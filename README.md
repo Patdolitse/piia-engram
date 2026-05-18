@@ -28,7 +28,7 @@ AI 工具都很聪明，但它们不认识你。
 
 ```bash
 # 1. 克隆
-git clone https://github.com/<your-username>/engram.git
+git clone https://github.com/Patdolitse/engram.git
 cd engram
 
 # 2. 安装
