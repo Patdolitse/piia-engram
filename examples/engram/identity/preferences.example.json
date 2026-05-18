@@ -1,0 +1,13 @@
+{
+  "work_patterns": {
+    "语言": "所有沟通使用中文",
+    "代码风格": "实用为主",
+    "开发节奏": "快速迭代"
+  },
+  "communication": "直接简洁",
+  "tool_preferences": {
+    "编码": "Claude Code",
+    "设计": "Figma"
+  },
+  "updated_at": "2026-01-01T00:00:00"
+}

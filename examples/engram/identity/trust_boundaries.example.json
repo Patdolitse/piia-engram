@@ -1,0 +1,7 @@
+{
+  "default_sharing": "full",
+  "tool_access": {},
+  "private_fields": [],
+  "notes": "默认所有工具可访问全部Engram数据。可按工具或字段限制。",
+  "updated_at": "2026-01-01T00:00:00"
+}

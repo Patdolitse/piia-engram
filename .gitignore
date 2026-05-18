@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Engram 用户数据（绝不提交）
+.engram/
+.piia/
+*.env
+engram_backup_*.json
+identity_card.md
+reader_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,7 @@
+{
+  "title": "示例项目",
+  "tech_stack": ["python", "fastapi"],
+  "known_issues": ["部署脚本需要更新"],
+  "notes": "MVP阶段",
+  "updated_at": "2026-01-01T00:00:00"
+}

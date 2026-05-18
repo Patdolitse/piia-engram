@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "engram": {
+      "command": "<your-python-path>",
+      "args": ["<path-to>/engram/src/engram_core/mcp_server.py"]
+    }
+  }
+}

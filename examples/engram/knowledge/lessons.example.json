@@ -1,0 +1,9 @@
+[
+  {
+    "summary": "Windows上python命令可能是商店stub，用完整路径更可靠",
+    "detail": "",
+    "domain": "python",
+    "source_tool": "claude_code",
+    "timestamp": "2026-01-01T00:00:00"
+  }
+]
