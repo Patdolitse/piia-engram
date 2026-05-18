@@ -16,6 +16,7 @@ from typing import Any
 SCHEMA_VERSION = "2.0"
 _ENGRAM_DIR_NAME = ".engram"
 _LEGACY_DIR_NAME = ".piia"
+SIMILARITY_THRESHOLD = 0.55
 
 
 def _engram_root() -> Path:
@@ -199,40 +200,200 @@ class Engram:
     # Knowledge — what you've learned
     # =====================================================================
 
-    def add_lesson(self, lesson: dict) -> None:
-        """Add a lesson learned. Each lesson:
-        {
-            "summary": "...",
-            "detail": "...",
-            "domain": "python|frontend|...",
-            "source_tool": "claude_code|codex|manual|...",
-            "source_url": "...",
-            "source_project": "...",
-            "source_session": "...",
-        }
+    def _entry_identity_text(self, entry: dict, entry_type: str) -> str:
+        if entry_type == "decision":
+            return str(entry.get("title") or entry.get("question") or "")
+        return str(entry.get("summary") or "")
+
+    def _ensure_fields(self, entry: dict, entry_type: str) -> dict:
+        """Backfill v2.1 fields on old lesson/decision entries."""
+        if not isinstance(entry, dict):
+            entry = {}
+
+        if not entry.get("timestamp"):
+            entry["timestamp"] = _now_iso()
+
+        if not entry.get("id"):
+            identity = self._entry_identity_text(entry, entry_type)
+            if entry_type == "lesson":
+                seed = f"{identity}{entry.get('domain', '')}{entry.get('timestamp', '')}"
+            else:
+                seed = f"{identity}{entry.get('timestamp', '')}"
+            entry["id"] = hashlib.sha256(seed.encode()).hexdigest()[:12]
+
+        entry.setdefault("status", "active")
+        entry.setdefault("access_count", 0)
+        return entry
+
+    def _read_entries(self, path: Path, entry_type: str) -> list[dict]:
+        entries = _read_json(path)
+        if not isinstance(entries, list):
+            return []
+
+        changed = False
+        ensured: list[dict] = []
+        for entry in entries:
+            before = dict(entry) if isinstance(entry, dict) else {}
+            item = self._ensure_fields(entry, entry_type)
+            if item != before:
+                changed = True
+            ensured.append(item)
+
+        if changed:
+            _write_json(path, ensured)
+        return ensured
+
+    def _bigram_similarity(self, a: str, b: str) -> float:
+        """Calculate a simple bigram similarity score between 0 and 1."""
+        if not a or not b:
+            return 0.0
+        a_lower, b_lower = a.lower(), b.lower()
+        a_bigrams = {a_lower[i:i + 2] for i in range(len(a_lower) - 1)}
+        b_bigrams = {b_lower[i:i + 2] for i in range(len(b_lower) - 1)}
+        if not a_bigrams or not b_bigrams:
+            return 0.0
+        intersection = a_bigrams & b_bigrams
+        return 2.0 * len(intersection) / (len(a_bigrams) + len(b_bigrams))
+
+    def add_lesson(
+        self,
+        lesson: dict | str,
+        domain: str = "",
+        detail: str = "",
+        source_tool: str = "",
+        source_url: str = "",
+        **extra: Any,
+    ) -> dict:
+        """Add a lesson learned.
+
+        Accepts either the original dict form or a convenience form:
+        add_lesson("summary", "domain", source_tool="codex").
         """
         path = self._knowledge_dir / "lessons.json"
-        lessons = _read_json(path)
-        if not isinstance(lessons, list):
-            lessons = []
-        lesson["timestamp"] = _now_iso()
-        lessons.append(lesson)
-        # Keep last 200 lessons
+        lessons = self._read_entries(path, "lesson")
+
+        if isinstance(lesson, dict):
+            new_lesson = dict(lesson)
+        else:
+            new_lesson = {"summary": str(lesson)}
+            if domain:
+                new_lesson["domain"] = domain
+            if detail:
+                new_lesson["detail"] = detail
+            if source_tool:
+                new_lesson["source_tool"] = source_tool
+            if source_url:
+                new_lesson["source_url"] = source_url
+
+        for key, value in extra.items():
+            if value is not None:
+                new_lesson[key] = value
+
+        new_lesson["timestamp"] = new_lesson.get("timestamp") or _now_iso()
+        new_lesson = self._ensure_fields(new_lesson, "lesson")
+
+        for existing in lessons:
+            existing = self._ensure_fields(existing, "lesson")
+            if existing.get("status") != "active":
+                continue
+            sim = self._bigram_similarity(
+                new_lesson.get("summary", ""),
+                existing.get("summary", ""),
+            )
+            if sim >= SIMILARITY_THRESHOLD:
+                return {
+                    "status": "duplicate",
+                    "similarity": round(sim, 2),
+                    "existing_id": existing.get("id"),
+                    "existing_summary": existing.get("summary"),
+                    "message": f"与现有教训相似度 {sim:.0%}，未重复添加",
+                }
+
+        lessons.append(new_lesson)
         if len(lessons) > 200:
             lessons = lessons[-200:]
         _write_json(path, lessons)
-        # Auto-update domain statistics
-        if lesson.get("domain"):
-            self.increment_domain_usage(lesson["domain"])
 
-    def get_lessons(self, domain: str | None = None, limit: int = 50) -> list[dict]:
+        if new_lesson.get("domain"):
+            self.increment_domain_usage(new_lesson["domain"])
+        return new_lesson
+
+    def get_lessons(
+        self,
+        domain: str | None = None,
+        source_tool: str | None = None,
+        limit: int | None = 50,
+    ) -> list[dict]:
         path = self._knowledge_dir / "lessons.json"
-        lessons = _read_json(path)
-        if not isinstance(lessons, list):
-            return []
-        if domain:
-            lessons = [l for l in lessons if l.get("domain") == domain]
-        return lessons[-limit:]
+        lessons = self._read_entries(path, "lesson")
+        result = []
+        for lesson in lessons:
+            if lesson.get("status") != "active":
+                continue
+            if domain and lesson.get("domain") != domain:
+                continue
+            if source_tool and lesson.get("source_tool") != source_tool:
+                continue
+            result.append(lesson)
+        return result[-limit:] if limit is not None else result
+
+    def search_knowledge(self, query: str, scope: str = "all", limit: int = 10) -> dict:
+        """Search lessons and decisions by keyword."""
+        query_lower = (query or "").lower()
+        results = {"lessons": [], "decisions": []}
+        limit = max(0, int(limit))
+
+        if scope in ("all", "lessons"):
+            path = self._knowledge_dir / "lessons.json"
+            lessons = self._read_entries(path, "lesson")
+            changed = False
+            for lesson in lessons:
+                if lesson.get("status") != "active":
+                    continue
+                searchable = (
+                    f"{lesson.get('summary', '')} "
+                    f"{lesson.get('detail', '')} "
+                    f"{lesson.get('domain', '')}"
+                ).lower()
+                if query_lower in searchable:
+                    lesson["access_count"] = lesson.get("access_count", 0) + 1
+                    changed = True
+                    results["lessons"].append(lesson)
+            if changed:
+                _write_json(path, lessons)
+            results["lessons"] = sorted(
+                results["lessons"],
+                key=lambda item: item.get("access_count", 0),
+                reverse=True,
+            )[:limit]
+
+        if scope in ("all", "decisions"):
+            path = self._knowledge_dir / "decisions.json"
+            decisions = self._read_entries(path, "decision")
+            changed = False
+            for decision in decisions:
+                if decision.get("status") != "active":
+                    continue
+                searchable = (
+                    f"{decision.get('title', '')} "
+                    f"{decision.get('question', '')} "
+                    f"{decision.get('choice', '')} "
+                    f"{decision.get('reasoning', '')} "
+                    f"{decision.get('project', '')}"
+                ).lower()
+                if query_lower in searchable:
+                    decision["access_count"] = decision.get("access_count", 0) + 1
+                    changed = True
+                    results["decisions"].append(decision)
+            if changed:
+                _write_json(path, decisions)
+            results["decisions"] = sorted(
+                results["decisions"],
+                key=lambda item: item.get("access_count", 0),
+                reverse=True,
+            )[:limit]
+
+        return results
 
     def get_relevant_lessons(self, project_folder: str | None = None,
                              limit: int = 8) -> list[dict]:
@@ -293,33 +454,135 @@ class Engram:
         result = relevant[:n_relevant] + universal[:n_universal] + other[:n_other]
         return result[:limit]
 
-    def add_decision(self, decision: dict) -> None:
-        """Record a key decision. Each decision:
-        {
-            "question": "what was decided",
-            "choice": "what was chosen",
-            "reasoning": "why",
-            "alternatives": ["what else was considered"],
-            "source_tool": "claude_code|codex|manual|...",
-            "source_project": "...",
-        }
+    def update_lesson(self, lesson_id: str, updates: dict) -> dict:
+        """Update fields on a lesson entry."""
+        path = self._knowledge_dir / "lessons.json"
+        lessons = self._read_entries(path, "lesson")
+        allowed_fields = {"summary", "detail", "domain", "status"}
+        for lesson in lessons:
+            if lesson.get("id") == lesson_id:
+                for key, value in updates.items():
+                    if key in allowed_fields:
+                        lesson[key] = value
+                lesson["last_updated"] = _now_iso()
+                _write_json(path, lessons)
+                return lesson
+        return {"error": f"Lesson not found: {lesson_id}"}
+
+    def archive_lesson(self, lesson_id: str) -> dict:
+        """Mark a lesson as outdated without deleting it."""
+        return self.update_lesson(lesson_id, {"status": "outdated"})
+
+    def add_decision(
+        self,
+        decision: dict | str,
+        choice: str = "",
+        reasoning: str = "",
+        alternatives: list[str] | None = None,
+        source_tool: str = "",
+        project: str = "",
+        **extra: Any,
+    ) -> dict:
+        """Record a key decision.
+
+        Accepts either the original dict form or:
+        add_decision("question", "choice", "reasoning").
         """
         path = self._knowledge_dir / "decisions.json"
-        decisions = _read_json(path)
-        if not isinstance(decisions, list):
-            decisions = []
-        decision["timestamp"] = _now_iso()
-        decisions.append(decision)
+        decisions = self._read_entries(path, "decision")
+
+        if isinstance(decision, dict):
+            new_decision = dict(decision)
+        else:
+            new_decision = {"question": str(decision), "choice": choice}
+            if reasoning:
+                new_decision["reasoning"] = reasoning
+            if alternatives:
+                new_decision["alternatives"] = alternatives
+            if source_tool:
+                new_decision["source_tool"] = source_tool
+            if project:
+                new_decision["project"] = project
+
+        for key, value in extra.items():
+            if value is not None:
+                new_decision[key] = value
+
+        new_decision["timestamp"] = new_decision.get("timestamp") or _now_iso()
+        new_decision = self._ensure_fields(new_decision, "decision")
+
+        new_title = self._entry_identity_text(new_decision, "decision")
+        for existing in decisions:
+            existing = self._ensure_fields(existing, "decision")
+            if existing.get("status") != "active":
+                continue
+            sim = self._bigram_similarity(
+                new_title,
+                self._entry_identity_text(existing, "decision"),
+            )
+            if sim >= SIMILARITY_THRESHOLD:
+                return {
+                    "status": "duplicate",
+                    "similarity": round(sim, 2),
+                    "existing_id": existing.get("id"),
+                    "existing_title": self._entry_identity_text(existing, "decision"),
+                    "message": f"与现有决策相似度 {sim:.0%}，未重复添加",
+                }
+
+        decisions.append(new_decision)
         if len(decisions) > 200:
             decisions = decisions[-200:]
         _write_json(path, decisions)
+        return new_decision
 
-    def get_decisions(self, limit: int = 30) -> list[dict]:
+    def get_decisions(
+        self,
+        limit: int | None = 30,
+        source_tool: str | None = None,
+        project: str | None = None,
+    ) -> list[dict]:
         path = self._knowledge_dir / "decisions.json"
-        decisions = _read_json(path)
-        if not isinstance(decisions, list):
-            return []
-        return decisions[-limit:]
+        decisions = self._read_entries(path, "decision")
+        result = []
+        for decision in decisions:
+            if decision.get("status") != "active":
+                continue
+            if source_tool and decision.get("source_tool") != source_tool:
+                continue
+            if project:
+                decision_project = decision.get("project") or decision.get("source_project")
+                if decision_project != project:
+                    continue
+            result.append(decision)
+        return result[-limit:] if limit is not None else result
+
+    def update_decision(self, decision_id: str, updates: dict) -> dict:
+        """Update fields on a decision entry."""
+        path = self._knowledge_dir / "decisions.json"
+        decisions = self._read_entries(path, "decision")
+        allowed_fields = {
+            "title",
+            "question",
+            "choice",
+            "reasoning",
+            "alternatives",
+            "status",
+            "project",
+            "source_tool",
+        }
+        for decision in decisions:
+            if decision.get("id") == decision_id:
+                for key, value in updates.items():
+                    if key in allowed_fields:
+                        decision[key] = value
+                decision["last_updated"] = _now_iso()
+                _write_json(path, decisions)
+                return decision
+        return {"error": f"Decision not found: {decision_id}"}
+
+    def archive_decision(self, decision_id: str) -> dict:
+        """Mark a decision as outdated without deleting it."""
+        return self.update_decision(decision_id, {"status": "outdated"})
 
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""
@@ -335,16 +598,37 @@ class Engram:
 
     def get_domains(self) -> dict:
         path = self._knowledge_dir / "domains.json"
-        data = _read_json(path)
-        return data if isinstance(data, dict) else {}
+        stored = _read_json(path)
+        if not isinstance(stored, dict):
+            stored = {}
+
+        active_counts: dict[str, int] = {}
+        for lesson in self.get_lessons(limit=None):
+            domain = lesson.get("domain")
+            if domain:
+                active_counts[domain] = active_counts.get(domain, 0) + 1
+
+        result: dict[str, dict] = {}
+        for domain, count in active_counts.items():
+            entry = stored.get(domain, {})
+            if not isinstance(entry, dict):
+                entry = {}
+            merged = dict(entry)
+            merged["project_count"] = count
+            result[domain] = merged
+        return result
 
     def increment_domain_usage(self, domain: str) -> None:
         """Increment project count for a domain."""
-        domains = self.get_domains()
+        path = self._knowledge_dir / "domains.json"
+        domains = _read_json(path)
+        if not isinstance(domains, dict):
+            domains = {}
         entry = domains.get(domain, {"first_seen": _now_iso(), "project_count": 0})
         entry["project_count"] = entry.get("project_count", 0) + 1
         entry["last_used"] = _now_iso()
-        self.update_domain(domain, entry)
+        domains[domain] = entry
+        _write_json(path, domains)
 
     # =====================================================================
     # Projects — per-project knowledge
@@ -555,24 +839,88 @@ class Engram:
     # Stats — user's knowledge asset metrics
     # =====================================================================
 
+    def get_health_report(self) -> dict:
+        """Generate a health report for the knowledge asset."""
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+
+        active_lessons = [l for l in lessons if l.get("status") == "active"]
+        outdated_lessons = [l for l in lessons if l.get("status") == "outdated"]
+        active_decisions = [d for d in decisions if d.get("status") == "active"]
+        outdated_decisions = [d for d in decisions if d.get("status") == "outdated"]
+
+        domain_counts: dict[str, int] = {}
+        for lesson in active_lessons:
+            domain = lesson.get("domain", "unknown")
+            domain_counts[domain] = domain_counts.get(domain, 0) + 1
+
+        source_counts: dict[str, int] = {}
+        for item in active_lessons + active_decisions:
+            source = item.get("source_tool", "unknown")
+            source_counts[source] = source_counts.get(source, 0) + 1
+
+        duplicates = []
+        for i, first in enumerate(active_lessons):
+            for second in active_lessons[i + 1:]:
+                first_summary = first.get("summary", "")
+                second_summary = second.get("summary", "")
+                if min(len(first_summary), len(second_summary)) < 8:
+                    continue
+                sim = self._bigram_similarity(first_summary, second_summary)
+                if sim >= 0.45:
+                    duplicates.append({
+                        "a_id": first.get("id"),
+                        "a_summary": first_summary[:50],
+                        "b_id": second.get("id"),
+                        "b_summary": second_summary[:50],
+                        "similarity": round(sim, 2),
+                    })
+
+        warnings = []
+        if len(active_lessons) > 150:
+            warnings.append(f"教训数量较多（{len(active_lessons)}/200），建议清理过时条目")
+        if duplicates:
+            warnings.append(f"发现 {len(duplicates)} 对近似重复教训，建议合并")
+        if outdated_lessons:
+            warnings.append(f"{len(outdated_lessons)} 条教训已标记过时，可考虑清理")
+
+        return {
+            "summary": {
+                "total_lessons": len(lessons),
+                "active_lessons": len(active_lessons),
+                "outdated_lessons": len(outdated_lessons),
+                "total_decisions": len(decisions),
+                "active_decisions": len(active_decisions),
+                "outdated_decisions": len(outdated_decisions),
+            },
+            "domain_distribution": domain_counts,
+            "source_distribution": source_counts,
+            "potential_duplicates": duplicates[:10],
+            "warnings": warnings,
+        }
+
     def get_stats(self) -> dict:
         """Return statistics about the user's knowledge asset."""
-        lessons = _read_json(self._knowledge_dir / "lessons.json")
-        decisions = _read_json(self._knowledge_dir / "decisions.json")
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+        active_lessons = [l for l in lessons if l.get("status") == "active"]
+        active_decisions = [d for d in decisions if d.get("status") == "active"]
         domains = self.get_domains()
         projects = self.list_projects()
         profile = self.get_profile()
 
-        # Count lessons by source_tool
         source_breakdown = {}
-        if isinstance(lessons, list):
-            for l in lessons:
-                tool = l.get("source_tool", "unknown")
-                source_breakdown[tool] = source_breakdown.get(tool, 0) + 1
+        for lesson in active_lessons:
+            tool = lesson.get("source_tool", "unknown")
+            source_breakdown[tool] = source_breakdown.get(tool, 0) + 1
 
         return {
-            "total_lessons": len(lessons) if isinstance(lessons, list) else 0,
-            "total_decisions": len(decisions) if isinstance(decisions, list) else 0,
+            "total_lessons": len(lessons),
+            "active_lessons": len(active_lessons),
+            "outdated_lessons": len(lessons) - len(active_lessons),
+            "total_decisions": len(decisions),
+            "active_decisions": len(active_decisions),
+            "outdated_decisions": len(decisions) - len(active_decisions),
             "domain_count": len(domains),
             "project_count": len(projects),
             "domains": {

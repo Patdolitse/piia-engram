@@ -110,6 +110,12 @@ Common tools include:
 | `import_engram` | Import a backup |
 | `export_engram_to_openclaw` | Export OpenClaw-compatible files |
 | `import_engram_from_openclaw` | Import OpenClaw-compatible files |
+| `search_knowledge` | Search lessons and decisions by keyword |
+| `get_health_report` | Knowledge asset health report (duplicates, capacity, warnings) |
+| `update_lesson` | Update a lesson (summary, domain, status) |
+| `archive_lesson` | Mark a lesson as outdated |
+| `update_decision` | Update a decision |
+| `archive_decision` | Mark a decision as outdated |
 
 ## Data Layout
 

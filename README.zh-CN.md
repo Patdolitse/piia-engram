@@ -140,6 +140,12 @@ python demos/setup_engram.py
 | `export_engram_to_openclaw` | 导出 OpenClaw 格式 |
 | `import_engram_from_openclaw` | 导入 OpenClaw 格式 |
 | `read_web_content` | 读取网页内容（需 Reader 服务） |
+| `search_knowledge` | 按关键词搜索经验教训和关键决策 |
+| `get_health_report` | 知识资产健康度报告（重复、容量、告警） |
+| `update_lesson` | 更新经验教训 |
+| `archive_lesson` | 废弃经验教训 |
+| `update_decision` | 更新关键决策 |
+| `archive_decision` | 废弃关键决策 |
 
 </details>
 

@@ -154,3 +154,94 @@ def test_export_import_round_trip(tmp_path: Path):
     assert new_engram.get_profile().get("role") == "RT测试"
     assert len(new_engram.get_lessons()) >= 1
     assert len(new_engram.get_decisions()) >= 1
+
+
+def test_search_knowledge(tmp_path: Path):
+    """应能按关键词搜索经验教训和关键决策。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("Python 虚拟环境避免依赖冲突", "python", source_tool="claude_code")
+    engram.add_lesson("Git rebase 前先备份分支", "git", source_tool="codex")
+    engram.add_decision("选择 Apache 2.0 许可证", "Apache 2.0", "专利保护", source_tool="claude_code")
+
+    results = engram.search_knowledge("python")
+    assert len(results["lessons"]) == 1
+    assert results["lessons"][0]["summary"] == "Python 虚拟环境避免依赖冲突"
+    assert results["lessons"][0]["access_count"] == 1
+
+    results = engram.search_knowledge("Apache", scope="decisions")
+    assert len(results["decisions"]) == 1
+    assert len(results["lessons"]) == 0
+
+
+def test_update_and_archive_lesson(tmp_path: Path):
+    """经验教训应能更新并标记为过时。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("旧的经验", "test")
+    lessons = engram.get_lessons()
+    lesson_id = lessons[0]["id"]
+
+    updated = engram.update_lesson(lesson_id, {"summary": "更新后的经验"})
+    assert updated["summary"] == "更新后的经验"
+    assert "last_updated" in updated
+
+    archived = engram.archive_lesson(lesson_id)
+    assert archived["status"] == "outdated"
+    assert engram.get_lessons() == []
+
+
+def test_duplicate_detection(tmp_path: Path):
+    """相似经验不应重复写入。"""
+    engram = make_engram(tmp_path)
+    first = engram.add_lesson("Python 虚拟环境避免全局依赖冲突", "python")
+    duplicate = engram.add_lesson("Python 虚拟环境避免依赖冲突问题", "python")
+
+    assert first.get("status") == "active"
+    assert duplicate.get("status") == "duplicate"
+    assert len(engram.get_lessons()) == 1
+
+
+def test_source_filter(tmp_path: Path):
+    """经验教训和决策应支持来源工具过滤。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("经验A", "test", source_tool="claude_code")
+    engram.add_lesson("经验B", "test", source_tool="codex")
+    engram.add_decision("决策A", "A", source_tool="claude_code", project="demo")
+    engram.add_decision("决策B", "B", source_tool="codex", project="demo")
+
+    claude_lessons = engram.get_lessons(source_tool="claude_code")
+    assert len(claude_lessons) == 1
+    assert claude_lessons[0]["summary"] == "经验A"
+
+    codex_decisions = engram.get_decisions(source_tool="codex", project="demo")
+    assert len(codex_decisions) == 1
+    assert codex_decisions[0]["question"] == "决策B"
+
+
+def test_health_report(tmp_path: Path):
+    """健康报告应返回知识资产统计和分布。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("经验1", "python", source_tool="claude_code")
+    engram.add_lesson("经验2", "git", source_tool="codex")
+    engram.add_decision("决策1", "A", "因为A好", source_tool="claude_code")
+
+    report = engram.get_health_report()
+    assert report["summary"]["active_lessons"] == 2
+    assert report["summary"]["active_decisions"] == 1
+    assert "python" in report["domain_distribution"]
+    assert report["source_distribution"]["claude_code"] == 2
+    assert len(report["warnings"]) == 0
+
+
+def test_update_decision(tmp_path: Path):
+    """关键决策应能更新并标记为过时。"""
+    engram = make_engram(tmp_path)
+    engram.add_decision("旧决策", "A", "理由A")
+    decisions = engram.get_decisions()
+    decision_id = decisions[0]["id"]
+
+    updated = engram.update_decision(decision_id, {"choice": "B", "reasoning": "理由B更好"})
+    assert updated["choice"] == "B"
+
+    archived = engram.archive_decision(decision_id)
+    assert archived["status"] == "outdated"
+    assert engram.get_decisions() == []

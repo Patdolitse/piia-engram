@@ -116,31 +116,46 @@ async def get_quality_standards() -> str:
 
 
 @mcp.tool()
-async def get_lessons(domain: Optional[str] = None, limit: int = 50) -> str:
+async def get_lessons(
+    domain: Optional[str] = None,
+    source_tool: Optional[str] = None,
+    limit: int = 50,
+) -> str:
     """获取用户从过去项目中学到的经验教训。
 
     用这些来避免重复过去的错误。
 
     Args:
         domain: 按领域过滤（如 'python', 'frontend'）。
+        source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。
         limit: 最多返回多少条（默认 50）。
     """
-    lessons = _engram.get_lessons(domain=domain, limit=limit)
+    lessons = _engram.get_lessons(domain=domain, source_tool=source_tool, limit=limit)
     if not lessons:
         return "尚无经验教训记录。"
     return _json(lessons)
 
 
 @mcp.tool()
-async def get_decisions(limit: int = 30) -> str:
+async def get_decisions(
+    source_tool: Optional[str] = None,
+    project: Optional[str] = None,
+    limit: int = 30,
+) -> str:
     """获取用户做过的关键决策及其推理。
 
     帮助理解过去的选择以保持一致性。
 
     Args:
+        source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。
+        project: 按项目过滤（可选）。
         limit: 最多返回多少条（默认 30）。
     """
-    decisions = _engram.get_decisions(limit=limit)
+    decisions = _engram.get_decisions(
+        limit=limit,
+        source_tool=source_tool,
+        project=project,
+    )
     if not decisions:
         return "尚无决策记录。"
     return _json(decisions)
@@ -202,6 +217,18 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
     return _json(lessons)
 
 
+@mcp.tool()
+async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> str:
+    """搜索经验教训和关键决策内容。"""
+    return _json(_engram.search_knowledge(query, scope=scope, limit=limit))
+
+
+@mcp.tool()
+async def get_health_report() -> str:
+    """生成知识资产健康度报告。"""
+    return _json(_engram.get_health_report())
+
+
 # ===========================================================================
 # WRITE TOOLS (5)
 # ===========================================================================
@@ -233,7 +260,9 @@ async def add_lesson(
         lesson["source_tool"] = source_tool
     if source_url:
         lesson["source_url"] = source_url
-    _engram.add_lesson(lesson)
+    result = _engram.add_lesson(lesson)
+    if result.get("status") == "duplicate":
+        return _json(result)
     return f"教训已记录: {summary}"
 
 
@@ -243,6 +272,7 @@ async def add_decision(
     choice: str,
     reasoning: str = "",
     source_tool: str = "",
+    project: str = "",
 ) -> str:
     """记录一个在本次协作中做出的关键决策。
 
@@ -257,8 +287,66 @@ async def add_decision(
         decision["reasoning"] = reasoning
     if source_tool:
         decision["source_tool"] = source_tool
-    _engram.add_decision(decision)
+    if project:
+        decision["project"] = project
+    result = _engram.add_decision(decision)
+    if result.get("status") == "duplicate":
+        return _json(result)
     return f"决策已记录: {question} → {choice}"
+
+
+@mcp.tool()
+async def update_lesson(
+    lesson_id: str,
+    summary: Optional[str] = None,
+    detail: Optional[str] = None,
+    domain: Optional[str] = None,
+    status: Optional[str] = None,
+) -> str:
+    """更新一条经验教训。"""
+    updates = {}
+    if summary is not None:
+        updates["summary"] = summary
+    if detail is not None:
+        updates["detail"] = detail
+    if domain is not None:
+        updates["domain"] = domain
+    if status is not None:
+        updates["status"] = status
+    return _json(_engram.update_lesson(lesson_id, updates))
+
+
+@mcp.tool()
+async def archive_lesson(lesson_id: str) -> str:
+    """将一条经验教训标记为过时。"""
+    return _json(_engram.archive_lesson(lesson_id))
+
+
+@mcp.tool()
+async def update_decision(
+    decision_id: str,
+    title: Optional[str] = None,
+    choice: Optional[str] = None,
+    reasoning: Optional[str] = None,
+    status: Optional[str] = None,
+) -> str:
+    """更新一条关键决策。"""
+    updates = {}
+    if title is not None:
+        updates["title"] = title
+    if choice is not None:
+        updates["choice"] = choice
+    if reasoning is not None:
+        updates["reasoning"] = reasoning
+    if status is not None:
+        updates["status"] = status
+    return _json(_engram.update_decision(decision_id, updates))
+
+
+@mcp.tool()
+async def archive_decision(decision_id: str) -> str:
+    """将一条关键决策标记为过时。"""
+    return _json(_engram.archive_decision(decision_id))
 
 
 @mcp.tool()
