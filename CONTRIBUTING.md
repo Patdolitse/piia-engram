@@ -1,8 +1,12 @@
 # Contributing to Engram
 
-感谢你考虑为 Engram 做贡献。
+Thanks for considering a contribution to Engram.
 
-## 开发环境
+Engram is a local-first memory layer for AI coding tools. The project values small, reviewable changes, clear documentation, and user-owned data.
+
+[English](CONTRIBUTING.md) | [中文](CONTRIBUTING.zh-CN.md)
+
+## Development Setup
 
 ```bash
 git clone https://github.com/<your-username>/engram.git
@@ -10,33 +14,43 @@ cd engram
 pip install -e ".[dev]"
 ```
 
-## 运行测试
+## Run Tests
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-## 代码规范
+## Code Guidelines
 
-- Python 3.10+
-- 类型注解推荐但不强制
-- 中文注释和 docstring 均可
-- 测试覆盖新功能
+- Use Python 3.10+.
+- Keep changes focused and easy to review.
+- Prefer readable code over clever abstractions.
+- Add or update tests when behavior changes.
+- Preserve local-first, user-editable data as a core design principle.
 
-## 提交 PR
+## Pull Requests
 
-1. Fork 本仓库
-2. 创建功能分支：`git checkout -b feature/your-feature`
-3. 运行测试确认通过
-4. 提交 PR，说明改了什么和为什么
+1. Fork the repository.
+2. Create a feature branch:
 
-## 报告问题
+```bash
+git checkout -b feature/your-feature
+```
 
-在 GitHub Issues 中提交，请包含：
-- 操作系统和 Python 版本
-- 复现步骤
-- 预期行为 vs 实际行为
+3. Make your changes.
+4. Run the test suite.
+5. Open a pull request and explain what changed and why.
 
-## 行为准则
+## Reporting Issues
 
-友善、尊重、建设性。我们都是为了让 AI 更好地认识人类。
+When opening an issue, please include:
+
+- operating system
+- Python version
+- steps to reproduce
+- expected behavior
+- actual behavior
+
+## Conduct
+
+Be respectful, practical, and constructive. The goal is to make AI tools remember people better while keeping that memory under the user's control.
