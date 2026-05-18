@@ -185,6 +185,16 @@ Engram 是一个人和 AI 一起做出来的。
 
 所以 Engram 从第一天起就是自己的用户——它的代码、架构决策、经验教训，全部存在 Engram 里，被两个 AI 工具共享读取。
 
+## Contributors
+
+Engram 由人和 AI 共同创造：
+
+| 贡献者 | 角色 |
+|--------|------|
+| [@Patdolitse](https://github.com/Patdolitse) | 创始人 · 产品方向 · 战略决策 |
+| [Claude Code](https://claude.ai/claude-code) | 架构设计 · 任务规划 · 代码审查 · GitHub 发布 |
+| [Codex](https://openai.com/codex) | 代码执行 · 品牌重命名 · CI/README/测试 |
+
 ## Contributing
 
 见 [CONTRIBUTING.md](CONTRIBUTING.md)。
