@@ -3,7 +3,7 @@ name = "engram"
 version = "2.0.0"
 description = "Engram — AI 记忆印记。你的 AI 记忆，本地存储，跨工具共享。"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0",

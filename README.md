@@ -10,7 +10,7 @@
 
 `一次写入` · `所有 AI 共享读取` · `100% 本地`
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 
@@ -201,4 +201,4 @@ Engram 由人驱动，AI 工具辅助开发：
 
 ## License
 
-[MIT](LICENSE) - Engram 是自由软件，记忆属于你。
+[Apache 2.0](LICENSE) — Engram 是自由软件，记忆属于你。
