@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +96,15 @@ def _write_json(path: Path, data: Any) -> None:
 
 def _now_iso() -> str:
     return datetime.now().replace(microsecond=0).isoformat()
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _project_id(folder: str) -> str:
@@ -288,6 +297,8 @@ class Engram:
 
         if not entry.get("timestamp"):
             entry["timestamp"] = _now_iso()
+        entry.setdefault("created_at", entry.get("timestamp", _now_iso()))
+        entry.setdefault("last_reviewed", entry.get("created_at", _now_iso()))
 
         if not entry.get("id"):
             identity = self._entry_identity_text(entry, entry_type)
@@ -399,6 +410,7 @@ class Engram:
         domain: str | None = None,
         source_tool: str | None = None,
         limit: int | None = 50,
+        _update_access: bool = True,
     ) -> list[dict]:
         path = self._knowledge_dir / "lessons.json"
         lessons = self._read_entries(path, "lesson")
@@ -411,7 +423,14 @@ class Engram:
             if source_tool and lesson.get("source_tool") != source_tool:
                 continue
             result.append(lesson)
-        return result[-limit:] if limit is not None else result
+        result = result[-limit:] if limit is not None else result
+        if _update_access and result:
+            now = _now_iso()
+            for lesson in result:
+                lesson["last_reviewed"] = now
+                lesson["access_count"] = lesson.get("access_count", 0) + 1
+            _write_json(path, lessons)
+        return result
 
     def search_knowledge(self, query: str, scope: str = "all", limit: int = 10) -> dict:
         """Search lessons and decisions by keyword."""
@@ -616,6 +635,7 @@ class Engram:
         limit: int | None = 30,
         source_tool: str | None = None,
         project: str | None = None,
+        _update_access: bool = True,
     ) -> list[dict]:
         path = self._knowledge_dir / "decisions.json"
         decisions = self._read_entries(path, "decision")
@@ -630,7 +650,14 @@ class Engram:
                 if decision_project != project:
                     continue
             result.append(decision)
-        return result[-limit:] if limit is not None else result
+        result = result[-limit:] if limit is not None else result
+        if _update_access and result:
+            now = _now_iso()
+            for decision in result:
+                decision["last_reviewed"] = now
+                decision["access_count"] = decision.get("access_count", 0) + 1
+            _write_json(path, decisions)
+        return result
 
     def update_decision(self, decision_id: str, updates: dict) -> dict:
         """Update fields on a decision entry."""
@@ -679,7 +706,7 @@ class Engram:
             stored = {}
 
         active_counts: dict[str, int] = {}
-        for lesson in self.get_lessons(limit=None):
+        for lesson in self.get_lessons(limit=None, _update_access=False):
             domain = lesson.get("domain")
             if domain:
                 active_counts[domain] = active_counts.get(domain, 0) + 1
@@ -974,6 +1001,222 @@ class Engram:
             "potential_duplicates": duplicates[:10],
             "warnings": warnings,
         }
+
+    def _reviewed_at(self, item: dict) -> datetime | None:
+        return (
+            _parse_iso(item.get("last_reviewed"))
+            or _parse_iso(item.get("created_at"))
+            or _parse_iso(item.get("timestamp"))
+        )
+
+    def get_stale_knowledge(self, days: int = 30) -> dict:
+        """Return active lessons and decisions not reviewed for more than days."""
+        days = max(0, int(days))
+        cutoff = datetime.now() - timedelta(days=days)
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+
+        stale_lessons = []
+        for lesson in lessons:
+            if lesson.get("status") != "active":
+                continue
+            reviewed_at = self._reviewed_at(lesson)
+            if reviewed_at and reviewed_at <= cutoff:
+                stale_lessons.append({
+                    "id": lesson.get("id", ""),
+                    "type": "lesson",
+                    "title": lesson.get("summary", ""),
+                    "domain": lesson.get("domain", ""),
+                    "last_reviewed": lesson.get("last_reviewed") or lesson.get("created_at", ""),
+                    "access_count": lesson.get("access_count", 0),
+                })
+
+        stale_decisions = []
+        for decision in decisions:
+            if decision.get("status") != "active":
+                continue
+            reviewed_at = self._reviewed_at(decision)
+            if reviewed_at and reviewed_at <= cutoff:
+                stale_decisions.append({
+                    "id": decision.get("id", ""),
+                    "type": "decision",
+                    "title": self._entry_identity_text(decision, "decision"),
+                    "domain": decision.get("domain") or decision.get("project", ""),
+                    "last_reviewed": decision.get("last_reviewed") or decision.get("created_at", ""),
+                    "access_count": decision.get("access_count", 0),
+                })
+
+        return {
+            "days": days,
+            "lessons": stale_lessons,
+            "decisions": stale_decisions,
+        }
+
+    def get_knowledge_digest(self) -> dict:
+        """Return aggregate knowledge summary without updating access metadata."""
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+        active_lessons = [l for l in lessons if l.get("status") == "active"]
+        active_decisions = [d for d in decisions if d.get("status") == "active"]
+
+        recent_cutoff = datetime.now() - timedelta(days=7)
+        recent_items = []
+        for lesson in active_lessons:
+            created_at = lesson.get("created_at") or lesson.get("timestamp", "")
+            created_dt = _parse_iso(created_at)
+            if created_dt and created_dt >= recent_cutoff:
+                recent_items.append({
+                    "type": "lesson",
+                    "title": lesson.get("summary", ""),
+                    "domain": lesson.get("domain", ""),
+                    "created_at": created_at,
+                })
+        for decision in active_decisions:
+            created_at = decision.get("created_at") or decision.get("timestamp", "")
+            created_dt = _parse_iso(created_at)
+            if created_dt and created_dt >= recent_cutoff:
+                recent_items.append({
+                    "type": "decision",
+                    "title": self._entry_identity_text(decision, "decision"),
+                    "domain": decision.get("domain") or decision.get("project", ""),
+                    "created_at": created_at,
+                })
+        recent_items.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+
+        by_domain: dict[str, dict[str, int]] = {}
+        for lesson in active_lessons:
+            domain = lesson.get("domain") or "unknown"
+            bucket = by_domain.setdefault(domain, {"lessons": 0, "decisions": 0})
+            bucket["lessons"] += 1
+        for decision in active_decisions:
+            domain = (
+                decision.get("domain")
+                or decision.get("project")
+                or decision.get("source_project")
+                or "unknown"
+            )
+            bucket = by_domain.setdefault(domain, {"lessons": 0, "decisions": 0})
+            bucket["decisions"] += 1
+
+        top_lessons = sorted(
+            active_lessons,
+            key=lambda item: item.get("access_count", 0),
+            reverse=True,
+        )[:5]
+        top_decisions = sorted(
+            active_decisions,
+            key=lambda item: item.get("access_count", 0),
+            reverse=True,
+        )[:5]
+        stale = self.get_stale_knowledge(days=30)
+
+        return {
+            "total_lessons": len(active_lessons),
+            "total_decisions": len(active_decisions),
+            "recent_additions": {
+                "last_7_days": len(recent_items),
+                "items": recent_items[:10],
+            },
+            "top_accessed": {
+                "lessons": [
+                    {
+                        "title": item.get("summary", ""),
+                        "access_count": item.get("access_count", 0),
+                        "domain": item.get("domain", ""),
+                    }
+                    for item in top_lessons
+                ],
+                "decisions": [
+                    {
+                        "title": self._entry_identity_text(item, "decision"),
+                        "access_count": item.get("access_count", 0),
+                    }
+                    for item in top_decisions
+                ],
+            },
+            "by_domain": by_domain,
+            "stale_count": len(stale["lessons"]) + len(stale["decisions"]),
+        }
+
+    def export_knowledge_report(self) -> str:
+        """Generate and save a Chinese Markdown knowledge report."""
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+        active_lessons = [l for l in lessons if l.get("status") == "active"]
+        active_decisions = [d for d in decisions if d.get("status") == "active"]
+        domains = sorted({l.get("domain") for l in active_lessons if l.get("domain")})
+        stale = self.get_stale_knowledge(days=30)
+
+        lines = [
+            "# 个人知识报告",
+            f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "## 概览",
+            f"- 经验教训：{len(active_lessons)} 条（活跃）",
+            f"- 关键决策：{len(active_decisions)} 条（活跃）",
+            f"- 覆盖领域：{', '.join(domains) if domains else '暂无'}",
+            "",
+            "## 经验教训",
+            "",
+        ]
+
+        lessons_by_domain: dict[str, list[dict]] = {}
+        for lesson in active_lessons:
+            lessons_by_domain.setdefault(lesson.get("domain") or "未分类", []).append(lesson)
+        if lessons_by_domain:
+            for domain in sorted(lessons_by_domain):
+                lines.append(f"### {domain}")
+                for lesson in lessons_by_domain[domain]:
+                    source = lesson.get("source_tool", "unknown")
+                    access_count = lesson.get("access_count", 0)
+                    summary = lesson.get("summary", "")
+                    detail = lesson.get("detail", "")
+                    body = f" — {detail}" if detail else ""
+                    lines.append(
+                        f"- **{summary}**{body} *(来源: {source}, 访问 {access_count} 次)*"
+                    )
+                lines.append("")
+        else:
+            lines.extend(["暂无经验教训。", ""])
+
+        lines.extend(["## 关键决策", ""])
+        decisions_by_month: dict[str, list[dict]] = {}
+        for decision in active_decisions:
+            created = decision.get("created_at") or decision.get("timestamp", "")
+            month = created[:7] if len(created) >= 7 else "未知时间"
+            decisions_by_month.setdefault(month, []).append(decision)
+        if decisions_by_month:
+            for month in sorted(decisions_by_month, reverse=True):
+                lines.append(f"### {month}")
+                for decision in decisions_by_month[month]:
+                    title = self._entry_identity_text(decision, "decision")
+                    rationale = decision.get("reasoning") or decision.get("choice", "")
+                    status = decision.get("status", "active")
+                    lines.append(f"- **{title}** — {rationale} *(状态: {status})*")
+                lines.append("")
+        else:
+            lines.extend(["暂无关键决策。", ""])
+
+        lines.extend(["## 待复查（超过 30 天未访问）", ""])
+        stale_items = stale["lessons"] + stale["decisions"]
+        if stale_items:
+            for item in stale_items:
+                lines.append(
+                    f"- **{item.get('title', '')}** — 最后访问: {item.get('last_reviewed', '')}"
+                )
+        else:
+            lines.append("暂无超过 30 天未访问的活跃知识。")
+        lines.append("")
+
+        report = "\n".join(lines)
+        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = self._exports_dir / f"knowledge_report_{date_str}.md"
+        counter = 1
+        while report_path.exists():
+            report_path = self._exports_dir / f"knowledge_report_{date_str}_{counter}.md"
+            counter += 1
+        report_path.write_text(report, encoding="utf-8")
+        return report
 
     def get_stats(self) -> dict:
         """Return statistics about the user's knowledge asset."""
