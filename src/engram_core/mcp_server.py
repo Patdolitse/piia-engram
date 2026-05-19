@@ -268,7 +268,7 @@ async def export_knowledge_report() -> str:
 
 
 # ===========================================================================
-# WRITE TOOLS (17)
+# WRITE TOOLS (18)
 # ===========================================================================
 
 
@@ -413,6 +413,20 @@ async def update_decision(
 async def archive_knowledge(item_id: str) -> str:
     """Archive a lesson or decision by ID. Automatically detects the item type."""
     return _json(_engram.archive_knowledge(item_id))
+
+
+@mcp.tool()
+async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
+    """Merge secondary knowledge item into primary.
+
+    Transfers related_ids from secondary to primary, then archives secondary.
+    Use after find_similar_knowledge identifies a duplicate.
+
+    Args:
+        primary_id: ID of the item to keep (its content is preserved).
+        secondary_id: ID of the item to merge in (will be archived).
+    """
+    return _json(_engram.merge_knowledge(primary_id, secondary_id))
 
 
 @mcp.tool()
