@@ -35,6 +35,14 @@ except ImportError:
 # ---------------------------------------------------------------------------
 _engram = Engram()
 
+IDENTITY_FIELDS = frozenset({
+    "profile",
+    "preferences",
+    "trust_boundaries",
+    "work_style",
+    "quality_standards",
+})
+
 mcp = FastMCP(
     "engram",
     instructions=(
@@ -52,7 +60,7 @@ def _json(obj: object) -> str:
 
 
 # ===========================================================================
-# READ TOOLS (22)
+# READ TOOLS (20)
 # ===========================================================================
 
 
@@ -196,12 +204,6 @@ async def list_projects() -> str:
     if not projects:
         return "尚无项目记录。"
     return _json(projects)
-
-
-@mcp.tool()
-async def get_stats() -> str:
-    """获取知识资产的统计信息（教训数、领域数等）。"""
-    return _json(_engram.get_stats())
 
 
 @mcp.tool()
@@ -387,12 +389,6 @@ async def update_lesson(
 
 
 @mcp.tool()
-async def archive_lesson(lesson_id: str) -> str:
-    """将一条经验教训标记为过时。"""
-    return _json(_engram.archive_lesson(lesson_id))
-
-
-@mcp.tool()
 async def update_decision(
     decision_id: str,
     title: Optional[str] = None,
@@ -414,9 +410,9 @@ async def update_decision(
 
 
 @mcp.tool()
-async def archive_decision(decision_id: str) -> str:
-    """将一条关键决策标记为过时。"""
-    return _json(_engram.archive_decision(decision_id))
+async def archive_knowledge(item_id: str) -> str:
+    """Archive a lesson or decision by ID. Automatically detects the item type."""
+    return _json(_engram.archive_knowledge(item_id))
 
 
 @mcp.tool()
@@ -432,86 +428,35 @@ async def unlink_knowledge(id_a: str, id_b: str) -> str:
 
 
 @mcp.tool()
-async def update_profile(updates_json: str) -> str:
-    """更新用户身份画像。
+async def update_identity(field: str, updates_json: str) -> str:
+    """Update an identity field.
 
     Args:
-        updates_json: JSON 字符串，支持字段: role, language, technical_level, description。
+        field: One of: profile | preferences | trust_boundaries | work_style | quality_standards
+        updates_json: JSON string with the fields to update.
+
+    Field-specific keys:
+        profile: role, language, technical_level, description
+        preferences: work_patterns (dict), communication (str), tool_preferences (dict)
+        trust_boundaries: default_sharing, tool_access, private_fields, restricted_fields
+        work_style: preferences (dict), communication (str)
+        quality_standards: acceptance_threshold (1-5), rules (list)
     """
+    if field not in IDENTITY_FIELDS:
+        return _json({"error": f"Unknown field: {field}. Valid: {sorted(IDENTITY_FIELDS)}"})
     try:
         updates = json.loads(updates_json)
     except json.JSONDecodeError:
-        return "错误: updates_json 必须是合法的 JSON。"
-    _engram.update_profile(updates)
-    return f"画像已更新: {', '.join(updates.keys())}"
-
-
-@mcp.tool()
-async def update_preferences(updates_json: str) -> str:
-    """更新用户的工作偏好（v2.0）。
-
-    Args:
-        updates_json: JSON 字符串，支持字段:
-            work_patterns (dict) — 工作模式偏好
-            communication (str) — 沟通风格
-            tool_preferences (dict) — 工具偏好，如 {"编码": "Claude Code", "日常助手": "OpenClaw"}
-    """
-    try:
-        updates = json.loads(updates_json)
-    except json.JSONDecodeError:
-        return "错误: updates_json 必须是合法的 JSON。"
-    _engram.update_preferences(updates)
-    return f"偏好已更新: {', '.join(updates.keys())}"
-
-
-@mcp.tool()
-async def update_trust_boundaries(updates_json: str) -> str:
-    """更新数据信任边界。
-
-    Args:
-        updates_json: JSON 字符串，支持字段:
-            default_sharing (str) — 默认共享级别: 'full'/'limited'/'minimal'
-            tool_access (dict) — 按工具限制，如 {"openclaw": {"exclude": ["trust_boundaries"]}}
-            private_fields (list) — 不对外共享的字段列表
-            restricted_fields (list) — 从 get_user_context 输出中排除的 profile 字段名。
-                例如 ["phone", "address"] 会对所有 AI 工具隐藏这些画像字段。
-    """
-    try:
-        updates = json.loads(updates_json)
-    except json.JSONDecodeError:
-        return "错误: updates_json 必须是合法的 JSON。"
-    _engram.update_trust_boundaries(updates)
-    return f"信任边界已更新: {', '.join(updates.keys())}"
-
-
-@mcp.tool()
-async def update_work_style(updates_json: str) -> str:
-    """更新用户的工作偏好（v1兼容，建议使用 update_preferences）。
-
-    Args:
-        updates_json: JSON 字符串，支持字段: preferences (dict), communication (str)。
-    """
-    try:
-        updates = json.loads(updates_json)
-    except json.JSONDecodeError:
-        return "错误: updates_json 必须是合法的 JSON。"
-    _engram.update_work_style(updates)
-    return f"工作偏好已更新: {', '.join(updates.keys())}"
-
-
-@mcp.tool()
-async def update_quality_standards(updates_json: str) -> str:
-    """更新用户的质量标准和验收条件。
-
-    Args:
-        updates_json: JSON 字符串，支持字段: acceptance_threshold (1-5), rules (list)。
-    """
-    try:
-        updates = json.loads(updates_json)
-    except json.JSONDecodeError:
-        return "错误: updates_json 必须是合法的 JSON。"
-    _engram.update_quality_standards(updates)
-    return f"质量标准已更新: {', '.join(updates.keys())}"
+        return _json({"error": "updates_json must be valid JSON"})
+    dispatch = {
+        "profile": _engram.update_profile,
+        "preferences": _engram.update_preferences,
+        "trust_boundaries": _engram.update_trust_boundaries,
+        "work_style": _engram.update_work_style,
+        "quality_standards": _engram.update_quality_standards,
+    }
+    dispatch[field](updates)
+    return _json({"success": True, "field": field, "updated_keys": list(updates.keys())})
 
 
 @mcp.tool()

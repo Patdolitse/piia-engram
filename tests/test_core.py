@@ -613,3 +613,37 @@ def test_find_similar_not_found(tmp_path: Path):
     result = engram.find_similar_knowledge("nonexistent_id")
 
     assert result == {"error": "Item not found: nonexistent_id"}
+
+
+def test_archive_knowledge_lesson(tmp_path: Path):
+    """archive_knowledge 应能归档 lesson。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("需要归档的经验")
+
+    result = engram.archive_knowledge(lesson["id"])
+
+    assert result.get("status") == "outdated"
+    path = engram._knowledge_dir / "lessons.json"
+    all_lessons = engram._read_entries(path, "lesson")
+    archived = next((l for l in all_lessons if l["id"] == lesson["id"]), None)
+    assert archived is not None
+    assert archived["status"] == "outdated"
+
+
+def test_archive_knowledge_decision(tmp_path: Path):
+    """archive_knowledge 应能归档 decision。"""
+    engram = make_engram(tmp_path)
+    decision = engram.add_decision({"title": "需要归档的决策", "choice": "已过时"})
+
+    result = engram.archive_knowledge(decision["id"])
+
+    assert result.get("status") in ("archived", "outdated")
+
+
+def test_archive_knowledge_not_found(tmp_path: Path):
+    """archive_knowledge 对不存在 ID 应返回错误。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.archive_knowledge("nonexistent_id")
+
+    assert "error" in result

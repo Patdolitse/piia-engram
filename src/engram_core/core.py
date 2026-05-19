@@ -753,6 +753,15 @@ class Engram:
         """Mark a decision as outdated without deleting it."""
         return self.update_decision(decision_id, {"status": "outdated"})
 
+    def archive_knowledge(self, item_id: str) -> dict:
+        """Archive a lesson or decision by ID (auto-detects type)."""
+        item_type, _ = self._find_item_by_id(item_id)
+        if item_type is None:
+            return {"error": f"Item not found: {item_id}"}
+        if item_type == "lesson":
+            return self.archive_lesson(item_id)
+        return self.archive_decision(item_id)
+
     def _read_link_collections(self) -> tuple[list[dict], list[dict]]:
         lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
         decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
