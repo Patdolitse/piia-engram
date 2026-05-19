@@ -46,6 +46,8 @@ The goal is simple: **make every compatible AI tool start from the same understa
 
 Engram is not another chat app, agent framework, or hosted memory service. It is a small local memory layer that sits underneath the tools you already use.
 
+Unlike session-memory tools that remember what happened in a task, Engram stores **who you are** — your identity, preferences, lessons, and decisions — so every AI tool starts from the same understanding of you as a person.
+
 ## What It Stores
 
 Engram can store:
