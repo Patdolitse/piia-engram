@@ -96,14 +96,14 @@ python demos/setup_engram.py
 | **关键决策** | `add_decision` 记录选择和理由，保持长期一致性 |
 | **用户画像** | 角色、语言、技术水平、工作偏好、质量标准 |
 | **项目快照** | 按项目保存上下文，新任务快速接续 |
-| **信任边界** | 控制哪些工具能访问哪些数据 |
+| **信任边界** | 可从冷启动上下文中过滤指定画像字段 |
 | **身份卡导出** | 生成 Markdown 卡片，粘贴到不支持 MCP 的 AI |
 | **OpenClaw 兼容** | 导入/导出 SOUL.md、MEMORY.md、USER.md |
 | **完整备份** | 一键导出/导入全部数据 |
 | **来源追踪** | 每条知识记录来自哪个工具 |
 
 <details>
-<summary><strong>完整 MCP 工具列表（27 个）</strong></summary>
+<summary><strong>完整 MCP 工具列表（34 个）</strong></summary>
 
 **读取工具：**
 
@@ -112,6 +112,7 @@ python demos/setup_engram.py
 | `get_user_context` | 冷启动，加载完整用户上下文 |
 | `get_identity_card` | 导出 Markdown 身份卡 |
 | `get_profile` | 读取身份画像 |
+| `get_safe_profile` | 读取已过滤受限字段的身份画像 |
 | `get_work_style` | 读取工作方式 |
 | `get_preferences` | 读取偏好（v2.0） |
 | `get_trust_boundaries` | 读取信任边界 |
@@ -232,7 +233,7 @@ python demos/setup_engram.py
 不会。所有数据存在本地 `~/.engram/` 目录，Engram 不发起任何网络请求。记忆属于你。
 
 **Engram 有多少个 MCP 工具？**
-33 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、知识搜索和健康度报告。
+34 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、知识搜索和健康度报告。
 
 **Engram 免费吗？**
 是的。Engram 是 Apache 2.0 开源项目，完全免费。
@@ -243,16 +244,16 @@ Engram 可以正常使用，但以下功能目前尚未实现：
 
 | 方面 | 当前状态 | 计划版本 |
 |---|---|---|
-| **文件安全** | 直接写 JSON，无文件锁 | 原子写 + 文件锁（v2.2）|
-| **访问控制** | `trust_boundaries.json` 是配置，不执行过滤 | 字段级过滤（v2.2）|
+| **文件安全** | JSON 写入使用 portalocker 文件锁 + 原子替换 | 后续补充更大并发压力测试 |
+| **访问控制** | `restricted_fields` 会从 `get_user_context` 和 `get_safe_profile` 中过滤画像字段 | MCP 不传调用方身份，暂不做复杂 ACL |
 | **加密** | 明文 JSON，和普通本地文件一样 | 可选字段加密（v3.0）|
 | **调用方身份** | MCP 协议不传递工具身份 | 受 MCP 规范限制 |
-| **并发写保护** | 不支持多工具并发写入 | 文件锁（v2.2）|
+| **并发写保护** | Engram JSON 写入已通过文件锁和原子替换保护 | 网络文件系统等边界场景不保证 |
 
 **实际使用建议：**
 - 不要在 Engram 里存密码、API Key、客户隐私数据
 - `~/.engram/` 目录下的文件，本机有读权限的进程都可以读取
-- `trust_boundaries.json` 表达意图，不是安全边界
+- `restricted_fields` 能减少冷启动上下文暴露的画像字段，但不是加密，也不是真正的 ACL
 
 这不是劝你不用 Engram —— 而是对它本质的诚实描述：它是一个本地明文个人 AI 上下文层。用于存储个人偏好、项目决策、技术笔记等非敏感内容，今天就可以正常使用。
 

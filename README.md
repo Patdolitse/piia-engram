@@ -103,6 +103,7 @@ Common tools include:
 | `get_user_context` | Load the complete user context at the start of a session |
 | `get_identity_card` | Export a Markdown identity card for tools without MCP |
 | `get_profile` | Read the user profile |
+| `get_safe_profile` | Read the user profile with restricted fields filtered out |
 | `get_preferences` | Read communication and workflow preferences |
 | `get_trust_boundaries` | Read data access boundaries |
 | `get_quality_standards` | Read quality expectations |
@@ -200,7 +201,7 @@ Then add the MCP config and restart your AI tool. The AI will call `get_user_con
 No. All data is stored in `~/.engram/` on your local machine. Engram never makes network requests. Your memory is yours.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 33 MCP tools covering identity management, lessons learned, key decisions, project snapshots, knowledge search, and health reporting.
+Engram exposes 34 MCP tools covering identity management, lessons learned, key decisions, project snapshots, knowledge search, and health reporting.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.
@@ -211,16 +212,16 @@ Engram is functional and actively used, but some things it intentionally does no
 
 | Area | Current State | Planned |
 |---|---|---|
-| **File safety** | Direct JSON writes (no locking) | Atomic writes + file lock (v2.2) |
-| **Access control** | `trust_boundaries.json` is config, not enforced | Field-level filtering (v2.2) |
+| **File safety** | Atomic JSON writes with a shared portalocker file lock | Broader stress testing |
+| **Access control** | `restricted_fields` filters profile fields from `get_user_context` and `get_safe_profile` | Per-caller ACL blocked by MCP caller identity |
 | **Encryption** | Plaintext JSON — treat like any local file | Optional field encryption (v3.0) |
 | **Caller identity** | MCP protocol doesn't pass tool identity | Blocked by MCP spec |
-| **Concurrent writes** | Not protected against parallel tool calls | File lock (v2.2) |
+| **Concurrent writes** | Protected by file lock + atomic replace for Engram JSON writes | Network-filesystem edge cases not guaranteed |
 
 **What this means in practice:**
 - Don't store passwords, API keys, or client PII in Engram
 - Any process with read access to `~/.engram/` can read your data
-- `trust_boundaries.json` expresses intent — it is not a security boundary
+- `restricted_fields` reduces what Engram emits in cold-start context, but it is not encryption or a true ACL
 
 This is not a warning to avoid Engram — it's an honest description of what it is: a local, plaintext memory layer for personal AI context. For personal use with non-sensitive data, it works well today.
 

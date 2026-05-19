@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import portalocker
 
 
 # ---------------------------------------------------------------------------
@@ -17,6 +22,15 @@ SCHEMA_VERSION = "2.0"
 _ENGRAM_DIR_NAME = ".engram"
 _LEGACY_DIR_NAME = ".piia"
 SIMILARITY_THRESHOLD = 0.55
+DEFAULT_TRUST_BOUNDARIES = {
+    "default_sharing": "full",
+    "tool_access": {},
+    "private_fields": [],
+    "allowed_tools": [],
+    "data_sharing": "local_only",
+    "restricted_fields": [],
+    "notes": "默认所有工具可访问全部Engram数据。可按工具或字段限制。",
+}
 
 
 def _engram_root() -> Path:
@@ -42,12 +56,42 @@ def _read_json(path: Path) -> Any:
         return {}
 
 
-def _write_json(path: Path, data: Any) -> None:
+def _atomic_write_json(path: Path, data: Any) -> None:
+    """Atomically write JSON with a file lock for concurrent writers."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
     )
+    tmp_path = Path(tmp_name)
+    lock_path = path.parent / ".engram-write.lock"
+
+    try:
+        with portalocker.Lock(lock_path, "a", timeout=5):
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd = -1
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+    except portalocker.LockException as exc:
+        if fd != -1:
+            os.close(fd)
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise RuntimeError(f"无法获取文件锁（超时 5s）：{path}") from exc
+    except Exception:
+        if fd != -1:
+            os.close(fd)
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
+def _write_json(path: Path, data: Any) -> None:
+    _atomic_write_json(path, data)
 
 
 def _now_iso() -> str:
@@ -68,11 +112,11 @@ class Engram:
 
     def __init__(self, root: Path | None = None):
         self.root = root or _engram_root()
-        self._ensure_structure()
         self._identity_dir = self.root / "identity"
         self._knowledge_dir = self.root / "knowledge"
         self._projects_dir = self.root / "projects"
         self._exports_dir = self.root / "exports"
+        self._ensure_structure()
 
     def _ensure_structure(self) -> None:
         """Create directory structure if it doesn't exist."""
@@ -87,6 +131,29 @@ class Engram:
             })
         # Auto-migrate from v1 to v2
         self._migrate_v1_to_v2()
+        self._ensure_trust_boundaries()
+
+    def _atomic_write(self, path: Path, data: Any) -> None:
+        """Atomically write JSON through the shared Engram file lock."""
+        _write_json(path, data)
+
+    def _ensure_trust_boundaries(self) -> dict:
+        """Backfill trust boundary defaults, including v2.2 restricted fields."""
+        path = self._identity_dir / "trust_boundaries.json"
+        existing = _read_json(path)
+        if not isinstance(existing, dict):
+            existing = {}
+
+        changed = False
+        for key, value in DEFAULT_TRUST_BOUNDARIES.items():
+            if key not in existing:
+                existing[key] = deepcopy(value)
+                changed = True
+
+        if changed:
+            existing["updated_at"] = existing.get("updated_at") or _now_iso()
+            self._atomic_write(path, existing)
+        return existing
 
     # =====================================================================
     # Schema Migration
@@ -137,6 +204,15 @@ class Engram:
     def get_profile(self) -> dict:
         return _read_json(self._identity_dir / "profile.json")
 
+    def get_safe_profile(self) -> dict:
+        """Return profile with trust_boundaries.restricted_fields filtered out."""
+        profile = self.get_profile()
+        tb = self.get_trust_boundaries()
+        restricted = set(tb.get("restricted_fields", []))
+        if restricted:
+            profile = {k: v for k, v in profile.items() if k not in restricted}
+        return profile
+
     def update_profile(self, updates: dict) -> None:
         """Merge updates into the user profile."""
         profile = self.get_profile()
@@ -179,7 +255,7 @@ class Engram:
     # -- Trust Boundaries (v2.0, new) --
 
     def get_trust_boundaries(self) -> dict:
-        return _read_json(self._identity_dir / "trust_boundaries.json")
+        return self._ensure_trust_boundaries()
 
     def update_trust_boundaries(self, updates: dict) -> None:
         tb = self.get_trust_boundaries()
@@ -678,7 +754,7 @@ class Engram:
         lines: list[str] = []
 
         # Identity
-        profile = self.get_profile()
+        profile = self.get_safe_profile()
         if profile:
             lines.append("## 关于用户")
             if profile.get("role"):

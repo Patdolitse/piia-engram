@@ -89,10 +89,52 @@ def test_trust_boundaries_crud(tmp_path: Path):
     engram = make_engram(tmp_path)
     tb = engram.get_trust_boundaries()
     assert isinstance(tb, dict)
+    assert tb["restricted_fields"] == []
 
     engram.update_trust_boundaries({"default_sharing": "limited"})
     tb = engram.get_trust_boundaries()
     assert tb["default_sharing"] == "limited"
+
+
+def test_atomic_write_integrity(tmp_path: Path):
+    """原子写辅助方法应完整写入 JSON 且不留下临时文件。"""
+    engram = make_engram(tmp_path)
+    target = tmp_path / "identity" / "atomic_write_test.json"
+    data = {"items": [{"summary": "完整写入"}]}
+
+    engram._atomic_write(target, data)
+
+    assert json.loads(target.read_text(encoding="utf-8")) == data
+    assert list(target.parent.glob("*.tmp")) == []
+
+
+def test_restricted_fields_filtering(tmp_path: Path):
+    """safe profile 应过滤 restricted_fields，直接 profile 仍保留完整数据。"""
+    engram = make_engram(tmp_path)
+    engram.update_trust_boundaries({"restricted_fields": ["email"]})
+    engram.update_profile({"name": "Test", "email": "secret@test.com"})
+
+    safe_profile = engram.get_safe_profile()
+
+    assert "email" not in safe_profile
+    assert safe_profile["name"] == "Test"
+    assert engram.get_profile()["email"] == "secret@test.com"
+
+
+def test_get_user_context_respects_restricted_fields(tmp_path: Path):
+    """冷启动上下文应使用 safe profile，避免输出被限制的画像字段。"""
+    engram = make_engram(tmp_path)
+    engram.update_trust_boundaries({"restricted_fields": ["role"]})
+    engram.update_profile({
+        "role": "Secret Role",
+        "language": "中文",
+        "description": "可公开简介",
+    })
+
+    context = engram.generate_context()
+
+    assert "Secret Role" not in context
+    assert "可公开简介" in context
 
 
 def test_project_snapshot_crud(tmp_path: Path):
