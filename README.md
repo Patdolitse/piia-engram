@@ -104,38 +104,33 @@ Common tools include:
 |---|---|
 | `get_user_context` | Load the complete user context at the start of a session |
 | `get_identity_card` | Export a Markdown identity card for tools without MCP |
-| `get_profile` | Read the user profile |
-| `get_safe_profile` | Read the user profile with restricted fields filtered out |
+| `get_profile` | Read the user profile, optionally filtered with `safe=true` |
 | `get_preferences` | Read communication and workflow preferences |
 | `get_trust_boundaries` | Read data access boundaries |
 | `get_quality_standards` | Read quality expectations |
 | `get_lessons` | Read reusable lessons learned |
 | `get_decisions` | Read key decisions and reasons |
 | `get_relevant_knowledge` | Find knowledge relevant to a project |
+| `get_knowledge_inheritance` | Build a cross-project knowledge starter pack from free text |
 | `save_project_snapshot` | Save project context for later sessions |
 | `add_lesson` | Add a lesson learned |
 | `add_decision` | Add a key decision |
-| `bulk_add_lessons` | Add multiple lessons in one call |
-| `bulk_add_decisions` | Add multiple decisions in one call |
+| `bulk_add_knowledge` | Add multiple lessons or decisions in one call |
 | `ingest_notes` | Parse free-form notes into lessons and decisions |
 | `export_engram` | Export a full backup |
 | `import_engram` | Import a backup |
 | `export_engram_to_openclaw` | Export OpenClaw-compatible files |
 | `import_engram_from_openclaw` | Import OpenClaw-compatible files |
 | `search_knowledge` | Search lessons and decisions by weighted multi-term relevance |
-| `get_health_report` | Knowledge asset health report (duplicates, capacity, warnings) |
-| `get_stale_knowledge` | Find active knowledge that has not been reviewed recently |
-| `get_knowledge_digest` | Summarize counts, recent additions, top accessed items, and domains |
+| `get_knowledge_overview` | Knowledge overview: digest, health report, and stale checks |
 | `get_related_knowledge` | Follow links between lessons and decisions |
 | `find_similar_knowledge` | Find similar lessons and decisions by content |
 | `export_knowledge_report` | Export a readable Markdown knowledge report |
 | `link_knowledge` | Create a bidirectional link between two knowledge items |
 | `unlink_knowledge` | Remove a bidirectional knowledge link |
 | `merge_knowledge` | Merge a duplicate knowledge item into the primary item |
-| `update_lesson` | Update a lesson (summary, domain, status) |
-| `archive_lesson` | Mark a lesson as outdated |
-| `update_decision` | Update a decision |
-| `archive_decision` | Mark a decision as outdated |
+| `update_knowledge` | Update a lesson or decision by ID |
+| `archive_knowledge` | Archive a lesson or decision by ID |
 
 ## Data Layout
 
@@ -215,7 +210,7 @@ Then add the MCP config and restart your AI tool. The AI will call `get_user_con
 No. All data is stored in `~/.engram/` on your local machine. Engram never makes network requests. Your memory is yours.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 39 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, and health checks.
+Engram exposes 35 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, and health checks.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.
@@ -227,7 +222,7 @@ Engram is functional and actively used, but some things it intentionally does no
 | Area | Current State | Planned |
 |---|---|---|
 | **File safety** | Atomic JSON writes with a shared portalocker file lock | Broader stress testing |
-| **Access control** | `restricted_fields` filters profile fields from `get_user_context` and `get_safe_profile` | Per-caller ACL blocked by MCP caller identity |
+| **Access control** | `restricted_fields` filters profile fields from `get_user_context` and `get_profile(safe=true)` | Per-caller ACL blocked by MCP caller identity |
 | **Encryption** | Plaintext JSON — treat like any local file | Optional field encryption (v3.0) |
 | **Caller identity** | MCP protocol doesn't pass tool identity | Blocked by MCP spec |
 | **Concurrent writes** | Protected by file lock + atomic replace for Engram JSON writes | Network-filesystem edge cases not guaranteed |
