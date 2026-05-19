@@ -1,5 +1,5 @@
 [project]
-name = "engram"
+name = "piia-engram"
 version = "2.9.0"
 description = "Engram — AI 记忆印记。你的 AI 记忆，本地存储，跨工具共享。"
 readme = "README.md"
