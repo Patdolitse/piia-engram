@@ -1,14 +1,33 @@
 [project]
 name = "engram"
-version = "2.8.0"
+version = "2.9.0"
 description = "Engram — AI 记忆印记。你的 AI 记忆，本地存储，跨工具共享。"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
+authors = [
+    {name = "Engram Contributors"},
+]
+keywords = ["ai", "memory", "mcp", "knowledge", "personal-knowledge", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "mcp>=1.0",
     "portalocker>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Patdolitse/engram"
+Repository = "https://github.com/Patdolitse/engram"
+"Bug Tracker" = "https://github.com/Patdolitse/engram/issues"
 
 [project.scripts]
 engram = "engram_core.setup_wizard:main"
@@ -16,6 +35,7 @@ engram = "engram_core.setup_wizard:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "tomli>=2.0; python_version < \"3.11\"",
 ]
 
 [build-system]
