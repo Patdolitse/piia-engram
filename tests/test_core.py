@@ -819,3 +819,123 @@ def test_knowledge_inheritance_limit_respected(tmp_path: Path):
     result = engram.get_knowledge_inheritance("Python MCP", limit=3)
 
     assert result["total"] <= 3
+
+
+def test_update_knowledge_lesson(tmp_path: Path):
+    """update_knowledge 应能更新 lesson 字段。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("原始摘要", domain="test")
+
+    result = engram.update_knowledge(lesson["id"], {"summary": "更新后的摘要"})
+
+    assert result.get("summary") == "更新后的摘要"
+
+
+def test_update_knowledge_decision(tmp_path: Path):
+    """update_knowledge 应能更新 decision 字段。"""
+    engram = make_engram(tmp_path)
+    decision = engram.add_decision("原始问题", choice="选择A")
+
+    result = engram.update_knowledge(decision["id"], {"choice": "选择B"})
+
+    assert result.get("choice") == "选择B"
+
+
+def test_update_knowledge_not_found(tmp_path: Path):
+    """不存在的 ID 应返回 error。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.update_knowledge("nonexistent", {"summary": "x"})
+
+    assert "error" in result
+
+
+def test_bulk_add_knowledge_lessons(tmp_path: Path):
+    """bulk_add_knowledge 应能批量添加 lessons。"""
+    engram = make_engram(tmp_path)
+    items = [
+        {"summary": "Python package metadata includes classifiers", "domain": "python"},
+        {"summary": "Docker compose networks need explicit names", "domain": "docker"},
+    ]
+
+    result = engram.bulk_add_knowledge(items, item_type="lesson")
+
+    assert result["saved"] == 2
+
+
+def test_bulk_add_knowledge_decisions(tmp_path: Path):
+    """bulk_add_knowledge 应能批量添加 decisions。"""
+    engram = make_engram(tmp_path)
+    items = [
+        {"question": "Use pytest for unit tests", "choice": "pytest"},
+        {"question": "Use semver for package releases", "choice": "semver"},
+    ]
+
+    result = engram.bulk_add_knowledge(items, item_type="decision")
+
+    assert result["saved"] == 2
+
+
+def test_bulk_add_knowledge_invalid_type(tmp_path: Path):
+    """无效 item_type 应返回 error。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.bulk_add_knowledge([], item_type="invalid")
+
+    assert "error" in result
+
+
+def test_knowledge_overview_all(tmp_path: Path):
+    """section=all 应返回 digest + health + stale 三个 key。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("概览测试", domain="test")
+
+    result = engram.get_knowledge_overview("all")
+
+    assert "digest" in result
+    assert "health" in result
+    assert "stale" in result
+
+
+def test_knowledge_overview_single_section(tmp_path: Path):
+    """单独请求 digest section 应只返回 digest。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("单 section 测试", domain="test")
+
+    result = engram.get_knowledge_overview("digest")
+
+    assert "digest" in result
+    assert "health" not in result
+    assert "stale" not in result
+
+
+def test_knowledge_overview_invalid_section(tmp_path: Path):
+    """无效 section 应返回 error。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.get_knowledge_overview("invalid_section")
+
+    assert "error" in result
+
+
+def test_get_profile_safe_mode(tmp_path: Path):
+    """safe=True 应过滤 restricted_fields 中列出的字段。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"name": "测试用户", "email": "test@example.com"})
+    engram.update_trust_boundaries({"restricted_fields": ["email"]})
+
+    safe_profile = engram.get_profile(safe=True)
+
+    assert "email" not in safe_profile
+    assert safe_profile.get("name") == "测试用户"
+
+
+def test_get_profile_normal_mode(tmp_path: Path):
+    """safe=False（默认）应返回完整 profile。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"name": "测试用户", "email": "test@example.com"})
+    engram.update_trust_boundaries({"restricted_fields": ["email"]})
+
+    full_profile = engram.get_profile(safe=False)
+
+    assert "email" in full_profile

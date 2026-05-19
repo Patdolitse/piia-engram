@@ -60,7 +60,7 @@ def _json(obj: object) -> str:
 
 
 # ===========================================================================
-# READ TOOLS (21)
+# READ TOOLS (18)
 # ===========================================================================
 
 
@@ -94,15 +94,13 @@ async def get_identity_card() -> str:
 
 
 @mcp.tool()
-async def get_profile() -> str:
-    """获取用户身份画像（角色、技能、语言、技术水平）。"""
-    return _json(_engram.get_profile())
+async def get_profile(safe: bool = False) -> str:
+    """获取用户身份画像。
 
-
-@mcp.tool()
-async def get_safe_profile() -> str:
-    """Get user profile with restricted_fields filtered out per trust_boundaries settings."""
-    return _json(_engram.get_safe_profile())
+    Args:
+        safe: 设为 True 时按 trust_boundaries.restricted_fields 过滤敏感字段。
+    """
+    return _json(_engram.get_profile(safe=safe))
 
 
 @mcp.tool()
@@ -248,21 +246,14 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> s
 
 
 @mcp.tool()
-async def get_health_report() -> str:
-    """生成知识资产健康度报告。"""
-    return _json(_engram.get_health_report())
+async def get_knowledge_overview(section: str = "all", stale_days: int = 30) -> str:
+    """Get a unified knowledge overview: digest + health report + stale items.
 
-
-@mcp.tool()
-async def get_stale_knowledge(days: int = 30) -> str:
-    """Get lessons and decisions not accessed for more than N days."""
-    return _json(_engram.get_stale_knowledge(days))
-
-
-@mcp.tool()
-async def get_knowledge_digest() -> str:
-    """Get a summary of the knowledge base: counts, recent additions, top accessed, by domain."""
-    return _json(_engram.get_knowledge_digest())
+    Args:
+        section: "all" | "digest" | "health" | "stale".
+        stale_days: Days threshold for stale check.
+    """
+    return _json(_engram.get_knowledge_overview(section, stale_days=stale_days))
 
 
 @mcp.tool()
@@ -284,7 +275,7 @@ async def export_knowledge_report() -> str:
 
 
 # ===========================================================================
-# WRITE TOOLS (18)
+# WRITE TOOLS (16)
 # ===========================================================================
 
 
@@ -350,25 +341,21 @@ async def add_decision(
 
 
 @mcp.tool()
-async def bulk_add_lessons(lessons: list, source_tool: str = "") -> str:
-    """批量记录经验教训，复用单条新增的去重、字段补齐和写入逻辑。
+async def bulk_add_knowledge(items_json: str, item_type: str = "lesson", source_tool: str = "") -> str:
+    """Batch-add multiple lessons or decisions in one call.
 
     Args:
-        lessons: 经验教训列表；每项可以是字符串，或包含 summary/detail/domain 等字段的对象。
-        source_tool: 统一记录来源工具；单条对象已有 source_tool 时保留单条值。
+        items_json: JSON array of items.
+        item_type: "lesson" or "decision".
+        source_tool: Recording source tool.
     """
-    return _json(_engram.bulk_add_lessons(lessons, source_tool=source_tool))
-
-
-@mcp.tool()
-async def bulk_add_decisions(decisions: list, source_tool: str = "") -> str:
-    """批量记录关键决策，复用单条新增的去重、字段补齐和写入逻辑。
-
-    Args:
-        decisions: 决策列表；每项可以是字符串，或包含 question/title/choice/reasoning 等字段的对象。
-        source_tool: 统一记录来源工具；单条对象已有 source_tool 时保留单条值。
-    """
-    return _json(_engram.bulk_add_decisions(decisions, source_tool=source_tool))
+    try:
+        items = json.loads(items_json)
+    except json.JSONDecodeError:
+        return _json({"error": "items_json must be a valid JSON array"})
+    if not isinstance(items, list):
+        return _json({"error": "items_json must be a JSON array"})
+    return _json(_engram.bulk_add_knowledge(items, item_type=item_type, source_tool=source_tool))
 
 
 @mcp.tool()
@@ -384,45 +371,18 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
 
 
 @mcp.tool()
-async def update_lesson(
-    lesson_id: str,
-    summary: Optional[str] = None,
-    detail: Optional[str] = None,
-    domain: Optional[str] = None,
-    status: Optional[str] = None,
-) -> str:
-    """更新一条经验教训。"""
-    updates = {}
-    if summary is not None:
-        updates["summary"] = summary
-    if detail is not None:
-        updates["detail"] = detail
-    if domain is not None:
-        updates["domain"] = domain
-    if status is not None:
-        updates["status"] = status
-    return _json(_engram.update_lesson(lesson_id, updates))
+async def update_knowledge(item_id: str, updates_json: str) -> str:
+    """Update a lesson or decision by ID (auto-detects type).
 
-
-@mcp.tool()
-async def update_decision(
-    decision_id: str,
-    title: Optional[str] = None,
-    choice: Optional[str] = None,
-    reasoning: Optional[str] = None,
-    status: Optional[str] = None,
-) -> str:
-    """更新一条关键决策。"""
-    updates = {}
-    if title is not None:
-        updates["title"] = title
-    if choice is not None:
-        updates["choice"] = choice
-    if reasoning is not None:
-        updates["reasoning"] = reasoning
-    if status is not None:
-        updates["status"] = status
-    return _json(_engram.update_decision(decision_id, updates))
+    Args:
+        item_id: The ID of the lesson or decision.
+        updates_json: JSON string of fields to update.
+    """
+    try:
+        updates = json.loads(updates_json)
+    except json.JSONDecodeError:
+        return _json({"error": "updates_json must be valid JSON"})
+    return _json(_engram.update_knowledge(item_id, updates))
 
 
 @mcp.tool()

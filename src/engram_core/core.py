@@ -265,17 +265,18 @@ class Engram:
     # Identity — who the user is
     # =====================================================================
 
-    def get_profile(self) -> dict:
-        return _read_json(self._identity_dir / "profile.json")
+    def get_profile(self, safe: bool = False) -> dict:
+        profile = _read_json(self._identity_dir / "profile.json")
+        if safe:
+            tb = self.get_trust_boundaries()
+            restricted = set(tb.get("restricted_fields", []))
+            if restricted:
+                profile = {key: value for key, value in profile.items() if key not in restricted}
+        return profile
 
     def get_safe_profile(self) -> dict:
         """Return profile with trust_boundaries.restricted_fields filtered out."""
-        profile = self.get_profile()
-        tb = self.get_trust_boundaries()
-        restricted = set(tb.get("restricted_fields", []))
-        if restricted:
-            profile = {k: v for k, v in profile.items() if k not in restricted}
-        return profile
+        return self.get_profile(safe=True)
 
     def update_profile(self, updates: dict) -> None:
         """Merge updates into the user profile."""
@@ -819,6 +820,15 @@ class Engram:
         """Mark a decision as outdated without deleting it."""
         return self.update_decision(decision_id, {"status": "outdated"})
 
+    def update_knowledge(self, item_id: str, updates: dict) -> dict:
+        """Update a lesson or decision by ID (auto-detects type)."""
+        item_type, _ = self._find_item_by_id(item_id)
+        if item_type is None:
+            return {"error": f"Item not found: {item_id}"}
+        if item_type == "lesson":
+            return self.update_lesson(item_id, updates)
+        return self.update_decision(item_id, updates)
+
     def archive_knowledge(self, item_id: str) -> dict:
         """Archive a lesson or decision by ID (auto-detects type)."""
         item_type, _ = self._find_item_by_id(item_id)
@@ -1184,6 +1194,19 @@ class Engram:
             "errors": errors,
             "results": results,
         }
+
+    def bulk_add_knowledge(
+        self,
+        items: list,
+        item_type: str = "lesson",
+        source_tool: str = "",
+    ) -> dict:
+        """Add multiple lessons or decisions in one call."""
+        if item_type == "lesson":
+            return self.bulk_add_lessons(items, source_tool=source_tool)
+        if item_type == "decision":
+            return self.bulk_add_decisions(items, source_tool=source_tool)
+        return {"error": f"Unknown item_type: {item_type}. Use 'lesson' or 'decision'."}
 
     def _infer_domain(self, text: str, fallback: str = "") -> str:
         text_lower = text.lower()
@@ -1741,6 +1764,19 @@ class Engram:
             "by_domain": by_domain,
             "stale_count": len(stale["lessons"]) + len(stale["decisions"]),
         }
+
+    def get_knowledge_overview(self, section: str = "all", stale_days: int = 30) -> dict:
+        """Unified overview combining digest, health, and stale checks."""
+        result: dict = {}
+        if section in ("all", "digest"):
+            result["digest"] = self.get_knowledge_digest()
+        if section in ("all", "health"):
+            result["health"] = self.get_health_report()
+        if section in ("all", "stale"):
+            result["stale"] = self.get_stale_knowledge(days=stale_days)
+        if not result:
+            return {"error": f"Unknown section: {section}. Use: all, digest, health, stale."}
+        return result
 
     def export_knowledge_report(self) -> str:
         """Generate and save a Chinese Markdown knowledge report."""
