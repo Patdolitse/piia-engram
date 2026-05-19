@@ -1,6 +1,6 @@
 [project]
 name = "piia-engram"
-version = "3.3.0"
+version = "3.4.0"
 description = "Engram — AI 记忆印记。你的 AI 记忆，本地存储，跨工具共享。"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -36,6 +36,9 @@ engram = "engram_core.setup_wizard:main"
 dev = [
     "pytest>=7.0",
     "tomli>=2.0; python_version < \"3.11\"",
+]
+remote = [
+    "uvicorn>=0.20",
 ]
 
 [build-system]

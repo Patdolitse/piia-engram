@@ -1075,3 +1075,73 @@ def test_extract_session_insights_broader_patterns(tmp_path: Path):
     result = engram.extract_session_insights(summary, source_tool="test")
 
     assert result["saved_lessons"] + result["saved_decisions"] >= 1
+
+
+# ── remote deployment ──────────────────────────────────────────────────────
+
+def test_parse_args_defaults():
+    """默认参数应为 stdio 模式。"""
+    from engram_core.mcp_server import _parse_args
+
+    args = _parse_args(["mcp_server.py"])
+
+    assert args.transport == "stdio"
+    assert args.host == "127.0.0.1"
+    assert args.port == 8767
+
+
+def test_parse_args_sse_mode():
+    """SSE 模式参数应正确解析。"""
+    from engram_core.mcp_server import _parse_args
+
+    args = _parse_args([
+        "mcp_server.py",
+        "--transport",
+        "sse",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9999",
+    ])
+
+    assert args.transport == "sse"
+    assert args.host == "0.0.0.0"
+    assert args.port == 9999
+
+
+def test_token_auth_middleware_rejects_invalid_token():
+    """TokenAuthMiddleware 应拒绝缺失或错误 Bearer token。"""
+    import asyncio
+
+    from engram_core.mcp_server import TokenAuthMiddleware
+
+    class FakeRequest:
+        headers = {}
+
+    async def call_next(_request):
+        raise AssertionError("unauthorized request should not reach app")
+
+    middleware = TokenAuthMiddleware(lambda scope, receive, send: None, token="secret")
+    response = asyncio.run(middleware.dispatch(FakeRequest(), call_next))
+
+    assert response.status_code == 401
+
+
+def test_token_auth_middleware_accepts_valid_token():
+    """TokenAuthMiddleware 应放行正确 Bearer token。"""
+    import asyncio
+
+    from starlette.responses import JSONResponse
+
+    from engram_core.mcp_server import TokenAuthMiddleware
+
+    class FakeRequest:
+        headers = {"authorization": "Bearer secret"}
+
+    async def call_next(_request):
+        return JSONResponse({"ok": True})
+
+    middleware = TokenAuthMiddleware(lambda scope, receive, send: None, token="secret")
+    response = asyncio.run(middleware.dispatch(FakeRequest(), call_next))
+
+    assert response.status_code == 200

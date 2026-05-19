@@ -26,7 +26,7 @@ def test_required_fields():
     """pyproject.toml 应包含 name, version, description, license。"""
     data = _load()["project"]
     assert data["name"] == "piia-engram"
-    assert data["version"] == "3.3.0"
+    assert data["version"] == "3.4.0"
     assert data["description"]
     assert data["license"]
     assert data["authors"]
@@ -62,6 +62,13 @@ def test_dev_dependency_has_tomli_for_python310():
     data = _load()
     dev_deps = data["project"]["optional-dependencies"]["dev"]
     assert 'tomli>=2.0; python_version < "3.11"' in dev_deps
+
+
+def test_remote_optional_dependency_has_uvicorn():
+    """remote extras 应声明 SSE 服务运行所需的 uvicorn。"""
+    data = _load()
+    remote_deps = data["project"]["optional-dependencies"]["remote"]
+    assert "uvicorn>=0.20" in remote_deps
 
 
 def test_ci_workflow_exists():
@@ -104,10 +111,30 @@ def test_readme_uses_pypi_install_and_badge():
     assert "Engram exposes 36 MCP tools" in content
 
 
+def test_readme_has_remote_deployment_section():
+    """README 应说明远程部署和 Bearer token 配置。"""
+    content = README.read_text(encoding="utf-8")
+    assert "## Remote Deployment" in content
+    assert "pip install piia-engram[remote]" in content
+    assert "ENGRAM_AUTH_TOKEN" in content
+    assert '"Authorization": "Bearer abc123..."' in content
+
+
 def test_mcp_tool_count_and_merge_tool():
     """MCP server 应暴露 36 个工具且包含合并后的统一工具。"""
     tree = ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
-    tools = [node.name for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)]
+    tools = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "tool"
+            ):
+                tools.append(node.name)
+                break
     assert len(tools) == 36
     assert "update_knowledge" in tools
     assert "bulk_add_knowledge" in tools
@@ -141,3 +168,13 @@ def test_zh_readme_uses_pypi_install_and_36_tools():
     assert "`get_safe_profile`" not in content
     assert "`bulk_add_lessons`" not in content
     assert "`bulk_add_decisions`" not in content
+
+
+def test_zh_readme_has_remote_deployment_section():
+    """中文 README 应说明远程部署和 token 安全提醒。"""
+    content = README_ZH.read_text(encoding="utf-8")
+    assert "## 远程部署" in content
+    assert "pip install piia-engram[remote]" in content
+    assert "ENGRAM_AUTH_TOKEN" in content
+    assert '"Authorization": "Bearer abc123..."' in content
+    assert "数据始终在你自己的服务器上" in content

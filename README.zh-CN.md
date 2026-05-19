@@ -65,6 +65,60 @@ python demos/setup_engram.py
 # 5. 重启 Claude Code，新对话中 AI 会自动调用 get_user_context 认识你
 ```
 
+## 远程部署
+
+在自己的服务器上运行 Engram，从任何地方连接使用。
+
+### 服务器配置
+
+```bash
+# 安装（含远程支持）
+pip install piia-engram[remote]
+
+# 生成认证 token
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+# 保存输出，例如 "abc123..."
+
+# 以 SSE 模式启动
+ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --host 0.0.0.0 --port 8767
+```
+
+### 客户端配置（Claude Code）
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "url": "http://你的服务器:8767/sse",
+      "headers": {
+        "Authorization": "Bearer abc123..."
+      }
+    }
+  }
+}
+```
+
+### 客户端配置（Cursor）
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "url": "http://你的服务器:8767/sse",
+      "headers": {
+        "Authorization": "Bearer abc123..."
+      }
+    }
+  }
+}
+```
+
+**安全提醒：**
+- 生产环境务必使用 HTTPS，放在 nginx/caddy 反向代理后面并配置 TLS。
+- 认证 token 保护你的身份数据，请妥善保管。
+- 默认绑定 `127.0.0.1`，仅本地可访问；`0.0.0.0` 仅在反向代理后使用。
+- 数据始终在你自己的服务器上，不经过任何第三方云。
+
 ## 它解决什么
 
 | 没有 Engram | 有 Engram |

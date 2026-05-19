@@ -1,21 +1,28 @@
 """Engram MCP Server.
 
-Exposes Engram as an MCP server over stdio transport.
+Exposes Engram as an MCP server over stdio or SSE transport.
 Any MCP-compatible AI tool can access the user's identity, preferences,
 lessons, decisions, and skills.
 
 Usage:
     python mcp_server.py
+    python -m engram_core.mcp_server --transport sse
 
-Designed for stdio transport (Claude Desktop, Claude Code, Codex, Cursor).
+Designed for local stdio transport and self-hosted remote SSE transport.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 # ---------------------------------------------------------------------------
 # Sibling import setup (same pattern as local_llm_bridge.py)
@@ -57,6 +64,46 @@ mcp = FastMCP(
 def _json(obj: object) -> str:
     """Serialize to JSON string, handling empty results."""
     return json.dumps(obj, ensure_ascii=False, indent=2)
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments for transport configuration."""
+    parser = argparse.ArgumentParser(description="Engram MCP Server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse"],
+        default="stdio",
+        help="Transport mode: stdio (local) or sse (remote). Default: stdio.",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind (sse mode only). Default: 127.0.0.1.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8767,
+        help="Port to bind (sse mode only). Default: 8767.",
+    )
+    return parser.parse_args(argv[1:] if argv is not None else None)
+
+
+class TokenAuthMiddleware(BaseHTTPMiddleware):
+    """Simple Bearer token auth for remote SSE mode."""
+
+    def __init__(self, app, token: str):
+        super().__init__(app)
+        self.token = token
+
+    async def dispatch(self, request: Request, call_next):
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != self.token:
+            return JSONResponse(
+                {"error": "Unauthorized. Set ENGRAM_AUTH_TOKEN."},
+                status_code=401,
+            )
+        return await call_next(request)
 
 
 # ===========================================================================
@@ -636,4 +683,27 @@ def resource_stats() -> str:
 # ===========================================================================
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    args = _parse_args()
+
+    if args.transport == "sse":
+        token = os.environ.get("ENGRAM_AUTH_TOKEN", "").strip()
+        if not token:
+            print("ERROR: ENGRAM_AUTH_TOKEN environment variable is required for SSE mode.")
+            print(
+                'Generate one with: python -c "import secrets; '
+                'print(secrets.token_urlsafe(32))"'
+            )
+            sys.exit(1)
+
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+
+        print(f"Engram MCP server (SSE) on http://{args.host}:{args.port}/sse")
+
+        starlette_app = mcp.sse_app()
+        starlette_app.add_middleware(TokenAuthMiddleware, token=token)
+
+        import uvicorn
+        uvicorn.run(starlette_app, host=args.host, port=args.port)
+    else:
+        mcp.run(transport="stdio")

@@ -94,6 +94,60 @@ Example MCP config:
 
 After restarting your MCP-compatible client, a new session can call `get_user_context` to understand your profile, preferences, lessons, and project context.
 
+## Remote Deployment
+
+Run Engram on your own server and connect from anywhere.
+
+### Server Setup
+
+```bash
+# Install with remote support
+pip install piia-engram[remote]
+
+# Generate an auth token
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Save the output, e.g. "abc123..."
+
+# Start in SSE mode
+ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --host 0.0.0.0 --port 8767
+```
+
+### Client Config (Claude Code)
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "url": "http://your-server:8767/sse",
+      "headers": {
+        "Authorization": "Bearer abc123..."
+      }
+    }
+  }
+}
+```
+
+### Client Config (Cursor)
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "url": "http://your-server:8767/sse",
+      "headers": {
+        "Authorization": "Bearer abc123..."
+      }
+    }
+  }
+}
+```
+
+**Security notes:**
+- Always use HTTPS in production, behind nginx or caddy with TLS.
+- The auth token protects your identity data. Keep it secret.
+- Default bind is `127.0.0.1` for localhost only. Use `0.0.0.0` only behind a reverse proxy.
+- Data stays on your server and never touches third-party clouds.
+
 ## MCP Tools
 
 Engram exposes read, write, project, backup, and compatibility tools through MCP.
