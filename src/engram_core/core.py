@@ -31,6 +31,48 @@ DEFAULT_TRUST_BOUNDARIES = {
     "restricted_fields": [],
     "notes": "默认所有工具可访问全部Engram数据。可按工具或字段限制。",
 }
+DECISION_TRIGGERS = [
+    "决定",
+    "选择",
+    "采用",
+    "放弃",
+    "改用",
+    "决策",
+    "decided",
+    "chose",
+    "selected",
+    "switched to",
+    "dropped",
+    "rejected",
+    "went with",
+]
+LESSON_TRIGGERS = [
+    "发现",
+    "注意",
+    "学到",
+    "坑",
+    "问题",
+    "记住",
+    "经验",
+    "教训",
+    "learned",
+    "noted",
+    "discovered",
+    "remember",
+    "gotcha",
+    "caveat",
+    "pitfall",
+    "tip",
+]
+DOMAIN_KEYWORDS = {
+    "python": ["python", "pip", "pytest", "django", "fastapi", "pydantic"],
+    "javascript": ["js", "javascript", "node", "npm", "react", "vue", "typescript"],
+    "git": ["git", "commit", "branch", "merge", "rebase", "push", "pull"],
+    "docker": ["docker", "container", "image", "dockerfile", "compose"],
+    "mcp": ["mcp", "tool", "server", "stdio", "model context"],
+    "architecture": ["架构", "设计", "模式", "pattern", "architecture", "design"],
+    "database": ["sql", "database", "query", "index", "migration", "schema"],
+}
 
 
 def _engram_root() -> Path:
@@ -804,6 +846,240 @@ class Engram:
             "source": self._knowledge_view(item_type, item),
             "related": related,
             "total": len(related),
+        }
+
+    def bulk_add_lessons(self, lessons: list, source_tool: str = "") -> dict:
+        """Add multiple lessons while reusing add_lesson validation and dedupe."""
+        if not isinstance(lessons, list):
+            return {
+                "total": 0,
+                "saved": 0,
+                "duplicates": 0,
+                "errors": 1,
+                "results": [{"status": "error", "reason": "lessons must be a list", "input": str(lessons)[:100]}],
+            }
+        total = len(lessons)
+        saved = duplicates = errors = 0
+        results = []
+
+        for original in lessons:
+            item = original
+            try:
+                if isinstance(item, str):
+                    item = {"summary": item}
+                elif isinstance(item, dict):
+                    item = dict(item)
+                else:
+                    raise ValueError("lesson item must be a dict or string")
+
+                summary = str(item.get("summary", "")).strip()
+                if not summary:
+                    raise ValueError("empty summary")
+                item["summary"] = summary
+                if source_tool and not item.get("source_tool"):
+                    item["source_tool"] = source_tool
+
+                result = self.add_lesson(item)
+                if result.get("status") == "duplicate":
+                    duplicates += 1
+                    results.append({
+                        "status": "duplicate",
+                        "existing_id": result.get("existing_id"),
+                        "summary": summary,
+                    })
+                else:
+                    saved += 1
+                    results.append({
+                        "status": "saved",
+                        "id": result.get("id"),
+                        "summary": result.get("summary", summary),
+                    })
+            except Exception as exc:
+                errors += 1
+                results.append({
+                    "status": "error",
+                    "reason": str(exc),
+                    "input": str(original)[:100],
+                })
+
+        return {
+            "total": total,
+            "saved": saved,
+            "duplicates": duplicates,
+            "errors": errors,
+            "results": results,
+        }
+
+    def bulk_add_decisions(self, decisions: list, source_tool: str = "") -> dict:
+        """Add multiple decisions while reusing add_decision validation and dedupe."""
+        if not isinstance(decisions, list):
+            return {
+                "total": 0,
+                "saved": 0,
+                "duplicates": 0,
+                "errors": 1,
+                "results": [{"status": "error", "reason": "decisions must be a list", "input": str(decisions)[:100]}],
+            }
+        total = len(decisions)
+        saved = duplicates = errors = 0
+        results = []
+
+        for original in decisions:
+            item = original
+            try:
+                if isinstance(item, str):
+                    item = {"title": item, "choice": ""}
+                elif isinstance(item, dict):
+                    item = dict(item)
+                else:
+                    raise ValueError("decision item must be a dict or string")
+
+                title = str(item.get("title") or item.get("question") or "").strip()
+                if not title:
+                    raise ValueError("empty title")
+                if "title" in item:
+                    item["title"] = title
+                else:
+                    item["question"] = title
+                item.setdefault("choice", "")
+                if source_tool and not item.get("source_tool"):
+                    item["source_tool"] = source_tool
+
+                result = self.add_decision(item)
+                if result.get("status") == "duplicate":
+                    duplicates += 1
+                    results.append({
+                        "status": "duplicate",
+                        "existing_id": result.get("existing_id"),
+                        "title": title,
+                    })
+                else:
+                    saved += 1
+                    results.append({
+                        "status": "saved",
+                        "id": result.get("id"),
+                        "title": self._entry_identity_text(result, "decision") or title,
+                    })
+            except Exception as exc:
+                errors += 1
+                results.append({
+                    "status": "error",
+                    "reason": str(exc),
+                    "input": str(original)[:100],
+                })
+
+        return {
+            "total": total,
+            "saved": saved,
+            "duplicates": duplicates,
+            "errors": errors,
+            "results": results,
+        }
+
+    def _infer_domain(self, text: str, fallback: str = "") -> str:
+        text_lower = text.lower()
+        for domain, keywords in DOMAIN_KEYWORDS.items():
+            if any(kw in text_lower for kw in keywords):
+                return domain
+        return fallback
+
+    def _has_content_chars(self, text: str) -> bool:
+        return any(ch.isalnum() for ch in text)
+
+    def ingest_notes(self, text: str, source_tool: str = "", domain: str = "") -> dict:
+        """Parse free-form notes and extract lesson/decision candidates."""
+        lines = text.splitlines()
+        saved_lessons = saved_decisions = duplicates = skipped = 0
+        results = []
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            if len(line) < 5 or not self._has_content_chars(line):
+                skipped += 1
+                results.append({
+                    "type": "unknown",
+                    "status": "skipped",
+                    "reason": "too short",
+                    "text": line,
+                })
+                continue
+
+            line_lower = line.lower()
+            is_decision = any(trigger in line_lower for trigger in DECISION_TRIGGERS)
+            is_lesson = any(trigger in line_lower for trigger in LESSON_TRIGGERS)
+            if not is_decision and not is_lesson and len(line) <= 15:
+                skipped += 1
+                results.append({
+                    "type": "unknown",
+                    "status": "skipped",
+                    "reason": "too short",
+                    "text": line,
+                })
+                continue
+
+            item_domain = self._infer_domain(line, domain)
+            if is_decision:
+                result = self.add_decision({
+                    "title": line,
+                    "choice": "",
+                    "domain": item_domain,
+                    "source_tool": source_tool,
+                })
+                if result.get("status") == "duplicate":
+                    duplicates += 1
+                    results.append({
+                        "type": "decision",
+                        "status": "duplicate",
+                        "title": line,
+                        "existing_id": result.get("existing_id"),
+                        "domain": item_domain,
+                    })
+                else:
+                    saved_decisions += 1
+                    results.append({
+                        "type": "decision",
+                        "status": "saved",
+                        "id": result.get("id", ""),
+                        "title": self._entry_identity_text(result, "decision") or line,
+                        "domain": item_domain,
+                    })
+            else:
+                result = self.add_lesson({
+                    "summary": line,
+                    "domain": item_domain,
+                    "source_tool": source_tool,
+                })
+                if result.get("status") == "duplicate":
+                    duplicates += 1
+                    results.append({
+                        "type": "lesson",
+                        "status": "duplicate",
+                        "summary": line,
+                        "existing_id": result.get("existing_id"),
+                        "domain": item_domain,
+                    })
+                else:
+                    saved_lessons += 1
+                    results.append({
+                        "type": "lesson",
+                        "status": "saved",
+                        "id": result.get("id", ""),
+                        "summary": result.get("summary", line),
+                        "domain": item_domain,
+                    })
+
+        parsed = saved_lessons + saved_decisions + duplicates
+        return {
+            "total_lines": len(lines),
+            "parsed": parsed,
+            "saved_lessons": saved_lessons,
+            "saved_decisions": saved_decisions,
+            "duplicates": duplicates,
+            "skipped": skipped,
+            "results": results,
         }
 
     def update_domain(self, domain: str, updates: dict) -> None:

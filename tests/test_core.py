@@ -444,3 +444,95 @@ def test_report_shows_related(tmp_path: Path):
     assert "关联：" in report
     assert "发版门禁怎么定" in report
     assert "发布前需要完整验证" in report
+
+
+def test_bulk_add_lessons(tmp_path: Path):
+    """bulk_add_lessons 应一次保存多条 lessons。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.bulk_add_lessons([
+        "pytest fixture 支持嵌套复用",
+        "git rebase 前先备份分支",
+        {"summary": "FastAPI 依赖注入要集中管理", "domain": "python"},
+    ], source_tool="test")
+
+    assert result["total"] == 3
+    assert result["saved"] == 3
+    lessons = engram.get_lessons(limit=None)
+    assert len(lessons) == 3
+    assert all(lesson.get("source_tool") == "test" for lesson in lessons)
+
+
+def test_bulk_add_lessons_dedup(tmp_path: Path):
+    """bulk_add_lessons 应复用 add_lesson 的去重逻辑。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("已有经验需要避免重复", "test")
+
+    result = engram.bulk_add_lessons([
+        "已有经验需要避免重复",
+        "全新的经验应该保存",
+    ])
+
+    assert result["saved"] == 1
+    assert result["duplicates"] == 1
+    assert len(engram.get_lessons(limit=None)) == 2
+
+
+def test_bulk_add_decisions(tmp_path: Path):
+    """bulk_add_decisions 应一次保存多条 decisions。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.bulk_add_decisions([
+        {"title": "use postgres", "choice": "postgres"},
+        "use redis",
+    ], source_tool="test")
+
+    assert result["total"] == 2
+    assert result["saved"] == 2
+    decisions = engram.get_decisions(limit=None)
+    assert len(decisions) == 2
+    assert all(decision.get("source_tool") == "test" for decision in decisions)
+
+
+def test_ingest_notes_basic(tmp_path: Path):
+    """ingest_notes 应从自由文本中解析 lessons 和 decisions。"""
+    engram = make_engram(tmp_path)
+    result = engram.ingest_notes(
+        "发现 pytest fixture 可以嵌套使用\n"
+        "决定采用 FastAPI 替代 Flask\n"
+        "学到 git rebase 比 merge 更干净",
+        source_tool="test",
+    )
+
+    assert result["saved_lessons"] >= 2
+    assert result["saved_decisions"] >= 1
+    assert result["parsed"] == 3
+
+
+def test_ingest_notes_domain_detection(tmp_path: Path):
+    """ingest_notes 应按关键词推断 domain。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.ingest_notes(
+        "pip install 出现依赖冲突时用 venv 隔离",
+        source_tool="test",
+    )
+
+    lesson_results = [item for item in result["results"] if item.get("type") == "lesson"]
+    assert lesson_results[0]["domain"] == "python"
+
+
+def test_ingest_notes_skip_short(tmp_path: Path):
+    """ingest_notes 应跳过短行并保存有效长行。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.ingest_notes(
+        "ok\n"
+        "yes\n"
+        "\n"
+        "发现 MCP 工具调用可以并行执行以提升性能",
+        source_tool="test",
+    )
+
+    assert result["skipped"] == 2
+    assert result["saved_lessons"] == 1
