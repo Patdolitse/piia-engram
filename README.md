@@ -53,6 +53,25 @@ Engram is not another chat app, agent framework, or hosted memory service. It is
 
 Unlike session-memory tools that remember what happened in a task, Engram stores **who you are** — your identity, preferences, lessons, and decisions — so every AI tool starts from the same understanding of you as a person.
 
+## Who Uses Engram
+
+Engram fits anyone whose work involves accumulated judgment — not one-time tasks, but years of lessons, decisions, and hard-won standards that an AI tool should already know.
+
+**Developers**  
+Your quality standards (test coverage, naming rules, which hacks you refuse to ship), architecture decisions, and hard-won lessons exist only in your head — and reset every session. With Engram, day one of a new project is not day one: your AI already knows your bottom line.
+
+**Investment analysts**  
+Decisions get made but reasoning gets lost. Engram stores the full reasoning chain so six months later, "why did I pass on that?" has a real answer — and your analytical framework travels with you across every new analysis.
+
+**System architects**  
+Architecture decisions need context: what you chose, what you ruled out, and why. Engram keeps living Architecture Decision Records that travel with you across companies and projects, queryable by any AI tool.
+
+**Backend developers**  
+API quirks, integration gotchas, performance trade-offs — tacit knowledge that normally lives in your head and resets when you change jobs. Engram turns it into a searchable library that persists across everything.
+
+**Frontend and design**  
+Design philosophy rarely gets documented in a way AI tools can use. Engram stores your real standards, UX lessons from real users, and the reasoning behind component decisions — so every project starts where your last one ended.
+
 ## What It Stores
 
 Engram can store:
