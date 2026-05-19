@@ -86,7 +86,10 @@ FIELD_WEIGHTS: dict[str, float] = {
 
 
 def _engram_root() -> Path:
-    """Global Engram root directory, with legacy Engram fallback."""
+    """Global Engram root directory. ENGRAM_DIR env var overrides default."""
+    custom = os.environ.get("ENGRAM_DIR", "").strip()
+    if custom:
+        return Path(custom).expanduser().resolve()
     home = Path.home()
     engram_root = home / _ENGRAM_DIR_NAME
     legacy_root = home / _LEGACY_DIR_NAME
