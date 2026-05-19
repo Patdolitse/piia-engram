@@ -120,11 +120,12 @@ Common tools include:
 | `import_engram` | Import a backup |
 | `export_engram_to_openclaw` | Export OpenClaw-compatible files |
 | `import_engram_from_openclaw` | Import OpenClaw-compatible files |
-| `search_knowledge` | Search lessons and decisions by keyword |
+| `search_knowledge` | Search lessons and decisions by weighted multi-term relevance |
 | `get_health_report` | Knowledge asset health report (duplicates, capacity, warnings) |
 | `get_stale_knowledge` | Find active knowledge that has not been reviewed recently |
 | `get_knowledge_digest` | Summarize counts, recent additions, top accessed items, and domains |
 | `get_related_knowledge` | Follow links between lessons and decisions |
+| `find_similar_knowledge` | Find similar lessons and decisions by content |
 | `export_knowledge_report` | Export a readable Markdown knowledge report |
 | `link_knowledge` | Create a bidirectional link between two knowledge items |
 | `unlink_knowledge` | Remove a bidirectional knowledge link |
@@ -210,7 +211,7 @@ Then add the MCP config and restart your AI tool. The AI will call `get_user_con
 No. All data is stored in `~/.engram/` on your local machine. Engram never makes network requests. Your memory is yours.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 43 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, knowledge search, digesting, reporting, linking, and health checks.
+Engram exposes 44 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, weighted knowledge search, similarity discovery, digesting, reporting, linking, and health checks.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.
