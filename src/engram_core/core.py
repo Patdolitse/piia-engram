@@ -310,6 +310,10 @@ class Engram:
 
         entry.setdefault("status", "active")
         entry.setdefault("access_count", 0)
+        if not isinstance(entry.get("related_ids"), list):
+            entry["related_ids"] = []
+        else:
+            entry.setdefault("related_ids", [])
         return entry
 
     def _read_entries(self, path: Path, entry_type: str) -> list[dict]:
@@ -686,6 +690,121 @@ class Engram:
     def archive_decision(self, decision_id: str) -> dict:
         """Mark a decision as outdated without deleting it."""
         return self.update_decision(decision_id, {"status": "outdated"})
+
+    def _read_link_collections(self) -> tuple[list[dict], list[dict]]:
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+        return lessons, decisions
+
+    def _write_link_collections(self, lessons: list[dict], decisions: list[dict]) -> None:
+        _write_json(self._knowledge_dir / "lessons.json", lessons)
+        _write_json(self._knowledge_dir / "decisions.json", decisions)
+
+    def _find_item_in_collections(
+        self,
+        item_id: str,
+        lessons: list[dict],
+        decisions: list[dict],
+    ) -> tuple[str | None, dict | None]:
+        for item in lessons:
+            if item.get("id") == item_id:
+                return "lesson", item
+        for item in decisions:
+            if item.get("id") == item_id:
+                return "decision", item
+        return None, None
+
+    def _find_item_by_id(self, item_id: str) -> tuple[str | None, dict | None]:
+        """Find a lesson or decision by id without updating access metadata."""
+        lessons, decisions = self._read_link_collections()
+        return self._find_item_in_collections(item_id, lessons, decisions)
+
+    def _knowledge_title(self, item_type: str | None, item: dict | None) -> str:
+        if not item:
+            return ""
+        if item_type == "decision":
+            return self._entry_identity_text(item, "decision")
+        return item.get("summary", "")
+
+    def _knowledge_view(self, item_type: str, item: dict) -> dict:
+        if item_type == "decision":
+            return {
+                "id": item.get("id", ""),
+                "type": "decision",
+                "title": self._entry_identity_text(item, "decision"),
+                "choice": item.get("choice", ""),
+                "rationale": item.get("reasoning", ""),
+            }
+        return {
+            "id": item.get("id", ""),
+            "type": "lesson",
+            "title": item.get("summary", ""),
+            "content": item.get("detail") or item.get("summary", ""),
+            "domain": item.get("domain", ""),
+        }
+
+    def link_knowledge(self, id_a: str, id_b: str) -> dict:
+        """Create a bidirectional link between two knowledge items."""
+        lessons, decisions = self._read_link_collections()
+        type_a, item_a = self._find_item_in_collections(id_a, lessons, decisions)
+        type_b, item_b = self._find_item_in_collections(id_b, lessons, decisions)
+
+        if item_a is None:
+            return {"error": f"Item not found: {id_a}"}
+        if item_b is None:
+            return {"error": f"Item not found: {id_b}"}
+
+        if id_b not in item_a["related_ids"]:
+            item_a["related_ids"].append(id_b)
+        if id_a not in item_b["related_ids"]:
+            item_b["related_ids"].append(id_a)
+        self._write_link_collections(lessons, decisions)
+
+        title_a = self._knowledge_title(type_a, item_a)
+        title_b = self._knowledge_title(type_b, item_b)
+        return {"success": True, "message": f"Linked: {title_a} ↔ {title_b}"}
+
+    def unlink_knowledge(self, id_a: str, id_b: str) -> dict:
+        """Remove the bidirectional link between two knowledge items."""
+        lessons, decisions = self._read_link_collections()
+        type_a, item_a = self._find_item_in_collections(id_a, lessons, decisions)
+        type_b, item_b = self._find_item_in_collections(id_b, lessons, decisions)
+
+        if item_a is None:
+            return {"error": f"Item not found: {id_a}"}
+        if item_b is None:
+            return {"error": f"Item not found: {id_b}"}
+
+        item_a["related_ids"] = [item_id for item_id in item_a["related_ids"] if item_id != id_b]
+        item_b["related_ids"] = [item_id for item_id in item_b["related_ids"] if item_id != id_a]
+        self._write_link_collections(lessons, decisions)
+
+        title_a = self._knowledge_title(type_a, item_a)
+        title_b = self._knowledge_title(type_b, item_b)
+        return {"success": True, "message": f"Unlinked: {title_a} ↔ {title_b}"}
+
+    def get_related_knowledge(self, item_id: str) -> dict:
+        """Return all knowledge items linked to a lesson or decision id."""
+        lessons, decisions = self._read_link_collections()
+        item_type, item = self._find_item_in_collections(item_id, lessons, decisions)
+        if item is None or item_type is None:
+            return {"error": f"Item not found: {item_id}"}
+
+        related = []
+        for related_id in item.get("related_ids", []):
+            related_type, related_item = self._find_item_in_collections(
+                related_id,
+                lessons,
+                decisions,
+            )
+            if related_item is not None and related_type is not None:
+                related.append(self._knowledge_view(related_type, related_item))
+
+        return {
+            "source": self._knowledge_view(item_type, item),
+            "related": related,
+            "total": len(related),
+        }
 
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""
@@ -1146,6 +1265,21 @@ class Engram:
         active_decisions = [d for d in decisions if d.get("status") == "active"]
         domains = sorted({l.get("domain") for l in active_lessons if l.get("domain")})
         stale = self.get_stale_knowledge(days=30)
+        title_by_id = {
+            **{lesson.get("id", ""): lesson.get("summary", "") for lesson in lessons},
+            **{
+                decision.get("id", ""): self._entry_identity_text(decision, "decision")
+                for decision in decisions
+            },
+        }
+
+        def related_title_line(item: dict) -> str:
+            titles = [
+                title_by_id[item_id]
+                for item_id in item.get("related_ids", [])
+                if title_by_id.get(item_id)
+            ]
+            return f"  *关联：{', '.join(titles)}*" if titles else ""
 
         lines = [
             "# 个人知识报告",
@@ -1175,6 +1309,9 @@ class Engram:
                     lines.append(
                         f"- **{summary}**{body} *(来源: {source}, 访问 {access_count} 次)*"
                     )
+                    related_line = related_title_line(lesson)
+                    if related_line:
+                        lines.append(related_line)
                 lines.append("")
         else:
             lines.extend(["暂无经验教训。", ""])
@@ -1193,6 +1330,9 @@ class Engram:
                     rationale = decision.get("reasoning") or decision.get("choice", "")
                     status = decision.get("status", "active")
                     lines.append(f"- **{title}** — {rationale} *(状态: {status})*")
+                    related_line = related_title_line(decision)
+                    if related_line:
+                        lines.append(related_line)
                 lines.append("")
         else:
             lines.extend(["暂无关键决策。", ""])

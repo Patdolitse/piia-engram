@@ -361,3 +361,86 @@ def test_export_knowledge_report(tmp_path: Path):
     generated = list((tmp_path / "exports").glob("knowledge_report_*.md"))
     assert len(generated) == 1
     assert generated[0].read_text(encoding="utf-8") == report
+
+
+def test_link_knowledge(tmp_path: Path):
+    """link_knowledge 应在 lesson 和 decision 间建立双向关联。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("数据库迁移前先备份", "database")
+    decision = engram.add_decision("迁移策略怎么选", "先备份再迁移", "降低恢复风险")
+
+    result = engram.link_knowledge(lesson["id"], decision["id"])
+
+    assert result["success"] is True
+    lessons = json.loads((tmp_path / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
+    decisions = json.loads((tmp_path / "knowledge" / "decisions.json").read_text(encoding="utf-8"))
+    assert decision["id"] in lessons[0]["related_ids"]
+    assert lesson["id"] in decisions[0]["related_ids"]
+
+
+def test_unlink_knowledge(tmp_path: Path):
+    """unlink_knowledge 应移除双向关联。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("缓存失效需要显式策略", "backend")
+    decision = engram.add_decision("缓存策略怎么选", "短 TTL", "减少陈旧数据风险")
+    engram.link_knowledge(lesson["id"], decision["id"])
+
+    result = engram.unlink_knowledge(lesson["id"], decision["id"])
+
+    assert result["success"] is True
+    lessons = json.loads((tmp_path / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
+    decisions = json.loads((tmp_path / "knowledge" / "decisions.json").read_text(encoding="utf-8"))
+    assert decision["id"] not in lessons[0]["related_ids"]
+    assert lesson["id"] not in decisions[0]["related_ids"]
+
+
+def test_link_idempotent(tmp_path: Path):
+    """重复 link 同一组 ID 不应产生重复 related_ids。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("API 兼容性要先写测试", "api")
+    decision = engram.add_decision("版本策略怎么选", "语义化版本", "用户预期清晰")
+
+    engram.link_knowledge(lesson["id"], decision["id"])
+    engram.link_knowledge(lesson["id"], decision["id"])
+
+    lessons = json.loads((tmp_path / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
+    assert lessons[0]["related_ids"].count(decision["id"]) == 1
+
+
+def test_get_related_knowledge(tmp_path: Path):
+    """get_related_knowledge 应返回 source 和关联条目。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("失败测试先行能防止误修", "testing")
+    decision = engram.add_decision("开发流程怎么定", "TDD", "先看到失败再实现")
+    engram.link_knowledge(lesson["id"], decision["id"])
+
+    related = engram.get_related_knowledge(lesson["id"])
+
+    assert related["source"]["id"] == lesson["id"]
+    assert related["source"]["type"] == "lesson"
+    assert related["total"] == 1
+    assert related["related"][0]["id"] == decision["id"]
+    assert related["related"][0]["type"] == "decision"
+
+
+def test_get_related_knowledge_not_found(tmp_path: Path):
+    """不存在的 ID 应返回错误信息而不是抛异常。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.get_related_knowledge("missing-id")
+
+    assert result == {"error": "Item not found: missing-id"}
+
+
+def test_report_shows_related(tmp_path: Path):
+    """知识报告应显示关联知识标题。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("发布前需要完整验证", "release")
+    decision = engram.add_decision("发版门禁怎么定", "测试通过后再发", "减少回滚风险")
+    engram.link_knowledge(lesson["id"], decision["id"])
+
+    report = engram.export_knowledge_report()
+
+    assert "关联：" in report
+    assert "发版门禁怎么定" in report
+    assert "发布前需要完整验证" in report

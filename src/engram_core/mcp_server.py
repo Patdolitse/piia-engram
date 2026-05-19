@@ -52,7 +52,7 @@ def _json(obj: object) -> str:
 
 
 # ===========================================================================
-# READ TOOLS (20)
+# READ TOOLS (21)
 # ===========================================================================
 
 
@@ -248,13 +248,19 @@ async def get_knowledge_digest() -> str:
 
 
 @mcp.tool()
+async def get_related_knowledge(item_id: str) -> str:
+    """Get all knowledge items linked to a given lesson or decision ID."""
+    return _json(_engram.get_related_knowledge(item_id))
+
+
+@mcp.tool()
 async def export_knowledge_report() -> str:
     """Export a full Markdown knowledge report to ~/.engram/exports/ and return the content."""
     return _engram.export_knowledge_report()
 
 
 # ===========================================================================
-# WRITE TOOLS (5)
+# WRITE TOOLS (14)
 # ===========================================================================
 
 
@@ -371,6 +377,18 @@ async def update_decision(
 async def archive_decision(decision_id: str) -> str:
     """将一条关键决策标记为过时。"""
     return _json(_engram.archive_decision(decision_id))
+
+
+@mcp.tool()
+async def link_knowledge(id_a: str, id_b: str) -> str:
+    """Create a bidirectional link between two knowledge items (lessons or decisions)."""
+    return _json(_engram.link_knowledge(id_a, id_b))
+
+
+@mcp.tool()
+async def unlink_knowledge(id_a: str, id_b: str) -> str:
+    """Remove the bidirectional link between two knowledge items."""
+    return _json(_engram.unlink_knowledge(id_a, id_b))
 
 
 @mcp.tool()
