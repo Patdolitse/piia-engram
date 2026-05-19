@@ -186,6 +186,7 @@ Common tools include:
 | `merge_knowledge` | Merge a duplicate knowledge item into the primary item |
 | `update_knowledge` | Update a lesson or decision by ID |
 | `archive_knowledge` | Archive a lesson or decision by ID |
+| `get_audit_log` | Get recent audit log entries |
 
 ## Data Layout
 
@@ -265,7 +266,7 @@ Then add the MCP config and restart your AI tool. The AI will call `get_user_con
 All data is stored in `~/.engram/` on your local machine. Engram itself never uploads data anywhere. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked. Core identity and knowledge tools make no network requests.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 36 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, and health checks.
+Engram exposes 37 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, health checks, and audit logging.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.
@@ -278,7 +279,8 @@ Engram is functional and actively used, but some things it intentionally does no
 |---|---|---|
 | **File safety** | Atomic JSON writes with a shared portalocker file lock | Broader stress testing |
 | **Access control** | `restricted_fields` filters profile fields from `get_user_context` and `get_profile(safe=true)` | Per-caller ACL blocked by MCP caller identity |
-| **Encryption** | Plaintext JSON — treat like any local file | Optional field encryption (v3.0) |
+| **Encryption** | Optional field-level AES-256-GCM encryption via `ENGRAM_SECRET` env var. Install `pip install piia-engram[secure]`. | Full-disk encryption for all files (v4.0) |
+| **Audit logging** | Optional access audit log via `ENGRAM_AUDIT=1` env var. Logs to `~/.engram/audit.log`. | Per-caller audit (blocked by MCP spec) |
 | **Caller identity** | MCP protocol doesn't pass tool identity | Blocked by MCP spec |
 | **Concurrent writes** | Protected by file lock + atomic replace for Engram JSON writes | Network-filesystem edge cases not guaranteed |
 
@@ -287,7 +289,30 @@ Engram is functional and actively used, but some things it intentionally does no
 - Any process with read access to `~/.engram/` can read your data
 - `restricted_fields` reduces what Engram emits in cold-start context, but it is not encryption or a true ACL
 
-This is not a warning to avoid Engram — it's an honest description of what it is: a local, plaintext memory layer for personal AI context. For personal use with non-sensitive data, it works well today.
+This is not a warning to avoid Engram — it's an honest description of what it is: a local memory layer for personal AI context. For personal use, it works well today.
+
+## Security Configuration
+
+### Field-level encryption (optional)
+
+Encrypt sensitive profile fields (email, phone, location, etc.) at rest:
+
+```bash
+pip install piia-engram[secure]
+export ENGRAM_SECRET="your-strong-passphrase"
+```
+
+Encrypted fields are stored as `enc:v1:...` in JSON files. Without `ENGRAM_SECRET`, Engram works normally with plaintext (backward compatible).
+
+### Audit logging (optional)
+
+Track all read/write operations:
+
+```bash
+export ENGRAM_AUDIT=1
+```
+
+Logs are written to `~/.engram/audit.log` in JSON-lines format. Query with `get_audit_log` tool or `grep`.
 
 ## Contributing
 

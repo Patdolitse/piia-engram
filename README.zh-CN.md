@@ -162,7 +162,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
 <details>
-<summary><strong>完整 MCP 工具列表（36 个）</strong></summary>
+<summary><strong>完整 MCP 工具列表（37 个）</strong></summary>
 
 **读取工具：**
 
@@ -219,6 +219,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | `import_engram_from_openclaw` | 导入 OpenClaw 格式 |
 | `read_web_content` | 读取网页内容（需 Reader 服务） |
 | `search_knowledge` | 多词加权搜索经验教训和关键决策 |
+| `get_audit_log` | 查询最近的审计日志条目 |
 
 </details>
 
@@ -300,7 +301,7 @@ python demos/setup_engram.py
 所有数据存在本地 `~/.engram/` 目录，Engram 本身不会上传数据到任何地方。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求，该服务可能进一步抓取外部网页——但此工具只有在你显式调用时才执行。身份和知识类核心工具均不发起网络请求。
 
 **Engram 有多少个 MCP 工具？**
-36 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并和健康度检查。
+37 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并、健康度检查和审计日志。
 
 **Engram 免费吗？**
 是的。Engram 是 Apache 2.0 开源项目，完全免费。
@@ -313,7 +314,8 @@ Engram 可以正常使用，但以下功能目前尚未实现：
 |---|---|---|
 | **文件安全** | JSON 写入使用 portalocker 文件锁 + 原子替换 | 后续补充更大并发压力测试 |
 | **访问控制** | `restricted_fields` 会从 `get_user_context` 和 `get_profile(safe=true)` 中过滤画像字段 | MCP 不传调用方身份，暂不做复杂 ACL |
-| **加密** | 明文 JSON，和普通本地文件一样 | 可选字段加密（v3.0）|
+| **加密** | 可选字段级 AES-256-GCM 加密，通过 `ENGRAM_SECRET` 环境变量启用。安装 `pip install piia-engram[secure]`。 | 全盘加密（v4.0）|
+| **审计日志** | 可选访问审计，通过 `ENGRAM_AUDIT=1` 环境变量启用。日志写入 `~/.engram/audit.log`。 | 按调用方审计（受 MCP 规范限制）|
 | **调用方身份** | MCP 协议不传递工具身份 | 受 MCP 规范限制 |
 | **并发写保护** | Engram JSON 写入已通过文件锁和原子替换保护 | 网络文件系统等边界场景不保证 |
 
@@ -322,7 +324,30 @@ Engram 可以正常使用，但以下功能目前尚未实现：
 - `~/.engram/` 目录下的文件，本机有读权限的进程都可以读取
 - `restricted_fields` 能减少冷启动上下文暴露的画像字段，但不是加密，也不是真正的 ACL
 
-这不是劝你不用 Engram —— 而是对它本质的诚实描述：它是一个本地明文个人 AI 上下文层。用于存储个人偏好、项目决策、技术笔记等非敏感内容，今天就可以正常使用。
+这不是劝你不用 Engram —— 而是对它本质的诚实描述：它是一个本地个人 AI 上下文层。用于存储个人偏好、项目决策、技术笔记等内容，今天就可以正常使用。
+
+## 安全配置
+
+### 字段级加密（可选）
+
+加密敏感的用户画像字段（email、phone、location 等）：
+
+```bash
+pip install piia-engram[secure]
+export ENGRAM_SECRET="选一个强口令"
+```
+
+加密后的字段以 `enc:v1:...` 格式存储在 JSON 文件中。不设置 `ENGRAM_SECRET` 时，Engram 照常以明文工作（向后兼容）。
+
+### 审计日志（可选）
+
+记录所有读写操作：
+
+```bash
+export ENGRAM_AUDIT=1
+```
+
+日志以 JSON-lines 格式写入 `~/.engram/audit.log`。可通过 `get_audit_log` 工具或 `grep` 查询。
 
 ## Contributing
 

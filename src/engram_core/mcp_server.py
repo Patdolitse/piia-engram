@@ -631,6 +631,26 @@ async def import_engram_from_openclaw(
         return f"从 OpenClaw 兼容格式导入失败: {e}"
 
 
+@mcp.tool()
+async def get_audit_log(limit: int = 50) -> str:
+    """Get recent audit log entries.
+
+    Args:
+        limit: Max entries to return (default 50, most recent first).
+    """
+    log_path = _engram.root / "audit.log"
+    if not log_path.is_file():
+        return _json({"entries": [], "total": 0, "message": "Audit logging not enabled. Set ENGRAM_AUDIT=1."})
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    entries = []
+    for line in reversed(lines[-limit:]):
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return _json({"entries": entries, "total": len(lines)})
+
+
 # ===========================================================================
 # RESOURCES (5)
 # ===========================================================================

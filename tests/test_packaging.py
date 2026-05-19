@@ -26,7 +26,7 @@ def test_required_fields():
     """pyproject.toml 应包含 name, version, description, license。"""
     data = _load()["project"]
     assert data["name"] == "piia-engram"
-    assert data["version"] == "3.4.0"
+    assert data["version"] == "3.5.0"
     assert data["description"]
     assert data["license"]
     assert data["authors"]
@@ -71,6 +71,21 @@ def test_remote_optional_dependency_has_uvicorn():
     assert "uvicorn>=0.20" in remote_deps
 
 
+def test_secure_optional_dependency_has_cryptography():
+    """secure extras 应声明加密所需的 cryptography。"""
+    data = _load()
+    secure_deps = data["project"]["optional-dependencies"]["secure"]
+    assert "cryptography>=41.0" in secure_deps
+
+
+def test_all_optional_dependency():
+    """all extras 应包含 remote + secure 的所有依赖。"""
+    data = _load()
+    all_deps = data["project"]["optional-dependencies"]["all"]
+    assert "uvicorn>=0.20" in all_deps
+    assert "cryptography>=41.0" in all_deps
+
+
 def test_ci_workflow_exists():
     """CI workflow 文件应存在。"""
     assert CI_WORKFLOW.is_file()
@@ -108,7 +123,7 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "Engram exposes 36 MCP tools" in content
+    assert "Engram exposes 37 MCP tools" in content
 
 
 def test_readme_has_remote_deployment_section():
@@ -135,13 +150,14 @@ def test_mcp_tool_count_and_merge_tool():
             ):
                 tools.append(node.name)
                 break
-    assert len(tools) == 36
+    assert len(tools) == 37
     assert "update_knowledge" in tools
     assert "bulk_add_knowledge" in tools
     assert "get_knowledge_overview" in tools
     assert "merge_knowledge" in tools
     assert "get_knowledge_inheritance" in tools
     assert "extract_session_insights" in tools
+    assert "get_audit_log" in tools
     assert "get_safe_profile" not in tools
     assert "update_lesson" not in tools
     assert "update_decision" not in tools
@@ -157,8 +173,8 @@ def test_zh_readme_uses_pypi_install_and_36_tools():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "完整 MCP 工具列表（36 个）" in content
-    assert "36 个 MCP 工具" in content
+    assert "完整 MCP 工具列表（37 个）" in content
+    assert "37 个 MCP 工具" in content
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content

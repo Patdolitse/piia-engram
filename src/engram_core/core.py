@@ -24,6 +24,12 @@ SCHEMA_VERSION = "2.0"
 _ENGRAM_DIR_NAME = ".engram"
 _LEGACY_DIR_NAME = ".piia"
 SIMILARITY_THRESHOLD = 0.55
+
+# Sensitive profile fields eligible for encryption
+ENCRYPTED_PROFILE_FIELDS: set[str] = {
+    "email", "phone", "location", "company",
+    "real_name", "address", "id_number",
+}
 DEFAULT_TRUST_BOUNDARIES = {
     "default_sharing": "full",
     "tool_access": {},
@@ -202,6 +208,20 @@ class Engram:
         self._knowledge_dir = self.root / "knowledge"
         self._projects_dir = self.root / "projects"
         self._exports_dir = self.root / "exports"
+
+        # Encryption engine (transparent when ENGRAM_SECRET is not set)
+        from engram_core.crypto import EncryptionEngine
+        secret = os.environ.get("ENGRAM_SECRET", "").strip()
+        self._crypto = EncryptionEngine(secret if secret else None)
+
+        # Audit logger (disabled unless ENGRAM_AUDIT=1/true/yes)
+        from engram_core.audit import AuditLogger
+        audit_enabled = os.environ.get("ENGRAM_AUDIT", "").strip().lower() in ("1", "true", "yes")
+        self._audit = AuditLogger(
+            log_path=self.root / "audit.log" if audit_enabled else None,
+            enabled=audit_enabled,
+        )
+
         self._ensure_structure()
 
     def _ensure_structure(self) -> None:
@@ -289,11 +309,13 @@ class Engram:
 
     def get_profile(self, safe: bool = False) -> dict:
         profile = _read_json(self._identity_dir / "profile.json")
+        profile = self._crypto.decrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
         if safe:
             tb = self.get_trust_boundaries()
             restricted = set(tb.get("restricted_fields", []))
             if restricted:
                 profile = {key: value for key, value in profile.items() if key not in restricted}
+        self._audit.log("read", "identity/profile")
         return profile
 
     def get_safe_profile(self) -> dict:
@@ -305,7 +327,9 @@ class Engram:
         profile = self.get_profile()
         profile.update(updates)
         profile["updated_at"] = _now_iso()
-        _write_json(self._identity_dir / "profile.json", profile)
+        encrypted = self._crypto.encrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
+        _write_json(self._identity_dir / "profile.json", encrypted)
+        self._audit.log("write", "identity/profile", detail=str(list(updates.keys())))
 
     def get_work_style(self) -> dict:
         return _read_json(self._identity_dir / "work_style.json")
@@ -555,6 +579,8 @@ class Engram:
             lessons = lessons[-200:]
         _write_json(path, lessons)
 
+        summary = new_lesson.get("summary", "")
+        self._audit.log("write", "knowledge/lessons", detail=summary[:100])
         if new_lesson.get("domain"):
             self.increment_domain_usage(new_lesson["domain"])
         return new_lesson
@@ -584,6 +610,7 @@ class Engram:
                 lesson["last_reviewed"] = now
                 lesson["access_count"] = lesson.get("access_count", 0) + 1
             _write_json(path, lessons)
+        self._audit.log("read", "knowledge/lessons", detail=f"returned {len(result)} items")
         return result
 
     def search_knowledge(self, query: str, scope: str = "all", limit: int = 10) -> dict:
@@ -831,6 +858,8 @@ class Engram:
         if len(decisions) > 200:
             decisions = decisions[-200:]
         _write_json(path, decisions)
+        title = new_decision.get("question", "") or new_decision.get("title", "")
+        self._audit.log("write", "knowledge/decisions", detail=title[:100])
         return new_decision
 
     def get_decisions(
@@ -860,6 +889,7 @@ class Engram:
                 decision["last_reviewed"] = now
                 decision["access_count"] = decision.get("access_count", 0) + 1
             _write_json(path, decisions)
+        self._audit.log("read", "knowledge/decisions", detail=f"returned {len(result)} items")
         return result
 
     def update_decision(self, decision_id: str, updates: dict) -> dict:
@@ -2140,6 +2170,7 @@ class Engram:
 
         out.parent.mkdir(parents=True, exist_ok=True)
         _write_json(out, export_data)
+        self._audit.log("export", "all", detail=f"exported to {out}")
         return str(out)
 
     def import_all(self, input_path: str, merge: bool = True) -> dict:
@@ -2265,6 +2296,7 @@ class Engram:
                     _write_json(proj_path, proj_data)
             imported.append(f"projects({len(projects)})")
 
+        self._audit.log("import", "all", detail=f"imported from {input_path}")
         return {
             "status": "success",
             "mode": "merge" if merge else "overwrite",
