@@ -52,7 +52,7 @@ def _json(obj: object) -> str:
 
 
 # ===========================================================================
-# READ TOOLS (11)
+# READ TOOLS (17)
 # ===========================================================================
 
 
@@ -89,6 +89,12 @@ async def get_identity_card() -> str:
 async def get_profile() -> str:
     """获取用户身份画像（角色、技能、语言、技术水平）。"""
     return _json(_engram.get_profile())
+
+
+@mcp.tool()
+async def get_safe_profile() -> str:
+    """Get user profile with restricted_fields filtered out per trust_boundaries settings."""
+    return _json(_engram.get_safe_profile())
 
 
 @mcp.tool()
@@ -391,6 +397,8 @@ async def update_trust_boundaries(updates_json: str) -> str:
             default_sharing (str) — 默认共享级别: 'full'/'limited'/'minimal'
             tool_access (dict) — 按工具限制，如 {"openclaw": {"exclude": ["trust_boundaries"]}}
             private_fields (list) — 不对外共享的字段列表
+            restricted_fields (list) — 从 get_user_context 输出中排除的 profile 字段名。
+                例如 ["phone", "address"] 会对所有 AI 工具隐藏这些画像字段。
     """
     try:
         updates = json.loads(updates_json)
