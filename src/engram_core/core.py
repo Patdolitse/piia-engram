@@ -312,8 +312,6 @@ class Engram:
         entry.setdefault("access_count", 0)
         if not isinstance(entry.get("related_ids"), list):
             entry["related_ids"] = []
-        else:
-            entry.setdefault("related_ids", [])
         return entry
 
     def _read_entries(self, path: Path, entry_type: str) -> list[dict]:
@@ -697,6 +695,8 @@ class Engram:
         return lessons, decisions
 
     def _write_link_collections(self, lessons: list[dict], decisions: list[dict]) -> None:
+        # Each write is individually atomic, but the two writes together are not.
+        # A crash between them could leave a one-sided link. Acceptable for local single-user use.
         _write_json(self._knowledge_dir / "lessons.json", lessons)
         _write_json(self._knowledge_dir / "decisions.json", decisions)
 
