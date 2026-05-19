@@ -260,7 +260,7 @@ async def export_knowledge_report() -> str:
 
 
 # ===========================================================================
-# WRITE TOOLS (14)
+# WRITE TOOLS (17)
 # ===========================================================================
 
 
@@ -323,6 +323,40 @@ async def add_decision(
     if result.get("status") == "duplicate":
         return _json(result)
     return f"决策已记录: {question} → {choice}"
+
+
+@mcp.tool()
+async def bulk_add_lessons(lessons: list, source_tool: str = "") -> str:
+    """批量记录经验教训，复用单条新增的去重、字段补齐和写入逻辑。
+
+    Args:
+        lessons: 经验教训列表；每项可以是字符串，或包含 summary/detail/domain 等字段的对象。
+        source_tool: 统一记录来源工具；单条对象已有 source_tool 时保留单条值。
+    """
+    return _json(_engram.bulk_add_lessons(lessons, source_tool=source_tool))
+
+
+@mcp.tool()
+async def bulk_add_decisions(decisions: list, source_tool: str = "") -> str:
+    """批量记录关键决策，复用单条新增的去重、字段补齐和写入逻辑。
+
+    Args:
+        decisions: 决策列表；每项可以是字符串，或包含 question/title/choice/reasoning 等字段的对象。
+        source_tool: 统一记录来源工具；单条对象已有 source_tool 时保留单条值。
+    """
+    return _json(_engram.bulk_add_decisions(decisions, source_tool=source_tool))
+
+
+@mcp.tool()
+async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> str:
+    """从自由文本笔记中提取经验教训和关键决策并写入知识库。
+
+    Args:
+        text: 多行自由文本笔记。
+        source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。
+        domain: 默认领域；未命中关键词推断时使用。
+    """
+    return _json(_engram.ingest_notes(text, source_tool=source_tool, domain=domain))
 
 
 @mcp.tool()

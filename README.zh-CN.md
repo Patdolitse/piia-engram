@@ -94,6 +94,7 @@ python demos/setup_engram.py
 | **冷启动上下文** | 新对话开始时调用 `get_user_context`，AI 立即了解你 |
 | **经验教训** | `add_lesson` 记录可复用经验，按领域分类，跨工具共享 |
 | **关键决策** | `add_decision` 记录选择和理由，保持长期一致性 |
+| **知识输入提速** | 批量写入经验/决策，并从自由文本笔记中提取知识 |
 | **用户画像** | 角色、语言、技术水平、工作偏好、质量标准 |
 | **项目快照** | 按项目保存上下文，新任务快速接续 |
 | **信任边界** | 可从冷启动上下文中过滤指定画像字段 |
@@ -105,7 +106,7 @@ python demos/setup_engram.py
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
 <details>
-<summary><strong>完整 MCP 工具列表（40 个）</strong></summary>
+<summary><strong>完整 MCP 工具列表（43 个）</strong></summary>
 
 **读取工具：**
 
@@ -137,6 +138,9 @@ python demos/setup_engram.py
 |------|------|
 | `add_lesson` | 记录经验教训 |
 | `add_decision` | 记录关键决策 |
+| `bulk_add_lessons` | 批量记录经验教训 |
+| `bulk_add_decisions` | 批量记录关键决策 |
+| `ingest_notes` | 从自由文本笔记提取经验和决策 |
 | `link_knowledge` | 建立两条知识的双向关联 |
 | `unlink_knowledge` | 移除两条知识的双向关联 |
 | `update_profile` | 更新身份画像 |
@@ -241,7 +245,7 @@ python demos/setup_engram.py
 不会。所有数据存在本地 `~/.engram/` 目录，Engram 不发起任何网络请求。记忆属于你。
 
 **Engram 有多少个 MCP 工具？**
-40 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、知识搜索、摘要、报告、知识关联和健康度检查。
+43 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、知识搜索、摘要、报告、知识关联和健康度检查。
 
 **Engram 免费吗？**
 是的。Engram 是 Apache 2.0 开源项目，完全免费。

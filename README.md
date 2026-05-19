@@ -113,6 +113,9 @@ Common tools include:
 | `save_project_snapshot` | Save project context for later sessions |
 | `add_lesson` | Add a lesson learned |
 | `add_decision` | Add a key decision |
+| `bulk_add_lessons` | Add multiple lessons in one call |
+| `bulk_add_decisions` | Add multiple decisions in one call |
+| `ingest_notes` | Parse free-form notes into lessons and decisions |
 | `export_engram` | Export a full backup |
 | `import_engram` | Import a backup |
 | `export_engram_to_openclaw` | Export OpenClaw-compatible files |
@@ -207,7 +210,7 @@ Then add the MCP config and restart your AI tool. The AI will call `get_user_con
 No. All data is stored in `~/.engram/` on your local machine. Engram never makes network requests. Your memory is yours.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 40 MCP tools covering identity management, lessons learned, key decisions, project snapshots, knowledge search, digesting, reporting, linking, and health checks.
+Engram exposes 43 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, knowledge search, digesting, reporting, linking, and health checks.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.
