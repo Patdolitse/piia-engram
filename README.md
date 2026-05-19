@@ -104,7 +104,9 @@ ChatGPT, Gemini, Kimi — `get_identity_card` exports a ready-to-paste Markdown 
 **Knowledge health and discovery**  
 `get_knowledge_overview` surfaces stale lessons (not reviewed in 90+ days), gives a health score, and flags gaps worth revisiting. `find_similar_knowledge` finds overlapping items to merge. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
 
-## Quick Start
+## Local Setup
+
+Run Engram on your own machine. Data stays in `~/.engram/`, AI tools connect over stdio.
 
 ```bash
 git clone https://github.com/Patdolitse/engram.git
@@ -114,9 +116,7 @@ pip install piia-engram      # Install from PyPI (recommended)
 python demos/setup_engram.py
 ```
 
-Then configure Engram as an MCP server in your AI coding tool.
-
-Example MCP config:
+Add to your AI tool's MCP config:
 
 ```json
 {
@@ -129,7 +129,7 @@ Example MCP config:
 }
 ```
 
-After restarting your MCP-compatible client, a new session can call `get_user_context` to understand your profile, preferences, lessons, and project context.
+Restart your MCP-compatible client. A new session will call `get_user_context` automatically.
 
 ## Remote Deployment
 
