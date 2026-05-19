@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 from copy import deepcopy
@@ -72,6 +73,15 @@ DOMAIN_KEYWORDS = {
     "mcp": ["mcp", "tool", "server", "stdio", "model context"],
     "architecture": ["架构", "设计", "模式", "pattern", "architecture", "design"],
     "database": ["sql", "database", "query", "index", "migration", "schema"],
+}
+FIELD_WEIGHTS: dict[str, float] = {
+    "summary": 3.0,
+    "title": 3.0,
+    "question": 2.5,
+    "detail": 1.5,
+    "choice": 1.0,
+    "reasoning": 1.0,
+    "domain": 0.5,
 }
 
 
@@ -386,6 +396,32 @@ class Engram:
         intersection = a_bigrams & b_bigrams
         return 2.0 * len(intersection) / (len(a_bigrams) + len(b_bigrams))
 
+    def _score_item(self, item: dict, terms: list[str]) -> float:
+        """Score a knowledge item against query terms using weighted fields."""
+        if not terms:
+            return 0.0
+
+        score = 0.0
+        for field, weight in FIELD_WEIGHTS.items():
+            value = str(item.get(field, "")).lower()
+            if not value:
+                continue
+            matched = sum(1 for term in terms if term in value)
+            score += weight * (matched / len(terms))
+
+        primary = str(
+            item.get("summary")
+            or item.get("title")
+            or item.get("question")
+            or ""
+        ).lower()
+        if primary:
+            query_str = " ".join(terms)
+            score += self._bigram_similarity(query_str, primary) * 1.5
+
+        score += math.log1p(item.get("access_count", 0)) * 0.1
+        return score
+
     def add_lesson(
         self,
         lesson: dict | str,
@@ -477,58 +513,44 @@ class Engram:
         return result
 
     def search_knowledge(self, query: str, scope: str = "all", limit: int = 10) -> dict:
-        """Search lessons and decisions by keyword."""
-        query_lower = (query or "").lower()
+        """Search lessons and decisions by weighted multi-term relevance."""
+        terms = [term for term in (query or "").lower().split() if term]
         results = {"lessons": [], "decisions": []}
         limit = max(0, int(limit))
+        if not terms or limit == 0:
+            return results
 
         if scope in ("all", "lessons"):
             path = self._knowledge_dir / "lessons.json"
             lessons = self._read_entries(path, "lesson")
-            changed = False
             for lesson in lessons:
                 if lesson.get("status") != "active":
                     continue
-                searchable = (
-                    f"{lesson.get('summary', '')} "
-                    f"{lesson.get('detail', '')} "
-                    f"{lesson.get('domain', '')}"
-                ).lower()
-                if query_lower in searchable:
-                    lesson["access_count"] = lesson.get("access_count", 0) + 1
-                    changed = True
-                    results["lessons"].append(lesson)
-            if changed:
-                _write_json(path, lessons)
+                score = self._score_item(lesson, terms)
+                if score >= 0.3:
+                    item = dict(lesson)
+                    item["_score"] = round(score, 3)
+                    results["lessons"].append(item)
             results["lessons"] = sorted(
                 results["lessons"],
-                key=lambda item: item.get("access_count", 0),
+                key=lambda item: item["_score"],
                 reverse=True,
             )[:limit]
 
         if scope in ("all", "decisions"):
             path = self._knowledge_dir / "decisions.json"
             decisions = self._read_entries(path, "decision")
-            changed = False
             for decision in decisions:
                 if decision.get("status") != "active":
                     continue
-                searchable = (
-                    f"{decision.get('title', '')} "
-                    f"{decision.get('question', '')} "
-                    f"{decision.get('choice', '')} "
-                    f"{decision.get('reasoning', '')} "
-                    f"{decision.get('project', '')}"
-                ).lower()
-                if query_lower in searchable:
-                    decision["access_count"] = decision.get("access_count", 0) + 1
-                    changed = True
-                    results["decisions"].append(decision)
-            if changed:
-                _write_json(path, decisions)
+                score = self._score_item(decision, terms)
+                if score >= 0.3:
+                    item = dict(decision)
+                    item["_score"] = round(score, 3)
+                    results["decisions"].append(item)
             results["decisions"] = sorted(
                 results["decisions"],
-                key=lambda item: item.get("access_count", 0),
+                key=lambda item: item["_score"],
                 reverse=True,
             )[:limit]
 
@@ -846,6 +868,57 @@ class Engram:
             "source": self._knowledge_view(item_type, item),
             "related": related,
             "total": len(related),
+        }
+
+    def find_similar_knowledge(self, item_id: str, limit: int = 5) -> dict:
+        """Find active knowledge items with similar primary content."""
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type is None:
+            return {"error": f"Item not found: {item_id}"}
+
+        source_text = str(
+            item.get("summary")
+            or item.get("title")
+            or item.get("question")
+            or ""
+        )
+        if not source_text:
+            return {
+                "source": self._knowledge_view(item_type, item),
+                "similar": [],
+                "total": 0,
+            }
+
+        candidates = []
+        sources = (
+            ("lesson", self._knowledge_dir / "lessons.json"),
+            ("decision", self._knowledge_dir / "decisions.json"),
+        )
+        for entry_type, path in sources:
+            entries = self._read_entries(path, entry_type)
+            for entry in entries:
+                if entry.get("status") != "active":
+                    continue
+                if entry.get("id") == item_id:
+                    continue
+                candidate_text = str(
+                    entry.get("summary")
+                    or entry.get("title")
+                    or entry.get("question")
+                    or ""
+                )
+                similarity = self._bigram_similarity(source_text, candidate_text)
+                if similarity > 0.2:
+                    candidate = self._knowledge_view(entry_type, entry)
+                    candidate["similarity"] = round(similarity, 3)
+                    candidates.append(candidate)
+
+        candidates.sort(key=lambda candidate: candidate["similarity"], reverse=True)
+        candidates = candidates[:max(0, int(limit))]
+        return {
+            "source": self._knowledge_view(item_type, item),
+            "similar": candidates,
+            "total": len(candidates),
         }
 
     def bulk_add_lessons(self, lessons: list, source_tool: str = "") -> dict:

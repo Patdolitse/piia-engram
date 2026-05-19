@@ -52,7 +52,7 @@ def _json(obj: object) -> str:
 
 
 # ===========================================================================
-# READ TOOLS (21)
+# READ TOOLS (22)
 # ===========================================================================
 
 
@@ -251,6 +251,12 @@ async def get_knowledge_digest() -> str:
 async def get_related_knowledge(item_id: str) -> str:
     """Get all knowledge items linked to a given lesson or decision ID."""
     return _json(_engram.get_related_knowledge(item_id))
+
+
+@mcp.tool()
+async def find_similar_knowledge(item_id: str, limit: int = 5) -> str:
+    """Find knowledge items most similar to a given lesson or decision by content."""
+    return _json(_engram.find_similar_knowledge(item_id, limit=limit))
 
 
 @mcp.tool()

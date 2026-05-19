@@ -209,7 +209,8 @@ def test_search_knowledge(tmp_path: Path):
     results = engram.search_knowledge("python")
     assert len(results["lessons"]) == 1
     assert results["lessons"][0]["summary"] == "Python 虚拟环境避免依赖冲突"
-    assert results["lessons"][0]["access_count"] == 1
+    assert results["lessons"][0]["access_count"] == 0
+    assert results["lessons"][0]["_score"] > 0
 
     results = engram.search_knowledge("Apache", scope="decisions")
     assert len(results["decisions"]) == 1
@@ -536,3 +537,79 @@ def test_ingest_notes_skip_short(tmp_path: Path):
 
     assert result["skipped"] == 2
     assert result["saved_lessons"] == 1
+
+
+def test_search_multiword(tmp_path: Path):
+    """search_knowledge 应支持多词拆分匹配。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("python 里遇到 import error 时检查 sys.path", domain="python")
+
+    results = engram.search_knowledge("python error")
+
+    assert len(results["lessons"]) == 1
+    assert results["lessons"][0]["summary"] == "python 里遇到 import error 时检查 sys.path"
+
+
+def test_search_returns_score(tmp_path: Path):
+    """search_knowledge 应在结果中返回相关性分数。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("pytest fixture 可以嵌套使用")
+
+    results = engram.search_knowledge("pytest fixture")
+
+    assert "_score" in results["lessons"][0]
+    assert results["lessons"][0]["_score"] > 0
+
+
+def test_search_ranking(tmp_path: Path):
+    """search_knowledge 应按相关性分数排序。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("pytest 基础用法")
+    engram.add_lesson("pytest fixture 进阶：scope 和 autouse 详解")
+
+    results = engram.search_knowledge("pytest fixture")
+
+    assert results["lessons"][0]["summary"] == "pytest fixture 进阶：scope 和 autouse 详解"
+    assert results["lessons"][0]["_score"] > results["lessons"][1]["_score"]
+
+
+def test_search_no_mutation(tmp_path: Path):
+    """search_knowledge 是只读操作，不应更新 access_count。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("some test lesson")
+    path = engram._knowledge_dir / "lessons.json"
+    original_access = next(
+        item for item in engram._read_entries(path, "lesson")
+        if item["id"] == lesson["id"]
+    )["access_count"]
+
+    engram.search_knowledge("test lesson")
+
+    after_access = next(
+        item for item in engram._read_entries(path, "lesson")
+        if item["id"] == lesson["id"]
+    )["access_count"]
+    assert after_access == original_access
+
+
+def test_find_similar_knowledge(tmp_path: Path):
+    """find_similar_knowledge 应找到相似知识并排除低相似度条目。"""
+    engram = make_engram(tmp_path)
+    lesson_a = engram.add_lesson("pytest fixture usage basics", domain="python")
+    lesson_b = engram.add_lesson("fixture setup and teardown in pytest")
+    lesson_c = engram.add_lesson("docker compose network config")
+
+    result = engram.find_similar_knowledge(lesson_a["id"])
+    similar_ids = {item["id"] for item in result["similar"]}
+
+    assert lesson_b["id"] in similar_ids
+    assert lesson_c["id"] not in similar_ids
+
+
+def test_find_similar_not_found(tmp_path: Path):
+    """find_similar_knowledge 对不存在 ID 应返回错误。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.find_similar_knowledge("nonexistent_id")
+
+    assert result == {"error": "Item not found: nonexistent_id"}
