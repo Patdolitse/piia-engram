@@ -20,6 +20,10 @@
 
 ---
 
+> **TL;DR：** Engram 是一个 MCP server，给 Claude Code、Codex、Cursor 提供持久身份层——你的画像、偏好、经验教训、关键决策以本地 JSON 文件存储。一次写入，所有 AI 共享读取。100% 本地，Apache 2.0。
+
+---
+
 AI 工具都很聪明，但它们不认识你。
 
 每换一个工具、一个会话、一个项目，你都要重新解释自己是谁。Engram 把你的身份、偏好、经验、决策持久化为本地文件，通过 MCP 协议让任何 AI 工具共享读取。
@@ -204,6 +208,34 @@ Engram 由人驱动，AI 工具辅助开发：
 | [@Patdolitse](https://github.com/Patdolitse) | 创始人 · 产品方向 · 战略决策 · 版权所有者 |
 | Claude Code | AI 开发工具 — 架构设计 · 任务规划 · 代码审查 |
 | Codex | AI 开发工具 — 代码执行 · 测试 · CI 构建 |
+
+## 常见问题 FAQ
+
+**Engram 是什么？**
+Engram 是一个本地优先的 MCP server，给 Claude Code、Codex、Cursor 等 AI 工具提供持久身份层。它把你是谁、你怎么工作、你学到了什么、你做过哪些决策——以本地 JSON 文件的形式保存在你的机器上。
+
+**Engram 和其他 AI 记忆工具有什么区别？**
+大多数 AI 记忆工具存的是"本次任务做了什么"（会话上下文）。Engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策，跨工具、跨会话、跨项目持续有效。数据是你自己的本地 JSON 文件，可直接编辑。
+
+**支持哪些 AI 工具？**
+任何支持 MCP 协议的工具：Claude Code、OpenAI Codex、Cursor、Claude Desktop 等。不支持 MCP 的工具（ChatGPT、Gemini、Kimi），可以导出 Markdown 身份卡手动粘贴。
+
+**如何安装 Engram？**
+```bash
+git clone https://github.com/Patdolitse/engram.git
+cd engram && pip install -e .
+python demos/setup_engram.py
+```
+配置 MCP 后重启 AI 工具，AI 会在每次新对话开始时自动调用 `get_user_context` 认识你。
+
+**Engram 会把数据发到云端吗？**
+不会。所有数据存在本地 `~/.engram/` 目录，Engram 不发起任何网络请求。记忆属于你。
+
+**Engram 有多少个 MCP 工具？**
+33 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、知识搜索和健康度报告。
+
+**Engram 免费吗？**
+是的。Engram 是 Apache 2.0 开源项目，完全免费。
 
 ## Contributing
 

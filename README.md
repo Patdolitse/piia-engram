@@ -20,6 +20,10 @@
 
 ---
 
+> **TL;DR:** Engram is an MCP server that gives Claude Code, Codex, and Cursor a persistent identity layer — your profile, preferences, lessons learned, and key decisions stored as local JSON files. One write, every AI reads. 100% local, Apache 2.0.
+
+---
+
 AI coding tools are powerful, but they do not really know you.
 
 Every time you switch from Claude Code to Codex, open Cursor, start a new session, or move into a different project, you often have to explain the same things again:
@@ -172,6 +176,34 @@ Engram is a human-directed, AI-assisted open-source project.
 | [@Patdolitse](https://github.com/Patdolitse) | Creator, product direction, strategy, ownership |
 | Claude Code | Architecture, task planning, code review assistance |
 | Codex | Implementation, testing, documentation assistance |
+
+## FAQ
+
+**What is Engram?**
+Engram is a local-first MCP server that gives AI coding tools (Claude Code, Codex, Cursor) a persistent identity layer. It stores who you are, how you work, what you have learned, and the decisions you have made — as local JSON files on your machine.
+
+**How is Engram different from other AI memory tools?**
+Most AI memory tools store what happened in a session (task context, code changes). Engram stores who you are as a person — your identity, preferences, lessons, and decisions. This identity layer persists across tools, sessions, and projects. Your data is local JSON files you own and can edit directly.
+
+**Which AI tools does Engram support?**
+Engram works with any MCP-compatible AI tool: Claude Code, OpenAI Codex, Cursor, Claude Desktop, and others. For tools without MCP support (ChatGPT, Gemini, Kimi), you can export a Markdown identity card and paste it in manually.
+
+**How do I install Engram?**
+```bash
+git clone https://github.com/Patdolitse/engram.git
+cd engram && pip install -e .
+python demos/setup_engram.py
+```
+Then add the MCP config and restart your AI tool. The AI will call `get_user_context` automatically at the start of each session.
+
+**Does Engram send data to the cloud?**
+No. All data is stored in `~/.engram/` on your local machine. Engram never makes network requests. Your memory is yours.
+
+**How many MCP tools does Engram provide?**
+Engram exposes 33 MCP tools covering identity management, lessons learned, key decisions, project snapshots, knowledge search, and health reporting.
+
+**Is Engram free?**
+Yes. Engram is free and open source under the Apache 2.0 license.
 
 ## Contributing
 
