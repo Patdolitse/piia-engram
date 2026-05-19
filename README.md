@@ -205,6 +205,25 @@ Engram exposes 33 MCP tools covering identity management, lessons learned, key d
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.
 
+## Limitations
+
+Engram is functional and actively used, but some things it intentionally does not do yet:
+
+| Area | Current State | Planned |
+|---|---|---|
+| **File safety** | Direct JSON writes (no locking) | Atomic writes + file lock (v2.2) |
+| **Access control** | `trust_boundaries.json` is config, not enforced | Field-level filtering (v2.2) |
+| **Encryption** | Plaintext JSON — treat like any local file | Optional field encryption (v3.0) |
+| **Caller identity** | MCP protocol doesn't pass tool identity | Blocked by MCP spec |
+| **Concurrent writes** | Not protected against parallel tool calls | File lock (v2.2) |
+
+**What this means in practice:**
+- Don't store passwords, API keys, or client PII in Engram
+- Any process with read access to `~/.engram/` can read your data
+- `trust_boundaries.json` expresses intent — it is not a security boundary
+
+This is not a warning to avoid Engram — it's an honest description of what it is: a local, plaintext memory layer for personal AI context. For personal use with non-sensitive data, it works well today.
+
 ## Contributing
 
 Contributions, issues, and feedback are welcome.

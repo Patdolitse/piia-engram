@@ -237,6 +237,25 @@ python demos/setup_engram.py
 **Engram 免费吗？**
 是的。Engram 是 Apache 2.0 开源项目，完全免费。
 
+## 局限性说明
+
+Engram 可以正常使用，但以下功能目前尚未实现：
+
+| 方面 | 当前状态 | 计划版本 |
+|---|---|---|
+| **文件安全** | 直接写 JSON，无文件锁 | 原子写 + 文件锁（v2.2）|
+| **访问控制** | `trust_boundaries.json` 是配置，不执行过滤 | 字段级过滤（v2.2）|
+| **加密** | 明文 JSON，和普通本地文件一样 | 可选字段加密（v3.0）|
+| **调用方身份** | MCP 协议不传递工具身份 | 受 MCP 规范限制 |
+| **并发写保护** | 不支持多工具并发写入 | 文件锁（v2.2）|
+
+**实际使用建议：**
+- 不要在 Engram 里存密码、API Key、客户隐私数据
+- `~/.engram/` 目录下的文件，本机有读权限的进程都可以读取
+- `trust_boundaries.json` 表达意图，不是安全边界
+
+这不是劝你不用 Engram —— 而是对它本质的诚实描述：它是一个本地明文个人 AI 上下文层。用于存储个人偏好、项目决策、技术笔记等非敏感内容，今天就可以正常使用。
+
 ## Contributing
 
 见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。英文版见 [CONTRIBUTING.md](CONTRIBUTING.md)。
