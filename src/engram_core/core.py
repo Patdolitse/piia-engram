@@ -765,6 +765,67 @@ class Engram:
             return self.archive_lesson(item_id)
         return self.archive_decision(item_id)
 
+    def merge_knowledge(self, primary_id: str, secondary_id: str) -> dict:
+        """Merge secondary into primary, then archive the secondary item."""
+        if primary_id == secondary_id:
+            return {"error": "Cannot merge an item with itself"}
+
+        lessons, decisions = self._read_link_collections()
+        primary_type, primary = self._find_item_in_collections(primary_id, lessons, decisions)
+        secondary_type, secondary = self._find_item_in_collections(secondary_id, lessons, decisions)
+
+        if primary is None:
+            return {"error": f"Primary item not found: {primary_id}"}
+        if secondary is None:
+            return {"error": f"Secondary item not found: {secondary_id}"}
+        if primary.get("status") != "active":
+            return {"error": f"Primary item is not active (status={primary.get('status')})"}
+        if secondary.get("status") != "active":
+            return {"error": f"Secondary item is not active (status={secondary.get('status')})"}
+
+        primary_related = set(primary.get("related_ids", []))
+        transferred = []
+        secondary_related = list(secondary.get("related_ids", []))
+
+        for related_id in secondary_related:
+            if related_id in (primary_id, secondary_id):
+                continue
+            if related_id not in primary_related:
+                primary_related.add(related_id)
+                transferred.append(related_id)
+
+        primary_related.discard(primary_id)
+        primary_related.discard(secondary_id)
+        primary["related_ids"] = sorted(primary_related)
+
+        # Preserve bidirectional link semantics for migrated related items.
+        for related_id in secondary_related:
+            if related_id in (primary_id, secondary_id):
+                continue
+            _, related_item = self._find_item_in_collections(related_id, lessons, decisions)
+            if related_item is None:
+                continue
+            related_ids = set(related_item.get("related_ids", []))
+            related_ids.discard(secondary_id)
+            related_ids.discard(related_id)
+            related_ids.add(primary_id)
+            related_item["related_ids"] = sorted(related_ids)
+
+        secondary["status"] = "outdated"
+        secondary["merged_into"] = primary_id
+        secondary["last_updated"] = _now_iso()
+        self._write_link_collections(lessons, decisions)
+
+        return {
+            "success": True,
+            "primary_id": primary_id,
+            "secondary_id": secondary_id,
+            "secondary_archived": True,
+            "related_ids_transferred": len(transferred),
+            "primary_title": self._knowledge_title(primary_type, primary),
+            "secondary_title": self._knowledge_title(secondary_type, secondary),
+        }
+
     def _read_link_collections(self) -> tuple[list[dict], list[dict]]:
         lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
         decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")

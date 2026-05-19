@@ -15,6 +15,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
+[![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
 
 </div>
 
@@ -71,7 +72,8 @@ All data is stored under `~/.engram/` as JSON and Markdown files. You can open, 
 ```bash
 git clone https://github.com/Patdolitse/engram.git
 cd engram
-pip install -e .
+pip install piia-engram      # Install from PyPI (recommended)
+# Or install from source: pip install -e .
 python demos/setup_engram.py
 ```
 
@@ -129,6 +131,7 @@ Common tools include:
 | `export_knowledge_report` | Export a readable Markdown knowledge report |
 | `link_knowledge` | Create a bidirectional link between two knowledge items |
 | `unlink_knowledge` | Remove a bidirectional knowledge link |
+| `merge_knowledge` | Merge a duplicate knowledge item into the primary item |
 | `update_lesson` | Update a lesson (summary, domain, status) |
 | `archive_lesson` | Mark a lesson as outdated |
 | `update_decision` | Update a decision |
@@ -202,7 +205,8 @@ Engram works with any MCP-compatible AI tool: Claude Code, OpenAI Codex, Cursor,
 **How do I install Engram?**
 ```bash
 git clone https://github.com/Patdolitse/engram.git
-cd engram && pip install -e .
+pip install piia-engram
+# Or from source: cd engram && pip install -e .
 python demos/setup_engram.py
 ```
 Then add the MCP config and restart your AI tool. The AI will call `get_user_context` automatically at the start of each session.
@@ -211,7 +215,7 @@ Then add the MCP config and restart your AI tool. The AI will call `get_user_con
 No. All data is stored in `~/.engram/` on your local machine. Engram never makes network requests. Your memory is yours.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 44 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, weighted knowledge search, similarity discovery, digesting, reporting, linking, and health checks.
+Engram exposes 39 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, and health checks.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.

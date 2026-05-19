@@ -1,5 +1,6 @@
-"""验证 pyproject.toml 和 GitHub Actions 包含 PyPI 发布所需配置。"""
+"""验证 pyproject.toml、README 和 GitHub Actions 发布配置。"""
 
+import ast
 from pathlib import Path
 
 try:
@@ -10,6 +11,8 @@ except ImportError:  # pragma: no cover - Python 3.10 fallback
 
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
+README = ROOT / "README.md"
+MCP_SERVER = ROOT / "src" / "engram_core" / "mcp_server.py"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
 
@@ -22,7 +25,7 @@ def test_required_fields():
     """pyproject.toml 应包含 name, version, description, license。"""
     data = _load()["project"]
     assert data["name"] == "piia-engram"
-    assert data["version"] == "2.9.0"
+    assert data["version"] == "3.0.0"
     assert data["description"]
     assert data["license"]
     assert data["authors"]
@@ -90,3 +93,19 @@ def test_publish_workflow_release_trigger_and_token():
     assert "python -m build" in content
     assert "pypa/gh-action-pypi-publish@release/v1" in content
     assert "secrets.PYPI_API_TOKEN" in content
+
+
+def test_readme_uses_pypi_install_and_badge():
+    """README 应展示 PyPI badge 和 piia-engram 安装命令。"""
+    content = README.read_text(encoding="utf-8")
+    assert "https://img.shields.io/pypi/v/piia-engram" in content
+    assert "pip install piia-engram" in content
+    assert "Engram exposes 39 MCP tools" in content
+
+
+def test_mcp_tool_count_and_merge_tool():
+    """MCP server 应暴露 39 个工具且包含 merge_knowledge。"""
+    tree = ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
+    tools = [node.name for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)]
+    assert len(tools) == 39
+    assert "merge_knowledge" in tools

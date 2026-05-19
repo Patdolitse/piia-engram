@@ -647,3 +647,75 @@ def test_archive_knowledge_not_found(tmp_path: Path):
     result = engram.archive_knowledge("nonexistent_id")
 
     assert "error" in result
+
+
+def test_merge_knowledge_basic(tmp_path: Path):
+    """合并后 primary 保留，secondary 归档。"""
+    engram = make_engram(tmp_path)
+    primary_lesson = engram.add_lesson("保留主条目的工程实践", domain="engineering")
+    secondary_lesson = engram.add_lesson("归档次要条目的维护经验", domain="maintenance")
+
+    result = engram.merge_knowledge(primary_lesson["id"], secondary_lesson["id"])
+
+    assert result["success"] is True
+    assert result["secondary_archived"] is True
+
+    all_lessons = engram._read_entries(engram._knowledge_dir / "lessons.json", "lesson")
+    secondary = next(item for item in all_lessons if item["id"] == secondary_lesson["id"])
+    assert secondary["status"] == "outdated"
+    assert secondary["merged_into"] == primary_lesson["id"]
+
+    primary = next(item for item in all_lessons if item["id"] == primary_lesson["id"])
+    assert primary["status"] == "active"
+    assert primary["summary"] == "保留主条目的工程实践"
+
+
+def test_merge_knowledge_transfers_related_ids(tmp_path: Path):
+    """secondary 的 related_ids 应迁移到 primary（去重并排除自身引用）。"""
+    engram = make_engram(tmp_path)
+    primary_lesson = engram.add_lesson("主条目保留内容", domain="testing")
+    secondary_lesson = engram.add_lesson("次要条目用于合并", domain="quality")
+    related_lesson = engram.add_lesson("关联条目迁移验证", domain="integration")
+
+    engram.link_knowledge(secondary_lesson["id"], related_lesson["id"])
+
+    result = engram.merge_knowledge(primary_lesson["id"], secondary_lesson["id"])
+
+    assert result["related_ids_transferred"] == 1
+    related = engram.get_related_knowledge(primary_lesson["id"])
+    related_ids = [item["id"] for item in related["related"]]
+    assert related_lesson["id"] in related_ids
+    assert secondary_lesson["id"] not in related_ids
+
+
+def test_merge_knowledge_self_merge_rejected(tmp_path: Path):
+    """不能把自己合并到自己。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("自合并测试", domain="test")
+
+    result = engram.merge_knowledge(lesson["id"], lesson["id"])
+
+    assert result == {"error": "Cannot merge an item with itself"}
+
+
+def test_merge_knowledge_nonexistent_rejected(tmp_path: Path):
+    """不存在的 ID 应返回 error。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("存在的条目", domain="test")
+
+    result = engram.merge_knowledge(lesson["id"], "nonexistent_id")
+
+    assert "error" in result
+
+
+def test_merge_knowledge_archived_primary_rejected(tmp_path: Path):
+    """不能以已归档条目为 primary。"""
+    engram = make_engram(tmp_path)
+    primary_lesson = engram.add_lesson("已归档主条目", domain="test")
+    secondary_lesson = engram.add_lesson("待合并次要条目", domain="merge")
+    engram.archive_knowledge(primary_lesson["id"])
+
+    result = engram.merge_knowledge(primary_lesson["id"], secondary_lesson["id"])
+
+    assert "error" in result
+    assert "not active" in result["error"]
