@@ -72,19 +72,37 @@ API quirks, integration gotchas, performance trade-offs — tacit knowledge that
 **Frontend and design**  
 Design philosophy rarely gets documented in a way AI tools can use. Engram stores your real standards, UX lessons from real users, and the reasoning behind component decisions — so every project starts where your last one ended.
 
-## What It Stores
+**Vibe coders**  
+You build with AI and move fast. The problem: every new session your AI starts from scratch — different style choices, inconsistent patterns, re-explaining the same preferences. Engram makes every tool consistent from session one: your stack, your patterns, your voice, already there.
 
-Engram can store:
+## What Engram Stores
 
-- identity and communication preferences
-- coding style and quality standards
-- trust boundaries for AI tools
-- project snapshots
-- lessons learned
-- key technical or product decisions
-- domain knowledge that should be reused later
+All data lives under `~/.engram/` as plain JSON and Markdown files you can open, edit, back up, or migrate yourself.
 
-All data is stored under `~/.engram/` as JSON and Markdown files. You can open, edit, back up, or migrate it yourself.
+- **Identity**: who you are, how you communicate, what languages you prefer
+- **Quality standards**: your code review bar, test coverage expectations, what you refuse to ship
+- **Preferences**: coding style, AI behavior, how you like explanations
+- **Trust boundaries**: which fields to keep private, what tools can access
+- **Project snapshots**: context for ongoing work, captured and reloadable
+- **Lessons learned**: mistakes, surprises, things that worked and didn't
+- **Key decisions**: what you chose, what you ruled out, and why
+- **Domain knowledge**: reusable insights across projects and tools
+
+## What Engram Does (Beyond Storage)
+
+Most memory tools are passive — you put things in, they give them back. Engram is also active.
+
+**Knowledge inheritance across projects**  
+Describe a new project in plain text. `get_knowledge_inheritance` returns a curated starter pack of the most relevant lessons and decisions from everything you have ever worked on. Your tenth project benefits from all nine before it — automatically.
+
+**Passive knowledge capture**  
+Paste a session summary into `extract_session_insights` and Engram automatically extracts and stores the lessons and decisions. No manual note-taking. Knowledge accumulates even when you are not thinking about it.
+
+**Works with tools that do not support MCP**  
+ChatGPT, Gemini, Kimi — `get_identity_card` exports a ready-to-paste Markdown identity card. Your context travels even to tools that cannot connect directly.
+
+**Knowledge health and discovery**  
+`get_knowledge_overview` surfaces stale lessons (not reviewed in 90+ days), gives a health score, and flags gaps worth revisiting. `find_similar_knowledge` finds overlapping items to merge. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
 
 ## Quick Start
 
