@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import sys
@@ -287,3 +288,76 @@ def test_update_decision(tmp_path: Path):
     archived = engram.archive_decision(decision_id)
     assert archived["status"] == "outdated"
     assert engram.get_decisions() == []
+
+
+def test_last_reviewed_updated_on_read(tmp_path: Path):
+    """读取经验教训时应刷新 last_reviewed 和 access_count。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("需要定期复查的经验", "knowledge")
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    old_review = (datetime.now() - timedelta(days=40)).isoformat()
+    lessons[0]["last_reviewed"] = old_review
+    lessons[0]["access_count"] = 0
+    engram._atomic_write(lessons_path, lessons)
+
+    lessons = engram.get_lessons()
+
+    assert lessons[0]["last_reviewed"] != old_review
+    reviewed_at = datetime.fromisoformat(lessons[0]["last_reviewed"])
+    assert reviewed_at > datetime.now() - timedelta(minutes=1)
+    assert lessons[0]["access_count"] == 1
+
+
+def test_get_stale_knowledge(tmp_path: Path):
+    """超过指定天数未访问的 active 知识应出现在 stale 结果中。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("很久没复查的经验", "python")
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    stale_review = (datetime.now() - timedelta(days=40)).isoformat()
+    lessons[0]["last_reviewed"] = stale_review
+    engram._atomic_write(lessons_path, lessons)
+
+    stale = engram.get_stale_knowledge(days=30)
+
+    assert len(stale["lessons"]) == 1
+    assert stale["lessons"][0]["title"] == "很久没复查的经验"
+    assert stale["lessons"][0]["last_reviewed"] == stale_review
+    assert stale["decisions"] == []
+
+
+def test_knowledge_digest_structure(tmp_path: Path):
+    """知识摘要应包含总量、近期新增、常访问、领域分布和过期数量。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("Python 虚拟环境复用经验", "python")
+    engram.add_lesson("架构决策需要记录理由", "architecture")
+    engram.add_decision("日志格式怎么选", "JSON Lines", "方便机器读取", project="architecture")
+    engram.search_knowledge("Python")
+
+    digest = engram.get_knowledge_digest()
+
+    assert digest["total_lessons"] == 2
+    assert digest["total_decisions"] == 1
+    assert "recent_additions" in digest
+    assert "top_accessed" in digest
+    assert "by_domain" in digest
+    assert digest["by_domain"]["python"]["lessons"] == 1
+    assert digest["by_domain"]["architecture"]["decisions"] == 1
+    assert isinstance(digest["stale_count"], int)
+
+
+def test_export_knowledge_report(tmp_path: Path):
+    """知识报告应返回中文 Markdown 内容并写入 exports 目录。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("报告里应该出现的经验", "python", source_tool="codex")
+    engram.add_decision("报告格式怎么选", "Markdown", "人和 AI 都容易读")
+
+    report = engram.export_knowledge_report()
+
+    assert "# 个人知识报告" in report
+    assert "报告里应该出现的经验" in report
+    assert "报告格式怎么选" in report
+    generated = list((tmp_path / "exports").glob("knowledge_report_*.md"))
+    assert len(generated) == 1
+    assert generated[0].read_text(encoding="utf-8") == report

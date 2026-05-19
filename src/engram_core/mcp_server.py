@@ -52,7 +52,7 @@ def _json(obj: object) -> str:
 
 
 # ===========================================================================
-# READ TOOLS (17)
+# READ TOOLS (20)
 # ===========================================================================
 
 
@@ -233,6 +233,24 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> s
 async def get_health_report() -> str:
     """生成知识资产健康度报告。"""
     return _json(_engram.get_health_report())
+
+
+@mcp.tool()
+async def get_stale_knowledge(days: int = 30) -> str:
+    """Get lessons and decisions not accessed for more than N days."""
+    return _json(_engram.get_stale_knowledge(days))
+
+
+@mcp.tool()
+async def get_knowledge_digest() -> str:
+    """Get a summary of the knowledge base: counts, recent additions, top accessed, by domain."""
+    return _json(_engram.get_knowledge_digest())
+
+
+@mcp.tool()
+async def export_knowledge_report() -> str:
+    """Export a full Markdown knowledge report to ~/.engram/exports/ and return the content."""
+    return _engram.export_knowledge_report()
 
 
 # ===========================================================================
