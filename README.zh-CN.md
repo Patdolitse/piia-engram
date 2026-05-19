@@ -10,7 +10,7 @@
 
 `一次写入` · `所有 AI 共享读取` · `100% 本地`
 
-[中文](README.zh-CN.md) | [English](README.md)
+[中文](README.zh-CN.md) | [ENGLISH](README.md)
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
