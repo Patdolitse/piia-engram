@@ -939,3 +939,139 @@ def test_get_profile_normal_mode(tmp_path: Path):
     full_profile = engram.get_profile(safe=False)
 
     assert "email" in full_profile
+
+
+# ── 中文搜索质量 ─────────────────────────────────────────────────────────────
+
+def test_search_chinese_exact(tmp_path: Path):
+    """中文关键词应能精确匹配中文内容。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("工具数量控制在35个以内", domain="mcp_dev")
+    result = engram.search_knowledge("工具", scope="lessons")
+    summaries = [lesson.get("summary", "") for lesson in result["lessons"]]
+    assert any("工具" in summary for summary in summaries)
+
+
+def test_search_chinese_partial(tmp_path: Path):
+    """查询子词应能匹配包含该词的条目。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("MCP server 应支持 stdio 传输", domain="mcp_dev")
+    result = engram.search_knowledge("stdio", scope="lessons")
+    summaries = [lesson.get("summary", "") for lesson in result["lessons"]]
+    assert any("stdio" in summary.lower() for summary in summaries)
+
+
+def test_search_cross_language_alias(tmp_path: Path):
+    """英文查 'tool' 应能匹配含 '工具' 的中文条目。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("工具数量影响AI决策质量", domain="mcp_dev")
+    result = engram.search_knowledge("tool", scope="lessons")
+    summaries = [lesson.get("summary", "") for lesson in result["lessons"]]
+    assert any("工具" in summary for summary in summaries)
+
+
+def test_search_case_insensitive(tmp_path: Path):
+    """大小写不应影响搜索结果。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("MCP server 设计原则", domain="mcp_dev")
+    result_lower = engram.search_knowledge("mcp server", scope="lessons")
+    result_upper = engram.search_knowledge("MCP SERVER", scope="lessons")
+    assert len(result_lower["lessons"]) == len(result_upper["lessons"])
+
+
+def test_bigram_similarity_chinese(tmp_path: Path):
+    """中文 bigram 相似度应对相近内容返回 > 0。"""
+    engram = make_engram(tmp_path)
+    sim = engram._bigram_similarity("工具数量", "工具设计数量")
+    assert sim > 0.0
+
+
+def test_tokenize_cjk(tmp_path: Path):
+    """_tokenize 应提取 CJK 字符 unigram 和 bigram。"""
+    engram = make_engram(tmp_path)
+    tokens = engram._tokenize("工具数量")
+    assert "工" in tokens
+    assert "工具" in tokens
+    assert "具数" in tokens
+
+
+def test_tokenize_alias_expansion(tmp_path: Path):
+    """_tokenize 应将 'tool' 展开为包含 '工具' 的 token 集合。"""
+    engram = make_engram(tmp_path)
+    tokens = engram._tokenize("tool design")
+    assert "工具" in tokens
+    assert "tool" in tokens
+
+
+# ── extract_session_insights ─────────────────────────────────────────────────
+
+def test_extract_session_insights_basic(tmp_path: Path):
+    """段落摘要应能提取 lessons 和 decisions。"""
+    engram = make_engram(tmp_path)
+    summary = """
+    我们决定采用 portalocker 来保护文件写入。
+    发现 Python bigram 对中文支持不好，需要改进。
+    最终选择了字符级 n-gram 方案。
+    """
+
+    result = engram.extract_session_insights(summary, source_tool="test")
+
+    assert result["saved_lessons"] + result["saved_decisions"] > 0
+
+
+def test_extract_session_insights_english(tmp_path: Path):
+    """英文摘要也应能提取知识。"""
+    engram = make_engram(tmp_path)
+    summary = (
+        "We decided to use GitHub Releases to trigger PyPI publishing. "
+        "Remember to check package name availability before publishing."
+    )
+
+    result = engram.extract_session_insights(summary, source_tool="test")
+
+    assert result["saved_lessons"] + result["saved_decisions"] > 0
+
+
+def test_extract_session_insights_empty(tmp_path: Path):
+    """空摘要应返回全零结果，不报错。"""
+    engram = make_engram(tmp_path)
+
+    result = engram.extract_session_insights("", source_tool="test")
+
+    assert result["saved_lessons"] == 0
+    assert result["saved_decisions"] == 0
+    assert result["results"] == []
+
+
+def test_extract_session_insights_deduplication(tmp_path: Path):
+    """重复调用相同摘要不应重复存储。"""
+    engram = make_engram(tmp_path)
+    summary = "注意：PyPI 包名需要提前确认是否被占用。"
+
+    result1 = engram.extract_session_insights(summary, source_tool="test")
+    result2 = engram.extract_session_insights(summary, source_tool="test")
+
+    assert result1["saved_lessons"] >= 1
+    assert result2["duplicates"] >= 1
+
+
+def test_extract_session_insights_skips_noise(tmp_path: Path):
+    """短句和无意义内容应被跳过。"""
+    engram = make_engram(tmp_path)
+    summary = "OK\n好的\n嗯\n确认"
+
+    result = engram.extract_session_insights(summary, source_tool="test")
+
+    assert result["skipped"] > 0
+    assert result["saved_lessons"] == 0
+    assert result["saved_decisions"] == 0
+
+
+def test_extract_session_insights_broader_patterns(tmp_path: Path):
+    """'应该'/'因此' 等结构词应触发提取，即使没有 LESSON_TRIGGERS 词。"""
+    engram = make_engram(tmp_path)
+    summary = "应该在发布前运行完整测试套件。因此我们改为使用 Release 触发发布。"
+
+    result = engram.extract_session_insights(summary, source_tool="test")
+
+    assert result["saved_lessons"] + result["saved_decisions"] >= 1

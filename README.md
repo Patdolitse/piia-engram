@@ -117,6 +117,7 @@ Common tools include:
 | `add_decision` | Add a key decision |
 | `bulk_add_knowledge` | Add multiple lessons or decisions in one call |
 | `ingest_notes` | Parse free-form notes into lessons and decisions |
+| `extract_session_insights` | Extract lessons and decisions from session summaries |
 | `export_engram` | Export a full backup |
 | `import_engram` | Import a backup |
 | `export_engram_to_openclaw` | Export OpenClaw-compatible files |
@@ -210,7 +211,7 @@ Then add the MCP config and restart your AI tool. The AI will call `get_user_con
 All data is stored in `~/.engram/` on your local machine. Engram itself never uploads data anywhere. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked. Core identity and knowledge tools make no network requests.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 35 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, and health checks.
+Engram exposes 36 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, and health checks.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.

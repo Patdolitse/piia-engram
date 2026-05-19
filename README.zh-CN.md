@@ -108,7 +108,7 @@ python demos/setup_engram.py
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
 <details>
-<summary><strong>完整 MCP 工具列表（35 个）</strong></summary>
+<summary><strong>完整 MCP 工具列表（36 个）</strong></summary>
 
 **读取工具：**
 
@@ -142,6 +142,7 @@ python demos/setup_engram.py
 | `add_decision` | 记录关键决策 |
 | `bulk_add_knowledge` | 批量添加经验教训或决策 |
 | `ingest_notes` | 从自由文本笔记提取经验和决策 |
+| `extract_session_insights` | 从会话摘要自动提取经验和决策 |
 | `link_knowledge` | 建立两条知识的双向关联 |
 | `unlink_knowledge` | 移除两条知识的双向关联 |
 | `merge_knowledge` | 合并重复知识条目 |
@@ -245,7 +246,7 @@ python demos/setup_engram.py
 所有数据存在本地 `~/.engram/` 目录，Engram 本身不会上传数据到任何地方。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求，该服务可能进一步抓取外部网页——但此工具只有在你显式调用时才执行。身份和知识类核心工具均不发起网络请求。
 
 **Engram 有多少个 MCP 工具？**
-35 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并和健康度检查。
+36 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并和健康度检查。
 
 **Engram 免费吗？**
 是的。Engram 是 Apache 2.0 开源项目，完全免费。

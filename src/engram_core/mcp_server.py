@@ -275,7 +275,7 @@ async def export_knowledge_report() -> str:
 
 
 # ===========================================================================
-# WRITE TOOLS (16)
+# WRITE TOOLS (17)
 # ===========================================================================
 
 
@@ -368,6 +368,21 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
         domain: 默认领域；未命中关键词推断时使用。
     """
     return _json(_engram.ingest_notes(text, source_tool=source_tool, domain=domain))
+
+
+@mcp.tool()
+async def extract_session_insights(summary: str, source_tool: str = "") -> str:
+    """Extract lessons and decisions from a session summary automatically.
+
+    Call this at the end of a working session with a free-form summary of
+    what happened. Engram will parse it for lessons learned and key decisions
+    made, storing them without requiring manual add_lesson/add_decision calls.
+
+    Args:
+        summary: Free-form session summary, paragraphs, or bullet points.
+        source_tool: The tool calling this, such as "claude_code" or "codex".
+    """
+    return _json(_engram.extract_session_insights(summary, source_tool=source_tool))
 
 
 @mcp.tool()

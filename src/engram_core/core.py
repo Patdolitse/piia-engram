@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import tempfile
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -83,6 +84,27 @@ FIELD_WEIGHTS: dict[str, float] = {
     "reasoning": 1.0,
     "domain": 0.5,
 }
+_TERM_ALIASES: dict[str, list[str]] = {
+    "mcp": ["mcp", "model context protocol"],
+    "python": ["python", "py"],
+    "tool": ["tool", "工具"],
+    "memory": ["memory", "记忆", "内存"],
+    "lesson": ["lesson", "教训", "经验"],
+    "decision": ["decision", "决策", "决定"],
+    "search": ["search", "搜索", "查询"],
+    "merge": ["merge", "合并"],
+    "archive": ["archive", "归档"],
+    "project": ["project", "项目"],
+    "knowledge": ["knowledge", "知识"],
+    "config": ["config", "配置"],
+    "test": ["test", "测试"],
+    "error": ["error", "错误", "报错"],
+    "install": ["install", "安装"],
+}
+_ALIAS_LOOKUP: dict[str, str] = {}
+for _canonical, _aliases in _TERM_ALIASES.items():
+    for _alias in _aliases:
+        _ALIAS_LOOKUP[_alias] = _canonical
 
 
 def _engram_root() -> Path:
@@ -388,21 +410,66 @@ class Engram:
             _write_json(path, ensured)
         return ensured
 
+    def _tokenize(self, text: str, *, expand_aliases: bool = True) -> set[str]:
+        """Tokenize text into character n-grams plus normalized aliases."""
+        if not text:
+            return set()
+
+        text_lower = text.lower()
+        tokens: set[str] = set()
+
+        for word in re.split(r"[^a-z0-9]+", text_lower):
+            if not word:
+                continue
+            tokens.add(word)
+            canonical = _ALIAS_LOOKUP.get(word) if expand_aliases else None
+            if canonical:
+                tokens.add(canonical)
+                tokens.update(_TERM_ALIASES.get(canonical, []))
+
+        cjk_chars = [ch for ch in text_lower if "\u4e00" <= ch <= "\u9fff"]
+        for ch in cjk_chars:
+            tokens.add(ch)
+            canonical = _ALIAS_LOOKUP.get(ch) if expand_aliases else None
+            if canonical:
+                tokens.add(canonical)
+                tokens.update(_TERM_ALIASES.get(canonical, []))
+        for i in range(len(cjk_chars) - 1):
+            bigram = cjk_chars[i] + cjk_chars[i + 1]
+            tokens.add(bigram)
+            canonical = _ALIAS_LOOKUP.get(bigram) if expand_aliases else None
+            if canonical:
+                tokens.add(canonical)
+                tokens.update(_TERM_ALIASES.get(canonical, []))
+
+        return tokens
+
     def _bigram_similarity(self, a: str, b: str) -> float:
-        """Calculate a simple bigram similarity score between 0 and 1."""
+        """Similarity score using tokenized sets (works for CJK and ASCII)."""
         if not a or not b:
             return 0.0
-        a_lower, b_lower = a.lower(), b.lower()
-        a_bigrams = {a_lower[i:i + 2] for i in range(len(a_lower) - 1)}
-        b_bigrams = {b_lower[i:i + 2] for i in range(len(b_lower) - 1)}
-        if not a_bigrams or not b_bigrams:
+        a_tokens = {
+            token for token in self._tokenize(a, expand_aliases=False)
+            if not (len(token) == 1 and "\u4e00" <= token <= "\u9fff")
+        }
+        b_tokens = {
+            token for token in self._tokenize(b, expand_aliases=False)
+            if not (len(token) == 1 and "\u4e00" <= token <= "\u9fff")
+        }
+        if not a_tokens or not b_tokens:
             return 0.0
-        intersection = a_bigrams & b_bigrams
-        return 2.0 * len(intersection) / (len(a_bigrams) + len(b_bigrams))
+        intersection = a_tokens & b_tokens
+        return 2.0 * len(intersection) / (len(a_tokens) + len(b_tokens))
 
     def _score_item(self, item: dict, terms: list[str]) -> float:
         """Score a knowledge item against query terms using weighted fields."""
         if not terms:
+            return 0.0
+
+        query_tokens: set[str] = set()
+        for term in terms:
+            query_tokens.update(self._tokenize(term))
+        if not query_tokens:
             return 0.0
 
         score = 0.0
@@ -410,8 +477,11 @@ class Engram:
             value = str(item.get(field, "")).lower()
             if not value:
                 continue
-            matched = sum(1 for term in terms if term in value)
-            score += weight * (matched / len(terms))
+            field_tokens = self._tokenize(value)
+            if not field_tokens:
+                continue
+            matched = len(query_tokens & field_tokens)
+            score += weight * (matched / len(query_tokens))
 
         primary = str(
             item.get("summary")
@@ -1307,6 +1377,112 @@ class Engram:
         return {
             "total_lines": len(lines),
             "parsed": parsed,
+            "saved_lessons": saved_lessons,
+            "saved_decisions": saved_decisions,
+            "duplicates": duplicates,
+            "skipped": skipped,
+            "results": results,
+        }
+
+    def extract_session_insights(
+        self,
+        summary: str,
+        source_tool: str = "",
+    ) -> dict:
+        """Extract lessons and decisions from a free-form session summary."""
+        if not summary or not summary.strip():
+            return {
+                "saved_lessons": 0,
+                "saved_decisions": 0,
+                "duplicates": 0,
+                "skipped": 0,
+                "results": [],
+            }
+
+        sentences = re.split(r"[。！？.!?\n]+", summary)
+        saved_lessons = saved_decisions = duplicates = skipped = 0
+        results = []
+
+        for raw in sentences:
+            sentence = raw.strip()
+            if not sentence or len(sentence) < 8:
+                skipped += 1
+                continue
+            if not self._has_content_chars(sentence):
+                skipped += 1
+                continue
+
+            sentence_lower = sentence.lower()
+            is_decision = any(trigger in sentence_lower for trigger in DECISION_TRIGGERS)
+            is_lesson = any(trigger in sentence_lower for trigger in LESSON_TRIGGERS)
+
+            if not is_decision and not is_lesson:
+                if re.search(
+                    r"(应该|需要|必须|建议|最好|注意|避免|不要|要|should|must|need|avoid|remember|make sure)",
+                    sentence_lower,
+                ):
+                    is_lesson = True
+                elif re.search(
+                    r"(因此|所以|最终|改为|使用|采用|选择了|therefore|so we|decided to|chose|switched)",
+                    sentence_lower,
+                ):
+                    is_decision = True
+
+            if not is_decision and not is_lesson:
+                skipped += 1
+                results.append({"status": "skipped", "text": sentence[:80]})
+                continue
+
+            item_domain = self._infer_domain(sentence)
+            if is_decision:
+                result = self.add_decision({
+                    "title": sentence,
+                    "choice": "",
+                    "domain": item_domain,
+                    "source_tool": source_tool,
+                })
+                if result.get("status") == "duplicate":
+                    duplicates += 1
+                    results.append({
+                        "type": "decision",
+                        "status": "duplicate",
+                        "title": sentence[:80],
+                        "existing_id": result.get("existing_id"),
+                    })
+                else:
+                    saved_decisions += 1
+                    results.append({
+                        "type": "decision",
+                        "status": "saved",
+                        "id": result.get("id", ""),
+                        "title": sentence[:80],
+                        "domain": item_domain,
+                    })
+            else:
+                result = self.add_lesson({
+                    "summary": sentence,
+                    "domain": item_domain,
+                    "source_tool": source_tool,
+                })
+                if result.get("status") == "duplicate":
+                    duplicates += 1
+                    results.append({
+                        "type": "lesson",
+                        "status": "duplicate",
+                        "summary": sentence[:80],
+                        "existing_id": result.get("existing_id"),
+                    })
+                else:
+                    saved_lessons += 1
+                    results.append({
+                        "type": "lesson",
+                        "status": "saved",
+                        "id": result.get("id", ""),
+                        "summary": sentence[:80],
+                        "domain": item_domain,
+                    })
+
+        return {
             "saved_lessons": saved_lessons,
             "saved_decisions": saved_decisions,
             "duplicates": duplicates,

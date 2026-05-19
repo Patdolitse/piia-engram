@@ -26,7 +26,7 @@ def test_required_fields():
     """pyproject.toml 应包含 name, version, description, license。"""
     data = _load()["project"]
     assert data["name"] == "piia-engram"
-    assert data["version"] == "3.2.0"
+    assert data["version"] == "3.3.0"
     assert data["description"]
     assert data["license"]
     assert data["authors"]
@@ -101,19 +101,20 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "Engram exposes 35 MCP tools" in content
+    assert "Engram exposes 36 MCP tools" in content
 
 
 def test_mcp_tool_count_and_merge_tool():
-    """MCP server 应暴露 35 个工具且包含合并后的统一工具。"""
+    """MCP server 应暴露 36 个工具且包含合并后的统一工具。"""
     tree = ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
     tools = [node.name for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)]
-    assert len(tools) == 35
+    assert len(tools) == 36
     assert "update_knowledge" in tools
     assert "bulk_add_knowledge" in tools
     assert "get_knowledge_overview" in tools
     assert "merge_knowledge" in tools
     assert "get_knowledge_inheritance" in tools
+    assert "extract_session_insights" in tools
     assert "get_safe_profile" not in tools
     assert "update_lesson" not in tools
     assert "update_decision" not in tools
@@ -124,18 +125,19 @@ def test_mcp_tool_count_and_merge_tool():
     assert "get_knowledge_digest" not in tools
 
 
-def test_zh_readme_uses_pypi_install_and_35_tools():
+def test_zh_readme_uses_pypi_install_and_36_tools():
     """中文 README 应同步 PyPI badge、安装命令和工具数量。"""
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "完整 MCP 工具列表（35 个）" in content
-    assert "35 个 MCP 工具" in content
+    assert "完整 MCP 工具列表（36 个）" in content
+    assert "36 个 MCP 工具" in content
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content
     assert "`get_knowledge_inheritance`" in content
     assert "`merge_knowledge`" in content
+    assert "`extract_session_insights`" in content
     assert "`get_safe_profile`" not in content
     assert "`bulk_add_lessons`" not in content
     assert "`bulk_add_decisions`" not in content
