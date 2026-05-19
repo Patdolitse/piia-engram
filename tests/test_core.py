@@ -719,3 +719,103 @@ def test_merge_knowledge_archived_primary_rejected(tmp_path: Path):
 
     assert "error" in result
     assert "not active" in result["error"]
+
+
+def test_knowledge_inheritance_returns_relevant_items(tmp_path: Path):
+    """描述中出现的关键词应能召回相关条目。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("Python 异步编程优先用 asyncio", domain="python")
+    engram.add_lesson("前端组件应保持无状态", domain="frontend")
+    engram.add_decision(
+        "选择 MCP 协议作为工具接口标准",
+        choice="MCP",
+        reasoning="跨工具兼容",
+    )
+
+    result = engram.get_knowledge_inheritance("Python MCP server asyncio")
+
+    assert result["total"] > 0
+    titles = [item.get("title") or item.get("summary") or item.get("question") or "" for item in result["items"]]
+    assert any("Python" in title or "MCP" in title or "asyncio" in title for title in titles)
+
+
+def test_knowledge_inheritance_mixed_types(tmp_path: Path):
+    """结果应同时包含 lesson 和 decision（如果都相关）。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("MCP server 应支持 stdio 传输", domain="mcp_dev")
+    engram.add_decision(
+        "MCP 工具数量控制在 40 以内",
+        choice="≤40 tools",
+        reasoning="超过20个工具 AI 决策质量下降",
+    )
+
+    result = engram.get_knowledge_inheritance("MCP server tool design", limit=10)
+
+    types_found = {item["type"] for item in result["items"]}
+    assert "lesson" in types_found
+    assert "decision" in types_found
+
+
+def test_knowledge_inheritance_ranked_by_score(tmp_path: Path):
+    """items 应按 score 降序排列，rank 从 1 开始。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("文件写入使用原子操作防止竞争", domain="engineering")
+    engram.add_lesson("记录每次重构的原因", domain="engineering")
+
+    result = engram.get_knowledge_inheritance("文件写入原子操作", limit=5)
+
+    if result["total"] >= 2:
+        scores = [item["score"] for item in result["items"]]
+        assert scores == sorted(scores, reverse=True)
+    ranks = [item["rank"] for item in result["items"]]
+    assert ranks == list(range(1, len(ranks) + 1))
+
+
+def test_knowledge_inheritance_recommended_domains(tmp_path: Path):
+    """recommended_domains 应包含匹配条目的 domain。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("Python typing 提升代码可读性", domain="python")
+    engram.add_lesson("Python 异常应有详细 message", domain="python")
+
+    result = engram.get_knowledge_inheritance("Python 类型注解 异常处理")
+
+    assert "python" in result["recommended_domains"]
+
+
+def test_knowledge_inheritance_empty_description(tmp_path: Path):
+    """空描述应返回空结果，不报错。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("任意教训", domain="test")
+
+    result = engram.get_knowledge_inheritance("")
+
+    assert result["total"] == 0
+    assert result["items"] == []
+    assert result["recommended_domains"] == []
+
+
+def test_knowledge_inheritance_limit_respected(tmp_path: Path):
+    """limit 参数应被遵守。"""
+    engram = make_engram(tmp_path)
+    summaries = [
+        "alpha ingestion notes",
+        "bravo context startup",
+        "charlie tool routing",
+        "delta memory recall",
+        "echo project kickoff",
+        "foxtrot archive hygiene",
+        "golf report export",
+        "hotel search tuning",
+        "india workflow guard",
+        "juliet release notes",
+    ]
+    for summary in summaries:
+        engram.add_lesson({
+            "summary": summary,
+            "detail": "Python MCP knowledge inheritance",
+            "domain": "python",
+        })
+
+    result = engram.get_knowledge_inheritance("Python MCP", limit=3)
+
+    assert result["total"] <= 3

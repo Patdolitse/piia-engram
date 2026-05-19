@@ -618,6 +618,69 @@ class Engram:
         result = relevant[:n_relevant] + universal[:n_universal] + other[:n_other]
         return result[:limit]
 
+    def get_knowledge_inheritance(
+        self,
+        description: str,
+        limit: int = 10,
+    ) -> dict:
+        """Return a ranked lessons + decisions inheritance pack for free text."""
+        terms = [term for term in (description or "").lower().split() if term]
+        limit = max(1, int(limit))
+
+        if not terms:
+            return {
+                "description": description,
+                "total": 0,
+                "recommended_domains": [],
+                "items": [],
+            }
+
+        scored: list[tuple[float, str, dict]] = []
+
+        lessons_path = self._knowledge_dir / "lessons.json"
+        for lesson in self._read_entries(lessons_path, "lesson"):
+            if lesson.get("status") != "active":
+                continue
+            score = self._score_item(lesson, terms)
+            if score > 0:
+                scored.append((score, "lesson", lesson))
+
+        decisions_path = self._knowledge_dir / "decisions.json"
+        for decision in self._read_entries(decisions_path, "decision"):
+            if decision.get("status") != "active":
+                continue
+            score = self._score_item(decision, terms)
+            if score > 0:
+                scored.append((score, "decision", decision))
+
+        scored.sort(key=lambda entry: entry[0], reverse=True)
+        top = scored[:limit]
+
+        domain_counts: dict[str, int] = {}
+        for _, _, item in top:
+            domain = str(item.get("domain", "")).strip()
+            if domain:
+                domain_counts[domain] = domain_counts.get(domain, 0) + 1
+        recommended_domains = sorted(
+            domain_counts,
+            key=lambda domain: (-domain_counts[domain], domain),
+        )
+
+        items = []
+        for rank, (score, item_type, item) in enumerate(top, start=1):
+            view = self._knowledge_view(item_type, item)
+            view["rank"] = rank
+            view["type"] = item_type
+            view["score"] = round(score, 3)
+            items.append(view)
+
+        return {
+            "description": description,
+            "total": len(items),
+            "recommended_domains": recommended_domains,
+            "items": items,
+        }
+
     def update_lesson(self, lesson_id: str, updates: dict) -> dict:
         """Update fields on a lesson entry."""
         path = self._knowledge_dir / "lessons.json"
