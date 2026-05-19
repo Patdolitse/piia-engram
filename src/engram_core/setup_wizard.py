@@ -1,4 +1,4 @@
-"""Engram 安装向导 — engram setup 命令入口。"""
+"""Engram 安装向导 — engram setup / engram doctor 命令入口。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 旧版 MCP server 名称，迁移时需要清理
+LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
 
 # ---------------------------------------------------------------------------
 # 工具检测配置
@@ -121,12 +123,21 @@ def _write_mcp_config(
     mcp_server_path: str,
     data_dir: str | None = None,
 ) -> None:
-    """将 engram 写入指定工具的 MCP 配置（合并，不覆盖其他工具的配置）。"""
+    """将 engram 写入指定工具的 MCP 配置（合并，不覆盖其他工具的配置）。
+    同时自动清理已知的旧版 server 名称（piia-pkc 等）。
+    """
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config = _read_mcp_config(config_path)
 
     if "mcpServers" not in config:
         config["mcpServers"] = {}
+
+    # 清理旧版 server 名称
+    removed = [name for name in LEGACY_SERVER_NAMES if name in config["mcpServers"]]
+    for name in removed:
+        del config["mcpServers"][name]
+    if removed:
+        print(f"  [migrated] removed legacy server(s): {', '.join(removed)}")
 
     entry: dict = {
         "command": python_path,
@@ -243,13 +254,93 @@ def run_setup() -> None:
     print("========================================\n")
 
 
+def run_doctor(fix: bool = False) -> int:
+    """扫描所有已知配置文件，检查旧版 server 名称和失效路径。
+
+    Args:
+        fix: True 时自动修复发现的问题。
+
+    Returns:
+        发现的问题数量（0 = 健康）。
+    """
+    print("\n========================================")
+    print("  Engram Doctor - Config Health Check")
+    print("========================================\n")
+
+    issues: list[tuple[Path, str]] = []  # (config_path, 描述)
+
+    for tool_id, cfg in _tool_configs().items():
+        for config_path in cfg["config_paths"]:
+            if not config_path.is_file():
+                continue
+            config = _read_mcp_config(config_path)
+            servers = config.get("mcpServers", {})
+
+            # 检查旧版名称
+            stale = [n for n in LEGACY_SERVER_NAMES if n in servers]
+            if stale:
+                issues.append((config_path, f"包含旧版 server: {', '.join(stale)}"))
+
+            # 检查 engram 条目路径是否有效
+            engram_entry = servers.get("engram", {})
+            if engram_entry:
+                python_exe = engram_entry.get("command", "")
+                server_script = (engram_entry.get("args") or [""])[0]
+                if python_exe and not Path(python_exe).is_file():
+                    issues.append((config_path, f"Python 路径不存在: {python_exe}"))
+                if server_script and not Path(server_script).is_file():
+                    issues.append((config_path, f"mcp_server.py 路径不存在: {server_script}"))
+
+    if not issues:
+        print("  [ok] All configs look healthy.\n")
+        return 0
+
+    print(f"  [!] Found {len(issues)} issue(s):\n")
+    for path, desc in issues:
+        print(f"  {path}")
+        print(f"    -> {desc}")
+    print()
+
+    if not fix:
+        print("  Run 'engram doctor --fix' to auto-repair the issues above.\n")
+        return len(issues)
+
+    # 自动修复
+    python_path = _find_python()
+    mcp_server_path = _find_mcp_server()
+    if not python_path or not mcp_server_path:
+        print("  [error] Cannot auto-fix: Python 3.10+ or mcp_server.py not found.")
+        print("          Run 'engram setup' to complete installation first.\n")
+        return len(issues)
+
+    fixed = 0
+    seen_paths: set[Path] = set()
+    for path, _ in issues:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        try:
+            _write_mcp_config(path, python_path, mcp_server_path)
+            print(f"  [fixed] {path}")
+            fixed += 1
+        except Exception as exc:
+            print(f"  [error] {path}: {exc}")
+
+    remaining = len(issues) - fixed
+    print(f"\n  Done: {fixed} config(s) updated. Restart your AI tools to apply changes.\n")
+    return remaining
+
+
 def main() -> None:
-    """CLI 入口：engram setup 或 engram（无参数时显示帮助）。"""
+    """CLI 入口：engram setup / engram doctor [--fix]"""
     args = sys.argv[1:]
     if not args or args[0] == "setup":
         run_setup()
+    elif args[0] == "doctor":
+        fix = "--fix" in args
+        sys.exit(run_doctor(fix=fix))
     else:
-        print("Engram CLI\n\n用法: engram setup\n")
+        print("Engram CLI\n\nUsage:\n  engram setup            Interactive install wizard\n  engram doctor           Check config health (all AI tools)\n  engram doctor --fix     Auto-repair any issues found\n")
         sys.exit(0)
 
 
