@@ -207,7 +207,7 @@ python demos/setup_engram.py
 Then add the MCP config and restart your AI tool. The AI will call `get_user_context` automatically at the start of each session.
 
 **Does Engram send data to the cloud?**
-No. All data is stored in `~/.engram/` on your local machine. Engram never makes network requests. Your memory is yours.
+All data is stored in `~/.engram/` on your local machine. Engram itself never uploads data anywhere. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked. Core identity and knowledge tools make no network requests.
 
 **How many MCP tools does Engram provide?**
 Engram exposes 35 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, and health checks.

@@ -35,7 +35,7 @@ fi
 echo "✅ Python: $($PYTHON --version)"
 echo ""
 echo "正在安装 Engram..."
-$PYTHON -m pip install --upgrade engram
+$PYTHON -m pip install --upgrade piia-engram
 
 echo ""
 $PYTHON -m engram_core.setup_wizard setup

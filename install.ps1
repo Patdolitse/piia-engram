@@ -39,7 +39,7 @@ if (-not $python) {
 Write-Host "✅ Python: $python"
 Write-Host ""
 Write-Host "正在安装 Engram..."
-& $python -m pip install --upgrade engram
+& $python -m pip install --upgrade piia-engram
 
 Write-Host ""
 & $python -m engram_core.setup_wizard setup
