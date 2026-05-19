@@ -1,6 +1,6 @@
 [project]
 name = "piia-engram"
-version = "3.0.0"
+version = "3.1.0"
 description = "Engram — AI 记忆印记。你的 AI 记忆，本地存储，跨工具共享。"
 readme = "README.md"
 license = {text = "Apache-2.0"}

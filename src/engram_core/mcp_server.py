@@ -60,7 +60,7 @@ def _json(obj: object) -> str:
 
 
 # ===========================================================================
-# READ TOOLS (20)
+# READ TOOLS (21)
 # ===========================================================================
 
 
@@ -223,6 +223,22 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
     if not lessons:
         return "尚无相关经验教训。"
     return _json(lessons)
+
+
+@mcp.tool()
+async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
+    """Get a knowledge inheritance pack for a new project or task.
+
+    Scores all active lessons and decisions against a free-text description
+    and returns the most relevant items ranked by relevance, without requiring
+    a saved project snapshot.
+
+    Args:
+        description: Free-text description of the new project or task.
+        limit: Max items to return in total (default 10, max 20).
+    """
+    limit = min(int(limit), 20)
+    return _json(_engram.get_knowledge_inheritance(description, limit=limit))
 
 
 @mcp.tool()
