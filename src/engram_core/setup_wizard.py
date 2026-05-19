@@ -254,6 +254,67 @@ def run_setup() -> None:
     print("========================================\n")
 
 
+def auto_migrate() -> None:
+    """升级后首次启动时静默迁移旧配置，每个版本只运行一次。
+
+    由 mcp_server.py 在 stdio 模式启动前调用。
+    不向 stdout 输出任何内容（避免破坏 MCP 协议）。
+    迁移日志写入 ~/.engram/migration.log。
+    """
+    try:
+        import os as _os
+        from datetime import datetime
+
+        # 确定数据目录和哨兵文件
+        data_dir = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+        sentinel = data_dir / ".migrated_version"
+
+        # 读取当前版本
+        try:
+            from engram_core import __version__ as _ver  # type: ignore[import]
+        except Exception:
+            return
+
+        # 已迁移过则跳过
+        if sentinel.is_file() and sentinel.read_text(encoding="utf-8").strip() == _ver:
+            return
+
+        # 扫描所有工具配置，清理旧版名称
+        log_lines: list[str] = []
+        for _tool_id, cfg in _tool_configs().items():
+            for config_path in cfg["config_paths"]:
+                if not config_path.is_file():
+                    continue
+                config = _read_mcp_config(config_path)
+                servers = config.get("mcpServers", {})
+                stale = [n for n in LEGACY_SERVER_NAMES if n in servers]
+                if not stale:
+                    continue
+                for name in stale:
+                    del servers[name]
+                config_path.write_text(
+                    json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                log_lines.append(f"  {config_path}: removed {stale}")
+
+        # 写哨兵（无论是否有迁移，都标记当前版本已处理过）
+        data_dir.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text(_ver, encoding="utf-8")
+
+        # 写迁移日志（仅在有实际变更时）
+        if log_lines:
+            log_file = data_dir / "migration.log"
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"\n[{datetime.now().isoformat()}] engram v{_ver} migration:\n")
+                for line in log_lines:
+                    f.write(line + "\n")
+                f.write("  Restart affected AI tools to apply changes.\n")
+
+    except Exception:
+        pass  # 迁移失败不能导致 MCP server 崩溃
+
+
 def run_doctor(fix: bool = False) -> int:
     """扫描所有已知配置文件，检查旧版 server 名称和失效路径。
 

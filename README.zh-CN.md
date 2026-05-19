@@ -105,6 +105,21 @@ python demos/setup_engram.py
 # 5. 重启 Claude Code，新对话中 AI 会自动调用 get_user_context 认识你
 ```
 
+## 升级
+
+```bash
+pip install --upgrade piia-engram
+```
+
+升级后，Engram 会在下次启动时自动迁移旧版 MCP 配置，无需手动操作。如果 AI 工具仍然显示"MCP 断开连接"，运行：
+
+```bash
+engram doctor        # 查看问题所在
+engram doctor --fix  # 一步自动修复
+```
+
+修复后重启对应的 AI 工具即可。`doctor` 命令会扫描 Claude Code、Cursor、Claude Desktop 的配置文件，移除过时的 server 条目并修复失效路径。
+
 ## 远程部署
 
 在自己的服务器上运行 Engram，从任何地方连接使用。
@@ -336,6 +351,9 @@ pip install piia-engram
 python demos/setup_engram.py
 ```
 配置 MCP 后重启 AI 工具，AI 会在每次新对话开始时自动调用 `get_user_context` 认识你。
+
+**升级后 AI 工具显示"MCP server disconnected"，怎么解决？**
+在终端运行 `engram doctor --fix`，然后重启 AI 工具。该命令会扫描所有已知 MCP 配置（Claude Code、Cursor、Claude Desktop），移除旧版 server 条目并修复失效路径，一步完成。Engram 在下次 server 启动时也会自动执行此迁移，大多数用户不会遇到这个问题。
 
 **Engram 会把数据发到云端吗？**
 所有数据存在本地 `~/.engram/` 目录，Engram 本身不会上传数据到任何地方。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求，该服务可能进一步抓取外部网页——但此工具只有在你显式调用时才执行。身份和知识类核心工具均不发起网络请求。

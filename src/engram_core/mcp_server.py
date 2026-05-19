@@ -705,6 +705,19 @@ def resource_stats() -> str:
 if __name__ == "__main__":
     args = _parse_args()
 
+    # Auto-migrate legacy configs on first run after upgrade (stdio only;
+    # must happen before mcp.run() to avoid polluting the MCP stdio channel).
+    if args.transport == "stdio":
+        try:
+            from engram_core.setup_wizard import auto_migrate  # type: ignore[import]
+        except ImportError:
+            try:
+                from setup_wizard import auto_migrate  # type: ignore[import]
+            except ImportError:
+                auto_migrate = None  # type: ignore[assignment]
+        if auto_migrate is not None:
+            auto_migrate()
+
     if args.transport == "sse":
         token = os.environ.get("ENGRAM_AUTH_TOKEN", "").strip()
         if not token:

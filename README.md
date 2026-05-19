@@ -131,6 +131,21 @@ Add to your AI tool's MCP config:
 
 Restart your MCP-compatible client. A new session will call `get_user_context` automatically.
 
+## Upgrading
+
+```bash
+pip install --upgrade piia-engram
+```
+
+After upgrading, Engram automatically migrates any stale MCP configs the next time its server starts (stdio mode). If your AI tool still shows an "MCP disconnected" error after restarting, run:
+
+```bash
+engram doctor        # show what's wrong
+engram doctor --fix  # auto-repair and fix in one step
+```
+
+Then restart the affected AI tool. The doctor command checks Claude Code, Cursor, and Claude Desktop configs and removes any outdated server entries.
+
 ## Remote Deployment
 
 Run Engram on your own server and connect from anywhere.
@@ -298,6 +313,9 @@ pip install piia-engram
 python demos/setup_engram.py
 ```
 Then add the MCP config and restart your AI tool. The AI will call `get_user_context` automatically at the start of each session.
+
+**After upgrading, my AI tool shows "MCP server disconnected". How do I fix it?**
+Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files (Claude Code, Cursor, Claude Desktop), removes outdated server entries, and repairs broken paths in one step. Engram also runs this migration automatically the next time its server starts, so most users will never see this message.
 
 **Does Engram send data to the cloud?**
 All data is stored in `~/.engram/` on your local machine. Engram itself never uploads data anywhere. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked. Core identity and knowledge tools make no network requests.
