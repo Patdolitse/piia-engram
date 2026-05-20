@@ -251,6 +251,9 @@ def run_setup() -> None:
     print("  Engram 安装完成！")
     print("  重启你的 AI 工具（Claude Code / Cursor）即可使用。")
     print("  AI 对话开始时会自动调用 get_user_context 加载你的身份。")
+    print()
+    print("  遇到问题或有建议？欢迎反馈：")
+    print("  https://github.com/Patdolitse/engram/issues")
     print("========================================\n")
 
 
