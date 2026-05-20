@@ -403,8 +403,11 @@ def main() -> None:
     elif args[0] == "doctor":
         fix = "--fix" in args
         sys.exit(run_doctor(fix=fix))
+    elif args[0] == "stats":
+        from engram_core.stats import run_stats
+        run_stats()
     else:
-        print("Engram CLI\n\nUsage:\n  engram setup            Interactive install wizard\n  engram doctor           Check config health (all AI tools)\n  engram doctor --fix     Auto-repair any issues found\n")
+        print("Engram CLI\n\nUsage:\n  engram setup            Interactive install wizard\n  engram doctor           Check config health (all AI tools)\n  engram doctor --fix     Auto-repair any issues found\n  engram stats            Show project growth metrics\n")
         sys.exit(0)
 
 
