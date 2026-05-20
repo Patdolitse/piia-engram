@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="assets/social_preview.png" alt="Engram - Local AI memory layer" width="640">
+<img src="assets/social_preview.png" alt="Engram - Your AI identity layer" width="640">
 
 # Engram
 
-### A local memory layer for AI coding tools
+### Your AI knows your code. It doesn't know *you*. Engram fixes that.
 
-**Stop re-explaining yourself every time you switch tools, projects, or sessions.**
+**A local identity layer that makes every AI tool start from the same understanding of who you are.**
 
 `Claude Code` | `Codex` | `Cursor` | `MCP compatible` | `100% local`
 
@@ -21,37 +21,34 @@
 
 ---
 
-> **TL;DR:** Engram is an MCP server that gives Claude Code, Codex, and Cursor a persistent identity layer — your profile, preferences, lessons learned, and key decisions stored as local JSON files. One write, every AI reads. 100% local, Apache 2.0.
+> **TL;DR:** Engram is a local identity layer for AI tools — not session memory, not an agent framework, not a hosted database. It stores who you are (profile, preferences, lessons learned, key decisions) as local JSON files on your machine, and exposes them through MCP so every AI tool reads the same you. One write, every AI reads. 100% local, Apache 2.0.
 
 ---
 
-AI coding tools are powerful, but they do not really know you.
+AI coding tools are powerful, but they don't know *you*.
 
-Every time you switch from Claude Code to Codex, open Cursor, start a new session, or move into a different project, you often have to explain the same things again:
+Every time you open a new chat window, switch from Claude Code to Codex, update your AI tool, or move into a different project, you're back to zero:
 
-- how you prefer to communicate
-- how the AI should approach code
-- which project rules matter
-- which mistakes should not happen again
-- why earlier decisions were made
+- your communication preferences — gone
+- your code standards and quality bar — forgotten
+- which mistakes you've already learned from — lost
+- why you made that architecture decision last month — erased
 
-Engram stores that collaboration memory as local files, then exposes it through MCP so different AI tools can read the same user context.
+This happens because AI memory today is locked inside each platform. It belongs to the tool, not to you. The tool updates, resets, or gets replaced — and your context disappears with it.
 
-The goal is simple: **make every compatible AI tool start from the same understanding of you.**
+**Engram gives you a personal identity layer that lives on your machine, independent of any AI tool.** You tell it once who you are, how you work, and what you've learned. Every MCP-compatible tool reads the same context. New chat, new tool, new version — your identity persists.
+
+> **Engram is not an agent memory database.** Tools like Mem0, Zep, and Letta store task context and session history for AI agents. Engram stores *who you are as a person* — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: not what happened in a task, but who is behind every task.
 
 ## Why Engram?
 
 | Without Engram | With Engram |
 |---|---|
-| Every new session starts from zero | AI tools can load your identity and preferences |
-| Switching tools loses accumulated context | Claude Code, Codex, and Cursor can read the same memory |
-| Project rules live in scattered prompts | Rules and decisions are stored as local assets |
-| Past mistakes get repeated | Lessons learned can follow you across tools |
+| New chat window = start from zero | Every conversation already knows you |
+| AI tool updates and your preferences vanish | Your identity lives on your machine, survives any update |
+| Switching tools loses accumulated context | Claude Code, Codex, and Cursor read the same memory |
+| Past mistakes get repeated | Lessons learned follow you across tools and sessions |
 | Memory is locked inside one product | Data stays local, editable, and portable |
-
-Engram is not another chat app, agent framework, or hosted memory service. It is a small local memory layer that sits underneath the tools you already use.
-
-Unlike session-memory tools that remember what happened in a task, Engram stores **who you are** — your identity, preferences, lessons, and decisions — so every AI tool starts from the same understanding of you as a person.
 
 ## Who Uses Engram
 
@@ -297,10 +294,10 @@ Engram is a human-directed, AI-assisted open-source project.
 ## FAQ
 
 **What is Engram?**
-Engram is a local-first MCP server that gives AI coding tools (Claude Code, Codex, Cursor) a persistent identity layer. It stores who you are, how you work, what you have learned, and the decisions you have made — as local JSON files on your machine.
+Engram is a local-first AI identity layer — not session memory, not an agent framework. It stores who you are, how you work, what you've learned, and the decisions you've made — as local JSON files on your machine. Every MCP-compatible AI tool (Claude Code, Codex, Cursor) reads the same identity, so new chats, tool updates, and tool switches never erase your context.
 
-**How is Engram different from other AI memory tools?**
-Most AI memory tools store what happened in a session (task context, code changes). Engram stores who you are as a person — your identity, preferences, lessons, and decisions. This identity layer persists across tools, sessions, and projects. Your data is local JSON files you own and can edit directly.
+**How is Engram different from agent memory tools like Mem0, Zep, or Letta?**
+Those tools store task context and session history for AI agents — what happened during a workflow. Engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.
 
 **Which AI tools does Engram support?**
 Engram works with any MCP-compatible AI tool: Claude Code, OpenAI Codex, Cursor, Claude Desktop, and others. For tools without MCP support (ChatGPT, Gemini, Kimi), you can export a Markdown identity card and paste it in manually.

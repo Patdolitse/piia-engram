@@ -1,14 +1,14 @@
 [project]
 name = "piia-engram"
 version = "3.5.1"
-description = "Engram — AI 记忆印记。你的 AI 记忆，本地存储，跨工具共享。"
+description = "Engram — Your AI identity layer. Stores who you are, not just what you did. Local-first, MCP-compatible."
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 authors = [
     {name = "Engram Contributors"},
 ]
-keywords = ["ai", "memory", "mcp", "knowledge", "personal-knowledge", "llm"]
+keywords = ["ai", "identity", "mcp", "memory", "personal-knowledge", "llm", "context"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
