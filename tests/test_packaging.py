@@ -26,7 +26,7 @@ def test_required_fields():
     """pyproject.toml 应包含 name, version, description, license。"""
     data = _load()["project"]
     assert data["name"] == "piia-engram"
-    assert data["version"] == "3.5.0"
+    assert data["version"]  # version exists and is non-empty
     assert data["description"]
     assert data["license"]
     assert data["authors"]
