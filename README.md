@@ -52,25 +52,33 @@ This happens because AI memory today is locked inside each platform. It belongs 
 
 ## Who Uses Engram
 
-Engram fits anyone whose work involves accumulated judgment — not one-time tasks, but years of lessons, decisions, and hard-won standards that an AI tool should already know.
+Engram is built for developers who use multiple AI coding tools and are tired of re-explaining themselves.
 
-**Developers**  
-Your quality standards (test coverage, naming rules, which hacks you refuse to ship), architecture decisions, and hard-won lessons exist only in your head — and reset every session. With Engram, day one of a new project is not day one: your AI already knows your bottom line.
+**If you switch between Claude Code, Codex, and Cursor** — your code standards, architecture decisions, and hard-won lessons reset every time. Engram makes every tool start from the same understanding of who you are.
 
-**Investment analysts**  
+**If you open 10+ AI chat windows a week** — each one starts from zero. Engram gives every conversation your full context from the first message.
+
+**If you've lost preferences after a tool update** — your identity lives on your machine, not inside any platform. Updates, resets, and migrations don't touch your memory.
+
+<details>
+<summary><strong>Other use cases</strong></summary>
+
+**Investment analysts**
 Decisions get made but reasoning gets lost. Engram stores the full reasoning chain so six months later, "why did I pass on that?" has a real answer — and your analytical framework travels with you across every new analysis.
 
-**System architects**  
+**System architects**
 Architecture decisions need context: what you chose, what you ruled out, and why. Engram keeps living Architecture Decision Records that travel with you across companies and projects, queryable by any AI tool.
 
-**Backend developers**  
+**Backend developers**
 API quirks, integration gotchas, performance trade-offs — tacit knowledge that normally lives in your head and resets when you change jobs. Engram turns it into a searchable library that persists across everything.
 
-**Frontend and design**  
+**Frontend and design**
 Design philosophy rarely gets documented in a way AI tools can use. Engram stores your real standards, UX lessons from real users, and the reasoning behind component decisions — so every project starts where your last one ended.
 
-**Vibe coders**  
+**Vibe coders**
 You build with AI and move fast. The problem: every new session your AI starts from scratch — different style choices, inconsistent patterns, re-explaining the same preferences. Engram makes every tool consistent from session one: your stack, your patterns, your voice, already there.
+
+</details>
 
 ## What Engram Stores
 
@@ -199,43 +207,49 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 
 ## MCP Tools
 
-Engram exposes read, write, project, backup, and compatibility tools through MCP.
+Engram exposes all 37 MCP tools by default. Set `ENGRAM_TOOLS=core` to load only Tier-1 Core tools for a smaller tool list.
 
 Common tools include:
 
-| Tool | Purpose |
-|---|---|
-| `get_user_context` | Load the complete user context at the start of a session |
-| `get_identity_card` | Export a Markdown identity card for tools without MCP |
-| `get_profile` | Read the user profile, optionally filtered with `safe=true` |
-| `get_preferences` | Read communication and workflow preferences |
-| `get_trust_boundaries` | Read data access boundaries |
-| `get_quality_standards` | Read quality expectations |
-| `get_lessons` | Read reusable lessons learned |
-| `get_decisions` | Read key decisions and reasons |
-| `get_relevant_knowledge` | Find knowledge relevant to a project |
-| `get_knowledge_inheritance` | Build a cross-project knowledge starter pack from free text |
-| `save_project_snapshot` | Save project context for later sessions |
-| `add_lesson` | Add a lesson learned |
-| `add_decision` | Add a key decision |
-| `bulk_add_knowledge` | Add multiple lessons or decisions in one call |
-| `ingest_notes` | Parse free-form notes into lessons and decisions |
-| `extract_session_insights` | Extract lessons and decisions from session summaries |
-| `export_engram` | Export a full backup |
-| `import_engram` | Import a backup |
-| `export_engram_to_openclaw` | Export OpenClaw-compatible files |
-| `import_engram_from_openclaw` | Import OpenClaw-compatible files |
-| `search_knowledge` | Search lessons and decisions by weighted multi-term relevance |
-| `get_knowledge_overview` | Knowledge overview: digest, health report, and stale checks |
-| `get_related_knowledge` | Follow links between lessons and decisions |
-| `find_similar_knowledge` | Find similar lessons and decisions by content |
-| `export_knowledge_report` | Export a readable Markdown knowledge report |
-| `link_knowledge` | Create a bidirectional link between two knowledge items |
-| `unlink_knowledge` | Remove a bidirectional knowledge link |
-| `merge_knowledge` | Merge a duplicate knowledge item into the primary item |
-| `update_knowledge` | Update a lesson or decision by ID |
-| `archive_knowledge` | Archive a lesson or decision by ID |
-| `get_audit_log` | Get recent audit log entries |
+| Tool | Tier | Purpose |
+|---|---|---|
+| `get_user_context` | Tier-1 Core | Load the complete user context at the start of a session |
+| `get_identity_card` | Tier-1 Core | Export a Markdown identity card for tools without MCP |
+| `search_knowledge` | Tier-1 Core | Search lessons and decisions by weighted multi-term relevance |
+| `add_lesson` | Tier-1 Core | Add a lesson learned |
+| `add_decision` | Tier-1 Core | Add a key decision |
+| `get_relevant_knowledge` | Tier-1 Core | Find knowledge relevant to a project |
+| `save_project_snapshot` | Tier-1 Core | Save project context for later sessions |
+| `get_project_context` | Tier-1 Core | Read a saved project snapshot |
+| `extract_session_insights` | Tier-1 Core | Extract lessons and decisions from session summaries |
+| `export_engram` | Tier-1 Core | Export a full backup |
+| `get_profile` | Tier-2 Advanced | Read the user profile, optionally filtered with `safe=true` |
+| `get_work_style` | Tier-2 Advanced | Read work style preferences |
+| `get_preferences` | Tier-2 Advanced | Read communication and workflow preferences |
+| `get_trust_boundaries` | Tier-2 Advanced | Read data access boundaries |
+| `get_quality_standards` | Tier-2 Advanced | Read quality expectations |
+| `get_lessons` | Tier-2 Advanced | Read reusable lessons learned |
+| `get_decisions` | Tier-2 Advanced | Read key decisions and reasons |
+| `get_domains` | Tier-2 Advanced | Read domain experience stats |
+| `get_knowledge_inheritance` | Tier-2 Advanced | Build a cross-project knowledge starter pack from free text |
+| `list_projects` | Tier-2 Advanced | List saved project snapshots |
+| `bulk_add_knowledge` | Tier-2 Advanced | Add multiple lessons or decisions in one call |
+| `ingest_notes` | Tier-2 Advanced | Parse free-form notes into lessons and decisions |
+| `import_engram` | Tier-2 Advanced | Import a backup |
+| `export_engram_to_openclaw` | Tier-2 Advanced | Export OpenClaw-compatible files |
+| `import_engram_from_openclaw` | Tier-2 Advanced | Import OpenClaw-compatible files |
+| `read_web_content` | Tier-2 Advanced | Read webpage content through the local Reader service |
+| `get_knowledge_overview` | Tier-2 Advanced | Knowledge overview: digest, health report, and stale checks |
+| `get_related_knowledge` | Tier-2 Advanced | Follow links between lessons and decisions |
+| `find_similar_knowledge` | Tier-2 Advanced | Find similar lessons and decisions by content |
+| `export_knowledge_report` | Tier-2 Advanced | Export a readable Markdown knowledge report |
+| `link_knowledge` | Tier-2 Advanced | Create a bidirectional link between two knowledge items |
+| `unlink_knowledge` | Tier-2 Advanced | Remove a bidirectional knowledge link |
+| `merge_knowledge` | Tier-2 Advanced | Merge a duplicate knowledge item into the primary item |
+| `update_knowledge` | Tier-2 Advanced | Update a lesson or decision by ID |
+| `archive_knowledge` | Tier-2 Advanced | Archive a lesson or decision by ID |
+| `update_identity` | Tier-2 Advanced | Update profile, preferences, trust boundaries, work style, or quality standards |
+| `get_audit_log` | Tier-2 Advanced | Get recent audit log entries |
 
 ## Data Layout
 

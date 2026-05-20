@@ -177,18 +177,116 @@ def _yn(message: str, default: bool = True) -> bool:
     return answer.startswith("y")
 
 
+def _configure_utf8_stdio() -> None:
+    """Prefer UTF-8 output so Windows setup can print Chinese and status icons."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not reconfigure:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (TypeError, ValueError, OSError):
+            pass
+
+
+def _get_engram_class():
+    """Import Engram from package or local script execution context."""
+    try:
+        from engram_core.core import Engram
+    except ImportError:  # pragma: no cover - direct script fallback
+        from core import Engram  # type: ignore
+    return Engram
+
+
+def _run_seed_knowledge_onboarding(
+    data_dir: str | None = None,
+    cwd: Path | None = None,
+) -> dict:
+    """Guide first-time users to save enough seed context for get_user_context."""
+    Engram = _get_engram_class()
+    root = Path(data_dir).expanduser().resolve() if data_dir else Path.home() / ".engram"
+    root.mkdir(parents=True, exist_ok=True)
+    engram = Engram(root=root)
+    current_dir = cwd or Path.cwd()
+
+    print("Step 4/4 — 录入种子知识（可直接回车跳过）")
+    role = _prompt("  你的角色是什么？（如：全栈开发者、产品经理、学生）", "")
+    tech_stack = _prompt("  你常用什么编程语言/技术栈？", "")
+    language = _prompt("  你偏好 AI 用什么语言跟你沟通？（中文/English/其他）", "")
+
+    profile_updates: dict[str, str] = {}
+    if role:
+        profile_updates["role"] = role
+    if language:
+        profile_updates["language"] = language
+    if tech_stack:
+        profile_updates["tech_stack"] = tech_stack
+        existing_profile = engram.get_profile()
+        if not existing_profile.get("description"):
+            profile_updates["description"] = f"常用技术栈：{tech_stack}"
+    if profile_updates:
+        engram.update_profile(profile_updates)
+
+    lessons_added = 0
+    first_lesson = _prompt("  你有没有一条 AI 工具总是忘记的规则或偏好？录入一条试试", "")
+    lesson_inputs = [first_lesson] if first_lesson else []
+    while lesson_inputs and len(lesson_inputs) < 3:
+        next_lesson = _prompt("  还有吗？（直接回车跳过）", "")
+        if not next_lesson:
+            break
+        lesson_inputs.append(next_lesson)
+
+    for lesson in lesson_inputs:
+        result = engram.add_lesson(lesson, domain="setup", source_tool="engram_setup")
+        if result.get("status") != "duplicate":
+            lessons_added += 1
+
+    imported_files: list[str] = []
+    for rule_path in [current_dir / "CLAUDE.md", current_dir / ".cursorrules"]:
+        if not rule_path.is_file():
+            continue
+        if not _yn(f"  检测到 {rule_path.name}，要不要把里面的规则导入 Engram？", default=False):
+            continue
+        try:
+            content = rule_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = rule_path.read_text(encoding="utf-8", errors="replace")
+        if content.strip():
+            engram.ingest_notes(content, source_tool="engram_setup", domain="setup")
+        imported_files.append(rule_path.name)
+
+    print("\n✅ Engram 初始化完成！\n")
+    if role or tech_stack or language:
+        identity_parts = [role or "-", tech_stack or "-", language or "-"]
+        print(f"   身份：{' | '.join(identity_parts)}")
+    else:
+        print("   身份：未填写")
+    print(f"   经验：已录入 {lessons_added} 条")
+    if imported_files:
+        print(f"   导入：{', '.join(imported_files)}")
+    print("\n   下次打开 AI 工具，它就认识你了。\n")
+
+    return {
+        "profile": profile_updates,
+        "lessons_added": lessons_added,
+        "imported_files": imported_files,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 向导主流程
 # ---------------------------------------------------------------------------
 
 def run_setup() -> None:
     """交互式安装向导主流程。"""
+    _configure_utf8_stdio()
     print("\n========================================")
     print("  Engram 安装向导")
     print("========================================\n")
 
     # Step 1 — Python 检测
-    print("Step 1/3 — 检测 Python")
+    print("Step 1/4 — 检测 Python")
     python_path = _find_python()
     if not python_path:
         print("❌ 未找到可用的 Python 3.10+。")
@@ -203,7 +301,7 @@ def run_setup() -> None:
         sys.exit(1)
 
     # Step 2 — 数据目录
-    print("Step 2/3 — 数据目录")
+    print("Step 2/4 — 数据目录")
     default_data_dir = str(Path.home() / ".engram")
     print(f"  知识库默认存储位置: {default_data_dir}")
     custom_dir = _prompt("  自定义路径（直接回车使用默认）", "")
@@ -217,7 +315,7 @@ def run_setup() -> None:
     print()
 
     # Step 3 — 工具检测与配置
-    print("Step 3/3 — 配置 AI 工具")
+    print("Step 3/4 — 配置 AI 工具")
     tools = _detect_tools()
     if not tools:
         print("  ⚠️  未检测到支持 MCP 的 AI 工具（Claude Code / Cursor / Claude Desktop）。")
@@ -245,6 +343,9 @@ def run_setup() -> None:
                 print(f"  ✅ {name} 已配置")
             for name in failed:
                 print(f"  ❌ {name} 配置失败")
+
+    selected_data_dir = data_dir or default_data_dir
+    _run_seed_knowledge_onboarding(selected_data_dir)
 
     # 完成
     print("\n========================================")
@@ -407,7 +508,17 @@ def main() -> None:
         from engram_core.stats import run_stats
         run_stats()
     else:
-        print("Engram CLI\n\nUsage:\n  engram setup            Interactive install wizard\n  engram doctor           Check config health (all AI tools)\n  engram doctor --fix     Auto-repair any issues found\n  engram stats            Show project growth metrics\n")
+        print(
+            "Engram CLI\n\n"
+            "Usage:\n"
+            "  engram setup            Interactive install wizard\n"
+            "  engram doctor           Check config health (all AI tools)\n"
+            "  engram doctor --fix     Auto-repair any issues found\n"
+            "  engram stats            Show project growth metrics\n\n"
+            "Tool tiers:\n"
+            "  Default: all MCP tools are loaded.\n"
+            "  Set ENGRAM_TOOLS=core to load only 核心工具 / core MCP tools.\n"
+        )
         sys.exit(0)
 
 

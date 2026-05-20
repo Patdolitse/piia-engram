@@ -37,25 +37,33 @@ AI 工具都很聪明，但它们不认识你。
 
 ## 谁在用 Engram
 
-适合所有靠**积累型判断**工作的人——不是一次性任务，而是多年沉淀的标准、决策和经验教训，AI 应该天然就知道。
+Engram 为同时使用多个 AI 编程工具、厌倦重复自我介绍的开发者而生。
 
-**开发者**  
-你的代码质量标准（测试覆盖率要求、命名规范、哪类 hack 绝对不接受）、架构决策和踩过的坑，原本只活在你脑子里，换个会话就归零。有了 Engram，新项目第一天不是真的第一天——AI 已经知道你的底线。
+**如果你在 Claude Code、Codex、Cursor 之间切换** — 代码标准、架构决策、踩过的坑，每次都要重讲。Engram 让每个工具从同一个起点认识你。
 
-**投资分析师**  
+**如果你每周开 10+ 个 AI 对话框** — 每一个都从零开始。Engram 让每次对话从第一条消息就有你的完整上下文。
+
+**如果你因为工具更新丢过偏好** — 你的身份存在自己电脑里，不在任何平台内部。更新、重置、迁移都不影响你的记忆。
+
+<details>
+<summary><strong>更多使用场景</strong></summary>
+
+**投资分析师**
 决策做了，但推理链丢了。Engram 存下每个决策的完整推理，六个月后"我当时为什么放弃那个机会"有真实答案。你的分析框架，不只是笔记，会跟着你进入每一次新分析。
 
-**系统架构师**  
+**系统架构师**
 架构决策需要上下文：选了什么、排除了什么、为什么。这些内容在 Wiki 里没人读，在记忆里会消失。Engram 保存活的架构决策记录，跨公司、跨项目可检索，AI 在你设计下一个系统时可以直接调用。
 
-**后端开发者**  
+**后端开发者**
 第三方 API 的坑、集成的隐患、性能权衡——这些隐性知识原本只活在你脑子里，换工作就归零。Engram 把它们变成可搜索的知识库，在新项目遇到同类问题时主动提醒你。
 
-**前端与设计**  
+**前端与设计**
 你的设计哲学、真实用户反馈带来的 UX 教训、组件选型背后的理由，很少能以 AI 工具能用的方式记录下来。Engram 把这些存成可供 AI 调用的知识，每个新项目都从上一个结束的地方继续。
 
-**Vibe 编程用户**  
+**Vibe 编程用户**
 你用 AI 快速构建，每次开新会话却要重头解释：你的技术栈、你的风格偏好、你不想要的写法。Engram 让每个工具从第一条消息就认识你——同样的栈、同样的模式、同样的语气，不用再重复自己。
+
+</details>
 
 ## Engram 不只是存储
 
@@ -221,62 +229,59 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 <details>
 <summary><strong>完整 MCP 工具列表（37 个）</strong></summary>
 
+默认暴露全部 37 个 MCP 工具。设置 `ENGRAM_TOOLS=core` 可以只加载 Tier-1 核心工具，减少工具列表长度。
+
 **读取工具：**
 
-| 工具 | 功能 |
-|------|------|
-| `get_user_context` | 冷启动，加载完整用户上下文 |
-| `get_identity_card` | 导出 Markdown 身份卡 |
-| `get_profile` | 读取身份画像，可用 safe 模式过滤受限字段 |
-| `get_work_style` | 读取工作方式 |
-| `get_preferences` | 读取偏好（v2.0） |
-| `get_trust_boundaries` | 读取信任边界 |
-| `get_quality_standards` | 读取质量标准 |
-| `get_lessons` | 读取经验教训 |
-| `get_decisions` | 读取关键决策 |
-| `get_domains` | 读取领域经验图谱 |
-| `get_relevant_knowledge` | 按项目检索相关知识 |
-| `get_knowledge_inheritance` | 根据自由文本生成跨项目知识继承包 |
-| `get_project_context` | 读取项目快照 |
-| `list_projects` | 列出所有项目 |
-| `get_stats` | 知识资产统计 |
-| `get_knowledge_overview` | 知识概览（摘要 + 健康度 + 过期检查） |
-| `get_related_knowledge` | 查询某条知识关联的其他知识 |
-| `find_similar_knowledge` | 按内容查找相似知识 |
-| `export_knowledge_report` | 导出 Markdown 知识报告 |
+| 工具 | 分层 | 功能 |
+|------|------|------|
+| `get_user_context` | Tier-1 核心 | 冷启动，加载完整用户上下文 |
+| `get_identity_card` | Tier-1 核心 | 导出 Markdown 身份卡 |
+| `search_knowledge` | Tier-1 核心 | 多词加权搜索经验教训和关键决策 |
+| `get_relevant_knowledge` | Tier-1 核心 | 按项目检索相关知识 |
+| `get_project_context` | Tier-1 核心 | 读取项目快照 |
+| `get_profile` | Tier-2 高级 | 读取身份画像，可用 safe 模式过滤受限字段 |
+| `get_work_style` | Tier-2 高级 | 读取工作方式 |
+| `get_preferences` | Tier-2 高级 | 读取偏好（v2.0） |
+| `get_trust_boundaries` | Tier-2 高级 | 读取信任边界 |
+| `get_quality_standards` | Tier-2 高级 | 读取质量标准 |
+| `get_lessons` | Tier-2 高级 | 读取经验教训 |
+| `get_decisions` | Tier-2 高级 | 读取关键决策 |
+| `get_domains` | Tier-2 高级 | 读取领域经验图谱 |
+| `get_knowledge_inheritance` | Tier-2 高级 | 根据自由文本生成跨项目知识继承包 |
+| `list_projects` | Tier-2 高级 | 列出所有项目 |
+| `get_knowledge_overview` | Tier-2 高级 | 知识概览（摘要 + 健康度 + 过期检查） |
+| `get_related_knowledge` | Tier-2 高级 | 查询某条知识关联的其他知识 |
+| `find_similar_knowledge` | Tier-2 高级 | 按内容查找相似知识 |
+| `export_knowledge_report` | Tier-2 高级 | 导出 Markdown 知识报告 |
 
 **写入工具：**
 
-| 工具 | 功能 |
-|------|------|
-| `add_lesson` | 记录经验教训 |
-| `add_decision` | 记录关键决策 |
-| `bulk_add_knowledge` | 批量添加经验教训或决策 |
-| `ingest_notes` | 从自由文本笔记提取经验和决策 |
-| `extract_session_insights` | 从会话摘要自动提取经验和决策 |
-| `link_knowledge` | 建立两条知识的双向关联 |
-| `unlink_knowledge` | 移除两条知识的双向关联 |
-| `merge_knowledge` | 合并重复知识条目 |
-| `update_knowledge` | 更新一条经验教训或决策（自动检测类型） |
-| `archive_knowledge` | 废弃一条经验教训或决策（自动检测类型） |
-| `update_profile` | 更新身份画像 |
-| `update_preferences` | 更新偏好 |
-| `update_trust_boundaries` | 更新信任边界 |
-| `update_work_style` | 更新工作方式（v1 兼容） |
-| `update_quality_standards` | 更新质量标准 |
-| `save_project_snapshot` | 保存项目快照 |
+| 工具 | 分层 | 功能 |
+|------|------|------|
+| `add_lesson` | Tier-1 核心 | 记录经验教训 |
+| `add_decision` | Tier-1 核心 | 记录关键决策 |
+| `extract_session_insights` | Tier-1 核心 | 从会话摘要自动提取经验和决策 |
+| `save_project_snapshot` | Tier-1 核心 | 保存项目快照 |
+| `bulk_add_knowledge` | Tier-2 高级 | 批量添加经验教训或决策 |
+| `ingest_notes` | Tier-2 高级 | 从自由文本笔记提取经验和决策 |
+| `link_knowledge` | Tier-2 高级 | 建立两条知识的双向关联 |
+| `unlink_knowledge` | Tier-2 高级 | 移除两条知识的双向关联 |
+| `merge_knowledge` | Tier-2 高级 | 合并重复知识条目 |
+| `update_knowledge` | Tier-2 高级 | 更新一条经验教训或决策（自动检测类型） |
+| `archive_knowledge` | Tier-2 高级 | 废弃一条经验教训或决策（自动检测类型） |
+| `update_identity` | Tier-2 高级 | 更新身份画像、偏好、信任边界、工作方式或质量标准 |
 
 **导入导出工具：**
 
-| 工具 | 功能 |
-|------|------|
-| `export_engram` | 导出完整备份 |
-| `import_engram` | 导入备份 |
-| `export_engram_to_openclaw` | 导出 OpenClaw 格式 |
-| `import_engram_from_openclaw` | 导入 OpenClaw 格式 |
-| `read_web_content` | 读取网页内容（需 Reader 服务） |
-| `search_knowledge` | 多词加权搜索经验教训和关键决策 |
-| `get_audit_log` | 查询最近的审计日志条目 |
+| 工具 | 分层 | 功能 |
+|------|------|------|
+| `export_engram` | Tier-1 核心 | 导出完整备份 |
+| `import_engram` | Tier-2 高级 | 导入备份 |
+| `export_engram_to_openclaw` | Tier-2 高级 | 导出 OpenClaw 格式 |
+| `import_engram_from_openclaw` | Tier-2 高级 | 导入 OpenClaw 格式 |
+| `read_web_content` | Tier-2 高级 | 读取网页内容（需 Reader 服务） |
+| `get_audit_log` | Tier-2 高级 | 查询最近的审计日志条目 |
 
 </details>
 

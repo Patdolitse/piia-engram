@@ -50,6 +50,20 @@ IDENTITY_FIELDS = frozenset({
     "quality_standards",
 })
 
+TOOL_TIER = os.environ.get("ENGRAM_TOOLS", "all").strip().lower() or "all"
+TIER1_TOOLS = frozenset({
+    "get_user_context",
+    "get_identity_card",
+    "search_knowledge",
+    "add_lesson",
+    "add_decision",
+    "get_relevant_knowledge",
+    "save_project_snapshot",
+    "get_project_context",
+    "extract_session_insights",
+    "export_engram",
+})
+
 mcp = FastMCP(
     "engram",
     instructions=(
@@ -59,6 +73,25 @@ mcp = FastMCP(
         "START every new conversation by calling get_user_context to understand the user."
     ),
 )
+
+
+def _apply_tool_tier() -> None:
+    """Keep all tools by default; allow ENGRAM_TOOLS=core to expose Tier-1 only."""
+    if TOOL_TIER != "core":
+        return
+
+    tool_manager = getattr(mcp, "_tool_manager", None)
+    tools = getattr(tool_manager, "_tools", None)
+    if not isinstance(tools, dict):
+        return
+
+    for name in list(tools):
+        if name in TIER1_TOOLS:
+            continue
+        try:
+            mcp.remove_tool(name)
+        except Exception:
+            tools.pop(name, None)
 
 
 def _json(obj: object) -> str:
@@ -649,6 +682,9 @@ async def get_audit_log(limit: int = 50) -> str:
         except json.JSONDecodeError:
             continue
     return _json({"entries": entries, "total": len(lines)})
+
+
+_apply_tool_tier()
 
 
 # ===========================================================================
