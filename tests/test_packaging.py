@@ -1,6 +1,10 @@
 """验证 pyproject.toml、README 和 GitHub Actions 发布配置。"""
 
 import ast
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 try:
@@ -16,10 +20,49 @@ README_ZH = ROOT / "README.zh-CN.md"
 MCP_SERVER = ROOT / "src" / "engram_core" / "mcp_server.py"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
+SETUP_WIZARD = ROOT / "src" / "engram_core" / "setup_wizard.py"
+
+CORE_MCP_TOOLS = {
+    "get_user_context",
+    "get_identity_card",
+    "search_knowledge",
+    "add_lesson",
+    "add_decision",
+    "get_relevant_knowledge",
+    "save_project_snapshot",
+    "get_project_context",
+    "extract_session_insights",
+    "export_engram",
+}
 
 
 def _load():
     return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+
+
+def _registered_mcp_tools(tmp_path: Path, tools_tier: str | None = None) -> list[str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    env["ENGRAM_DIR"] = str(tmp_path / "engram")
+    if tools_tier is None:
+        env.pop("ENGRAM_TOOLS", None)
+    else:
+        env["ENGRAM_TOOLS"] = tools_tier
+
+    script = (
+        "import json\n"
+        "import engram_core.mcp_server as server\n"
+        "print(json.dumps(sorted(server.mcp._tool_manager._tools.keys())))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
 
 
 def test_required_fields():
@@ -135,6 +178,16 @@ def test_readme_has_remote_deployment_section():
     assert '"Authorization": "Bearer abc123..."' in content
 
 
+def test_readme_documents_tool_tiering():
+    """English README should explain the core/all MCP tool tiers."""
+    content = README.read_text(encoding="utf-8")
+
+    assert "ENGRAM_TOOLS=core" in content
+    assert "Tier-1 Core" in content
+    assert "Tier-2 Advanced" in content
+    assert "| `get_user_context` | Tier-1 Core |" in content
+
+
 def test_mcp_tool_count_and_merge_tool():
     """MCP server 应暴露 36 个工具且包含合并后的统一工具。"""
     tree = ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
@@ -168,6 +221,33 @@ def test_mcp_tool_count_and_merge_tool():
     assert "get_knowledge_digest" not in tools
 
 
+def test_mcp_tools_default_to_all_registered_tools(tmp_path: Path):
+    """未设置 ENGRAM_TOOLS 时应保持全部 37 个工具，避免破坏现有用户。"""
+    tools = _registered_mcp_tools(tmp_path)
+
+    assert len(tools) == 37
+    assert set(CORE_MCP_TOOLS).issubset(tools)
+    assert "get_profile" in tools
+    assert "bulk_add_knowledge" in tools
+
+
+def test_mcp_tools_core_tier_registers_only_core_tools(tmp_path: Path):
+    """ENGRAM_TOOLS=core 时应只暴露 Tier-1 核心工具。"""
+    tools = _registered_mcp_tools(tmp_path, tools_tier="core")
+
+    assert set(tools) == CORE_MCP_TOOLS
+    assert "get_profile" not in tools
+    assert "bulk_add_knowledge" not in tools
+
+
+def test_setup_help_mentions_core_tool_tier():
+    """CLI help 应提示可以用 ENGRAM_TOOLS=core 精简工具列表。"""
+    content = SETUP_WIZARD.read_text(encoding="utf-8")
+
+    assert "ENGRAM_TOOLS=core" in content
+    assert "核心工具" in content
+
+
 def test_zh_readme_uses_pypi_install_and_36_tools():
     """中文 README 应同步 PyPI badge、安装命令和工具数量。"""
     content = README_ZH.read_text(encoding="utf-8")
@@ -184,6 +264,16 @@ def test_zh_readme_uses_pypi_install_and_36_tools():
     assert "`get_safe_profile`" not in content
     assert "`bulk_add_lessons`" not in content
     assert "`bulk_add_decisions`" not in content
+
+
+def test_zh_readme_documents_tool_tiering():
+    """中文 README 应说明 core/all 工具分层。"""
+    content = README_ZH.read_text(encoding="utf-8")
+
+    assert "ENGRAM_TOOLS=core" in content
+    assert "Tier-1 核心" in content
+    assert "Tier-2 高级" in content
+    assert "| `get_user_context` | Tier-1 核心 |" in content
 
 
 def test_zh_readme_has_remote_deployment_section():
