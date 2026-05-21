@@ -3838,12 +3838,12 @@ def extract_knowledge(
         messages = [{"role": "user", "content": prompt}]
         raw = provider.chat(messages, project_folder)
 
-        import re
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
             return json.loads(match.group())
-    except Exception:
-        pass
+    except Exception as exc:
+        import sys
+        print(f"[engram] extract_knowledge LLM call failed: {exc}", file=sys.stderr)
     return None
 
 

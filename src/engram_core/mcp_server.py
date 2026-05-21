@@ -1068,23 +1068,23 @@ async def wrap_up_session(
         reconcile = _engram.reconcile_memories()
         if reconcile["imported"] > 0:
             results["memory_sync"] = reconcile
-    except Exception:
-        pass  # Never let reconcile failure block wrap-up
+    except Exception as exc:
+        print(f"[engram] reconcile_memories failed: {exc}", file=sys.stderr)
 
     try:
         cfg_sync = _engram.reconcile_ai_configs()
         if cfg_sync["imported"] > 0:
             results["config_sync"] = cfg_sync
-    except Exception:
-        pass  # Never let config scan failure block wrap-up
+    except Exception as exc:
+        print(f"[engram] reconcile_ai_configs failed: {exc}", file=sys.stderr)
 
-    # Step 4: Evaluate tier promotions (staging→verified based on access evidence)
+    # Step 4: Evaluate tier promotions (staging->verified based on access evidence)
     try:
         tier_result = _engram.evaluate_tiers()
         if tier_result["promoted"] > 0:
             results["tier_promotions"] = tier_result
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[engram] evaluate_tiers failed: {exc}", file=sys.stderr)
 
     # Step 5: Report staging backlog
     try:
@@ -1099,8 +1099,8 @@ async def wrap_up_session(
                 ),
                 **staging,
             }
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[engram] get_staging_summary failed: {exc}", file=sys.stderr)
 
     return _json(results)
 
