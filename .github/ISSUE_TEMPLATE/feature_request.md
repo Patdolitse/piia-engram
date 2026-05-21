@@ -1,15 +1,15 @@
 ---
-name: Feature Request
-about: 建议一个新功能
+name: Feature Request / 功能建议
+about: Suggest a new feature or improvement / 建议一个新功能
 title: "[Feature] "
 labels: enhancement
 assignees: ''
 ---
 
-## 需求描述
+## Description / 需求描述
 
-## 使用场景
+## Use case / 使用场景
 
-## 你希望它怎么工作
+## How it should work / 你希望它怎么工作
 
-## 其他上下文
+## Additional context / 其他上下文
