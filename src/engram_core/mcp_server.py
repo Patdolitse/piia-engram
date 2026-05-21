@@ -264,7 +264,11 @@ async def get_domains() -> str:
 
 @mcp.tool()
 async def get_project_context(project_folder: str) -> str:
-    """获取特定项目的知识快照。
+    """读取特定项目的知识快照（项目级，只含该项目的历史）。
+
+    用途：想了解某个项目之前的技术栈、已知问题、协作次数时调用。
+    注意：如果想获取用户级的完整身份上下文（跨项目），用 get_user_context。
+    如果想写入项目快照，用 save_project_snapshot。
 
     Args:
         project_folder: 项目文件夹路径。
@@ -286,10 +290,10 @@ async def list_projects() -> str:
 
 @mcp.tool()
 async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
-    """获取与当前项目最相关的经验教训（跨项目知识继承）。
+    """按项目路径自动推荐最相关的经验教训（无需搜索词）。
 
-    根据项目技术栈智能筛选：相关领域的教训优先，通用教训补充。
-    比 get_lessons 更精准——不是按时间排序，而是按相关度排序。
+    用途：你知道当前项目路径但不知道该搜什么词时调用——Engram 根据项目技术栈自动筛选。
+    注意：如果用户给了明确的搜索词，用 search_knowledge 更直接。
 
     Args:
         project_folder: 当前项目文件夹路径。
@@ -321,7 +325,11 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
 
 @mcp.tool()
 async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> str:
-    """搜索经验教训和关键决策内容。"""
+    """按关键词搜索经验教训和决策（你知道要找什么）。
+
+    用途：用户说"帮我找一下关于 X 的经验"时调用。
+    注意：如果你只有项目路径、没有搜索词，用 get_relevant_knowledge 按项目自动推荐。
+    如果你有一条已有知识的 ID 想找相似的，用 find_similar_knowledge。"""
     return _json(_engram.search_knowledge(query, scope=scope, limit=limit))
 
 
@@ -344,7 +352,10 @@ async def get_related_knowledge(item_id: str) -> str:
 
 @mcp.tool()
 async def find_similar_knowledge(item_id: str, limit: int = 5) -> str:
-    """Find knowledge items most similar to a given lesson or decision by content."""
+    """根据已有知识条目 ID 查找内容相似的条目。
+
+    用途：你已经有一条 lesson 或 decision 的 ID，想看还有没有类似的。
+    注意：如果你没有 ID、只有关键词，用 search_knowledge。"""
     return _json(_engram.find_similar_knowledge(item_id, limit=limit))
 
 
@@ -367,7 +378,10 @@ async def add_lesson(
     source_tool: str = "",
     source_url: str = "",
 ) -> str:
-    """记录一条从本次协作中学到的经验教训。
+    """记录单条经验教训（你已经知道要记什么）。
+
+    用途：用户明确说出一条踩坑经验或技术发现时调用。
+    注意：如果用户给了一段会话摘要让你自动提取，请用 extract_session_insights 而不是本工具。
 
     Args:
         summary: 教训的一行摘要。
@@ -399,11 +413,14 @@ async def add_decision(
     source_tool: str = "",
     project: str = "",
 ) -> str:
-    """记录一个在本次协作中做出的关键决策。
+    """记录单条关键决策（用户明确选了某个方案）。
+
+    用途：用户说"我们决定用 X"或"以后都用 Y"时调用。
+    注意：如果用户给了一段会话摘要让你自动提取，请用 extract_session_insights 而不是本工具。
 
     Args:
-        question: 决策的问题。
-        choice: 做出的选择。
+        question: 决策的问题（如"数据库选型"）。
+        choice: 做出的选择（如"PostgreSQL"）。
         reasoning: 选择的理由（可选）。
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。
     """
@@ -452,15 +469,15 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
 
 @mcp.tool()
 async def extract_session_insights(summary: str, source_tool: str = "") -> str:
-    """Extract lessons and decisions from a session summary automatically.
+    """从会话摘要中批量自动提取经验教训和决策（你不需要自己分类）。
 
-    Call this at the end of a working session with a free-form summary of
-    what happened. Engram will parse it for lessons learned and key decisions
-    made, storing them without requiring manual add_lesson/add_decision calls.
+    用途：会话结束时，把一段自由文本摘要交给 Engram，它会自动解析出 lessons 和 decisions 并存入知识库。
+    注意：如果你已经明确知道要记一条 lesson 或 decision，直接用 add_lesson / add_decision 更精准。
+    本工具适合"我不确定里面有什么值得记的，让 Engram 自己判断"的场景。
 
     Args:
-        summary: Free-form session summary, paragraphs, or bullet points.
-        source_tool: The tool calling this, such as "claude_code" or "codex".
+        summary: 自由文本会话摘要，段落或要点列表均可。
+        source_tool: 调用来源工具，如 'claude_code', 'codex'。
     """
     return _json(_engram.extract_session_insights(summary, source_tool=source_tool))
 
@@ -546,7 +563,10 @@ async def update_identity(field: str, updates_json: str) -> str:
 
 @mcp.tool()
 async def save_project_snapshot(project_folder: str, data_json: str) -> str:
-    """保存项目的知识快照。
+    """写入/更新项目的知识快照（写操作，不是读取）。
+
+    用途：保存或更新当前项目的技术栈、已知问题、注释等信息。
+    注意：读取项目快照用 get_project_context，不是本工具。
 
     Args:
         project_folder: 项目文件夹路径。
@@ -682,6 +702,99 @@ async def get_audit_log(limit: int = 50) -> str:
         except json.JSONDecodeError:
             continue
     return _json({"entries": entries, "total": len(lines)})
+
+
+# ===========================================================================
+# WORKFLOW SHORTCUTS (2)
+# ===========================================================================
+
+
+@mcp.tool()
+async def wrap_up_session(
+    summary: str,
+    project_folder: str = "",
+    source_tool: str = "",
+    project_title: str = "",
+    tech_stack: str = "",
+    known_issues: str = "",
+) -> str:
+    """会话结束一键收尾：自动提取知识 + 保存项目快照。
+
+    用途：一次对话结束时调用，把会话摘要交给 Engram。它会：
+    1. 从摘要中自动提取 lessons 和 decisions（等同于 extract_session_insights）
+    2. 如果提供了 project_folder，同时更新项目快照
+
+    Args:
+        summary: 会话摘要（自由文本，段落或要点列表均可）。
+        project_folder: 项目文件夹路径（可选，不填则只提取知识不保存快照）。
+        source_tool: 调用来源工具，如 'claude_code', 'codex'。
+        project_title: 项目名称（可选，仅在首次保存快照时需要）。
+        tech_stack: 技术栈（可选，逗号分隔）。
+        known_issues: 已知问题（可选，逗号分隔）。
+    """
+    results = {}
+
+    # Step 1: Extract insights
+    insights = _engram.extract_session_insights(summary, source_tool=source_tool)
+    results["insights"] = insights
+
+    # Step 2: Save project snapshot (if project_folder provided)
+    if project_folder:
+        snapshot_data: dict = {}
+        if project_title:
+            snapshot_data["title"] = project_title
+        if tech_stack:
+            snapshot_data["tech_stack"] = [s.strip() for s in tech_stack.split(",") if s.strip()]
+        if known_issues:
+            snapshot_data["known_issues"] = [s.strip() for s in known_issues.split(",") if s.strip()]
+        _engram.save_project_snapshot(project_folder, snapshot_data)
+        results["project_snapshot"] = {"saved": True, "folder": project_folder}
+
+    return _json(results)
+
+
+@mcp.tool()
+async def start_project(
+    description: str,
+    project_folder: str,
+    project_title: str = "",
+    tech_stack: str = "",
+    limit: int = 10,
+) -> str:
+    """新项目一键启动：继承跨项目经验 + 建立项目档案。
+
+    用途：开始一个新项目时调用，一次拿到过往相关经验并初始化项目记录。它会：
+    1. 根据项目描述从已有知识中找最相关的 lessons 和 decisions（等同于 get_knowledge_inheritance）
+    2. 自动创建项目快照（等同于 save_project_snapshot）
+
+    注意：如果只想获取可继承的经验、不需要创建项目档案，请直接用 get_knowledge_inheritance。
+
+    Args:
+        description: 新项目的自由文本描述（用于匹配已有知识）。
+        project_folder: 项目文件夹路径。
+        project_title: 项目名称（可选）。
+        tech_stack: 技术栈（可选，逗号分隔）。
+        limit: 最多继承多少条经验（默认 10，上限 20）。
+    """
+    results = {}
+
+    # Step 1: Knowledge inheritance
+    limit = min(int(limit), 20)
+    inheritance = _engram.get_knowledge_inheritance(description, limit=limit)
+    results["inherited_knowledge"] = inheritance
+
+    # Step 2: Initialize project snapshot
+    snapshot_data: dict = {}
+    if project_title:
+        snapshot_data["title"] = project_title
+    elif description:
+        snapshot_data["title"] = description[:80]
+    if tech_stack:
+        snapshot_data["tech_stack"] = [s.strip() for s in tech_stack.split(",") if s.strip()]
+    _engram.save_project_snapshot(project_folder, snapshot_data)
+    results["project_snapshot"] = {"created": True, "folder": project_folder}
+
+    return _json(results)
 
 
 _apply_tool_tier()
