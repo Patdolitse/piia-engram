@@ -232,22 +232,25 @@ async def get_lessons(
 async def get_decisions(
     source_tool: Optional[str] = None,
     project: Optional[str] = None,
+    domain: Optional[str] = None,
     limit: int = 30,
 ) -> str:
     """按时间列出用户做过的关键决策（不需要搜索词）。
 
-    用途：想浏览最近的决策记录、或按项目/来源筛选时调用。
+    用途：想浏览最近的决策记录，或按领域/项目/来源筛选时调用。
     注意：如果你有明确的关键词想搜索决策内容，用 search_knowledge(scope="decisions") 更精准。
 
     Args:
         source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。
         project: 按项目过滤（可选）。
+        domain: 按领域过滤（如 'architecture'）。支持多标签决策的包含匹配。
         limit: 最多返回多少条（默认 30）。
     """
     decisions = _engram.get_decisions(
         limit=limit,
         source_tool=source_tool,
         project=project,
+        domain=domain,
     )
     if not decisions:
         return "尚无决策记录。"
@@ -413,6 +416,7 @@ async def add_decision(
     reasoning: str = "",
     source_tool: str = "",
     project: str = "",
+    domain: str = "",
 ) -> str:
     """记录单条关键决策（用户明确选了某个方案）。
 
@@ -424,6 +428,7 @@ async def add_decision(
         choice: 做出的选择（如"PostgreSQL"）。
         reasoning: 选择的理由（可选）。
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。
+        domain: 技术领域（可选）。可填多个，逗号分隔，如 'architecture,database'。
     """
     decision = {"question": question, "choice": choice}
     if reasoning:
@@ -432,6 +437,8 @@ async def add_decision(
         decision["source_tool"] = source_tool
     if project:
         decision["project"] = project
+    if domain:
+        decision["domain"] = domain
     result = _engram.add_decision(decision)
     if result.get("status") == "duplicate":
         return _json(result)

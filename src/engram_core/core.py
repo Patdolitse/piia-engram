@@ -873,6 +873,7 @@ class Engram:
         limit: int | None = 30,
         source_tool: str | None = None,
         project: str | None = None,
+        domain: str | None = None,
         _update_access: bool = True,
     ) -> list[dict]:
         path = self._knowledge_dir / "decisions.json"
@@ -886,6 +887,10 @@ class Engram:
             if project:
                 decision_project = decision.get("project") or decision.get("source_project")
                 if decision_project != project:
+                    continue
+            if domain:
+                decision_domains = {d.strip() for d in (decision.get("domain") or "").split(",") if d.strip()}
+                if domain not in decision_domains:
                     continue
             result.append(decision)
         result = result[-limit:] if limit is not None else result
