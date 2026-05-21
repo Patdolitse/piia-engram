@@ -1,0 +1,411 @@
+{
+  "test": "T2",
+  "scenario_count": 20,
+  "correct": 19,
+  "accuracy": 0.95,
+  "round6_same_scenario_correct": 19,
+  "round6_same_scenario_accuracy": 0.95,
+  "regression_count": 0,
+  "passed": true,
+  "by_source_group": {
+    "G1": {
+      "total": 5,
+      "correct": 5,
+      "accuracy": 1.0,
+      "round6_correct": 5
+    },
+    "G2": {
+      "total": 5,
+      "correct": 4,
+      "accuracy": 0.8,
+      "round6_correct": 4
+    },
+    "G3": {
+      "total": 5,
+      "correct": 5,
+      "accuracy": 1.0,
+      "round6_correct": 5
+    },
+    "G4": {
+      "total": 5,
+      "correct": 5,
+      "accuracy": 1.0,
+      "round6_correct": 5
+    }
+  },
+  "results": [
+    {
+      "id": "R7-G1-USER-CONTEXT-01",
+      "round6_id": "G1-USER-CONTEXT-01",
+      "source_group": "G1",
+      "category": "get_user_context",
+      "user_input": "新的 Codex 会话开始了，请先加载我的完整个性化上下文，包括身份、工作方式、偏好、质量标准和关键决策。",
+      "expected": "get_user_context",
+      "actual": "get_user_context",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "get_user_context",
+        "get_user_context",
+        "get_user_context"
+      ],
+      "reasoning": "用户明确要求加载完整个性化上下文，包括身份、工作方式、偏好、质量标准和关键决策，get_user_context 是提供完整冷启动上下文的工具，最适合此需求。"
+    },
+    {
+      "id": "R7-G1-IDENTITY-CARD-01",
+      "round6_id": "G1-IDENTITY-CARD-01",
+      "source_group": "G1",
+      "category": "get_identity_card",
+      "user_input": "请导出一份可以发给另一个 AI 的 Markdown 身份卡，内容要精简可携带。",
+      "expected": "get_identity_card",
+      "actual": "get_identity_card",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "get_identity_card",
+        "get_identity_card",
+        "get_identity_card"
+      ],
+      "reasoning": "用户要求导出一份可携带的 Markdown 身份卡，get_identity_card 正是为此设计的工具，无需额外参数。"
+    },
+    {
+      "id": "R7-G1-PROJECT-CONTEXT-01",
+      "round6_id": "G1-PROJECT-CONTEXT-01",
+      "source_group": "G1",
+      "category": "get_project_context",
+      "user_input": "读取 E:/Personal Intelligence Identity Asset/engram 这个项目的历史上下文和项目快照。",
+      "expected": "get_project_context",
+      "actual": "get_project_context",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "get_project_context",
+        "get_project_context",
+        "get_project_context"
+      ],
+      "reasoning": "用户明确要求读取指定项目文件夹的历史上下文和项目快照，get_project_context 正是用于读取项目级知识快照的工具，参数 project_folder 已提供为 'E:/Personal Intelligence Identity Asset/engram'。"
+    },
+    {
+      "id": "R7-G1-SAVE-SNAPSHOT-01",
+      "round6_id": "G1-SAVE-SNAPSHOT-01",
+      "source_group": "G1",
+      "category": "save_project_snapshot",
+      "user_input": "保存 E:/Personal Intelligence Identity Asset/engram 的项目快照，包含入口文件、测试命令和已知问题。",
+      "expected": "save_project_snapshot",
+      "actual": "save_project_snapshot",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "save_project_snapshot",
+        "save_project_snapshot",
+        "save_project_snapshot"
+      ],
+      "reasoning": "用户明确要求保存项目快照，提供了项目文件夹路径，但缺少 data_json 参数（需要包含入口文件、测试命令和已知问题等信息）。"
+    },
+    {
+      "id": "R7-G1-DOMAINS-01",
+      "round6_id": "G1-DOMAINS-01",
+      "source_group": "G1",
+      "category": "get_domains",
+      "user_input": "查看我的技术领域经验图谱，看看我在哪些 domain 上积累最多。",
+      "expected": "get_domains",
+      "actual": "get_domains",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "get_domains",
+        "get_domains",
+        "get_domains"
+      ],
+      "reasoning": "用户明确要求查看技术领域经验图谱，get_domains 工具正好返回用户涉及的所有技术/领域及其积累情况，完全匹配需求。"
+    },
+    {
+      "id": "R7-G2-ADD-LESSON-01",
+      "round6_id": "G2-ADD-LESSON-01",
+      "source_group": "G2",
+      "category": "add_lesson",
+      "user_input": "记一条经验教训：DeepSeek 工具选择评估必须保存 raw request/response，否则报告没有复核证据。",
+      "expected": "add_lesson",
+      "actual": "add_lesson",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "add_lesson",
+        "add_lesson",
+        "add_lesson"
+      ],
+      "reasoning": "用户明确要求记录一条经验教训，提供了摘要和领域信息，符合 add_lesson 的使用场景。参数 summary 和 domain 已提供，detail 和 source_tool 可选但未提供，不强制。"
+    },
+    {
+      "id": "R7-G2-ADD-DECISION-01",
+      "round6_id": "G2-ADD-DECISION-01",
+      "source_group": "G2",
+      "category": "add_decision",
+      "user_input": "记录关键决策：Engram v3.7.0 暂时保留 39 个原子工具，不上线五工具 coordinator。",
+      "expected": "add_decision",
+      "actual": "add_decision",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "add_decision",
+        "add_decision",
+        "add_decision"
+      ],
+      "reasoning": "用户明确说出一条关键决策（Engram v3.7.0 保留39个原子工具，不上线五工具coordinator），应使用add_decision记录。缺少source_tool和project参数，但用户未提供，不虚构。"
+    },
+    {
+      "id": "R7-G2-SEARCH-01",
+      "round6_id": "G2-SEARCH-01",
+      "source_group": "G2",
+      "category": "search_knowledge",
+      "user_input": "搜索关键词 DeepSeek 工具选择 稳定性，找相关经验和决策。",
+      "expected": "search_knowledge",
+      "actual": "search_knowledge",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "search_knowledge",
+        "search_knowledge",
+        "search_knowledge"
+      ],
+      "reasoning": "用户明确给出了搜索关键词 'DeepSeek 工具选择 稳定性'，希望找到相关的经验和决策。search_knowledge 支持按关键词搜索经验教训和决策，最适合此需求。"
+    },
+    {
+      "id": "R7-G2-RELEVANT-01",
+      "round6_id": "G2-RELEVANT-01",
+      "source_group": "G2",
+      "category": "get_relevant_knowledge",
+      "user_input": "当前项目路径是 E:/Personal Intelligence Identity Asset/engram，请自动推荐最相关的历史经验，不提供搜索词。",
+      "expected": "get_relevant_knowledge",
+      "actual": "get_relevant_knowledge",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "get_relevant_knowledge",
+        "get_relevant_knowledge",
+        "get_relevant_knowledge"
+      ],
+      "reasoning": "用户明确要求根据当前项目路径自动推荐最相关的历史经验，且不提供搜索词，这正是 get_relevant_knowledge 的用途。项目路径已提供：E:/Personal Intelligence Identity Asset/engram。"
+    },
+    {
+      "id": "R7-G2-GET-DECISIONS-01",
+      "round6_id": "G2-GET-DECISIONS-01",
+      "source_group": "G2",
+      "category": "get_decisions",
+      "user_input": "列出 architecture 领域的关键决策和推理。",
+      "expected": "get_decisions",
+      "actual": "search_knowledge",
+      "correct": false,
+      "round6_correct": false,
+      "regressed": false,
+      "votes": [
+        "search_knowledge",
+        "search_knowledge",
+        "search_knowledge"
+      ],
+      "reasoning": "用户想列出 architecture 领域的关键决策和推理，search_knowledge 支持按关键词搜索决策内容，scope 可设为 'decisions' 来精准匹配，query 参数为 'architecture'。"
+    },
+    {
+      "id": "R7-G3-EXPORT-ENGRAM-01",
+      "round6_id": "G3-EXPORT-ENGRAM-01",
+      "source_group": "G3",
+      "category": "export_engram",
+      "user_input": "把整个 Engram 导出成一个内部备份文件。",
+      "expected": "export_engram",
+      "actual": "export_engram",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "export_engram",
+        "export_engram",
+        "export_engram"
+      ],
+      "reasoning": "用户要求将整个 Engram 导出为备份文件，export_engram 工具正是为此设计的，且不需要额外参数（output_path 可选）。"
+    },
+    {
+      "id": "R7-G3-EXPORT-OPENCLAW-01",
+      "round6_id": "G3-EXPORT-OPENCLAW-01",
+      "source_group": "G3",
+      "category": "export_engram_to_openclaw",
+      "user_input": "导出到 OpenClaw 兼容格式，生成 SOUL.md、MEMORY.md 和 USER.md。",
+      "expected": "export_engram_to_openclaw",
+      "actual": "export_engram_to_openclaw",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "export_engram_to_openclaw",
+        "export_engram_to_openclaw",
+        "export_engram_to_openclaw"
+      ],
+      "reasoning": "用户明确要求导出 Engram 为 OpenClaw 兼容格式，生成 SOUL.md、MEMORY.md 和 USER.md 文件，对应工具 export_engram_to_openclaw 的用途完全匹配。"
+    },
+    {
+      "id": "R7-G3-AUDIT-01",
+      "round6_id": "G3-AUDIT-01",
+      "source_group": "G3",
+      "category": "get_audit_log",
+      "user_input": "查看最近 20 条 Engram 审计日志。",
+      "expected": "get_audit_log",
+      "actual": "get_audit_log",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "get_audit_log",
+        "get_audit_log",
+        "get_audit_log"
+      ],
+      "reasoning": "用户明确要求查看最近20条Engram审计日志，get_audit_log工具支持limit参数，默认返回50条，用户要求20条，因此调用时传入limit=20。"
+    },
+    {
+      "id": "R7-G3-WRAP-SESSION-01",
+      "round6_id": "G3-WRAP-SESSION-01",
+      "source_group": "G3",
+      "category": "wrap_up_session",
+      "user_input": "本轮会话结束，请自动提取经验和决策，并保存当前项目快照作为收尾。",
+      "expected": "wrap_up_session",
+      "actual": "wrap_up_session",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "wrap_up_session",
+        "wrap_up_session",
+        "wrap_up_session"
+      ],
+      "reasoning": "用户明确要求会话结束收尾，自动提取经验和决策并保存项目快照，wrap_up_session 正是为此设计的工具。但缺少必填参数 summary 和 source_tool，以及可选的 project_folder。请用户提供会话摘要和来源工具名称。"
+    },
+    {
+      "id": "R7-G3-START-PROJECT-01",
+      "round6_id": "G3-START-PROJECT-01",
+      "source_group": "G3",
+      "category": "start_project",
+      "user_input": "启动一个新的本地 AI harness 项目，请继承相关历史经验并创建项目档案。",
+      "expected": "start_project",
+      "actual": "start_project",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "start_project",
+        "start_project",
+        "start_project"
+      ],
+      "reasoning": "用户明确要求启动新项目并继承历史经验、创建项目档案，start_project 正是为此设计的工具。但缺少必填参数 description 和 project_folder，需要用户补充项目描述和文件夹路径。"
+    },
+    {
+      "id": "R7-G4-NONE-01",
+      "round6_id": "G4-NONE-01",
+      "source_group": "G4",
+      "category": "no_tool",
+      "user_input": "你好，今天天气怎么样？",
+      "expected": "none",
+      "actual": "none",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "none",
+        "none",
+        "none"
+      ],
+      "reasoning": "用户询问天气，这是一个普通的聊天问题，与 Engram 的知识管理功能无关，不需要调用任何工具。"
+    },
+    {
+      "id": "R7-G4-NONE-02",
+      "round6_id": "G4-NONE-02",
+      "source_group": "G4",
+      "category": "no_tool",
+      "user_input": "Engram 是什么？给我解释一下。",
+      "expected": "none",
+      "actual": "none",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "none",
+        "none",
+        "none"
+      ],
+      "reasoning": "用户询问 Engram 是什么，这是一个一般性的解释性问题，不涉及读取、写入或维护 Engram 知识库的具体操作，因此不需要调用任何 Engram MCP 工具。"
+    },
+    {
+      "id": "R7-G4-MISSING-01",
+      "round6_id": "G4-MISSING-01",
+      "source_group": "G4",
+      "category": "missing_params",
+      "user_input": "帮我记一下这个教训。",
+      "expected": "add_lesson",
+      "actual": "add_lesson",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "add_lesson",
+        "add_lesson",
+        "add_lesson"
+      ],
+      "reasoning": "用户明确要求记录一条教训，应使用 add_lesson 工具。但缺少必要参数 summary（教训摘要），需要用户提供具体内容。"
+    },
+    {
+      "id": "R7-G4-MISSING-02",
+      "round6_id": "G4-MISSING-02",
+      "source_group": "G4",
+      "category": "missing_params",
+      "user_input": "搜索一下相关经验。",
+      "expected": "search_knowledge",
+      "actual": "search_knowledge",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "search_knowledge",
+        "search_knowledge",
+        "search_knowledge"
+      ],
+      "reasoning": "用户明确要求搜索相关经验，search_knowledge 最适合按关键词搜索经验教训和决策，但缺少必填参数 query，需要用户提供搜索词。"
+    },
+    {
+      "id": "R7-G4-MISSING-05",
+      "round6_id": "G4-MISSING-05",
+      "source_group": "G4",
+      "category": "missing_params",
+      "user_input": "保存项目快照。",
+      "expected": "save_project_snapshot",
+      "actual": "save_project_snapshot",
+      "correct": true,
+      "round6_correct": true,
+      "regressed": false,
+      "votes": [
+        "save_project_snapshot",
+        "save_project_snapshot",
+        "save_project_snapshot"
+      ],
+      "reasoning": "用户明确要求保存项目快照，但缺少必填参数 project_folder 和 data_json。需要用户提供项目文件夹路径和要保存的数据。"
+    }
+  ],
+  "regressions": [],
+  "judge_info": {
+    "model": "deepseek-chat",
+    "runs_per_scenario": 3,
+    "total_calls": 60,
+    "failed_calls": 0,
+    "usage": {
+      "prompt_tokens": 169896,
+      "completion_tokens": 3203,
+      "total_tokens": 173099
+    },
+    "tool_count": 39
+  }
+}

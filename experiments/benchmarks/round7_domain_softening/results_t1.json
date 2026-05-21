@@ -1,0 +1,278 @@
+{
+  "test": "T1",
+  "scenario_count": 15,
+  "correct": 15,
+  "passed": true,
+  "groups": {
+    "infer": {
+      "total": 6,
+      "correct": 6,
+      "passed": true,
+      "results": [
+        {
+          "id": "T1-INFER-01",
+          "category": "infer",
+          "input": "pytest configuration for Python project",
+          "expected": "python",
+          "actual": "python",
+          "correct": true
+        },
+        {
+          "id": "T1-INFER-02",
+          "category": "infer",
+          "input": "docker compose for node.js app",
+          "expected": "docker,javascript",
+          "actual": "javascript,docker",
+          "correct": true
+        },
+        {
+          "id": "T1-INFER-03",
+          "category": "infer",
+          "input": "git rebase strategy for architecture refactor",
+          "expected": "git,architecture",
+          "actual": "git,architecture",
+          "correct": true
+        },
+        {
+          "id": "T1-INFER-04",
+          "category": "infer",
+          "input": "random unrelated text",
+          "expected": "fallback",
+          "actual": "fallback",
+          "correct": true
+        },
+        {
+          "id": "T1-INFER-05",
+          "category": "infer",
+          "input": "MCP tool server design pattern",
+          "expected": "mcp,architecture",
+          "actual": "mcp,architecture",
+          "correct": true
+        },
+        {
+          "id": "T1-INFER-06",
+          "category": "infer",
+          "input": "SQL migration for Django",
+          "expected": "database,python",
+          "actual": "python,database",
+          "correct": true
+        }
+      ]
+    },
+    "contains_filter": {
+      "total": 4,
+      "correct": 4,
+      "passed": true,
+      "results": [
+        {
+          "id": "T1-FILTER-01",
+          "category": "contains_filter",
+          "input": "domain=python",
+          "expected": true,
+          "actual": true,
+          "correct": true
+        },
+        {
+          "id": "T1-FILTER-02",
+          "category": "contains_filter",
+          "input": "domain=testing",
+          "expected": true,
+          "actual": true,
+          "correct": true
+        },
+        {
+          "id": "T1-FILTER-03",
+          "category": "contains_filter",
+          "input": "domain=javascript",
+          "expected": false,
+          "actual": false,
+          "correct": true
+        },
+        {
+          "id": "T1-FILTER-04",
+          "category": "contains_filter",
+          "input": "domain=None",
+          "expected": true,
+          "actual": true,
+          "correct": true
+        }
+      ]
+    },
+    "compatibility": {
+      "total": 3,
+      "correct": 3,
+      "passed": true,
+      "results": [
+        {
+          "id": "T1-COMPAT-01",
+          "category": "compatibility",
+          "input": "single domain lesson with domain=python",
+          "expected": true,
+          "actual": true,
+          "correct": true
+        },
+        {
+          "id": "T1-COMPAT-02",
+          "category": "compatibility",
+          "input": "empty domain lesson with domain=python filter",
+          "expected": false,
+          "actual": false,
+          "correct": true
+        },
+        {
+          "id": "T1-COMPAT-03",
+          "category": "compatibility",
+          "input": "unfiltered lessons include empty-domain lesson",
+          "expected": true,
+          "actual": true,
+          "correct": true
+        }
+      ]
+    },
+    "domain_counts": {
+      "total": 2,
+      "correct": 2,
+      "passed": true,
+      "results": [
+        {
+          "id": "T1-COUNT-01",
+          "category": "domain_counts",
+          "input": "python count",
+          "expected": 2,
+          "actual": 2,
+          "correct": true
+        },
+        {
+          "id": "T1-COUNT-02",
+          "category": "domain_counts",
+          "input": "testing count",
+          "expected": 1,
+          "actual": 1,
+          "correct": true
+        }
+      ]
+    }
+  },
+  "results": [
+    {
+      "id": "T1-INFER-01",
+      "category": "infer",
+      "input": "pytest configuration for Python project",
+      "expected": "python",
+      "actual": "python",
+      "correct": true
+    },
+    {
+      "id": "T1-INFER-02",
+      "category": "infer",
+      "input": "docker compose for node.js app",
+      "expected": "docker,javascript",
+      "actual": "javascript,docker",
+      "correct": true
+    },
+    {
+      "id": "T1-INFER-03",
+      "category": "infer",
+      "input": "git rebase strategy for architecture refactor",
+      "expected": "git,architecture",
+      "actual": "git,architecture",
+      "correct": true
+    },
+    {
+      "id": "T1-INFER-04",
+      "category": "infer",
+      "input": "random unrelated text",
+      "expected": "fallback",
+      "actual": "fallback",
+      "correct": true
+    },
+    {
+      "id": "T1-INFER-05",
+      "category": "infer",
+      "input": "MCP tool server design pattern",
+      "expected": "mcp,architecture",
+      "actual": "mcp,architecture",
+      "correct": true
+    },
+    {
+      "id": "T1-INFER-06",
+      "category": "infer",
+      "input": "SQL migration for Django",
+      "expected": "database,python",
+      "actual": "python,database",
+      "correct": true
+    },
+    {
+      "id": "T1-FILTER-01",
+      "category": "contains_filter",
+      "input": "domain=python",
+      "expected": true,
+      "actual": true,
+      "correct": true
+    },
+    {
+      "id": "T1-FILTER-02",
+      "category": "contains_filter",
+      "input": "domain=testing",
+      "expected": true,
+      "actual": true,
+      "correct": true
+    },
+    {
+      "id": "T1-FILTER-03",
+      "category": "contains_filter",
+      "input": "domain=javascript",
+      "expected": false,
+      "actual": false,
+      "correct": true
+    },
+    {
+      "id": "T1-FILTER-04",
+      "category": "contains_filter",
+      "input": "domain=None",
+      "expected": true,
+      "actual": true,
+      "correct": true
+    },
+    {
+      "id": "T1-COMPAT-01",
+      "category": "compatibility",
+      "input": "single domain lesson with domain=python",
+      "expected": true,
+      "actual": true,
+      "correct": true
+    },
+    {
+      "id": "T1-COMPAT-02",
+      "category": "compatibility",
+      "input": "empty domain lesson with domain=python filter",
+      "expected": false,
+      "actual": false,
+      "correct": true
+    },
+    {
+      "id": "T1-COMPAT-03",
+      "category": "compatibility",
+      "input": "unfiltered lessons include empty-domain lesson",
+      "expected": true,
+      "actual": true,
+      "correct": true
+    },
+    {
+      "id": "T1-COUNT-01",
+      "category": "domain_counts",
+      "input": "python count",
+      "expected": 2,
+      "actual": 2,
+      "correct": true
+    },
+    {
+      "id": "T1-COUNT-02",
+      "category": "domain_counts",
+      "input": "testing count",
+      "expected": 1,
+      "actual": 1,
+      "correct": true
+    }
+  ]
+}
