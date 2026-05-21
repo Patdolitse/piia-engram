@@ -387,6 +387,17 @@ class Engram:
     # Knowledge — what you've learned
     # =====================================================================
 
+    @staticmethod
+    def _sanitize_project(project: str) -> str:
+        """Extract a short project name from a value that may be a file path."""
+        if not project:
+            return project
+        # Detect file paths (contains slash/backslash or drive letter)
+        if "/" in project or "\\" in project or (len(project) > 2 and project[1] == ":"):
+            name = Path(project).name
+            return name if name else project
+        return project
+
     def _entry_identity_text(self, entry: dict, entry_type: str) -> str:
         if entry_type == "decision":
             return str(entry.get("title") or entry.get("question") or "")
@@ -715,8 +726,9 @@ class Engram:
                 other.append(lesson)
 
         # 按比例分配: 相关领域占 60%, 通用 30%, 其他 10%
-        n_relevant = max(1, int(limit * 0.6))
-        n_universal = max(1, int(limit * 0.3))
+        # 空桶的 slots 回收给非空桶，避免大量浪费
+        n_relevant = min(len(relevant), max(1, int(limit * 0.6)))
+        n_universal = min(len(universal), max(1, int(limit * 0.3)))
         n_other = limit - n_relevant - n_universal
 
         result = relevant[:n_relevant] + universal[:n_universal] + other[:n_other]
@@ -834,11 +846,15 @@ class Engram:
             if source_tool:
                 new_decision["source_tool"] = source_tool
             if project:
-                new_decision["project"] = project
+                new_decision["project"] = self._sanitize_project(project)
 
         for key, value in extra.items():
             if value is not None:
                 new_decision[key] = value
+
+        # Sanitize project field regardless of input path (dict or kwargs)
+        if new_decision.get("project"):
+            new_decision["project"] = self._sanitize_project(new_decision["project"])
 
         new_decision["timestamp"] = new_decision.get("timestamp") or _now_iso()
         new_decision = self._ensure_fields(new_decision, "decision")
@@ -1657,6 +1673,9 @@ class Engram:
                 lines.append(f"- 技术水平: {profile['technical_level']}")
             if profile.get("description"):
                 lines.append(f"- 简介: {profile['description']}")
+        else:
+            lines.append("## 关于用户")
+            lines.append("- ⚠ 身份画像未设置。请运行 `engram setup` 或调用 update_identity 录入基本信息，以获得个性化体验。")
 
         # Preferences (v2.0) — falls back to work_style for v1
         prefs = self.get_preferences()

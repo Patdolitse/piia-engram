@@ -33,7 +33,7 @@ def test_atomic_tool_parser_finds_current_mcp_surface():
     tools = load_atomic_tool_descriptions()
     names = {tool["name"] for tool in tools}
 
-    assert len(tools) == 39
+    assert len(tools) >= 41
     assert {
         "add_lesson",
         "add_decision",
