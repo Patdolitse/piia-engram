@@ -582,7 +582,10 @@ class Engram:
         summary = new_lesson.get("summary", "")
         self._audit.log("write", "knowledge/lessons", detail=summary[:100])
         if new_lesson.get("domain"):
-            self.increment_domain_usage(new_lesson["domain"])
+            for _d in new_lesson["domain"].split(","):
+                _d = _d.strip()
+                if _d:
+                    self.increment_domain_usage(_d)
         return new_lesson
 
     def get_lessons(
@@ -598,8 +601,10 @@ class Engram:
         for lesson in lessons:
             if lesson.get("status") != "active":
                 continue
-            if domain and lesson.get("domain") != domain:
-                continue
+            if domain:
+                lesson_domains = {d.strip() for d in (lesson.get("domain") or "").split(",") if d.strip()}
+                if domain not in lesson_domains:
+                    continue
             if source_tool and lesson.get("source_tool") != source_tool:
                 continue
             result.append(lesson)
@@ -695,15 +700,15 @@ class Engram:
         # 通用领域（总是相关）
         universal_domains = {"产品策略", "架构"}
 
-        # 分桶：相关领域 / 通用 / 其他
+        # 分桶：相关领域 / 通用 / 其他（支持多标签 domain）
         relevant = []
         universal = []
         other = []
         for lesson in reversed(all_lessons):  # 最新的在前
-            domain = lesson.get("domain", "")
-            if domain in relevant_domains:
+            lesson_domains = {d.strip() for d in (lesson.get("domain") or "").split(",") if d.strip()}
+            if lesson_domains & relevant_domains:
                 relevant.append(lesson)
-            elif domain in universal_domains:
+            elif lesson_domains & universal_domains:
                 universal.append(lesson)
             else:
                 other.append(lesson)
@@ -756,9 +761,10 @@ class Engram:
 
         domain_counts: dict[str, int] = {}
         for _, _, item in top:
-            domain = str(item.get("domain", "")).strip()
-            if domain:
-                domain_counts[domain] = domain_counts.get(domain, 0) + 1
+            for _d in str(item.get("domain", "")).split(","):
+                _d = _d.strip()
+                if _d:
+                    domain_counts[_d] = domain_counts.get(_d, 0) + 1
         recommended_domains = sorted(
             domain_counts,
             key=lambda domain: (-domain_counts[domain], domain),
@@ -1309,10 +1315,15 @@ class Engram:
         return {"error": f"Unknown item_type: {item_type}. Use 'lesson' or 'decision'."}
 
     def _infer_domain(self, text: str, fallback: str = "") -> str:
+        """Infer domain(s) from text. Returns comma-separated if multiple match."""
         text_lower = text.lower()
-        for domain, keywords in DOMAIN_KEYWORDS.items():
-            if any(kw in text_lower for kw in keywords):
-                return domain
+        matched = [
+            domain
+            for domain, keywords in DOMAIN_KEYWORDS.items()
+            if any(kw in text_lower for kw in keywords)
+        ]
+        if matched:
+            return ",".join(matched)
         return fallback
 
     def _has_content_chars(self, text: str) -> bool:
@@ -1540,9 +1551,11 @@ class Engram:
 
         active_counts: dict[str, int] = {}
         for lesson in self.get_lessons(limit=None, _update_access=False):
-            domain = lesson.get("domain")
-            if domain:
-                active_counts[domain] = active_counts.get(domain, 0) + 1
+            raw = lesson.get("domain") or ""
+            for _d in raw.split(","):
+                _d = _d.strip()
+                if _d:
+                    active_counts[_d] = active_counts.get(_d, 0) + 1
 
         result: dict[str, dict] = {}
         for domain, count in active_counts.items():
@@ -1815,8 +1828,10 @@ class Engram:
 
         domain_counts: dict[str, int] = {}
         for lesson in active_lessons:
-            domain = lesson.get("domain", "unknown")
-            domain_counts[domain] = domain_counts.get(domain, 0) + 1
+            raw = lesson.get("domain") or "unknown"
+            for _d in raw.split(","):
+                _d = _d.strip() or "unknown"
+                domain_counts[_d] = domain_counts.get(_d, 0) + 1
 
         source_counts: dict[str, int] = {}
         for item in active_lessons + active_decisions:
@@ -1946,9 +1961,11 @@ class Engram:
 
         by_domain: dict[str, dict[str, int]] = {}
         for lesson in active_lessons:
-            domain = lesson.get("domain") or "unknown"
-            bucket = by_domain.setdefault(domain, {"lessons": 0, "decisions": 0})
-            bucket["lessons"] += 1
+            raw = lesson.get("domain") or "unknown"
+            for _d in raw.split(","):
+                _d = _d.strip() or "unknown"
+                bucket = by_domain.setdefault(_d, {"lessons": 0, "decisions": 0})
+                bucket["lessons"] += 1
         for decision in active_decisions:
             domain = (
                 decision.get("domain")
@@ -2051,7 +2068,10 @@ class Engram:
 
         lessons_by_domain: dict[str, list[dict]] = {}
         for lesson in active_lessons:
-            lessons_by_domain.setdefault(lesson.get("domain") or "未分类", []).append(lesson)
+            raw = lesson.get("domain") or "未分类"
+            domains = [d.strip() for d in raw.split(",") if d.strip()] or ["未分类"]
+            for _d in domains:
+                lessons_by_domain.setdefault(_d, []).append(lesson)
         if lessons_by_domain:
             for domain in sorted(lessons_by_domain):
                 lines.append(f"### {domain}")

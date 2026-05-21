@@ -218,7 +218,7 @@ async def get_lessons(
     用这些来避免重复过去的错误。
 
     Args:
-        domain: 按领域过滤（如 'python', 'frontend'）。
+        domain: 按领域过滤（如 'python'）。支持多标签教训的包含匹配。
         source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。
         limit: 最多返回多少条（默认 50）。
     """
@@ -387,7 +387,7 @@ async def add_lesson(
     Args:
         summary: 教训的一行摘要。
         detail: 详细说明（可选）。
-        domain: 技术领域如 'python', 'frontend', 'devops'（可选）。
+        domain: 技术领域（可选）。可填多个，逗号分隔，如 'python,testing'。
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。
         source_url: 如果教训来自外部内容，填写来源URL（可选）。
     """
@@ -463,7 +463,7 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
     Args:
         text: 多行自由文本笔记。
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。
-        domain: 默认领域；未命中关键词推断时使用。
+        domain: 默认领域（可填多个，逗号分隔）；未命中关键词推断时使用。
     """
     return _json(_engram.ingest_notes(text, source_tool=source_tool, domain=domain))
 
