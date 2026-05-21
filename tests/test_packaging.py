@@ -143,6 +143,7 @@ def test_ci_workflow_matrix():
     assert '"3.10"' in content
     assert '"3.11"' in content
     assert '"3.12"' in content
+    assert '"3.13"' in content
     assert 'pip install -e ".[dev]"' in content
     assert "pytest tests/ -q" in content
 
