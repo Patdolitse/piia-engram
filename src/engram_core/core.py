@@ -1672,6 +1672,20 @@ class Engram:
             for l in lessons:
                 lines.append(f"- {l.get('summary', '')}")
 
+        # Recent key decisions (so AI doesn't re-litigate settled choices)
+        decisions = self.get_decisions(limit=6, _update_access=False)
+        if decisions:
+            lines.append("\n## 已做的关键决策（请遵循）")
+            for d in decisions:
+                question = d.get("question") or d.get("title") or ""
+                choice = d.get("choice", "")
+                if question and choice:
+                    lines.append(f"- {question} → {choice}")
+                elif question:
+                    lines.append(f"- {question}")
+                elif choice:
+                    lines.append(f"- {choice}")
+
         # Project-specific context
         if project_folder:
             proj = self.get_project_snapshot(project_folder)
@@ -1758,6 +1772,20 @@ class Engram:
             lines.append("## 我踩过的坑（请帮我避免）")
             for l in lessons:
                 lines.append(f"- {l.get('summary', '')}")
+            lines.append("")
+
+        decisions = self.get_decisions(limit=8, _update_access=False)
+        if decisions:
+            lines.append("## 我的关键决策（请遵循）")
+            for d in decisions:
+                question = d.get("question") or d.get("title") or ""
+                choice = d.get("choice", "")
+                if question and choice:
+                    lines.append(f"- {question} → {choice}")
+                elif question:
+                    lines.append(f"- {question}")
+                elif choice:
+                    lines.append(f"- {choice}")
             lines.append("")
 
         lines.append("---")
