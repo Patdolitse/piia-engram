@@ -1,0 +1,2 @@
+"""High-level coordinator prototype."""
+
