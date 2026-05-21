@@ -1789,6 +1789,173 @@ def test_import_from_openclaw_missing_files(tmp_path: Path):
     assert result["imported"] == []
 
 
+# =====================================================================
+# classify_rarity
+# =====================================================================
+
+
+def test_classify_rarity_staging_always_staging(tmp_path: Path):
+    """staging 条目不论内容如何，rarity 始终为 staging。"""
+    engram = make_engram(tmp_path)
+    item = {"tier": "staging", "summary": "核心身份原则", "domain": "identity", "access_count": 99}
+    assert engram.classify_rarity(item) == "staging"
+
+
+def test_classify_rarity_decision_gets_bonus(tmp_path: Path):
+    """decision 类型有额外加分，更容易达到 epic/legendary。"""
+    engram = make_engram(tmp_path)
+    # 简单 lesson 应该是 rare
+    lesson = {"tier": "verified", "summary": "一个普通经验", "domain": "general"}
+    assert engram.classify_rarity(lesson, "lesson") == "rare"
+    # 相同内容但 decision 类型会有加分
+    decision = {"tier": "verified", "summary": "一个普通决策", "domain": "python",
+                "reasoning": "因为有很好的理由所以选择了这个方案"}
+    rarity = engram.classify_rarity(decision, "decision")
+    assert rarity in ("epic", "legendary")
+
+
+def test_classify_rarity_identity_content_scores_high(tmp_path: Path):
+    """包含身份关键词的内容应得到较高 rarity。"""
+    engram = make_engram(tmp_path)
+    item = {
+        "tier": "verified",
+        "summary": "核心身份定位",
+        "detail": "这是一条关于角色定位和核心原则的深入分析" * 5,
+        "domain": "identity",
+        "access_count": 5,
+    }
+    rarity = engram.classify_rarity(item)
+    assert rarity in ("epic", "legendary")
+
+
+# =====================================================================
+# evaluate_tiers
+# =====================================================================
+
+
+def test_evaluate_tiers_promotes_referenced_staging(tmp_path: Path):
+    """access_count >= 3 的 staging 条目应被提升为 verified。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("高频引用的经验", domain="python", tier="staging")
+    # 手动设置 access_count >= 3
+    path = tmp_path / "knowledge" / "lessons.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for entry in data:
+        if entry.get("id") == lesson["id"]:
+            entry["access_count"] = 5
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    result = engram.evaluate_tiers()
+    assert result["promoted"] >= 1
+
+    # 验证已变为 verified
+    data = json.loads(path.read_text(encoding="utf-8"))
+    promoted_entry = next(e for e in data if e.get("id") == lesson["id"])
+    assert promoted_entry["tier"] == "verified"
+    assert "promoted_at" in promoted_entry
+
+
+def test_evaluate_tiers_keeps_low_access_staging(tmp_path: Path):
+    """access_count < 3 的 staging 条目不应被提升。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("低频引用的经验", domain="python", tier="staging")
+    result = engram.evaluate_tiers()
+    assert result["promoted"] == 0
+
+
+# =====================================================================
+# get_staging_summary
+# =====================================================================
+
+
+def test_get_staging_summary_empty(tmp_path: Path):
+    """无 staging 条目时应返回全零。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("一条普通 lesson")  # 默认 tier=verified
+    summary = engram.get_staging_summary()
+    assert summary["total_staging"] == 0
+    assert summary["staging_lessons"] == 0
+    assert summary["staging_decisions"] == 0
+
+
+def test_get_staging_summary_counts_staging(tmp_path: Path):
+    """应正确统计 staging 的 lesson 和 decision 数量。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("数据库索引策略值得深入研究", tier="staging")
+    engram.add_lesson("Docker 多阶段构建减少镜像体积", tier="staging")
+    engram.add_decision("staging question", choice="A", tier="staging")
+    engram.add_lesson("verified lesson")  # 默认 verified，不计入
+    summary = engram.get_staging_summary()
+    assert summary["staging_lessons"] == 2
+    assert summary["staging_decisions"] == 1
+    assert summary["total_staging"] == 3
+
+
+# =====================================================================
+# promote_knowledge
+# =====================================================================
+
+
+def test_promote_knowledge_lesson(tmp_path: Path):
+    """应将 staging lesson 提升为 verified。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("待审核经验", tier="staging")
+    result = engram.promote_knowledge(lesson["id"])
+    assert result["status"] == "promoted"
+    # 检查实际写入
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    promoted = next(l for l in lessons if l.get("id") == lesson["id"])
+    assert promoted["tier"] == "verified"
+    assert promoted["promotion_reason"] == "user_confirmed"
+
+
+def test_promote_knowledge_not_found(tmp_path: Path):
+    """不存在的 ID 应返回 not_found。"""
+    engram = make_engram(tmp_path)
+    result = engram.promote_knowledge("nonexistent-id")
+    assert result["status"] == "not_found"
+
+
+# =====================================================================
+# apply_review
+# =====================================================================
+
+
+def test_apply_review_dict_format(tmp_path: Path):
+    """dict 格式的 review_data 应正确处理 promote 和 archive。"""
+    engram = make_engram(tmp_path)
+    staging = engram.add_lesson("待审核", tier="staging")
+    to_archive = engram.add_lesson("要归档的")
+    review = {
+        "promote": [{"type": "lesson", "id": staging["id"]}],
+        "archive": [{"type": "lesson", "id": to_archive["id"]}],
+    }
+    result = engram.apply_review(review)
+    assert result["promoted"] == 1
+    assert result["archived"] == 1
+    assert result["errors"] == []
+
+
+def test_apply_review_string_format(tmp_path: Path):
+    """字符串格式的 review 命令应被正确解析。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("待审核字符串", tier="staging")
+    review_str = f"promote lesson {lesson['id']}"
+    result = engram.apply_review(review_str)
+    assert result["promoted"] == 1
+
+
+def test_apply_review_nonexistent_item(tmp_path: Path):
+    """review 中引用不存在的 ID 应记录 error。"""
+    engram = make_engram(tmp_path)
+    review = {
+        "archive": [{"type": "lesson", "id": "fake-id-12345"}],
+    }
+    result = engram.apply_review(review)
+    assert result["archived"] == 0
+    assert len(result["errors"]) >= 1
+
+
 def test_export_import_roundtrip(tmp_path: Path):
     """导出后再导入应保持 profile 数据一致。"""
     engram = make_engram(tmp_path)
