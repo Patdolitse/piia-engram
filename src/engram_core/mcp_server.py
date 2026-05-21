@@ -689,6 +689,68 @@ async def get_stale_knowledge(days: int = 30, limit: int = 20) -> str:
 
 
 @mcp.tool()
+async def request_outline_review(lang: str = "zh") -> str:
+    """生成交互式知识审查 HTML 页面，用户可在浏览器中逐条保留或归档知识。
+
+    用途：用户说"帮我核对一下记忆"、"看看我的知识库"、"review my knowledge"时调用。
+    也可以定期建议用户运行，确保知识库质量。
+
+    生成的 HTML 页面包含：
+    - 身份画像总览
+    - 所有经验教训（按领域分组，可勾选保留/归档）
+    - 所有关键决策（可勾选保留/归档）
+    - "确认"按钮生成审查结果 JSON 文件
+
+    用户审查完成后，将结果粘贴回对话或下载 JSON，再调用 apply_review 执行归档。
+
+    Args:
+        lang: 页面语言，"zh"（中文）或 "en"（英文），默认中文。
+    """
+    path = _engram.export_review_page(lang=lang)
+    return _json({
+        "status": "review_page_generated",
+        "path": str(path),
+        "message": f"知识审查页面已生成: {path}。请在浏览器中打开，审查完成后将结果粘贴回对话。"
+        if lang == "zh"
+        else f"Review page generated: {path}. Open in browser, then paste review results back.",
+    })
+
+
+@mcp.tool()
+async def apply_review(review_text: str) -> str:
+    """执行知识审查结果——归档用户标记为不需要的条目。
+
+    用途：用户从审查页面复制审查结果文本后，调用此工具执行归档操作。
+    Purpose: After the user copies review results from the HTML review page, call this to execute archival.
+
+    输入格式（每行一条）：
+    ```
+    archive lesson <id>
+    archive decision <id>
+    ```
+
+    或者传入审查页面下载的 JSON 内容（字符串形式）。
+
+    Args:
+        review_text: 审查结果文本或 JSON 字符串。
+    """
+    import json as _json_mod
+
+    # Try to parse as JSON first
+    try:
+        data = _json_mod.loads(review_text)
+        if isinstance(data, dict) and "archive" in data:
+            result = _engram.apply_review(data)
+            return _json(result)
+    except (ValueError, TypeError):
+        pass
+
+    # Treat as text format
+    result = _engram.apply_review(review_text)
+    return _json(result)
+
+
+@mcp.tool()
 async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
     """将次要知识条目合并进主知识条目。 / Merge a secondary knowledge item into a primary knowledge item.
 
@@ -1009,6 +1071,45 @@ async def wrap_up_session(
         _engram.save_project_snapshot(project_folder, snapshot_data)
         results["project_snapshot"] = {"saved": True, "folder": project_folder}
 
+    # Step 3: Auto-reconcile external AI memories and configs
+    try:
+        reconcile = _engram.reconcile_memories()
+        if reconcile["imported"] > 0:
+            results["memory_sync"] = reconcile
+    except Exception:
+        pass  # Never let reconcile failure block wrap-up
+
+    try:
+        cfg_sync = _engram.reconcile_ai_configs()
+        if cfg_sync["imported"] > 0:
+            results["config_sync"] = cfg_sync
+    except Exception:
+        pass  # Never let config scan failure block wrap-up
+
+    # Step 4: Evaluate tier promotions (staging→verified based on access evidence)
+    try:
+        tier_result = _engram.evaluate_tiers()
+        if tier_result["promoted"] > 0:
+            results["tier_promotions"] = tier_result
+    except Exception:
+        pass
+
+    # Step 5: Report staging backlog
+    try:
+        staging = _engram.get_staging_summary()
+        if staging["total_staging"] > 0:
+            results["staging_reminder"] = {
+                "message": (
+                    f"有 {staging['total_staging']} 条待审知识"
+                    f"（{staging['staging_lessons']} 条经验 + "
+                    f"{staging['staging_decisions']} 条决策）。"
+                    "建议使用 review_knowledge 审查。"
+                ),
+                **staging,
+            }
+    except Exception:
+        pass
+
     return _json(results)
 
 
@@ -1125,6 +1226,26 @@ if __name__ == "__main__":
                 auto_migrate = None  # type: ignore[assignment]
         if auto_migrate is not None:
             auto_migrate()
+
+    # Auto-reconcile on MCP server startup — runs once regardless of which
+    # AI tool connects.  This ensures cross-tool memory sync happens even if
+    # the AI tool never calls get_user_context.
+    try:
+        _mem = _engram.reconcile_memories()
+        _cfg = _engram.reconcile_ai_configs()
+        if _mem["imported"] or _cfg["imported"]:
+            import sys as _sys
+            _msgs = []
+            if _mem["imported"]:
+                _msgs.append(f"memories={_mem['imported']}")
+            if _cfg["imported"]:
+                _msgs.append(f"configs={_cfg['imported']}")
+            print(
+                f"[engram] startup sync: {', '.join(_msgs)}",
+                file=_sys.stderr,
+            )
+    except Exception:
+        pass  # Never block server startup
 
     if args.transport == "sse":
         token = os.environ.get("ENGRAM_AUTH_TOKEN", "").strip()
