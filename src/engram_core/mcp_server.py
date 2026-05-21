@@ -180,17 +180,17 @@ async def get_identity_card() -> str:
 
 
 @mcp.tool()
-async def get_profile(safe: bool = False) -> str:
+async def get_profile(safe: bool = True) -> str:
     """获取用户身份画像。 / Get the user's identity profile.
 
     用途：需要读取角色、语言、技术水平、简介等用户画像字段时调用。
     Purpose: Call when you need profile fields such as role, language, technical level, or description.
 
-    注意：如果要给普通 AI 会话注入安全上下文，优先用 get_user_context。
-    Note: Prefer get_user_context when injecting safe context into a normal AI conversation.
+    注意：默认遵守 trust_boundaries.restricted_fields 过滤敏感字段。设 safe=False 仅在用户明确要求时使用。
+    Note: Respects trust_boundaries.restricted_fields by default. Set safe=False only when the user explicitly requests full profile access.
 
     Args:
-        safe: 设为 True 时按 trust_boundaries.restricted_fields 过滤敏感字段。 / Set to True to filter sensitive fields using trust_boundaries.restricted_fields.
+        safe: 默认 True，按 trust_boundaries 过滤敏感字段。 / Default True; filters sensitive fields per trust_boundaries.
     """
     return _json(_engram.get_profile(safe=safe))
 
@@ -1167,8 +1167,8 @@ _apply_tool_tier()
 
 @mcp.resource("engram://identity/profile")
 def resource_profile() -> str:
-    """用户身份画像。"""
-    return _json(_engram.get_profile())
+    """用户身份画像（已按信任边界过滤）。"""
+    return _json(_engram.get_safe_profile())
 
 
 @mcp.resource("engram://identity/preferences")
