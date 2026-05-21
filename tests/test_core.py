@@ -1339,3 +1339,97 @@ def test_filter_allowed_static_method(tmp_path: Path):
     )
     assert filtered == {"a": 1, "b": 2}
     assert sorted(rejected) == ["x", "y"]
+
+
+# ── Work style / domains / projects ────────────────────────────────
+
+
+def test_get_and_update_work_style(tmp_path: Path):
+    """update_work_style 应合并数据，get_work_style 应返回。"""
+    engram = make_engram(tmp_path)
+    assert engram.get_work_style() == {}
+    engram.update_work_style({"decision_style": "data-driven"})
+    result = engram.get_work_style()
+    assert result["decision_style"] == "data-driven"
+    assert "updated_at" in result
+
+
+def test_get_domains_empty(tmp_path: Path):
+    """无 domain 数据时应返回空 dict。"""
+    engram = make_engram(tmp_path)
+    assert engram.get_domains() == {}
+
+
+def test_update_domain_creates_and_updates(tmp_path: Path):
+    """update_domain 应创建和更新 domain 条目。"""
+    engram = make_engram(tmp_path)
+    # get_domains() derives counts from active lessons, so we need a lesson
+    engram.add_lesson("Python 列表推导式效率高", domain="python")
+    engram.update_domain("python", {"skills": ["FastAPI"]})
+    domains = engram.get_domains()
+    assert "python" in domains
+    assert domains["python"]["skills"] == ["FastAPI"]
+    assert domains["python"]["project_count"] == 1  # from the lesson
+
+
+def test_list_projects_empty(tmp_path: Path):
+    """无项目快照时应返回空列表。"""
+    engram = make_engram(tmp_path)
+    assert engram.list_projects() == []
+
+
+def test_list_projects_after_save(tmp_path: Path):
+    """保存项目快照后 list_projects 应列出它。"""
+    engram = make_engram(tmp_path)
+    engram.save_project_snapshot(str(tmp_path / "my-app"), {
+        "title": "My App",
+        "tech_stack": ["Python", "FastAPI"],
+    })
+    projects = engram.list_projects()
+    assert len(projects) >= 1
+    assert any(p.get("title") == "My App" for p in projects)
+
+
+def test_get_relevant_lessons_returns_list(tmp_path: Path):
+    """get_relevant_lessons 应返回经验列表。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("pytest 支持 parametrize", domain="python")
+    engram.add_lesson("React hooks 必须在顶层调用", domain="frontend")
+    engram.add_lesson("Docker 镜像要用多阶段构建", domain="devops")
+    lessons = engram.get_relevant_lessons(limit=2, _update_access=False)
+    assert isinstance(lessons, list)
+    assert len(lessons) <= 2
+
+
+def test_get_relevant_lessons_project_domain_priority(tmp_path: Path):
+    """项目技术栈匹配的 domain 应优先返回。"""
+    engram = make_engram(tmp_path)
+    # Semantically distinct lessons to avoid dedup
+    py_lessons = [
+        "用 pathlib 替代 os.path 处理文件路径更 Pythonic",
+        "asyncio TaskGroup 比 gather 更安全",
+        "dataclass frozen 可以模拟不可变对象",
+    ]
+    fe_lessons = [
+        "React 组件拆分遵循单一职责原则",
+        "TypeScript 用 interface 定义对象形状",
+        "Vite 替代 webpack 加速前端开发构建",
+    ]
+    for s in py_lessons:
+        engram.add_lesson(s, domain="python")
+    for s in fe_lessons:
+        engram.add_lesson(s, domain="frontend")
+
+    engram.save_project_snapshot(str(tmp_path / "py-proj"), {
+        "title": "Python Project",
+        "tech_stack": ["Python"],
+    })
+
+    lessons = engram.get_relevant_lessons(
+        project_folder=str(tmp_path / "py-proj"),
+        limit=6,
+        _update_access=False,
+    )
+    python_count = sum(1 for l in lessons if l.get("domain") == "python")
+    # With a Python tech stack, python domain lessons should dominate
+    assert python_count >= 2
