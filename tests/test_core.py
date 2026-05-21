@@ -328,6 +328,106 @@ def test_get_stale_knowledge(tmp_path: Path):
     assert stale["decisions"] == []
 
 
+def test_review_knowledge_updates_review_metadata(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("round9 review lifecycle lesson", "lifecycle")
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    old_review = (datetime.now() - timedelta(days=45)).isoformat()
+    lessons[0]["last_reviewed"] = old_review
+    lessons[0]["access_count"] = 1
+    engram._atomic_write(lessons_path, lessons)
+
+    reviewed = engram.review_knowledge(lesson["id"])
+
+    assert reviewed["id"] == lesson["id"]
+    assert reviewed["last_reviewed"] != old_review
+    assert datetime.fromisoformat(reviewed["last_reviewed"]) > datetime.now() - timedelta(minutes=1)
+    assert reviewed["access_count"] == 2
+
+
+def test_review_knowledge_not_found(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    result = engram.review_knowledge("missing-id")
+
+    assert "error" in result
+
+
+def test_get_stale_knowledge_limit(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    first = engram.add_lesson("round9 stale limit first", "lifecycle")
+    second = engram.add_lesson("round9 stale limit second", "lifecycle")
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    stale_review = (datetime.now() - timedelta(days=60)).isoformat()
+    for lesson in lessons:
+        lesson["last_reviewed"] = stale_review
+    engram._atomic_write(lessons_path, lessons)
+
+    stale = engram.get_stale_knowledge(days=30, limit=1)
+    none = engram.get_stale_knowledge(days=30, limit=0)
+
+    assert len(stale["lessons"]) == 1
+    assert stale["lessons"][0]["id"] in {first["id"], second["id"]}
+    assert none["lessons"] == []
+    assert none["decisions"] == []
+
+
+def test_health_report_lifecycle_recommendations(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    review = engram.add_lesson("round9 high access stale review item", "lifecycle")
+    archive = engram.add_lesson("round9 zero access archive item", "lifecycle")
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    for lesson in lessons:
+        if lesson["id"] == review["id"]:
+            lesson["last_reviewed"] = (datetime.now() - timedelta(days=60)).isoformat()
+            lesson["access_count"] = 5
+        if lesson["id"] == archive["id"]:
+            lesson["last_reviewed"] = (datetime.now() - timedelta(days=90)).isoformat()
+            lesson["access_count"] = 0
+    engram._atomic_write(lessons_path, lessons)
+
+    health = engram.get_health_report()
+
+    assert any(item["id"] == review["id"] for item in health["items_needing_review"])
+    assert any(item["id"] == archive["id"] for item in health["items_to_archive"])
+
+
+def test_generate_context_warns_when_many_stale_items(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    stale_review = (datetime.now() - timedelta(days=60)).isoformat()
+    for index in range(6):
+        engram.add_lesson(f"round9 stale context warning item {index}", "lifecycle")
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    for lesson in lessons:
+        lesson["last_reviewed"] = stale_review
+    engram._atomic_write(lessons_path, lessons)
+
+    context = engram.generate_context()
+
+    assert "stale_knowledge_warning" in context
+    assert "6" in context
+
+
+def test_generate_context_omits_warning_when_few_stale_items(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    stale_review = (datetime.now() - timedelta(days=60)).isoformat()
+    for index in range(3):
+        engram.add_lesson(f"round9 small stale context item {index}", "lifecycle")
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    for lesson in lessons:
+        lesson["last_reviewed"] = stale_review
+    engram._atomic_write(lessons_path, lessons)
+
+    context = engram.generate_context()
+
+    assert "stale_knowledge_warning" not in context
+
+
 def test_knowledge_digest_structure(tmp_path: Path):
     """知识摘要应包含总量、近期新增、常访问、领域分布和过期数量。"""
     engram = make_engram(tmp_path)
