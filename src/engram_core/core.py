@@ -949,6 +949,19 @@ class Engram:
             return self.archive_lesson(item_id)
         return self.archive_decision(item_id)
 
+    def review_knowledge(self, knowledge_id: str) -> dict:
+        """Mark a lesson or decision as reviewed without changing its content."""
+        lessons, decisions = self._read_link_collections()
+        item_type, item = self._find_item_in_collections(knowledge_id, lessons, decisions)
+        if item is None or item_type is None:
+            return {"error": f"Item not found: {knowledge_id}"}
+
+        item["last_reviewed"] = _now_iso()
+        item["access_count"] = item.get("access_count", 0) + 1
+        self._write_link_collections(lessons, decisions)
+        self._audit.log("write", "knowledge/review", detail=knowledge_id)
+        return item
+
     def merge_knowledge(self, primary_id: str, secondary_id: str) -> dict:
         """Merge secondary into primary, then archive the secondary item."""
         if primary_id == secondary_id:
@@ -1720,6 +1733,12 @@ class Engram:
                     for issue in proj["known_issues"][:3]:
                         lines.append(f"  - {issue}")
 
+        stale = self.get_stale_knowledge(days=30, limit=None)
+        stale_count = len(stale["lessons"]) + len(stale["decisions"])
+        if stale_count > 5:
+            lines.append("\n## stale_knowledge_warning")
+            lines.append(f"- 有 {stale_count} 条知识超过 30 天未复习，建议运行 get_stale_knowledge 查看。")
+
         if not lines:
             return ""
 
@@ -1868,6 +1887,30 @@ class Engram:
         if outdated_lessons:
             warnings.append(f"{len(outdated_lessons)} 条教训已标记过时，可考虑清理")
 
+        review_cutoff = datetime.now() - timedelta(days=30)
+        archive_cutoff = datetime.now() - timedelta(days=60)
+        lifecycle_items = [
+            ("lesson", item)
+            for item in active_lessons
+        ] + [
+            ("decision", item)
+            for item in active_decisions
+        ]
+        items_needing_review = []
+        items_to_archive = []
+        for item_type, item in lifecycle_items:
+            reviewed_at = self._reviewed_at(item)
+            if not reviewed_at:
+                continue
+            view = self._lifecycle_review_view(item_type, item)
+            if item.get("access_count", 0) >= 3 and reviewed_at <= review_cutoff:
+                items_needing_review.append(view)
+            if item.get("access_count", 0) == 0 and reviewed_at <= archive_cutoff:
+                items_to_archive.append(view)
+
+        items_needing_review.sort(key=lambda item: item.get("last_reviewed", ""))
+        items_to_archive.sort(key=lambda item: item.get("last_reviewed", ""))
+
         return {
             "summary": {
                 "total_lessons": len(lessons),
@@ -1880,6 +1923,8 @@ class Engram:
             "domain_distribution": domain_counts,
             "source_distribution": source_counts,
             "potential_duplicates": duplicates[:10],
+            "items_needing_review": items_needing_review[:10],
+            "items_to_archive": items_to_archive[:10],
             "warnings": warnings,
         }
 
@@ -1890,7 +1935,16 @@ class Engram:
             or _parse_iso(item.get("timestamp"))
         )
 
-    def get_stale_knowledge(self, days: int = 30) -> dict:
+    def _lifecycle_review_view(self, item_type: str, item: dict) -> dict:
+        return {
+            "id": item.get("id", ""),
+            "type": item_type,
+            "title": self._knowledge_title(item_type, item),
+            "last_reviewed": item.get("last_reviewed") or item.get("created_at", ""),
+            "access_count": item.get("access_count", 0),
+        }
+
+    def get_stale_knowledge(self, days: int = 30, limit: int | None = 20) -> dict:
         """Return active lessons and decisions not reviewed for more than days."""
         days = max(0, int(days))
         cutoff = datetime.now() - timedelta(days=days)
@@ -1927,8 +1981,17 @@ class Engram:
                     "access_count": decision.get("access_count", 0),
                 })
 
+        stale_items = stale_lessons + stale_decisions
+        stale_items.sort(key=lambda item: item.get("last_reviewed", ""))
+        if limit is not None:
+            limit = max(0, int(limit))
+            stale_items = stale_items[:limit]
+        stale_lessons = [item for item in stale_items if item.get("type") == "lesson"]
+        stale_decisions = [item for item in stale_items if item.get("type") == "decision"]
+
         return {
             "days": days,
+            "limit": limit,
             "lessons": stale_lessons,
             "decisions": stale_decisions,
         }

@@ -512,6 +512,33 @@ async def archive_knowledge(item_id: str) -> str:
 
 
 @mcp.tool()
+async def review_knowledge(knowledge_id: str) -> str:
+    """标记一条知识为"已复习"（刷新 last_reviewed 时间戳，不改内容）。
+
+    用途：用户确认某条经验/决策仍然有效时调用，防止它被标记为过期。
+    注意：如果要修改内容，用 update_knowledge。
+
+    Args:
+        knowledge_id: 要复习的知识条目 ID。
+    """
+    return _json(_engram.review_knowledge(knowledge_id))
+
+
+@mcp.tool()
+async def get_stale_knowledge(days: int = 30, limit: int = 20) -> str:
+    """列出超过指定天数未复习的知识条目。
+
+    用途：定期检查哪些经验/决策需要复习或归档。
+    注意：如果想直接归档某条，用 archive_knowledge。如果确认仍有效，用 review_knowledge 刷新。
+
+    Args:
+        days: 超过多少天算过期（默认 30）。
+        limit: 最多返回多少条（默认 20）。
+    """
+    return _json(_engram.get_stale_knowledge(days=days, limit=limit))
+
+
+@mcp.tool()
 async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
     """Merge secondary knowledge item into primary.
 
