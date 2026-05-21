@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,183 @@ from pathlib import Path
 
 # 旧版 MCP server 名称，迁移时需要清理
 LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
+
+# ---------------------------------------------------------------------------
+# 智能扫描 + 分流导入
+# ---------------------------------------------------------------------------
+
+# 用户身份类关键词
+_USER_KEYWORDS = re.compile(
+    r"(语言|language|中文|english|角色|role|我是|i am|偏好|prefer|always|never"
+    r"|禁止|必须|风格|style|tone|沟通|communicate|所有沟通|技术水平|technical.?level"
+    r"|工作方式|work.?style|习惯|habit)",
+    re.IGNORECASE,
+)
+
+# 项目规则类关键词
+_PROJECT_KEYWORDS = re.compile(
+    r"(这个.?repo|this.?repo|测试|test|build|deploy|ci/cd|ci |cd "
+    r"|pre.?commit|hook|lint|tailwind|webpack|vite|docker|makefile"
+    r"|\.env|package\.json|tsconfig|eslint|prettier|migration"
+    r"|数据库|database|schema|endpoint|路由|route|api)",
+    re.IGNORECASE,
+)
+
+
+def _scan_rule_files(cwd: Path | None = None) -> list[dict]:
+    """扫描全局和项目级规则文件，返回 [{path, scope, lines}]。
+
+    scope: "global" (全局文件，倾向用户身份) / "project" (项目文件，倾向项目规则)
+    """
+    home = Path.home()
+    current_dir = cwd or Path.cwd()
+    found: list[dict] = []
+
+    # 全局文件
+    global_candidates = [
+        home / ".claude" / "CLAUDE.md",
+    ]
+    # Cursor 全局规则目录
+    cursor_rules_dir = home / ".cursor" / "rules"
+    if cursor_rules_dir.is_dir():
+        global_candidates.extend(sorted(cursor_rules_dir.glob("*.mdc"))[:5])
+
+    # Claude Code 项目级指令（全局目录下的各项目）
+    claude_projects = home / ".claude" / "projects"
+    if claude_projects.is_dir():
+        for proj_claude in sorted(claude_projects.glob("*/CLAUDE.md"))[:10]:
+            global_candidates.append(proj_claude)
+
+    for path in global_candidates:
+        entry = _read_rule_file(path, "global")
+        if entry:
+            found.append(entry)
+
+    # 项目文件（CWD）
+    project_candidates = [
+        current_dir / "CLAUDE.md",
+        current_dir / ".cursorrules",
+        current_dir / "AGENTS.md",
+        current_dir / ".github" / "copilot-instructions.md",
+    ]
+    for path in project_candidates:
+        entry = _read_rule_file(path, "project")
+        if entry:
+            found.append(entry)
+
+    return found
+
+
+def _read_rule_file(path: Path, scope: str) -> dict | None:
+    """读取单个规则文件，返回 {path, scope, lines} 或 None。"""
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, PermissionError):
+        return None
+
+    lines = text.splitlines()[:200]  # 最多 200 行
+    content_lines = [l for l in lines if l.strip() and not l.strip().startswith("#")]
+    if len(content_lines) < 2:
+        return None  # 太少，跳过
+
+    return {"path": path, "scope": scope, "lines": lines}
+
+
+def _classify_line(line: str, scope: str) -> str:
+    """将一行内容分类为 "user" / "project" / "skip"。
+
+    Args:
+        line: 文本行
+        scope: "global" (全局文件) / "project" (项目文件)
+    """
+    stripped = line.strip()
+
+    # 跳过：空行、纯标记、过短
+    if not stripped or stripped.startswith("#") or stripped.startswith("---"):
+        return "skip"
+    if len(stripped) < 8:
+        return "skip"
+    # 跳过 frontmatter / code fences
+    if stripped.startswith("```") or stripped.startswith("<!--"):
+        return "skip"
+
+    has_user = bool(_USER_KEYWORDS.search(stripped))
+    has_project = bool(_PROJECT_KEYWORDS.search(stripped))
+
+    if has_user and not has_project:
+        return "user"
+    if has_project and not has_user:
+        return "project"
+    if has_user and has_project:
+        # 歧义：看文件来源
+        return "user" if scope == "global" else "project"
+
+    # 无关键词命中：看来源文件默认倾向
+    return "user" if scope == "global" else "project"
+
+
+def _import_with_split(
+    rule_files: list[dict],
+    engram,
+) -> dict:
+    """将扫描到的规则文件按分流规则导入 Engram。
+
+    Returns: {user_count, project_count, skipped, files}
+    """
+    user_rules: list[str] = []
+    project_rules: list[str] = []
+    skipped = 0
+
+    for rf in rule_files:
+        scope = rf["scope"]
+        for line in rf["lines"]:
+            category = _classify_line(line, scope)
+            if category == "user":
+                user_rules.append(line.strip())
+            elif category == "project":
+                project_rules.append(line.strip())
+            else:
+                skipped += 1
+
+    # 写入用户偏好
+    if user_rules:
+        # 提取特定偏好
+        prefs_update: dict = {}
+        remaining_user: list[str] = []
+
+        for rule in user_rules:
+            rule_lower = rule.lower()
+            if any(kw in rule_lower for kw in ["语言", "language", "中文", "english", "沟通"]):
+                # 语言偏好 → profile
+                if "中文" in rule:
+                    prefs_update["language"] = "中文"
+                elif "english" in rule_lower:
+                    prefs_update["language"] = "English"
+                remaining_user.append(rule)
+            elif any(kw in rule_lower for kw in ["角色", "role", "我是", "i am"]):
+                remaining_user.append(rule)
+            else:
+                remaining_user.append(rule)
+
+        if prefs_update:
+            engram.update_profile(prefs_update)
+
+        # 剩余用户规则存为 lesson（domain=user_preference）
+        for rule in remaining_user:
+            engram.add_lesson(rule, domain="user_preference", source_tool="engram_setup")
+
+    # 写入项目规则
+    for rule in project_rules:
+        engram.add_lesson(rule, domain="project_rules", source_tool="engram_setup")
+
+    return {
+        "user_count": len(user_rules),
+        "project_count": len(project_rules),
+        "skipped": skipped,
+        "files": [str(rf["path"]) for rf in rule_files],
+    }
 
 # ---------------------------------------------------------------------------
 # 工具检测配置
@@ -242,35 +420,70 @@ def _run_seed_knowledge_onboarding(
         if result.get("status") != "duplicate":
             lessons_added += 1
 
-    imported_files: list[str] = []
-    for rule_path in [current_dir / "CLAUDE.md", current_dir / ".cursorrules"]:
-        if not rule_path.is_file():
-            continue
-        if not _yn(f"  检测到 {rule_path.name}，要不要把里面的规则导入 Engram？", default=False):
-            continue
-        try:
-            content = rule_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            content = rule_path.read_text(encoding="utf-8", errors="replace")
-        if content.strip():
-            engram.ingest_notes(content, source_tool="engram_setup", domain="setup")
-        imported_files.append(rule_path.name)
+    # Step 4.5 — 智能扫描 + 分流导入
+    print("\nStep 4.5 — 智能导入规则文件")
+    rule_files = _scan_rule_files(cwd=current_dir)
+    import_result: dict = {"user_count": 0, "project_count": 0, "skipped": 0, "files": []}
 
-    print("\n✅ Engram 初始化完成！\n")
+    if rule_files:
+        print(f"\n  扫描到 {len(rule_files)} 个规则文件：")
+        for rf in rule_files:
+            scope_label = "全局" if rf["scope"] == "global" else "项目"
+            content_count = sum(1 for l in rf["lines"] if l.strip() and not l.strip().startswith("#"))
+            print(f"  [{scope_label}] {rf['path']} ({content_count} 行有效内容)")
+
+        # 预览分流
+        user_preview = project_preview = skip_preview = 0
+        for rf in rule_files:
+            for line in rf["lines"]:
+                cat = _classify_line(line, rf["scope"])
+                if cat == "user":
+                    user_preview += 1
+                elif cat == "project":
+                    project_preview += 1
+                else:
+                    skip_preview += 1
+
+        print(f"\n  分流预览：")
+        print(f"    用户身份: {user_preview} 条")
+        print(f"    项目规则: {project_preview} 条")
+        print(f"    跳过:     {skip_preview} 条")
+
+        if _yn("\n  导入这些内容？", default=True):
+            import_result = _import_with_split(rule_files, engram)
+            print(f"\n  ✅ 已导入: {import_result['user_count']} 条身份 + {import_result['project_count']} 条项目规则")
+        else:
+            print("  跳过导入。")
+    else:
+        print("  未发现规则文件（CLAUDE.md / .cursorrules 等）。")
+
+    total_imported = import_result["user_count"] + import_result["project_count"]
+
+    print("\n========================================")
+    print("  Engram 初始化完成！")
+    print("========================================\n")
     if role or tech_stack or language:
         identity_parts = [role or "-", tech_stack or "-", language or "-"]
-        print(f"   身份：{' | '.join(identity_parts)}")
+        print(f"  身份：{' | '.join(identity_parts)}")
     else:
-        print("   身份：未填写")
-    print(f"   经验：已录入 {lessons_added} 条")
-    if imported_files:
-        print(f"   导入：{', '.join(imported_files)}")
-    print("\n   下次打开 AI 工具，它就认识你了。\n")
+        print("  身份：未填写")
+    print(f"  经验：已录入 {lessons_added} 条")
+    if total_imported > 0:
+        print(f"  导入：{total_imported} 条规则（{import_result['user_count']} 条身份 + {import_result['project_count']} 条项目）")
+    print()
+    print("  验证方法：打开你的 AI 工具，说这句话：")
+    print()
+    print("    请同步 Engram 上下文，然后告诉我你现在知道我什么。")
+    print()
+    print("  如果 AI 能说出你的角色、语言偏好、技术栈，")
+    print("  就说明 Engram 已经在工作了。\n")
 
     return {
         "profile": profile_updates,
         "lessons_added": lessons_added,
-        "imported_files": imported_files,
+        "imported_files": import_result["files"],
+        "import_user_count": import_result["user_count"],
+        "import_project_count": import_result["project_count"],
     }
 
 
@@ -347,15 +560,11 @@ def run_setup() -> None:
     selected_data_dir = data_dir or default_data_dir
     _run_seed_knowledge_onboarding(selected_data_dir)
 
-    # 完成
-    print("\n========================================")
-    print("  Engram 安装完成！")
+    # 完成 — 验证提示已在 _run_seed_knowledge_onboarding 中输出
     print("  重启你的 AI 工具（Claude Code / Cursor）即可使用。")
-    print("  AI 对话开始时会自动调用 get_user_context 加载你的身份。")
     print()
     print("  遇到问题或有建议？欢迎反馈：")
-    print("  https://github.com/Patdolitse/engram/issues")
-    print("========================================\n")
+    print("  https://github.com/Patdolitse/engram/issues\n")
 
 
 def auto_migrate() -> None:
