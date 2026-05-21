@@ -690,21 +690,16 @@ async def get_stale_knowledge(days: int = 30, limit: int = 20) -> str:
 
 @mcp.tool()
 async def request_outline_review(lang: str = "zh") -> str:
-    """生成交互式知识审查 HTML 页面，用户可在浏览器中逐条保留或归档知识。
+    """生成交互式知识审查 HTML 页面，用户可在浏览器中逐条保留或归档知识。 / Generate an interactive knowledge review HTML page where the user can retain or archive items.
 
     用途：用户说"帮我核对一下记忆"、"看看我的知识库"、"review my knowledge"时调用。
-    也可以定期建议用户运行，确保知识库质量。
+    Purpose: Call when the user wants to audit their knowledge base, e.g. "review my knowledge" or "check my memory".
 
-    生成的 HTML 页面包含：
-    - 身份画像总览
-    - 所有经验教训（按领域分组，可勾选保留/归档）
-    - 所有关键决策（可勾选保留/归档）
-    - "确认"按钮生成审查结果 JSON 文件
-
+    生成的 HTML 页面包含身份画像总览、经验教训（按领域分组）、关键决策，可逐条勾选保留/归档。
     用户审查完成后，将结果粘贴回对话或下载 JSON，再调用 apply_review 执行归档。
 
     Args:
-        lang: 页面语言，"zh"（中文）或 "en"（英文），默认中文。
+        lang: 页面语言，"zh"（中文）或 "en"（英文），默认中文。 / Page language: "zh" (Chinese) or "en" (English), default "zh".
     """
     path = _engram.export_review_page(lang=lang)
     return _json({
@@ -718,21 +713,15 @@ async def request_outline_review(lang: str = "zh") -> str:
 
 @mcp.tool()
 async def apply_review(review_text: str) -> str:
-    """执行知识审查结果——归档用户标记为不需要的条目。
+    """执行知识审查结果——归档用户标记为不需要的条目。 / Execute knowledge review results — archive items the user marked for removal.
 
     用途：用户从审查页面复制审查结果文本后，调用此工具执行归档操作。
     Purpose: After the user copies review results from the HTML review page, call this to execute archival.
 
-    输入格式（每行一条）：
-    ```
-    archive lesson <id>
-    archive decision <id>
-    ```
-
-    或者传入审查页面下载的 JSON 内容（字符串形式）。
+    输入格式（每行一条 `archive lesson <id>` 或 `archive decision <id>`），或审查页面下载的 JSON 字符串。
 
     Args:
-        review_text: 审查结果文本或 JSON 字符串。
+        review_text: 审查结果文本或 JSON 字符串。 / Review results text or JSON string from the review page.
     """
     import json as _json_mod
 

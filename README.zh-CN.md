@@ -227,7 +227,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
 <details>
-<summary><strong>完整 MCP 工具列表（41 个）</strong></summary>
+<summary><strong>完整 MCP 工具列表（43 个）</strong></summary>
 
 默认暴露全部 43 个 MCP 工具。设置 `ENGRAM_TOOLS=core` 可以只加载 Tier-1 核心工具，减少工具列表长度。
 
