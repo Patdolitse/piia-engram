@@ -23,3 +23,7 @@ reader_cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Benchmark test outputs (results stay local, code & REPORT.md go in)
+experiments/benchmarks/**/results_*.json
+experiments/benchmarks/**/results_*.jsonl
