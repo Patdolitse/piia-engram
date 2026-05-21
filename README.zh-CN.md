@@ -229,7 +229,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 <details>
 <summary><strong>完整 MCP 工具列表（41 个）</strong></summary>
 
-默认暴露全部 41 个 MCP 工具。设置 `ENGRAM_TOOLS=core` 可以只加载 Tier-1 核心工具，减少工具列表长度。
+默认暴露全部 43 个 MCP 工具。设置 `ENGRAM_TOOLS=core` 可以只加载 Tier-1 核心工具，减少工具列表长度。
 
 **读取工具：**
 
@@ -370,7 +370,7 @@ python demos/setup_engram.py
 所有数据存在本地 `~/.engram/` 目录，Engram 本身不会上传数据到任何地方。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求，该服务可能进一步抓取外部网页——但此工具只有在你显式调用时才执行。身份和知识类核心工具均不发起网络请求。
 
 **Engram 有多少个 MCP 工具？**
-41 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并、生命周期复习、健康度检查、工作流快捷操作和审计日志。
+43 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并、生命周期复习、健康度检查、工作流快捷操作和审计日志。
 
 **Engram 免费吗？**
 是的。Engram 是 Apache 2.0 开源项目，完全免费。

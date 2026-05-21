@@ -207,7 +207,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 
 ## MCP Tools
 
-Engram exposes all 41 MCP tools by default. Set `ENGRAM_TOOLS=core` to load only Tier-1 Core tools for a smaller tool list.
+Engram exposes all 43 MCP tools by default. Set `ENGRAM_TOOLS=core` to load only Tier-1 Core tools for a smaller tool list.
 
 Common tools include:
 
@@ -223,7 +223,7 @@ Common tools include:
 | `get_project_context` | Tier-1 Core | Read a saved project snapshot |
 | `extract_session_insights` | Tier-1 Core | Extract lessons and decisions from session summaries |
 | `export_engram` | Tier-1 Core | Export a full backup |
-| `get_profile` | Tier-2 Advanced | Read the user profile, optionally filtered with `safe=true` |
+| `get_profile` | Tier-2 Advanced | Read the user profile (safe=true by default, respects trust boundaries) |
 | `get_work_style` | Tier-2 Advanced | Read work style preferences |
 | `get_preferences` | Tier-2 Advanced | Read communication and workflow preferences |
 | `get_trust_boundaries` | Tier-2 Advanced | Read data access boundaries |
@@ -336,7 +336,7 @@ Run `engram doctor --fix` in a terminal, then restart your AI tool. This command
 All data is stored in `~/.engram/` on your local machine. Engram itself never uploads data anywhere. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked. Core identity and knowledge tools make no network requests.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 41 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, lifecycle review, digesting, reporting, linking, health checks, workflow shortcuts, and audit logging.
+Engram exposes 43 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, lifecycle review, digesting, reporting, linking, health checks, workflow shortcuts, and audit logging.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.
@@ -348,7 +348,7 @@ Engram is functional and actively used, but some things it intentionally does no
 | Area | Current State | Planned |
 |---|---|---|
 | **File safety** | Atomic JSON writes with a shared portalocker file lock | Broader stress testing |
-| **Access control** | `restricted_fields` filters profile fields from `get_user_context` and `get_profile(safe=true)` | Per-caller ACL blocked by MCP caller identity |
+| **Access control** | `restricted_fields` filters profile in `get_user_context`, `get_profile` (default safe=true), `get_identity_card`, and resource endpoints | Per-caller ACL blocked by MCP caller identity |
 | **Encryption** | Optional field-level AES-256-GCM encryption via `ENGRAM_SECRET` env var. Install `pip install piia-engram[secure]`. | Full-disk encryption for all files (v4.0) |
 | **Audit logging** | Optional access audit log via `ENGRAM_AUDIT=1` env var. Logs to `~/.engram/audit.log`. | Per-caller audit (blocked by MCP spec) |
 | **Caller identity** | MCP protocol doesn't pass tool identity | Blocked by MCP spec |
