@@ -2,11 +2,7 @@
 
 import json
 import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from engram_core.stats import _gh, _pypi_recent, run_stats
 

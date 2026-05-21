@@ -1,10 +1,7 @@
 """setup_wizard 辅助函数单元测试。"""
 
 import json
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from engram_core.setup_wizard import (
     _find_mcp_server,
