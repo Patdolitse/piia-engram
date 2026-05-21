@@ -36,6 +36,26 @@ ENCRYPTED_PROFILE_FIELDS: set[str] = {
     "email", "phone", "location", "company",
     "real_name", "address", "id_number",
 }
+# Field whitelists — reject unknown keys to prevent injection of arbitrary data
+_ALLOWED_PROFILE_FIELDS: frozenset = frozenset({
+    "name", "role", "language", "technical_level", "description",
+    "email", "phone", "location", "company", "real_name",
+    "address", "id_number", "tech_stack", "years_experience",
+    "specialties", "updated_at",
+})
+_ALLOWED_PREFERENCES_FIELDS: frozenset = frozenset({
+    "work_patterns", "communication", "tool_preferences",
+    "updated_at", "migrated_from",
+})
+_ALLOWED_TRUST_FIELDS: frozenset = frozenset({
+    "default_sharing", "tool_access", "private_fields",
+    "allowed_tools", "data_sharing", "restricted_fields",
+    "notes", "updated_at",
+})
+_ALLOWED_QUALITY_FIELDS: frozenset = frozenset({
+    "acceptance_threshold", "rules", "evidence_requirements",
+    "review_checklist", "updated_at",
+})
 DEFAULT_TRUST_BOUNDARIES = {
     "default_sharing": "full",
     "tool_access": {},
@@ -328,8 +348,21 @@ class Engram:
         """Return profile with trust_boundaries.restricted_fields filtered out."""
         return self.get_profile(safe=True)
 
+    @staticmethod
+    def _filter_allowed(updates: dict, allowed: frozenset) -> tuple[dict, list[str]]:
+        """Return (filtered_updates, rejected_keys)."""
+        rejected = [k for k in updates if k not in allowed]
+        filtered = {k: v for k, v in updates.items() if k in allowed}
+        return filtered, rejected
+
     def update_profile(self, updates: dict) -> None:
         """Merge updates into the user profile."""
+        updates, rejected = self._filter_allowed(updates, _ALLOWED_PROFILE_FIELDS)
+        if rejected:
+            self._audit.log("warn", "identity/profile",
+                            detail=f"rejected unknown fields: {rejected}")
+        if not updates:
+            return
         profile = self.get_profile()
         profile.update(updates)
         profile["updated_at"] = _now_iso()
@@ -364,6 +397,12 @@ class Engram:
         return {}
 
     def update_preferences(self, updates: dict) -> None:
+        updates, rejected = self._filter_allowed(updates, _ALLOWED_PREFERENCES_FIELDS)
+        if rejected:
+            self._audit.log("warn", "identity/preferences",
+                            detail=f"rejected unknown fields: {rejected}")
+        if not updates:
+            return
         prefs = self.get_preferences()
         prefs.update(updates)
         prefs["updated_at"] = _now_iso()
@@ -375,6 +414,12 @@ class Engram:
         return self._ensure_trust_boundaries()
 
     def update_trust_boundaries(self, updates: dict) -> None:
+        updates, rejected = self._filter_allowed(updates, _ALLOWED_TRUST_FIELDS)
+        if rejected:
+            self._audit.log("warn", "identity/trust_boundaries",
+                            detail=f"rejected unknown fields: {rejected}")
+        if not updates:
+            return
         tb = self.get_trust_boundaries()
         tb.update(updates)
         tb["updated_at"] = _now_iso()
@@ -384,6 +429,12 @@ class Engram:
         return _read_json(self._identity_dir / "quality_standards.json")
 
     def update_quality_standards(self, updates: dict) -> None:
+        updates, rejected = self._filter_allowed(updates, _ALLOWED_QUALITY_FIELDS)
+        if rejected:
+            self._audit.log("warn", "identity/quality_standards",
+                            detail=f"rejected unknown fields: {rejected}")
+        if not updates:
+            return
         standards = self.get_quality_standards()
         standards.update(updates)
         standards["updated_at"] = _now_iso()
@@ -2053,6 +2104,8 @@ class Engram:
         "~/.claude/projects/*/memory/*.md",
     ]
 
+    _RECONCILE_MAX_FILE_SIZE = 10_240  # 10 KB — memory files should be small
+
     def reconcile_memories(self) -> dict:
         """Scan external AI tool memory dirs and auto-import missing items.
 
@@ -2062,6 +2115,7 @@ class Engram:
         imported = 0
         duplicates = 0
         scanned_files = 0
+        skipped_large = 0
         sources: list[str] = []
 
         existing_lessons = self.get_lessons(limit=None, _update_access=False)
@@ -2093,6 +2147,12 @@ class Engram:
                     continue  # Index file, not a memory
                 scanned_files += 1
                 try:
+                    fsize = mem_file.stat().st_size
+                    if fsize > self._RECONCILE_MAX_FILE_SIZE:
+                        skipped_large += 1
+                        self._audit.log("warn", "reconcile/skip_large",
+                                        detail=f"{mem_file.name} ({fsize}B)")
+                        continue
                     content = mem_file.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError):
                     continue
@@ -2173,10 +2233,14 @@ class Engram:
                 else:
                     duplicates += 1
 
+        self._audit.log("read", "reconcile_memories",
+                        detail=f"scanned={scanned_files} imported={imported} "
+                               f"dup={duplicates} skipped_large={skipped_large}")
         return {
             "scanned_files": scanned_files,
             "imported": imported,
             "duplicates": duplicates,
+            "skipped_large": skipped_large,
             "sources": sources,
         }
 
@@ -2317,9 +2381,15 @@ class Engram:
                 if candidate.is_file():
                     config_files.append(candidate)
 
+        _MAX_CFG = 50_000  # 50 KB — config files can be larger than memory
         for cfg in config_files:
             scanned_files += 1
             try:
+                fsize = cfg.stat().st_size
+                if fsize > _MAX_CFG:
+                    self._audit.log("warn", "reconcile_config/skip_large",
+                                    detail=f"{cfg.name} ({fsize}B)")
+                    continue
                 content = cfg.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
@@ -3018,7 +3088,7 @@ function copyResult() {{
             "",
         ]
 
-        profile = self.get_profile()
+        profile = self.get_safe_profile()
         if profile:
             lines.append("## 我是谁")
             if profile.get("role"):

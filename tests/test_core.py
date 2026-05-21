@@ -1253,3 +1253,92 @@ def test_token_auth_middleware_accepts_valid_token():
     response = asyncio.run(middleware.dispatch(FakeRequest(), call_next))
 
     assert response.status_code == 200
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Security hardening tests (v3.11.2)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_update_profile_rejects_unknown_fields(tmp_path: Path):
+    """update_profile 应静默丢弃不在白名单中的字段。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "developer", "malicious_key": "evil"})
+
+    profile = engram.get_profile()
+    assert profile.get("role") == "developer"
+    assert "malicious_key" not in profile
+
+
+def test_update_preferences_rejects_unknown_fields(tmp_path: Path):
+    """update_preferences 应丢弃未知字段。"""
+    engram = make_engram(tmp_path)
+    engram.update_preferences({"communication": "简洁", "hack": "inject"})
+
+    prefs = engram.get_preferences()
+    assert prefs.get("communication") == "简洁"
+    assert "hack" not in prefs
+
+
+def test_update_trust_boundaries_rejects_unknown_fields(tmp_path: Path):
+    """update_trust_boundaries 应丢弃未知字段。"""
+    engram = make_engram(tmp_path)
+    engram.update_trust_boundaries({"restricted_fields": ["email"], "pwned": True})
+
+    tb = engram.get_trust_boundaries()
+    assert "email" in tb["restricted_fields"]
+    assert "pwned" not in tb
+
+
+def test_update_quality_standards_rejects_unknown_fields(tmp_path: Path):
+    """update_quality_standards 应丢弃未知字段。"""
+    engram = make_engram(tmp_path)
+    engram.update_quality_standards({"acceptance_threshold": 4, "exploit": "xss"})
+
+    qs = engram.get_quality_standards()
+    assert qs.get("acceptance_threshold") == 4
+    assert "exploit" not in qs
+
+
+def test_identity_card_respects_trust_boundaries(tmp_path: Path):
+    """export_identity_card 应使用 safe profile，不输出被限制字段。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({
+        "role": "高级工程师",
+        "email": "secret@corp.com",
+        "language": "中文",
+    })
+    engram.update_trust_boundaries({"restricted_fields": ["email"]})
+
+    card = engram.export_identity_card()
+    assert "高级工程师" in card
+    assert "secret@corp.com" not in card
+
+
+def test_reconcile_skips_large_files(tmp_path: Path):
+    """reconcile_memories 应跳过超过 10KB 的文件。"""
+    engram = make_engram(tmp_path / "engram")
+
+    mem_dir = tmp_path / ".claude" / "projects" / "test" / "memory"
+    mem_dir.mkdir(parents=True)
+    # Normal file
+    (mem_dir / "small.md").write_text("Small memory content here", encoding="utf-8")
+    # Oversized file (> 10KB)
+    (mem_dir / "huge.md").write_text("x" * 15_000, encoding="utf-8")
+
+    engram._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
+    result = engram.reconcile_memories()
+
+    assert result["skipped_large"] == 1
+    assert result["scanned_files"] == 2  # both encountered, one skipped
+
+
+def test_filter_allowed_static_method(tmp_path: Path):
+    """_filter_allowed 应正确分离合法和非法字段。"""
+    engram = make_engram(tmp_path)
+    allowed = frozenset({"a", "b", "c"})
+    filtered, rejected = engram._filter_allowed(
+        {"a": 1, "b": 2, "x": 3, "y": 4}, allowed
+    )
+    assert filtered == {"a": 1, "b": 2}
+    assert sorted(rejected) == ["x", "y"]

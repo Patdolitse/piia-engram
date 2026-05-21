@@ -257,7 +257,7 @@ def test_reconcile_empty_dir(tmp_path: Path):
 
     engram._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
     result = engram.reconcile_memories()
-    assert result == {"scanned_files": 0, "imported": 0, "duplicates": 0, "sources": []}
+    assert result == {"scanned_files": 0, "imported": 0, "duplicates": 0, "skipped_large": 0, "sources": []}
 
 
 # ── Non-existent path doesn't crash ──────────────────────────────────
