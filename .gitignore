@@ -24,6 +24,12 @@ reader_cache/
 .DS_Store
 Thumbs.db
 
+# Generated temp files
+test_output.txt
+test_stdout.txt
+my_ai_profile.html
+.claude/
+
 # Benchmark test outputs (results stay local, code & REPORT.md go in)
 experiments/benchmarks/**/results_*.json
 experiments/benchmarks/**/results_*.jsonl
