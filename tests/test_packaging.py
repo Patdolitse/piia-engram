@@ -166,7 +166,7 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "Engram exposes 41 MCP tools" in content
+    assert "Engram exposes 43 MCP tools" in content
 
 
 def test_readme_has_remote_deployment_section():
@@ -256,8 +256,8 @@ def test_zh_readme_uses_pypi_install_and_41_tools():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "完整 MCP 工具列表（41 个）" in content
-    assert "41 个 MCP 工具" in content
+    assert "完整 MCP 工具列表（43 个）" in content
+    assert "43 个 MCP 工具" in content
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content
