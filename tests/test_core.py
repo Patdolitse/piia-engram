@@ -5,7 +5,7 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from engram_core.core import Engram
+from engram_core.core import Engram, extract_knowledge, ingest_extraction
 
 
 def make_engram(tmp_path: Path) -> Engram:
@@ -1433,3 +1433,68 @@ def test_get_relevant_lessons_project_domain_priority(tmp_path: Path):
     python_count = sum(1 for l in lessons if l.get("domain") == "python")
     # With a Python tech stack, python domain lessons should dominate
     assert python_count >= 2
+
+
+# ── extract_knowledge / ingest_extraction ──────────────────────────
+
+
+def test_extract_knowledge_returns_none_without_provider(tmp_path: Path):
+    """provider=None 时 extract_knowledge 应返回 None。"""
+    result = extract_knowledge(
+        conversation=[{"role": "user", "content": "hello"}],
+        project_folder=str(tmp_path),
+        project_files="main.py",
+        provider=None,
+    )
+    assert result is None
+
+
+def test_extract_knowledge_returns_none_for_empty_conversation():
+    """空对话时应返回 None。"""
+    result = extract_knowledge(
+        conversation=[],
+        project_folder="/some/path",
+        project_files="",
+        provider="dummy",
+    )
+    assert result is None
+
+
+def test_ingest_extraction_applies_profile(tmp_path: Path):
+    """ingest_extraction 应将 profile_updates 写入 Engram。"""
+    engram = make_engram(tmp_path)
+    extracted = {
+        "profile_updates": {"role": "全栈开发者", "language": "中文"},
+    }
+    result = ingest_extraction(engram, extracted, str(tmp_path))
+    assert result["items_learned"] >= 1
+    profile = engram.get_profile()
+    assert profile["role"] == "全栈开发者"
+
+
+def test_ingest_extraction_applies_lessons_and_decisions(tmp_path: Path):
+    """ingest_extraction 应添加 lessons 和 decisions。"""
+    engram = make_engram(tmp_path)
+    extracted = {
+        "lessons": [
+            {"summary": "pytest 的 parametrize 能减少重复测试代码", "domain": "python"},
+        ],
+        "decisions": [
+            {"question": "测试框架选型", "choice": "pytest", "reasoning": "生态好"},
+        ],
+    }
+    result = ingest_extraction(engram, extracted, str(tmp_path), session_id="test-session")
+    assert result["items_learned"] >= 2
+
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    assert any("parametrize" in l.get("summary", "") for l in lessons)
+
+    decisions = engram.get_decisions(limit=None, _update_access=False)
+    assert any("测试框架" in d.get("question", d.get("title", "")) for d in decisions)
+
+
+def test_ingest_extraction_empty_dict(tmp_path: Path):
+    """空提取结果不应崩溃。"""
+    engram = make_engram(tmp_path)
+    result = ingest_extraction(engram, {}, str(tmp_path))
+    assert result["items_learned"] == 0
