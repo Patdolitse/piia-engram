@@ -1,9 +1,6 @@
 """Audit logger unit tests."""
 import json
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from engram_core.audit import AuditLogger
 
