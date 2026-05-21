@@ -355,6 +355,40 @@ def _yn(message: str, default: bool = True) -> bool:
     return answer.startswith("y")
 
 
+def _choice(message: str, options: list[str], allow_custom: bool = True) -> str:
+    """数字菜单选择。支持自定义输入。
+
+    Args:
+        message: 提示语
+        options: 预设选项列表
+        allow_custom: 是否允许自定义输入
+
+    Returns: 选中的选项文本，或空字符串（跳过）
+    """
+    print(f"  {message}")
+    for i, opt in enumerate(options, 1):
+        print(f"    {i}. {opt}")
+    if allow_custom:
+        print(f"    {len(options) + 1}. 其他（自行输入）")
+    print(f"    0. 跳过")
+
+    answer = _prompt("  请选择").strip()
+    if not answer or answer == "0":
+        return ""
+
+    try:
+        idx = int(answer)
+        if 1 <= idx <= len(options):
+            return options[idx - 1]
+        if allow_custom and idx == len(options) + 1:
+            return _prompt("  请输入")
+    except ValueError:
+        # 直接输入了文本而非数字，也接受
+        return answer
+
+    return ""
+
+
 def _configure_utf8_stdio() -> None:
     """Prefer UTF-8 output so Windows setup can print Chinese and status icons."""
     for stream_name in ("stdout", "stderr"):
@@ -388,10 +422,30 @@ def _run_seed_knowledge_onboarding(
     engram = Engram(root=root)
     current_dir = cwd or Path.cwd()
 
-    print("Step 4/4 — 录入种子知识（可直接回车跳过）")
-    role = _prompt("  你的角色是什么？（如：全栈开发者、产品经理、学生）", "")
-    tech_stack = _prompt("  你常用什么编程语言/技术栈？", "")
-    language = _prompt("  你偏好 AI 用什么语言跟你沟通？（中文/English/其他）", "")
+    print("Step 4/4 — 录入种子知识（输入 0 跳过）\n")
+    role = _choice("你的角色是什么？", [
+        "全栈开发者",
+        "后端开发者",
+        "前端开发者",
+        "产品经理",
+        "数据科学家",
+        "学生",
+    ])
+    print()
+    tech_stack = _choice("你常用什么编程语言/技术栈？", [
+        "Python",
+        "TypeScript / JavaScript",
+        "Go",
+        "Java",
+        "Rust",
+        "Python + TypeScript",
+    ])
+    print()
+    language = _choice("你偏好 AI 用什么语言跟你沟通？", [
+        "中文",
+        "English",
+        "日本语",
+    ])
 
     profile_updates: dict[str, str] = {}
     if role:
