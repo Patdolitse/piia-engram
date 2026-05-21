@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Engram are documented in this file.
+All notable changes to Engram are documented in this file. For detailed release notes with upgrade instructions, see [GitHub Releases](https://github.com/Patdolitse/engram/releases).
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
