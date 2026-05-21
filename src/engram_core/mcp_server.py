@@ -234,9 +234,10 @@ async def get_decisions(
     project: Optional[str] = None,
     limit: int = 30,
 ) -> str:
-    """获取用户做过的关键决策及其推理。
+    """按时间列出用户做过的关键决策（不需要搜索词）。
 
-    帮助理解过去的选择以保持一致性。
+    用途：想浏览最近的决策记录、或按项目/来源筛选时调用。
+    注意：如果你有明确的关键词想搜索决策内容，用 search_knowledge(scope="decisions") 更精准。
 
     Args:
         source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。
