@@ -33,8 +33,15 @@ def test_atomic_tool_parser_finds_current_mcp_surface():
     tools = load_atomic_tool_descriptions()
     names = {tool["name"] for tool in tools}
 
-    assert len(tools) == 37
-    assert {"add_lesson", "add_decision", "search_knowledge", "export_engram"} <= names
+    assert len(tools) == 39
+    assert {
+        "add_lesson",
+        "add_decision",
+        "search_knowledge",
+        "export_engram",
+        "wrap_up_session",
+        "start_project",
+    } <= names
 
 
 def test_rule_based_judge_handles_main_intents_without_expected_labels():
