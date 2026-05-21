@@ -628,6 +628,7 @@ class Engram:
             return 0.0
 
         score = 0.0
+        all_matched: set[str] = set()
         for field, weight in FIELD_WEIGHTS.items():
             value = str(item.get(field, "")).lower()
             if not value:
@@ -635,8 +636,13 @@ class Engram:
             field_tokens = self._tokenize(value)
             if not field_tokens:
                 continue
-            matched = len(query_tokens & field_tokens)
-            score += weight * (matched / len(query_tokens))
+            matched_tokens = query_tokens & field_tokens
+            all_matched.update(matched_tokens)
+            score += weight * (len(matched_tokens) / len(query_tokens))
+
+        # Query coverage bonus: reward items matching more unique query terms
+        coverage = len(all_matched) / len(query_tokens)
+        score += coverage * 2.0
 
         primary = str(
             item.get("summary")
