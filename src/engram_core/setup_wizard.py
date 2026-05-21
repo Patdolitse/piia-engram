@@ -301,8 +301,8 @@ def _read_mcp_config(config_path: Path) -> dict:
     if config_path.is_file():
         try:
             return json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[engram] read config failed ({config_path}): {exc}", file=sys.stderr)
     return {}
 
 
@@ -733,8 +733,8 @@ def auto_migrate() -> None:
                     f.write(line + "\n")
                 f.write("  Restart affected AI tools to apply changes.\n")
 
-    except Exception:
-        pass  # 迁移失败不能导致 MCP server 崩溃
+    except Exception as exc:
+        print(f"[engram] migration failed: {exc}", file=sys.stderr)
 
 
 def run_doctor(fix: bool = False) -> int:

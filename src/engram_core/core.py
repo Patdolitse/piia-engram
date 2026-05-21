@@ -2059,8 +2059,8 @@ class Engram:
                     f"- 记忆同步：导入了 {reconcile['imported']} 条外部 AI 记忆"
                     f"（来源：{', '.join(reconcile['sources'][:5])}）"
                 )
-        except Exception:
-            pass  # Never let reconcile failure block cold-start
+        except Exception as exc:
+            print(f"[engram] reconcile_memories failed: {exc}", file=sys.stderr)
 
         try:
             cfg_sync = self.reconcile_ai_configs()
@@ -2070,8 +2070,8 @@ class Engram:
                     f"导入了 {cfg_sync['imported']} 条规则"
                     f"（来源：{', '.join(cfg_sync['sources'][:5])}）"
                 )
-        except Exception:
-            pass  # Never let config scan failure block cold-start
+        except Exception as exc:
+            print(f"[engram] reconcile_ai_configs failed: {exc}", file=sys.stderr)
 
         if sync_msgs:
             sections["sync"] = "\n## auto_sync\n" + "\n".join(sync_msgs)
@@ -3964,8 +3964,8 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: Engram) -> dict:
                 if threshold:
                     engram.update_quality_standards({"acceptance_threshold": threshold})
                 migrated.append("owner_profile")
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[engram] migrate owner_profile failed: {exc}", file=sys.stderr)
 
     # Project patterns → Engram domains + quality standards
     patterns_path = mem_dir / "project_patterns.json"
@@ -3983,8 +3983,8 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: Engram) -> dict:
                 if domain:
                     engram.update_domain(domain, {"project_count": count})
             migrated.append("project_patterns")
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[engram] migrate project_patterns failed: {exc}", file=sys.stderr)
 
     # Near misses → Engram lessons
     nm_path = mem_dir / "near_misses.json"
@@ -4000,8 +4000,8 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: Engram) -> dict:
                         "source_project": "migrated_from_oca_memory",
                     })
                 migrated.append(f"near_misses ({len(near_misses)} entries)")
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[engram] migrate near_misses failed: {exc}", file=sys.stderr)
 
     return {"migrated": migrated}
 

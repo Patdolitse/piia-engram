@@ -47,5 +47,5 @@ class AuditLogger:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
-            pass  # Audit log failure must not block main flow
+        except Exception as exc:
+            print(f"[engram] audit write failed: {exc}", file=__import__('sys').stderr)
