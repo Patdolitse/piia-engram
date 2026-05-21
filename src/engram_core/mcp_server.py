@@ -1004,12 +1004,14 @@ async def get_audit_log(limit: int = 50) -> str:
     用途：需要查看 Engram 最近的读写操作、排查行为或核对记录时调用。
     Purpose: Call when inspecting recent Engram reads/writes, debugging behavior, or auditing activity.
 
-    注意：只有启用 ENGRAM_AUDIT=1 后才会有审计日志。
-    Note: Audit entries exist only when ENGRAM_AUDIT=1 has been enabled.
+    注意：只有启用 ENGRAM_AUDIT=1 后才会有审计日志。最多返回 200 条。
+    Note: Audit entries exist only when ENGRAM_AUDIT=1 has been enabled. Max 200 entries.
 
     Args:
-        limit: 最多返回多少条（默认 50，按最近优先）。 / Maximum number of entries to return (default 50, most recent first).
+        limit: 最多返回多少条（默认 50，上限 200，按最近优先）。 / Maximum entries to return (default 50, max 200, most recent first).
     """
+    _MAX_AUDIT_ENTRIES = 200
+    limit = max(1, min(limit, _MAX_AUDIT_ENTRIES))
     log_path = _engram.root / "audit.log"
     if not log_path.is_file():
         return _json({"entries": [], "total": 0, "message": "Audit logging not enabled. Set ENGRAM_AUDIT=1."})
@@ -1020,6 +1022,7 @@ async def get_audit_log(limit: int = 50) -> str:
             entries.append(json.loads(line))
         except json.JSONDecodeError:
             continue
+    _engram._audit.log("read", "audit_log", detail=f"returned {len(entries)}/{len(lines)}")
     return _json({"entries": entries, "total": len(lines)})
 
 
