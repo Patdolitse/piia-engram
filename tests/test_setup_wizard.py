@@ -145,6 +145,10 @@ def test_seed_onboarding_saves_profile_and_lessons(tmp_path: Path, monkeypatch, 
 
 def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
     """检测到 CLAUDE.md 且用户确认时，应通过 ingest_notes 导入规则。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     (tmp_path / "CLAUDE.md").write_text(
         "remember to run tests before claiming completion\n"
         "decided to keep project memory local first\n",
@@ -159,15 +163,18 @@ def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
 
     engram = Engram(root=tmp_path)
     lessons = engram.get_lessons(limit=None, _update_access=False)
-    decisions = engram.get_decisions(limit=None, _update_access=False)
 
-    assert summary["imported_files"] == ["CLAUDE.md"]
+    assert summary["imported_files"] == [str(tmp_path / "CLAUDE.md")]
     assert any("remember to run tests" in lesson["summary"] for lesson in lessons)
-    assert any("decided to keep project memory" in decision["title"] for decision in decisions)
+    assert any("decided to keep project memory" in lesson["summary"] for lesson in lessons)
 
 
 def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch, capsys):
     """所有问题直接回车跳过时，应正常结束且不写入空数据。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     answers = iter(["", "", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 

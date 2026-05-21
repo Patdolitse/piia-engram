@@ -227,9 +227,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
 <details>
-<summary><strong>完整 MCP 工具列表（37 个）</strong></summary>
+<summary><strong>完整 MCP 工具列表（41 个）</strong></summary>
 
-默认暴露全部 37 个 MCP 工具。设置 `ENGRAM_TOOLS=core` 可以只加载 Tier-1 核心工具，减少工具列表长度。
+默认暴露全部 41 个 MCP 工具。设置 `ENGRAM_TOOLS=core` 可以只加载 Tier-1 核心工具，减少工具列表长度。
 
 **读取工具：**
 
@@ -254,6 +254,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | `get_related_knowledge` | Tier-2 高级 | 查询某条知识关联的其他知识 |
 | `find_similar_knowledge` | Tier-2 高级 | 按内容查找相似知识 |
 | `export_knowledge_report` | Tier-2 高级 | 导出 Markdown 知识报告 |
+| `get_stale_knowledge` | Tier-2 高级 | 列出需要复习的过期知识 |
 
 **写入工具：**
 
@@ -270,7 +271,10 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | `merge_knowledge` | Tier-2 高级 | 合并重复知识条目 |
 | `update_knowledge` | Tier-2 高级 | 更新一条经验教训或决策（自动检测类型） |
 | `archive_knowledge` | Tier-2 高级 | 废弃一条经验教训或决策（自动检测类型） |
+| `review_knowledge` | Tier-2 高级 | 标记一条经验教训或决策已复习 |
 | `update_identity` | Tier-2 高级 | 更新身份画像、偏好、信任边界、工作方式或质量标准 |
+| `wrap_up_session` | Tier-2 高级 | 会话结束时自动提取知识并可选保存项目快照 |
+| `start_project` | Tier-2 高级 | 新项目启动时继承历史知识并建立项目档案 |
 
 **导入导出工具：**
 
@@ -366,7 +370,7 @@ python demos/setup_engram.py
 所有数据存在本地 `~/.engram/` 目录，Engram 本身不会上传数据到任何地方。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求，该服务可能进一步抓取外部网页——但此工具只有在你显式调用时才执行。身份和知识类核心工具均不发起网络请求。
 
 **Engram 有多少个 MCP 工具？**
-37 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并、健康度检查和审计日志。
+41 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并、生命周期复习、健康度检查、工作流快捷操作和审计日志。
 
 **Engram 免费吗？**
 是的。Engram 是 Apache 2.0 开源项目，完全免费。

@@ -356,8 +356,8 @@ def test_review_knowledge_not_found(tmp_path: Path):
 
 def test_get_stale_knowledge_limit(tmp_path: Path):
     engram = make_engram(tmp_path)
-    first = engram.add_lesson("round9 stale limit first", "lifecycle")
-    second = engram.add_lesson("round9 stale limit second", "lifecycle")
+    first = engram.add_lesson("alpha orchard expiry marker", "lifecycle")
+    second = engram.add_lesson("zebra quartz overdue signal", "lifecycle")
     lessons_path = tmp_path / "knowledge" / "lessons.json"
     lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
     stale_review = (datetime.now() - timedelta(days=60)).isoformat()
@@ -398,8 +398,16 @@ def test_health_report_lifecycle_recommendations(tmp_path: Path):
 def test_generate_context_warns_when_many_stale_items(tmp_path: Path):
     engram = make_engram(tmp_path)
     stale_review = (datetime.now() - timedelta(days=60)).isoformat()
-    for index in range(6):
-        engram.add_lesson(f"round9 stale context warning item {index}", "lifecycle")
+    summaries = [
+        "alpha orchard expiry marker",
+        "bravo canyon review signal",
+        "charlie cedar overdue note",
+        "delta harbor stale pointer",
+        "echo lantern refresh reminder",
+        "foxtrot quartz lifecycle item",
+    ]
+    for summary in summaries:
+        engram.add_lesson(summary, "lifecycle")
     lessons_path = tmp_path / "knowledge" / "lessons.json"
     lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
     for lesson in lessons:

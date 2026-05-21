@@ -166,7 +166,7 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "Engram exposes 37 MCP tools" in content
+    assert "Engram exposes 41 MCP tools" in content
 
 
 def test_readme_has_remote_deployment_section():
@@ -189,7 +189,7 @@ def test_readme_documents_tool_tiering():
 
 
 def test_mcp_tool_count_and_merge_tool():
-    """MCP server 应暴露 36 个工具且包含合并后的统一工具。"""
+    """MCP server 应暴露 41 个工具且包含统一知识生命周期工具。"""
     tree = ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
     tools = []
     for node in ast.walk(tree):
@@ -203,7 +203,7 @@ def test_mcp_tool_count_and_merge_tool():
             ):
                 tools.append(node.name)
                 break
-    assert len(tools) == 37
+    assert len(tools) == 41
     assert "update_knowledge" in tools
     assert "bulk_add_knowledge" in tools
     assert "get_knowledge_overview" in tools
@@ -211,24 +211,27 @@ def test_mcp_tool_count_and_merge_tool():
     assert "get_knowledge_inheritance" in tools
     assert "extract_session_insights" in tools
     assert "get_audit_log" in tools
+    assert "review_knowledge" in tools
+    assert "get_stale_knowledge" in tools
     assert "get_safe_profile" not in tools
     assert "update_lesson" not in tools
     assert "update_decision" not in tools
     assert "bulk_add_lessons" not in tools
     assert "bulk_add_decisions" not in tools
     assert "get_health_report" not in tools
-    assert "get_stale_knowledge" not in tools
     assert "get_knowledge_digest" not in tools
 
 
 def test_mcp_tools_default_to_all_registered_tools(tmp_path: Path):
-    """未设置 ENGRAM_TOOLS 时应保持全部 37 个工具，避免破坏现有用户。"""
+    """未设置 ENGRAM_TOOLS 时应保持全部 41 个工具，避免破坏现有用户。"""
     tools = _registered_mcp_tools(tmp_path)
 
-    assert len(tools) == 37
+    assert len(tools) == 41
     assert set(CORE_MCP_TOOLS).issubset(tools)
     assert "get_profile" in tools
     assert "bulk_add_knowledge" in tools
+    assert "review_knowledge" in tools
+    assert "get_stale_knowledge" in tools
 
 
 def test_mcp_tools_core_tier_registers_only_core_tools(tmp_path: Path):
@@ -248,18 +251,20 @@ def test_setup_help_mentions_core_tool_tier():
     assert "核心工具" in content
 
 
-def test_zh_readme_uses_pypi_install_and_36_tools():
+def test_zh_readme_uses_pypi_install_and_41_tools():
     """中文 README 应同步 PyPI badge、安装命令和工具数量。"""
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "完整 MCP 工具列表（37 个）" in content
-    assert "37 个 MCP 工具" in content
+    assert "完整 MCP 工具列表（41 个）" in content
+    assert "41 个 MCP 工具" in content
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content
     assert "`get_knowledge_inheritance`" in content
     assert "`merge_knowledge`" in content
+    assert "`review_knowledge`" in content
+    assert "`get_stale_knowledge`" in content
     assert "`extract_session_insights`" in content
     assert "`get_safe_profile`" not in content
     assert "`bulk_add_lessons`" not in content

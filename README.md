@@ -207,7 +207,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 
 ## MCP Tools
 
-Engram exposes all 37 MCP tools by default. Set `ENGRAM_TOOLS=core` to load only Tier-1 Core tools for a smaller tool list.
+Engram exposes all 41 MCP tools by default. Set `ENGRAM_TOOLS=core` to load only Tier-1 Core tools for a smaller tool list.
 
 Common tools include:
 
@@ -243,13 +243,17 @@ Common tools include:
 | `get_related_knowledge` | Tier-2 Advanced | Follow links between lessons and decisions |
 | `find_similar_knowledge` | Tier-2 Advanced | Find similar lessons and decisions by content |
 | `export_knowledge_report` | Tier-2 Advanced | Export a readable Markdown knowledge report |
+| `get_stale_knowledge` | Tier-2 Advanced | List knowledge items that need review |
 | `link_knowledge` | Tier-2 Advanced | Create a bidirectional link between two knowledge items |
 | `unlink_knowledge` | Tier-2 Advanced | Remove a bidirectional knowledge link |
 | `merge_knowledge` | Tier-2 Advanced | Merge a duplicate knowledge item into the primary item |
 | `update_knowledge` | Tier-2 Advanced | Update a lesson or decision by ID |
 | `archive_knowledge` | Tier-2 Advanced | Archive a lesson or decision by ID |
+| `review_knowledge` | Tier-2 Advanced | Mark a lesson or decision as reviewed |
 | `update_identity` | Tier-2 Advanced | Update profile, preferences, trust boundaries, work style, or quality standards |
 | `get_audit_log` | Tier-2 Advanced | Get recent audit log entries |
+| `wrap_up_session` | Tier-2 Advanced | End a session by extracting knowledge and optionally saving a project snapshot |
+| `start_project` | Tier-2 Advanced | Start a project with inherited knowledge and a new project snapshot |
 
 ## Data Layout
 
@@ -332,7 +336,7 @@ Run `engram doctor --fix` in a terminal, then restart your AI tool. This command
 All data is stored in `~/.engram/` on your local machine. Engram itself never uploads data anywhere. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked. Core identity and knowledge tools make no network requests.
 
 **How many MCP tools does Engram provide?**
-Engram exposes 37 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, digesting, reporting, linking, health checks, and audit logging.
+Engram exposes 41 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, lifecycle review, digesting, reporting, linking, health checks, workflow shortcuts, and audit logging.
 
 **Is Engram free?**
 Yes. Engram is free and open source under the Apache 2.0 license.
