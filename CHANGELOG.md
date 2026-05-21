@@ -4,6 +4,25 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.12.0] - 2026-05-22
+
+### Improved
+- Cold-start empty-state guidance: actionable next steps (update_identity / engram setup) instead of bare warning
+- All silent `except Exception: pass` blocks now log to stderr for debugging
+- Python 3.13 added to CI test matrix and PyPI classifiers
+
+### Tests
+- 212 passed (up from 193 in v3.11.2)
+- New: `test_stats.py` — 11 tests covering stats module (API mocking)
+- New: 3 `engram doctor` tests (healthy config, legacy name, invalid path)
+- New: 5 edge-case tests (token budget, CJK conflict, config size limit)
+
+### Docs
+- Bilingual issue templates (bug report + feature request)
+- Bilingual PR template with security checklist
+- Consolidated 9 individual RELEASE_NOTES files into CHANGELOG.md
+- Bilingual docstrings for review tools
+
 ## [3.11.2] - 2026-05-22
 
 ### Security
