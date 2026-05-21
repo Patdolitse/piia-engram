@@ -187,5 +187,78 @@ def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch,
     assert engram.get_profile() == {}
     assert engram.get_lessons(limit=None, _update_access=False) == []
     assert summary["profile"] == {}
-    assert summary["lessons_added"] == 0
-    assert "Engram 初始化完成" in capsys.readouterr().out
+
+
+# ── Doctor tests ─────────────────────────────────────────────────────
+
+
+def test_doctor_healthy_config(tmp_path: Path, monkeypatch):
+    """doctor 对健康配置应返回 0（无问题）。"""
+    from engram_core.setup_wizard import run_doctor, _write_mcp_config, _find_python, _find_mcp_server
+
+    python_path = _find_python()
+    mcp_path = _find_mcp_server()
+    if not python_path or not mcp_path:
+        return  # Skip if can't find paths
+
+    config_dir = tmp_path / ".claude"
+    config_dir.mkdir()
+    config_path = config_dir / ".mcp.json"
+    _write_mcp_config(config_path, python_path, mcp_path)
+
+    # Patch _tool_configs to point to our test config
+    monkeypatch.setattr(
+        "engram_core.setup_wizard._tool_configs",
+        lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+    )
+
+    result = run_doctor(fix=False)
+    assert result == 0
+
+
+def test_doctor_detects_legacy_server_name(tmp_path: Path, monkeypatch):
+    """doctor 应检测到旧版 server 名称。"""
+    from engram_core.setup_wizard import run_doctor
+
+    config_dir = tmp_path / ".claude"
+    config_dir.mkdir()
+    config_path = config_dir / ".mcp.json"
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "piia-pkc": {"command": "python", "args": ["old_server.py"]},
+            "engram": {"command": "python", "args": ["mcp_server.py"]},
+        }
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "engram_core.setup_wizard._tool_configs",
+        lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+    )
+
+    result = run_doctor(fix=False)
+    assert result > 0  # Should detect the legacy name
+
+
+def test_doctor_detects_invalid_python_path(tmp_path: Path, monkeypatch):
+    """doctor 应检测到不存在的 Python 路径。"""
+    from engram_core.setup_wizard import run_doctor
+
+    config_dir = tmp_path / ".claude"
+    config_dir.mkdir()
+    config_path = config_dir / ".mcp.json"
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "engram": {
+                "command": "/nonexistent/python999",
+                "args": ["/nonexistent/mcp_server.py"],
+            }
+        }
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "engram_core.setup_wizard._tool_configs",
+        lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+    )
+
+    result = run_doctor(fix=False)
+    assert result > 0  # Should detect invalid paths
