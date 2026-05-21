@@ -1,0 +1,11 @@
+Engram
+Copyright 2026 Patdolitse
+
+This product includes software developed by the Engram project
+(https://github.com/Patdolitse/engram).
+
+Licensed under the Apache License, Version 2.0.
+
+Third-party dependencies:
+- mcp (MIT License) — Model Context Protocol SDK
+- portalocker (PSF License) — Cross-platform file locking
