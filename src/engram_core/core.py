@@ -663,7 +663,8 @@ class Engram:
         return results
 
     def get_relevant_lessons(self, project_folder: str | None = None,
-                             limit: int = 8) -> list[dict]:
+                             limit: int = 8,
+                             _update_access: bool = True) -> list[dict]:
         """根据项目技术栈智能筛选教训：相关领域优先，兼顾通用教训。
 
         策略：
@@ -673,7 +674,7 @@ class Engram:
 
         Returns: 最多 limit 条教训（相关度排序）
         """
-        all_lessons = self.get_lessons(limit=200)
+        all_lessons = self.get_lessons(limit=200, _update_access=_update_access)
         if not all_lessons:
             return []
 
@@ -1695,8 +1696,9 @@ class Engram:
                 lines.append(f"- {name}: {count} 个项目经验")
 
         # Smart lessons: domain-relevant + recent universal
+        # _update_access=False: AI 注入 context 不算"用户复习"，避免污染 staleness 检测
         lessons = self.get_relevant_lessons(
-            project_folder=project_folder, limit=8
+            project_folder=project_folder, limit=8, _update_access=False
         )
         if lessons:
             lines.append("\n## 相关经验教训（请在开发中主动避免）")
