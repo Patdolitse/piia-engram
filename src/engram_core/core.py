@@ -1929,7 +1929,10 @@ class Engram:
             if profile.get("description"):
                 plines.append(f"- 简介: {profile['description']}")
         else:
-            plines.append("- ⚠ 身份画像未设置。请运行 `engram setup` 或调用 update_identity 录入基本信息，以获得个性化体验。")
+            plines.append("- ⚠ 身份画像未设置。")
+            plines.append("- 你可以通过对话了解用户并调用 `update_identity` 设置画像（role、language、technical_level、description）。")
+            plines.append("- 或者建议用户运行 `engram setup` 完成引导式设置。")
+            plines.append("- 设置后，所有 AI 工具都能从第一条消息开始就了解这位用户。")
         sections["profile"] = "\n".join(plines)
 
         # Preferences
