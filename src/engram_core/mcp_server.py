@@ -1236,8 +1236,8 @@ if __name__ == "__main__":
                 f"[engram] startup sync: {', '.join(_msgs)}",
                 file=_sys.stderr,
             )
-    except Exception:
-        pass  # Never block server startup
+    except Exception as exc:
+        print(f"[engram] startup sync failed: {exc}", file=_sys.stderr)
 
     if args.transport == "sse":
         token = os.environ.get("ENGRAM_AUTH_TOKEN", "").strip()
