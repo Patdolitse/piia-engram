@@ -937,3 +937,96 @@ def test_max_tokens_large_equals_unlimited():
         ctx_none = e.generate_context()
         ctx_large = e.generate_context(max_tokens=10000)
         assert ctx_none == ctx_large
+
+
+# ── Token Budget Edge Cases ───────────────────────────────────────
+
+
+def test_max_tokens_zero_returns_minimal():
+    """max_tokens=0 or very small should still return something (not crash)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        e = _make_engram(Path(tmp))
+        e._CLAUDE_MEMORY_GLOBS = []
+        e._AI_GLOBAL_CONFIGS = []
+        e._discover_project_roots = lambda: []
+        e.update_profile({"role": "test"})
+
+        # Should not crash even with very tight budget
+        ctx = e.generate_context(max_tokens=1)
+        assert isinstance(ctx, str)
+
+
+def test_max_tokens_profile_always_included():
+    """Even with tight budget, profile section (highest priority) is included."""
+    with tempfile.TemporaryDirectory() as tmp:
+        e = _make_engram(Path(tmp))
+        e._CLAUDE_MEMORY_GLOBS = []
+        e._AI_GLOBAL_CONFIGS = []
+        e._discover_project_roots = lambda: []
+        e.update_profile({"role": "senior engineer", "language": "en"})
+        # Add many lessons to make context large
+        for i in range(20):
+            e.add_lesson(
+                f"Unique lesson about topic number {i}: "
+                f"{'performance' if i % 2 == 0 else 'security'} optimization technique",
+                domain="python",
+            )
+
+        ctx = e.generate_context(max_tokens=50)
+        assert "关于用户" in ctx or "senior engineer" in ctx
+
+
+# ── Conflict Detection Edge Cases ─────────────────────────────────
+
+
+def test_decision_conflict_cjk_questions():
+    """冲突检测应正确处理纯中文问题和选择。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        e = _make_engram(Path(tmp))
+        e._CLAUDE_MEMORY_GLOBS = []
+        e._AI_GLOBAL_CONFIGS = []
+        e._discover_project_roots = lambda: []
+        # Questions must be different enough to pass dedup (bigram sim < 0.55)
+        # but similar enough to trigger conflict (q_sim >= 0.25)
+        # "项目中数据库的选择" vs "数据库技术选择方案" → sim=0.375
+        e.add_decision("项目中数据库的选择", choice="PostgreSQL 关系型", domain="database")
+        e.add_decision("数据库技术选择方案", choice="MongoDB 文档型", domain="database")
+
+        ctx = e.generate_context()
+        assert "知识冲突" in ctx, "Similar CJK questions with different choices should trigger conflict"
+
+
+def test_lesson_conflict_negation_pairs():
+    """教训冲突检测：肯定 vs 否定的配对应被检测到。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        e = _make_engram(Path(tmp))
+        e._CLAUDE_MEMORY_GLOBS = []
+        e._AI_GLOBAL_CONFIGS = []
+        e._discover_project_roots = lambda: []
+        e.add_lesson("推荐使用类型注解提升代码可读性", domain="python")
+        e.add_lesson("不推荐使用类型注解因为增加维护成本", domain="python")
+
+        ctx = e.generate_context()
+        assert "知识冲突" in ctx, "Affirm vs negate on same topic should trigger conflict"
+
+
+# ── Reconcile Config Size Limit ───────────────────────────────────
+
+
+def test_reconcile_ai_configs_skips_large_files():
+    """reconcile_ai_configs 应跳过超过 50KB 的配置文件。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        e = _make_engram(Path(tmp))
+
+        # Create a fake project root with a large CLAUDE.md
+        project_root = Path(tmp) / "fake_project"
+        project_root.mkdir()
+        large_config = project_root / "CLAUDE.md"
+        large_config.write_text("x" * 60_000, encoding="utf-8")
+
+        # Patch _discover_project_roots to return our fake root
+        e._discover_project_roots = lambda: [project_root]
+        e._AI_GLOBAL_CONFIGS = []
+
+        result = e.reconcile_ai_configs()
+        assert result["imported"] == 0, "Large config file should be skipped"
