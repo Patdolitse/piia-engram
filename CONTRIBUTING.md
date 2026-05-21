@@ -41,7 +41,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **193+ tests, 0 failures**. All PRs must maintain this.
+Current baseline: **212+ tests, 0 failures**. All PRs must maintain this.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash
@@ -86,7 +86,7 @@ security: enforce trust boundaries in identity card export
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/your-feature`
 3. Make your changes with tests
-4. Run the full test suite — all 193+ tests must pass
+4. Run the full test suite — all 212+ tests must pass
 5. Open a PR explaining **what** changed and **why**
 
 PR titles should be under 70 characters. Use the description for details.
