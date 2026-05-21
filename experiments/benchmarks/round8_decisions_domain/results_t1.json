@@ -1,0 +1,195 @@
+{
+  "test": "T1",
+  "scenario_count": 8,
+  "correct": 8,
+  "passed": true,
+  "groups": {
+    "write": {
+      "total": 2,
+      "correct": 2,
+      "passed": true,
+      "results": [
+        {
+          "id": "T1-WRITE-01",
+          "category": "write",
+          "input": "add_decision(domain='architecture')",
+          "expected": "architecture",
+          "actual": "architecture",
+          "correct": true
+        },
+        {
+          "id": "T1-WRITE-02",
+          "category": "write",
+          "input": "add_decision(domain='architecture,database')",
+          "expected": "architecture,database",
+          "actual": "architecture,database",
+          "correct": true
+        }
+      ]
+    },
+    "filter": {
+      "total": 4,
+      "correct": 4,
+      "passed": true,
+      "results": [
+        {
+          "id": "T1-FILTER-01",
+          "category": "filter",
+          "input": "domain=architecture",
+          "expected": [
+            "c6fd50049642",
+            "7d6ef08cf68b"
+          ],
+          "actual": [
+            "c6fd50049642",
+            "7d6ef08cf68b"
+          ],
+          "correct": true
+        },
+        {
+          "id": "T1-FILTER-02",
+          "category": "filter",
+          "input": "domain=database",
+          "expected": [
+            "7d6ef08cf68b"
+          ],
+          "actual": [
+            "7d6ef08cf68b"
+          ],
+          "correct": true
+        },
+        {
+          "id": "T1-FILTER-03",
+          "category": "filter",
+          "input": "domain=python",
+          "expected": [],
+          "actual": [],
+          "correct": true
+        },
+        {
+          "id": "T1-FILTER-04",
+          "category": "filter",
+          "input": "domain=None",
+          "expected": [
+            "c6fd50049642",
+            "7d6ef08cf68b",
+            "12f96d560dc1"
+          ],
+          "actual": [
+            "c6fd50049642",
+            "7d6ef08cf68b",
+            "12f96d560dc1"
+          ],
+          "correct": true
+        }
+      ]
+    },
+    "compatibility": {
+      "total": 2,
+      "correct": 2,
+      "passed": true,
+      "results": [
+        {
+          "id": "T1-COMPAT-01",
+          "category": "compatibility",
+          "input": "unfiltered get_decisions includes no-domain decision",
+          "expected": true,
+          "actual": true,
+          "correct": true
+        },
+        {
+          "id": "T1-COMPAT-02",
+          "category": "compatibility",
+          "input": "domain=architecture excludes no-domain decision",
+          "expected": false,
+          "actual": false,
+          "correct": true
+        }
+      ]
+    }
+  },
+  "results": [
+    {
+      "id": "T1-WRITE-01",
+      "category": "write",
+      "input": "add_decision(domain='architecture')",
+      "expected": "architecture",
+      "actual": "architecture",
+      "correct": true
+    },
+    {
+      "id": "T1-WRITE-02",
+      "category": "write",
+      "input": "add_decision(domain='architecture,database')",
+      "expected": "architecture,database",
+      "actual": "architecture,database",
+      "correct": true
+    },
+    {
+      "id": "T1-FILTER-01",
+      "category": "filter",
+      "input": "domain=architecture",
+      "expected": [
+        "c6fd50049642",
+        "7d6ef08cf68b"
+      ],
+      "actual": [
+        "c6fd50049642",
+        "7d6ef08cf68b"
+      ],
+      "correct": true
+    },
+    {
+      "id": "T1-FILTER-02",
+      "category": "filter",
+      "input": "domain=database",
+      "expected": [
+        "7d6ef08cf68b"
+      ],
+      "actual": [
+        "7d6ef08cf68b"
+      ],
+      "correct": true
+    },
+    {
+      "id": "T1-FILTER-03",
+      "category": "filter",
+      "input": "domain=python",
+      "expected": [],
+      "actual": [],
+      "correct": true
+    },
+    {
+      "id": "T1-FILTER-04",
+      "category": "filter",
+      "input": "domain=None",
+      "expected": [
+        "c6fd50049642",
+        "7d6ef08cf68b",
+        "12f96d560dc1"
+      ],
+      "actual": [
+        "c6fd50049642",
+        "7d6ef08cf68b",
+        "12f96d560dc1"
+      ],
+      "correct": true
+    },
+    {
+      "id": "T1-COMPAT-01",
+      "category": "compatibility",
+      "input": "unfiltered get_decisions includes no-domain decision",
+      "expected": true,
+      "actual": true,
+      "correct": true
+    },
+    {
+      "id": "T1-COMPAT-02",
+      "category": "compatibility",
+      "input": "domain=architecture excludes no-domain decision",
+      "expected": false,
+      "actual": false,
+      "correct": true
+    }
+  ]
+}
