@@ -4,6 +4,18 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.12.1] - 2026-05-22
+
+### Fixed
+- **Search ranking**: multi-term queries now correctly prioritize items matching more query terms via coverage bonus (D6-RANK-01 benchmark fix)
+
+### Improved
+- SPDX license format in pyproject.toml (silences setuptools deprecation warnings)
+- pytest `pythonpath` config replaces `sys.path.insert` hack in all test files
+
+### Tests
+- Round 10 benchmark: 43/43 (100%), up from 40/43
+
 ## [3.12.0] - 2026-05-22
 
 ### Improved
