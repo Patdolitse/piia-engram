@@ -146,13 +146,16 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
 @mcp.tool()
 async def get_user_context(project_folder: Optional[str] = None) -> str:
-    """获取用户的个性化上下文（冷启动）。
+    """获取用户的个性化上下文（冷启动）。 / Get the user's personalized cold-start context.
 
-    在每次新对话开始时调用此工具，了解用户是谁、如何工作、学到了什么、质量标准是什么。
-    这是最重要的工具——它提供完整的冷启动上下文。
+    用途：在每次新对话开始时调用，了解用户是谁、如何工作、学到了什么、质量标准是什么。
+    Purpose: Call at the start of each new conversation to understand who the user is, how they work, what they have learned, and their quality bar.
+
+    注意：这是最重要的冷启动工具；如果只需要某个项目历史，用 get_project_context。
+    Note: This is the primary cold-start tool; use get_project_context when you only need one project's history.
 
     Args:
-        project_folder: 当前项目文件夹路径（可选，用于获取项目特定上下文）。
+        project_folder: 当前项目文件夹路径（可选，用于获取项目特定上下文）。 / Current project folder path (optional, used to include project-specific context).
     """
     context = _engram.generate_context(project_folder)
     if not context:
@@ -162,10 +165,13 @@ async def get_user_context(project_folder: Optional[str] = None) -> str:
 
 @mcp.tool()
 async def get_identity_card() -> str:
-    """导出用户的可携带 AI 身份卡（Markdown 格式）。
+    """导出用户的可携带 AI 身份卡（Markdown 格式）。 / Export the user's portable AI identity card as Markdown.
 
-    一个自包含的摘要，可以分享给任何 AI 工具。
-    包含：用户身份、工作方式、质量标准、经验和教训。
+    用途：需要把用户身份、工作方式、质量标准、经验教训分享给其它 AI 工具时调用。
+    Purpose: Call when another AI tool needs a self-contained summary of the user's identity, work style, quality standards, and lessons.
+
+    注意：如果本会话只需要运行时上下文，用 get_user_context 更合适。
+    Note: If the current session only needs runtime context, get_user_context is usually the better choice.
     """
     card = _engram.export_identity_card()
     if not card:
@@ -175,35 +181,69 @@ async def get_identity_card() -> str:
 
 @mcp.tool()
 async def get_profile(safe: bool = False) -> str:
-    """获取用户身份画像。
+    """获取用户身份画像。 / Get the user's identity profile.
+
+    用途：需要读取角色、语言、技术水平、简介等用户画像字段时调用。
+    Purpose: Call when you need profile fields such as role, language, technical level, or description.
+
+    注意：如果要给普通 AI 会话注入安全上下文，优先用 get_user_context。
+    Note: Prefer get_user_context when injecting safe context into a normal AI conversation.
 
     Args:
-        safe: 设为 True 时按 trust_boundaries.restricted_fields 过滤敏感字段。
+        safe: 设为 True 时按 trust_boundaries.restricted_fields 过滤敏感字段。 / Set to True to filter sensitive fields using trust_boundaries.restricted_fields.
     """
     return _json(_engram.get_profile(safe=safe))
 
 
 @mcp.tool()
 async def get_work_style() -> str:
-    """获取用户的工作偏好（工作模式、节奏、沟通风格）。"""
+    """获取用户的工作偏好（工作模式、节奏、沟通风格）。 / Get the user's work style preferences: patterns, pace, and communication style.
+
+    用途：需要单独读取旧版 work_style 偏好时调用。
+    Purpose: Call when you specifically need the legacy work_style preference object.
+
+    注意：新版偏好优先使用 get_preferences。
+    Note: Prefer get_preferences for the newer preferences model.
+    """
     return _json(_engram.get_work_style())
 
 
 @mcp.tool()
 async def get_preferences() -> str:
-    """获取用户的工作偏好（v2.0，含工具偏好、工作模式、沟通风格）。"""
+    """获取用户的工作偏好（v2.0，含工具偏好、工作模式、沟通风格）。 / Get the user's v2.0 preferences, including tool preferences, work patterns, and communication style.
+
+    用途：需要读取用户如何协作、喜欢哪些工具、偏好什么工作方式时调用。
+    Purpose: Call when you need to understand how the user collaborates, which tools they prefer, and how they like work to be done.
+
+    注意：如果只需要完整冷启动上下文，用 get_user_context。
+    Note: Use get_user_context when you need the full cold-start context rather than preferences alone.
+    """
     return _json(_engram.get_preferences())
 
 
 @mcp.tool()
 async def get_trust_boundaries() -> str:
-    """获取数据信任边界（哪些工具可以访问哪些Engram数据）。"""
+    """获取数据信任边界（哪些工具可以访问哪些 Engram 数据）。 / Get data trust boundaries that define which tools may access which Engram data.
+
+    用途：需要判断敏感字段、共享边界或工具访问权限时调用。
+    Purpose: Call when you need to inspect sensitive fields, sharing boundaries, or tool access permissions.
+
+    注意：普通上下文读取会自动遵守安全画像逻辑；不要用本工具绕过隐私边界。
+    Note: Normal context reads already respect safe-profile behavior; do not use this tool to bypass privacy boundaries.
+    """
     return _json(_engram.get_trust_boundaries())
 
 
 @mcp.tool()
 async def get_quality_standards() -> str:
-    """获取用户的质量标准和验收条件。"""
+    """获取用户的质量标准和验收条件。 / Get the user's quality standards and acceptance criteria.
+
+    用途：需要知道用户如何判断工作是否完成、测试和证据要求有多严格时调用。
+    Purpose: Call when you need to know how the user judges completion, tests, evidence, and acceptance quality.
+
+    注意：冷启动时 get_user_context 通常已经包含关键质量标准。
+    Note: get_user_context usually includes the key quality standards during cold start.
+    """
     return _json(_engram.get_quality_standards())
 
 
@@ -213,14 +253,18 @@ async def get_lessons(
     source_tool: Optional[str] = None,
     limit: int = 50,
 ) -> str:
-    """获取用户从过去项目中学到的经验教训。
+    """获取用户从过去项目中学到的经验教训。 / Get lessons the user learned from past projects.
 
-    用这些来避免重复过去的错误。
+    用途：用这些经验来避免重复过去的错误，可按领域、来源工具和数量过滤。
+    Purpose: Call to avoid repeating past mistakes, optionally filtering by domain, source tool, and limit.
+
+    注意：如果你只有项目路径、不知道关键词，用 get_relevant_knowledge 自动推荐。
+    Note: If you only have a project path and no search keywords, use get_relevant_knowledge for automatic recommendations.
 
     Args:
-        domain: 按领域过滤（如 'python'）。支持多标签教训的包含匹配。
-        source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。
-        limit: 最多返回多少条（默认 50）。
+        domain: 按领域过滤（如 'python'），支持多标签教训的包含匹配。 / Filter by domain, such as 'python'; supports contains matching for multi-label lessons.
+        source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。 / Filter by source tool, such as 'claude_code' or 'codex'.
+        limit: 最多返回多少条（默认 50）。 / Maximum number of items to return (default 50).
     """
     lessons = _engram.get_lessons(domain=domain, source_tool=source_tool, limit=limit)
     if not lessons:
@@ -235,16 +279,19 @@ async def get_decisions(
     domain: Optional[str] = None,
     limit: int = 30,
 ) -> str:
-    """按时间列出用户做过的关键决策（不需要搜索词）。
+    """按时间列出用户做过的关键决策（不需要搜索词）。 / List the user's key decisions by time, without requiring a search query.
 
-    用途：想浏览最近的决策记录，或按领域/项目/来源筛选时调用。
-    注意：如果你有明确的关键词想搜索决策内容，用 search_knowledge(scope="decisions") 更精准。
+    用途：想浏览最近的决策记录，或按领域、项目、来源筛选时调用。
+    Purpose: Call when browsing recent decisions or filtering decisions by domain, project, or source.
+
+    注意：如果你有明确关键词想搜索决策内容，用 search_knowledge(scope="decisions") 更精准。
+    Note: If you have explicit keywords for decision content, search_knowledge(scope="decisions") is more precise.
 
     Args:
-        source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。
-        project: 按项目过滤（可选）。
-        domain: 按领域过滤（如 'architecture'）。支持多标签决策的包含匹配。
-        limit: 最多返回多少条（默认 30）。
+        source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。 / Filter by source tool, such as 'claude_code' or 'codex'.
+        project: 按项目过滤（可选）。 / Filter by project (optional).
+        domain: 按领域过滤（如 'architecture'），支持多标签决策的包含匹配。 / Filter by domain, such as 'architecture'; supports contains matching for multi-label decisions.
+        limit: 最多返回多少条（默认 30）。 / Maximum number of items to return (default 30).
     """
     decisions = _engram.get_decisions(
         limit=limit,
@@ -259,7 +306,14 @@ async def get_decisions(
 
 @mcp.tool()
 async def get_domains() -> str:
-    """获取用户的技术领域经验图谱（涉及哪些技术/领域）。"""
+    """获取用户的技术领域经验图谱。 / Get the user's technical domain experience map.
+
+    用途：查看用户在哪些技术、领域或主题上积累了经验。
+    Purpose: Call to see which technologies, domains, or topics the user has experience in.
+
+    注意：如果要读取某个领域里的具体经验，用 get_lessons(domain=...) 或 search_knowledge。
+    Note: To read concrete knowledge within a domain, use get_lessons(domain=...) or search_knowledge.
+    """
     domains = _engram.get_domains()
     if not domains:
         return "尚无领域经验记录。"
@@ -268,14 +322,16 @@ async def get_domains() -> str:
 
 @mcp.tool()
 async def get_project_context(project_folder: str) -> str:
-    """读取特定项目的知识快照（项目级，只含该项目的历史）。
+    """读取特定项目的知识快照（项目级，只含该项目的历史）。 / Read the knowledge snapshot for a specific project, containing only that project's history.
 
     用途：想了解某个项目之前的技术栈、已知问题、协作次数时调用。
-    注意：如果想获取用户级的完整身份上下文（跨项目），用 get_user_context。
-    如果想写入项目快照，用 save_project_snapshot。
+    Purpose: Call when you need a project's previous tech stack, known issues, notes, or collaboration history.
+
+    注意：如果想获取用户级完整身份上下文，用 get_user_context；如果想写入项目快照，用 save_project_snapshot。
+    Note: Use get_user_context for full user-level context; use save_project_snapshot to write a project snapshot.
 
     Args:
-        project_folder: 项目文件夹路径。
+        project_folder: 项目文件夹路径。 / Project folder path.
     """
     snapshot = _engram.get_project_snapshot(project_folder)
     if not snapshot:
@@ -285,7 +341,14 @@ async def get_project_context(project_folder: str) -> str:
 
 @mcp.tool()
 async def list_projects() -> str:
-    """列出用户参与过的所有项目及基本信息。"""
+    """列出用户参与过的所有项目及基本信息。 / List all projects the user has worked on with basic metadata.
+
+    用途：需要发现已有项目记录、确认项目路径或查看项目清单时调用。
+    Purpose: Call when discovering saved project records, confirming project paths, or reviewing the project list.
+
+    注意：读取单个项目详情用 get_project_context。
+    Note: Use get_project_context to read details for one project.
+    """
     projects = _engram.list_projects()
     if not projects:
         return "尚无项目记录。"
@@ -294,14 +357,17 @@ async def list_projects() -> str:
 
 @mcp.tool()
 async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
-    """按项目路径自动推荐最相关的经验教训（无需搜索词）。
+    """按项目路径自动推荐最相关的经验教训（无需搜索词）。 / Automatically recommend the most relevant lessons for a project path, without search keywords.
 
-    用途：你知道当前项目路径但不知道该搜什么词时调用——Engram 根据项目技术栈自动筛选。
-    注意：如果用户给了明确的搜索词，用 search_knowledge 更直接。
+    用途：你知道当前项目路径但不知道该搜什么词时调用，Engram 根据项目技术栈自动筛选。
+    Purpose: Call when you know the current project path but not the right search terms; Engram filters by project tech stack.
+
+    注意：如果用户给了明确搜索词，用 search_knowledge 更直接。
+    Note: If the user provides explicit search keywords, search_knowledge is more direct.
 
     Args:
-        project_folder: 当前项目文件夹路径。
-        limit: 最多返回多少条（默认 8）。
+        project_folder: 当前项目文件夹路径。 / Current project folder path.
+        limit: 最多返回多少条（默认 8）。 / Maximum number of items to return (default 8).
     """
     lessons = _engram.get_relevant_lessons(
         project_folder=project_folder, limit=limit
@@ -313,15 +379,17 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
 
 @mcp.tool()
 async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
-    """Get a knowledge inheritance pack for a new project or task.
+    """为新项目或任务生成可继承知识包。 / Build a knowledge inheritance pack for a new project or task.
 
-    Scores all active lessons and decisions against a free-text description
-    and returns the most relevant items ranked by relevance, without requiring
-    a saved project snapshot.
+    用途：根据自由文本描述，从现有 lessons 和 decisions 中找出最相关的可复用知识。
+    Purpose: Call to rank existing lessons and decisions against a free-text description and return reusable knowledge.
+
+    注意：本工具不需要已保存的项目快照；如果要同时创建项目档案，用 start_project。
+    Note: This tool does not require a saved project snapshot; use start_project if you also want to create a project record.
 
     Args:
-        description: Free-text description of the new project or task.
-        limit: Max items to return in total (default 10, max 20).
+        description: 新项目或任务的自由文本描述。 / Free-text description of the new project or task.
+        limit: 最多返回多少条（默认 10，上限 20）。 / Maximum number of items to return in total (default 10, max 20).
     """
     limit = min(int(limit), 20)
     return _json(_engram.get_knowledge_inheritance(description, limit=limit))
@@ -329,43 +397,82 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
 
 @mcp.tool()
 async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> str:
-    """按关键词搜索经验教训和决策（你知道要找什么）。
+    """按关键词搜索经验教训和决策（你知道要找什么）。 / Search lessons and decisions by keyword when you know what to look for.
 
-    用途：用户说"帮我找一下关于 X 的经验"时调用。
-    注意：如果你只有项目路径、没有搜索词，用 get_relevant_knowledge 按项目自动推荐。
-    如果你有一条已有知识的 ID 想找相似的，用 find_similar_knowledge。"""
+    用途：用户说“帮我找一下关于 X 的经验”时调用。
+    Purpose: Call when the user asks to find knowledge about a specific topic X.
+
+    注意：如果你只有项目路径、没有搜索词，用 get_relevant_knowledge；如果有已有知识 ID 想找相似项，用 find_similar_knowledge。
+    Note: If you only have a project path and no query, use get_relevant_knowledge; if you have an existing knowledge ID, use find_similar_knowledge.
+
+    Args:
+        query: 搜索关键词。 / Search query keywords.
+        scope: 搜索范围：'all'、'lessons' 或 'decisions'。 / Search scope: 'all', 'lessons', or 'decisions'.
+        limit: 最多返回多少条（默认 10）。 / Maximum number of items to return (default 10).
+    """
     return _json(_engram.search_knowledge(query, scope=scope, limit=limit))
 
 
 @mcp.tool()
 async def get_knowledge_overview(section: str = "all", stale_days: int = 30) -> str:
-    """Get a unified knowledge overview: digest + health report + stale items.
+    """获取统一的知识概览：摘要、健康报告和过期知识。 / Get a unified knowledge overview: digest, health report, and stale items.
+
+    用途：需要快速了解知识库整体状态、健康度或待复查条目时调用。
+    Purpose: Call when you need a quick view of knowledge-base status, health, or items needing review.
+
+    注意：如果只想列出过期条目，用 get_stale_knowledge 更直接。
+    Note: If you only want stale items, get_stale_knowledge is more direct.
 
     Args:
-        section: "all" | "digest" | "health" | "stale".
-        stale_days: Days threshold for stale check.
+        section: 概览部分：'all'、'digest'、'health' 或 'stale'。 / Overview section: 'all', 'digest', 'health', or 'stale'.
+        stale_days: 超过多少天算过期知识。 / Number of days after which knowledge is considered stale.
     """
     return _json(_engram.get_knowledge_overview(section, stale_days=stale_days))
 
 
 @mcp.tool()
 async def get_related_knowledge(item_id: str) -> str:
-    """Get all knowledge items linked to a given lesson or decision ID."""
+    """获取与某条 lesson 或 decision 相连的所有知识。 / Get all knowledge items linked to a given lesson or decision.
+
+    用途：已知一个知识 ID，想沿着知识关系图查看相关经验和决策时调用。
+    Purpose: Call when you have a knowledge ID and want to follow the knowledge graph to related lessons and decisions.
+
+    注意：如果想找内容相似但尚未显式关联的条目，用 find_similar_knowledge。
+    Note: Use find_similar_knowledge to find similar items that are not explicitly linked.
+
+    Args:
+        item_id: lesson 或 decision 的 ID。 / ID of a lesson or decision.
+    """
     return _json(_engram.get_related_knowledge(item_id))
 
 
 @mcp.tool()
 async def find_similar_knowledge(item_id: str, limit: int = 5) -> str:
-    """根据已有知识条目 ID 查找内容相似的条目。
+    """根据已有知识条目 ID 查找内容相似的条目。 / Find content-similar knowledge items from an existing knowledge item ID.
 
-    用途：你已经有一条 lesson 或 decision 的 ID，想看还有没有类似的。
-    注意：如果你没有 ID、只有关键词，用 search_knowledge。"""
+    用途：你已经有一条 lesson 或 decision 的 ID，想看有没有类似或重复的条目。
+    Purpose: Call when you already have a lesson or decision ID and want to find similar or duplicate items.
+
+    注意：如果你没有 ID、只有关键词，用 search_knowledge。
+    Note: If you do not have an ID and only have keywords, use search_knowledge.
+
+    Args:
+        item_id: 已有 lesson 或 decision 的 ID。 / ID of the existing lesson or decision.
+        limit: 最多返回多少条相似项（默认 5）。 / Maximum number of similar items to return (default 5).
+    """
     return _json(_engram.find_similar_knowledge(item_id, limit=limit))
 
 
 @mcp.tool()
 async def export_knowledge_report() -> str:
-    """Export a full Markdown knowledge report to ~/.engram/exports/ and return the content."""
+    """导出完整 Markdown 知识报告并返回内容。 / Export a full Markdown knowledge report and return its content.
+
+    用途：需要把当前知识库整理成人可读报告，用于审阅、归档或分享时调用。
+    Purpose: Call when the knowledge base should be rendered into a readable report for review, archiving, or sharing.
+
+    注意：报告会保存到 ~/.engram/exports/，同时返回正文内容。
+    Note: The report is saved under ~/.engram/exports/ and the content is returned as well.
+    """
     return _engram.export_knowledge_report()
 
 
@@ -382,17 +489,20 @@ async def add_lesson(
     source_tool: str = "",
     source_url: str = "",
 ) -> str:
-    """记录单条经验教训（你已经知道要记什么）。
+    """记录单条经验教训（你已经知道要记什么）。 / Record one lesson learned when you already know what to save.
 
     用途：用户明确说出一条踩坑经验或技术发现时调用。
+    Purpose: Call when the user explicitly states a lesson, pitfall, or technical finding.
+
     注意：如果用户给了一段会话摘要让你自动提取，请用 extract_session_insights 而不是本工具。
+    Note: If the user gives a session summary for automatic extraction, use extract_session_insights instead.
 
     Args:
-        summary: 教训的一行摘要。
-        detail: 详细说明（可选）。
-        domain: 技术领域（可选）。可填多个，逗号分隔，如 'python,testing'。
-        source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。
-        source_url: 如果教训来自外部内容，填写来源URL（可选）。
+        summary: 教训的一行摘要。 / One-line lesson summary.
+        detail: 详细说明（可选）。 / Detailed explanation (optional).
+        domain: 技术领域（可选），可填多个，逗号分隔，如 'python,testing'。 / Technical domain (optional); may contain multiple comma-separated labels such as 'python,testing'.
+        source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
+        source_url: 如果教训来自外部内容，填写来源 URL（可选）。 / Source URL when the lesson comes from external content (optional).
     """
     lesson = {"summary": summary}
     if detail:
@@ -418,17 +528,21 @@ async def add_decision(
     project: str = "",
     domain: str = "",
 ) -> str:
-    """记录单条关键决策（用户明确选了某个方案）。
+    """记录单条关键决策（用户明确选了某个方案）。 / Record one key decision when the user explicitly chose an option.
 
-    用途：用户说"我们决定用 X"或"以后都用 Y"时调用。
+    用途：用户说“我们决定用 X”或“以后都用 Y”时调用。
+    Purpose: Call when the user says they decided to use X or will use Y going forward.
+
     注意：如果用户给了一段会话摘要让你自动提取，请用 extract_session_insights 而不是本工具。
+    Note: If the user gives a session summary for automatic extraction, use extract_session_insights instead.
 
     Args:
-        question: 决策的问题（如"数据库选型"）。
-        choice: 做出的选择（如"PostgreSQL"）。
-        reasoning: 选择的理由（可选）。
-        source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。
-        domain: 技术领域（可选）。可填多个，逗号分隔，如 'architecture,database'。
+        question: 决策的问题，如“数据库选型”。 / Decision question, such as 'database choice'.
+        choice: 做出的选择，如“PostgreSQL”。 / Chosen option, such as 'PostgreSQL'.
+        reasoning: 选择的理由（可选）。 / Reasoning for the choice (optional).
+        source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
+        project: 关联项目（可选）。 / Related project (optional).
+        domain: 技术领域（可选），可填多个，逗号分隔，如 'architecture,database'。 / Technical domain (optional); may contain multiple comma-separated labels such as 'architecture,database'.
     """
     decision = {"question": question, "choice": choice}
     if reasoning:
@@ -447,12 +561,18 @@ async def add_decision(
 
 @mcp.tool()
 async def bulk_add_knowledge(items_json: str, item_type: str = "lesson", source_tool: str = "") -> str:
-    """Batch-add multiple lessons or decisions in one call.
+    """批量记录多条 lessons 或 decisions。 / Batch-add multiple lessons or decisions in one call.
+
+    用途：已有结构化条目列表，需要一次性导入多条经验或决策时调用。
+    Purpose: Call when you already have a structured list of items and want to import many lessons or decisions at once.
+
+    注意：如果输入是自由文本笔记而不是 JSON 数组，用 ingest_notes 或 extract_session_insights。
+    Note: If the input is free-form notes rather than a JSON array, use ingest_notes or extract_session_insights.
 
     Args:
-        items_json: JSON array of items.
-        item_type: "lesson" or "decision".
-        source_tool: Recording source tool.
+        items_json: 条目 JSON 数组。 / JSON array of items.
+        item_type: 条目类型：'lesson' 或 'decision'。 / Item type: 'lesson' or 'decision'.
+        source_tool: 记录来源工具。 / Recording source tool.
     """
     try:
         items = json.loads(items_json)
@@ -465,38 +585,52 @@ async def bulk_add_knowledge(items_json: str, item_type: str = "lesson", source_
 
 @mcp.tool()
 async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> str:
-    """从自由文本笔记中提取经验教训和关键决策并写入知识库。
+    """从自由文本笔记中提取经验教训和关键决策并写入知识库。 / Extract lessons and key decisions from free-form notes and save them to the knowledge base.
+
+    用途：用户贴了一段笔记，希望 Engram 尝试解析其中的 lessons 和 decisions 时调用。
+    Purpose: Call when the user pastes notes and wants Engram to parse possible lessons and decisions from them.
+
+    注意：如果是会话结束摘要，extract_session_insights 更贴近场景；如果已经明确一条 lesson 或 decision，用 add_lesson 或 add_decision。
+    Note: For an end-of-session summary, extract_session_insights fits better; for one explicit lesson or decision, use add_lesson or add_decision.
 
     Args:
-        text: 多行自由文本笔记。
-        source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。
-        domain: 默认领域（可填多个，逗号分隔）；未命中关键词推断时使用。
+        text: 多行自由文本笔记。 / Multi-line free-form notes.
+        source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
+        domain: 默认领域（可填多个，逗号分隔），未命中关键词推断时使用。 / Default domain, optionally comma-separated; used when keyword inference does not find a domain.
     """
     return _json(_engram.ingest_notes(text, source_tool=source_tool, domain=domain))
 
 
 @mcp.tool()
 async def extract_session_insights(summary: str, source_tool: str = "") -> str:
-    """从会话摘要中批量自动提取经验教训和决策（你不需要自己分类）。
+    """从会话摘要中批量自动提取经验教训和决策（你不需要自己分类）。 / Automatically extract lessons and decisions from a session summary without manually classifying them.
 
     用途：会话结束时，把一段自由文本摘要交给 Engram，它会自动解析出 lessons 和 decisions 并存入知识库。
-    注意：如果你已经明确知道要记一条 lesson 或 decision，直接用 add_lesson / add_decision 更精准。
-    本工具适合"我不确定里面有什么值得记的，让 Engram 自己判断"的场景。
+    Purpose: Call at the end of a session with a free-text summary so Engram can parse and store lessons and decisions.
+
+    注意：如果你已经明确知道要记一条 lesson 或 decision，直接用 add_lesson 或 add_decision 更精准；本工具适合不确定里面有什么值得记的场景。
+    Note: If you already know one exact lesson or decision to save, add_lesson or add_decision is more precise; this tool fits summaries where the useful knowledge is not yet classified.
 
     Args:
-        summary: 自由文本会话摘要，段落或要点列表均可。
-        source_tool: 调用来源工具，如 'claude_code', 'codex'。
+        summary: 自由文本会话摘要，段落或要点列表均可。 / Free-text session summary; paragraphs or bullet lists both work.
+        source_tool: 调用来源工具，如 'claude_code', 'codex'。 / Calling source tool, such as 'claude_code' or 'codex'.
     """
     return _json(_engram.extract_session_insights(summary, source_tool=source_tool))
 
 
 @mcp.tool()
 async def update_knowledge(item_id: str, updates_json: str) -> str:
-    """Update a lesson or decision by ID (auto-detects type).
+    """按 ID 更新 lesson 或 decision（自动识别类型）。 / Update a lesson or decision by ID, automatically detecting the item type.
+
+    用途：需要修改已有知识条目的内容、状态或元数据时调用。
+    Purpose: Call when an existing knowledge item's content, status, or metadata needs to be changed.
+
+    注意：如果只是确认某条知识仍有效，用 review_knowledge；如果要归档，用 archive_knowledge。
+    Note: If you only need to confirm an item is still valid, use review_knowledge; to archive it, use archive_knowledge.
 
     Args:
-        item_id: The ID of the lesson or decision.
-        updates_json: JSON string of fields to update.
+        item_id: lesson 或 decision 的 ID。 / ID of the lesson or decision.
+        updates_json: 要更新字段的 JSON 字符串。 / JSON string containing fields to update.
     """
     try:
         updates = json.loads(updates_json)
@@ -507,77 +641,124 @@ async def update_knowledge(item_id: str, updates_json: str) -> str:
 
 @mcp.tool()
 async def archive_knowledge(item_id: str) -> str:
-    """Archive a lesson or decision by ID. Automatically detects the item type."""
+    """按 ID 归档 lesson 或 decision（自动识别类型）。 / Archive a lesson or decision by ID, automatically detecting the item type.
+
+    用途：某条知识已经过时但不应删除时调用。
+    Purpose: Call when a knowledge item is outdated but should be preserved rather than deleted.
+
+    注意：如果只是内容重复需要合并，用 merge_knowledge。
+    Note: If the item is a duplicate that should be merged, use merge_knowledge.
+
+    Args:
+        item_id: 要归档的 lesson 或 decision ID。 / ID of the lesson or decision to archive.
+    """
     return _json(_engram.archive_knowledge(item_id))
 
 
 @mcp.tool()
 async def review_knowledge(knowledge_id: str) -> str:
-    """标记一条知识为"已复习"（刷新 last_reviewed 时间戳，不改内容）。
+    """标记一条知识为“已复习”（刷新 last_reviewed 时间戳，不改内容）。 / Mark one knowledge item as reviewed, refreshing last_reviewed without changing content.
 
-    用途：用户确认某条经验/决策仍然有效时调用，防止它被标记为过期。
+    用途：用户确认某条经验或决策仍然有效时调用，防止它被标记为过期。
+    Purpose: Call when the user confirms a lesson or decision is still valid, preventing it from being treated as stale.
+
     注意：如果要修改内容，用 update_knowledge。
+    Note: Use update_knowledge when the content itself needs to change.
 
     Args:
-        knowledge_id: 要复习的知识条目 ID。
+        knowledge_id: 要复习的知识条目 ID。 / ID of the knowledge item to review.
     """
     return _json(_engram.review_knowledge(knowledge_id))
 
 
 @mcp.tool()
 async def get_stale_knowledge(days: int = 30, limit: int = 20) -> str:
-    """列出超过指定天数未复习的知识条目。
+    """列出超过指定天数未复习的知识条目。 / List knowledge items not reviewed for more than the specified number of days.
 
-    用途：定期检查哪些经验/决策需要复习或归档。
-    注意：如果想直接归档某条，用 archive_knowledge。如果确认仍有效，用 review_knowledge 刷新。
+    用途：定期检查哪些经验或决策需要复习或归档。
+    Purpose: Call during periodic maintenance to find lessons or decisions that need review or archiving.
+
+    注意：如果想直接归档某条，用 archive_knowledge；如果确认仍有效，用 review_knowledge 刷新。
+    Note: Use archive_knowledge to archive an item directly; use review_knowledge to refresh an item that is still valid.
 
     Args:
-        days: 超过多少天算过期（默认 30）。
-        limit: 最多返回多少条（默认 20）。
+        days: 超过多少天算过期（默认 30）。 / Number of days after which an item is stale (default 30).
+        limit: 最多返回多少条（默认 20）。 / Maximum number of items to return (default 20).
     """
     return _json(_engram.get_stale_knowledge(days=days, limit=limit))
 
 
 @mcp.tool()
 async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
-    """Merge secondary knowledge item into primary.
+    """将次要知识条目合并进主知识条目。 / Merge a secondary knowledge item into a primary knowledge item.
 
-    Transfers related_ids from secondary to primary, then archives secondary.
-    Use after find_similar_knowledge identifies a duplicate.
+    用途：find_similar_knowledge 发现重复或高度相似条目后，用来保留主条目并归档次要条目。
+    Purpose: Call after find_similar_knowledge identifies duplicate or highly similar items, keeping the primary item and archiving the secondary one.
+
+    注意：主条目的内容会保留，次要条目的关联关系会转移后归档。
+    Note: The primary item's content is preserved; related links from the secondary item are transferred before it is archived.
 
     Args:
-        primary_id: ID of the item to keep (its content is preserved).
-        secondary_id: ID of the item to merge in (will be archived).
+        primary_id: 要保留的主条目 ID。 / ID of the primary item to keep.
+        secondary_id: 要合并并归档的次要条目 ID。 / ID of the secondary item to merge and archive.
     """
     return _json(_engram.merge_knowledge(primary_id, secondary_id))
 
 
 @mcp.tool()
 async def link_knowledge(id_a: str, id_b: str) -> str:
-    """Create a bidirectional link between two knowledge items (lessons or decisions)."""
+    """在两个知识条目之间创建双向关联。 / Create a bidirectional link between two knowledge items.
+
+    用途：当两条 lesson 或 decision 在原因、结果或主题上有关联时调用。
+    Purpose: Call when two lessons or decisions are related by cause, outcome, topic, or supporting context.
+
+    注意：如果只是想查已有关系，用 get_related_knowledge。
+    Note: Use get_related_knowledge when you only want to inspect existing links.
+
+    Args:
+        id_a: 第一个 lesson 或 decision 的 ID。 / ID of the first lesson or decision.
+        id_b: 第二个 lesson 或 decision 的 ID。 / ID of the second lesson or decision.
+    """
     return _json(_engram.link_knowledge(id_a, id_b))
 
 
 @mcp.tool()
 async def unlink_knowledge(id_a: str, id_b: str) -> str:
-    """Remove the bidirectional link between two knowledge items."""
+    """移除两个知识条目之间的双向关联。 / Remove the bidirectional link between two knowledge items.
+
+    用途：发现两条 lesson 或 decision 不再相关，或之前错误关联时调用。
+    Purpose: Call when two lessons or decisions are no longer related or were linked by mistake.
+
+    注意：这不会删除或归档任何知识，只移除关系。
+    Note: This does not delete or archive any knowledge; it only removes the relationship.
+
+    Args:
+        id_a: 第一个 lesson 或 decision 的 ID。 / ID of the first lesson or decision.
+        id_b: 第二个 lesson 或 decision 的 ID。 / ID of the second lesson or decision.
+    """
     return _json(_engram.unlink_knowledge(id_a, id_b))
 
 
 @mcp.tool()
 async def update_identity(field: str, updates_json: str) -> str:
-    """Update an identity field.
+    """更新一个身份字段。 / Update one identity field.
+
+    用途：需要修改 profile、preferences、trust_boundaries、work_style 或 quality_standards 时调用。
+    Purpose: Call when changing profile, preferences, trust_boundaries, work_style, or quality_standards.
+
+    注意：updates_json 必须只包含该字段允许的键；敏感字段边界应通过 trust_boundaries 管理。
+    Note: updates_json should contain only keys valid for that field; manage sensitive-field boundaries through trust_boundaries.
 
     Args:
-        field: One of: profile | preferences | trust_boundaries | work_style | quality_standards
-        updates_json: JSON string with the fields to update.
+        field: 字段名：profile、preferences、trust_boundaries、work_style 或 quality_standards。 / Field name: profile, preferences, trust_boundaries, work_style, or quality_standards.
+        updates_json: 包含要更新字段的 JSON 字符串。 / JSON string containing the fields to update.
 
-    Field-specific keys:
-        profile: role, language, technical_level, description
-        preferences: work_patterns (dict), communication (str), tool_preferences (dict)
-        trust_boundaries: default_sharing, tool_access, private_fields, restricted_fields
-        work_style: preferences (dict), communication (str)
-        quality_standards: acceptance_threshold (1-5), rules (list)
+    Field-specific keys / 字段专用键:
+        profile: role, language, technical_level, description / role、language、technical_level、description。
+        preferences: work_patterns (dict), communication (str), tool_preferences (dict) / work_patterns（字典）、communication（字符串）、tool_preferences（字典）。
+        trust_boundaries: default_sharing, tool_access, private_fields, restricted_fields / default_sharing、tool_access、private_fields、restricted_fields。
+        work_style: preferences (dict), communication (str) / preferences（字典）、communication（字符串）。
+        quality_standards: acceptance_threshold (1-5), rules (list) / acceptance_threshold（1-5）、rules（列表）。
     """
     if field not in IDENTITY_FIELDS:
         return _json({"error": f"Unknown field: {field}. Valid: {sorted(IDENTITY_FIELDS)}"})
@@ -598,14 +779,17 @@ async def update_identity(field: str, updates_json: str) -> str:
 
 @mcp.tool()
 async def save_project_snapshot(project_folder: str, data_json: str) -> str:
-    """写入/更新项目的知识快照（写操作，不是读取）。
+    """写入或更新项目的知识快照（写操作，不是读取）。 / Write or update a project's knowledge snapshot; this is a write operation, not a read.
 
     用途：保存或更新当前项目的技术栈、已知问题、注释等信息。
+    Purpose: Call to save or update a project's tech stack, known issues, notes, and related metadata.
+
     注意：读取项目快照用 get_project_context，不是本工具。
+    Note: Use get_project_context to read a project snapshot; this tool writes one.
 
     Args:
-        project_folder: 项目文件夹路径。
-        data_json: JSON 字符串，支持字段: title, tech_stack, known_issues, notes。
+        project_folder: 项目文件夹路径。 / Project folder path.
+        data_json: JSON 字符串，支持字段 title、tech_stack、known_issues、notes。 / JSON string supporting fields: title, tech_stack, known_issues, and notes.
     """
     try:
         data = json.loads(data_json)
@@ -622,13 +806,16 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
 
 @mcp.tool()
 async def read_web_content(url: str) -> str:
-    """读取网页/视频/文章的文本内容（通过 Engram Reader 本地服务）。
+    """读取网页、视频或文章的文本内容（通过 Engram Reader 本地服务）。 / Read text content from a web page, video, or article through the local Engram Reader service.
 
-    支持：YouTube字幕、B站、公众号文章、知乎、通用网页。
-    需要 Engram Reader 本地服务运行中 (localhost:7890)。
+    用途：用户发链接并要求分析、看看或读一下时调用。
+    Purpose: Call when the user sends a URL and asks to analyze, inspect, or read it.
+
+    注意：需要 Engram Reader 本地服务运行在 localhost:7890；支持 YouTube 字幕、B 站、公众号文章、知乎和通用网页。
+    Note: Requires the local Engram Reader service on localhost:7890; supports YouTube subtitles, Bilibili, WeChat articles, Zhihu, and general web pages.
 
     Args:
-        url: 要提取内容的网页链接。
+        url: 要提取内容的网页链接。 / URL to extract content from.
     """
     import urllib.request
     import urllib.error
@@ -662,13 +849,16 @@ async def read_web_content(url: str) -> str:
 
 @mcp.tool()
 async def export_engram(output_path: Optional[str] = None) -> str:
-    """导出整个 Engram 为单一备份文件。
+    """导出整个 Engram 为单一备份文件。 / Export the entire Engram store as a single backup file.
 
-    用于：备份、迁移到另一台机器、跨设备同步。
-    导出包含全部身份、知识、项目数据。
+    用途：用于备份、迁移到另一台机器或跨设备同步。
+    Purpose: Call for backup, migration to another machine, or cross-device sync.
+
+    注意：导出包含全部身份、知识和项目数据，请按隐私级别处理文件。
+    Note: The export contains all identity, knowledge, and project data, so handle the file according to its privacy level.
 
     Args:
-        output_path: 导出路径（可选，默认存到 ~/.engram/exports/engram_backup_<日期>.json）。
+        output_path: 导出路径（可选，默认存到 ~/.engram/exports/engram_backup_<日期>.json）。 / Export path (optional; defaults to ~/.engram/exports/engram_backup_<date>.json).
     """
     try:
         path = _engram.export_all(output_path)
@@ -679,13 +869,17 @@ async def export_engram(output_path: Optional[str] = None) -> str:
 
 @mcp.tool()
 async def import_engram(input_path: str, merge: bool = True) -> str:
-    """从备份文件导入 Engram 数据。
+    """从备份文件导入 Engram 数据。 / Import Engram data from a backup file.
 
-    用于：从备份恢复、从另一台机器迁移数据。
+    用途：从备份恢复，或从另一台机器迁移数据。
+    Purpose: Call to restore from backup or migrate data from another machine.
+
+    注意：merge=True 会合并数据；merge=False 会覆盖现有数据，使用前要确认风险。
+    Note: merge=True merges data; merge=False overwrites existing data, so confirm the risk before using it.
 
     Args:
-        input_path: 备份文件路径（export_engram 生成的 JSON 文件）。
-        merge: True=合并模式（保留已有数据，追加新数据），False=覆盖模式。
+        input_path: 备份文件路径（export_engram 生成的 JSON 文件）。 / Backup file path, usually a JSON file generated by export_engram.
+        merge: True 表示合并模式（保留已有数据并追加新数据），False 表示覆盖模式。 / True means merge mode (keep existing data and append new data); False means overwrite mode.
     """
     result = _engram.import_all(input_path, merge=merge)
     return _json(result)
@@ -693,7 +887,17 @@ async def import_engram(input_path: str, merge: bool = True) -> str:
 
 @mcp.tool()
 async def export_engram_to_openclaw(output_dir: str = "") -> str:
-    """导出 Engram 为 OpenClaw 兼容格式（SOUL.md + MEMORY.md + USER.md）。"""
+    """导出 Engram 为 OpenClaw 兼容格式（SOUL.md + MEMORY.md + USER.md）。 / Export Engram to the OpenClaw-compatible format: SOUL.md, MEMORY.md, and USER.md.
+
+    用途：需要把 Engram 数据交给 OpenClaw 或兼容工作流使用时调用。
+    Purpose: Call when Engram data needs to be used by OpenClaw or compatible workflows.
+
+    注意：如果 output_dir 为空，会导出到 Engram 的 compat/openclaw 目录。
+    Note: If output_dir is empty, files are exported to Engram's compat/openclaw directory.
+
+    Args:
+        output_dir: 输出目录（可选）。 / Output directory (optional).
+    """
     try:
         target_dir = output_dir or str(_engram.root / "compat" / "openclaw")
         result = export_to_openclaw(_engram, target_dir)
@@ -711,7 +915,19 @@ async def import_engram_from_openclaw(
     memory_path: str = "",
     user_path: str = "",
 ) -> str:
-    """从 OpenClaw 格式导入数据到 Engram（SOUL.md/MEMORY.md/USER.md）。"""
+    """从 OpenClaw 格式导入数据到 Engram（SOUL.md、MEMORY.md、USER.md）。 / Import OpenClaw-format data into Engram from SOUL.md, MEMORY.md, and USER.md.
+
+    用途：需要把 OpenClaw 或兼容记忆文件迁移进 Engram 时调用。
+    Purpose: Call when migrating OpenClaw or compatible memory files into Engram.
+
+    注意：只提供存在的文件路径即可；导入逻辑会按文件类型处理。
+    Note: Provide only the file paths that exist; the import logic handles each file type.
+
+    Args:
+        soul_path: SOUL.md 文件路径（可选）。 / Path to SOUL.md (optional).
+        memory_path: MEMORY.md 文件路径（可选）。 / Path to MEMORY.md (optional).
+        user_path: USER.md 文件路径（可选）。 / Path to USER.md (optional).
+    """
     try:
         result = import_from_openclaw(_engram, soul_path, memory_path, user_path)
         return _json(result)
@@ -721,10 +937,16 @@ async def import_engram_from_openclaw(
 
 @mcp.tool()
 async def get_audit_log(limit: int = 50) -> str:
-    """Get recent audit log entries.
+    """获取最近的审计日志条目。 / Get recent audit log entries.
+
+    用途：需要查看 Engram 最近的读写操作、排查行为或核对记录时调用。
+    Purpose: Call when inspecting recent Engram reads/writes, debugging behavior, or auditing activity.
+
+    注意：只有启用 ENGRAM_AUDIT=1 后才会有审计日志。
+    Note: Audit entries exist only when ENGRAM_AUDIT=1 has been enabled.
 
     Args:
-        limit: Max entries to return (default 50, most recent first).
+        limit: 最多返回多少条（默认 50，按最近优先）。 / Maximum number of entries to return (default 50, most recent first).
     """
     log_path = _engram.root / "audit.log"
     if not log_path.is_file():
@@ -753,19 +975,21 @@ async def wrap_up_session(
     tech_stack: str = "",
     known_issues: str = "",
 ) -> str:
-    """会话结束一键收尾：自动提取知识 + 保存项目快照。
+    """会话结束一键收尾：自动提取知识并保存项目快照。 / Wrap up a session in one step: extract knowledge and save a project snapshot.
 
-    用途：一次对话结束时调用，把会话摘要交给 Engram。它会：
-    1. 从摘要中自动提取 lessons 和 decisions（等同于 extract_session_insights）
-    2. 如果提供了 project_folder，同时更新项目快照
+    用途：一次对话结束时调用，把会话摘要交给 Engram 自动提取 lessons 和 decisions，并可选更新项目快照。
+    Purpose: Call at the end of a conversation to let Engram extract lessons and decisions from the summary and optionally update the project snapshot.
+
+    注意：如果只想提取知识不用保存项目，用 extract_session_insights；如果只想保存项目快照，用 save_project_snapshot。
+    Note: Use extract_session_insights when you only want extraction, and save_project_snapshot when you only want to save a project snapshot.
 
     Args:
-        summary: 会话摘要（自由文本，段落或要点列表均可）。
-        project_folder: 项目文件夹路径（可选，不填则只提取知识不保存快照）。
-        source_tool: 调用来源工具，如 'claude_code', 'codex'。
-        project_title: 项目名称（可选，仅在首次保存快照时需要）。
-        tech_stack: 技术栈（可选，逗号分隔）。
-        known_issues: 已知问题（可选，逗号分隔）。
+        summary: 会话摘要（自由文本，段落或要点列表均可）。 / Session summary in free text; paragraphs or bullet lists both work.
+        project_folder: 项目文件夹路径（可选，不填则只提取知识不保存快照）。 / Project folder path (optional; omit it to extract knowledge without saving a snapshot).
+        source_tool: 调用来源工具，如 'claude_code', 'codex'。 / Calling source tool, such as 'claude_code' or 'codex'.
+        project_title: 项目名称（可选，仅在首次保存快照时需要）。 / Project title (optional; mainly needed when first saving a snapshot).
+        tech_stack: 技术栈（可选，逗号分隔）。 / Tech stack (optional, comma-separated).
+        known_issues: 已知问题（可选，逗号分隔）。 / Known issues (optional, comma-separated).
     """
     results = {}
 
@@ -796,20 +1020,20 @@ async def start_project(
     tech_stack: str = "",
     limit: int = 10,
 ) -> str:
-    """新项目一键启动：继承跨项目经验 + 建立项目档案。
+    """新项目一键启动：继承跨项目经验并建立项目档案。 / Start a new project in one step: inherit cross-project knowledge and create a project record.
 
-    用途：开始一个新项目时调用，一次拿到过往相关经验并初始化项目记录。它会：
-    1. 根据项目描述从已有知识中找最相关的 lessons 和 decisions（等同于 get_knowledge_inheritance）
-    2. 自动创建项目快照（等同于 save_project_snapshot）
+    用途：开始一个新项目时调用，一次拿到过往相关 lessons 和 decisions，并初始化项目快照。
+    Purpose: Call when starting a new project to retrieve relevant prior lessons and decisions and initialize the project snapshot.
 
-    注意：如果只想获取可继承的经验、不需要创建项目档案，请直接用 get_knowledge_inheritance。
+    注意：如果只想获取可继承经验、不需要创建项目档案，请直接用 get_knowledge_inheritance。
+    Note: If you only want inheritable knowledge and do not need a project record, use get_knowledge_inheritance directly.
 
     Args:
-        description: 新项目的自由文本描述（用于匹配已有知识）。
-        project_folder: 项目文件夹路径。
-        project_title: 项目名称（可选）。
-        tech_stack: 技术栈（可选，逗号分隔）。
-        limit: 最多继承多少条经验（默认 10，上限 20）。
+        description: 新项目的自由文本描述（用于匹配已有知识）。 / Free-text description of the new project, used to match existing knowledge.
+        project_folder: 项目文件夹路径。 / Project folder path.
+        project_title: 项目名称（可选）。 / Project title (optional).
+        tech_stack: 技术栈（可选，逗号分隔）。 / Tech stack (optional, comma-separated).
+        limit: 最多继承多少条经验（默认 10，上限 20）。 / Maximum number of knowledge items to inherit (default 10, max 20).
     """
     results = {}
 
