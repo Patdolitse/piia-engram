@@ -16,6 +16,17 @@ from pathlib import Path
 LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
 
 # ---------------------------------------------------------------------------
+# i18n — 双语支持（中文/English）
+# ---------------------------------------------------------------------------
+
+_lang = "zh"  # 默认中文，setup 开始时由用户选择
+
+
+def _t(zh: str, en: str) -> str:
+    """根据当前语言返回对应文案。"""
+    return zh if _lang == "zh" else en
+
+# ---------------------------------------------------------------------------
 # 智能扫描 + 分流导入
 # ---------------------------------------------------------------------------
 
@@ -422,17 +433,18 @@ def _run_seed_knowledge_onboarding(
     engram = Engram(root=root)
     current_dir = cwd or Path.cwd()
 
-    print("Step 4/4 — 录入种子知识（输入 0 跳过）\n")
-    role = _choice("你的角色是什么？", [
-        "全栈开发者",
-        "后端开发者",
-        "前端开发者",
-        "产品经理",
-        "数据科学家",
-        "学生",
+    print(_t("Step 4/4 — 录入种子知识（输入 0 跳过）\n",
+             "Step 4/4 — Seed knowledge (enter 0 to skip)\n"))
+    role = _choice(_t("你的角色是什么？", "What is your role?"), [
+        _t("全栈开发者", "Full-stack developer"),
+        _t("后端开发者", "Backend developer"),
+        _t("前端开发者", "Frontend developer"),
+        _t("产品经理", "Product manager"),
+        _t("数据科学家", "Data scientist"),
+        _t("学生", "Student"),
     ])
     print()
-    tech_stack = _choice("你常用什么编程语言/技术栈？", [
+    tech_stack = _choice(_t("你常用什么编程语言/技术栈？", "Primary language / tech stack?"), [
         "Python",
         "TypeScript / JavaScript",
         "Go",
@@ -441,10 +453,11 @@ def _run_seed_knowledge_onboarding(
         "Python + TypeScript",
     ])
     print()
-    language = _choice("你偏好 AI 用什么语言跟你沟通？", [
+    language = _choice(_t("你偏好 AI 用什么语言跟你沟通？",
+                          "Preferred language for AI communication?"), [
         "中文",
         "English",
-        "日本语",
+        _t("日本语", "Japanese"),
     ])
 
     profile_updates: dict[str, str] = {}
@@ -456,15 +469,22 @@ def _run_seed_knowledge_onboarding(
         profile_updates["tech_stack"] = tech_stack
         existing_profile = engram.get_profile()
         if not existing_profile.get("description"):
-            profile_updates["description"] = f"常用技术栈：{tech_stack}"
+            profile_updates["description"] = _t(
+                f"常用技术栈：{tech_stack}",
+                f"Primary tech stack: {tech_stack}",
+            )
     if profile_updates:
         engram.update_profile(profile_updates)
 
     lessons_added = 0
-    first_lesson = _prompt("  你有没有一条 AI 工具总是忘记的规则或偏好？录入一条试试", "")
+    first_lesson = _prompt(_t(
+        "  你有没有一条 AI 工具总是忘记的规则或偏好？录入一条试试",
+        "  Any rule or preference your AI tools keep forgetting? Enter one to try",
+    ), "")
     lesson_inputs = [first_lesson] if first_lesson else []
     while lesson_inputs and len(lesson_inputs) < 3:
-        next_lesson = _prompt("  还有吗？（直接回车跳过）", "")
+        next_lesson = _prompt(_t("  还有吗？（直接回车跳过）",
+                                 "  More? (Enter to skip)"), "")
         if not next_lesson:
             break
         lesson_inputs.append(next_lesson)
@@ -475,16 +495,19 @@ def _run_seed_knowledge_onboarding(
             lessons_added += 1
 
     # Step 4.5 — 智能扫描 + 分流导入
-    print("\nStep 4.5 — 智能导入规则文件")
+    print(_t("\nStep 4.5 — 智能导入规则文件",
+             "\nStep 4.5 — Smart rule file import"))
     rule_files = _scan_rule_files(cwd=current_dir)
     import_result: dict = {"user_count": 0, "project_count": 0, "skipped": 0, "files": []}
 
     if rule_files:
-        print(f"\n  扫描到 {len(rule_files)} 个规则文件：")
+        print(_t(f"\n  扫描到 {len(rule_files)} 个规则文件：",
+                 f"\n  Found {len(rule_files)} rule file(s):"))
         for rf in rule_files:
-            scope_label = "全局" if rf["scope"] == "global" else "项目"
+            scope_label = _t("全局", "global") if rf["scope"] == "global" else _t("项目", "project")
             content_count = sum(1 for l in rf["lines"] if l.strip() and not l.strip().startswith("#"))
-            print(f"  [{scope_label}] {rf['path']} ({content_count} 行有效内容)")
+            print(_t(f"  [{scope_label}] {rf['path']} ({content_count} 行有效内容)",
+                     f"  [{scope_label}] {rf['path']} ({content_count} content lines)"))
 
         # 预览分流
         user_preview = project_preview = skip_preview = 0
@@ -498,39 +521,51 @@ def _run_seed_knowledge_onboarding(
                 else:
                     skip_preview += 1
 
-        print(f"\n  分流预览：")
-        print(f"    用户身份: {user_preview} 条")
-        print(f"    项目规则: {project_preview} 条")
-        print(f"    跳过:     {skip_preview} 条")
+        print(_t("\n  分流预览：", "\n  Classification preview:"))
+        print(_t(f"    用户身份: {user_preview} 条",
+                 f"    User identity: {user_preview}"))
+        print(_t(f"    项目规则: {project_preview} 条",
+                 f"    Project rules: {project_preview}"))
+        print(_t(f"    跳过:     {skip_preview} 条",
+                 f"    Skipped:       {skip_preview}"))
 
-        if _yn("\n  导入这些内容？", default=True):
+        if _yn(_t("\n  导入这些内容？", "\n  Import these?"), default=True):
             import_result = _import_with_split(rule_files, engram)
-            print(f"\n  ✅ 已导入: {import_result['user_count']} 条身份 + {import_result['project_count']} 条项目规则")
+            print(_t(f"\n  ✅ 已导入: {import_result['user_count']} 条身份 + {import_result['project_count']} 条项目规则",
+                     f"\n  ✅ Imported: {import_result['user_count']} identity + {import_result['project_count']} project rules"))
         else:
-            print("  跳过导入。")
+            print(_t("  跳过导入。", "  Skipped."))
     else:
-        print("  未发现规则文件（CLAUDE.md / .cursorrules 等）。")
+        print(_t("  未发现规则文件（CLAUDE.md / .cursorrules 等）。",
+                 "  No rule files found (CLAUDE.md / .cursorrules etc.)."))
 
     total_imported = import_result["user_count"] + import_result["project_count"]
 
     print("\n========================================")
-    print("  Engram 初始化完成！")
+    print(_t("  Engram 初始化完成！", "  Engram setup complete!"))
     print("========================================\n")
     if role or tech_stack or language:
         identity_parts = [role or "-", tech_stack or "-", language or "-"]
-        print(f"  身份：{' | '.join(identity_parts)}")
+        print(_t(f"  身份：{' | '.join(identity_parts)}",
+                 f"  Identity: {' | '.join(identity_parts)}"))
     else:
-        print("  身份：未填写")
-    print(f"  经验：已录入 {lessons_added} 条")
+        print(_t("  身份：未填写", "  Identity: not set"))
+    print(_t(f"  经验：已录入 {lessons_added} 条",
+             f"  Lessons: {lessons_added} recorded"))
     if total_imported > 0:
-        print(f"  导入：{total_imported} 条规则（{import_result['user_count']} 条身份 + {import_result['project_count']} 条项目）")
+        print(_t(f"  导入：{total_imported} 条规则（{import_result['user_count']} 条身份 + {import_result['project_count']} 条项目）",
+                 f"  Imported: {total_imported} rules ({import_result['user_count']} identity + {import_result['project_count']} project)"))
     print()
-    print("  验证方法：打开你的 AI 工具，说这句话：")
+    print(_t("  验证方法：打开你的 AI 工具，说这句话：",
+             "  To verify: open your AI tool and say:"))
     print()
-    print("    请同步 Engram 上下文，然后告诉我你现在知道我什么。")
+    print(_t("    请同步 Engram 上下文，然后告诉我你现在知道我什么。",
+             "    Sync Engram context, then tell me what you know about me."))
     print()
-    print("  如果 AI 能说出你的角色、语言偏好、技术栈，")
-    print("  就说明 Engram 已经在工作了。\n")
+    print(_t("  如果 AI 能说出你的角色、语言偏好、技术栈，",
+             "  If the AI mentions your role, language, and tech stack,"))
+    print(_t("  就说明 Engram 已经在工作了。\n",
+             "  Engram is working.\n"))
 
     return {
         "profile": profile_updates,
@@ -547,51 +582,69 @@ def _run_seed_knowledge_onboarding(
 
 def run_setup() -> None:
     """交互式安装向导主流程。"""
+    global _lang
     _configure_utf8_stdio()
-    print("\n========================================")
-    print("  Engram 安装向导")
+
+    # 语言选择（最先，决定后续所有文案）
+    print("\n  Language / 语言选择:")
+    print("    1. 中文")
+    print("    2. English")
+    lang_answer = _prompt("  Choose / 请选择", "1").strip()
+    _lang = "en" if lang_answer == "2" else "zh"
+    print()
+
+    print("========================================")
+    print(_t("  PIIA Engram 安装向导", "  PIIA Engram Setup Wizard"))
     print("========================================\n")
 
     # Step 1 — Python 检测
-    print("Step 1/4 — 检测 Python")
+    print(_t("Step 1/4 — 检测 Python", "Step 1/4 — Detecting Python"))
     python_path = _find_python()
     if not python_path:
-        print("❌ 未找到可用的 Python 3.10+。")
-        print("   请安装 Python 后重新运行：https://python.org/downloads/")
+        print(_t("❌ 未找到可用的 Python 3.10+。", "❌ Python 3.10+ not found."))
+        print(_t("   请安装 Python 后重新运行：https://python.org/downloads/",
+                 "   Please install Python and re-run: https://python.org/downloads/"))
         sys.exit(1)
     print(f"  ✅ Python: {python_path}\n")
 
     # mcp_server.py 路径
     mcp_server_path = _find_mcp_server()
     if not mcp_server_path:
-        print("❌ 未找到 mcp_server.py，请确认 engram 已正确安装（pip install engram）。")
+        print(_t("❌ 未找到 mcp_server.py，请确认已正确安装（pip install piia-engram）。",
+                 "❌ mcp_server.py not found. Please ensure piia-engram is installed."))
         sys.exit(1)
 
     # Step 2 — 数据目录
-    print("Step 2/4 — 数据目录")
+    print(_t("Step 2/4 — 数据目录", "Step 2/4 — Data directory"))
     default_data_dir = str(Path.home() / ".engram")
-    print(f"  知识库默认存储位置: {default_data_dir}")
-    custom_dir = _prompt("  自定义路径（直接回车使用默认）", "")
+    print(_t(f"  知识库默认存储位置: {default_data_dir}",
+             f"  Default storage: {default_data_dir}"))
+    custom_dir = _prompt(_t("  自定义路径（直接回车使用默认）",
+                            "  Custom path (Enter for default)"), "")
     data_dir: str | None = None
     if custom_dir:
         data_dir = str(Path(custom_dir).expanduser().resolve())
         Path(data_dir).mkdir(parents=True, exist_ok=True)
-        print(f"  ✅ 将使用: {data_dir}")
+        print(_t(f"  ✅ 将使用: {data_dir}", f"  ✅ Using: {data_dir}"))
     else:
-        print(f"  ✅ 将使用: {default_data_dir}")
+        print(_t(f"  ✅ 将使用: {default_data_dir}", f"  ✅ Using: {default_data_dir}"))
     print()
 
     # Step 3 — 工具检测与配置
-    print("Step 3/4 — 配置 AI 工具")
+    print(_t("Step 3/4 — 配置 AI 工具", "Step 3/4 — Configure AI tools"))
     tools = _detect_tools()
     if not tools:
-        print("  ⚠️  未检测到支持 MCP 的 AI 工具（Claude Code / Cursor / Claude Desktop）。")
-        print("  安装工具后重新运行 'engram setup' 即可完成配置。\n")
+        print(_t("  ⚠️  未检测到支持 MCP 的 AI 工具（Claude Code / Cursor / Claude Desktop）。",
+                 "  ⚠️  No MCP-compatible AI tools detected (Claude Code / Cursor / Claude Desktop)."))
+        print(_t("  安装工具后重新运行 'engram setup' 即可完成配置。\n",
+                 "  Install a supported tool and re-run 'engram setup'.\n"))
     else:
         for tool in tools:
-            print(f"  ✅ 检测到 {tool['name']}: {tool['config_path']}")
+            print(_t(f"  ✅ 检测到 {tool['name']}: {tool['config_path']}",
+                     f"  ✅ Found {tool['name']}: {tool['config_path']}"))
         print()
-        if _yn("  为所有检测到的工具配置 Engram？"):
+        if _yn(_t("  为所有检测到的工具配置 Engram？",
+                   "  Configure Engram for all detected tools?")):
             success = []
             failed = []
             for tool in tools:
@@ -607,17 +660,19 @@ def run_setup() -> None:
                     failed.append(f"{tool['name']} ({exc})")
             print()
             for name in success:
-                print(f"  ✅ {name} 已配置")
+                print(_t(f"  ✅ {name} 已配置", f"  ✅ {name} configured"))
             for name in failed:
-                print(f"  ❌ {name} 配置失败")
+                print(_t(f"  ❌ {name} 配置失败", f"  ❌ {name} failed"))
 
     selected_data_dir = data_dir or default_data_dir
     _run_seed_knowledge_onboarding(selected_data_dir)
 
-    # 完成 — 验证提示已在 _run_seed_knowledge_onboarding 中输出
-    print("  重启你的 AI 工具（Claude Code / Cursor）即可使用。")
+    # 完成
+    print(_t("  重启你的 AI 工具（Claude Code / Cursor）即可使用。",
+             "  Restart your AI tool (Claude Code / Cursor) to get started."))
     print()
-    print("  遇到问题或有建议？欢迎反馈：")
+    print(_t("  遇到问题或有建议？欢迎反馈：",
+             "  Questions or feedback:"))
     print("  https://github.com/Patdolitse/engram/issues\n")
 
 
