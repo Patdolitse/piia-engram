@@ -119,6 +119,18 @@ FIELD_WEIGHTS: dict[str, float] = {
 _TERM_ALIASES: dict[str, list[str]] = {
     "mcp": ["mcp", "model context protocol"],
     "python": ["python", "py"],
+    "javascript": ["javascript", "js"],
+    "typescript": ["typescript", "ts"],
+    "database": ["database", "db", "数据库"],
+    "api": ["api", "接口"],
+    "frontend": ["frontend", "前端"],
+    "backend": ["backend", "后端"],
+    "deploy": ["deploy", "部署"],
+    "debug": ["debug", "调试"],
+    "refactor": ["refactor", "重构"],
+    "performance": ["performance", "性能", "优化"],
+    "security": ["security", "安全"],
+    "docker": ["docker", "容器"],
     "tool": ["tool", "工具"],
     "memory": ["memory", "记忆", "内存"],
     "lesson": ["lesson", "教训", "经验"],
@@ -132,6 +144,9 @@ _TERM_ALIASES: dict[str, list[str]] = {
     "test": ["test", "测试"],
     "error": ["error", "错误", "报错"],
     "install": ["install", "安装"],
+    "document": ["document", "文档", "doc"],
+    "framework": ["framework", "框架"],
+    "dependency": ["dependency", "依赖", "dep"],
 }
 _ALIAS_LOOKUP: dict[str, str] = {}
 for _canonical, _aliases in _TERM_ALIASES.items():
@@ -596,6 +611,14 @@ class Engram:
             if canonical:
                 tokens.add(canonical)
                 tokens.update(_TERM_ALIASES.get(canonical, []))
+        if expand_aliases:
+            for i in range(len(cjk_chars) - 2):
+                trigram = cjk_chars[i] + cjk_chars[i + 1] + cjk_chars[i + 2]
+                canonical = _ALIAS_LOOKUP.get(trigram)
+                if canonical:
+                    tokens.add(trigram)
+                    tokens.add(canonical)
+                    tokens.update(_TERM_ALIASES.get(canonical, []))
 
         return tokens
 

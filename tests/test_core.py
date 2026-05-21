@@ -5,7 +5,14 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from engram_core.core import Engram, extract_knowledge, ingest_extraction
+from engram_core.core import (
+    Engram,
+    export_to_openclaw,
+    extract_knowledge,
+    import_from_openclaw,
+    ingest_extraction,
+    migrate_from_oca_memory,
+)
 
 
 def make_engram(tmp_path: Path) -> Engram:
@@ -1108,6 +1115,31 @@ def test_tokenize_alias_expansion(tmp_path: Path):
     assert "tool" in tokens
 
 
+def test_tokenize_alias_js_ts_db(tmp_path: Path):
+    """缩写 js/ts/db 应展开为完整形式。"""
+    engram = make_engram(tmp_path)
+    js_tokens = engram._tokenize("js")
+    assert "javascript" in js_tokens
+    ts_tokens = engram._tokenize("ts")
+    assert "typescript" in ts_tokens
+    db_tokens = engram._tokenize("db")
+    assert "database" in db_tokens
+    assert "数据库" in db_tokens
+
+
+def test_search_alias_cross_language_new(tmp_path: Path):
+    """CJK 别名搜索应命中英文 lesson（数据库→database、部署→deploy）。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson({"summary": "Database indexing improves query speed", "domain": "backend"})
+    engram.add_lesson({"summary": "Deploy with zero-downtime rolling updates", "domain": "devops"})
+    db_results = engram.search_knowledge("数据库")
+    db_lessons = db_results.get("lessons", [])
+    assert any("Database" in r.get("summary", "") for r in db_lessons)
+    deploy_results = engram.search_knowledge("部署")
+    deploy_lessons = deploy_results.get("lessons", [])
+    assert any("Deploy" in r.get("summary", "") for r in deploy_lessons)
+
+
 # ── extract_session_insights ─────────────────────────────────────────────────
 
 def test_extract_session_insights_basic(tmp_path: Path):
@@ -1498,3 +1530,289 @@ def test_ingest_extraction_empty_dict(tmp_path: Path):
     engram = make_engram(tmp_path)
     result = ingest_extraction(engram, {}, str(tmp_path))
     assert result["items_learned"] == 0
+
+
+# =====================================================================
+# increment_domain_usage
+# =====================================================================
+
+
+def test_increment_domain_usage_creates_entry(tmp_path: Path):
+    """首次调用应创建 domain 条目，含 first_seen 和 project_count=1。"""
+    engram = make_engram(tmp_path)
+    engram.increment_domain_usage("rust")
+    domains_path = tmp_path / "knowledge" / "domains.json"
+    data = json.loads(domains_path.read_text(encoding="utf-8"))
+    assert "rust" in data
+    assert data["rust"]["project_count"] == 1
+    assert "first_seen" in data["rust"]
+    assert "last_used" in data["rust"]
+
+
+def test_increment_domain_usage_increments(tmp_path: Path):
+    """多次调用应递增 project_count。"""
+    engram = make_engram(tmp_path)
+    engram.increment_domain_usage("go")
+    engram.increment_domain_usage("go")
+    engram.increment_domain_usage("go")
+    domains_path = tmp_path / "knowledge" / "domains.json"
+    data = json.loads(domains_path.read_text(encoding="utf-8"))
+    assert data["go"]["project_count"] == 3
+
+
+def test_increment_domain_usage_multiple_domains(tmp_path: Path):
+    """不同 domain 应独立计数。"""
+    engram = make_engram(tmp_path)
+    engram.increment_domain_usage("python")
+    engram.increment_domain_usage("javascript")
+    engram.increment_domain_usage("python")
+    domains_path = tmp_path / "knowledge" / "domains.json"
+    data = json.loads(domains_path.read_text(encoding="utf-8"))
+    assert data["python"]["project_count"] == 2
+    assert data["javascript"]["project_count"] == 1
+
+
+# =====================================================================
+# migrate_from_oca_memory
+# =====================================================================
+
+
+def test_migrate_from_oca_memory_empty_dir(tmp_path: Path):
+    """空目录迁移不应崩溃，返回空 migrated 列表。"""
+    engram = make_engram(tmp_path)
+    oca_dir = tmp_path / "oca_memory"
+    oca_dir.mkdir()
+    result = migrate_from_oca_memory(str(oca_dir), engram)
+    assert result["migrated"] == []
+
+
+def test_migrate_from_oca_memory_owner_profile(tmp_path: Path):
+    """应迁移 owner_profile.json 到 Engram profile。"""
+    engram = make_engram(tmp_path)
+    oca_dir = tmp_path / "oca_memory"
+    oca_dir.mkdir()
+    profile = {
+        "language": "中文",
+        "preferences": {"editor": "vscode"},
+        "quality_threshold": 0.85,
+    }
+    (oca_dir / "owner_profile.json").write_text(
+        json.dumps(profile), encoding="utf-8"
+    )
+    result = migrate_from_oca_memory(str(oca_dir), engram)
+    assert "owner_profile" in result["migrated"]
+    p = engram.get_profile()
+    assert p["language"] == "中文"
+    # migrated_from 不在 _ALLOWED_PROFILE_FIELDS 白名单中，会被过滤
+    standards = engram.get_quality_standards()
+    assert standards.get("acceptance_threshold") == 0.85
+
+
+def test_migrate_from_oca_memory_project_patterns(tmp_path: Path):
+    """应迁移 project_patterns.json 的 file_types 到 domain。"""
+    engram = make_engram(tmp_path)
+    oca_dir = tmp_path / "oca_memory"
+    oca_dir.mkdir()
+    patterns = {"common_file_types": {".py": 10, ".js": 5, ".unknown": 2}}
+    (oca_dir / "project_patterns.json").write_text(
+        json.dumps(patterns), encoding="utf-8"
+    )
+    result = migrate_from_oca_memory(str(oca_dir), engram)
+    assert "project_patterns" in result["migrated"]
+    domains_path = tmp_path / "knowledge" / "domains.json"
+    data = json.loads(domains_path.read_text(encoding="utf-8"))
+    assert "python" in data
+    assert "javascript" in data
+    # .unknown 不在 domain_map 中，应被忽略
+    assert "unknown" not in data
+
+
+def test_migrate_from_oca_memory_near_misses(tmp_path: Path):
+    """应迁移 near_misses.json 为 safety domain 的 lesson。"""
+    engram = make_engram(tmp_path)
+    oca_dir = tmp_path / "oca_memory"
+    oca_dir.mkdir()
+    near_misses = [
+        {
+            "what_happened": "差点删了生产数据库",
+            "what_could_have_happened": "数据全丢",
+        },
+        {
+            "what_happened": "误操作 git force push",
+            "what_could_have_happened": "团队代码丢失",
+        },
+    ]
+    (oca_dir / "near_misses.json").write_text(
+        json.dumps(near_misses), encoding="utf-8"
+    )
+    result = migrate_from_oca_memory(str(oca_dir), engram)
+    assert any("near_misses" in m for m in result["migrated"])
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    safety_lessons = [l for l in lessons if l.get("domain") == "safety"]
+    assert len(safety_lessons) == 2
+
+
+# =====================================================================
+# export_to_openclaw
+# =====================================================================
+
+
+def test_export_to_openclaw_creates_three_files(tmp_path: Path):
+    """应在输出目录创建 SOUL.md、USER.md、MEMORY.md。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "developer", "language": "中文"})
+    out_dir = tmp_path / "openclaw_export"
+    result = export_to_openclaw(engram, str(out_dir))
+    assert result["status"] == "success"
+    assert len(result["files"]) == 3
+    assert (out_dir / "SOUL.md").is_file()
+    assert (out_dir / "USER.md").is_file()
+    assert (out_dir / "MEMORY.md").is_file()
+
+
+def test_export_to_openclaw_soul_contains_profile(tmp_path: Path):
+    """SOUL.md 应包含 profile 信息。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({
+        "role": "senior_engineer",
+        "language": "中文",
+        "technical_level": "expert",
+    })
+    out_dir = tmp_path / "export"
+    export_to_openclaw(engram, str(out_dir))
+    soul = (out_dir / "SOUL.md").read_text(encoding="utf-8")
+    assert "senior_engineer" in soul
+    assert "expert" in soul
+    assert "# SOUL" in soul
+
+
+def test_export_to_openclaw_memory_contains_lessons(tmp_path: Path):
+    """MEMORY.md 应包含 lessons 和 decisions。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson({"summary": "永远先写测试", "domain": "testing"})
+    engram.add_decision({
+        "question": "数据库选型",
+        "choice": "PostgreSQL",
+        "reasoning": "成熟可靠",
+    })
+    out_dir = tmp_path / "export"
+    export_to_openclaw(engram, str(out_dir))
+    memory = (out_dir / "MEMORY.md").read_text(encoding="utf-8")
+    assert "永远先写测试" in memory
+    assert "[testing]" in memory
+    assert "PostgreSQL" in memory
+    assert "数据库选型" in memory
+
+
+def test_export_to_openclaw_empty_data(tmp_path: Path):
+    """空数据导出不应崩溃。"""
+    engram = make_engram(tmp_path)
+    out_dir = tmp_path / "export_empty"
+    result = export_to_openclaw(engram, str(out_dir))
+    assert result["status"] == "success"
+    assert (out_dir / "SOUL.md").is_file()
+
+
+# =====================================================================
+# import_from_openclaw
+# =====================================================================
+
+
+def test_import_from_openclaw_user_md(tmp_path: Path):
+    """应从 USER.md 导入 profile 字段。"""
+    engram = make_engram(tmp_path)
+    user_file = tmp_path / "USER.md"
+    user_file.write_text(
+        "# USER\n\n- Role: architect\n- Language: English\n- Technical Level: senior\n",
+        encoding="utf-8",
+    )
+    result = import_from_openclaw(engram, user_path=str(user_file))
+    assert result["status"] == "success"
+    p = engram.get_profile()
+    assert p["role"] == "architect"
+    assert p["language"] == "English"
+    assert p["technical_level"] == "senior"
+
+
+def test_import_from_openclaw_soul_md(tmp_path: Path):
+    """应从 SOUL.md 导入 work preferences 和 quality standards。"""
+    engram = make_engram(tmp_path)
+    soul_file = tmp_path / "SOUL.md"
+    soul_file.write_text(
+        "# SOUL\n\n"
+        "## Work Preferences\n"
+        "- Editor: VSCode\n"
+        "- Style: pragmatic\n\n"
+        "## Quality Standards\n"
+        "- 所有代码必须有测试\n"
+        "- PR 必须经过 review\n",
+        encoding="utf-8",
+    )
+    result = import_from_openclaw(engram, soul_path=str(soul_file))
+    assert result["status"] == "success"
+    assert any("preferences" in item for item in result["imported"])
+    assert any("quality_standards" in item for item in result["imported"])
+
+
+def test_import_from_openclaw_memory_md_lessons(tmp_path: Path):
+    """应从 MEMORY.md 导入 lessons，跳过重复。"""
+    engram = make_engram(tmp_path)
+    # 先添加一条已有的 lesson
+    engram.add_lesson({"summary": "已有的经验"})
+    memory_file = tmp_path / "MEMORY.md"
+    memory_file.write_text(
+        "# MEMORY\n\n"
+        "## Lessons Learned\n"
+        "- [python] 用 virtualenv 隔离依赖\n"
+        "- 已有的经验\n"
+        "- [testing] mock 要谨慎使用\n",
+        encoding="utf-8",
+    )
+    result = import_from_openclaw(engram, memory_path=str(memory_file))
+    assert result["status"] == "success"
+    # 应只导入 2 条新的（"已有的经验"跳过）
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    summaries = [l.get("summary", "") for l in lessons]
+    assert "用 virtualenv 隔离依赖" in summaries
+    assert "mock 要谨慎使用" in summaries
+
+
+def test_import_from_openclaw_missing_files(tmp_path: Path):
+    """不存在的文件路径不应崩溃。"""
+    engram = make_engram(tmp_path)
+    result = import_from_openclaw(
+        engram,
+        soul_path=str(tmp_path / "nonexistent_SOUL.md"),
+        user_path=str(tmp_path / "nonexistent_USER.md"),
+    )
+    assert result["status"] == "no_new_data"
+    assert result["imported"] == []
+
+
+def test_export_import_roundtrip(tmp_path: Path):
+    """导出后再导入应保持 profile 数据一致。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({
+        "role": "data_engineer",
+        "language": "中文",
+        "technical_level": "mid",
+    })
+    engram.add_lesson({"summary": "Spark 调优先看 shuffle", "domain": "data"})
+
+    # 导出
+    out_dir = tmp_path / "roundtrip"
+    export_to_openclaw(engram, str(out_dir))
+
+    # 新实例导入
+    engram2 = Engram(root=tmp_path / "engram2")
+    import_from_openclaw(
+        engram2,
+        soul_path=str(out_dir / "SOUL.md"),
+        memory_path=str(out_dir / "MEMORY.md"),
+        user_path=str(out_dir / "USER.md"),
+    )
+    p2 = engram2.get_profile()
+    assert p2["role"] == "data_engineer"
+    assert p2["language"] == "中文"
+    lessons2 = engram2.get_lessons(limit=None, _update_access=False)
+    assert any("Spark" in l.get("summary", "") for l in lessons2)

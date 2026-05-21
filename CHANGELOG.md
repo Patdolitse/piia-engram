@@ -4,6 +4,20 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.12.2] - 2026-05-22
+
+### Added
+- **Search alias expansion**: 16 new CJK/English alias pairs (js→javascript, db→数据库, 部署→deploy, 前端→frontend, etc.)
+- **CJK trigram alias lookup**: 3-character Chinese terms (e.g. "数据库") now correctly expand to English aliases during search
+
+### Improved
+- Removed redundant `test.yml` workflow — `ci.yml` already covers 3 OS × 4 Python versions
+
+### Tests
+- 242 passed (up from 224 in v3.12.1)
+- New: 16 tests for `export_to_openclaw`, `import_from_openclaw`, `migrate_from_oca_memory`, `increment_domain_usage`
+- New: 2 alias expansion tests (abbreviation + cross-language search)
+
 ## [3.12.1] - 2026-05-22
 
 ### Fixed
