@@ -314,14 +314,21 @@ piia-engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools ar
 
 ## Supported Tools
 
-| Tool | Integration | Status |
+| Tool | Integration | Confidence |
 |---|---|---|
-| Claude Code | MCP over stdio | Tested |
-| Codex | MCP over stdio | Tested |
-| Cursor | MCP over stdio | Expected to work |
-| Claude Desktop | MCP over stdio | Expected to work |
-| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | Tested |
-| ChatGPT / Gemini / Kimi | Markdown identity card fallback | Usable |
+| Claude Code | MCP over stdio | ✅ Verified |
+| Codex | MCP over stdio | ✅ Verified |
+| Cursor | MCP over stdio | ✅ Verified |
+| Claude Desktop | MCP over stdio | ✅ Verified |
+| Windsurf | MCP over stdio | Expected to work |
+| GitHub Copilot | MCP over stdio | Expected to work |
+| Cline | MCP over stdio | Expected to work |
+| Roo Code | MCP over stdio | Expected to work |
+| Amazon Q | MCP over stdio | Expected to work |
+| Augment | MCP over stdio | Expected to work |
+| Zed | MCP over stdio | Expected to work |
+| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | ✅ Verified |
+| ChatGPT / Gemini / Kimi | Markdown identity card fallback | 🔧 Usable |
 
 ## Comparison
 
