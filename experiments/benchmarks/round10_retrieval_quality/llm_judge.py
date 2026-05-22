@@ -1,67 +1,123 @@
-"""LLM judge for Round 10 retrieval quality evaluation."""
+"""LLM judge for Round 10 retrieval quality evaluation.
+
+Uses urllib (no SDK dependency) to call DeepSeek V4 API.
+- Evaluation / judge calls: deepseek-v4-pro
+- Fast test runner calls: deepseek-v4-flash
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
-# DeepSeek API (OpenAI-compatible)
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None  # type: ignore[misc,assignment]
-
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    load_dotenv = None  # type: ignore[misc,assignment]
-
-
 ENV_PATH = Path(__file__).resolve().parent.parent / "round3" / ".env"
+
+# DeepSeek V4 model names
+MODEL_JUDGE = "deepseek-v4-pro"    # evaluation / judge
+MODEL_FAST = "deepseek-v4-flash"   # fast test runner
+
+
+def _load_env(path: Path | None = None) -> None:
+    env_path = path or ENV_PATH
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 class DeepSeekJudge:
-    """Lightweight DeepSeek V3 judge for retrieval quality evaluation."""
+    """Lightweight DeepSeek V4 judge for retrieval quality evaluation.
 
-    def __init__(self, raw_log_path: Path | None = None, runs_per_scenario: int = 3):
-        if load_dotenv:
-            load_dotenv(ENV_PATH)
-        if OpenAI is None:
-            raise RuntimeError("openai package not installed. Run: pip install openai")
+    Uses raw urllib — no openai SDK needed.
+    """
 
-        self.client = OpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        )
-        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    def __init__(
+        self,
+        raw_log_path: Path | None = None,
+        runs_per_scenario: int = 3,
+        model: str | None = None,
+    ):
+        _load_env()
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY missing; check round3/.env")
+        self._api_key = api_key
+        self._base_url = os.environ.get(
+            "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
+        ).rstrip("/")
+        self.model = model or MODEL_JUDGE
         self.runs = runs_per_scenario
         self.raw_log = raw_log_path
         self._call_count = 0
 
+    def _complete(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
+    ) -> dict[str, Any]:
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        req = urllib.request.Request(
+            f"{self._base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"DeepSeek HTTP {exc.code}: {body}") from exc
+        content = (
+            data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        )
+        return {"content": content, "usage": data.get("usage", {}), "raw": data}
+
     def ask(self, system: str, user: str) -> str:
         """Single LLM call, returns content string."""
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=0.0,
-            max_tokens=1024,
-        )
-        content = resp.choices[0].message.content or ""
-        self._call_count += 1
-        if self.raw_log:
-            with open(self.raw_log, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "call": self._call_count,
-                    "system": system[:200],
-                    "user": user[:200],
-                    "response": content[:500],
-                }, ensure_ascii=False) + "\n")
-        return content
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        for attempt in range(1, 4):
+            try:
+                resp = self._complete(messages)
+                content = resp["content"]
+                self._call_count += 1
+                if self.raw_log:
+                    with open(self.raw_log, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "call": self._call_count,
+                            "model": self.model,
+                            "system": system[:200],
+                            "user": user[:200],
+                            "response": content[:500],
+                            "usage": resp.get("usage", {}),
+                        }, ensure_ascii=False) + "\n")
+                return content
+            except Exception as exc:
+                if attempt >= 3:
+                    raise
+                time.sleep(0.5 * attempt)
+        return ""  # unreachable
 
     def majority_vote(self, system: str, user: str, extractor=None) -> Any:
         """Run N times, return majority-voted result."""
@@ -74,7 +130,6 @@ class DeepSeekJudge:
         from collections import Counter
         counts = Counter(str(r) for r in results)
         winner = counts.most_common(1)[0][0]
-        # Return the original value matching the winner string
         for r in results:
             if str(r) == winner:
                 return r

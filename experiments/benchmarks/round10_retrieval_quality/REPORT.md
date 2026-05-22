@@ -1,6 +1,6 @@
 # Engram Round 10: Retrieval/Injection Quality — Report
 
-**Generated**: 2026-05-22 16:14
+**Generated**: 2026-05-22 20:36
 
 ## 总结
 - 总 case 数: 43
@@ -22,7 +22,7 @@
 | D4 | Identity Fidelity (LLM) | 5 | 5 | 0 | 4/5 (80%) | PASS |
 
 ## LLM 评估信息
-- 模型: deepseek-chat
+- 模型: deepseek-v4-pro
 - API 调用次数: 23
 - 每场景重复次数: 3
 
