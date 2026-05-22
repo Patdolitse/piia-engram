@@ -2518,3 +2518,318 @@ def test_lesson_eviction_staging_first(tmp_path: Path):
     assert len(final) <= MAX_KNOWLEDGE_ENTRIES
     # staging 应该被驱逐
     assert not any(l.get("id") == "s-0" for l in final)
+
+
+# ── context.py coverage: generate_context sections ─────────────────
+
+
+def test_generate_context_preferences_section(tmp_path: Path):
+    """generate_context should include work preferences when set."""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "dev", "language": "中文"})
+    engram.update_preferences({
+        "work_patterns": {"decision_style": "data-driven", "review_depth": "thorough"},
+        "communication": "简洁直接",
+        "tool_preferences": {"editor": "VS Code", "terminal": "iTerm2"},
+    })
+    ctx = engram.generate_context()
+    assert "decision_style" in ctx
+    assert "简洁直接" in ctx
+    assert "VS Code" in ctx
+
+
+def test_generate_context_quality_section(tmp_path: Path):
+    """generate_context should include quality standards."""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "dev"})
+    engram.update_quality_standards({
+        "acceptance_threshold": 4,
+        "rules": ["所有代码必须有测试", "不允许 TODO 留在 main 分支"],
+    })
+    ctx = engram.generate_context()
+    assert "4" in ctx
+    assert "所有代码必须有测试" in ctx
+
+
+def test_generate_context_project_section(tmp_path: Path):
+    """generate_context with project_folder should include project history."""
+    engram = make_engram(tmp_path)
+    engram.save_project_snapshot("E:/test-project", {
+        "title": "Test Project",
+        "tech_stack": ["Python", "FastAPI"],
+        "session_count": 10,
+        "known_issues": ["性能问题", "文档缺失"],
+    })
+    ctx = engram.generate_context(project_folder="E:/test-project")
+    assert "Test Project" in ctx
+    assert "10" in ctx
+    assert "Python" in ctx
+    assert "性能问题" in ctx
+
+
+def test_generate_context_decisions_partial_fields(tmp_path: Path):
+    """Decisions with missing question or choice should still render."""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "dev"})
+    # decision with only question
+    engram.add_decision({"question": "用什么框架", "choice": ""})
+    # decision with only choice
+    engram.add_decision({"title": "", "question": "", "choice": "FastAPI"})
+    ctx = engram.generate_context()
+    assert "用什么框架" in ctx or "FastAPI" in ctx
+
+
+def test_generate_context_empty_returns_empty_string(tmp_path: Path):
+    """generate_context with absolutely no data should return empty."""
+    engram = Engram(tmp_path)
+    # Patch reconcile to do nothing
+    engram.reconcile_memories = lambda: {"imported": 0, "sources": []}
+    engram.reconcile_ai_configs = lambda: {"imported": 0, "sources": [], "scanned_files": 0}
+    # Remove all data files
+    for f in tmp_path.glob("**/*.json"):
+        f.unlink()
+    # Empty profile, no lessons, no decisions
+    ctx = engram.generate_context()
+    # Should still have at least profile warning
+    assert "身份画像未设置" in ctx
+
+
+def test_generate_context_reconcile_failure_graceful(tmp_path: Path):
+    """generate_context should not crash if reconcile raises."""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "dev"})
+
+    def boom():
+        raise RuntimeError("reconcile boom")
+
+    engram.reconcile_memories = boom
+    engram.reconcile_ai_configs = boom
+    # Should not raise
+    ctx = engram.generate_context()
+    assert "关于用户" in ctx
+
+
+# ── context.py coverage: extract_knowledge with mock LLM ──────────
+
+
+def test_extract_knowledge_with_mock_provider():
+    """extract_knowledge should parse LLM JSON response."""
+    from engram_core.context import extract_knowledge
+
+    class MockProvider:
+        def chat(self, messages, project_folder):
+            return json.dumps({
+                "profile_updates": {"language": "中文", "technical_level": "高级"},
+                "lessons": [{"summary": "测试很重要", "domain": "testing"}],
+                "decisions": [{"question": "用什么数据库", "choice": "PostgreSQL", "reasoning": "稳定"}],
+                "domains_used": ["python", "database"],
+                "project_info": {"title": "Test", "tech_stack": ["Python"]},
+            })
+
+    conversation = [
+        {"role": "user", "content": "帮我写个测试"},
+        {"role": "assistant", "content": "好的，我来写测试"},
+    ]
+    result = extract_knowledge(conversation, "E:/test", "main.py", provider=MockProvider())
+    assert result is not None
+    assert result["profile_updates"]["language"] == "中文"
+    assert len(result["lessons"]) == 1
+    assert len(result["decisions"]) == 1
+
+
+def test_extract_knowledge_handles_bad_json():
+    """extract_knowledge should return None on invalid LLM response."""
+    from engram_core.context import extract_knowledge
+
+    class BadProvider:
+        def chat(self, messages, project_folder):
+            return "This is not JSON at all, just text"
+
+    result = extract_knowledge(
+        [{"role": "user", "content": "hello"}], "E:/test", "main.py", provider=BadProvider()
+    )
+    assert result is None
+
+
+def test_extract_knowledge_handles_exception():
+    """extract_knowledge should return None on LLM exception."""
+    from engram_core.context import extract_knowledge
+
+    class CrashProvider:
+        def chat(self, messages, project_folder):
+            raise ConnectionError("API down")
+
+    result = extract_knowledge(
+        [{"role": "user", "content": "hello"}], "E:/test", "main.py", provider=CrashProvider()
+    )
+    assert result is None
+
+
+# ── context.py coverage: ingest_extraction branches ────────────────
+
+
+def test_ingest_extraction_work_style(tmp_path: Path):
+    """ingest_extraction should apply work_style_updates."""
+    from engram_core.context import ingest_extraction
+
+    engram = make_engram(tmp_path)
+    extracted = {
+        "work_style_updates": {
+            "preferences": {"review_depth": "deep"},
+            "communication": "简洁",
+        }
+    }
+    result = ingest_extraction(engram, extracted, "E:/test")
+    assert result["items_learned"] >= 1
+    style = engram.get_work_style()
+    assert style.get("communication") == "简洁"
+
+
+def test_ingest_extraction_quality_standards(tmp_path: Path):
+    """ingest_extraction should apply quality_updates with rule dedup."""
+    from engram_core.context import ingest_extraction
+
+    engram = make_engram(tmp_path)
+    # Add existing rule
+    engram.update_quality_standards({"rules": ["existing rule"]})
+    extracted = {
+        "quality_updates": {
+            "acceptance_threshold": 4,
+            "rules": ["existing rule", "new rule"],
+        }
+    }
+    result = ingest_extraction(engram, extracted, "E:/test")
+    assert result["items_learned"] >= 1
+    standards = engram.get_quality_standards()
+    assert standards["acceptance_threshold"] == 4
+    assert "new rule" in standards["rules"]
+    # existing rule not duplicated
+    assert standards["rules"].count("existing rule") == 1
+
+
+def test_ingest_extraction_domains_and_project(tmp_path: Path):
+    """ingest_extraction should increment domains and save project snapshot."""
+    from engram_core.context import ingest_extraction
+    from engram_core.core import _read_json
+
+    engram = Engram(root=tmp_path)
+    extracted = {
+        "domains_used": ["python", "testing"],
+        "project_info": {
+            "title": "My Project",
+            "tech_stack": ["Python", "React"],
+        },
+    }
+    result = ingest_extraction(engram, extracted, "E:/test-project")
+    # domains.json should have incremented counts
+    domains_raw = _read_json(tmp_path / "knowledge" / "domains.json")
+    assert "python" in domains_raw
+    assert domains_raw["python"]["project_count"] == 1
+    # Project snapshot should be saved
+    proj = engram.get_project_snapshot("E:/test-project")
+    assert proj["title"] == "My Project"
+    assert proj["session_count"] == 1  # first session
+
+
+def test_ingest_extraction_quality_bad_threshold(tmp_path: Path):
+    """ingest_extraction should handle non-numeric acceptance_threshold."""
+    from engram_core.context import ingest_extraction
+
+    engram = make_engram(tmp_path)
+    extracted = {
+        "quality_updates": {
+            "acceptance_threshold": "not a number",
+            "rules": ["rule one"],
+        }
+    }
+    result = ingest_extraction(engram, extracted, "E:/test")
+    # Should still save rules even if threshold is bad
+    standards = engram.get_quality_standards()
+    assert "rule one" in standards.get("rules", [])
+
+
+# ── context.py coverage: ingest_notes duplicate decision ──────────
+
+
+def test_ingest_notes_duplicate_decision(tmp_path: Path):
+    """Ingesting the same decision text twice should report duplicate."""
+    engram = make_engram(tmp_path)
+    text = "决定使用 PostgreSQL 作为主数据库"
+    engram.ingest_notes(text)
+    result = engram.ingest_notes(text)
+    assert result["duplicates"] >= 1
+
+
+# ── context.py coverage: extract_session_insights branches ────────
+
+
+def test_extract_session_insights_decision_duplicate(tmp_path: Path):
+    """Duplicate decisions from session insights should be reported."""
+    engram = make_engram(tmp_path)
+    text = "最终决定使用 Redis 做缓存层"
+    engram.extract_session_insights(text)
+    result = engram.extract_session_insights(text)
+    assert result["duplicates"] >= 1
+
+
+def test_extract_session_insights_no_content_chars(tmp_path: Path):
+    """Sentences without content chars should be skipped."""
+    engram = make_engram(tmp_path)
+    result = engram.extract_session_insights("---------- .......... $$$$$$$$$$")
+    assert result["saved_lessons"] == 0
+    assert result["saved_decisions"] == 0
+
+
+# ── CJK search quality regression tests ───────────────────────────
+
+
+def test_cjk_search_finds_chinese_lessons(tmp_path: Path):
+    """中文查询应能找到中文 lesson。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("测试框架的选择要考虑团队熟悉度", domain="testing")
+    engram.add_lesson("部署流程自动化减少人为错误", domain="devops")
+    engram.add_lesson("代码审查重点关注逻辑正确性而非格式", domain="python")
+    results = engram.search_knowledge("测试框架")
+    lessons = results.get("lessons", [])
+    assert any("测试框架" in l.get("summary", "") for l in lessons)
+
+
+def test_cjk_search_no_false_positives(tmp_path: Path):
+    """不相关的中文 lesson 不应被中文查询找到。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("Python 列表推导式是强大的特性", domain="python")
+    engram.add_lesson("今天天气真好适合出去散步", domain="general")
+    results = engram.search_knowledge("Python 列表")
+    lessons = results.get("lessons", [])
+    noise = [l for l in lessons if "天气" in l.get("summary", "")]
+    assert len(noise) == 0
+
+
+def test_cjk_bigram_exact_match_ranks_higher(tmp_path: Path):
+    """精确匹配的中文内容应排名更高。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("pytest 覆盖率报告生成方法", domain="python")
+    engram.add_lesson("pytest 速度优化技巧总结", domain="python")
+    results = engram.search_knowledge("pytest 覆盖率")
+    lessons = results.get("lessons", [])
+    assert lessons, "should find at least one result"
+    assert "覆盖率" in lessons[0].get("summary", "")
+
+
+def test_cjk_alias_cross_language(tmp_path: Path):
+    """中英别名应互通：查 'tool' 能找到含 '工具' 的 lesson。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("选择合适的工具是提高效率的关键因素", domain="general")
+    results = engram.search_knowledge("tool")
+    lessons = results.get("lessons", [])
+    assert any("工具" in l.get("summary", "") for l in lessons)
+
+
+def test_cjk_mixed_query(tmp_path: Path):
+    """中英混合查询应正常工作。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("Docker 容器化部署简单高效", domain="devops")
+    engram.add_lesson("Redis 缓存策略选择指南", domain="database")
+    results = engram.search_knowledge("Docker 部署")
+    lessons = results.get("lessons", [])
+    assert any("Docker" in l.get("summary", "") for l in lessons)
