@@ -4,6 +4,20 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.13.2] - 2026-05-22
+
+### Tests
+- **327 passed** (up from 281 in v3.13.1) — 46 new tests covering critical algorithm gaps
+- New: 7 `_score_item` tests (field weights, access bonus, multi-term coverage, CJK queries)
+- New: 4 `search_knowledge` tests (ranking, CJK search, alias expansion, threshold filtering)
+- New: 4 `_detect_decision_conflicts` tests (same/different domains, overlapping domains)
+- New: 4 `_detect_lesson_conflicts` tests (negation/affirmation markers, CJK, domain separation)
+- New: 7 `generate_context` tests (empty profile, token budget, conflict section, section inclusion)
+- New: 8 `ingest_notes` tests (decision/lesson triggers, short line skipping, dedup, CJK triggers)
+- New: 4 `_infer_domain` tests (single/multi match, fallback behavior)
+- New: 4 `_bigram_similarity` tests (identical, empty, partial, completely different)
+- New: 2 `evaluate_tiers` + 1 eviction test (staging-first eviction policy)
+
 ## [3.13.1] - 2026-05-22
 
 ### Fixed
