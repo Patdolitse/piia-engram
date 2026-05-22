@@ -5,7 +5,7 @@ This document describes how piia-engram is structured internally, why the struct
 It complements the user-facing [README](../README.md) (which answers *"what does it do"*) by answering *"how is it built and where would I extend it"*.
 
 > **Audience**: contributors, integrators, and anyone reading the code.
-> **Version**: v3.16.0 (2026-05-22)
+> **Version**: v3.19.0 (2026-05-23)
 
 ---
 
@@ -54,17 +54,17 @@ The whole thing fits in your laptop's RAM (typical user has < 1 MB on disk) and 
 
 After the v3.14.1 refactor and v3.16.0 reports split, the package is split into **11 focused modules + 7 supporting modules**.
 
-> **Line counts last verified**: v3.16.0 (2026-05-22). Run `wc -l src/piia_engram/*.py` to check.
+> **Line counts last verified**: v3.19.0 (2026-05-23). Run `wc -l src/piia_engram/*.py` to check.
 
 ### Core modules
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`storage.py`](../src/piia_engram/storage.py) | ~225 | Constants + I/O primitives (`_read_json`, `_write_json`, `_engram_root`, `_now_iso`) — the only place the rest of the code touches the filesystem |
-| [`core.py`](../src/piia_engram/core.py) | ~1097 | `Engram` class facade — `__init__`, schema migration, identity CRUD (profile / preferences / trust_boundaries / quality_standards), knowledge CRUD (add/get/update/archive lessons & decisions), link management, domain & project methods, `export_all` / `import_all` |
+| [`storage.py`](../src/piia_engram/storage.py) | ~260 | Constants + I/O primitives (`_read_json`, `_write_json`, `_engram_root`, `_now_iso`) — the only place the rest of the code touches the filesystem |
+| [`core.py`](../src/piia_engram/core.py) | ~1112 | `Engram` class facade — `__init__`, schema migration, identity CRUD (profile / preferences / trust_boundaries / quality_standards), knowledge CRUD (add/get/update/archive lessons & decisions), link management, domain & project methods, `export_all` / `import_all` |
 | [`retrieval.py`](../src/piia_engram/retrieval.py) | ~639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
-| [`context.py`](../src/piia_engram/context.py) | ~690 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
-| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~468 | `ReconcileMixin` — silent import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
+| [`context.py`](../src/piia_engram/context.py) | ~811 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
+| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~473 | `ReconcileMixin` — silent import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
 | [`reports.py`](../src/piia_engram/reports.py) | 20 | `ReportsMixin` — thin composition hub, inherits from 4 sub-mixins below |
 | [`reports_rarity.py`](../src/piia_engram/reports_rarity.py) | ~84 | `RarityMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `RARITY_TIERS` constant |
 | [`reports_review.py`](../src/piia_engram/reports_review.py) | ~517 | `ReviewMixin` — `generate_review_page` (interactive HTML audit), `export_review_page`, `promote_knowledge`, `apply_review` |
@@ -76,10 +76,10 @@ After the v3.14.1 refactor and v3.16.0 reports split, the package is split into 
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1411 | FastMCP server: 43 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
+| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1476 | FastMCP server: 43 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
-| [`telemetry.py`](../src/piia_engram/telemetry.py) | ~311 | `ToolCallTracker` — opt-in anonymous usage statistics (Phase 1: local log only, no network), payload validation, HMAC daily ID, preview/status CLI support |
-| [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~1155 | `engram setup` + `piia-engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
+| [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (Phase 1: local log only, no network), payload validation, HMAC daily ID, preview/status CLI support |
+| [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~1723 | `engram setup` + `piia-engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
 | [`audit.py`](../src/piia_engram/audit.py) | ~54 | `AuditLogger` — opt-in audit trail (`ENGRAM_AUDIT=1`) to `~/.engram/audit.log` |
 | [`stats.py`](../src/piia_engram/stats.py) | ~157 | `piia-engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
 
@@ -254,5 +254,5 @@ Set `ENGRAM_TOOLS=all` to expose the full 43 tools (review, health, link/unlink,
 - README user-facing intro: [README.md](../README.md) · [中文版](../README.zh-CN.md)
 - Security model: [SECURITY.md](../SECURITY.md)
 - Contributing & test baseline: [CONTRIBUTING.md](../CONTRIBUTING.md)
-- Coverage baseline: [coverage_baseline_v3.14.2.md](coverage_baseline_v3.14.2.md) (historical) — current: 490 tests, 83% total, 86% mcp_server.py
+- Coverage baseline: [coverage_baseline_v3.14.2.md](coverage_baseline_v3.14.2.md) (historical) — current: 678 tests, 96% total
 - Recent milestone review (v3.13.2 external audit): [milestone_review_v3.13.2.md](milestone_review_v3.13.2.md)
