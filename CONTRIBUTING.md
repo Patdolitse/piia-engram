@@ -13,7 +13,7 @@ src/engram_core/
     setup_wizard.py  # Interactive setup CLI
     crypto.py        # AES-256-GCM encryption for sensitive profile fields
 tests/
-    test_core.py      # Unit tests: core engine (142 tests)
+    test_core.py      # Unit tests: core engine (188 tests)
     test_reconcile.py # Auto-sync, staging, conflict detection (56 tests)
     test_packaging.py # Package metadata, CI, MCP tool verification (22 tests)
     test_setup_wizard.py # Setup wizard + doctor diagnostics (15 tests)
@@ -46,7 +46,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **281+ tests, 0 failures**. All PRs must maintain this.
+Current baseline: **327+ tests, 0 failures**. All PRs must maintain this.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash
