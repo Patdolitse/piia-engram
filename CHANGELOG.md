@@ -4,6 +4,23 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.19.0] - 2026-05-23
+
+Cold-start optimization release — solving the "installed but never used" gap.
+
+### Added
+- **Environment auto-probing**: `engram setup` now detects name, email (from git config), tech stack (from project files), language preference (from commit history), and commit style automatically
+- **Seed knowledge templates**: Setup injects best-practice lessons based on detected tech stack (Python, TypeScript, Go, Rust, Java + universal), marked as `staging` tier
+- **Guided empty-state response**: `get_user_context` on empty Engram now returns a 5-step AI onboarding guide instead of a bare "no context" message
+- **Auto-refresh `quick_context.md`** at end of setup wizard — all AI tools can read it immediately
+- **Distribution monitoring script** (`scripts/metrics.py`): tracks GitHub traffic, PyPI downloads, referral sources, and local usage signals
+- 4 new tests for cold-start functions (probe, seed templates, dedup, empty dir)
+
+### Changed
+- **Supported tools table expanded to 13 entries** in README (was 6): 4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback
+- **"Status" column renamed to "Confidence"** for clearer messaging
+- Setup menu options now pre-ordered based on probed environment signals
+
 ## [3.18.0] - 2026-05-23
 
 Repo rename, security hardening, and doctor upgrade release.
