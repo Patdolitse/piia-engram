@@ -21,8 +21,8 @@ def _gh(endpoint: str = "") -> dict | list | None:
         )
         if result.returncode == 0:
             return json.loads(result.stdout.decode("utf-8", errors="replace"))
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[engram] gh api call failed: {exc}", file=sys.stderr)
     return None
 
 
@@ -34,7 +34,8 @@ def _pypi_recent() -> dict | None:
         req = urllib.request.Request(url, headers={"User-Agent": "engram-stats/1.0"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
-    except Exception:
+    except Exception as exc:
+        print(f"[engram] PyPI stats fetch failed: {exc}", file=sys.stderr)
         return None
 
 

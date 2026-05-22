@@ -70,8 +70,9 @@ class EncryptionEngine:
             aesgcm = AESGCM(key)
             plaintext = aesgcm.decrypt(nonce, ciphertext, None)
             return plaintext.decode("utf-8")
-        except Exception:
+        except Exception as exc:
             # Decryption failed (wrong key, corrupt data) — return original, don't crash
+            print(f"[engram] decryption failed: {exc}", file=__import__('sys').stderr)
             return value
 
     def encrypt_fields(self, data: dict, fields: set[str]) -> dict:
