@@ -109,19 +109,25 @@ ChatGPT, Gemini, Kimi — `get_identity_card` exports a ready-to-paste Markdown 
 **Knowledge health and discovery**  
 `get_knowledge_overview` surfaces stale lessons (not reviewed in 90+ days), gives a health score, and flags gaps worth revisiting. `find_similar_knowledge` finds overlapping items to merge. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
 
-## Local Setup
-
-Run Engram on your own machine. Data stays in `~/.engram/`, AI tools connect over stdio.
+## Quick Start
 
 ```bash
-git clone https://github.com/Patdolitse/engram.git
-cd engram
-pip install piia-engram      # Install from PyPI (recommended)
-# Or install from source: pip install -e .
-python demos/setup_engram.py
+pip install piia-engram
+engram setup
 ```
 
-Add to your AI tool's MCP config:
+The setup wizard will:
+1. Detect your Python environment
+2. Find and configure your AI tools (Claude Code, Cursor, Claude Desktop)
+3. Walk you through seed knowledge (role, tech stack, language)
+4. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
+
+Restart your AI tool after setup. The first conversation will call `get_user_context` automatically — your AI already knows you.
+
+<details>
+<summary><strong>Manual MCP configuration</strong></summary>
+
+If you prefer to configure manually, add to your AI tool's MCP config:
 
 ```json
 {
@@ -134,7 +140,7 @@ Add to your AI tool's MCP config:
 }
 ```
 
-Restart your MCP-compatible client. A new session will call `get_user_context` automatically.
+</details>
 
 ## Upgrading
 
