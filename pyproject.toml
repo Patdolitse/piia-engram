@@ -25,9 +25,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Patdolitse/engram"
-Repository = "https://github.com/Patdolitse/engram"
-"Bug Tracker" = "https://github.com/Patdolitse/engram/issues"
+Homepage = "https://github.com/Patdolitse/piia-engram"
+Repository = "https://github.com/Patdolitse/piia-engram"
+"Bug Tracker" = "https://github.com/Patdolitse/piia-engram/issues"
 
 [project.scripts]
 piia-engram = "piia_engram.setup_wizard:main"
