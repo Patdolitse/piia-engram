@@ -1379,6 +1379,65 @@ def test_identity_card_respects_trust_boundaries(tmp_path: Path):
     assert "secret@corp.com" not in card
 
 
+def test_identity_card_all_sections(tmp_path: Path):
+    """export_identity_card 应覆盖所有可选 section：work_style, quality, domains, decisions。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({
+        "role": "全栈工程师",
+        "description": "10年经验",
+        "language": "中文",
+        "technical_level": "senior",
+    })
+    engram.update_work_style({
+        "preferences": {"editor": "vim", "testing": "pytest"},
+        "communication": "简洁直接",
+    })
+    engram.update_quality_standards({"rules": ["必须有测试", "代码评审"]})
+    engram.add_lesson({"summary": "不要硬编码", "domain": "python"})
+    engram.add_lesson({"summary": "监控先行", "domain": "devops"})
+    engram.add_decision({
+        "question": "用什么框架",
+        "choice": "FastAPI",
+    })
+    # decision with only question
+    engram.add_decision({"question": "数据库选型"})
+    # decision with only choice
+    engram.add_decision({"choice": "PostgreSQL"})
+
+    card = engram.export_identity_card()
+
+    # profile fields
+    assert "全栈工程师" in card
+    assert "10年经验" in card
+    assert "中文" in card
+    assert "senior" in card
+
+    # work_style
+    assert "我的工作方式" in card
+    assert "vim" in card
+    assert "简洁直接" in card
+
+    # quality
+    assert "我的质量标准" in card
+    assert "必须有测试" in card
+
+    # domains
+    assert "我的经验" in card
+
+    # decisions — all 3 patterns (question+choice, question-only, choice-only)
+    assert "用什么框架" in card
+    assert "FastAPI" in card
+    assert "数据库选型" in card
+    assert "PostgreSQL" in card
+
+    # lessons
+    assert "不要硬编码" in card
+    assert "监控先行" in card
+
+    # export file saved
+    assert (tmp_path / "exports" / "identity_card.md").is_file()
+
+
 def test_reconcile_skips_large_files(tmp_path: Path):
     """reconcile_memories 应跳过超过 10KB 的文件。"""
     engram = make_engram(tmp_path / "engram")
