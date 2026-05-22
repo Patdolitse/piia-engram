@@ -11,13 +11,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - Last 3 silent exception blocks (stats.py, crypto.py) now log to stderr — **zero silent exceptions** across all source files
 
 ### Improved
-- Extracted `SEARCH_RELEVANCE_THRESHOLD` and `STALE_KNOWLEDGE_DAYS` as module constants (was hardcoded in 6 places)
+- Extracted `SEARCH_RELEVANCE_THRESHOLD`, `STALE_KNOWLEDGE_DAYS`, and `MAX_KNOWLEDGE_ENTRIES` as module constants (was hardcoded in 17 places total)
 - CI workflow: added pip caching for faster runs
 - README tool tables now list all 43 tools (was missing `apply_review` and `request_outline_review`)
 - Replaced `__import__('sys')` hacks with proper imports
 
 ### Tests
-- 257 passed (up from 242 in v3.12.2)
+- 258 passed (up from 242 in v3.12.2)
 - New: 12 tests for staging/review/rarity workflow (classify_rarity, evaluate_tiers, apply_review, promote_knowledge)
 - New: 3 tests for export_all/import_all error handling
 
