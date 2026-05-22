@@ -1,8 +1,8 @@
 # Coverage Baseline — v3.16.1
 
 Run on: 2026-05-22
-Test count: **520 passed**
-Total coverage: **87%** (3778 statements, 486 uncovered)
+Test count: **541 passed**
+Total coverage: **90%** (3778 statements, 394 uncovered)
 
 ## Per-module coverage
 
@@ -10,6 +10,7 @@ Total coverage: **87%** (3778 statements, 486 uncovered)
 |--------|-------|------|-------|--------|
 | `reports.py` | 6 | 0 | **100%** | ✅ Strong |
 | `__init__.py` | 3 | 0 | **100%** | ✅ Strong |
+| `context.py` | 308 | 1 | **99%** | ✅ Strong |
 | `crypto.py` | 76 | 2 | **97%** | ✅ Strong |
 | `reports_review.py` | 138 | 4 | **97%** | ✅ Strong |
 | `reports_analytics.py` | 211 | 10 | **95%** | ✅ Strong |
@@ -25,32 +26,30 @@ Total coverage: **87%** (3778 statements, 486 uncovered)
 | `reports_identity.py` | 65 | 11 | **83%** | ✅ Acceptable |
 | `storage.py` | 94 | 19 | **80%** | ✅ Acceptable |
 | `stats.py` | 99 | 27 | **73%** | ⚠ Acceptable |
-| `context.py` | 308 | 93 | **70%** | ⚠ Acceptable |
-| **TOTAL** | **3778** | **486** | **87%** | — |
+| **TOTAL** | **3778** | **394** | **90%** | — |
 
 ## Changes since v3.14.2
 
 | Metric | v3.14.2 | v3.16.1 | Delta |
 |--------|---------|---------|-------|
-| Tests | 386 | 520 | **+134** |
-| Total coverage | 78% | 87% | **+9%** |
+| Tests | 386 | 541 | **+155** |
+| Total coverage | 78% | 90% | **+12%** |
 | Statements | 3367 | 3778 | +411 |
-| Uncovered | 729 | 486 | **-243** |
+| Uncovered | 729 | 394 | **-335** |
 
 ### Biggest movers
 
-- `setup_wizard.py`: 58% → **90%** (+32%) — added 24 new tests covering run_setup, auto_migrate, CLI main, doctor --fix, safe_print, telemetry CLI edge cases
-- `mcp_server.py`: 54% → **86%** (+32%) — added MCP coverage tests, tool wrapper tests
+- `context.py`: 70% → **99%** (+29%) — added 16 tests: preferences, quality, project sections, extract_knowledge mock LLM, ingest_extraction all branches, duplicate decisions, reconcile failures
+- `setup_wizard.py`: 58% → **90%** (+32%) — added 24 tests: run_setup, auto_migrate, CLI main, doctor --fix, safe_print, telemetry CLI edge cases
+- `mcp_server.py`: 54% → **86%** (+32%) — MCP coverage tests, tool wrapper tests
 - `telemetry.py`: (new in v3.15) → **92%** — 36 tests covering config, payload validation, key validation, tool tracker
-- Reports modules split from monolithic `reports.py` → individually tracked
 
-### Modules at ≥85% (14 of 18)
+### Modules at ≥85% (15 of 18)
 
-All high-risk modules (core, mcp_server, telemetry, crypto, retrieval, reconcile) are now ≥85%.
+All high-risk modules (core, mcp_server, telemetry, crypto, retrieval, reconcile, context) are now ≥85%.
 
 ## Remaining gaps
 
-- `context.py` (70%) — `extract_knowledge` LLM branch (requires live provider), some reconcile-on-cold-start try/except paths
 - `stats.py` (73%) — `run_stats` interactive output (mostly print formatting)
 - `reports_identity.py` (83%) — edge cases in identity report generation
 - `storage.py` (80%) — fs-error fallback paths (read failures, lock-timeout handling)
@@ -69,6 +68,6 @@ python -m pytest --cov=engram_core --cov-report=term-missing tests/
 | v3.14.2 | 386 | 78% |
 | v3.15.0 | 490 | 83% |
 | v3.16.0 | 490 | 83% |
-| **v3.16.1** | **520** | **87%** |
+| **v3.16.1** | **541** | **90%** |
 
-Regression floor: 82% total. Modules currently ≥85% should not regress below 80%.
+Regression floor: 85% total. Modules currently ≥85% should not regress below 80%.
