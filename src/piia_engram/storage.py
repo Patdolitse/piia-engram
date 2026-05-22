@@ -142,6 +142,14 @@ for _canonical, _aliases in _TERM_ALIASES.items():
 # Path resolution
 # ---------------------------------------------------------------------------
 
+def _has_engram_data(root: Path) -> bool:
+    """Return True if *root* looks like an active Engram data directory."""
+    return (
+        (root / "knowledge" / "lessons.json").is_file()
+        or (root / "identity" / "profile.json").is_file()
+    )
+
+
 def _engram_root() -> Path:
     """Global Engram root directory. ENGRAM_DIR env var overrides default."""
     custom = os.environ.get("ENGRAM_DIR", "").strip()
@@ -153,6 +161,33 @@ def _engram_root() -> Path:
     if not engram_root.exists() and legacy_root.exists():
         return legacy_root
     return engram_root
+
+
+def detect_data_fragmentation(active_root: Path) -> list[str]:
+    """Check all known paths for Engram data outside *active_root*.
+
+    Returns a list of directory paths that contain data but are NOT the
+    active root.  An empty list means no fragmentation detected.
+    """
+    candidates = [
+        Path.home() / _ENGRAM_DIR_NAME,
+        Path.home() / _LEGACY_DIR_NAME,
+    ]
+    env_dir = os.environ.get("ENGRAM_DIR", "").strip()
+    if env_dir:
+        candidates.append(Path(env_dir).expanduser().resolve())
+
+    active_resolved = active_root.resolve()
+    orphans: list[str] = []
+    for cand in candidates:
+        try:
+            if cand.resolve() == active_resolved:
+                continue
+            if _has_engram_data(cand):
+                orphans.append(str(cand))
+        except OSError:
+            continue
+    return orphans
 
 
 # ---------------------------------------------------------------------------

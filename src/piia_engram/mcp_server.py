@@ -6,7 +6,7 @@ lessons, decisions, and skills.
 
 Usage:
     python mcp_server.py
-    python -m engram_core.mcp_server --transport sse
+    python -m piia_engram.mcp_server --transport sse
 
 Designed for local stdio transport and self-hosted remote SSE transport.
 """
@@ -200,20 +200,32 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
 
 @mcp.tool()
-async def get_user_context(project_folder: Optional[str] = None) -> str:
-    """获取用户的个性化上下文（冷启动）。 / Get the user's personalized cold-start context.
+async def get_user_context(
+    project_folder: Optional[str] = None,
+    level: str = "standard",
+) -> str:
+    """获取用户的个性化上下文（冷启动，分层延迟可控）。 / Get tiered cold-start user context with latency control.
 
     用途：在每次新对话开始时调用，了解用户是谁、如何工作、学到了什么、质量标准是什么。
     Purpose: Call at the start of each new conversation to understand who the user is, how they work, what they have learned, and their quality bar.
 
-    注意：这是最重要的冷启动工具；如果只需要某个项目历史，用 get_project_context。
-    Note: This is the primary cold-start tool; use get_project_context when you only need one project's history.
+    分层说明 / Tiered behaviour:
+    - "quick": 仅身份画像 + 工作偏好（纯 JSON 读取，无文件扫描，最低延迟）。
+      Profile + preferences only — pure JSON reads, no filesystem scans. Lowest latency.
+    - "standard"（默认）: 加上质量标准、经验领域、相关教训/决策、项目快照。跳过昂贵的 reconcile。
+      Default. Adds quality, domains, top lessons/decisions, project snapshot. Skips expensive reconciliation.
+    - "full": 完整上下文，含冲突检测、过期/暂存提醒、自动同步副作用。仅在用户明确要求"全量回顾"时使用。
+      Full context including conflict detection, stale/staging warnings, auto-sync side effects. Use only when the user explicitly asks for a comprehensive memory review.
+
+    注意：默认 "standard" 已覆盖绝大多数冷启动需求；只有用户问"我们之前所有决定/经验"或要做记忆健康检查时才用 "full"。
+    Note: "standard" covers most cold-start needs. Use "full" only when the user asks for a comprehensive memory review.
 
     Args:
-        project_folder: 当前项目文件夹路径（可选，用于获取项目特定上下文）。 / Current project folder path (optional, used to include project-specific context).
+        project_folder: 当前项目文件夹路径（可选）。 / Current project folder path (optional).
+        level: "quick" | "standard" | "full"，默认 "standard"。 / Tier — defaults to "standard".
     """
     try:
-        context = _engram.generate_context(project_folder)
+        context = _engram.generate_context(project_folder, level=level)
         _track("get_user_context", success=True)
     except Exception as exc:
         _track("get_user_context", success=False)
@@ -222,6 +234,33 @@ async def get_user_context(project_folder: Optional[str] = None) -> str:
     if not context:
         return "Engram 为空——这可能是新用户。尚无用户上下文可用。"
     return context
+
+
+@mcp.tool()
+async def refresh_quick_context(level: str = "standard") -> str:
+    """刷新本地 `quick_context.md` 快照（跨工具 / 离线场景的快速通路）。 / Refresh the local quick_context.md snapshot (cross-tool / offline fast path).
+
+    用途：把当前 Engram 状态固化为一份纯文本身份卡，写到 `~/.engram/quick_context.md`。任何 AI 工具（包括没接 Engram MCP 的）都可以直接 Read 这个文件作为冷启动上下文，无需 MCP 调用。
+    Purpose: Persist the current Engram state as a plain-text identity card at `~/.engram/quick_context.md`. Any AI tool — even one without Engram MCP — can Read this file as cold-start context without an MCP round-trip.
+
+    何时调用 / When to call:
+    - 用户更新身份/偏好/质量标准后（让快照反映最新状态）
+    - 添加重要的 lesson/decision 后
+    - 第一次设置 Engram 时
+    - 定期（例如每天一次）保持新鲜
+    After identity/preference/quality updates, after significant lessons or decisions, on first setup, or on a periodic refresh.
+
+    Args:
+        level: 快照详细度 "quick" | "standard"(默认) | "full"。 / Snapshot tier — defaults to "standard".
+    """
+    try:
+        path = _engram.refresh_quick_context(level=level)
+        _track("refresh_quick_context", success=True)
+        return f"已写入快照: {path} (level={level})"
+    except Exception as exc:
+        _track("refresh_quick_context", success=False)
+        logger.warning("refresh_quick_context failed: %s", exc)
+        return f"快照写入失败: {exc}"
 
 
 @mcp.tool()
@@ -1348,7 +1387,7 @@ if __name__ == "__main__":
     # must happen before mcp.run() to avoid polluting the MCP stdio channel).
     if args.transport == "stdio":
         try:
-            from engram_core.setup_wizard import auto_migrate  # type: ignore[import]
+            from piia_engram.setup_wizard import auto_migrate  # type: ignore[import]
         except ImportError:
             try:
                 from setup_wizard import auto_migrate  # type: ignore[import]
