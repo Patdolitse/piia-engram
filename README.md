@@ -250,6 +250,8 @@ Common tools include:
 | `update_knowledge` | Tier-2 Advanced | Update a lesson or decision by ID |
 | `archive_knowledge` | Tier-2 Advanced | Archive a lesson or decision by ID |
 | `review_knowledge` | Tier-2 Advanced | Mark a lesson or decision as reviewed |
+| `request_outline_review` | Tier-2 Advanced | Generate an interactive HTML knowledge review page |
+| `apply_review` | Tier-2 Advanced | Process review results — promote confirmed staging items, archive others |
 | `update_identity` | Tier-2 Advanced | Update profile, preferences, trust boundaries, work style, or quality standards |
 | `get_audit_log` | Tier-2 Advanced | Get recent audit log entries |
 | `wrap_up_session` | Tier-2 Advanced | End a session by extracting knowledge and optionally saving a project snapshot |
