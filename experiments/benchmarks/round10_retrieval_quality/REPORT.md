@@ -1,6 +1,6 @@
 # Engram Round 10: Retrieval/Injection Quality — Report
 
-**Generated**: 2026-05-22 (updated after v3.12.0 fixes)
+**Generated**: 2026-05-22 (updated after v3.12.3 — search aliases, trigram expansion)
 
 ## 总结
 - 总 case 数: 43
