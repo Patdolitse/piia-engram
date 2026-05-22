@@ -203,6 +203,34 @@ def test_export_import_round_trip(tmp_path: Path):
     assert len(new_engram.get_decisions()) >= 1
 
 
+def test_import_all_file_not_found(tmp_path: Path):
+    """不存在的备份文件应返回 error。"""
+    engram = make_engram(tmp_path)
+    result = engram.import_all(str(tmp_path / "nonexistent.json"))
+    assert "error" in result
+
+
+def test_import_all_invalid_backup(tmp_path: Path):
+    """非法备份文件应返回 error。"""
+    engram = make_engram(tmp_path)
+    bad_file = tmp_path / "bad_backup.json"
+    bad_file.write_text('{"foo": "bar"}', encoding="utf-8")
+    result = engram.import_all(str(bad_file))
+    assert "error" in result
+
+
+def test_export_all_custom_path(tmp_path: Path):
+    """自定义导出路径应正确创建文件。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("导出路径测试")
+    custom_path = tmp_path / "custom" / "backup.json"
+    result_path = engram.export_all(str(custom_path))
+    assert custom_path.is_file()
+    data = json.loads(custom_path.read_text(encoding="utf-8"))
+    assert data["schema_version"]
+    assert len(data["knowledge"]["lessons"]) >= 1
+
+
 def test_search_knowledge(tmp_path: Path):
     """应能按关键词搜索经验教训和关键决策。"""
     engram = make_engram(tmp_path)
