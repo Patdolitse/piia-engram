@@ -1,6 +1,6 @@
 [project]
 name = "piia-engram"
-version = "3.16.1"
+version = "3.17.0"
 description = "Engram — Your AI identity layer. Stores who you are, not just what you did. Local-first, MCP-compatible."
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,7 +30,9 @@ Repository = "https://github.com/Patdolitse/engram"
 "Bug Tracker" = "https://github.com/Patdolitse/engram/issues"
 
 [project.scripts]
-engram = "engram_core.setup_wizard:main"
+piia-engram = "piia_engram.setup_wizard:main"
+# Backward-compat alias — `engram` will be removed in a future major release.
+engram = "piia_engram.setup_wizard:main"
 
 [project.optional-dependencies]
 dev = [
