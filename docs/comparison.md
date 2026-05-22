@@ -60,7 +60,7 @@ External docs we drew from:
 ## What Engram explicitly does *not* do
 
 - **No vector embeddings.** We use character n-gram + alias tokenization for similarity. This is fast, deterministic, works offline, handles CJK well, and is appropriate for the small-store regime (200–500 items). It would be the wrong choice at 100,000 items — don't use Engram for that.
-- **No cloud storage in core.** There is no Engram Cloud, no managed instance, no opt-out telemetry. The only network call from the core library is `read_web_content` (optional, requires the local Engram Reader sidecar). MCP transport itself is stdio or self-hosted HTTP.
+- **No cloud storage in core.** There is no Engram Cloud, no managed instance. **Usage statistics are off by default** — users must explicitly opt in during `engram setup`. When enabled, only anonymous aggregated counts are sent (tool call counts, knowledge totals, engram version); no identity content, prompts, file paths, or IP addresses are ever transmitted. The only other network call from the core library is `read_web_content` (optional, requires the local Engram Reader sidecar). MCP transport itself is stdio or self-hosted HTTP.
 - **No automatic "agent self-edits the memory."** The agent can call `add_lesson` / `add_decision` / `extract_session_insights`, but new items land in the `staging` tier. They only become `verified` when the user explicitly promotes them via the review page. This is a deliberate choice against the failure mode where an agent hallucinates a "remembered fact."
 - **No team / multi-user model.** Engram is one person × many tools. If you need many people × many tools, you want something else.
 

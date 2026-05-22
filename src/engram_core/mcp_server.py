@@ -46,6 +46,23 @@ except ImportError:
 # ---------------------------------------------------------------------------
 _engram = Engram()
 
+# Anonymous usage statistics tracker (Phase 1: local log only)
+try:
+    from .telemetry import ToolCallTracker as _ToolCallTracker
+except ImportError:
+    try:
+        from telemetry import ToolCallTracker as _ToolCallTracker  # type: ignore
+    except ImportError:
+        _ToolCallTracker = None  # type: ignore
+
+_tracker = _ToolCallTracker() if _ToolCallTracker else None
+
+
+def _track(tool_name: str, success: bool = True) -> None:
+    """Record a tool call for anonymous usage statistics (if tracker available)."""
+    if _tracker is not None:
+        _tracker.record(tool_name, success=success)
+
 IDENTITY_FIELDS = frozenset({
     "profile",
     "preferences",
@@ -192,7 +209,9 @@ async def get_user_context(project_folder: Optional[str] = None) -> str:
     """
     try:
         context = _engram.generate_context(project_folder)
+        _track("get_user_context", success=True)
     except Exception as exc:
+        _track("get_user_context", success=False)
         logger.warning("generate_context failed: %s", exc)
         return f"Engram 上下文加载失败: {exc}"
     if not context:
@@ -212,7 +231,9 @@ async def get_identity_card() -> str:
     """
     try:
         card = _engram.export_identity_card()
+        _track("get_identity_card", success=True)
     except Exception as exc:
+        _track("get_identity_card", success=False)
         logger.warning("export_identity_card failed: %s", exc)
         return f"身份卡生成失败: {exc}"
     if not card:
@@ -374,7 +395,12 @@ async def get_project_context(project_folder: str) -> str:
     Args:
         project_folder: 项目文件夹路径。 / Project folder path.
     """
-    snapshot = _engram.get_project_snapshot(project_folder)
+    try:
+        snapshot = _engram.get_project_snapshot(project_folder)
+        _track("get_project_context", success=True)
+    except Exception as exc:
+        _track("get_project_context", success=False)
+        raise
     if not snapshot:
         return f"未找到项目知识记录: {project_folder}"
     return _json(snapshot)
@@ -410,9 +436,14 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
         project_folder: 当前项目文件夹路径。 / Current project folder path.
         limit: 最多返回多少条（默认 8）。 / Maximum number of items to return (default 8).
     """
-    lessons = _engram.get_relevant_lessons(
-        project_folder=project_folder, limit=limit
-    )
+    try:
+        lessons = _engram.get_relevant_lessons(
+            project_folder=project_folder, limit=limit
+        )
+        _track("get_relevant_knowledge", success=True)
+    except Exception as exc:
+        _track("get_relevant_knowledge", success=False)
+        raise
     if not lessons:
         return "尚无相关经验教训。"
     return _json(lessons)
@@ -451,7 +482,13 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> s
         scope: 搜索范围：'all'、'lessons' 或 'decisions'。 / Search scope: 'all', 'lessons', or 'decisions'.
         limit: 最多返回多少条（默认 10）。 / Maximum number of items to return (default 10).
     """
-    return _json(_engram.search_knowledge(query, scope=scope, limit=limit))
+    try:
+        result = _engram.search_knowledge(query, scope=scope, limit=limit)
+        _track("search_knowledge", success=True)
+    except Exception as exc:
+        _track("search_knowledge", success=False)
+        return f"搜索失败: {exc}"
+    return _json(result)
 
 
 @mcp.tool()
@@ -554,7 +591,12 @@ async def add_lesson(
         lesson["source_tool"] = source_tool
     if source_url:
         lesson["source_url"] = source_url
-    result = _engram.add_lesson(lesson)
+    try:
+        result = _engram.add_lesson(lesson)
+        _track("add_lesson", success=True)
+    except Exception as exc:
+        _track("add_lesson", success=False)
+        return f"添加教训失败: {exc}"
     if result.get("status") == "duplicate":
         return _json(result)
     return f"教训已记录: {summary}"
@@ -594,7 +636,12 @@ async def add_decision(
         decision["project"] = project
     if domain:
         decision["domain"] = domain
-    result = _engram.add_decision(decision)
+    try:
+        result = _engram.add_decision(decision)
+        _track("add_decision", success=True)
+    except Exception as exc:
+        _track("add_decision", success=False)
+        return f"添加决策失败: {exc}"
     if result.get("status") == "duplicate":
         return _json(result)
     return f"决策已记录: {question} → {choice}"
@@ -865,7 +912,12 @@ async def update_identity(field: str, updates_json: str) -> str:
         "work_style": _engram.update_work_style,
         "quality_standards": _engram.update_quality_standards,
     }
-    dispatch[field](updates)
+    try:
+        dispatch[field](updates)
+        _track("update_identity", success=True)
+    except Exception as exc:
+        _track("update_identity", success=False)
+        raise
     return _json({"success": True, "field": field, "updated_keys": list(updates.keys())})
 
 
@@ -891,6 +943,7 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
     except json.JSONDecodeError:
         return "错误: data_json 必须是合法的 JSON。"
     _engram.save_project_snapshot(project_folder, data)
+    _track("save_project_snapshot", success=True)
     return f"项目快照已保存: {project_folder}"
 
 
@@ -1160,6 +1213,26 @@ async def wrap_up_session(
     except Exception as exc:
         logger.warning("get_staging_summary failed: %s", exc)
 
+    # Step 6: Flush anonymous usage statistics (local log only)
+    try:
+        if _tracker is not None:
+            from importlib.metadata import version as _pkg_version
+            try:
+                _ver = _pkg_version("piia-engram")
+            except Exception:
+                _ver = "dev"
+            k_counts = {}
+            try:
+                k_counts["lessons"] = len(_engram.get_lessons(limit=None, _update_access=False))
+                k_counts["decisions"] = len(_engram.get_decisions(limit=None, _update_access=False))
+                k_counts["domains"] = len(_engram.get_domains())
+            except Exception:
+                pass
+            _tracker.flush(knowledge_counts=k_counts, engram_version=_ver)
+    except Exception as exc:
+        logger.debug("telemetry flush skipped: %s", exc)
+
+    _track("wrap_up_session", success=True)
     return _json(results)
 
 

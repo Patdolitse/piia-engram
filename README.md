@@ -347,7 +347,7 @@ These are factual claims about Engram itself, refreshed each minor release.
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | AES-256-GCM, per-value random salt + nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls from core | **0** — except optional `read_web_content` |
+| Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics |
 | External AI evaluations | 3 (GPT-5 + DeepSeek-V3 + GPT-5-mini), see [`docs/milestone_review_v3.13.2.md`](docs/milestone_review_v3.13.2.md) |
 
 ## Built With
@@ -385,7 +385,7 @@ The setup wizard detects your AI tools and configures MCP automatically. Restart
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files (Claude Code, Cursor, Claude Desktop), removes outdated server entries, and repairs broken paths in one step. Engram also runs this migration automatically the next time its server starts, so most users will never see this message.
 
 **Does Engram send data to the cloud?**
-All data is stored in `~/.engram/` on your local machine. Engram itself never uploads data anywhere. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked. Core identity and knowledge tools make no network requests.
+All identity and knowledge data is stored in `~/.engram/` on your local machine. Core identity and knowledge tools make no network requests. **Anonymous usage statistics** (tool call counts, knowledge totals, engram version — never content, prompts, or file paths) can be optionally enabled during `engram setup`; they are **off by default**. You can inspect the exact payload with `engram telemetry preview` and disable anytime with `engram telemetry off`. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked.
 
 **How many MCP tools does Engram provide?**
 Engram exposes 43 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, lifecycle review, digesting, reporting, linking, health checks, workflow shortcuts, and audit logging.

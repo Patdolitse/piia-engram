@@ -10,7 +10,10 @@ from engram_core.setup_wizard import (
     _find_mcp_server,
     _find_python,
     _read_mcp_config,
+    _run_privacy_preferences,
+    _run_privacy_report,
     _run_seed_knowledge_onboarding,
+    _run_telemetry_cli,
     _scan_rule_files,
     _write_mcp_config,
 )
@@ -319,3 +322,175 @@ def test_scan_rule_files_skips_tiny_files(tmp_path: Path):
     results = _scan_rule_files(cwd=tmp_path)
     project_files = [r for r in results if str(tmp_path) in str(r["path"])]
     assert len(project_files) == 0
+
+
+# ── Privacy preferences tests ───────────────────────────────────────
+
+
+class TestPrivacyPreferences:
+    def test_both_defaults(self, tmp_path, monkeypatch, capsys):
+        """Pressing Enter twice should keep defaults: reconcile=Yes, telemetry=No."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        answers = iter(["", ""])  # both defaults
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+        _run_privacy_preferences(str(tmp_path))
+
+        cfg_path = tmp_path / "telemetry_config.json"
+        assert cfg_path.is_file()
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        assert cfg["reconcile_authorized"] is True
+        assert cfg["enabled"] is False
+
+    def test_opt_in_telemetry(self, tmp_path, monkeypatch, capsys):
+        """Answering 'y' to telemetry should enable it."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        answers = iter(["", "y"])  # reconcile default, telemetry yes
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+        _run_privacy_preferences(str(tmp_path))
+
+        cfg = json.loads((tmp_path / "telemetry_config.json").read_text(encoding="utf-8"))
+        assert cfg["enabled"] is True
+        assert "opted_in_at" in cfg
+
+    def test_opt_out_reconcile(self, tmp_path, monkeypatch, capsys):
+        """Answering 'n' to reconcile should disable it."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        answers = iter(["n", ""])  # reconcile no, telemetry default
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+        _run_privacy_preferences(str(tmp_path))
+
+        cfg = json.loads((tmp_path / "telemetry_config.json").read_text(encoding="utf-8"))
+        assert cfg["reconcile_authorized"] is False
+
+
+# ── Telemetry CLI tests ─────────────────────────────────────────────
+
+
+class TestTelemetryCLI:
+    def test_status_shows_off(self, tmp_path, monkeypatch, capsys):
+        """engram telemetry status should show OFF by default."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+
+        _run_telemetry_cli(["status"])
+        out = capsys.readouterr().out
+        assert "OFF" in out
+
+    def test_on_then_status(self, tmp_path, monkeypatch, capsys):
+        """engram telemetry on, then status should show ON."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+
+        _run_telemetry_cli(["on"])
+        capsys.readouterr()  # clear
+
+        _run_telemetry_cli(["status"])
+        out = capsys.readouterr().out
+        assert "ON" in out
+
+    def test_off_disables(self, tmp_path, monkeypatch, capsys):
+        """engram telemetry off should disable."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+
+        _run_telemetry_cli(["on"])
+        _run_telemetry_cli(["off"])
+        capsys.readouterr()
+
+        _run_telemetry_cli(["status"])
+        out = capsys.readouterr().out
+        assert "OFF" in out
+
+    def test_preview_returns_json(self, tmp_path, monkeypatch, capsys):
+        """engram telemetry preview should output valid JSON."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+
+        _run_telemetry_cli(["preview"])
+        out = capsys.readouterr().out
+        # The output contains the JSON payload somewhere in it
+        assert "schema" in out
+        assert "tool_calls" in out
+
+    def test_unknown_subcommand_shows_usage(self, tmp_path, monkeypatch, capsys):
+        """Unknown subcommand should show usage help."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        _run_telemetry_cli(["bogus"])
+        out = capsys.readouterr().out
+        assert "Usage" in out
+
+
+# ── Privacy report tests ────────────────────────────────────────────
+
+
+class TestPrivacyReport:
+    def test_report_runs_without_error(self, tmp_path, monkeypatch, capsys):
+        """engram privacy should print report without error."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert "Privacy Report" in out
+        assert "[DIR]" in out
+        assert "[STAT]" in out
+        assert "[NET]" in out
+
+    def test_report_shows_data_dir(self, tmp_path, monkeypatch, capsys):
+        """Report should show the ENGRAM_DIR path."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert str(tmp_path) in out
+
+    def test_report_with_identity_file(self, tmp_path, monkeypatch, capsys):
+        """Report should show identity file info when it exists."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        # Create a fake identity file
+        (tmp_path / "identity.json").write_text(
+            '{"profile": {"role": "dev"}}', encoding="utf-8"
+        )
+
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert "identity.json" in out
+        assert "profile" in out
+
+    def test_report_with_knowledge_file(self, tmp_path, monkeypatch, capsys):
+        """Report should count lessons and decisions."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        (tmp_path / "knowledge.json").write_text(
+            json.dumps({"lessons": [{"id": "1"}, {"id": "2"}], "decisions": [{"id": "3"}]}),
+            encoding="utf-8",
+        )
+
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert "Lessons: 2" in out
+        assert "Decisions: 1" in out
+
+    def test_report_shows_encrypted_fields(self, tmp_path, monkeypatch, capsys):
+        """Report should detect encrypted fields."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        (tmp_path / "identity.json").write_text(
+            '{"profile": {"role": "enc:v2:abc123"}}', encoding="utf-8"
+        )
+
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert "ENCRYPTED" in out

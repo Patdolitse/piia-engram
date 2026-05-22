@@ -573,6 +573,32 @@ def _run_seed_knowledge_onboarding(
     print(_t("  就说明 Engram 已经在工作了。\n",
              "  Engram is working.\n"))
 
+    # --- First-day aha moment: show identity card preview ---
+    try:
+        from .core import Engram as _Engram
+    except ImportError:
+        try:
+            from core import Engram as _Engram  # type: ignore
+        except ImportError:
+            _Engram = None  # type: ignore
+    if _Engram is not None:
+        try:
+            _e = _Engram()
+            card = _e.export_identity_card()
+            if card and len(card.strip().splitlines()) > 5:
+                print("────────────────────────────────────────")
+                print(_t("  🪪  你的 AI 身份卡预览：\n",
+                         "  🪪  Your AI identity card preview:\n"))
+                for line in card.strip().splitlines():
+                    print(f"  {line}")
+                print()
+                print("────────────────────────────────────────")
+                print(_t("  💡 任何 AI 工具调用 get_identity_card 就能看到这张卡。",
+                         "  💡 Any AI tool can see this card via get_identity_card."))
+                print()
+        except Exception:
+            pass  # Non-critical — skip silently
+
     return {
         "profile": profile_updates,
         "lessons_added": lessons_added,
@@ -580,6 +606,87 @@ def _run_seed_knowledge_onboarding(
         "import_user_count": import_result["user_count"],
         "import_project_count": import_result["project_count"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Privacy & data preferences (telemetry opt-in + reconcile authorization)
+# ---------------------------------------------------------------------------
+
+def _run_privacy_preferences(data_dir: str) -> None:
+    """Ask user about auto-reconcile and anonymous usage statistics."""
+    from engram_core.telemetry import _load_config, _save_config, set_enabled
+
+    cfg = _load_config()
+
+    print(_t("\nStep 5 — 隐私与数据偏好", "\nStep 5 — Privacy & data preferences"))
+    print(_t("  你的数据默认只留在本机。以下两项可选功能需要你明确同意。\n",
+             "  Your data stays local by default. The following optional features require your explicit consent.\n"))
+
+    # --- Reconcile authorization ---
+    print(_t("  [1] 跨工具记忆同步",
+             "  [1] Cross-tool memory sync"))
+    print(_t("      Engram 可以在每次启动时自动扫描其他 AI 工具的配置文件",
+             "      Engram can scan other AI tools' config files on each startup"))
+    print(_t("      （如 ~/.claude/projects/*/memory/*.md、CLAUDE.md、.cursorrules 等）",
+             "      (e.g. ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules)"))
+    print(_t("      并导入其中的规则和记忆到 Engram。",
+             "      and import rules and memories into Engram."))
+    print(_t("      扫描结果会显示在 get_user_context 输出中。\n",
+             "      Results appear in get_user_context output.\n"))
+
+    reconcile_authorized = _yn(
+        _t("  允许 Engram 扫描其他 AI 工具的文件？",
+           "  Allow Engram to scan other AI tools' files?"),
+        default=True,
+    )
+    cfg["reconcile_authorized"] = reconcile_authorized
+    if reconcile_authorized:
+        print(_t("  ✅ 已授权跨工具同步\n", "  ✅ Cross-tool sync authorized\n"))
+    else:
+        print(_t("  ℹ️  已关闭跨工具同步。可设置 ENGRAM_RECONCILE=1 重新开启。\n",
+                 "  ℹ️  Cross-tool sync disabled. Set ENGRAM_RECONCILE=1 to re-enable.\n"))
+
+    # --- Anonymous usage statistics ---
+    print(_t("  [2] 匿名使用统计",
+             "  [2] Anonymous usage statistics"))
+    print(_t("      帮助我们了解哪些功能被使用、哪些需要改进。",
+             "      Help us understand which features are used and need improvement."))
+    print(_t("      每天最多记录一次，内容如下：",
+             "      Logged at most once per day:"))
+    print(_t("        • 工具调用计数（只有工具名和次数，无参数和内容）",
+             "        • Tool call counts (names + counts only, no arguments or content)"))
+    print(_t("        • 知识条目总数（只有数字，无内容）",
+             "        • Knowledge entry totals (counts only, no content)"))
+    print(_t("        • Engram 版本号",
+             "        • Engram version"))
+    print(_t("      绝不发送：知识内容、prompt、文件路径、邮箱、IP 地址",
+             "      Never sent: knowledge content, prompts, file paths, email, IP"))
+    print(_t("      当前为 Phase 1：仅记录到本地文件，不发送网络请求。",
+             "      Current Phase 1: logged to local file only, no network requests."))
+    print(_t(f"      日志位置：{data_dir}/telemetry.log",
+             f"      Log location: {data_dir}/telemetry.log"))
+    print(_t("      查看将记录的内容：engram telemetry preview",
+             "      Preview what's logged: engram telemetry preview"))
+    print(_t("      随时关闭：engram telemetry off\n",
+             "      Disable anytime: engram telemetry off\n"))
+
+    telemetry_enabled = _yn(
+        _t("  开启匿名使用统计？",
+           "  Enable anonymous usage statistics?"),
+        default=False,
+    )
+    set_enabled(telemetry_enabled)
+    if telemetry_enabled:
+        print(_t("  ✅ 已开启（仅本地日志，Phase 1 不发送网络请求）\n",
+                 "  ✅ Enabled (local log only, Phase 1 sends no network requests)\n"))
+    else:
+        print(_t("  ℹ️  未开启。可随时运行 engram telemetry on 改变。\n",
+                 "  ℹ️  Not enabled. Run engram telemetry on to change anytime.\n"))
+
+    # Save reconcile pref to same config file
+    cfg_all = _load_config()
+    cfg_all["reconcile_authorized"] = reconcile_authorized
+    _save_config(cfg_all)
 
 
 # ---------------------------------------------------------------------------
@@ -673,12 +780,18 @@ def run_setup() -> None:
     selected_data_dir = data_dir or default_data_dir
     _run_seed_knowledge_onboarding(selected_data_dir)
 
+    # Step 5 — Privacy & data preferences
+    _run_privacy_preferences(selected_data_dir)
+
     # 完成
     print(_t("  重启你的 AI 工具（Claude Code / Cursor）即可使用。",
              "  Restart your AI tool (Claude Code / Cursor) to get started."))
     print()
-    print(_t("  遇到问题或有建议？欢迎反馈：",
-             "  Questions or feedback:"))
+    print(_t("  觉得有用？来聊聊你怎么用的：",
+             "  Find Engram useful? Share how you use it:"))
+    print("  https://github.com/Patdolitse/engram/discussions\n")
+    print(_t("  遇到问题？",
+             "  Issues?"))
     print("  https://github.com/Patdolitse/engram/issues\n")
 
 
@@ -833,8 +946,165 @@ def run_doctor(fix: bool = False) -> int:
     return remaining
 
 
+def _run_telemetry_cli(sub_args: list[str]) -> None:
+    """Handle `engram telemetry <subcommand>`."""
+    from engram_core.telemetry import (
+        get_status, is_enabled, preview_payload, set_enabled,
+    )
+
+    sub = sub_args[0] if sub_args else "status"
+
+    if sub == "status":
+        status = get_status()
+        state = "ON" if status["enabled"] else "OFF"
+        print(f"\n  Anonymous usage statistics: {state}")
+        print(f"  Phase: {status['phase']}")
+        print(f"  Config: {status['config_path']}")
+        print(f"  Log: {status['log_path']}")
+        if status["enabled"]:
+            print(f"  Opted in: {status['opted_in_at']}")
+        print()
+
+    elif sub == "preview":
+        print("\n  Next payload (if enabled):\n")
+        print(preview_payload())
+        print()
+
+    elif sub in ("off", "disable"):
+        set_enabled(False)
+        print("\n  ✅ Anonymous usage statistics disabled.")
+        print("  No data will be logged or sent.\n")
+
+    elif sub in ("on", "enable"):
+        set_enabled(True)
+        print("\n  ✅ Anonymous usage statistics enabled (Phase 1: local log only).")
+        print("  Run 'engram telemetry preview' to see what will be logged.\n")
+
+    elif sub == "--show-payload":
+        # Alias for preview (ChatGPT Pro recommendation)
+        print("\n  Next payload (if enabled):\n")
+        print(preview_payload())
+        print()
+
+    else:
+        print(
+            "\nUsage:\n"
+            "  engram telemetry status       Show current status\n"
+            "  engram telemetry preview      Show what data will be logged\n"
+            "  engram telemetry on           Enable anonymous usage statistics\n"
+            "  engram telemetry off          Disable anonymous usage statistics\n"
+        )
+
+
+def _run_privacy_report() -> None:
+    """Handle `engram privacy` — show what data Engram stores and where."""
+    import os as _os
+    data_dir = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+
+    print("\n========================================")
+    print("  Engram Privacy Report")
+    print("========================================\n")
+
+    # 1. Data directory
+    print(f"  [DIR] Data directory: {data_dir}")
+    if data_dir.exists():
+        files = list(data_dir.iterdir())
+        total_size = sum(f.stat().st_size for f in files if f.is_file())
+        print(f"        Files: {len([f for f in files if f.is_file()])}")
+        print(f"        Total size: {total_size / 1024:.1f} KB")
+    else:
+        print("        (not created yet)")
+    print()
+
+    # 2. Identity data
+    identity_file = data_dir / "identity.json"
+    print("  [ID]  Identity data:")
+    if identity_file.is_file():
+        size = identity_file.stat().st_size
+        print(f"        {identity_file} ({size / 1024:.1f} KB)")
+        print("        Contains: profile, preferences, work_style, quality_standards, trust_boundaries")
+        try:
+            raw = identity_file.read_text(encoding="utf-8")
+            encrypted_count = raw.count("enc:v")
+            if encrypted_count > 0:
+                print(f"        [ENCRYPTED] {encrypted_count} fields encrypted")
+            else:
+                print("        [PLAIN] No encrypted fields (set ENGRAM_KEY to enable)")
+        except Exception:
+            pass
+    else:
+        print("        (not created yet)")
+    print()
+
+    # 3. Knowledge base
+    knowledge_file = data_dir / "knowledge.json"
+    print("  [KB]  Knowledge base:")
+    if knowledge_file.is_file():
+        size = knowledge_file.stat().st_size
+        print(f"        {knowledge_file} ({size / 1024:.1f} KB)")
+        try:
+            import json as _j
+            kdata = _j.loads(knowledge_file.read_text(encoding="utf-8"))
+            lessons = kdata.get("lessons", [])
+            decisions = kdata.get("decisions", [])
+            print(f"        Lessons: {len(lessons)}")
+            print(f"        Decisions: {len(decisions)}")
+        except Exception:
+            pass
+    else:
+        print("        (not created yet)")
+    print()
+
+    # 4. Telemetry
+    print("  [STAT] Anonymous usage statistics:")
+    try:
+        from engram_core.telemetry import get_status
+        status = get_status()
+        state = "ON" if status["enabled"] else "OFF"
+        print(f"        Status: {state}")
+        print(f"        Config: {status['config_path']}")
+        log_path = Path(status["log_path"])
+        if log_path.is_file():
+            log_size = log_path.stat().st_size
+            log_lines = len(log_path.read_text(encoding="utf-8").strip().splitlines())
+            print(f"        Log: {log_path} ({log_size / 1024:.1f} KB, {log_lines} entries)")
+        else:
+            print("        Log: (no entries yet)")
+        print("        Collected: tool names + counts, knowledge totals, version, daily anonymous ID")
+        print("        NOT collected: text content, prompts, file paths, PII, IP, OS info")
+        print("        Network: Phase 1 = local only, NO network requests")
+    except ImportError:
+        print("        (telemetry module not available)")
+    print()
+
+    # 5. Reconcile
+    print("  [SYNC] Cross-tool sync:")
+    try:
+        from engram_core.reconcile import ReconcileMixin
+        authorized = ReconcileMixin._reconcile_authorized()
+        print(f"        Status: {'ON' if authorized else 'OFF'}")
+        print("        Scans: ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules, etc.")
+        print("        Control: ENGRAM_RECONCILE=0 to disable")
+    except ImportError:
+        print("        (reconcile module not available)")
+    print()
+
+    # 6. Network
+    print("  [NET]  Network requests:")
+    print("        Core Engram: ZERO network requests (local files only)")
+    print("        Optional: read_web_content (user-initiated only, via local Reader service)")
+    print("        Optional: telemetry Phase 2 (NOT implemented, requires re-consent)")
+    print()
+
+    # 7. How to delete
+    print("  [DEL]  Delete all data:")
+    print(f"        rm -rf {data_dir}")
+    print("        (This removes ALL Engram data permanently)")
+    print()
+
+
 def main() -> None:
-    """CLI 入口：engram setup / engram doctor [--fix]"""
+    """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy"""
     args = sys.argv[1:]
     if not args or args[0] == "setup":
         run_setup()
@@ -842,8 +1112,15 @@ def main() -> None:
         fix = "--fix" in args
         sys.exit(run_doctor(fix=fix))
     elif args[0] == "stats":
-        from engram_core.stats import run_stats
-        run_stats()
+        from engram_core.stats import run_stats, log_stats
+        if "--log" in args:
+            log_stats()
+        else:
+            run_stats()
+    elif args[0] == "telemetry":
+        _run_telemetry_cli(args[1:])
+    elif args[0] == "privacy":
+        _run_privacy_report()
     else:
         print(
             "Engram CLI\n\n"
@@ -851,7 +1128,10 @@ def main() -> None:
             "  engram setup            Interactive install wizard\n"
             "  engram doctor           Check config health (all AI tools)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
-            "  engram stats            Show project growth metrics\n\n"
+            "  engram stats            Show project growth metrics\n"
+            "  engram stats --log      Append stats snapshot to local log\n"
+            "  engram telemetry        Manage anonymous usage statistics\n"
+            "  engram privacy          Show what data Engram stores\n\n"
             "Tool tiers:\n"
             "  Default: 10 核心工具 / core MCP tools.\n"
             "  Set ENGRAM_TOOLS=all to unlock all 43 tools.\n"

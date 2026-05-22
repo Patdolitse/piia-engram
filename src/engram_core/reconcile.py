@@ -8,6 +8,7 @@ ReconcileMixin provides:
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -61,12 +62,47 @@ class ReconcileMixin:
     # Memory file sync
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _reconcile_authorized() -> bool:
+        """Check if the user has authorized auto-reconcile of external AI files.
+
+        Returns True if:
+        - ENGRAM_RECONCILE env var is set to a truthy value, OR
+        - ~/.engram/telemetry_config.json has "reconcile_authorized": true
+
+        The authorization is requested during `engram setup` and can be
+        changed with ENGRAM_RECONCILE=0 env var.
+        """
+        env = os.environ.get("ENGRAM_RECONCILE", "").strip().lower()
+        if env in ("0", "false", "off", "no"):
+            return False
+        if env in ("1", "true", "on", "yes"):
+            return True
+        # Check persisted config
+        cfg_path = Path(os.environ.get("ENGRAM_DIR", "").strip() or
+                        Path.home() / ".engram") / "telemetry_config.json"
+        if cfg_path.is_file():
+            try:
+                import json as _json
+                cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
+                return cfg.get("reconcile_authorized", True)  # default True for existing users
+            except Exception:
+                pass
+        return True  # default True for backward compatibility
+
     def reconcile_memories(self) -> dict:
         """Scan external AI tool memory dirs and auto-import missing items.
 
         Returns a dict with sync stats.  Designed to be called silently
         during cold-start (generate_context) and session wrap-up.
+
+        Requires reconcile authorization (granted during setup or via
+        ENGRAM_RECONCILE=1 env var).
         """
+        if not self._reconcile_authorized():
+            return {"imported": 0, "duplicates": 0, "scanned_files": 0,
+                    "skipped_large": 0, "sources": [],
+                    "skipped_reason": "reconcile not authorized"}
         imported = 0
         duplicates = 0
         scanned_files = 0
@@ -281,7 +317,14 @@ class ReconcileMixin:
         Discovers project roots from Claude Code project entries, then
         looks for CLAUDE.md, .cursorrules, AGENT.md, etc. in each.
         Parses markdown sections and imports meaningful directives as lessons.
+
+        Requires reconcile authorization (granted during setup or via
+        ENGRAM_RECONCILE=1 env var).
         """
+        if not self._reconcile_authorized():
+            return {"imported": 0, "duplicates": 0, "scanned_files": 0,
+                    "sources": [],
+                    "skipped_reason": "reconcile not authorized"}
         imported = 0
         duplicates = 0
         scanned_files = 0

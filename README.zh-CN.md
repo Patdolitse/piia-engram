@@ -223,7 +223,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | AES-256-GCM，每条数据随机 salt + nonce |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
-| 核心功能网络调用 | **0** —— 除可选的 `read_web_content` 之外 |
+| 核心功能网络调用 | 默认 **0** —— 除可选的 `read_web_content` 和可选匿名使用统计外 |
 | 外部 AI 评测次数 | 3 次（GPT-5 + DeepSeek-V3 + GPT-5-mini），见 [`docs/milestone_review_v3.13.2.md`](docs/milestone_review_v3.13.2.md) |
 
 ## 核心功能
@@ -383,7 +383,7 @@ engram setup
 在终端运行 `engram doctor --fix`，然后重启 AI 工具。该命令会扫描所有已知 MCP 配置（Claude Code、Cursor、Claude Desktop），移除旧版 server 条目并修复失效路径，一步完成。Engram 在下次 server 启动时也会自动执行此迁移，大多数用户不会遇到这个问题。
 
 **Engram 会把数据发到云端吗？**
-所有数据存在本地 `~/.engram/` 目录，Engram 本身不会上传数据到任何地方。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求，该服务可能进一步抓取外部网页——但此工具只有在你显式调用时才执行。身份和知识类核心工具均不发起网络请求。
+所有身份和知识数据存在本地 `~/.engram/` 目录。身份和知识类核心工具均不发起网络请求。**匿名使用统计**（工具调用计数、知识条目总数、engram 版本——绝不包含内容、prompt 或文件路径）可在 `engram setup` 中选择开启，**默认关闭**。你可以用 `engram telemetry preview` 查看将发送的确切内容，用 `engram telemetry off` 随时关闭。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求——只有在你显式调用时才执行。
 
 **Engram 有多少个 MCP 工具？**
 43 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并、生命周期复习、健康度检查、工作流快捷操作和审计日志。
