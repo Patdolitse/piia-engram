@@ -183,7 +183,7 @@ def test_readme_documents_tool_tiering():
     """English README should explain the core/all MCP tool tiers."""
     content = README.read_text(encoding="utf-8")
 
-    assert "ENGRAM_TOOLS=core" in content
+    assert "ENGRAM_TOOLS=all" in content
     assert "Tier-1 Core" in content
     assert "Tier-2 Advanced" in content
     assert "`get_user_context`" in content
@@ -224,9 +224,18 @@ def test_mcp_tool_count_and_merge_tool():
     assert "get_knowledge_digest" not in tools
 
 
-def test_mcp_tools_default_to_all_registered_tools(tmp_path: Path):
-    """未设置 ENGRAM_TOOLS 时应保持全部 43 个工具，避免破坏现有用户。"""
+def test_mcp_tools_default_to_core_tier(tmp_path: Path):
+    """未设置 ENGRAM_TOOLS 时默认只加载 Tier-1 核心工具。"""
     tools = _registered_mcp_tools(tmp_path)
+
+    assert set(tools) == CORE_MCP_TOOLS
+    assert "get_profile" not in tools
+    assert "bulk_add_knowledge" not in tools
+
+
+def test_mcp_tools_all_tier_registers_all_tools(tmp_path: Path):
+    """ENGRAM_TOOLS=all 时应暴露全部 43 个工具。"""
+    tools = _registered_mcp_tools(tmp_path, tools_tier="all")
 
     assert len(tools) >= 43
     assert set(CORE_MCP_TOOLS).issubset(tools)
@@ -236,20 +245,11 @@ def test_mcp_tools_default_to_all_registered_tools(tmp_path: Path):
     assert "get_stale_knowledge" in tools
 
 
-def test_mcp_tools_core_tier_registers_only_core_tools(tmp_path: Path):
-    """ENGRAM_TOOLS=core 时应只暴露 Tier-1 核心工具。"""
-    tools = _registered_mcp_tools(tmp_path, tools_tier="core")
-
-    assert set(tools) == CORE_MCP_TOOLS
-    assert "get_profile" not in tools
-    assert "bulk_add_knowledge" not in tools
-
-
-def test_setup_help_mentions_core_tool_tier():
-    """CLI help 应提示可以用 ENGRAM_TOOLS=core 精简工具列表。"""
+def test_setup_help_mentions_tool_tiers():
+    """CLI help 应提示可以用 ENGRAM_TOOLS=all 解锁全部工具。"""
     content = SETUP_WIZARD.read_text(encoding="utf-8")
 
-    assert "ENGRAM_TOOLS=core" in content
+    assert "ENGRAM_TOOLS=all" in content
     assert "核心工具" in content
 
 
@@ -277,7 +277,7 @@ def test_zh_readme_documents_tool_tiering():
     """中文 README 应说明 core/all 工具分层。"""
     content = README_ZH.read_text(encoding="utf-8")
 
-    assert "ENGRAM_TOOLS=core" in content
+    assert "ENGRAM_TOOLS=all" in content
     assert "Tier-1 核心" in content
     assert "Tier-2 高级" in content
     assert "`get_user_context`" in content

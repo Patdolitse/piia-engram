@@ -50,7 +50,7 @@ IDENTITY_FIELDS = frozenset({
     "quality_standards",
 })
 
-TOOL_TIER = os.environ.get("ENGRAM_TOOLS", "all").strip().lower() or "all"
+TOOL_TIER = os.environ.get("ENGRAM_TOOLS", "core").strip().lower() or "core"
 TIER1_TOOLS = frozenset({
     # Session lifecycle
     "get_user_context",          # cold-start: load identity + context

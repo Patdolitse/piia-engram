@@ -241,7 +241,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | `get_project_context` | 读取项目快照 |
 | `save_project_snapshot` | 保存项目状态 |
 
-设置 `ENGRAM_TOOLS=core` 可以只加载以上 10 个核心工具。
+默认只加载以上 10 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 43 个工具。
 
 ### Tier-2 高级工具（33 个 — 知识管理、审查、导入导出）
 
