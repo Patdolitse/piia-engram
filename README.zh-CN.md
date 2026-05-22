@@ -196,17 +196,35 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 
 ## 对比
 
-| 特性 | Engram | Claude Memory | 手动 CLAUDE.md | Mem0 |
-|------|--------|--------------|----------------|------|
-| 跨工具共享 | 支持 | 仅 Claude | 仅单工具 | 支持 |
-| 本地存储 | 全部本地 | 云端 | 本地 | 云端 |
-| 数据可编辑 | JSON/MD 直接编辑 | 不可见 | 可编辑 | API |
-| MCP 标准协议 | 支持 | 不适用 | 不适用 | 支持 |
-| 自动知识积累 | add_lesson/add_decision | 自动 | 手动 | 自动 |
-| 可迁移/备份 | 复制文件夹 | 不可导出 | 复制文件 | API 导出 |
-| 身份卡导出 | Markdown 卡片 | 无 | 无 | 无 |
-| 模型无关 | 任何 MCP 客户端 | 仅 Claude | 取决于工具 | 多模型 |
-| 价格 | 免费开源 | 含在订阅中 | 免费 | 免费/付费 |
+| 特性 | Engram | Claude Memory | 手动 CLAUDE.md | Mem0 | Letta (MemGPT) |
+|------|--------|--------------|----------------|------|----------------|
+| 主要定位 | 跨工具的用户身份 | 单对话记忆 | 单项目笔记 | Agent 向量记忆 | Agent 自编辑记忆 |
+| 跨工具协作 | ✅ MCP 原生（45 个工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
+| 存储位置 | 本地 JSON (`~/.engram/`) | 云端 | 本地 | 向量库 + Mem0 Cloud | Postgres 或 Letta Cloud |
+| 默认本地优先 | ✅ | ❌ | ✅ | ⚠ Cloud 是默认路径 | ⚠ Cloud 是默认路径 |
+| 静态加密 | ✅ AES-256-GCM, PBKDF2 600k（可选）| 视云端策略 | ❌ 明文 Markdown | 视存储后端配置 | 视 Postgres 配置 |
+| 知识分层（用户审核）| ✅ staging → verified | ❌ | ❌ | ❌ | ❌ |
+| 冲突检测 | ✅ | ❌ | ❌ | ❌ | ❌ |
+| MCP 原生 | ✅ | n/a | n/a | ⚠ 第三方 | ⚠ 第三方 |
+| 价格 | 免费 Apache 2.0 | 含在订阅 | 免费 | 免费 / 云端付费 | 免费 / 云端付费 |
+
+📊 **完整对比**（含「什么场景应该选别家」），见 [`docs/comparison.md`](docs/comparison.md)。
+
+## 量化数据
+
+下列数字每个 minor release 都会刷新：
+
+| | v3.14.2 (2026-05-22) |
+|---|---|
+| MCP 工具数 | **45** 个（默认开放 10 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部）|
+| 测试通过 | **386** 个（单元 + 集成）|
+| 代码覆盖率 | **78%** 总体；12 个模块中 8 个 ≥85% ([基线](docs/coverage_baseline_v3.14.2.md))|
+| `core.py` 行数 | **1083** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
+| PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
+| 加密 | AES-256-GCM，每条数据随机 salt + nonce |
+| 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
+| 核心功能网络调用 | **0** —— 除可选的 `read_web_content` 之外 |
+| 外部 AI 评测次数 | 3 次（GPT-5 + DeepSeek-V3 + GPT-5-mini），见 [`docs/milestone_review_v3.13.2.md`](docs/milestone_review_v3.13.2.md) |
 
 ## 核心功能
 
@@ -350,6 +368,9 @@ Engram 是一个本地优先的 AI 身份层——不是会话记忆，不是 Ag
 
 **支持哪些 AI 工具？**
 任何支持 MCP 协议的工具：Claude Code、OpenAI Codex、Cursor、Claude Desktop 等。不支持 MCP 的工具（ChatGPT、Gemini、Kimi），可以导出 Markdown 身份卡手动粘贴。
+
+**为什么产品叫 Engram，但 PyPI 包名是 `piia-engram`？**
+项目最早是一个更大的个人 AI 计划 **PIIA**（Personal Intelligence Identity Asset，个人智能身份资产）的一部分，Engram 是这个体系下第一个、也是目前唯一发布的工具，所以 PyPI 包名保留了 `piia-` 前缀。日常使用中产品就叫 **Engram** —— CLI 命令是 `engram setup` / `engram doctor`，Python 包名是 `engram_core`，MCP server 名是 `engram`。`piia-` 前缀只在 `pip install` 时出现，未来主版本可能会去掉。
 
 **如何安装 Engram？**
 ```bash
