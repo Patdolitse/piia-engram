@@ -30,8 +30,14 @@ CONFLICT_Q_THRESHOLD = 0.25   # question similarity for potential decision confl
 CONFLICT_C_CEILING = 0.80     # choice similarity ceiling — above means same choice, not conflict
 
 # Sentiment markers for lesson conflict detection
-_NEGATION_MARKERS = frozenset({"不", "不要", "避免", "别", "禁止", "不能", "不推荐"})
-_AFFIRMATION_MARKERS = frozenset({"推荐", "应该", "建议", "优先", "必须"})
+_NEGATION_MARKERS = frozenset({
+    "不", "不要", "避免", "别", "禁止", "不能", "不推荐",
+    "don't", "avoid", "never", "shouldn't", "not recommended",
+})
+_AFFIRMATION_MARKERS = frozenset({
+    "推荐", "应该", "建议", "优先", "必须",
+    "recommend", "should", "prefer", "always", "must",
+})
 
 # Sensitive profile fields eligible for encryption
 ENCRYPTED_PROFILE_FIELDS: set[str] = {

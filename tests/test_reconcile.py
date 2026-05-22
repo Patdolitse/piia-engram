@@ -861,6 +861,16 @@ def test_lesson_conflict_detected():
         assert "冲突" in ctx, "Should detect contradictory lessons"
 
 
+def test_lesson_conflict_english():
+    """English contradictory lessons should also trigger conflict detection."""
+    with tempfile.TemporaryDirectory() as tmp:
+        e = _make_engram(Path(tmp))
+        e.add_lesson("TypeScript generics should always be used for type safety", domain="typescript")
+        e.add_lesson("TypeScript generics are overused, avoid them in simple cases", domain="typescript")
+        ctx = e.generate_context()
+        assert "冲突" in ctx, "Should detect English contradictory lessons"
+
+
 def test_lesson_no_false_positive():
     """Lessons on different topics → no conflict."""
     with tempfile.TemporaryDirectory() as tmp:
