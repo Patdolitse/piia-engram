@@ -4,6 +4,27 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.18.0] - 2026-05-23
+
+Repo rename, security hardening, and doctor upgrade release.
+
+### Changed
+- **GitHub repo renamed** `Patdolitse/engram` → `Patdolitse/piia-engram` (avoids collision with Gentleman-Programming/engram 3.7k stars)
+- **Module rename completed** across all files: `engram_core` → `piia_engram` (backward-compat shim retained with `DeprecationWarning`)
+- **`engram doctor` expanded to 11 AI tools** (was 6): Claude Code, Cursor, Claude Desktop, Codex + 7 community-supported (Windsurf, Copilot, Cline, Roo Code, Amazon Q, Augment, Zed)
+- **Doctor output now shows verified vs community tiers** — clear labeling of team-tested vs untested tools
+- **Social preview images updated** with piia-engram branding
+
+### Security
+- **Removed 20 tracked result/data files** from git (benchmark outputs, evaluation logs with LLM payloads)
+- **Scrubbed 4 hardcoded personal paths** (Windows username) from reports and docs
+- **.gitignore hardened** — added `.env.*`, `*.pem`, `*.key`, `credentials*`, `secrets*`, broader evaluation result patterns
+- **CI workflows locked down** — explicit `permissions: contents: read` on both ci.yml and publish.yml
+
+### Tests
+- **674 passed**, 0 failed
+- Post-rename verification: 10/10 checks PASS (old imports, URLs, package metadata, CLI entry points, doctor coverage, backward compat)
+
 ## [3.17.0] - 2026-05-23
 
 Quality & reliability release: 657 tests at 96% coverage (all modules ≥90%), cross-platform CI fixes, and Round 10 retrieval quality benchmark achieving 43/43 PASS.
