@@ -16,6 +16,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
+[![Downloads](https://img.shields.io/pypi/dm/piia-engram)](https://pypi.org/project/piia-engram/)
 
 </div>
 
@@ -109,7 +110,7 @@ ChatGPT, Gemini, Kimi — `get_identity_card` exports a ready-to-paste Markdown 
 **Knowledge health and discovery**  
 `get_knowledge_overview` surfaces stale lessons (not reviewed in 30+ days), gives a health score, and flags gaps worth revisiting. `find_similar_knowledge` finds overlapping items to merge. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
 
-## Quick Start
+## Quick Start (30 seconds)
 
 ```bash
 pip install piia-engram
@@ -121,6 +122,8 @@ The setup wizard will:
 2. Find and configure your AI tools (Claude Code, Cursor, Claude Desktop)
 3. Walk you through seed knowledge (role, tech stack, language)
 4. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
+5. Show your privacy preferences (cross-tool sync, anonymous statistics — both optional)
+6. **Preview your AI identity card** — immediate proof of value
 
 Restart your AI tool after setup. The first conversation will call `get_user_context` automatically — your AI already knows you.
 
@@ -338,17 +341,17 @@ Engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools are loa
 
 These are factual claims about Engram itself, refreshed each minor release.
 
-| | v3.14.2 (2026-05-22) |
+| | v3.15.0 (2026-05-22) |
 |---|---|
 | MCP tools exposed | **43** (10 Tier-1 default, 33 opt-in via `ENGRAM_TOOLS=all`) |
-| Tests passing | **386** (unit + integration) |
+| Tests passing | **437** (unit + integration) |
 | Code coverage | **78%** total; 8/12 modules ≥85% ([baseline](docs/coverage_baseline_v3.14.2.md)) |
 | Lines in `core.py` | **1083** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | AES-256-GCM, per-value random salt + nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics |
-| External AI evaluations | 3 (GPT-5 + DeepSeek-V3 + GPT-5-mini), see [`docs/milestone_review_v3.13.2.md`](docs/milestone_review_v3.13.2.md) |
+| Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics ([details](docs/telemetry_roadmap.md)) |
+| External AI evaluations | 4 independent AIs evaluated the telemetry design; 3 earlier evaluations on architecture (see [`docs/`](docs/)) |
 
 ## Built With
 
@@ -435,6 +438,18 @@ export ENGRAM_AUDIT=1
 ```
 
 Logs are written to `~/.engram/audit.log` in JSON-lines format. Query with `get_audit_log` tool or `grep`.
+
+## CLI Commands
+
+```bash
+engram setup            # Interactive install wizard
+engram doctor           # Check config health (all AI tools)
+engram doctor --fix     # Auto-repair any issues found
+engram stats            # Show project growth metrics (GitHub + PyPI)
+engram stats --log      # Append stats snapshot to local log
+engram telemetry        # Manage anonymous usage statistics
+engram privacy          # Show what data Engram stores and where
+```
 
 ## Contributing
 
