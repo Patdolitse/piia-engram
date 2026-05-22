@@ -7,16 +7,22 @@ from pathlib import Path
 import pytest
 
 from engram_core.setup_wizard import (
+    LEGACY_SERVER_NAMES,
+    _choice,
     _classify_line,
+    _configure_utf8_stdio,
     _find_mcp_server,
     _find_python,
+    _import_with_split,
     _read_mcp_config,
+    _read_rule_file,
     _run_privacy_preferences,
     _run_privacy_report,
     _run_seed_knowledge_onboarding,
     _run_telemetry_cli,
     _scan_rule_files,
     _write_mcp_config,
+    main,
 )
 
 
@@ -953,3 +959,233 @@ class TestDoctorFix:
         out = capsys.readouterr().out
         assert "Cannot auto-fix" in out
         assert result > 0
+
+
+# ── 覆盖率补充测试 ──────────────────────────────────────────────────
+
+
+class TestClassifyLineEdgeCases:
+    """_classify_line 边缘情况。"""
+
+    def test_both_user_and_project_global(self):
+        """同时含用户和项目关键词时，global scope 应返回 user。"""
+        # "language" is user keyword, "test" is project keyword
+        result = _classify_line("- use English language for all test cases", "global")
+        assert result == "user"
+
+    def test_both_user_and_project_project(self):
+        """同时含用户和项目关键词时，project scope 应返回 project。"""
+        result = _classify_line("- use English language for all test cases", "project")
+        assert result == "project"
+
+
+class TestImportWithSplit:
+    """_import_with_split 分流导入测试。"""
+
+    def test_language_detection_chinese(self, tmp_path):
+        """中文语言偏好应写入 profile。"""
+        from engram_core.core import Engram
+        engram = Engram(root=tmp_path)
+
+        rule_files = [{
+            "path": tmp_path / "rules.md",
+            "scope": "global",
+            "lines": ["所有沟通使用中文"],
+        }]
+        result = _import_with_split(rule_files, engram)
+        profile = engram.get_profile()
+        assert profile.get("language") == "中文"
+
+    def test_language_detection_english(self, tmp_path):
+        """English 语言偏好应写入 profile。"""
+        from engram_core.core import Engram
+        engram = Engram(root=tmp_path)
+
+        rule_files = [{
+            "path": tmp_path / "rules.md",
+            "scope": "global",
+            "lines": ["Use English language for all communication"],
+        }]
+        result = _import_with_split(rule_files, engram)
+        profile = engram.get_profile()
+        assert profile.get("language") == "English"
+
+
+class TestReadRuleFile:
+    """_read_rule_file 边缘情况。"""
+
+    def test_permission_error(self, tmp_path, monkeypatch):
+        """PermissionError 应返回 None。"""
+        path = tmp_path / "rules.md"
+        path.write_text("# Header\ncontent line 1\ncontent line 2\n", encoding="utf-8")
+
+        from unittest.mock import patch
+        with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+            assert _read_rule_file(path, "global") is None
+
+    def test_too_few_content_lines(self, tmp_path):
+        """内容行少于 2 行时返回 None。"""
+        path = tmp_path / "rules.md"
+        path.write_text("# Only a header\n", encoding="utf-8")
+        assert _read_rule_file(path, "global") is None
+
+
+class TestReadMcpConfig:
+    """_read_mcp_config 异常测试。"""
+
+    def test_corrupt_json(self, tmp_path):
+        """损坏的 JSON 应返回空结构。"""
+        path = tmp_path / "config.json"
+        path.write_text("not json!", encoding="utf-8")
+        assert _read_mcp_config(path) == {}
+
+
+class TestWriteMcpConfig:
+    """_write_mcp_config 旧版名称清理。"""
+
+    def test_removes_legacy_servers(self, tmp_path, capsys):
+        """应清理旧版 server 名称。"""
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({
+            "mcpServers": {
+                "piia-pkc": {"command": "old"},
+                "piia_pkc": {"command": "old"},
+                "other": {"command": "keep"},
+            }
+        }), encoding="utf-8")
+
+        _write_mcp_config(config_path, "/usr/bin/python3", "/path/to/mcp_server.py")
+
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        # Legacy names removed
+        assert "piia-pkc" not in config["mcpServers"]
+        assert "piia_pkc" not in config["mcpServers"]
+        # New entry added
+        assert "engram" in config["mcpServers"]
+        # Migration message printed
+        out = capsys.readouterr().out
+        assert "migrated" in out
+
+
+class TestChoiceFunction:
+    """_choice 数字菜单选择测试。"""
+
+    def test_custom_input_option(self, monkeypatch):
+        """选择"其他"时应提示自行输入。"""
+        inputs = iter(["3", "自定义值"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+        result = _choice("选择语言", ["中文", "English"])
+        assert result == "自定义值"
+
+    def test_text_input_instead_of_number(self, monkeypatch):
+        """直接输入文本而非数字也应接受。"""
+        monkeypatch.setattr("builtins.input", lambda _: "日本語")
+        result = _choice("选择语言", ["中文", "English"])
+        assert result == "日本語"
+
+    def test_invalid_number_returns_empty(self, monkeypatch):
+        """无效数字应返回空字符串。"""
+        monkeypatch.setattr("builtins.input", lambda _: "99")
+        result = _choice("选择", ["A", "B"], allow_custom=False)
+        assert result == ""
+
+    def test_skip_returns_empty(self, monkeypatch):
+        """输入 0 应跳过。"""
+        monkeypatch.setattr("builtins.input", lambda _: "0")
+        result = _choice("选择", ["A", "B"])
+        assert result == ""
+
+
+class TestConfigureUtf8:
+    """_configure_utf8_stdio 测试。"""
+
+    def test_reconfigure_called(self, monkeypatch):
+        """应调用 stdout/stderr 的 reconfigure 方法。"""
+        calls = []
+
+        class MockStream:
+            def reconfigure(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr("sys.stdout", MockStream())
+        monkeypatch.setattr("sys.stderr", MockStream())
+        _configure_utf8_stdio()
+        assert len(calls) == 2
+        assert calls[0]["encoding"] == "utf-8"
+
+    def test_reconfigure_error_ignored(self, monkeypatch):
+        """reconfigure 异常应被忽略。"""
+        class BadStream:
+            def reconfigure(self, **kwargs):
+                raise TypeError("bad")
+
+        monkeypatch.setattr("sys.stdout", BadStream())
+        monkeypatch.setattr("sys.stderr", BadStream())
+        _configure_utf8_stdio()  # Should not raise
+
+
+class TestMainCLIRouting:
+    """main() CLI 路由补充测试。"""
+
+    def test_main_stats_default(self, monkeypatch, capsys):
+        """main() 处理 'stats' 子命令。"""
+        monkeypatch.setattr("sys.argv", ["engram", "stats"])
+        from unittest.mock import patch
+        with (
+            patch("engram_core.stats._gh", return_value=None),
+            patch("engram_core.stats._pypi_recent", return_value=None),
+        ):
+            main()
+        out = capsys.readouterr().out
+        assert "Engram Stats" in out
+
+    def test_main_stats_log(self, tmp_path, monkeypatch, capsys):
+        """main() 处理 'stats --log' 子命令。"""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setattr("sys.argv", ["engram", "stats", "--log"])
+        from unittest.mock import patch
+        with (
+            patch("engram_core.stats._gh", return_value=None),
+            patch("engram_core.stats._pypi_recent", return_value=None),
+        ):
+            main()
+        assert (tmp_path / "stats.log").is_file()
+
+    def test_main_setup_advanced(self, monkeypatch):
+        """main() 处理 'setup --advanced' 应传递 advanced=True。"""
+        monkeypatch.setattr("sys.argv", ["engram", "setup", "--advanced"])
+        called_with = {}
+        from unittest.mock import patch
+        with patch("engram_core.setup_wizard.run_setup") as mock_setup:
+            main()
+            mock_setup.assert_called_once_with(advanced=True)
+
+
+class TestScanRuleFilesGlobs:
+    """_scan_rule_files 全局文件扫描。"""
+
+    def test_cursor_rules_dir(self, tmp_path, monkeypatch):
+        """应扫描 .cursor/rules/*.mdc 文件。"""
+        rules_dir = tmp_path / ".cursor" / "rules"
+        rules_dir.mkdir(parents=True)
+        (rules_dir / "style.mdc").write_text(
+            "# Style\nAlways use 4 spaces\nNever use tabs\nKeep lines short\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        found = _scan_rule_files(tmp_path)
+        paths = [str(f["path"]) for f in found]
+        assert any("style.mdc" in p for p in paths)
+
+    def test_claude_project_claude_md(self, tmp_path, monkeypatch):
+        """应扫描 .claude/projects/*/CLAUDE.md。"""
+        proj_dir = tmp_path / ".claude" / "projects" / "test-proj"
+        proj_dir.mkdir(parents=True)
+        (proj_dir / "CLAUDE.md").write_text(
+            "# Project Rules\nUse pytest for testing\nAlways run linter\nCommit messages in English\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        found = _scan_rule_files(tmp_path)
+        paths = [str(f["path"]) for f in found]
+        assert any("CLAUDE.md" in p for p in paths)
