@@ -22,6 +22,17 @@ import os
 
 logger = logging.getLogger(__name__)
 
+
+class DecryptionError(Exception):
+    """Raised when ``EncryptionEngine.decrypt(..., strict=True)`` cannot recover
+    the plaintext — typically wrong key, corrupted payload, or truncated data.
+
+    The default ``decrypt(value)`` call still returns the original ciphertext
+    on failure (with a logger warning) for backward compatibility, but callers
+    that need explicit error handling should pass ``strict=True``.
+    """
+
+
 # Encryption prefix markers — version-aware on disk for forward upgrades
 ENC_PREFIX_V1 = "enc:v1:"
 ENC_PREFIX_V2 = "enc:v2:"
@@ -79,10 +90,22 @@ class EncryptionEngine:
         payload = base64.urlsafe_b64encode(salt + nonce + ciphertext).decode("ascii")
         return f"{ENC_PREFIX_V2}{payload}"
 
-    def decrypt(self, value: str) -> str:
+    def decrypt(self, value: str, *, strict: bool = False) -> str:
         """Decrypt a string value. Non-encrypted values are returned as-is.
 
         Supports both ``enc:v1:`` (100k PBKDF2) and ``enc:v2:`` (600k PBKDF2) on input.
+
+        Args:
+            value: The string to decrypt. Non-string or non-prefixed values pass through.
+            strict: When ``True``, raise :class:`DecryptionError` if a prefixed
+                value cannot be decrypted (wrong key, truncated, corrupted).
+                When ``False`` (default — backward compatible), log a warning
+                and return the original ciphertext so callers don't crash.
+
+        ⚠ The default behavior can mask wrong-key bugs: if the caller doesn't
+        check whether the return value still has an ``enc:`` prefix, they may
+        treat ciphertext as plaintext. New code should prefer ``strict=True``
+        and catch :class:`DecryptionError` explicitly.
         """
         if not self.enabled or not isinstance(value, str):
             return value
@@ -102,7 +125,15 @@ class EncryptionEngine:
             plaintext = aesgcm.decrypt(nonce, ciphertext, None)
             return plaintext.decode("utf-8")
         except Exception as exc:
-            # Decryption failed (wrong key, corrupt data) — return original, don't crash
+            if strict:
+                # Don't include exc as __cause__ to avoid leaking timing/oracle
+                # information about which stage failed (b64, key derivation, AEAD tag).
+                raise DecryptionError(
+                    f"decryption failed for {prefix} payload (wrong key or corrupted data)"
+                ) from None
+            # Backward-compatible fallback: log + return original ciphertext.
+            # Callers that don't validate the prefix after this call may treat
+            # ciphertext as plaintext — prefer strict=True in new code.
             logger.warning("decryption failed: %s", exc)
             return value
 
@@ -116,12 +147,20 @@ class EncryptionEngine:
                 result[field] = self.encrypt(result[field])
         return result
 
-    def decrypt_fields(self, data: dict, fields: set[str]) -> dict:
-        """Decrypt specified fields in a dictionary."""
+    def decrypt_fields(self, data: dict, fields: set[str], *, strict: bool = False) -> dict:
+        """Decrypt specified fields in a dictionary.
+
+        Args:
+            data: The dictionary holding the encrypted values.
+            fields: Set of field names to attempt decryption on.
+            strict: Passed through to :meth:`decrypt`. When ``True``, the first
+                failing field raises :class:`DecryptionError` and processing stops
+                (no partial mutation — the input is copied first).
+        """
         if not self.enabled or not fields:
             return data
         result = dict(data)
         for field in fields:
             if field in result and isinstance(result[field], str):
-                result[field] = self.decrypt(result[field])
+                result[field] = self.decrypt(result[field], strict=strict)
         return result

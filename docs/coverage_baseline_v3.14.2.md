@@ -44,7 +44,7 @@ These can be lifted to ~75% by mocking `input()` and `Path.exists()` in unit tes
 
 **`mcp_server.py` (54%)** — primarily the SSE transport + uncalled tool wrappers:
 - SSE/HTTP transport setup (`run_sse_async`, CORS middleware, TokenAuthMiddleware)
-- ~20 tool wrappers we haven't unit-tested yet (only ~25 of ~45 tools covered in v3.14.2)
+- ~18 tool wrappers we haven't unit-tested yet (only ~25 of 43 tools covered in v3.14.2)
 - Argument parsing for CLI variants
 
 Lifting MCP coverage requires:

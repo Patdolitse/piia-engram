@@ -42,7 +42,7 @@
 - **`docs/comparison.md`** — 与 Letta、Mem0、Cline memories、Claude Code memory 的事实对比；显式标注"什么场景应该选别家"；identity-layer vs memory-layer 架构定位
 - README 升级（中英双语）：
   - 对比表扩到 5 个竞品
-  - 新"量化数据"段：45 个 MCP 工具、386 测试、78% 覆盖、PBKDF2 600k、<100ms 冷启动、0 网络调用
+  - 新"量化数据"段：43 个 MCP 工具、386 测试、78% 覆盖、PBKDF2 600k、<100ms 冷启动、0 网络调用
   - FAQ 新增 `piia-engram` PyPI 包名 vs "Engram" 产品名的品牌说明
 
 ---
@@ -85,7 +85,7 @@
 | 覆盖率 | 未测量 | 78% | (首次发布) |
 | PBKDF2 轮数 | 100,000 | 600,000 | 6x |
 | MCP 工具 (Tier-1) | 10 | 10 | 不变 |
-| MCP 工具 (全部) | 43 | 45 | +2 |
+| MCP 工具 (全部) | 43 | 43 | 0（数字未变；v3.14.3 自评草稿一度误写 45，已在 v3.14.4 全局更正）|
 | 文档页数 (docs/) | 1 (milestone) | 4 (+ architecture, comparison, coverage_baseline) | +3 |
 
 ---
