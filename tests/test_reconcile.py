@@ -1037,3 +1037,29 @@ def test_reconcile_ai_configs_skips_large_files():
 
         result = e.reconcile_ai_configs()
         assert result["imported"] == 0, "Large config file should be skipped"
+
+
+def test_reconcile_ai_configs_globs_rule_directories():
+    """reconcile_ai_configs should glob .md/.mdc files from directory entries."""
+    with tempfile.TemporaryDirectory() as tmp:
+        e = _make_engram(Path(tmp))
+        e._discover_project_roots = lambda: []
+
+        # Create a fake rules directory with .mdc files
+        rules_dir = Path(tmp) / "cursor_rules"
+        rules_dir.mkdir()
+        (rules_dir / "style.mdc").write_text(
+            "## Code Style\n\nAlways use 4 spaces for indentation in Python files.\n",
+            encoding="utf-8",
+        )
+        (rules_dir / "testing.mdc").write_text(
+            "## Testing Rules\n\nAll functions must have at least one pytest test case.\n",
+            encoding="utf-8",
+        )
+
+        # Point global configs to our fake directory
+        e._AI_GLOBAL_CONFIGS = [str(rules_dir)]
+
+        result = e.reconcile_ai_configs()
+        assert result["scanned_files"] == 2
+        assert result["imported"] == 2
