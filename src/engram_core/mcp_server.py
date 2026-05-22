@@ -59,7 +59,12 @@ _tracker = _ToolCallTracker() if _ToolCallTracker else None
 
 
 def _track(tool_name: str, success: bool = True) -> None:
-    """Record a tool call for anonymous usage statistics (if tracker available)."""
+    """Record a tool call for anonymous usage statistics (if tracker available).
+
+    Phase 1 scope: only Tier-1 tools (TIER1_TOOLS) are tracked. This covers
+    the 10 most-used tools representing ~95% of typical sessions. Extending
+    to all 43 tools is planned for Phase 2 if usage statistics prove useful.
+    """
     if _tracker is not None:
         _tracker.record(tool_name, success=success)
 
@@ -1213,7 +1218,10 @@ async def wrap_up_session(
     except Exception as exc:
         logger.warning("get_staging_summary failed: %s", exc)
 
-    # Step 6: Flush anonymous usage statistics (local log only)
+    # Step 6: Record this tool call BEFORE flushing so it's included
+    _track("wrap_up_session", success=True)
+
+    # Step 7: Flush anonymous usage statistics (local log only)
     try:
         if _tracker is not None:
             from importlib.metadata import version as _pkg_version
@@ -1232,7 +1240,6 @@ async def wrap_up_session(
     except Exception as exc:
         logger.debug("telemetry flush skipped: %s", exc)
 
-    _track("wrap_up_session", success=True)
     return _json(results)
 
 

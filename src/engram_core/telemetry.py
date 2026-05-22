@@ -130,13 +130,39 @@ def _daily_id(local_uuid: str) -> str:
 # and will be rejected to prevent accidental content leakage.
 _MAX_FIELD_LEN = 200
 
+# Maximum length for dictionary keys (tool names, field names).
+_MAX_KEY_LEN = 80
+
+
+def _validate_key(key: str) -> bool:
+    """Validate a dictionary key is safe for telemetry.
+
+    Keys must be short ASCII-ish identifiers (tool names, field names).
+    Rejects keys that look like natural language, file paths, or content.
+    """
+    if not isinstance(key, str):
+        return False
+    if len(key) > _MAX_KEY_LEN:
+        logger.warning("telemetry key rejected: %r too long (%d)", key[:40], len(key))
+        return False
+    # Keys should not contain spaces (natural language) or path separators
+    if " " in key or "/" in key or "\\" in key:
+        logger.warning("telemetry key rejected: %r looks like content or path", key[:40])
+        return False
+    return True
+
 
 def _validate_payload(payload: dict) -> bool:
     """Recursively validate that no field contains natural-language content.
 
+    Checks both keys and values. Keys must be short identifiers (tool names,
+    field names). Values must not be long strings or natural language.
+
     Returns True if the payload is safe to log/send, False otherwise.
     """
     for key, value in payload.items():
+        if not _validate_key(key):
+            return False
         if isinstance(value, str):
             if len(value) > _MAX_FIELD_LEN:
                 logger.warning("telemetry payload rejected: field %r too long (%d)",

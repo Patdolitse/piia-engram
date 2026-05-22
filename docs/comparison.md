@@ -31,7 +31,7 @@ If you only need a single agent to remember its own conversations, you don't nee
 | **User-facing audit** | ✅ HTML review page with rarity tiers + opt-in audit log | ⚠ via UI in Letta Cloud | ⚠ via Mem0 dashboard | ✅ files are plain Markdown | ✅ files are plain Markdown |
 | **Knowledge tiers** | ✅ staging → verified, manual promotion gate | ❌ | ❌ | ❌ | ❌ |
 | **OSS license** | Apache-2.0 | Apache-2.0 | Apache-2.0 | Apache-2.0 | Anthropic ToS |
-| **Total tests** | 386, 78% coverage (v3.14.2) | (varies; not our number to publish) | (varies; not our number to publish) | n/a | n/a |
+| **Total tests** | 490, 83% coverage (v3.16.0) | (varies; not our number to publish) | (varies; not our number to publish) | n/a | n/a |
 
 External docs we drew from:
 - Letta: <https://github.com/letta-ai/letta>, <https://docs.letta.com>
