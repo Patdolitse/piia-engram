@@ -345,7 +345,12 @@ class ReconcileMixin:
 
         # Global configs (all AI tools)
         for gpath in self._AI_GLOBAL_CONFIGS:
-            resolved = Path(gpath.replace("~", str(Path.home())))
+            if gpath.startswith("~/") or gpath.startswith("~\\"):
+                resolved = Path.home() / gpath[2:]
+            elif gpath == "~":
+                resolved = Path.home()
+            else:
+                resolved = Path(gpath)
             if resolved.is_file():
                 config_files.append(resolved)
             elif resolved.is_dir():
