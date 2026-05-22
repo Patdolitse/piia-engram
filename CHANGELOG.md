@@ -4,6 +4,19 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.13.1] - 2026-05-22
+
+### Fixed
+- **CJK line classification**: Chinese lines (e.g. "我是全栈开发者") were incorrectly skipped during rule file import because the minimum length threshold (8 chars) didn't account for CJK character density. Now uses 4-char threshold for CJK text.
+- **Rule directory globbing**: `reconcile_ai_configs` now correctly imports rule files from directory-style configs (e.g. `~/.cursor/rules/*.mdc`) instead of silently skipping them.
+- **Stale knowledge display**: 3 remaining hardcoded "30 天" strings now use the `STALE_KNOWLEDGE_DAYS` constant consistently.
+
+### Tests
+- 281 passed (up from 258 in v3.13.0)
+- New: 22 parametrized `_classify_line` tests covering CJK, user identity, project rules, skip, and ambiguous cases
+- New: 2 `_scan_rule_files` tests (project detection + tiny file skip)
+- New: `reconcile_ai_configs` directory globbing test
+
 ## [3.13.0] - 2026-05-22
 
 ### Breaking
