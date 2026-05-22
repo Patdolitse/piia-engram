@@ -116,6 +116,12 @@ def test_engram_dir_env(tmp_path: Path, monkeypatch):
 
 def test_seed_onboarding_saves_profile_and_lessons(tmp_path: Path, monkeypatch, capsys):
     """种子知识引导应把身份和最多 3 条经验写入 Engram。"""
+    # Isolate from real home directory (prevent global CLAUDE.md auto-import)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
     answers = iter([
         "全栈开发者",
         "Python + React",
@@ -692,7 +698,7 @@ class TestRunSetup:
 
         out = capsys.readouterr().out
         assert "PIIA Engram" in out
-        assert "Step 1/4" in out
+        assert "Step 1/3" in out
         assert "TestTool" in out
 
     def test_wizard_no_python_exits(self, tmp_path, monkeypatch, capsys):
@@ -754,7 +760,7 @@ class TestRunSetup:
         run_setup()
 
         out = capsys.readouterr().out
-        assert "No MCP-compatible" in out
+        assert "No AI tools detected" in out
 
     def test_wizard_custom_data_dir(self, tmp_path, monkeypatch, capsys):
         """run_setup should accept custom data directory."""

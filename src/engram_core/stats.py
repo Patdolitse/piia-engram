@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def log_stats() -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     log_path = data_dir / "stats.log"
 
-    snapshot: dict = {"timestamp": datetime.utcnow().isoformat() + "Z"}
+    snapshot: dict = {"timestamp": datetime.now(timezone.utc).isoformat()}
 
     repo = _gh("")
     if repo:

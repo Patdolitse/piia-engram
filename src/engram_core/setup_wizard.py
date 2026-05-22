@@ -451,8 +451,8 @@ def _run_seed_knowledge_onboarding(
     engram = Engram(root=root)
     current_dir = cwd or Path.cwd()
 
-    print(_t("Step 4/4 — 录入种子知识（输入 0 跳过）\n",
-             "Step 4/4 — Seed knowledge (enter 0 to skip)\n"))
+    print(_t("Step 2/3 — 录入种子知识（输入 0 跳过）\n",
+             "Step 2/3 — Seed knowledge (enter 0 to skip)\n"))
     role = _choice(_t("你的角色是什么？", "What is your role?"), [
         _t("全栈开发者", "Full-stack developer"),
         _t("后端开发者", "Backend developer"),
@@ -513,8 +513,8 @@ def _run_seed_knowledge_onboarding(
             lessons_added += 1
 
     # Step 4.5 — 智能扫描 + 分流导入
-    print(_t("\nStep 4.5 — 智能导入规则文件",
-             "\nStep 4.5 — Smart rule file import"))
+    print(_t("\n  智能导入规则文件",
+             "\n  Smart rule file import"))
     rule_files = _scan_rule_files(cwd=current_dir)
     import_result: dict = {"user_count": 0, "project_count": 0, "skipped": 0, "files": []}
 
@@ -547,12 +547,9 @@ def _run_seed_knowledge_onboarding(
         print(_t(f"    跳过:     {skip_preview} 条",
                  f"    Skipped:       {skip_preview}"))
 
-        if _yn(_t("\n  导入这些内容？", "\n  Import these?"), default=True):
-            import_result = _import_with_split(rule_files, engram)
-            print(_t(f"\n  ✅ 已导入: {import_result['user_count']} 条身份 + {import_result['project_count']} 条项目规则",
-                     f"\n  ✅ Imported: {import_result['user_count']} identity + {import_result['project_count']} project rules"))
-        else:
-            print(_t("  跳过导入。", "  Skipped."))
+        import_result = _import_with_split(rule_files, engram)
+        print(_t(f"\n  ✅ 已导入: {import_result['user_count']} 条身份 + {import_result['project_count']} 条项目规则",
+                 f"\n  ✅ Imported: {import_result['user_count']} identity + {import_result['project_count']} project rules"))
     else:
         print(_t("  未发现规则文件（CLAUDE.md / .cursorrules 等）。",
                  "  No rule files found (CLAUDE.md / .cursorrules etc.)."))
@@ -701,12 +698,37 @@ def _run_privacy_preferences(data_dir: str) -> None:
     _save_config(cfg_all)
 
 
+def _run_privacy_defaults(data_dir: str) -> None:
+    """Apply safe privacy defaults without prompting (reconcile=on, telemetry=off).
+
+    For interactive privacy configuration, use ``engram setup --advanced``.
+    """
+    from engram_core.telemetry import _load_config, _save_config, set_enabled
+
+    cfg = _load_config()
+    cfg["reconcile_authorized"] = True
+    _save_config(cfg)
+    set_enabled(False)
+
+    print(_t("  隐私设置：跨工具同步=开启，匿名统计=关闭（默认）",
+             "  Privacy: cross-tool sync=on, anonymous stats=off (defaults)"))
+    print(_t("  可随时通过 'engram setup --advanced' 或 'engram telemetry on' 修改。\n",
+             "  Change anytime via 'engram setup --advanced' or 'engram telemetry on'.\n"))
+
+
 # ---------------------------------------------------------------------------
 # 向导主流程
 # ---------------------------------------------------------------------------
 
-def run_setup() -> None:
-    """交互式安装向导主流程。"""
+def run_setup(advanced: bool = False) -> None:
+    """交互式安装向导主流程。
+
+    Streamlined flow: auto-detect + auto-configure where possible,
+    only prompt when there is a real choice to make.
+
+    Args:
+        advanced: If True, show full interactive privacy preferences.
+    """
     global _lang
     _configure_utf8_stdio()
 
@@ -722,78 +744,59 @@ def run_setup() -> None:
     print(_t("  PIIA Engram 安装向导", "  PIIA Engram Setup Wizard"))
     print("========================================\n")
 
-    # Step 1 — Python 检测
-    print(_t("Step 1/4 — 检测 Python", "Step 1/4 — Detecting Python"))
+    # Step 1 — 自动检测环境
+    print(_t("Step 1/3 — 检测环境", "Step 1/3 — Detecting environment"))
     python_path = _find_python()
     if not python_path:
         print(_t("❌ 未找到可用的 Python 3.10+。", "❌ Python 3.10+ not found."))
         print(_t("   请安装 Python 后重新运行：https://python.org/downloads/",
                  "   Please install Python and re-run: https://python.org/downloads/"))
         sys.exit(1)
-    print(f"  ✅ Python: {python_path}\n")
+    print(f"  ✅ Python: {python_path}")
 
-    # mcp_server.py 路径
     mcp_server_path = _find_mcp_server()
     if not mcp_server_path:
         print(_t("❌ 未找到 mcp_server.py，请确认已正确安装（pip install piia-engram）。",
                  "❌ mcp_server.py not found. Please ensure piia-engram is installed."))
         sys.exit(1)
 
-    # Step 2 — 数据目录
-    print(_t("Step 2/4 — 数据目录", "Step 2/4 — Data directory"))
+    # 数据目录 — 自动使用默认
     default_data_dir = str(Path.home() / ".engram")
-    print(_t(f"  知识库默认存储位置: {default_data_dir}",
-             f"  Default storage: {default_data_dir}"))
-    custom_dir = _prompt(_t("  自定义路径（直接回车使用默认）",
-                            "  Custom path (Enter for default)"), "")
     data_dir: str | None = None
-    if custom_dir:
-        data_dir = str(Path(custom_dir).expanduser().resolve())
-        Path(data_dir).mkdir(parents=True, exist_ok=True)
-        print(_t(f"  ✅ 将使用: {data_dir}", f"  ✅ Using: {data_dir}"))
-    else:
-        print(_t(f"  ✅ 将使用: {default_data_dir}", f"  ✅ Using: {default_data_dir}"))
-    print()
+    print(_t(f"  ✅ 数据目录: {default_data_dir}",
+             f"  ✅ Data dir: {default_data_dir}"))
 
-    # Step 3 — 工具检测与配置
-    print(_t("Step 3/4 — 配置 AI 工具", "Step 3/4 — Configure AI tools"))
+    # 工具检测 — 自动配置
     tools = _detect_tools()
     if not tools:
-        print(_t("  ⚠️  未检测到支持 MCP 的 AI 工具（Claude Code / Cursor / Claude Desktop）。",
-                 "  ⚠️  No MCP-compatible AI tools detected (Claude Code / Cursor / Claude Desktop)."))
-        print(_t("  安装工具后重新运行 'engram setup' 即可完成配置。\n",
-                 "  Install a supported tool and re-run 'engram setup'.\n"))
+        print(_t("  ⚠️  未检测到 AI 工具（Claude Code / Cursor / Claude Desktop）",
+                 "  ⚠️  No AI tools detected (Claude Code / Cursor / Claude Desktop)"))
+        print(_t("  安装后重新运行 'engram setup' 即可。\n",
+                 "  Re-run 'engram setup' after installing.\n"))
     else:
+        success = []
+        failed = []
         for tool in tools:
-            print(_t(f"  ✅ 检测到 {tool['name']}: {tool['config_path']}",
-                     f"  ✅ Found {tool['name']}: {tool['config_path']}"))
-        print()
-        if _yn(_t("  为所有检测到的工具配置 Engram？",
-                   "  Configure Engram for all detected tools?")):
-            success = []
-            failed = []
-            for tool in tools:
-                try:
-                    _write_mcp_config(
-                        tool["config_path"],
-                        python_path,
-                        mcp_server_path,
-                        data_dir,
-                    )
-                    success.append(tool["name"])
-                except Exception as exc:
-                    failed.append(f"{tool['name']} ({exc})")
-            print()
-            for name in success:
-                print(_t(f"  ✅ {name} 已配置", f"  ✅ {name} configured"))
-            for name in failed:
-                print(_t(f"  ❌ {name} 配置失败", f"  ❌ {name} failed"))
+            try:
+                _write_mcp_config(tool["config_path"], python_path, mcp_server_path, data_dir)
+                success.append(tool["name"])
+            except Exception as exc:
+                failed.append(f"{tool['name']} ({exc})")
+        for name in success:
+            print(_t(f"  ✅ {name} 已配置", f"  ✅ {name} configured"))
+        for name in failed:
+            print(_t(f"  ❌ {name} 配置失败", f"  ❌ {name} failed"))
+    print()
 
+    # Step 2 — 录入身份信息
     selected_data_dir = data_dir or default_data_dir
     _run_seed_knowledge_onboarding(selected_data_dir)
 
-    # Step 5 — Privacy & data preferences
-    _run_privacy_preferences(selected_data_dir)
+    # Step 3 — 隐私偏好
+    if advanced:
+        _run_privacy_preferences(selected_data_dir)
+    else:
+        _run_privacy_defaults(selected_data_dir)
 
     # 完成
     print(_t("  重启你的 AI 工具（Claude Code / Cursor）即可使用。",
@@ -1119,7 +1122,10 @@ def main() -> None:
     """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy"""
     args = sys.argv[1:]
     if not args or args[0] == "setup":
-        run_setup()
+        if "--advanced" in args:
+            run_setup(advanced=True)
+        else:
+            run_setup()
     elif args[0] == "doctor":
         fix = "--fix" in args
         sys.exit(run_doctor(fix=fix))
@@ -1137,7 +1143,8 @@ def main() -> None:
         print(
             "Engram CLI\n\n"
             "Usage:\n"
-            "  engram setup            Interactive install wizard\n"
+            "  engram setup            Interactive install wizard (streamlined)\n"
+            "  engram setup --advanced Full interactive setup with privacy prompts\n"
             "  engram doctor           Check config health (all AI tools)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram stats            Show project growth metrics\n"

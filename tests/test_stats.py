@@ -4,7 +4,7 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from engram_core.stats import _gh, _pypi_recent, run_stats
+from engram_core.stats import _gh, _pypi_recent, log_stats, main, run_stats
 
 
 # ── _gh tests ────────────────────────────────────────────────────────
@@ -171,3 +171,133 @@ def test_run_stats_with_daily_views(capsys):
     out = capsys.readouterr().out
     assert "2026-05-20" in out
     assert "2026-05-21" in out
+
+
+def test_run_stats_with_daily_clones(capsys):
+    """有每日 clone 数据时应打印最近条目。"""
+    clones_data = {
+        "count": 50,
+        "uniques": 20,
+        "clones": [
+            {"timestamp": "2026-05-19T00:00:00Z", "count": 15, "uniques": 8},
+            {"timestamp": "2026-05-20T00:00:00Z", "count": 20, "uniques": 10},
+        ],
+    }
+
+    def mock_gh(endpoint=""):
+        if "clones" in endpoint:
+            return clones_data
+        return None
+
+    with (
+        patch("engram_core.stats._gh", side_effect=mock_gh),
+        patch("engram_core.stats._pypi_recent", return_value=None),
+    ):
+        run_stats()
+
+    out = capsys.readouterr().out
+    assert "2026-05-19" in out
+    assert "2026-05-20" in out
+    assert "Git Clones" in out
+
+
+# ── log_stats tests ─────────────────────────────────────────────────
+
+
+def test_log_stats_creates_file(tmp_path, monkeypatch, capsys):
+    """log_stats should append JSON snapshot to stats.log."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+    repo_data = {"stargazers_count": 42, "forks_count": 5}
+    views_data = {"count": 100, "uniques": 30}
+    clones_data = {"count": 20, "uniques": 10}
+    pypi_data = {"data": {"last_day": 5, "last_week": 25, "last_month": 100}}
+
+    def mock_gh(endpoint=""):
+        mapping = {
+            "": repo_data,
+            "traffic/views": views_data,
+            "traffic/clones": clones_data,
+        }
+        return mapping.get(endpoint.rstrip("/"))
+
+    with (
+        patch("engram_core.stats._gh", side_effect=mock_gh),
+        patch("engram_core.stats._pypi_recent", return_value=pypi_data),
+    ):
+        log_stats()
+
+    log_path = tmp_path / "stats.log"
+    assert log_path.is_file()
+    line = log_path.read_text(encoding="utf-8").strip()
+    snapshot = json.loads(line)
+    assert snapshot["github"]["stars"] == 42
+    assert snapshot["views_14d"]["total"] == 100
+    assert snapshot["clones_14d"]["total"] == 20
+    assert snapshot["pypi"]["last_day"] == 5
+    assert "timestamp" in snapshot
+
+    out = capsys.readouterr().out
+    assert "stats.log" in out
+
+
+def test_log_stats_no_apis(tmp_path, monkeypatch, capsys):
+    """log_stats with no APIs should still write timestamp."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+    with (
+        patch("engram_core.stats._gh", return_value=None),
+        patch("engram_core.stats._pypi_recent", return_value=None),
+    ):
+        log_stats()
+
+    log_path = tmp_path / "stats.log"
+    snapshot = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert "timestamp" in snapshot
+    assert "github" not in snapshot
+
+
+def test_log_stats_appends(tmp_path, monkeypatch, capsys):
+    """Multiple log_stats calls should append, not overwrite."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+    with (
+        patch("engram_core.stats._gh", return_value=None),
+        patch("engram_core.stats._pypi_recent", return_value=None),
+    ):
+        log_stats()
+        log_stats()
+
+    log_path = tmp_path / "stats.log"
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+
+
+# ── main() tests ────────────────────────────────────────────────────
+
+
+def test_main_default_runs_stats(capsys):
+    """main() without --log should call run_stats."""
+    with (
+        patch("engram_core.stats._gh", return_value=None),
+        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("sys.argv", ["engram", "stats"]),
+    ):
+        main()
+
+    out = capsys.readouterr().out
+    assert "Engram Stats" in out
+
+
+def test_main_log_runs_log_stats(tmp_path, monkeypatch, capsys):
+    """main() with --log should call log_stats."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+    with (
+        patch("engram_core.stats._gh", return_value=None),
+        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("sys.argv", ["engram", "stats", "--log"]),
+    ):
+        main()
+
+    assert (tmp_path / "stats.log").is_file()
