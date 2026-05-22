@@ -3312,7 +3312,7 @@ function copyResult() {{
             "access_count": item.get("access_count", 0),
         }
 
-    def get_stale_knowledge(self, days: int = 30, limit: int | None = 20) -> dict:
+    def get_stale_knowledge(self, days: int = STALE_KNOWLEDGE_DAYS, limit: int | None = 20) -> dict:
         """Return active lessons and decisions not reviewed for more than days."""
         days = max(0, int(days))
         cutoff = datetime.now() - timedelta(days=days)
@@ -3452,7 +3452,7 @@ function copyResult() {{
             "stale_count": len(stale["lessons"]) + len(stale["decisions"]),
         }
 
-    def get_knowledge_overview(self, section: str = "all", stale_days: int = 30) -> dict:
+    def get_knowledge_overview(self, section: str = "all", stale_days: int = STALE_KNOWLEDGE_DAYS) -> dict:
         """Unified overview combining digest, health, and stale checks."""
         result: dict = {}
         if section in ("all", "digest"):
