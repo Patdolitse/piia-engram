@@ -7,11 +7,13 @@ on:
 
 permissions:
   contents: read
+  id-token: write  # Required for PyPI Trusted Publishing (OIDC)
 
 jobs:
   build-and-publish:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
+    environment: pypi
 
     steps:
       - name: Checkout
@@ -30,6 +32,8 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        # Uses OIDC Trusted Publishing — no API token needed.
+        # Fallback to token if Trusted Publishing is not yet configured on PyPI.
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true

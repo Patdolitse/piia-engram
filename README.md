@@ -4,7 +4,7 @@
 
 # piia-engram
 
-### Your AI knows your code. It doesn't know *you*. piia-engram fixes that.
+### One identity. Every AI tool. Your context stays yours.
 
 **A local identity layer that makes every AI tool start from the same understanding of who you are.**
 
