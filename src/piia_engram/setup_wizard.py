@@ -226,12 +226,18 @@ def _import_with_split(
 # ---------------------------------------------------------------------------
 
 def _tool_configs() -> dict:
-    """返回各工具的配置路径（运行时构建，确保 Path.home() 正确）。"""
+    """返回各工具的 MCP 配置路径（运行时构建，确保 Path.home() 正确）。
+
+    覆盖所有 Engram 声称支持的 AI 工具。每个条目包含:
+    - name: 工具显示名
+    - config_paths: 配置文件路径列表
+    - format: "json" | "toml"（默认 json）
+    """
     home = Path.home()
     is_mac = platform.system() == "Darwin"
     is_win = platform.system() == "Windows"
 
-    return {
+    configs: dict = {
         "claude_code": {
             "name": "Claude Code",
             "config_paths": [home / ".claude" / ".mcp.json"],
@@ -250,7 +256,21 @@ def _tool_configs() -> dict:
                 else []
             ),
         },
+        "codex": {
+            "name": "Codex",
+            "config_paths": [home / ".codex" / "config.toml"],
+            "format": "toml",
+        },
+        "windsurf": {
+            "name": "Windsurf",
+            "config_paths": [home / ".codeium" / "windsurf" / "mcp_config.json"],
+        },
+        "trae": {
+            "name": "Trae",
+            "config_paths": [home / ".trae" / "mcp.json"],
+        },
     }
+    return configs
 
 
 # ---------------------------------------------------------------------------
@@ -314,14 +334,104 @@ def _detect_tools() -> list[dict]:
     return detected
 
 
-def _read_mcp_config(config_path: Path) -> dict:
-    """读取现有 MCP 配置，不存在或解析失败时返回空结构。"""
-    if config_path.is_file():
-        try:
-            return json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("read config failed (%s): %s", config_path, exc)
+def _read_mcp_config(config_path: Path, fmt: str = "json") -> dict:
+    """读取现有 MCP 配置，不存在或解析失败时返回空结构。
+
+    Args:
+        config_path: 配置文件路径。
+        fmt: "json" 或 "toml"。
+    """
+    if not config_path.is_file():
+        return {}
+    try:
+        raw = config_path.read_text(encoding="utf-8")
+        if fmt == "toml":
+            return _parse_toml(raw)
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning("read config failed (%s): %s", config_path, exc)
     return {}
+
+
+def _parse_toml(text: str) -> dict:
+    """解析 TOML 文本，兼容 Python 3.10（无 tomllib）。"""
+    try:
+        import tomllib  # Python 3.11+
+        return tomllib.loads(text)
+    except ImportError:
+        pass
+    try:
+        import tomli  # third-party fallback
+        return tomli.loads(text)
+    except ImportError:
+        pass
+    # 最后手段：只提取 [mcp_servers.*] 段（覆盖 doctor 的核心需求）
+    return _parse_toml_mcp_minimal(text)
+
+
+def _parse_toml_mcp_minimal(text: str) -> dict:
+    """从 TOML 文本中最小化提取 mcp_servers 配置。
+
+    只处理 doctor 需要的字段：command, args, env。
+    不是通用 TOML 解析器，仅用于 Python 3.10 无 tomllib 的回退。
+    """
+    import re as _re
+    servers: dict = {}
+    current_server: str | None = None
+    current_section: str | None = None  # "root" | "env"
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        # [mcp_servers.NAME]
+        m = _re.match(r'^\[mcp_servers\.([a-zA-Z0-9_-]+)\]$', line)
+        if m:
+            current_server = m.group(1)
+            current_section = "root"
+            servers[current_server] = {"command": "", "args": [], "env": {}}
+            continue
+
+        # [mcp_servers.NAME.env]
+        m = _re.match(r'^\[mcp_servers\.([a-zA-Z0-9_-]+)\.env\]$', line)
+        if m:
+            current_server = m.group(1)
+            current_section = "env"
+            if current_server not in servers:
+                servers[current_server] = {"command": "", "args": [], "env": {}}
+            continue
+
+        # Other section header → stop tracking current server
+        if line.startswith("["):
+            current_server = None
+            current_section = None
+            continue
+
+        if not current_server:
+            continue
+
+        # key = value
+        m = _re.match(r'^(\w+)\s*=\s*(.+)$', line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+
+        # Unquote string values
+        if (val.startswith('"') and val.endswith('"')) or \
+           (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+
+        if current_section == "env":
+            servers[current_server]["env"][key] = val
+        elif key == "command":
+            servers[current_server]["command"] = val
+        elif key == "args":
+            # Parse simple TOML array: ["a", "b"]
+            arr_m = _re.findall(r'"([^"]*)"', val)
+            servers[current_server]["args"] = arr_m
+
+    return {"mcp_servers": servers}
 
 
 def _write_mcp_config(
@@ -359,6 +469,76 @@ def _write_mcp_config(
         json.dumps(config, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_mcp_config_toml(
+    config_path: Path,
+    python_path: str,
+    mcp_server_path: str,
+) -> None:
+    """修复 TOML 格式配置文件中的 engram MCP 条目（如 Codex config.toml）。
+
+    策略：原地替换 [mcp_servers.engram] 段，保留文件其余内容不动。
+    """
+    if not config_path.is_file():
+        return
+
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    new_lines: list[str] = []
+    skip_until_next_section = False
+
+    # 构建新的 engram 条目
+    # 优先用 -m 模块调用（不依赖绝对路径）
+    engram_block = [
+        '[mcp_servers.engram]',
+        f'command = "{python_path}"',
+        f'args = ["-m", "piia_engram.mcp_server"]',
+    ]
+    # 如果 mcp_server_path 不是通过 -m 可达的（不在 site-packages），加 PYTHONPATH
+    spec = importlib.util.find_spec("piia_engram")
+    if not spec:
+        # piia_engram 不在默认路径，需要 PYTHONPATH
+        src_dir = str(Path(mcp_server_path).parent.parent)
+        engram_block.append('')
+        engram_block.append('[mcp_servers.engram.env]')
+        engram_block.append(f'PYTHONPATH = "{src_dir}"')
+
+    inserted = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # 检测 [mcp_servers.engram] 段开始
+        if stripped == '[mcp_servers.engram]':
+            skip_until_next_section = True
+            if not inserted:
+                new_lines.extend(engram_block)
+                inserted = True
+            i += 1
+            continue
+
+        # 检测 [mcp_servers.engram.env] 子段（也要跳过）
+        if stripped == '[mcp_servers.engram.env]':
+            skip_until_next_section = True
+            i += 1
+            continue
+
+        # 遇到其他段头，结束跳过
+        if stripped.startswith('[') and skip_until_next_section:
+            skip_until_next_section = False
+
+        if not skip_until_next_section:
+            new_lines.append(line)
+
+        i += 1
+
+    # 如果原文件没有 engram 段，追加到末尾
+    if not inserted:
+        new_lines.append('')
+        new_lines.extend(engram_block)
+
+    config_path.write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
 
 
 # ---------------------------------------------------------------------------
@@ -871,8 +1051,100 @@ def auto_migrate() -> None:
         logger.warning("migration failed: %s", exc)
 
 
+def _detect_installed_tools() -> list[dict]:
+    """扫描系统中实际安装的 AI 工具。
+
+    不仅检查配置文件是否存在，还检查工具本身是否安装（可执行文件、目录结构）。
+    返回 [{tool_id, name, config_path, format, status}]。
+    - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram),
+              "config_only" (只有配置文件)
+    """
+    results = []
+    for tool_id, cfg in _tool_configs().items():
+        fmt = cfg.get("format", "json")
+        for config_path in cfg["config_paths"]:
+            # 检查工具是否安装（配置目录存在 = 工具装了）
+            tool_dir = config_path.parent
+            if not tool_dir.exists():
+                continue
+
+            config = _read_mcp_config(config_path, fmt=fmt)
+
+            # 统一取 engram 条目：JSON 用 mcpServers，TOML 用 mcp_servers
+            servers = config.get("mcpServers", config.get("mcp_servers", {}))
+            has_engram = "engram" in servers
+
+            results.append({
+                "tool_id": tool_id,
+                "name": cfg["name"],
+                "config_path": config_path,
+                "format": fmt,
+                "status": "configured" if has_engram else "installed",
+                "config": config,
+                "servers": servers,
+            })
+            break  # 每个工具只取第一个匹配的路径
+    return results
+
+
+def _validate_engram_entry(servers: dict, config_path: Path) -> list[str]:
+    """验证 engram MCP 条目的所有路径是否有效。
+
+    Returns:
+        问题描述列表（空 = 健康）。
+    """
+    issues = []
+    engram = servers.get("engram", {})
+    if not engram:
+        return issues
+
+    # 1. Python 可执行路径
+    python_exe = engram.get("command", "")
+    if python_exe and python_exe not in ("npx", "node", "uvx"):
+        exe_path = Path(python_exe.replace("\\\\", "\\"))
+        if not exe_path.is_file():
+            issues.append(f"Python 路径不存在: {python_exe}")
+
+    # 2. 服务端脚本/模块路径
+    args = engram.get("args") or []
+    for arg in args:
+        if arg.startswith("-"):
+            # -m module.name — 不是文件路径，跳过
+            continue
+        p = Path(arg.replace("\\\\", "\\"))
+        # 只验证看起来像路径的参数（含 / 或 \ 或 .py）
+        if ("/" in arg or "\\" in arg or arg.endswith(".py")) and not p.is_file():
+            issues.append(f"脚本路径不存在: {arg}")
+
+    # 3. 检查 -m 模块调用是否指向旧模块名
+    for i, arg in enumerate(args):
+        if arg == "-m" and i + 1 < len(args):
+            module_name = args[i + 1]
+            if "engram_core" in module_name:
+                issues.append(
+                    f"使用旧模块名 '{module_name}'，应改为 "
+                    f"'{module_name.replace('engram_core', 'piia_engram')}'"
+                )
+
+    # 4. 环境变量中的路径
+    env = engram.get("env", {})
+    for key, val in env.items():
+        if key in ("ENGRAM_DIR", "PYTHONPATH") and val:
+            p = Path(val.replace("\\\\", "\\"))
+            if not p.exists():
+                issues.append(f"环境变量 {key} 路径不存在: {val}")
+
+    return issues
+
+
 def run_doctor(fix: bool = False) -> int:
-    """扫描所有已知配置文件，检查旧版 server 名称和失效路径。
+    """扫描系统中所有已安装的 AI 工具，检查 Engram MCP 配置健康状况。
+
+    流程：
+    1. 扫描系统中装了哪些 AI 工具
+    2. 检查哪些已配置 Engram、哪些还没配
+    3. 验证已配置的条目路径是否有效（stale path 检测）
+    4. 可选自动修复
 
     Args:
         fix: True 时自动修复发现的问题。
@@ -884,58 +1156,68 @@ def run_doctor(fix: bool = False) -> int:
     print("  Engram Doctor - Config Health Check")
     print("========================================\n")
 
-    issues: list[tuple[Path, str]] = []  # (config_path, 描述)
+    # ── 第一步：扫描已安装的 AI 工具 ──
+    tools = _detect_installed_tools()
 
-    for tool_id, cfg in _tool_configs().items():
-        for config_path in cfg["config_paths"]:
-            if not config_path.is_file():
-                continue
-            config = _read_mcp_config(config_path)
-            servers = config.get("mcpServers", {})
+    if not tools:
+        print("  [!] No supported AI tools detected on this system.\n")
+        print("  Supported tools: Claude Code, Claude Desktop, Cursor,")
+        print("  Codex, Windsurf, Trae\n")
+        return 0
 
-            # 检查旧版名称
-            stale = [n for n in LEGACY_SERVER_NAMES if n in servers]
-            if stale:
-                issues.append((config_path, f"包含旧版 server: {', '.join(stale)}"))
+    print(f"  Detected {len(tools)} AI tool(s):\n")
+    configured_count = 0
+    unconfigured: list[dict] = []
+    for t in tools:
+        if t["status"] == "configured":
+            print(f"    [✓] {t['name']} — Engram configured")
+            configured_count += 1
+        else:
+            print(f"    [ ] {t['name']} — Engram NOT configured")
+            unconfigured.append(t)
+    print()
 
-            # 检查 engram 条目路径是否有效
-            engram_entry = servers.get("engram", {})
-            if engram_entry:
-                python_exe = engram_entry.get("command", "")
-                server_script = (engram_entry.get("args") or [""])[0]
-                if python_exe and not Path(python_exe).is_file():
-                    issues.append((config_path, f"Python 路径不存在: {python_exe}"))
-                if server_script and not Path(server_script).is_file():
-                    issues.append((config_path, f"mcp_server.py 路径不存在: {server_script}"))
+    # ── 第二步：验证已配置的条目 ──
+    issues: list[tuple[dict, str]] = []  # (tool_info, 描述)
 
-    # Info: remind about ENGRAM_TOOLS default change (v3.13+)
-    for _tool_id, cfg in _tool_configs().items():
-        for config_path in cfg["config_paths"]:
-            if not config_path.is_file():
-                continue
-            config = _read_mcp_config(config_path)
-            engram_entry = config.get("mcpServers", {}).get("engram", {})
-            if engram_entry and not engram_entry.get("env", {}).get("ENGRAM_TOOLS"):
-                print(f"  [info] {config_path}")
-                print("    -> Engram now defaults to 10 core tools (was 43).")
-                print('    -> Add "ENGRAM_TOOLS": "all" to env if you need all 43 tools.')
-                print()
+    for t in tools:
+        if t["status"] != "configured":
+            continue
+        servers = t["servers"]
+
+        # 旧版 server 名称
+        stale = [n for n in LEGACY_SERVER_NAMES if n in servers]
+        if stale:
+            issues.append((t, f"包含旧版 server: {', '.join(stale)}"))
+
+        # 路径验证（核心：stale path 检测）
+        path_issues = _validate_engram_entry(servers, t["config_path"])
+        for desc in path_issues:
+            issues.append((t, desc))
+
+    # ── 第三步：报告 ──
+    if unconfigured:
+        print(f"  [info] {len(unconfigured)} tool(s) detected but Engram not configured:")
+        for t in unconfigured:
+            print(f"    - {t['name']} ({t['config_path']})")
+        print("    Run 'engram setup' to configure them.\n")
 
     if not issues:
-        print("  [ok] All configs look healthy.\n")
+        if configured_count > 0:
+            print("  [ok] All configured tools look healthy.\n")
         return 0
 
     print(f"  [!] Found {len(issues)} issue(s):\n")
-    for path, desc in issues:
-        print(f"  {path}")
+    for t, desc in issues:
+        print(f"  {t['name']} ({t['config_path']})")
         print(f"    -> {desc}")
     print()
 
     if not fix:
-        print("  Run 'engram doctor --fix' to auto-repair the issues above.\n")
+        print("  Run 'engram doctor --fix' to auto-repair.\n")
         return len(issues)
 
-    # 自动修复
+    # ── 第四步：自动修复 ──
     python_path = _find_python()
     mcp_server_path = _find_mcp_server()
     if not python_path or not mcp_server_path:
@@ -945,16 +1227,21 @@ def run_doctor(fix: bool = False) -> int:
 
     fixed = 0
     seen_paths: set[Path] = set()
-    for path, _ in issues:
+    for t, _ in issues:
+        path = t["config_path"]
         if path in seen_paths:
             continue
         seen_paths.add(path)
+        fmt = t.get("format", "json")
         try:
-            _write_mcp_config(path, python_path, mcp_server_path)
-            print(f"  [fixed] {path}")
+            if fmt == "toml":
+                _write_mcp_config_toml(path, python_path, mcp_server_path)
+            else:
+                _write_mcp_config(path, python_path, mcp_server_path)
+            print(f"  [fixed] {t['name']} ({path})")
             fixed += 1
         except Exception as exc:
-            print(f"  [error] {path}: {exc}")
+            print(f"  [error] {t['name']} ({path}): {exc}")
 
     remaining = len(issues) - fixed
     print(f"\n  Done: {fixed} config(s) updated. Restart your AI tools to apply changes.\n")
