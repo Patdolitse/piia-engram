@@ -38,11 +38,10 @@ class EncryptionEngine:
         self._secret = secret or ""
         self.enabled = bool(secret) and HAS_CRYPTO
         if secret and not HAS_CRYPTO:
-            import warnings
-            warnings.warn(
+            raise RuntimeError(
                 "ENGRAM_SECRET is set but 'cryptography' package is not installed. "
-                "Encryption disabled. Install it: pip install piia-engram[secure]",
-                stacklevel=2,
+                "Data would be stored in plaintext despite user expectation of encryption. "
+                "Install it: pip install piia-engram[secure]"
             )
 
     def encrypt(self, value: str) -> str:
