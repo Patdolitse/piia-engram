@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 sys.path.insert(0, "src")
 
-from engram_core.setup_wizard import _classify_line, _scan_rule_files
+from piia_engram.setup_wizard import _classify_line, _scan_rule_files
 
 # (input_line, scope, expected_category)
 TEST_CASES: list[tuple[str, str, str]] = [

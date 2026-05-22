@@ -127,8 +127,8 @@ regression_baseline:
 ## 7. 修复验证（第四轮后续）
 
 修复位置：
-- src/engram_core/core.py:1675-1687 (generate_context)
-- src/engram_core/core.py:1777-1789 (export_identity_card)
+- src/piia_engram/core.py:1675-1687 (generate_context)
+- src/piia_engram/core.py:1777-1789 (export_identity_card)
 
 验证命令：
 - `python -m experiments.benchmarks.round4_regression.run_round4`

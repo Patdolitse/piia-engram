@@ -19,10 +19,10 @@ import sys
 from pathlib import Path
 
 # Add tools directory to path
-TOOLS_DIR = Path(__file__).resolve().parent.parent / "src" / "engram_core"
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "src" / "piia_engram"
 sys.path.insert(0, str(TOOLS_DIR.parent))
 
-from engram_core.core import Engram
+from piia_engram.core import Engram
 
 
 def print_section(title: str):

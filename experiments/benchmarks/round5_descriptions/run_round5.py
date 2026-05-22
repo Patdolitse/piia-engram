@@ -92,7 +92,7 @@ def render_report(t1: dict[str, Any], t2: dict[str, Any], t3: dict[str, Any], ju
         f"- LLM：DeepSeek（`{judge_info.get('model', 'deepseek-chat')}`）",
         "- 温度：0.0",
         "- 每个场景：3 次取多数",
-        f"- 当前工具数：{judge_info.get('tool_count', 0)}（从 `src/engram_core/mcp_server.py` 实时抽取）",
+        f"- 当前工具数：{judge_info.get('tool_count', 0)}（从 `src/piia_engram/mcp_server.py` 实时抽取）",
         f"- 总场景数：{t1['scenario_count'] + t2['scenario_count'] + t3['scenario_count']}",
         f"- 总调用次数：{judge_info.get('total_calls', 0)}",
         f"- 失败调用：{judge_info.get('failed_calls', 0)}",

@@ -1,4 +1,4 @@
-"""Tests for engram_core.telemetry — anonymous usage statistics (Phase 1)."""
+"""Tests for piia_engram.telemetry — anonymous usage statistics (Phase 1)."""
 
 import json
 import os
@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from engram_core.telemetry import (
+from piia_engram.telemetry import (
     ToolCallTracker,
     _daily_id,
     _validate_payload,

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from engram_core.core import (
+from piia_engram.core import (
     CONFLICT_C_CEILING,
     CONFLICT_Q_THRESHOLD,
     Engram,
@@ -1253,7 +1253,7 @@ def test_extract_session_insights_broader_patterns(tmp_path: Path):
 
 def test_parse_args_defaults():
     """默认参数应为 stdio 模式。"""
-    from engram_core.mcp_server import _parse_args
+    from piia_engram.mcp_server import _parse_args
 
     args = _parse_args(["mcp_server.py"])
 
@@ -1264,7 +1264,7 @@ def test_parse_args_defaults():
 
 def test_parse_args_sse_mode():
     """SSE 模式参数应正确解析。"""
-    from engram_core.mcp_server import _parse_args
+    from piia_engram.mcp_server import _parse_args
 
     args = _parse_args([
         "mcp_server.py",
@@ -1285,7 +1285,7 @@ def test_token_auth_middleware_rejects_invalid_token():
     """TokenAuthMiddleware 应拒绝缺失或错误 Bearer token。"""
     import asyncio
 
-    from engram_core.mcp_server import TokenAuthMiddleware
+    from piia_engram.mcp_server import TokenAuthMiddleware
 
     class FakeRequest:
         headers = {}
@@ -1305,7 +1305,7 @@ def test_token_auth_middleware_accepts_valid_token():
 
     from starlette.responses import JSONResponse
 
-    from engram_core.mcp_server import TokenAuthMiddleware
+    from piia_engram.mcp_server import TokenAuthMiddleware
 
     class FakeRequest:
         headers = {"authorization": "Bearer secret"}
@@ -2555,7 +2555,7 @@ def test_lesson_eviction_staging_first(tmp_path: Path):
     path = tmp_path / "knowledge" / "lessons.json"
 
     # 填充到接近上限
-    from engram_core.core import MAX_KNOWLEDGE_ENTRIES
+    from piia_engram.core import MAX_KNOWLEDGE_ENTRIES
     lessons = []
     for i in range(MAX_KNOWLEDGE_ENTRIES - 1):
         lessons.append({
@@ -2673,7 +2673,7 @@ def test_generate_context_reconcile_failure_graceful(tmp_path: Path):
 
 def test_extract_knowledge_with_mock_provider():
     """extract_knowledge should parse LLM JSON response."""
-    from engram_core.context import extract_knowledge
+    from piia_engram.context import extract_knowledge
 
     class MockProvider:
         def chat(self, messages, project_folder):
@@ -2698,7 +2698,7 @@ def test_extract_knowledge_with_mock_provider():
 
 def test_extract_knowledge_handles_bad_json():
     """extract_knowledge should return None on invalid LLM response."""
-    from engram_core.context import extract_knowledge
+    from piia_engram.context import extract_knowledge
 
     class BadProvider:
         def chat(self, messages, project_folder):
@@ -2712,7 +2712,7 @@ def test_extract_knowledge_handles_bad_json():
 
 def test_extract_knowledge_handles_exception():
     """extract_knowledge should return None on LLM exception."""
-    from engram_core.context import extract_knowledge
+    from piia_engram.context import extract_knowledge
 
     class CrashProvider:
         def chat(self, messages, project_folder):
@@ -2729,7 +2729,7 @@ def test_extract_knowledge_handles_exception():
 
 def test_ingest_extraction_work_style(tmp_path: Path):
     """ingest_extraction should apply work_style_updates."""
-    from engram_core.context import ingest_extraction
+    from piia_engram.context import ingest_extraction
 
     engram = make_engram(tmp_path)
     extracted = {
@@ -2746,7 +2746,7 @@ def test_ingest_extraction_work_style(tmp_path: Path):
 
 def test_ingest_extraction_quality_standards(tmp_path: Path):
     """ingest_extraction should apply quality_updates with rule dedup."""
-    from engram_core.context import ingest_extraction
+    from piia_engram.context import ingest_extraction
 
     engram = make_engram(tmp_path)
     # Add existing rule
@@ -2768,8 +2768,8 @@ def test_ingest_extraction_quality_standards(tmp_path: Path):
 
 def test_ingest_extraction_domains_and_project(tmp_path: Path):
     """ingest_extraction should increment domains and save project snapshot."""
-    from engram_core.context import ingest_extraction
-    from engram_core.core import _read_json
+    from piia_engram.context import ingest_extraction
+    from piia_engram.core import _read_json
 
     engram = Engram(root=tmp_path)
     extracted = {
@@ -2792,7 +2792,7 @@ def test_ingest_extraction_domains_and_project(tmp_path: Path):
 
 def test_ingest_extraction_quality_bad_threshold(tmp_path: Path):
     """ingest_extraction should handle non-numeric acceptance_threshold."""
-    from engram_core.context import ingest_extraction
+    from piia_engram.context import ingest_extraction
 
     engram = make_engram(tmp_path)
     extracted = {
@@ -2899,7 +2899,7 @@ def test_cjk_mixed_query(tmp_path: Path):
 
 def test_parse_schema_version_invalid(tmp_path: Path):
     """_parse_schema_version 应对无效输入返回 (0, 0)。"""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     assert Engram._parse_schema_version("abc") == (0, 0)
     assert Engram._parse_schema_version(None) == (0, 0)
 
@@ -3013,7 +3013,7 @@ def test_get_preferences_falls_back_to_work_style(tmp_path: Path):
 
 def test_sanitize_project_with_path(tmp_path: Path):
     """_sanitize_project 应从路径中提取项目名。"""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     assert Engram._sanitize_project("/home/user/projects/my-app") == "my-app"
     assert Engram._sanitize_project("C:\\Users\\dev\\project") == "project"
     assert Engram._sanitize_project("") == ""
@@ -3053,7 +3053,7 @@ def test_add_decision_with_alternatives(tmp_path: Path):
 
 def test_lesson_eviction_overflow(tmp_path: Path):
     """超过 MAX_KNOWLEDGE_ENTRIES 时应驱逐 staging 条目优先。"""
-    from engram_core.storage import MAX_KNOWLEDGE_ENTRIES, _read_json
+    from piia_engram.storage import MAX_KNOWLEDGE_ENTRIES, _read_json
 
     engram = make_engram(tmp_path)
     path = tmp_path / "knowledge" / "lessons.json"
@@ -3070,7 +3070,7 @@ def test_lesson_eviction_overflow(tmp_path: Path):
             "tier": tier,
             "timestamp": f"2026-01-{(i % 28) + 1:02d}T00:00:00",
         })
-    from engram_core.storage import _write_json
+    from piia_engram.storage import _write_json
     _write_json(path, entries)
 
     # Add one more → triggers eviction
@@ -3083,7 +3083,7 @@ def test_lesson_eviction_overflow(tmp_path: Path):
 
 def test_decision_eviction_overflow(tmp_path: Path):
     """超过 MAX_KNOWLEDGE_ENTRIES 时应驱逐 staging 决策优先。"""
-    from engram_core.storage import MAX_KNOWLEDGE_ENTRIES, _read_json
+    from piia_engram.storage import MAX_KNOWLEDGE_ENTRIES, _read_json
 
     engram = make_engram(tmp_path)
     path = tmp_path / "knowledge" / "decisions.json"
@@ -3099,7 +3099,7 @@ def test_decision_eviction_overflow(tmp_path: Path):
             "tier": tier,
             "timestamp": f"2026-01-{(i % 28) + 1:02d}T00:00:00",
         })
-    from engram_core.storage import _write_json
+    from piia_engram.storage import _write_json
     _write_json(path, entries)
 
     result = engram.add_decision({"question": "溢出决策", "choice": "测试"})
@@ -3244,3 +3244,198 @@ def test_import_all_overwrite_mode(tmp_path: Path):
     assert "profile" in result["imported"]
     assert "work_style" in result["imported"]
     assert "quality_standards" in result["imported"]
+
+
+# ===========================================================================
+# Tiered cold-start context (level parameter)
+# ===========================================================================
+
+
+def _seed_full_context_data(engram: Engram) -> None:
+    """给 engram 填一份足以让所有 section 出现的数据。"""
+    engram.update_profile({
+        "role": "PM",
+        "language": "Chinese",
+        "technical_level": "advanced",
+        "description": "test user",
+    })
+    engram.update_preferences({
+        "work_patterns": {"pace": "fast"},
+        "communication": "concise",
+        "tool_preferences": {"editor": "vscode"},
+    })
+    engram.update_quality_standards({
+        "acceptance_threshold": 4,
+        "rules": ["always test before push"],
+    })
+    for i in range(3):
+        engram.add_lesson(f"lesson item alpha bravo {i}", "python")
+    for i in range(3):
+        engram.add_decision({
+            "question": f"choose-tool-{i}",
+            "choice": f"option-{i}",
+            "reasoning": "context",
+        })
+
+
+def test_generate_context_level_quick_minimal(tmp_path: Path):
+    """quick 只输出 profile + preferences，不含 quality/lessons/decisions/domains。"""
+    engram = make_engram(tmp_path)
+    _seed_full_context_data(engram)
+
+    ctx = engram.generate_context(level="quick")
+
+    assert "## 关于用户" in ctx
+    assert "## 工作偏好" in ctx
+    assert "## 质量标准" not in ctx
+    assert "## 相关经验教训" not in ctx
+    assert "## 已做的关键决策" not in ctx
+    assert "## 经验领域" not in ctx
+    assert "auto_sync" not in ctx
+    assert "staging_review_reminder" not in ctx
+
+
+def test_generate_context_level_standard_includes_top_knowledge(tmp_path: Path):
+    """standard 含质量/教训/决策/领域，但跳过 sync/stale/staging/conflicts。"""
+    engram = make_engram(tmp_path)
+    _seed_full_context_data(engram)
+
+    ctx = engram.generate_context(level="standard")
+
+    assert "## 关于用户" in ctx
+    assert "## 质量标准" in ctx
+    assert "## 相关经验教训" in ctx
+    assert "## 已做的关键决策" in ctx
+    # 重 IO 的部分不应出现
+    assert "auto_sync" not in ctx
+    assert "stale_knowledge_warning" not in ctx
+    assert "staging_review_reminder" not in ctx
+
+
+def test_generate_context_level_full_default_backward_compat(tmp_path: Path):
+    """不传 level 时行为应与之前一致(level=full)。"""
+    engram = make_engram(tmp_path)
+    _seed_full_context_data(engram)
+
+    legacy = engram.generate_context()
+    explicit = engram.generate_context(level="full")
+
+    # 两者结构相同；reconcile 的 side effects 可能在二次调用导入数变化，
+    # 因此只比对静态 section 标题，足以证明默认 = full。
+    for header in ["## 关于用户", "## 工作偏好", "## 质量标准",
+                   "## 相关经验教训", "## 已做的关键决策"]:
+        assert header in legacy
+        assert header in explicit
+
+
+def test_generate_context_unknown_level_falls_back_to_full(tmp_path: Path):
+    """未知 level 字符串应回退到 full，避免静默丢内容。"""
+    engram = make_engram(tmp_path)
+    _seed_full_context_data(engram)
+
+    ctx = engram.generate_context(level="nonsense")
+
+    assert "## 关于用户" in ctx
+    assert "## 质量标准" in ctx
+    assert "## 相关经验教训" in ctx
+
+
+def test_generate_context_quick_is_faster_than_full(tmp_path: Path):
+    """quick 应明显快于 full（跳过文件系统扫描的副作用）。"""
+    import time
+    engram = make_engram(tmp_path)
+    _seed_full_context_data(engram)
+
+    # warm-up
+    engram.generate_context(level="full")
+    engram.generate_context(level="quick")
+
+    def _avg(level: str, runs: int = 3) -> float:
+        samples = []
+        for _ in range(runs):
+            t0 = time.perf_counter()
+            engram.generate_context(level=level)
+            samples.append(time.perf_counter() - t0)
+        return sum(samples) / len(samples)
+
+    full_avg = _avg("full")
+    quick_avg = _avg("quick")
+
+    # full 必然慢于 quick（reconcile 扫描）。设较宽松阈值避免 CI flake。
+    assert quick_avg < full_avg, (
+        f"quick={quick_avg*1000:.1f}ms full={full_avg*1000:.1f}ms — "
+        "quick mode should skip reconcile and be faster"
+    )
+
+
+# ===========================================================================
+# Quick-context snapshot file (refresh_quick_context)
+# ===========================================================================
+
+
+def test_refresh_quick_context_writes_file(tmp_path: Path):
+    """refresh_quick_context 应写出 markdown 文件，含身份内容。"""
+    engram = make_engram(tmp_path)
+    _seed_full_context_data(engram)
+
+    path = engram.refresh_quick_context()
+
+    assert path.exists(), "snapshot file should be created"
+    assert path.name == "quick_context.md"
+    text = path.read_text(encoding="utf-8")
+    # 顶部标记
+    assert "Engram quick_context snapshot" in text
+    assert "level=standard" in text
+    # standard 应含的内容
+    assert "## 关于用户" in text
+    assert "## 质量标准" in text
+    # standard 不应含的内容（reconcile / sync）
+    assert "auto_sync" not in text
+
+
+def test_refresh_quick_context_atomic_overwrite(tmp_path: Path):
+    """重复刷新应正确覆盖旧内容，无残留临时文件。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "first role"})
+    p1 = engram.refresh_quick_context()
+    text1 = p1.read_text(encoding="utf-8")
+    assert "first role" in text1
+
+    engram.update_profile({"role": "second role"})
+    p2 = engram.refresh_quick_context()
+    text2 = p2.read_text(encoding="utf-8")
+    assert "second role" in text2
+    assert "first role" not in text2  # 被覆盖
+
+    # 无残留 .tmp 文件
+    leftovers = [p for p in p1.parent.iterdir() if p.name.startswith(".quick_context.md.")]
+    assert leftovers == [], f"leftover tmp files: {leftovers}"
+
+
+def test_refresh_quick_context_respects_level(tmp_path: Path):
+    """level 参数应控制快照详细度。"""
+    engram = make_engram(tmp_path)
+    _seed_full_context_data(engram)
+
+    quick_path = engram.refresh_quick_context(level="quick")
+    quick_text = quick_path.read_text(encoding="utf-8")
+    assert "## 关于用户" in quick_text
+    assert "## 质量标准" not in quick_text  # quick 不含
+
+    # 切回 standard 应重新填回 quality
+    std_path = engram.refresh_quick_context(level="standard")
+    std_text = std_path.read_text(encoding="utf-8")
+    assert "## 质量标准" in std_text
+
+
+def test_refresh_quick_context_custom_target(tmp_path: Path):
+    """target 参数应允许写到自定义路径。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "PM"})
+
+    target = tmp_path / "subdir" / "my_card.md"
+    path = engram.refresh_quick_context(target=target)
+
+    assert path == target
+    assert target.exists()
+    assert "PM" in target.read_text(encoding="utf-8")

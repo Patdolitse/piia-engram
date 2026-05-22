@@ -1,4 +1,4 @@
-"""Tests for MCP tool wrappers in engram_core.mcp_server.
+"""Tests for MCP tool wrappers in piia_engram.mcp_server.
 
 Each ``@mcp.tool()`` is a thin async wrapper around an Engram method. These
 tests verify:
@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from engram_core import mcp_server
-from engram_core.core import Engram
+from piia_engram import mcp_server
+from piia_engram.core import Engram
 
 
 # ---------------------------------------------------------------------------

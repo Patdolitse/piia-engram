@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from engram_core.core import Engram
+from piia_engram.core import Engram
 
 from .fixtures import RECALL_LESSONS, create_lessons_only
 from .llm_judge import DeepSeekJudge, build_relevance_rating_prompt

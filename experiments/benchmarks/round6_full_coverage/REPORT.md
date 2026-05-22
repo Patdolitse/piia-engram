@@ -5,12 +5,12 @@
 - LLM：DeepSeek `deepseek-chat`
 - 温度：0.0
 - 每个场景：3 次调用取多数
-- 当前工具数：39（从 `src/engram_core/mcp_server.py` 实时抽取）
+- 当前工具数：39（从 `src/piia_engram/mcp_server.py` 实时抽取）
 - 总场景数：88
 - 总调用次数：264
 - 失败调用：0
 - Usage：prompt=733260，completion=15343，total=748603 tokens
-- 边界：本轮只做验证；未修改 `src/engram_core/mcp_server.py` 主代码。
+- 边界：本轮只做验证；未修改 `src/piia_engram/mcp_server.py` 主代码。
 - 原始响应：`results_raw.jsonl` 合并保存全部 request/response/raw_content/parsed/error。
 
 ## 2. G1 Identity & Context 结果

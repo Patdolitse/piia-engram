@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from engram_core.core import Engram
+from piia_engram.core import Engram
 
 from experiments.benchmarks.round4_regression.llm_judge import DeepSeekClient, _parse_json_response
 

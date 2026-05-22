@@ -5,7 +5,7 @@
 - 范围：验证 domain 多标签软化；未修改主代码。
 - T1：Python 直接测试 `Engram(root=tempdir)`，不用 LLM，不污染用户数据。
 - T2：DeepSeek `deepseek-chat`，从 Round 6 抽取 20 个核心场景，每场景 3 次取多数。
-- T2 工具数：39（从 `src/engram_core/mcp_server.py` 实时抽取）。
+- T2 工具数：39（从 `src/piia_engram/mcp_server.py` 实时抽取）。
 - T2 调用次数：60，失败调用：0。
 - T2 usage：prompt=169896，completion=3203，total=173099 tokens。
 

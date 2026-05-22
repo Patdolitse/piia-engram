@@ -19,7 +19,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ROUND3_DIR = Path(__file__).resolve().parent
-ATOMIC_SOURCE = REPO_ROOT / "src" / "engram_core" / "mcp_server.py"
+ATOMIC_SOURCE = REPO_ROOT / "src" / "piia_engram" / "mcp_server.py"
 COORDINATOR_SOURCE = REPO_ROOT / "experiments" / "coordinator" / "high_level_actions.py"
 COORDINATOR_TOOLS = {"remember", "recall", "cleanup", "inherit", "sync"}
 

@@ -1,13 +1,13 @@
 # 贡献指南
 
-感谢你考虑为 Engram 做贡献 — AI 身份层，记住你是谁，而不只是你做了什么。
+感谢你考虑为 piia-engram 做贡献 — AI 身份层，记住你是谁，而不只是你做了什么。
 
 [English](CONTRIBUTING.md) | [中文](CONTRIBUTING.zh-CN.md)
 
 ## 架构概览
 
 ```
-src/engram_core/
+src/piia_engram/
     core.py            # 核心引擎：知识增删改查、身份管理、链接管理
     retrieval.py       # RetrievalMixin — 搜索、排序、层级晋升
     context.py         # ContextMixin — 冷启动上下文、内容摄取
@@ -42,8 +42,8 @@ experiments/
 ## 开发环境
 
 ```bash
-git clone https://github.com/Patdolitse/engram.git
-cd engram
+git clone https://github.com/Patdolitse/piia-engram.git
+cd piia-engram
 pip install -e ".[dev]"
 ```
 
@@ -63,12 +63,12 @@ python -m pytest tests/ -v
 - **改动聚焦** — 一个 PR 解决一个问题
 - **可读性优先** — 三行相似代码优于过早抽象
 - **测试覆盖** — 行为变更必须有对应测试
-- **禁止外部调用** — 核心操作中 Engram 绝不能发起网络请求
+- **禁止外部调用** — 核心操作中 piia-engram 绝不能发起网络请求
 - **双语内容** — 用户可见的字符串应同时支持中英文
 
 ## 安全准则
 
-Engram 处理敏感个人数据，需格外小心：
+piia-engram 处理敏感个人数据，需格外小心：
 
 - **禁止 `eval()` / `exec()` 用户数据**
 - **HTML 输出必须用 `_esc()` 转义所有用户可控值**（防 XSS）
@@ -97,9 +97,9 @@ Engram 处理敏感个人数据，需格外小心：
 - 操作系统和 Python 版本
 - 复现步骤
 - 预期行为 vs 实际行为
-- Engram 版本（`pip show piia-engram`）
+- piia-engram 版本（`pip show piia-engram`）
 
-**安全漏洞**：请勿公开提交 Issue，发送邮件至 engram-security@proton.me。
+**安全漏洞**：请勿公开提交 Issue，发送邮件至 piia-engram-security@proton.me。
 
 ## 许可证
 

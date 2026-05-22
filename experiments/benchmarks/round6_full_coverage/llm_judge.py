@@ -16,7 +16,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ROUND6_DIR = Path(__file__).resolve().parent
 ROUND3_ENV = ROUND6_DIR.parent / "round3" / ".env"
-MCP_SERVER = REPO_ROOT / "src" / "engram_core" / "mcp_server.py"
+MCP_SERVER = REPO_ROOT / "src" / "piia_engram" / "mcp_server.py"
 
 
 def load_env(path: Path | None = None) -> None:

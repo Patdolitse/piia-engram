@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 ENGRAM_DIRS = ("identity", "knowledge", "projects", "exports", "compat")
 DEFAULT_PYTHON = "python"
-MCP_RELATIVE_PATH = "src/engram_core/mcp_server.py"
+MCP_RELATIVE_PATH = "src/piia_engram/mcp_server.py"
 
 
 def configure_output() -> None:

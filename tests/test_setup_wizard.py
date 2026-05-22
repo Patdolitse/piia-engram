@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from engram_core.setup_wizard import (
+from piia_engram.setup_wizard import (
     LEGACY_SERVER_NAMES,
     _choice,
     _classify_line,
@@ -113,7 +113,7 @@ def test_engram_dir_env(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("ENGRAM_DIR", custom)
 
     import importlib
-    import engram_core.core as core_mod
+    import piia_engram.core as core_mod
     importlib.reload(core_mod)
 
     engram = core_mod.Engram()
@@ -141,7 +141,7 @@ def test_seed_onboarding_saves_profile_and_lessons(tmp_path: Path, monkeypatch, 
 
     summary = _run_seed_knowledge_onboarding(str(tmp_path), cwd=tmp_path)
 
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
 
     engram = Engram(root=tmp_path)
     profile = engram.get_profile()
@@ -176,7 +176,7 @@ def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
 
     summary = _run_seed_knowledge_onboarding(str(tmp_path), cwd=tmp_path)
 
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
 
     engram = Engram(root=tmp_path)
     lessons = engram.get_lessons(limit=None, _update_access=False)
@@ -197,7 +197,7 @@ def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch,
 
     summary = _run_seed_knowledge_onboarding(str(tmp_path), cwd=tmp_path)
 
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
 
     engram = Engram(root=tmp_path)
 
@@ -211,7 +211,7 @@ def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch,
 
 def test_doctor_healthy_config(tmp_path: Path, monkeypatch):
     """doctor 对健康配置应返回 0（无问题）。"""
-    from engram_core.setup_wizard import run_doctor, _write_mcp_config, _find_python, _find_mcp_server
+    from piia_engram.setup_wizard import run_doctor, _write_mcp_config, _find_python, _find_mcp_server
 
     python_path = _find_python()
     mcp_path = _find_mcp_server()
@@ -225,8 +225,8 @@ def test_doctor_healthy_config(tmp_path: Path, monkeypatch):
 
     # Patch _tool_configs to point to our test config
     monkeypatch.setattr(
-        "engram_core.setup_wizard._tool_configs",
-        lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+        "piia_engram.setup_wizard._tool_configs",
+        lambda: {"test": {"name": "Test", "config_paths": [config_path], "verified": True}},
     )
 
     result = run_doctor(fix=False)
@@ -235,7 +235,7 @@ def test_doctor_healthy_config(tmp_path: Path, monkeypatch):
 
 def test_doctor_detects_legacy_server_name(tmp_path: Path, monkeypatch):
     """doctor 应检测到旧版 server 名称。"""
-    from engram_core.setup_wizard import run_doctor
+    from piia_engram.setup_wizard import run_doctor
 
     config_dir = tmp_path / ".claude"
     config_dir.mkdir()
@@ -248,8 +248,8 @@ def test_doctor_detects_legacy_server_name(tmp_path: Path, monkeypatch):
     }), encoding="utf-8")
 
     monkeypatch.setattr(
-        "engram_core.setup_wizard._tool_configs",
-        lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+        "piia_engram.setup_wizard._tool_configs",
+        lambda: {"test": {"name": "Test", "config_paths": [config_path], "verified": True}},
     )
 
     result = run_doctor(fix=False)
@@ -258,7 +258,7 @@ def test_doctor_detects_legacy_server_name(tmp_path: Path, monkeypatch):
 
 def test_doctor_detects_invalid_python_path(tmp_path: Path, monkeypatch):
     """doctor 应检测到不存在的 Python 路径。"""
-    from engram_core.setup_wizard import run_doctor
+    from piia_engram.setup_wizard import run_doctor
 
     config_dir = tmp_path / ".claude"
     config_dir.mkdir()
@@ -273,8 +273,8 @@ def test_doctor_detects_invalid_python_path(tmp_path: Path, monkeypatch):
     }), encoding="utf-8")
 
     monkeypatch.setattr(
-        "engram_core.setup_wizard._tool_configs",
-        lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+        "piia_engram.setup_wizard._tool_configs",
+        lambda: {"test": {"name": "Test", "config_paths": [config_path], "verified": True}},
     )
 
     result = run_doctor(fix=False)
@@ -549,13 +549,13 @@ class TestPrivacyReport:
 class TestSafePrint:
     def test_normal_print(self, capsys):
         """Normal ASCII text prints normally."""
-        from engram_core.setup_wizard import _safe_print
+        from piia_engram.setup_wizard import _safe_print
         _safe_print("hello world")
         assert "hello world" in capsys.readouterr().out
 
     def test_unicode_fallback(self, monkeypatch, capsys):
         """When stdout.encoding can't handle chars, fallback strips them."""
-        from engram_core.setup_wizard import _safe_print
+        from piia_engram.setup_wizard import _safe_print
         # Mock print to raise UnicodeEncodeError on first call, succeed on second
         call_count = [0]
         original_print = print
@@ -578,7 +578,7 @@ class TestSafePrint:
 class TestAutoMigrate:
     def test_first_run_creates_sentinel(self, tmp_path, monkeypatch):
         """auto_migrate should create .migrated_version sentinel."""
-        from engram_core.setup_wizard import auto_migrate
+        from piia_engram.setup_wizard import auto_migrate
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
 
         auto_migrate()
@@ -591,7 +591,7 @@ class TestAutoMigrate:
 
     def test_skip_if_already_migrated(self, tmp_path, monkeypatch):
         """auto_migrate should skip if sentinel matches current version."""
-        from engram_core.setup_wizard import auto_migrate
+        from piia_engram.setup_wizard import auto_migrate
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
 
         # First run
@@ -608,7 +608,7 @@ class TestAutoMigrate:
 
     def test_removes_legacy_server_names(self, tmp_path, monkeypatch):
         """auto_migrate should remove legacy server names from tool configs."""
-        from engram_core.setup_wizard import auto_migrate
+        from piia_engram.setup_wizard import auto_migrate
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
 
@@ -625,7 +625,7 @@ class TestAutoMigrate:
 
         # Patch _tool_configs to point to our test config
         monkeypatch.setattr(
-            "engram_core.setup_wizard._tool_configs",
+            "piia_engram.setup_wizard._tool_configs",
             lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
         )
 
@@ -642,12 +642,12 @@ class TestAutoMigrate:
 
     def test_migration_failure_doesnt_crash(self, tmp_path, monkeypatch):
         """auto_migrate should log warning on failure, not crash."""
-        from engram_core.setup_wizard import auto_migrate
+        from piia_engram.setup_wizard import auto_migrate
 
         # Point to a dir that will cause issues — make __version__ import fail
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.setattr(
-            "engram_core.setup_wizard._tool_configs",
+            "piia_engram.setup_wizard._tool_configs",
             lambda: 1 / 0,  # will raise if called
         )
         # But the version import happens first — if it succeeds, _tool_configs runs.
@@ -661,7 +661,7 @@ class TestAutoMigrate:
 class TestRunSetup:
     def test_full_wizard_flow(self, tmp_path, monkeypatch, capsys):
         """run_setup should complete the full wizard flow with mocked inputs."""
-        from engram_core.setup_wizard import run_setup, _find_python, _find_mcp_server
+        from piia_engram.setup_wizard import run_setup, _find_python, _find_mcp_server
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
@@ -688,15 +688,15 @@ class TestRunSetup:
         # Mock _detect_tools to return one fake tool
         fake_config = tmp_path / "fake_mcp.json"
         monkeypatch.setattr(
-            "engram_core.setup_wizard._detect_tools",
+            "piia_engram.setup_wizard._detect_tools",
             lambda: [{"id": "test", "name": "TestTool", "config_path": fake_config}],
         )
         monkeypatch.setattr(
-            "engram_core.setup_wizard._find_python",
+            "piia_engram.setup_wizard._find_python",
             lambda: python_path or "/usr/bin/python3",
         )
         monkeypatch.setattr(
-            "engram_core.setup_wizard._find_mcp_server",
+            "piia_engram.setup_wizard._find_mcp_server",
             lambda: mcp_path or "/path/to/mcp_server.py",
         )
 
@@ -709,12 +709,12 @@ class TestRunSetup:
 
     def test_wizard_no_python_exits(self, tmp_path, monkeypatch, capsys):
         """run_setup should exit(1) if no Python found."""
-        from engram_core.setup_wizard import run_setup
+        from piia_engram.setup_wizard import run_setup
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         answers = iter(["1"])  # language only
         monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
-        monkeypatch.setattr("engram_core.setup_wizard._find_python", lambda: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: None)
 
         with pytest.raises(SystemExit) as exc_info:
             run_setup()
@@ -722,13 +722,13 @@ class TestRunSetup:
 
     def test_wizard_no_mcp_server_exits(self, tmp_path, monkeypatch, capsys):
         """run_setup should exit(1) if no mcp_server.py found."""
-        from engram_core.setup_wizard import run_setup
+        from piia_engram.setup_wizard import run_setup
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         answers = iter(["1"])  # language only
         monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
-        monkeypatch.setattr("engram_core.setup_wizard._find_python", lambda: "/usr/bin/python3")
-        monkeypatch.setattr("engram_core.setup_wizard._find_mcp_server", lambda: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: None)
 
         with pytest.raises(SystemExit) as exc_info:
             run_setup()
@@ -736,7 +736,7 @@ class TestRunSetup:
 
     def test_wizard_no_tools_detected(self, tmp_path, monkeypatch, capsys):
         """run_setup should continue gracefully when no AI tools detected."""
-        from engram_core.setup_wizard import run_setup, _find_python, _find_mcp_server
+        from piia_engram.setup_wizard import run_setup, _find_python, _find_mcp_server
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
@@ -753,13 +753,13 @@ class TestRunSetup:
             "",    # privacy: telemetry
         ])
         monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
-        monkeypatch.setattr("engram_core.setup_wizard._detect_tools", lambda: [])
+        monkeypatch.setattr("piia_engram.setup_wizard._detect_tools", lambda: [])
         monkeypatch.setattr(
-            "engram_core.setup_wizard._find_python",
+            "piia_engram.setup_wizard._find_python",
             lambda: _find_python() or "/usr/bin/python3",
         )
         monkeypatch.setattr(
-            "engram_core.setup_wizard._find_mcp_server",
+            "piia_engram.setup_wizard._find_mcp_server",
             lambda: _find_mcp_server() or "/path/to/mcp_server.py",
         )
 
@@ -770,7 +770,7 @@ class TestRunSetup:
 
     def test_wizard_custom_data_dir(self, tmp_path, monkeypatch, capsys):
         """run_setup should accept custom data directory."""
-        from engram_core.setup_wizard import run_setup
+        from piia_engram.setup_wizard import run_setup
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
@@ -788,9 +788,9 @@ class TestRunSetup:
             "",          # privacy: telemetry
         ])
         monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
-        monkeypatch.setattr("engram_core.setup_wizard._detect_tools", lambda: [])
-        monkeypatch.setattr("engram_core.setup_wizard._find_python", lambda: "/usr/bin/python3")
-        monkeypatch.setattr("engram_core.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
+        monkeypatch.setattr("piia_engram.setup_wizard._detect_tools", lambda: [])
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
 
         run_setup()
 
@@ -804,7 +804,7 @@ class TestRunSetup:
 class TestMainCLI:
     def test_main_unknown_command(self, monkeypatch, capsys):
         """Unknown command should print usage and exit(0)."""
-        from engram_core.setup_wizard import main
+        from piia_engram.setup_wizard import main
         monkeypatch.setattr("sys.argv", ["engram", "bogus"])
 
         with pytest.raises(SystemExit) as exc_info:
@@ -815,11 +815,11 @@ class TestMainCLI:
 
     def test_main_doctor_dispatches(self, tmp_path, monkeypatch, capsys):
         """main() with 'doctor' should call run_doctor."""
-        from engram_core.setup_wizard import main
+        from piia_engram.setup_wizard import main
         monkeypatch.setattr("sys.argv", ["engram", "doctor"])
         # Patch _tool_configs to avoid scanning real filesystem
         monkeypatch.setattr(
-            "engram_core.setup_wizard._tool_configs",
+            "piia_engram.setup_wizard._tool_configs",
             lambda: {},
         )
 
@@ -829,7 +829,7 @@ class TestMainCLI:
 
     def test_main_telemetry_dispatches(self, tmp_path, monkeypatch, capsys):
         """main() with 'telemetry' should call _run_telemetry_cli."""
-        from engram_core.setup_wizard import main
+        from piia_engram.setup_wizard import main
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
         monkeypatch.setattr("sys.argv", ["engram", "telemetry", "status"])
@@ -840,7 +840,7 @@ class TestMainCLI:
 
     def test_main_privacy_dispatches(self, tmp_path, monkeypatch, capsys):
         """main() with 'privacy' should call _run_privacy_report."""
-        from engram_core.setup_wizard import main
+        from piia_engram.setup_wizard import main
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
         monkeypatch.setattr("sys.argv", ["engram", "privacy"])
@@ -902,10 +902,94 @@ class TestTelemetryCLIExtended:
 # ── Doctor --fix tests ─────────────────────────────────────────────
 
 
+class TestDoctorVerifiedCommunity:
+    """doctor 应区分已验证和社区级工具。"""
+
+    def test_verified_label_shown(self, tmp_path, monkeypatch, capsys):
+        """Verified tools should appear under 'Verified' section."""
+        from piia_engram.setup_wizard import run_doctor, _find_python, _find_mcp_server
+
+        python_path = _find_python()
+        mcp_path = _find_mcp_server()
+        if not python_path or not mcp_path:
+            pytest.skip("Cannot find Python or mcp_server.py")
+
+        config_dir = tmp_path / ".claude"
+        config_dir.mkdir()
+        config_path = config_dir / ".mcp.json"
+        _write_mcp_config = __import__("piia_engram.setup_wizard", fromlist=["_write_mcp_config"])._write_mcp_config
+        _write_mcp_config(config_path, python_path, mcp_path)
+
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {"claude_code": {"name": "Claude Code", "config_paths": [config_path], "verified": True}},
+        )
+
+        run_doctor(fix=False)
+        out = capsys.readouterr().out
+        assert "Verified" in out
+        assert "Claude Code" in out
+
+    def test_community_label_shown(self, tmp_path, monkeypatch, capsys):
+        """Community tools should appear under 'Community-supported' section."""
+        from piia_engram.setup_wizard import run_doctor
+
+        config_dir = tmp_path / ".windsurf"
+        config_dir.mkdir()
+        config_path = config_dir / "mcp_config.json"
+        config_path.write_text(json.dumps({
+            "mcpServers": {
+                "engram": {"command": "python", "args": ["-m", "piia_engram.mcp_server"]},
+            }
+        }), encoding="utf-8")
+
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {"windsurf": {"name": "Windsurf", "config_paths": [config_path], "verified": False}},
+        )
+
+        run_doctor(fix=False)
+        out = capsys.readouterr().out
+        assert "Community-supported" in out
+        assert "Windsurf" in out
+
+    def test_mixed_verified_and_community(self, tmp_path, monkeypatch, capsys):
+        """Both sections should appear when both types are present."""
+        from piia_engram.setup_wizard import run_doctor
+
+        # Verified tool
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        claude_path = claude_dir / ".mcp.json"
+        claude_path.write_text(json.dumps({
+            "mcpServers": {"engram": {"command": "python", "args": ["-m", "piia_engram.mcp_server"]}},
+        }), encoding="utf-8")
+
+        # Community tool (installed but not configured)
+        wind_dir = tmp_path / ".windsurf"
+        wind_dir.mkdir()
+        wind_path = wind_dir / "mcp_config.json"
+
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {
+                "claude_code": {"name": "Claude Code", "config_paths": [claude_path], "verified": True},
+                "windsurf": {"name": "Windsurf", "config_paths": [wind_path], "verified": False},
+            },
+        )
+
+        run_doctor(fix=False)
+        out = capsys.readouterr().out
+        assert "Verified" in out
+        assert "Community-supported" in out
+        assert "Claude Code" in out
+        assert "Windsurf" in out
+
+
 class TestDoctorFix:
     def test_doctor_fix_repairs_invalid_path(self, tmp_path, monkeypatch, capsys):
         """doctor --fix should repair config with invalid paths."""
-        from engram_core.setup_wizard import run_doctor, _find_python, _find_mcp_server
+        from piia_engram.setup_wizard import run_doctor, _find_python, _find_mcp_server
 
         python_path = _find_python()
         mcp_path = _find_mcp_server()
@@ -925,8 +1009,8 @@ class TestDoctorFix:
         }), encoding="utf-8")
 
         monkeypatch.setattr(
-            "engram_core.setup_wizard._tool_configs",
-            lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {"test": {"name": "Test", "config_paths": [config_path], "verified": True}},
         )
 
         result = run_doctor(fix=True)
@@ -935,7 +1019,7 @@ class TestDoctorFix:
 
     def test_doctor_fix_no_python_fails(self, tmp_path, monkeypatch, capsys):
         """doctor --fix without Python should report error."""
-        from engram_core.setup_wizard import run_doctor
+        from piia_engram.setup_wizard import run_doctor
 
         config_dir = tmp_path / ".claude"
         config_dir.mkdir()
@@ -950,10 +1034,10 @@ class TestDoctorFix:
         }), encoding="utf-8")
 
         monkeypatch.setattr(
-            "engram_core.setup_wizard._tool_configs",
-            lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {"test": {"name": "Test", "config_paths": [config_path], "verified": True}},
         )
-        monkeypatch.setattr("engram_core.setup_wizard._find_python", lambda: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: None)
 
         result = run_doctor(fix=True)
         out = capsys.readouterr().out
@@ -984,7 +1068,7 @@ class TestImportWithSplit:
 
     def test_language_detection_chinese(self, tmp_path):
         """中文语言偏好应写入 profile。"""
-        from engram_core.core import Engram
+        from piia_engram.core import Engram
         engram = Engram(root=tmp_path)
 
         rule_files = [{
@@ -998,7 +1082,7 @@ class TestImportWithSplit:
 
     def test_language_detection_english(self, tmp_path):
         """English 语言偏好应写入 profile。"""
-        from engram_core.core import Engram
+        from piia_engram.core import Engram
         engram = Engram(root=tmp_path)
 
         rule_files = [{
@@ -1132,8 +1216,8 @@ class TestMainCLIRouting:
         monkeypatch.setattr("sys.argv", ["engram", "stats"])
         from unittest.mock import patch
         with (
-            patch("engram_core.stats._gh", return_value=None),
-            patch("engram_core.stats._pypi_recent", return_value=None),
+            patch("piia_engram.stats._gh", return_value=None),
+            patch("piia_engram.stats._pypi_recent", return_value=None),
         ):
             main()
         out = capsys.readouterr().out
@@ -1145,8 +1229,8 @@ class TestMainCLIRouting:
         monkeypatch.setattr("sys.argv", ["engram", "stats", "--log"])
         from unittest.mock import patch
         with (
-            patch("engram_core.stats._gh", return_value=None),
-            patch("engram_core.stats._pypi_recent", return_value=None),
+            patch("piia_engram.stats._gh", return_value=None),
+            patch("piia_engram.stats._pypi_recent", return_value=None),
         ):
             main()
         assert (tmp_path / "stats.log").is_file()
@@ -1156,7 +1240,7 @@ class TestMainCLIRouting:
         monkeypatch.setattr("sys.argv", ["engram", "setup", "--advanced"])
         called_with = {}
         from unittest.mock import patch
-        with patch("engram_core.setup_wizard.run_setup") as mock_setup:
+        with patch("piia_engram.setup_wizard.run_setup") as mock_setup:
             main()
             mock_setup.assert_called_once_with(advanced=True)
 

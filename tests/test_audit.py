@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from engram_core.audit import AuditLogger
+from piia_engram.audit import AuditLogger
 
 
 def test_audit_log_writes_entry(tmp_path):

@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
-from engram_core.core import Engram, _read_json, _write_json  # noqa: E402
+from piia_engram.core import Engram, _read_json, _write_json  # noqa: E402
 
 
 OUT_DIR = Path(__file__).resolve().parent

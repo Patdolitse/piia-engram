@@ -1,9 +1,9 @@
-# Engram 一键安装脚本 (Windows PowerShell)
-# 用法: irm https://raw.githubusercontent.com/Patdolitse/engram/main/install.ps1 | iex
+# piia-engram 一键安装脚本 (Windows PowerShell)
+# 用法: irm https://raw.githubusercontent.com/Patdolitse/piia-engram/main/install.ps1 | iex
 
 Write-Host ""
 Write-Host "========================================"
-Write-Host "  Engram 安装程序 (Windows)"
+Write-Host "  piia-engram 安装程序 (Windows)"
 Write-Host "========================================"
 Write-Host ""
 
@@ -42,4 +42,4 @@ Write-Host "正在安装 Engram..."
 & $python -m pip install --upgrade piia-engram
 
 Write-Host ""
-& $python -m engram_core.setup_wizard setup
+& $python -m piia_engram.setup_wizard setup

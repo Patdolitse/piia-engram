@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from engram_core.core import Engram
+from piia_engram.core import Engram
 
 
 def _make_engram(tmp_path: Path) -> Engram:
@@ -338,7 +338,7 @@ OK.
 
 def test_parse_config_sections():
     """_parse_config_sections should split markdown by headers."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     sections = Engram._parse_config_sections("""\
 # Top
 
@@ -535,7 +535,7 @@ Always review PRs before merging to avoid breaking changes in production.
 
 def test_promote_knowledge(tmp_path: Path):
     """promote_knowledge should change tier from staging to verified."""
-    from engram_core.core import _read_json, _write_json
+    from piia_engram.core import _read_json, _write_json
     engram = _make_engram(tmp_path / "engram")
     lesson = engram.add_lesson("Promotable lesson", domain="test")
     lesson_id = lesson.get("id", "")
@@ -559,7 +559,7 @@ def test_promote_knowledge(tmp_path: Path):
 
 def test_apply_review_with_promote(tmp_path: Path):
     """apply_review should handle promote list alongside archive."""
-    from engram_core.core import _read_json, _write_json
+    from piia_engram.core import _read_json, _write_json
     engram = _make_engram(tmp_path / "engram")
     lesson = engram.add_lesson("Promote via review", domain="test")
     lesson_id = lesson.get("id", "")
@@ -586,7 +586,7 @@ def test_apply_review_with_promote(tmp_path: Path):
 
 def test_truncation_protects_verified(tmp_path: Path):
     """When exceeding 200 lessons, staging items are evicted first."""
-    from engram_core.core import _read_json
+    from piia_engram.core import _read_json
     engram = _make_engram(tmp_path / "engram")
     # Add 199 staging lessons
     for i in range(199):
@@ -607,7 +607,7 @@ def test_truncation_protects_verified(tmp_path: Path):
 
 def test_review_page_no_access_count_side_effect(tmp_path: Path):
     """Generating review page should NOT increment access_count."""
-    from engram_core.core import _read_json
+    from piia_engram.core import _read_json
     engram = _make_engram(tmp_path / "engram")
     engram.add_lesson("Side effect test lesson for review page", domain="test")
 
@@ -664,7 +664,7 @@ def test_archive_failure_not_counted_as_success(tmp_path: Path):
 
 def test_evaluate_tiers_promotes_by_access(tmp_path: Path):
     """evaluate_tiers should promote staging items with access_count >= 3."""
-    from engram_core.core import _read_json, _write_json
+    from piia_engram.core import _read_json, _write_json
     engram = _make_engram(tmp_path / "engram")
     lesson = engram.add_lesson("Frequently accessed staging item for test", domain="test", tier="staging")
     lesson_id = lesson.get("id", "")
@@ -688,7 +688,7 @@ def test_evaluate_tiers_promotes_by_access(tmp_path: Path):
 
 def test_decode_claude_project_name():
     """_decode_claude_project_name should handle multi-level paths."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     # Test with the actual project encoding we know works
     result = Engram._decode_claude_project_name("E--Personal-Intelligence-Identity-Asset")
     # Should resolve to a real path (or None if drive E doesn't exist)
@@ -702,7 +702,7 @@ def test_decode_claude_project_name():
 
 def test_get_staging_summary(tmp_path: Path):
     """get_staging_summary should count active staging items."""
-    from engram_core.core import _read_json, _write_json
+    from piia_engram.core import _read_json, _write_json
 
     e = _make_engram(tmp_path)
     e.add_lesson("Auto imported alpha lesson pending review", domain="general")
@@ -728,7 +728,7 @@ def test_get_staging_summary(tmp_path: Path):
 
 def test_staging_reminder_in_context(tmp_path: Path):
     """generate_context should warn when > 10 staging items."""
-    from engram_core.core import _read_json, _write_json
+    from piia_engram.core import _read_json, _write_json
 
     e = _make_engram(tmp_path)
     e._CLAUDE_MEMORY_GLOBS = []
@@ -764,7 +764,7 @@ def test_staging_reminder_in_context(tmp_path: Path):
 
 def test_no_staging_reminder_when_few(tmp_path: Path):
     """generate_context should NOT warn when <= 10 staging items."""
-    from engram_core.core import _read_json, _write_json
+    from piia_engram.core import _read_json, _write_json
 
     e = _make_engram(tmp_path)
     e._CLAUDE_MEMORY_GLOBS = []
@@ -785,7 +785,7 @@ def test_no_staging_reminder_when_few(tmp_path: Path):
 def test_wrap_up_session_reports_staging_reminder(tmp_path: Path, monkeypatch):
     """wrap_up_session should include staging_reminder when backlog exists."""
     import asyncio
-    import engram_core.mcp_server as server
+    import piia_engram.mcp_server as server
 
     e = _make_engram(tmp_path)
     e._CLAUDE_MEMORY_GLOBS = []
@@ -886,7 +886,7 @@ def test_lesson_no_false_positive():
 
 def test_estimate_tokens():
     """_estimate_tokens handles mixed CJK/ASCII."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     # Pure ASCII: ~1 token per 4 chars
     assert Engram._estimate_tokens("abcd") == 1
     assert Engram._estimate_tokens("abcdefgh") == 2
@@ -1072,7 +1072,7 @@ def test_reconcile_ai_configs_globs_rule_directories(tmp_path, monkeypatch):
 
 def test_reconcile_authorized_env_false(monkeypatch):
     """ENGRAM_RECONCILE='0'/'false'/'off'/'no' should return False (line 78)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     for val in ("0", "false", "off", "no", "FALSE", "No"):
         monkeypatch.setenv("ENGRAM_RECONCILE", val)
         assert Engram._reconcile_authorized() is False, f"Expected False for '{val}'"
@@ -1080,7 +1080,7 @@ def test_reconcile_authorized_env_false(monkeypatch):
 
 def test_reconcile_authorized_env_true(monkeypatch):
     """ENGRAM_RECONCILE='1'/'true'/'on'/'yes' should return True (line 80)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     for val in ("1", "true", "on", "yes", "TRUE", "Yes"):
         monkeypatch.setenv("ENGRAM_RECONCILE", val)
         assert Engram._reconcile_authorized() is True, f"Expected True for '{val}'"
@@ -1088,7 +1088,7 @@ def test_reconcile_authorized_env_true(monkeypatch):
 
 def test_reconcile_authorized_config_file_true(tmp_path, monkeypatch):
     """Config file with reconcile_authorized=true should return True (lines 85-90)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     # Unset env var so it falls through to config file
     monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
@@ -1099,7 +1099,7 @@ def test_reconcile_authorized_config_file_true(tmp_path, monkeypatch):
 
 def test_reconcile_authorized_config_file_false(tmp_path, monkeypatch):
     """Config file with reconcile_authorized=false should return False (lines 85-90)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
     cfg = tmp_path / "telemetry_config.json"
@@ -1109,7 +1109,7 @@ def test_reconcile_authorized_config_file_false(tmp_path, monkeypatch):
 
 def test_reconcile_authorized_config_file_corrupt(tmp_path, monkeypatch):
     """Corrupt config file should fall through to default True (lines 85-90 except)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
     cfg = tmp_path / "telemetry_config.json"
@@ -1285,7 +1285,7 @@ Absolutely always verify before deploying new features to production environment
 
 def test_decode_claude_project_name_short_name():
     """Names shorter than 3 chars should return None (line 254)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     assert Engram._decode_claude_project_name("") is None
     assert Engram._decode_claude_project_name("E") is None
     assert Engram._decode_claude_project_name("E-") is None
@@ -1293,7 +1293,7 @@ def test_decode_claude_project_name_short_name():
 
 def test_decode_claude_project_name_no_double_dash():
     """Names without '--' at position 1:3 should return None (line 254)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     assert Engram._decode_claude_project_name("EXX") is None
     assert Engram._decode_claude_project_name("E-X") is None
     assert Engram._decode_claude_project_name("Eab") is None
@@ -1301,13 +1301,13 @@ def test_decode_claude_project_name_no_double_dash():
 
 def test_decode_claude_project_name_empty_rest():
     """Name with only 'X--' (empty rest after drive) should return None (line 258)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     assert Engram._decode_claude_project_name("E--") is None
 
 
 def test_decode_claude_project_name_nonexistent_drive():
     """Non-existent drive letter should return None (line 261)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     # Use a drive letter unlikely to exist (Z:/)
     result = Engram._decode_claude_project_name("Z--SomePath")
     # On most systems Z:/ doesn't exist, so should be None
@@ -1323,7 +1323,7 @@ def test_decode_claude_project_name_nonexistent_drive():
 
 def test_decode_claude_project_name_permission_error(monkeypatch):
     """PermissionError during iterdir should return None (lines 274-275)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     import unittest.mock
 
     # Mock Path.exists to return True for drive root
@@ -1352,7 +1352,7 @@ def test_decode_claude_project_name_permission_error(monkeypatch):
 
 def test_decode_claude_project_name_greedy_match(tmp_path, monkeypatch):
     """Greedy matching should prefer longest directory name first (lines 281-287)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     import unittest.mock
     import re as _re
 
@@ -1489,7 +1489,7 @@ Always use type hints in all Python function signatures for better readability.
 
 def test_parse_config_sections_with_frontmatter():
     """_parse_config_sections should skip YAML frontmatter (lines 440-445)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     content = """\
 ---
 title: My Config
@@ -1511,7 +1511,7 @@ Always run linting before committing code changes.
 
 def test_parse_config_sections_no_closing_frontmatter():
     """Unclosed frontmatter should treat entire file as content (line 445)."""
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
     content = """\
 ---
 title: Unclosed

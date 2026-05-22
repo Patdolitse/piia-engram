@@ -1,13 +1,13 @@
-# Contributing to Engram
+# Contributing to piia-engram
 
-Thanks for considering a contribution to Engram — the AI identity layer that stores who you are, not just what you did.
+Thanks for considering a contribution to piia-engram — the AI identity layer that stores who you are, not just what you did.
 
 [English](CONTRIBUTING.md) | [中文](CONTRIBUTING.zh-CN.md)
 
 ## Architecture Overview
 
 ```
-src/engram_core/
+src/piia_engram/
     core.py            # Core engine: knowledge CRUD, identity, link management
     retrieval.py       # RetrievalMixin — search, ranking, tier promotion
     context.py         # ContextMixin — cold-start context, ingestion helpers
@@ -42,8 +42,8 @@ Key design principles:
 ## Development Setup
 
 ```bash
-git clone https://github.com/Patdolitse/engram.git
-cd engram
+git clone https://github.com/Patdolitse/piia-engram.git
+cd piia-engram
 pip install -e ".[dev]"
 ```
 
@@ -68,12 +68,12 @@ python experiments/benchmarks/round10_retrieval_quality/run_round10.py --group t
 - **Keep changes focused** — one concern per PR
 - **Readable over clever** — three similar lines beat a premature abstraction
 - **Test behavioral changes** — add or update tests when logic changes
-- **No external calls** — Engram must never phone home or make network requests in core operations
+- **No external calls** — piia-engram must never phone home or make network requests in core operations
 - **Bilingual content** — user-facing strings should support both Chinese and English
 
 ## Security Guidelines
 
-Engram handles sensitive personal data. Extra care is required:
+piia-engram handles sensitive personal data. Extra care is required:
 
 - **Never `eval()` or `exec()` user data**
 - **HTML output must use `_esc()` for all user-controlled values** (XSS prevention)
@@ -111,9 +111,9 @@ Please include:
 - Operating system and Python version
 - Steps to reproduce
 - Expected vs actual behavior
-- Engram version (`pip show piia-engram`)
+- piia-engram version (`pip show piia-engram`)
 
-**Security vulnerabilities**: Do NOT open a public issue. Email engram-security@proton.me instead.
+**Security vulnerabilities**: Do NOT open a public issue. Email piia-engram-security@proton.me instead.
 
 ## License
 
