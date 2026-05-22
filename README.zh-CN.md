@@ -226,68 +226,63 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | **知识质量** | 发现久未复查的知识，生成摘要和 Markdown 报告 |
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
+### Tier-1 核心工具（10 个 — 日常工作流）
+
+| 工具 | 功能 |
+|------|------|
+| `get_user_context` | 冷启动：加载身份 + 知识上下文 |
+| `wrap_up_session` | 会话结束：提取知识 + 同步 |
+| `add_lesson` | 记录可复用的经验教训 |
+| `add_decision` | 记录关键决策及理由 |
+| `search_knowledge` | 多词加权搜索知识 |
+| `get_relevant_knowledge` | 按当前项目检索相关知识 |
+| `get_identity_card` | 导出 Markdown 身份卡（给无 MCP 工具用） |
+| `update_identity` | 更新身份画像、偏好或质量标准 |
+| `get_project_context` | 读取项目快照 |
+| `save_project_snapshot` | 保存项目状态 |
+
+设置 `ENGRAM_TOOLS=core` 可以只加载以上 10 个核心工具。
+
+### Tier-2 高级工具（33 个 — 知识管理、审查、导入导出）
+
 <details>
-<summary><strong>完整 MCP 工具列表（43 个）</strong></summary>
+<summary>点击展开完整工具列表</summary>
 
-默认暴露全部 43 个 MCP 工具。设置 `ENGRAM_TOOLS=core` 可以只加载 Tier-1 核心工具，减少工具列表长度。
-
-**读取工具：**
-
-| 工具 | 分层 | 功能 |
-|------|------|------|
-| `get_user_context` | Tier-1 核心 | 冷启动，加载完整用户上下文 |
-| `get_identity_card` | Tier-1 核心 | 导出 Markdown 身份卡 |
-| `search_knowledge` | Tier-1 核心 | 多词加权搜索经验教训和关键决策 |
-| `get_relevant_knowledge` | Tier-1 核心 | 按项目检索相关知识 |
-| `get_project_context` | Tier-1 核心 | 读取项目快照 |
-| `get_profile` | Tier-2 高级 | 读取身份画像，可用 safe 模式过滤受限字段 |
-| `get_work_style` | Tier-2 高级 | 读取工作方式 |
-| `get_preferences` | Tier-2 高级 | 读取偏好（v2.0） |
-| `get_trust_boundaries` | Tier-2 高级 | 读取信任边界 |
-| `get_quality_standards` | Tier-2 高级 | 读取质量标准 |
-| `get_lessons` | Tier-2 高级 | 读取经验教训 |
-| `get_decisions` | Tier-2 高级 | 读取关键决策 |
-| `get_domains` | Tier-2 高级 | 读取领域经验图谱 |
-| `get_knowledge_inheritance` | Tier-2 高级 | 根据自由文本生成跨项目知识继承包 |
-| `list_projects` | Tier-2 高级 | 列出所有项目 |
-| `get_knowledge_overview` | Tier-2 高级 | 知识概览（摘要 + 健康度 + 过期检查） |
-| `get_related_knowledge` | Tier-2 高级 | 查询某条知识关联的其他知识 |
-| `find_similar_knowledge` | Tier-2 高级 | 按内容查找相似知识 |
-| `export_knowledge_report` | Tier-2 高级 | 导出 Markdown 知识报告 |
-| `get_stale_knowledge` | Tier-2 高级 | 列出需要复习的过期知识 |
-
-**写入工具：**
-
-| 工具 | 分层 | 功能 |
-|------|------|------|
-| `add_lesson` | Tier-1 核心 | 记录经验教训 |
-| `add_decision` | Tier-1 核心 | 记录关键决策 |
-| `extract_session_insights` | Tier-1 核心 | 从会话摘要自动提取经验和决策 |
-| `save_project_snapshot` | Tier-1 核心 | 保存项目快照 |
-| `bulk_add_knowledge` | Tier-2 高级 | 批量添加经验教训或决策 |
-| `ingest_notes` | Tier-2 高级 | 从自由文本笔记提取经验和决策 |
-| `link_knowledge` | Tier-2 高级 | 建立两条知识的双向关联 |
-| `unlink_knowledge` | Tier-2 高级 | 移除两条知识的双向关联 |
-| `merge_knowledge` | Tier-2 高级 | 合并重复知识条目 |
-| `update_knowledge` | Tier-2 高级 | 更新一条经验教训或决策（自动检测类型） |
-| `archive_knowledge` | Tier-2 高级 | 废弃一条经验教训或决策（自动检测类型） |
-| `review_knowledge` | Tier-2 高级 | 标记一条经验教训或决策已复习 |
-| `request_outline_review` | Tier-2 高级 | 生成交互式 HTML 知识审查页面 |
-| `apply_review` | Tier-2 高级 | 处理审查结果——晋升确认的暂存条目、归档其余 |
-| `update_identity` | Tier-2 高级 | 更新身份画像、偏好、信任边界、工作方式或质量标准 |
-| `wrap_up_session` | Tier-2 高级 | 会话结束时自动提取知识并可选保存项目快照 |
-| `start_project` | Tier-2 高级 | 新项目启动时继承历史知识并建立项目档案 |
-
-**导入导出工具：**
-
-| 工具 | 分层 | 功能 |
-|------|------|------|
-| `export_engram` | Tier-1 核心 | 导出完整备份 |
-| `import_engram` | Tier-2 高级 | 导入备份 |
-| `export_engram_to_openclaw` | Tier-2 高级 | 导出 OpenClaw 格式 |
-| `import_engram_from_openclaw` | Tier-2 高级 | 导入 OpenClaw 格式 |
-| `read_web_content` | Tier-2 高级 | 读取网页内容（需 Reader 服务） |
-| `get_audit_log` | Tier-2 高级 | 查询最近的审计日志条目 |
+| 工具 | 功能 |
+|------|------|
+| `get_profile` | 读取身份画像（默认 safe 模式） |
+| `get_work_style` | 读取工作方式 |
+| `get_preferences` | 读取沟通与工作流偏好 |
+| `get_trust_boundaries` | 读取信任边界 |
+| `get_quality_standards` | 读取质量标准 |
+| `get_lessons` | 列出经验教训 |
+| `get_decisions` | 列出关键决策 |
+| `get_domains` | 读取领域经验图谱 |
+| `get_knowledge_inheritance` | 根据描述生成跨项目知识继承包 |
+| `list_projects` | 列出所有项目快照 |
+| `extract_session_insights` | 从文本中提取经验和决策 |
+| `bulk_add_knowledge` | 批量添加经验或决策 |
+| `ingest_notes` | 从自由文本笔记提取结构化知识 |
+| `update_knowledge` | 更新一条知识（自动检测类型） |
+| `archive_knowledge` | 归档一条知识 |
+| `review_knowledge` | 标记知识已复习 |
+| `merge_knowledge` | 合并重复知识条目 |
+| `link_knowledge` | 建立知识间双向关联 |
+| `unlink_knowledge` | 移除知识间双向关联 |
+| `get_knowledge_overview` | 知识概览（摘要 + 健康度 + 过期检查） |
+| `get_related_knowledge` | 查询关联知识 |
+| `find_similar_knowledge` | 按内容查找相似知识 |
+| `get_stale_knowledge` | 列出需要复习的过期知识 |
+| `export_knowledge_report` | 导出 Markdown 知识报告 |
+| `request_outline_review` | 生成交互式 HTML 知识审查页面 |
+| `apply_review` | 处理审查结果（晋升/归档暂存条目） |
+| `export_engram` | 导出完整备份 |
+| `import_engram` | 导入备份 |
+| `export_engram_to_openclaw` | 导出 OpenClaw 格式 |
+| `import_engram_from_openclaw` | 导入 OpenClaw 格式 |
+| `read_web_content` | 读取网页内容（需 Reader 服务） |
+| `get_audit_log` | 查询审计日志 |
+| `start_project` | 新项目启动（继承知识 + 建档） |
 
 </details>
 
