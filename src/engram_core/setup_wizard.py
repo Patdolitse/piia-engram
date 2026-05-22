@@ -121,7 +121,10 @@ def _classify_line(line: str, scope: str) -> str:
     # 跳过：空行、纯标记、过短
     if not stripped or stripped.startswith("#") or stripped.startswith("---"):
         return "skip"
-    if len(stripped) < 8:
+    # CJK characters carry more information per char than ASCII
+    has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in stripped)
+    min_len = 4 if has_cjk else 8
+    if len(stripped) < min_len:
         return "skip"
     # 跳过 frontmatter / code fences
     if stripped.startswith("```") or stripped.startswith("<!--"):

@@ -3,11 +3,15 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from engram_core.setup_wizard import (
+    _classify_line,
     _find_mcp_server,
     _find_python,
     _read_mcp_config,
     _run_seed_knowledge_onboarding,
+    _scan_rule_files,
     _write_mcp_config,
 )
 
@@ -259,3 +263,59 @@ def test_doctor_detects_invalid_python_path(tmp_path: Path, monkeypatch):
 
     result = run_doctor(fix=False)
     assert result > 0  # Should detect invalid paths
+
+
+# ── _classify_line tests ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("line,scope,expected", [
+    # User identity (global scope)
+    ("所有沟通使用中文", "global", "user"),
+    ("All communication in English", "global", "user"),
+    ("I am a senior backend developer", "global", "user"),
+    ("我是全栈开发者", "global", "user"),
+    ("Always prefer concise responses", "global", "user"),
+    ("Never add unnecessary comments", "global", "user"),
+    ("Work style: async, no meetings", "global", "user"),
+    # Project rules (project scope)
+    ("Run pytest before every commit", "project", "project"),
+    ("This repo uses Tailwind CSS", "project", "project"),
+    ("Build with docker-compose up", "project", "project"),
+    ("Database schema is in schema.sql", "project", "project"),
+    ("Pre-commit hooks must pass", "project", "project"),
+    ("API endpoints are under /api/v2", "project", "project"),
+    # Skip
+    ("", "global", "skip"),
+    ("# Section Title", "project", "skip"),
+    ("---", "global", "skip"),
+    ("```python", "project", "skip"),
+    ("short", "global", "skip"),  # < 8 chars
+    # Ambiguous (falls to scope default)
+    ("This is a normal documentation line about the project", "global", "user"),
+    ("This is a normal documentation line about the project", "project", "project"),
+])
+def test_classify_line(line, scope, expected):
+    assert _classify_line(line, scope) == expected
+
+
+# ── _scan_rule_files tests ───────────────────────────────────────────
+
+
+def test_scan_rule_files_finds_project_claude_md(tmp_path: Path):
+    """Should find CLAUDE.md in the project directory."""
+    (tmp_path / "CLAUDE.md").write_text(
+        "## Instructions\n\nUse Python 3.12 for all scripts.\nAlways run tests first.\n",
+        encoding="utf-8",
+    )
+    results = _scan_rule_files(cwd=tmp_path)
+    project_files = [r for r in results if r["scope"] == "project"]
+    assert len(project_files) >= 1
+    assert any("CLAUDE.md" in str(r["path"]) for r in project_files)
+
+
+def test_scan_rule_files_skips_tiny_files(tmp_path: Path):
+    """Files with < 2 content lines should be skipped."""
+    (tmp_path / "CLAUDE.md").write_text("# Title\n", encoding="utf-8")
+    results = _scan_rule_files(cwd=tmp_path)
+    project_files = [r for r in results if str(tmp_path) in str(r["path"])]
+    assert len(project_files) == 0
