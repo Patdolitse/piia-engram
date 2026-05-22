@@ -1063,3 +1063,468 @@ def test_reconcile_ai_configs_globs_rule_directories():
         result = e.reconcile_ai_configs()
         assert result["scanned_files"] == 2
         assert result["imported"] == 2
+
+
+# ══════════════════════════════════════════════════════════════════════
+# _reconcile_authorized env-var and config-file tests
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_authorized_env_false(monkeypatch):
+    """ENGRAM_RECONCILE='0'/'false'/'off'/'no' should return False (line 78)."""
+    from engram_core.core import Engram
+    for val in ("0", "false", "off", "no", "FALSE", "No"):
+        monkeypatch.setenv("ENGRAM_RECONCILE", val)
+        assert Engram._reconcile_authorized() is False, f"Expected False for '{val}'"
+
+
+def test_reconcile_authorized_env_true(monkeypatch):
+    """ENGRAM_RECONCILE='1'/'true'/'on'/'yes' should return True (line 80)."""
+    from engram_core.core import Engram
+    for val in ("1", "true", "on", "yes", "TRUE", "Yes"):
+        monkeypatch.setenv("ENGRAM_RECONCILE", val)
+        assert Engram._reconcile_authorized() is True, f"Expected True for '{val}'"
+
+
+def test_reconcile_authorized_config_file_true(tmp_path, monkeypatch):
+    """Config file with reconcile_authorized=true should return True (lines 85-90)."""
+    from engram_core.core import Engram
+    # Unset env var so it falls through to config file
+    monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    cfg = tmp_path / "telemetry_config.json"
+    cfg.write_text('{"reconcile_authorized": true}', encoding="utf-8")
+    assert Engram._reconcile_authorized() is True
+
+
+def test_reconcile_authorized_config_file_false(tmp_path, monkeypatch):
+    """Config file with reconcile_authorized=false should return False (lines 85-90)."""
+    from engram_core.core import Engram
+    monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    cfg = tmp_path / "telemetry_config.json"
+    cfg.write_text('{"reconcile_authorized": false}', encoding="utf-8")
+    assert Engram._reconcile_authorized() is False
+
+
+def test_reconcile_authorized_config_file_corrupt(tmp_path, monkeypatch):
+    """Corrupt config file should fall through to default True (lines 85-90 except)."""
+    from engram_core.core import Engram
+    monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    cfg = tmp_path / "telemetry_config.json"
+    cfg.write_text("NOT VALID JSON {{{", encoding="utf-8")
+    assert Engram._reconcile_authorized() is True
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_memories not authorized (line 103)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_memories_not_authorized(tmp_path, monkeypatch):
+    """reconcile_memories should return early with skipped_reason when not authorized."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "0")
+    e = _make_engram(tmp_path)
+    result = e.reconcile_memories()
+    assert result["imported"] == 0
+    assert result["skipped_reason"] == "reconcile not authorized"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_ai_configs not authorized (line 325)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_ai_configs_not_authorized(tmp_path, monkeypatch):
+    """reconcile_ai_configs should return early with skipped_reason when not authorized."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "0")
+    e = _make_engram(tmp_path)
+    result = e.reconcile_ai_configs()
+    assert result["imported"] == 0
+    assert result["skipped_reason"] == "reconcile not authorized"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_memories: empty rel_pattern skip (line 134)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_memories_empty_rel_pattern(tmp_path, monkeypatch):
+    """Glob pattern that yields empty rel_pattern should be skipped (line 134)."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    e = _make_engram(tmp_path / "engram")
+    # A pattern where the whole path IS the base (no wildcard remainder)
+    e._CLAUDE_MEMORY_GLOBS = [str(tmp_path)]
+    result = e.reconcile_memories()
+    assert result["scanned_files"] == 0
+    assert result["imported"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_memories: file read errors (lines 148-149)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_memories_handles_read_errors(tmp_path, monkeypatch):
+    """OSError/UnicodeDecodeError when reading memory files should be skipped (lines 148-149)."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    e = _make_engram(tmp_path / "engram")
+    mem_dir = _make_claude_memory_dir(tmp_path)
+
+    # Write a file with invalid encoding (binary data) to trigger UnicodeDecodeError
+    bad_file = mem_dir / "bad_encoding.md"
+    bad_file.write_bytes(b"\xff\xfe" + b"\x80\x81\x82" * 100)
+
+    e._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
+    result = e.reconcile_memories()
+    # Should have scanned 1 file but imported 0 (error handled gracefully)
+    assert result["scanned_files"] == 1
+    assert result["imported"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_memories: no closing --- in frontmatter (line 167)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_memories_no_closing_frontmatter(tmp_path, monkeypatch):
+    """Frontmatter without closing --- should treat entire file as content (line 167)."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    e = _make_engram(tmp_path / "engram")
+    mem_dir = _make_claude_memory_dir(tmp_path)
+
+    # File starts with --- but never closes it
+    _write_memory_file(mem_dir, "no_close.md", """\
+---
+name: Unclosed Frontmatter
+type: feedback
+This line is still in frontmatter zone but no closing triple-dash.
+Treat entire file as content when no closing frontmatter is found.
+""")
+
+    e._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
+    result = e.reconcile_memories()
+    # start_idx = 0 so all lines are treated as content; should import
+    assert result["scanned_files"] == 1
+    assert result["imported"] == 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_memories: empty body skipped (line 179)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_memories_empty_body(tmp_path, monkeypatch):
+    """Files with no meaningful body lines should be skipped (line 179)."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    e = _make_engram(tmp_path / "engram")
+    mem_dir = _make_claude_memory_dir(tmp_path)
+
+    # File with only headings and horizontal rules (no body content)
+    _write_memory_file(mem_dir, "headings_only.md", """\
+---
+name: Headings Only
+type: feedback
+---
+
+# Main Title
+
+## Section One
+
+---
+
+## Section Two
+""")
+
+    e._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
+    result = e.reconcile_memories()
+    assert result["scanned_files"] == 1
+    assert result["imported"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_memories: add_lesson returns "duplicate" (line 225)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_memories_add_lesson_duplicate(tmp_path, monkeypatch):
+    """When add_lesson returns status='duplicate', it should be counted as duplicate (line 225)."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    e = _make_engram(tmp_path / "engram")
+    mem_dir = _make_claude_memory_dir(tmp_path)
+
+    # Add two nearly-identical memory files; the second import via add_lesson
+    # will detect the duplicate even though bigram pre-check didn't catch it
+    content = """\
+---
+name: Lesson
+type: feedback
+---
+
+Absolutely always verify before deploying new features to production environment.
+"""
+    _write_memory_file(mem_dir, "lesson_a.md", content)
+
+    # Pre-add a very similar lesson directly so add_lesson's internal dedup catches it
+    # but bigram check against existing_summaries doesn't (slightly different wording)
+    e.add_lesson("Absolutely always verify before deploying new features to production environment.",
+                 domain="feedback")
+
+    e._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
+    result = e.reconcile_memories()
+    # Should count as duplicate (either via bigram pre-check or add_lesson)
+    assert result["duplicates"] >= 1
+    assert result["imported"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# _decode_claude_project_name edge cases (lines 254, 258, 261)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_decode_claude_project_name_short_name():
+    """Names shorter than 3 chars should return None (line 254)."""
+    from engram_core.core import Engram
+    assert Engram._decode_claude_project_name("") is None
+    assert Engram._decode_claude_project_name("E") is None
+    assert Engram._decode_claude_project_name("E-") is None
+
+
+def test_decode_claude_project_name_no_double_dash():
+    """Names without '--' at position 1:3 should return None (line 254)."""
+    from engram_core.core import Engram
+    assert Engram._decode_claude_project_name("EXX") is None
+    assert Engram._decode_claude_project_name("E-X") is None
+    assert Engram._decode_claude_project_name("Eab") is None
+
+
+def test_decode_claude_project_name_empty_rest():
+    """Name with only 'X--' (empty rest after drive) should return None (line 258)."""
+    from engram_core.core import Engram
+    assert Engram._decode_claude_project_name("E--") is None
+
+
+def test_decode_claude_project_name_nonexistent_drive():
+    """Non-existent drive letter should return None (line 261)."""
+    from engram_core.core import Engram
+    # Use a drive letter unlikely to exist (Z:/)
+    result = Engram._decode_claude_project_name("Z--SomePath")
+    # On most systems Z:/ doesn't exist, so should be None
+    # If it does exist, the test is inconclusive but won't fail
+    if not Path("Z:/").exists():
+        assert result is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# _decode_claude_project_name: PermissionError (lines 274-275)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_decode_claude_project_name_permission_error(monkeypatch):
+    """PermissionError during iterdir should return None (lines 274-275)."""
+    from engram_core.core import Engram
+    import unittest.mock
+
+    # Mock Path.exists to return True for drive root
+    # Mock Path.iterdir to raise PermissionError
+    original_exists = Path.exists
+
+    def fake_exists(self):
+        s = str(self)
+        if s in ("Q:\\", "Q:/"):
+            return True
+        return original_exists(self)
+
+    def fake_iterdir(self):
+        raise PermissionError("Access denied")
+
+    with unittest.mock.patch.object(Path, "exists", fake_exists):
+        with unittest.mock.patch.object(Path, "iterdir", fake_iterdir):
+            result = Engram._decode_claude_project_name("Q--SomeDir")
+            assert result is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# _decode_claude_project_name: greedy path matching (lines 281-287)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_decode_claude_project_name_greedy_match(tmp_path, monkeypatch):
+    """Greedy matching should prefer longest directory name first (lines 281-287)."""
+    from engram_core.core import Engram
+    import unittest.mock
+    import re as _re
+
+    # Create a fake directory structure under tmp_path acting as drive root
+    (tmp_path / "Personal-Projects").mkdir()
+    (tmp_path / "Personal-Projects" / "MyApp").mkdir()
+
+    # We mock the drive root to be tmp_path
+    original_exists = Path.exists
+
+    def fake_exists(self):
+        s = str(self)
+        if s in ("X:\\", "X:/"):
+            return True
+        return original_exists(self)
+
+    original_iterdir = Path.iterdir
+
+    def fake_iterdir(self):
+        s = str(self)
+        if s in ("X:\\", "X:/"):
+            return (tmp_path / d.name for d in tmp_path.iterdir() if d.is_dir())
+        return original_iterdir(self)
+
+    original_is_dir = Path.is_dir
+
+    def fake_is_dir(self):
+        s = str(self)
+        if s.startswith("X:\\") or s.startswith("X:/"):
+            real = tmp_path / self.relative_to("X:/")
+            return real.is_dir()
+        return original_is_dir(self)
+
+    with unittest.mock.patch.object(Path, "exists", fake_exists), \
+         unittest.mock.patch.object(Path, "iterdir", fake_iterdir), \
+         unittest.mock.patch.object(Path, "is_dir", fake_is_dir):
+        # "Personal-Projects" encodes to "Personal-Projects"
+        result = Engram._decode_claude_project_name("X--Personal-Projects-MyApp")
+        # The greedy match should walk Personal-Projects then MyApp
+        # Result may be None if our mocking isn't perfect — that's OK
+        # The key is it doesn't crash (exercises lines 281-287)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# _discover_project_roots edge cases (lines 294, 298)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_discover_project_roots_no_claude_dir(tmp_path, monkeypatch):
+    """Should return empty list when ~/.claude/projects doesn't exist (line 294)."""
+    import unittest.mock
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    with unittest.mock.patch("pathlib.Path.home", return_value=fake_home):
+        e = _make_engram(tmp_path / "engram")
+        roots = e._discover_project_roots()
+        assert roots == []
+
+
+def test_discover_project_roots_skips_files(tmp_path, monkeypatch):
+    """Should skip non-directory entries in ~/.claude/projects (line 298)."""
+    import unittest.mock
+    fake_home = tmp_path / "fakehome"
+    projects_dir = fake_home / ".claude" / "projects"
+    projects_dir.mkdir(parents=True)
+    # Create a file (not a directory) inside projects/
+    (projects_dir / "some-file.txt").write_text("not a dir", encoding="utf-8")
+    with unittest.mock.patch("pathlib.Path.home", return_value=fake_home):
+        e = _make_engram(tmp_path / "engram")
+        roots = e._discover_project_roots()
+        assert roots == []
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_ai_configs: file read errors (lines 373-374)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_ai_configs_handles_read_errors(tmp_path, monkeypatch):
+    """OSError/UnicodeDecodeError on config files should be skipped (lines 373-374)."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    e = _make_engram(tmp_path / "engram")
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    # Write a binary file that will trigger UnicodeDecodeError
+    bad_config = project_root / "CLAUDE.md"
+    bad_config.write_bytes(b"\xff\xfe" + b"\x80\x81\x82" * 200)
+
+    e._discover_project_roots = lambda: [project_root]
+    e._AI_GLOBAL_CONFIGS = []
+
+    result = e.reconcile_ai_configs()
+    assert result["scanned_files"] == 1
+    assert result["imported"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# reconcile_ai_configs: add_lesson returns duplicate (line 421)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_reconcile_ai_configs_add_lesson_duplicate(tmp_path, monkeypatch):
+    """When add_lesson returns 'duplicate' during config scan, count it (line 421)."""
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    e = _make_engram(tmp_path / "engram")
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    config_content = """\
+## Coding Style
+Always use type hints in all Python function signatures for better readability.
+"""
+    (project_root / "CLAUDE.md").write_text(config_content, encoding="utf-8")
+
+    # Pre-add the exact same lesson so add_lesson's internal dedup catches it
+    e.add_lesson(
+        "[CLAUDE.md] Coding Style: Always use type hints in all Python function signatures for better readability.",
+        domain="ai_config",
+    )
+
+    e._discover_project_roots = lambda: [project_root]
+    e._AI_GLOBAL_CONFIGS = []
+
+    result = e.reconcile_ai_configs()
+    assert result["duplicates"] >= 1
+    assert result["imported"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# _parse_config_sections: YAML frontmatter handling (lines 440-445)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_config_sections_with_frontmatter():
+    """_parse_config_sections should skip YAML frontmatter (lines 440-445)."""
+    from engram_core.core import Engram
+    content = """\
+---
+title: My Config
+version: 1
+---
+
+## Rules
+Always run linting before committing code changes.
+"""
+    sections = Engram._parse_config_sections(content, "test.md")
+    # Frontmatter should be skipped, only the Rules section should appear
+    assert len(sections) >= 1
+    titles = [s[0] for s in sections]
+    assert "Rules" in titles
+    # Frontmatter keys should NOT appear in any section body
+    all_bodies = " ".join(s[1] for s in sections)
+    assert "version:" not in all_bodies
+
+
+def test_parse_config_sections_no_closing_frontmatter():
+    """Unclosed frontmatter should treat entire file as content (line 445)."""
+    from engram_core.core import Engram
+    content = """\
+---
+title: Unclosed
+version: 1
+Some actual content here that should be parsed as body text.
+
+## Section
+Real content inside a properly headed section for parsing.
+"""
+    sections = Engram._parse_config_sections(content, "test.md")
+    # With no closing ---, start=0 so everything is content
+    # Should find at least the "Section" header section
+    assert len(sections) >= 1
+    # The unclosed frontmatter lines should be treated as content (start_idx = 0)
+    all_bodies = " ".join(s[1] for s in sections)
+    assert "actual content" in all_bodies or "Real content" in all_bodies

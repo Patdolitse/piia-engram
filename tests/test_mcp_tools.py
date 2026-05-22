@@ -359,3 +359,637 @@ class TestPathValidation:
         """No output_path means "use default" — must NOT be rejected as empty."""
         result = _run(mcp_server.export_engram(output_path=None))
         assert "导出成功" in result
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: _apply_tool_tier edge cases (lines 116, 123-124)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyToolTierEdgeCases:
+    def test_apply_tool_tier_returns_early_when_tools_not_dict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Line 116: _tools is not a dict -> early return without error."""
+        monkeypatch.setattr(mcp_server, "TOOL_TIER", "core")
+        # Create a mock tool_manager where _tools is None (not a dict)
+        import types
+
+        fake_manager = types.SimpleNamespace(_tools=None)
+        monkeypatch.setattr(mcp_server.mcp, "_tool_manager", fake_manager)
+        # Should return without error
+        mcp_server._apply_tool_tier()
+
+    def test_apply_tool_tier_fallback_pop_on_remove_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 123-124: mcp.remove_tool raises -> fallback to tools.pop."""
+        monkeypatch.setattr(mcp_server, "TOOL_TIER", "core")
+
+        # Create a fake tools dict with a non-tier1 tool
+        fake_tools = {"get_user_context": "t1", "some_extra_tool": "t2"}
+        import types
+
+        fake_manager = types.SimpleNamespace(_tools=fake_tools)
+        monkeypatch.setattr(mcp_server.mcp, "_tool_manager", fake_manager)
+
+        def failing_remove(name):
+            raise RuntimeError("cannot remove")
+
+        monkeypatch.setattr(mcp_server.mcp, "remove_tool", failing_remove)
+        mcp_server._apply_tool_tier()
+        # "some_extra_tool" should have been popped from the dict
+        assert "some_extra_tool" not in fake_tools
+        assert "get_user_context" in fake_tools
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: empty context returns (lines 223, 245)
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyContextReturns:
+    def test_get_user_context_returns_empty_sentinel(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Line 223: generate_context returns '' -> 'Engram 为空' message."""
+        monkeypatch.setattr(isolated_engram, "generate_context", lambda *a, **kw: "")
+        result = _run(mcp_server.get_user_context())
+        assert "Engram 为空" in result
+
+    def test_get_identity_card_returns_empty_sentinel(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Line 245: export_identity_card returns '' -> '身份卡为空' message."""
+        monkeypatch.setattr(
+            isolated_engram, "export_identity_card", lambda *a, **kw: ""
+        )
+        result = _run(mcp_server.get_identity_card())
+        assert "身份卡为空" in result
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: get_work_style (line 275)
+# ---------------------------------------------------------------------------
+
+
+class TestGetWorkStyle:
+    def test_get_work_style_returns_json(self, isolated_engram: Engram):
+        """Line 275: get_work_style returns JSON of work_style data."""
+        result = _run(mcp_server.get_work_style())
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: exception handlers in project/knowledge tools (lines 406-408, 449-451)
+# ---------------------------------------------------------------------------
+
+
+class TestProjectKnowledgeExceptions:
+    def test_get_project_context_exception_propagates(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 406-408: get_project_snapshot raises -> exception re-raised."""
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("snapshot boom")
+
+        monkeypatch.setattr(isolated_engram, "get_project_snapshot", explode)
+        with pytest.raises(RuntimeError, match="snapshot boom"):
+            _run(mcp_server.get_project_context(project_folder="/some/path"))
+
+    def test_get_relevant_knowledge_exception_propagates(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 449-451: get_relevant_lessons raises -> exception re-raised."""
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("relevance boom")
+
+        monkeypatch.setattr(isolated_engram, "get_relevant_lessons", explode)
+        with pytest.raises(RuntimeError, match="relevance boom"):
+            _run(
+                mcp_server.get_relevant_knowledge(
+                    project_folder="/some/path", limit=5
+                )
+            )
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: update_identity exception (lines 923-925)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateIdentityException:
+    def test_update_identity_exception_propagates(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 923-925: dispatch[field]() raises -> exception re-raised."""
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("update boom")
+
+        monkeypatch.setattr(isolated_engram, "update_profile", explode)
+        with pytest.raises(RuntimeError, match="update boom"):
+            _run(
+                mcp_server.update_identity(
+                    field="profile", updates_json='{"role": "test"}'
+                )
+            )
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: read_web_content (lines 973-995)
+# ---------------------------------------------------------------------------
+
+
+class TestReadWebContent:
+    def test_read_web_content_success(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 973-991: successful extraction returns formatted content."""
+        import urllib.request
+
+        response_data = json.dumps(
+            {"content": "Hello World", "source": "test", "error": None}
+        ).encode("utf-8")
+
+        class FakeResponse:
+            def read(self):
+                return response_data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        monkeypatch.setattr(
+            urllib.request, "urlopen", lambda *a, **kw: FakeResponse()
+        )
+        result = _run(mcp_server.read_web_content(url="http://example.com"))
+        assert "[来源: test]" in result
+        assert "Hello World" in result
+
+    def test_read_web_content_extraction_error(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Line 986: API returns error field -> '提取失败'."""
+        import urllib.request
+
+        response_data = json.dumps(
+            {"error": "page not found", "content": ""}
+        ).encode("utf-8")
+
+        class FakeResponse:
+            def read(self):
+                return response_data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        monkeypatch.setattr(
+            urllib.request, "urlopen", lambda *a, **kw: FakeResponse()
+        )
+        result = _run(mcp_server.read_web_content(url="http://example.com"))
+        assert "提取失败" in result
+
+    def test_read_web_content_no_content(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 989-990: content is empty -> fallback message."""
+        import urllib.request
+
+        response_data = json.dumps(
+            {"content": "", "source": "test"}
+        ).encode("utf-8")
+
+        class FakeResponse:
+            def read(self):
+                return response_data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        monkeypatch.setattr(
+            urllib.request, "urlopen", lambda *a, **kw: FakeResponse()
+        )
+        result = _run(mcp_server.read_web_content(url="http://example.com"))
+        assert "未能提取到内容" in result
+
+    def test_read_web_content_url_error(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 992-993: URLError -> service not running message."""
+        import urllib.request
+        import urllib.error
+
+        def raise_url_error(*a, **kw):
+            raise urllib.error.URLError("Connection refused")
+
+        monkeypatch.setattr(urllib.request, "urlopen", raise_url_error)
+        result = _run(mcp_server.read_web_content(url="http://example.com"))
+        assert "Reader 服务未运行" in result
+
+    def test_read_web_content_generic_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 994-995: generic Exception -> '读取失败'."""
+        import urllib.request
+
+        def raise_generic(*a, **kw):
+            raise ValueError("unexpected error")
+
+        monkeypatch.setattr(urllib.request, "urlopen", raise_generic)
+        result = _run(mcp_server.read_web_content(url="http://example.com"))
+        assert "读取失败" in result
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: export/import exception handlers (lines 1022-1023, 1066-1068, 1093-1094)
+# ---------------------------------------------------------------------------
+
+
+class TestExportImportExceptions:
+    def test_export_engram_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1022-1023: export_all raises -> '导出失败'."""
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("export boom")
+
+        monkeypatch.setattr(isolated_engram, "export_all", explode)
+        result = _run(mcp_server.export_engram(output_path=None))
+        assert "导出失败" in result
+
+    def test_export_openclaw_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1066-1068: export_to_openclaw raises -> error message."""
+        monkeypatch.setattr(
+            mcp_server,
+            "export_to_openclaw",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("openclaw boom")),
+        )
+        # Simpler: patch to a function that raises
+        def explode(*a, **kw):
+            raise RuntimeError("openclaw boom")
+
+        monkeypatch.setattr(mcp_server, "export_to_openclaw", explode)
+        result = _run(mcp_server.export_engram_to_openclaw())
+        assert "OpenClaw 兼容格式失败" in result
+
+    def test_import_openclaw_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1093-1094: import_from_openclaw raises -> error message."""
+
+        def explode(*a, **kw):
+            raise RuntimeError("import boom")
+
+        monkeypatch.setattr(mcp_server, "import_from_openclaw", explode)
+        result = _run(mcp_server.import_engram_from_openclaw())
+        assert "OpenClaw 兼容格式导入失败" in result
+
+    def test_export_openclaw_non_success_status(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Line 1066: export_to_openclaw returns non-success status -> return full result."""
+
+        def fake_export(*a, **kw):
+            return {"status": "partial", "message": "some files missing"}
+
+        monkeypatch.setattr(mcp_server, "export_to_openclaw", fake_export)
+        result = json.loads(_run(mcp_server.export_engram_to_openclaw()))
+        assert result["status"] == "partial"
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: get_audit_log with bad JSON (lines 1120-1121)
+# ---------------------------------------------------------------------------
+
+
+class TestAuditLogBadJSON:
+    def test_audit_log_skips_corrupt_lines(self, isolated_engram: Engram):
+        """Lines 1120-1121: JSONDecodeError on a line -> skip it, continue."""
+        log_path = isolated_engram.root / "audit.log"
+        log_path.write_text(
+            '{"action":"read","target":"profile"}\n'
+            "NOT_JSON_AT_ALL\n"
+            '{"action":"write","target":"lesson"}\n',
+            encoding="utf-8",
+        )
+        result = json.loads(_run(mcp_server.get_audit_log(limit=50)))
+        entries = result["entries"]
+        # Only the two valid JSON lines should be parsed
+        assert len(entries) == 2
+        assert result["total"] == 3  # total lines including corrupt
+
+
+# ---------------------------------------------------------------------------
+# Coverage boost: wrap_up_session error paths (lines 1162-1241)
+# ---------------------------------------------------------------------------
+
+
+class TestWrapUpSessionErrors:
+    """Cover all exception handlers in wrap_up_session."""
+
+    def test_extract_insights_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1162-1164: extract_session_insights raises -> error in results."""
+
+        def explode(*a, **kw):
+            raise RuntimeError("extract boom")
+
+        monkeypatch.setattr(isolated_engram, "extract_session_insights", explode)
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert "error" in result["insights"]
+        assert "extract boom" in result["insights"]["error"]
+
+    def test_snapshot_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1178-1180: save_project_snapshot raises -> error in results."""
+        # Let extract succeed
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+
+        def explode(*a, **kw):
+            raise RuntimeError("snapshot boom")
+
+        monkeypatch.setattr(isolated_engram, "save_project_snapshot", explode)
+        result = json.loads(
+            _run(
+                mcp_server.wrap_up_session(
+                    summary="test", project_folder="/some/proj"
+                )
+            )
+        )
+        assert "error" in result["project_snapshot"]
+        assert "snapshot boom" in result["project_snapshot"]["error"]
+
+    def test_reconcile_memories_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1187-1188: reconcile_memories raises -> silently caught."""
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+
+        def explode(*a, **kw):
+            raise RuntimeError("reconcile boom")
+
+        monkeypatch.setattr(isolated_engram, "reconcile_memories", explode)
+        # Should not raise — error is logged and swallowed
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert "insights" in result
+
+    def test_reconcile_ai_configs_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1194-1195: reconcile_ai_configs raises -> silently caught."""
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_memories",
+            lambda *a, **kw: {"imported": 0},
+        )
+
+        def explode(*a, **kw):
+            raise RuntimeError("config boom")
+
+        monkeypatch.setattr(isolated_engram, "reconcile_ai_configs", explode)
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert "insights" in result
+
+    def test_evaluate_tiers_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1201-1203: evaluate_tiers raises -> silently caught."""
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_memories",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_ai_configs",
+            lambda *a, **kw: {"imported": 0},
+        )
+
+        def explode(*a, **kw):
+            raise RuntimeError("tier boom")
+
+        monkeypatch.setattr(isolated_engram, "evaluate_tiers", explode)
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert "insights" in result
+
+    def test_get_staging_summary_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1218-1219: get_staging_summary raises -> silently caught."""
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_memories",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_ai_configs",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "evaluate_tiers",
+            lambda *a, **kw: {"promoted": 0},
+        )
+
+        def explode(*a, **kw):
+            raise RuntimeError("staging boom")
+
+        monkeypatch.setattr(isolated_engram, "get_staging_summary", explode)
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert "insights" in result
+
+    def test_evaluate_tiers_promoted(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Line 1201: evaluate_tiers returns promoted > 0 -> included in results."""
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_memories",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_ai_configs",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "evaluate_tiers",
+            lambda *a, **kw: {"promoted": 2, "details": ["a", "b"]},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "get_staging_summary",
+            lambda *a, **kw: {"total_staging": 0, "staging_lessons": 0, "staging_decisions": 0},
+        )
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert result["tier_promotions"]["promoted"] == 2
+
+    def test_pkg_version_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1230-1231: _pkg_version raises -> falls back to 'dev'."""
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_memories",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_ai_configs",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "evaluate_tiers",
+            lambda *a, **kw: {"promoted": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "get_staging_summary",
+            lambda *a, **kw: {"total_staging": 0, "staging_lessons": 0, "staging_decisions": 0},
+        )
+        # Ensure _tracker is set so the pkg_version path runs
+        import importlib.metadata
+
+        original_version = importlib.metadata.version
+        monkeypatch.setattr(
+            importlib.metadata,
+            "version",
+            lambda name: (_ for _ in ()).throw(Exception("no package")),
+        )
+        # The function should still succeed — _ver falls back to "dev"
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert "insights" in result
+        monkeypatch.setattr(importlib.metadata, "version", original_version)
+
+    def test_k_counts_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1237-1238: get_lessons/get_decisions raises -> k_counts stays empty."""
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_memories",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_ai_configs",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "evaluate_tiers",
+            lambda *a, **kw: {"promoted": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "get_staging_summary",
+            lambda *a, **kw: {"total_staging": 0, "staging_lessons": 0, "staging_decisions": 0},
+        )
+
+        def explode(*a, **kw):
+            raise RuntimeError("count boom")
+
+        monkeypatch.setattr(isolated_engram, "get_lessons", explode)
+        # Should not raise — the exception is caught in the inner try
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert "insights" in result
+
+    def test_flush_exception(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Lines 1240-1241: _tracker.flush raises -> silently caught."""
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_memories",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "reconcile_ai_configs",
+            lambda *a, **kw: {"imported": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "evaluate_tiers",
+            lambda *a, **kw: {"promoted": 0},
+        )
+        monkeypatch.setattr(
+            isolated_engram,
+            "get_staging_summary",
+            lambda *a, **kw: {"total_staging": 0, "staging_lessons": 0, "staging_decisions": 0},
+        )
+
+        # Create a fake tracker that raises on flush
+        class ExplodingTracker:
+            def record(self, *a, **kw):
+                pass
+
+            def flush(self, *a, **kw):
+                raise RuntimeError("flush boom")
+
+        monkeypatch.setattr(mcp_server, "_tracker", ExplodingTracker())
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        assert "insights" in result
