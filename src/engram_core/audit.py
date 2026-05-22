@@ -6,10 +6,12 @@ Writes to ~/.engram/audit.log in JSON-lines format (one JSON object per line).
 from __future__ import annotations
 
 import json
+import logging
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class AuditLogger:
@@ -49,4 +51,4 @@ class AuditLogger:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as exc:
-            print(f"[engram] audit write failed: {exc}", file=sys.stderr)
+            logger.warning("audit write failed: %s", exc)
