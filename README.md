@@ -102,7 +102,7 @@ Most memory tools are passive — you put things in, they give them back. Engram
 Describe a new project in plain text. `get_knowledge_inheritance` returns a curated starter pack of the most relevant lessons and decisions from everything you have ever worked on. Your tenth project benefits from all nine before it — one tool call away.
 
 **Passive knowledge capture**  
-Paste a session summary into `extract_session_insights` and Engram extracts and stores the lessons and decisions. No manual note-taking. Knowledge accumulates through normal AI conversations.
+Paste a session summary into `extract_session_insights` — Engram extracts and stores the lessons and decisions. No manual note-taking. Knowledge accumulates through normal AI conversations.
 
 **Works with tools that do not support MCP**  
 ChatGPT, Gemini, Kimi — `get_identity_card` exports a ready-to-paste Markdown identity card. Your context travels even to tools that cannot connect directly.
