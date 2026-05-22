@@ -4,6 +4,32 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.14.1] - 2026-05-22
+
+### Refactor
+- **`core.py` split**: 4277 → 1083 lines (-74.7%), extracted into 7 modules via mixin pattern. Public API unchanged — all imports from `engram_core.core` continue to work via re-exports.
+  - `storage.py` (224) — constants + I/O primitives (`_read_json`, `_write_json`, `_engram_root`, etc.)
+  - `retrieval.py` (639) — `RetrievalMixin`: search, scoring, tokenization, batch ops, conflict detection
+  - `context.py` (688) — `ContextMixin`: `generate_context`, ingestion + standalone `extract_knowledge` / `ingest_extraction`
+  - `reconcile.py` (425) — `ReconcileMixin`: external AI memory + config file sync
+  - `reports.py` (1103) — `ReportsMixin`: review HTML, identity card, health, stats, knowledge digest
+  - `compat.py` (318) — OpenClaw / OCA migration functions
+  - `core.py` (1083) — `Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin)` facade
+
+### Security
+- **PBKDF2 iterations: 100,000 → 600,000** (OWASP 2023+ recommended floor). New encryptions use `enc:v2:` prefix.
+- **Backward compatibility**: `enc:v1:` ciphertexts (legacy 100k iterations) continue to decrypt. Old data is re-encrypted to v2 on next write of that field.
+
+### Fixed
+- **Schema version comparison**: `_migrate_v1_to_v2` used lexicographic string comparison (`"10.0" < "2.0"`). Now parses to tuples via `_parse_schema_version`.
+
+### Changed
+- **`print(file=sys.stderr)` → `logging`** across all engram_core modules (audit, compat, context, crypto, mcp_server, setup_wizard, stats, storage). Each module gets `logger = logging.getLogger(__name__)`. Library output is now respectful of host application's logging config.
+
+### Tests
+- **329 passed** (up from 328 in v3.14.0)
+- New: `test_v1_ciphertext_still_decrypts` — verifies forward decryption of legacy v1 ciphertexts after the PBKDF2 upgrade
+
 ## [3.14.0] - 2026-05-22
 
 ### Breaking

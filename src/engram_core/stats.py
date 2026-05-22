@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
-import sys
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 REPO = "Patdolitse/engram"
 PYPI_PACKAGE = "piia-engram"
@@ -22,7 +24,7 @@ def _gh(endpoint: str = "") -> dict | list | None:
         if result.returncode == 0:
             return json.loads(result.stdout.decode("utf-8", errors="replace"))
     except Exception as exc:
-        print(f"[engram] gh api call failed: {exc}", file=sys.stderr)
+        logger.warning("gh api call failed: %s", exc)
     return None
 
 
@@ -35,7 +37,7 @@ def _pypi_recent() -> dict | None:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
     except Exception as exc:
-        print(f"[engram] PyPI stats fetch failed: {exc}", file=sys.stderr)
+        logger.warning("PyPI stats fetch failed: %s", exc)
         return None
 
 

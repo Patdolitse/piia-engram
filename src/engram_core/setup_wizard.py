@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import platform
 import re
@@ -11,6 +12,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # 旧版 MCP server 名称，迁移时需要清理
 LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
@@ -305,7 +308,7 @@ def _read_mcp_config(config_path: Path) -> dict:
         try:
             return json.loads(config_path.read_text(encoding="utf-8"))
         except Exception as exc:
-            print(f"[engram] read config failed ({config_path}): {exc}", file=sys.stderr)
+            logger.warning("read config failed (%s): %s", config_path, exc)
     return {}
 
 
@@ -737,7 +740,7 @@ def auto_migrate() -> None:
                 f.write("  Restart affected AI tools to apply changes.\n")
 
     except Exception as exc:
-        print(f"[engram] migration failed: {exc}", file=sys.stderr)
+        logger.warning("migration failed: %s", exc)
 
 
 def run_doctor(fix: bool = False) -> int:

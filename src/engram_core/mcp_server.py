@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import secrets
 import sys
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -165,7 +168,7 @@ async def get_user_context(project_folder: Optional[str] = None) -> str:
     try:
         context = _engram.generate_context(project_folder)
     except Exception as exc:
-        print(f"[engram] generate_context failed: {exc}", file=sys.stderr)
+        logger.warning("generate_context failed: %s", exc)
         return f"Engram 上下文加载失败: {exc}"
     if not context:
         return "Engram 为空——这可能是新用户。尚无用户上下文可用。"
@@ -185,7 +188,7 @@ async def get_identity_card() -> str:
     try:
         card = _engram.export_identity_card()
     except Exception as exc:
-        print(f"[engram] export_identity_card failed: {exc}", file=sys.stderr)
+        logger.warning("export_identity_card failed: %s", exc)
         return f"身份卡生成失败: {exc}"
     if not card:
         return "身份卡为空——尚未积累足够的知识。"
@@ -1065,7 +1068,7 @@ async def wrap_up_session(
         insights = _engram.extract_session_insights(summary, source_tool=source_tool)
         results["insights"] = insights
     except Exception as exc:
-        print(f"[engram] extract_session_insights failed: {exc}", file=sys.stderr)
+        logger.warning("extract_session_insights failed: %s", exc)
         results["insights"] = {"error": str(exc)}
 
     # Step 2: Save project snapshot (if project_folder provided)
@@ -1081,7 +1084,7 @@ async def wrap_up_session(
             _engram.save_project_snapshot(project_folder, snapshot_data)
             results["project_snapshot"] = {"saved": True, "folder": project_folder}
         except Exception as exc:
-            print(f"[engram] save_project_snapshot failed: {exc}", file=sys.stderr)
+            logger.warning("save_project_snapshot failed: %s", exc)
             results["project_snapshot"] = {"error": str(exc)}
 
     # Step 3: Auto-reconcile external AI memories and configs
@@ -1090,14 +1093,14 @@ async def wrap_up_session(
         if reconcile["imported"] > 0:
             results["memory_sync"] = reconcile
     except Exception as exc:
-        print(f"[engram] reconcile_memories failed: {exc}", file=sys.stderr)
+        logger.warning("reconcile_memories failed: %s", exc)
 
     try:
         cfg_sync = _engram.reconcile_ai_configs()
         if cfg_sync["imported"] > 0:
             results["config_sync"] = cfg_sync
     except Exception as exc:
-        print(f"[engram] reconcile_ai_configs failed: {exc}", file=sys.stderr)
+        logger.warning("reconcile_ai_configs failed: %s", exc)
 
     # Step 4: Evaluate tier promotions (staging->verified based on access evidence)
     try:
@@ -1105,7 +1108,7 @@ async def wrap_up_session(
         if tier_result["promoted"] > 0:
             results["tier_promotions"] = tier_result
     except Exception as exc:
-        print(f"[engram] evaluate_tiers failed: {exc}", file=sys.stderr)
+        logger.warning("evaluate_tiers failed: %s", exc)
 
     # Step 5: Report staging backlog
     try:
@@ -1121,7 +1124,7 @@ async def wrap_up_session(
                 **staging,
             }
     except Exception as exc:
-        print(f"[engram] get_staging_summary failed: {exc}", file=sys.stderr)
+        logger.warning("get_staging_summary failed: %s", exc)
 
     return _json(results)
 
@@ -1257,7 +1260,7 @@ if __name__ == "__main__":
                 file=sys.stderr,
             )
     except Exception as exc:
-        print(f"[engram] startup sync failed: {exc}", file=sys.stderr)
+        logger.warning("startup sync failed: %s", exc)
 
     if args.transport == "sse":
         token = os.environ.get("ENGRAM_AUTH_TOKEN", "").strip()

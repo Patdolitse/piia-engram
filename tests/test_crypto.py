@@ -22,7 +22,7 @@ class TestEncryptionEngine:
         engine = EncryptionEngine(secret="test-passphrase")
         original = "sensitive@email.com"
         encrypted = engine.encrypt(original)
-        assert encrypted.startswith("enc:v1:")
+        assert encrypted.startswith("enc:v2:")
         assert encrypted != original
         decrypted = engine.decrypt(encrypted)
         assert decrypted == original
@@ -56,7 +56,7 @@ class TestEncryptionEngine:
         engine = EncryptionEngine(secret="test")
         data = {"email": "test@test.com", "name": "张三", "role": "developer"}
         encrypted = engine.encrypt_fields(data, {"email"})
-        assert encrypted["email"].startswith("enc:v1:")
+        assert encrypted["email"].startswith("enc:v2:")
         assert encrypted["name"] == "张三"
         assert encrypted["role"] == "developer"
 
@@ -78,6 +78,37 @@ class TestEncryptionEngine:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
         assert engine.encrypt("") == ""
+
+    def test_v1_ciphertext_still_decrypts(self):
+        """v1 ciphertext (100k PBKDF2) produced before the v2 upgrade must still decrypt.
+
+        Synthesize a v1 ciphertext by directly running the legacy derivation, then
+        verify the engine accepts it and recovers the plaintext.
+        """
+        from engram_core.crypto import (
+            EncryptionEngine,
+            ENC_PREFIX_V1,
+            HAS_CRYPTO,
+            PBKDF2_ITERATIONS_V1,
+            _derive_key,
+        )
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        import base64
+        import os
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        secret = "test-passphrase"
+        plaintext = "legacy@example.com"
+        salt = os.urandom(16)
+        nonce = os.urandom(12)
+        key = _derive_key(secret, salt, PBKDF2_ITERATIONS_V1)
+        ciphertext = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), None)
+        payload = base64.urlsafe_b64encode(salt + nonce + ciphertext).decode("ascii")
+        v1_blob = f"{ENC_PREFIX_V1}{payload}"
+
+        engine = EncryptionEngine(secret=secret)
+        assert engine.decrypt(v1_blob) == plaintext
 
     def test_secret_without_crypto_raises(self):
         """Setting secret without cryptography package must raise RuntimeError."""
