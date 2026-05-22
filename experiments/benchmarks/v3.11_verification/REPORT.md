@@ -2,8 +2,8 @@
 
 - 生成时间：2026-05-22T02:35:32
 - 仓库：`E:\Personal Intelligence Identity Asset\engram`
-- 任务包：`C:\Users\pp3x3\Desktop\codex任务框架和规则\verification\codex-task-verify-v3.11-full.md`
-- Python：`C:\Users\pp3x3\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`
+- 任务包：codex-task-verify-v3.11-full.md
+- Python：(local runtime)
 
 ## 总结
 - 总 case 数：32

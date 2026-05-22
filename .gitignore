@@ -11,9 +11,18 @@ build/
 .engram/
 .piia/
 *.env
+.env.*
 engram_backup_*.json
 identity_card.md
 reader_cache/
+
+# Secrets / credentials（防止意外提交）
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+secrets*
 
 # IDE
 .vscode/
@@ -27,12 +36,19 @@ Thumbs.db
 # Generated temp files
 test_output.txt
 test_stdout.txt
+test_out.txt
 my_ai_profile.html
 .claude/
+.mypy_cache/
+.ruff_cache/
 
-# Benchmark test outputs (results stay local, code & REPORT.md go in)
-experiments/benchmarks/**/results_*.json
-experiments/benchmarks/**/results_*.jsonl
+# Benchmark & evaluation outputs (results stay local, code & REPORT.md go in)
+experiments/**/results_*.json
+experiments/**/results_*.jsonl
+experiments/**/raw_log_*.jsonl
+experiments/**/scores.json
+experiments/**/facts.json
+experiments/**/chatgpt_scores.json
 
 # Coverage artifacts
 .coverage

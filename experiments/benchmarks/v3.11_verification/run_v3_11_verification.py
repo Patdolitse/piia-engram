@@ -858,7 +858,7 @@ def build_report(results: list[dict], extra: dict[str, Any]) -> str:
         "",
         f"- 生成时间：{datetime.now().isoformat(timespec='seconds')}",
         f"- 仓库：`{REPO_ROOT}`",
-        f"- 任务包：`C:\\Users\\pp3x3\\Desktop\\codex任务框架和规则\\verification\\codex-task-verify-v3.11-full.md`",
+        f"- 任务包：codex-task-verify-v3.11-full.md",
         f"- Python：`{sys.executable}`",
         "",
         "## 总结",

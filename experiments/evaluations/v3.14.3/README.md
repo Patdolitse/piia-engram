@@ -17,9 +17,7 @@ whether the v3.14.1/2/3 fixes actually address what v3.13.2 flagged.
 
 ```bash
 cd "E:/Personal Intelligence Identity Asset/engram"
-PYTHONIOENCODING=utf-8 \
-  "C:/Users/pp3x3/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe" \
-  experiments/evaluations/v3.14.3/run_evaluation.py
+PYTHONIOENCODING=utf-8 python experiments/evaluations/v3.14.3/run_evaluation.py
 ```
 
 Default is 3 passes. To run 1 pass for a quick smoke test:
