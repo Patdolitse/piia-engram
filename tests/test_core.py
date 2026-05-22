@@ -1,12 +1,19 @@
 """Engram 核心功能基础测试。"""
 
 import json
+import math
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from engram_core.core import (
+    CONFLICT_C_CEILING,
+    CONFLICT_Q_THRESHOLD,
     Engram,
+    SEARCH_RELEVANCE_THRESHOLD,
+    STALE_KNOWLEDGE_DAYS,
     export_to_openclaw,
     extract_knowledge,
     import_from_openclaw,
@@ -2011,3 +2018,503 @@ def test_export_import_roundtrip(tmp_path: Path):
     assert p2["language"] == "中文"
     lessons2 = engram2.get_lessons(limit=None, _update_access=False)
     assert any("Spark" in l.get("summary", "") for l in lessons2)
+
+
+# ── _score_item tests ───────────────────────────────────────────────
+
+
+def test_score_item_empty_terms(tmp_path: Path):
+    """空查询词应返回 0 分。"""
+    engram = make_engram(tmp_path)
+    item = {"summary": "use pytest for testing"}
+    assert engram._score_item(item, []) == 0.0
+
+
+def test_score_item_summary_match_scores_high(tmp_path: Path):
+    """summary 字段匹配应获得高权重（weight=3.0）。"""
+    engram = make_engram(tmp_path)
+    item_match = {"summary": "use python pytest for testing"}
+    item_no_match = {"summary": "cook dinner at restaurant"}
+    score_match = engram._score_item(item_match, ["python", "pytest"])
+    score_no = engram._score_item(item_no_match, ["python", "pytest"])
+    assert score_match > score_no
+    assert score_match > 0
+
+
+def test_score_item_detail_match_lower_than_summary(tmp_path: Path):
+    """detail 匹配（weight=1.5）应低于 summary 匹配（weight=3.0）。"""
+    engram = make_engram(tmp_path)
+    item_summary = {"summary": "python testing best practices"}
+    item_detail = {"detail": "python testing best practices"}
+    s1 = engram._score_item(item_summary, ["python"])
+    s2 = engram._score_item(item_detail, ["python"])
+    assert s1 > s2
+
+
+def test_score_item_access_count_bonus(tmp_path: Path):
+    """access_count 高的条目应获得额外加分。"""
+    engram = make_engram(tmp_path)
+    base = {"summary": "python testing"}
+    item_low = {**base, "access_count": 0}
+    item_high = {**base, "access_count": 50}
+    s_low = engram._score_item(item_low, ["python"])
+    s_high = engram._score_item(item_high, ["python"])
+    assert s_high > s_low
+    assert s_high - s_low == pytest.approx(math.log1p(50) * 0.1, abs=0.01)
+
+
+def test_score_item_multi_term_coverage_bonus(tmp_path: Path):
+    """匹配多个查询词应获得 coverage bonus。"""
+    engram = make_engram(tmp_path)
+    item_both = {"summary": "python pytest integration test"}
+    item_one = {"summary": "python only stuff here"}
+    s_both = engram._score_item(item_both, ["python", "pytest"])
+    s_one = engram._score_item(item_one, ["python", "pytest"])
+    assert s_both > s_one
+
+
+def test_score_item_cjk_query(tmp_path: Path):
+    """CJK 查询应能匹配 CJK 内容。"""
+    engram = make_engram(tmp_path)
+    item = {"summary": "测试框架选择很重要"}
+    score = engram._score_item(item, ["测试"])
+    assert score > 0
+
+
+def test_score_item_no_matching_fields(tmp_path: Path):
+    """完全无匹配时应返回 0（或接近 0）。"""
+    engram = make_engram(tmp_path)
+    item = {"summary": "cooking recipes for dinner"}
+    score = engram._score_item(item, ["quantum", "physics"])
+    assert score == pytest.approx(0.0, abs=0.01)
+
+
+# ── search_knowledge tests ──────────────────────────────────────────
+
+
+def test_search_knowledge_ranking(tmp_path: Path):
+    """搜索结果应按相关性排序，高匹配在前。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("pytest is the best testing framework for python")
+    engram.add_lesson("docker compose simplifies container orchestration")
+    engram.add_lesson("python type hints improve code quality")
+
+    results = engram.search_knowledge("python pytest")
+    assert len(results["lessons"]) >= 1
+    # 包含两个查询词的条目应排第一
+    assert "pytest" in results["lessons"][0].get("summary", "").lower()
+
+
+def test_search_knowledge_cjk(tmp_path: Path):
+    """CJK 搜索应能召回中文内容。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("数据库索引优化可以大幅提升查询性能", domain="database")
+    engram.add_lesson("python unit test should cover edge cases")
+
+    results = engram.search_knowledge("数据库")
+    assert len(results["lessons"]) >= 1
+    assert "数据库" in results["lessons"][0].get("summary", "")
+
+
+def test_search_knowledge_alias_expansion(tmp_path: Path):
+    """别名搜索（py → python）应能召回关联内容。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("python virtual environments prevent dependency conflicts")
+
+    results = engram.search_knowledge("py")
+    assert len(results["lessons"]) >= 1
+
+
+def test_search_knowledge_below_threshold(tmp_path: Path):
+    """低于 SEARCH_RELEVANCE_THRESHOLD 的结果不应返回。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("cooking pasta requires boiling water")
+    results = engram.search_knowledge("quantum computing algorithms")
+    assert results["lessons"] == []
+    assert results["decisions"] == []
+
+
+# ── _detect_decision_conflicts tests ────────────────────────────────
+
+
+def test_detect_decision_conflict_same_topic_different_choice(tmp_path: Path):
+    """同一主题不同选择应被检测为冲突。"""
+    engram = make_engram(tmp_path)
+    decisions = [
+        {"question": "which testing framework to use", "choice": "pytest", "domain": "python"},
+        {"question": "which testing framework to use", "choice": "unittest", "domain": "python"},
+    ]
+    conflicts = engram._detect_decision_conflicts(decisions)
+    assert len(conflicts) == 1
+    assert conflicts[0]["type"] == "decision"
+
+
+def test_detect_decision_conflict_same_choice_no_conflict(tmp_path: Path):
+    """同一主题同一选择不应被标记为冲突。"""
+    engram = make_engram(tmp_path)
+    decisions = [
+        {"question": "which testing framework to use", "choice": "pytest is the best choice", "domain": "python"},
+        {"question": "which testing framework to use", "choice": "pytest is the best choice for us", "domain": "python"},
+    ]
+    conflicts = engram._detect_decision_conflicts(decisions)
+    assert len(conflicts) == 0
+
+
+def test_detect_decision_conflict_different_domains_skipped(tmp_path: Path):
+    """不同 domain 的决策不应被检测为冲突。"""
+    engram = make_engram(tmp_path)
+    decisions = [
+        {"question": "which framework to use", "choice": "React", "domain": "frontend"},
+        {"question": "which framework to use", "choice": "Django", "domain": "backend"},
+    ]
+    conflicts = engram._detect_decision_conflicts(decisions)
+    assert len(conflicts) == 0
+
+
+def test_detect_decision_conflict_overlapping_domains(tmp_path: Path):
+    """domain 有交集时仍应检测冲突。"""
+    engram = make_engram(tmp_path)
+    decisions = [
+        {"question": "which test runner to use", "choice": "pytest", "domain": "python,testing"},
+        {"question": "which test runner to use", "choice": "unittest", "domain": "testing,ci"},
+    ]
+    conflicts = engram._detect_decision_conflicts(decisions)
+    assert len(conflicts) == 1
+
+
+# ── _detect_lesson_conflicts tests ──────────────────────────────────
+
+
+def test_detect_lesson_conflict_negation_vs_affirmation(tmp_path: Path):
+    """一条否定一条肯定同一话题应被检测为冲突。"""
+    engram = make_engram(tmp_path)
+    lessons = [
+        {"summary": "should always use type hints in python code"},
+        {"summary": "don't use type hints in python, they slow you down"},
+    ]
+    conflicts = engram._detect_lesson_conflicts(lessons)
+    assert len(conflicts) == 1
+    assert conflicts[0]["type"] == "lesson"
+
+
+def test_detect_lesson_conflict_no_sentiment_asymmetry(tmp_path: Path):
+    """两条都是肯定语气不应被标记为冲突。"""
+    engram = make_engram(tmp_path)
+    lessons = [
+        {"summary": "always write tests before implementation"},
+        {"summary": "should write documentation alongside code"},
+    ]
+    conflicts = engram._detect_lesson_conflicts(lessons)
+    assert len(conflicts) == 0
+
+
+def test_detect_lesson_conflict_different_domains(tmp_path: Path):
+    """不同 domain 的经验不应被检测为冲突。"""
+    engram = make_engram(tmp_path)
+    lessons = [
+        {"summary": "avoid using global state in python", "domain": "python"},
+        {"summary": "always use global state in javascript", "domain": "javascript"},
+    ]
+    conflicts = engram._detect_lesson_conflicts(lessons)
+    assert len(conflicts) == 0
+
+
+def test_detect_lesson_conflict_cjk_markers(tmp_path: Path):
+    """中文否定/肯定标记也应被检测。"""
+    engram = make_engram(tmp_path)
+    lessons = [
+        {"summary": "推荐使用 pytest 作为测试框架"},
+        {"summary": "不推荐使用 pytest 因为配置复杂"},
+    ]
+    conflicts = engram._detect_lesson_conflicts(lessons)
+    assert len(conflicts) == 1
+
+
+# ── generate_context tests ──────────────────────────────────────────
+
+
+def test_generate_context_empty_profile_warning(tmp_path: Path):
+    """空 profile 应输出设置提示。"""
+    engram = make_engram(tmp_path)
+    ctx = engram.generate_context()
+    assert "身份画像未设置" in ctx
+
+
+def test_generate_context_includes_profile(tmp_path: Path):
+    """有 profile 时应包含角色和语言。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "全栈开发者", "language": "中文", "technical_level": "senior"})
+    ctx = engram.generate_context()
+    assert "全栈开发者" in ctx
+    assert "中文" in ctx
+    assert "senior" in ctx
+
+
+def test_generate_context_includes_lessons(tmp_path: Path):
+    """有 lesson 时应包含在上下文中。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("always run tests before committing code")
+    ctx = engram.generate_context()
+    assert "always run tests" in ctx
+
+
+def test_generate_context_includes_decisions(tmp_path: Path):
+    """有 decision 时应包含在上下文中。"""
+    engram = make_engram(tmp_path)
+    engram.add_decision({"question": "testing framework", "choice": "pytest"})
+    ctx = engram.generate_context()
+    assert "pytest" in ctx
+
+
+def test_generate_context_token_budget_drops_low_priority(tmp_path: Path):
+    """token 预算不足时应按优先级丢弃低优先级 section。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "developer", "language": "en"})
+    # 添加足够多的 lesson 和 decision 使总 token 数较高
+    for i in range(8):
+        engram.add_lesson(f"lesson number {i} about important python testing practices and patterns")
+    for i in range(6):
+        engram.add_decision({"question": f"decision {i} about architecture", "choice": f"choice {i}"})
+
+    # 很小的预算：只应包含最高优先级的 section（profile）
+    ctx_small = engram.generate_context(max_tokens=30)
+    ctx_full = engram.generate_context(max_tokens=None)
+    assert len(ctx_small) < len(ctx_full)
+    # Profile（priority=1）应在小预算中存活
+    assert "关于用户" in ctx_small
+
+
+def test_generate_context_no_budget_includes_all(tmp_path: Path):
+    """max_tokens=None 时应包含所有 section。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"role": "dev"})
+    engram.add_lesson("test lesson for context")
+    engram.add_decision({"question": "test q", "choice": "test c"})
+    ctx = engram.generate_context(max_tokens=None)
+    assert "关于用户" in ctx
+    assert "test lesson" in ctx
+    assert "test c" in ctx
+
+
+def test_generate_context_conflict_section(tmp_path: Path):
+    """有冲突决策时应出现冲突提醒 section。"""
+    engram = make_engram(tmp_path)
+    # 直接写入两条冲突决策（绕过 add_decision 的去重）
+    path = tmp_path / "knowledge" / "decisions.json"
+    decisions = [
+        {
+            "id": "d1", "question": "which testing framework should we adopt",
+            "choice": "pytest", "domain": "python", "status": "active",
+            "tier": "verified", "timestamp": "2026-01-01T00:00:00",
+        },
+        {
+            "id": "d2", "question": "which testing framework should we adopt",
+            "choice": "unittest", "domain": "python", "status": "active",
+            "tier": "verified", "timestamp": "2026-01-02T00:00:00",
+        },
+    ]
+    path.write_text(json.dumps(decisions, ensure_ascii=False), encoding="utf-8")
+    ctx = engram.generate_context()
+    assert "冲突" in ctx
+
+
+def test_estimate_tokens_cjk_vs_ascii(tmp_path: Path):
+    """CJK 字符每个算 1 token，ASCII 每 4 个算 1 token。"""
+    assert Engram._estimate_tokens("你好世界") == 4  # 4 CJK chars
+    assert Engram._estimate_tokens("hello world") == 2  # 11 chars / 4 ≈ 2
+    assert Engram._estimate_tokens("你好 world") == 2 + 1  # 2 CJK + 6 ASCII/4
+
+
+# ── ingest_notes tests ──────────────────────────────────────────────
+
+
+def test_ingest_notes_decision_trigger(tmp_path: Path):
+    """包含决策触发词的行应被分类为 decision。"""
+    engram = make_engram(tmp_path)
+    result = engram.ingest_notes("decided to use pytest for all integration tests")
+    assert result["saved_decisions"] == 1
+    assert result["saved_lessons"] == 0
+
+
+def test_ingest_notes_lesson_trigger(tmp_path: Path):
+    """包含经验触发词的行应被分类为 lesson。"""
+    engram = make_engram(tmp_path)
+    result = engram.ingest_notes("discovered that connection pooling reduces latency by 40%")
+    assert result["saved_lessons"] == 1
+    assert result["saved_decisions"] == 0
+
+
+def test_ingest_notes_skips_short_lines(tmp_path: Path):
+    """短于 5 字符的行应被跳过。"""
+    engram = make_engram(tmp_path)
+    result = engram.ingest_notes("hi\nok\nyes\n")
+    assert result["skipped"] == 3
+    assert result["saved_lessons"] == 0
+
+
+def test_ingest_notes_skips_headers(tmp_path: Path):
+    """以 # 开头的行应被跳过。"""
+    engram = make_engram(tmp_path)
+    result = engram.ingest_notes("# Section Title\nlearned that caching matters a lot")
+    assert result["saved_lessons"] == 1
+    assert result["skipped"] == 0  # headers aren't counted as skipped
+
+
+def test_ingest_notes_medium_line_without_trigger_skipped(tmp_path: Path):
+    """6-15 字符且无触发词的行应被跳过。"""
+    engram = make_engram(tmp_path)
+    result = engram.ingest_notes("some text ok")
+    assert result["skipped"] == 1
+
+
+def test_ingest_notes_deduplicates(tmp_path: Path):
+    """重复内容应被检测为 duplicate。"""
+    engram = make_engram(tmp_path)
+    engram.ingest_notes("discovered that connection pooling reduces latency significantly")
+    result2 = engram.ingest_notes("discovered that connection pooling reduces latency significantly")
+    assert result2["duplicates"] == 1
+
+
+def test_ingest_notes_domain_inference(tmp_path: Path):
+    """含有 domain 关键词的行应自动推断 domain。"""
+    engram = make_engram(tmp_path)
+    result = engram.ingest_notes("learned that pytest fixtures simplify test setup")
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    assert any("python" in l.get("domain", "") for l in lessons)
+
+
+def test_ingest_notes_cjk_triggers(tmp_path: Path):
+    """中文触发词也应被正确识别。"""
+    engram = make_engram(tmp_path)
+    result = engram.ingest_notes("决定使用 FastAPI 作为后端框架\n发现缓存可以大幅提升性能")
+    assert result["saved_decisions"] == 1
+    assert result["saved_lessons"] == 1
+
+
+# ── _infer_domain tests ─────────────────────────────────────────────
+
+
+def test_infer_domain_python(tmp_path: Path):
+    """含 python 关键词应推断为 python domain。"""
+    engram = make_engram(tmp_path)
+    assert "python" in engram._infer_domain("use pytest for testing python code")
+
+
+def test_infer_domain_multiple(tmp_path: Path):
+    """同时含多个 domain 关键词应返回逗号分隔的多个 domain。"""
+    engram = make_engram(tmp_path)
+    result = engram._infer_domain("deploy python app with docker compose")
+    assert "python" in result
+    assert "docker" in result
+
+
+def test_infer_domain_fallback(tmp_path: Path):
+    """无法推断时应使用 fallback。"""
+    engram = make_engram(tmp_path)
+    assert engram._infer_domain("something generic here", fallback="general") == "general"
+
+
+def test_infer_domain_no_match_no_fallback(tmp_path: Path):
+    """无法推断且无 fallback 时应返回空字符串。"""
+    engram = make_engram(tmp_path)
+    assert engram._infer_domain("nothing relevant here") == ""
+
+
+# ── _bigram_similarity tests ────────────────────────────────────────
+
+
+def test_bigram_similarity_identical(tmp_path: Path):
+    """相同文本应返回 1.0。"""
+    engram = make_engram(tmp_path)
+    assert engram._bigram_similarity("hello world", "hello world") == pytest.approx(1.0)
+
+
+def test_bigram_similarity_empty(tmp_path: Path):
+    """空字符串应返回 0.0。"""
+    engram = make_engram(tmp_path)
+    assert engram._bigram_similarity("", "hello") == 0.0
+    assert engram._bigram_similarity("hello", "") == 0.0
+    assert engram._bigram_similarity("", "") == 0.0
+
+
+def test_bigram_similarity_partially_similar(tmp_path: Path):
+    """部分相似的文本应返回 0 < score < 1。"""
+    engram = make_engram(tmp_path)
+    score = engram._bigram_similarity("python testing", "python cooking")
+    assert 0.0 < score < 1.0
+
+
+def test_bigram_similarity_completely_different(tmp_path: Path):
+    """完全不同的文本应返回 0 或接近 0。"""
+    engram = make_engram(tmp_path)
+    score = engram._bigram_similarity("quantum physics", "cooking recipes")
+    assert score < 0.1
+
+
+# ── evaluate_tiers tests ────────────────────────────────────────────
+
+
+def test_evaluate_tiers_promotes_accessed_staging(tmp_path: Path):
+    """access_count >= 3 的 staging 条目应被提升为 verified。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("test staging promotion")
+    # 手动设为 staging 并增加 access_count
+    path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(path.read_text(encoding="utf-8"))
+    lessons[-1]["tier"] = "staging"
+    lessons[-1]["access_count"] = 5
+    path.write_text(json.dumps(lessons, ensure_ascii=False), encoding="utf-8")
+
+    result = engram.evaluate_tiers()
+    assert result["promoted"] == 1
+
+    lessons_after = json.loads(path.read_text(encoding="utf-8"))
+    assert lessons_after[-1]["tier"] == "verified"
+    assert "promoted_at" in lessons_after[-1]
+
+
+def test_evaluate_tiers_no_promote_low_access(tmp_path: Path):
+    """access_count < 3 的 staging 条目不应被提升。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("low access staging item")
+    path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(path.read_text(encoding="utf-8"))
+    lessons[-1]["tier"] = "staging"
+    lessons[-1]["access_count"] = 1
+    path.write_text(json.dumps(lessons, ensure_ascii=False), encoding="utf-8")
+
+    result = engram.evaluate_tiers()
+    assert result["promoted"] == 0
+
+
+# ── Knowledge eviction tests ───────────────────────────────────────
+
+
+def test_lesson_eviction_staging_first(tmp_path: Path):
+    """超出 MAX_KNOWLEDGE_ENTRIES 时应优先驱逐 staging 条目。"""
+    engram = make_engram(tmp_path)
+    path = tmp_path / "knowledge" / "lessons.json"
+
+    # 填充到接近上限
+    from engram_core.core import MAX_KNOWLEDGE_ENTRIES
+    lessons = []
+    for i in range(MAX_KNOWLEDGE_ENTRIES - 1):
+        lessons.append({
+            "id": f"v-{i}", "summary": f"verified lesson {i}",
+            "tier": "verified", "status": "active",
+            "timestamp": "2026-01-01T00:00:00",
+        })
+    # 加一个 staging
+    lessons.append({
+        "id": "s-0", "summary": "staging lesson to evict",
+        "tier": "staging", "status": "active",
+        "timestamp": "2026-01-01T00:00:00",
+    })
+    path.write_text(json.dumps(lessons, ensure_ascii=False), encoding="utf-8")
+
+    # 再添加一个新的，触发驱逐
+    engram.add_lesson("new lesson that triggers eviction")
+    final = json.loads(path.read_text(encoding="utf-8"))
+    assert len(final) <= MAX_KNOWLEDGE_ENTRIES
+    # staging 应该被驱逐
+    assert not any(l.get("id") == "s-0" for l in final)
