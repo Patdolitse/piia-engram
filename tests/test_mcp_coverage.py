@@ -67,6 +67,37 @@ class TestReadToolsCoverage:
         parsed = json.loads(result)
         assert isinstance(parsed, (list, dict))
 
+    def test_suggest_merges_wrapper(self, eng: Engram):
+        base = "数据库连接池必须配置最大连接数和超时设置"
+        eng.add_lesson({"summary": base})
+        # Bypass ingestion dedup by writing directly
+        lessons_path = eng._knowledge_dir / "lessons.json"
+        lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+        dup = dict(lessons[0])
+        dup["id"] = "dup-mcp-test"
+        dup["summary"] = base.replace("和超时设置", "与超时配置")
+        lessons.append(dup)
+        eng._atomic_write(lessons_path, lessons)
+        result = _run(mcp_server.suggest_merges(threshold=0.4, limit=5))
+        parsed = json.loads(result)
+        assert "total_candidates" in parsed
+        assert "suggestions" in parsed
+        assert parsed["total_candidates"] >= 1
+
+    def test_suggest_merges_empty(self, eng: Engram):
+        result = _run(mcp_server.suggest_merges())
+        parsed = json.loads(result)
+        assert parsed["total_candidates"] == 0
+
+    def test_health_score_in_overview(self, eng: Engram):
+        eng.add_lesson({"summary": "test lesson", "domain": "testing"})
+        result = _run(mcp_server.get_knowledge_overview(section="health"))
+        parsed = json.loads(result)
+        health = parsed["health"]
+        assert "health_score" in health
+        assert "dimensions" in health
+        assert 0 <= health["health_score"] <= 100
+
     def test_export_knowledge_report(self, eng: Engram):
         eng.add_lesson({"summary": "some lesson", "domain": "testing"})
         result = _run(mcp_server.export_knowledge_report())

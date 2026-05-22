@@ -4,6 +4,19 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.20.0] - 2026-05-23
+
+Knowledge health scoring and smart deduplication release.
+
+### Added
+- **Knowledge health score**: `get_knowledge_overview(section="health")` now returns a 0–100 composite `health_score` with four-dimension breakdown: freshness (% reviewed within 30 days), quality (verified vs staging ratio), coverage (domain diversity via Shannon entropy), cleanliness (absence of duplicates/archive candidates)
+- **`suggest_merges` MCP tool**: Full-knowledge-base scan for near-duplicate items above a similarity threshold (default 0.45). Returns actionable merge commands — each suggestion includes primary/secondary IDs, summaries, similarity score, and a ready-to-call `merge_knowledge()` command
+- Tests for health scoring dimensions and suggest_merges functionality
+
+### Changed
+- README updated to describe health score dimensions and `suggest_merges` tool
+- MCP tool count increased: 19 read + 17 write + 1 web + 4 import/export + 2 workflow = 43 tools
+
 ## [3.19.0] - 2026-05-23
 
 Cold-start optimization release — solving the "installed but never used" gap.

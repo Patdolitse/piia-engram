@@ -110,7 +110,7 @@ Paste a session summary into `extract_session_insights` and piia-engram extracts
 ChatGPT, Gemini, Kimi — `get_identity_card` exports a ready-to-paste Markdown identity card. Your context travels even to tools that cannot connect directly.
 
 **Knowledge health and discovery**  
-`get_knowledge_overview` surfaces stale lessons (not reviewed in 30+ days), gives a health score, and flags gaps worth revisiting. `find_similar_knowledge` finds overlapping items to merge. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
+`get_knowledge_overview` surfaces stale lessons (not reviewed in 30+ days), computes a 0–100 health score across four dimensions (freshness, quality, coverage, cleanliness), and flags gaps worth revisiting. `suggest_merges` scans your entire knowledge base for near-duplicates and returns actionable merge commands. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
 
 ## Quick Start (30 seconds)
 
@@ -277,6 +277,7 @@ piia-engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools ar
 | `get_knowledge_overview` | Knowledge digest, health report, stale checks |
 | `get_related_knowledge` | Follow links between knowledge items |
 | `find_similar_knowledge` | Find similar items by content |
+| `suggest_merges` | Scan for near-duplicates with actionable merge commands |
 | `get_stale_knowledge` | List items that need review |
 | `export_knowledge_report` | Export a readable Markdown knowledge report |
 | `request_outline_review` | Generate an interactive HTML review page |
