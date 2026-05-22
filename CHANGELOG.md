@@ -4,6 +4,20 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.13.0] - 2026-05-22
+
+### Breaking
+- **Default tool set changed to Tier-1 Core (10 tools)**. Previously all 43 tools were loaded by default. Set `ENGRAM_TOOLS=all` in your MCP config `env` to restore the full set. `engram doctor` will show an info notice if your config doesn't specify `ENGRAM_TOOLS`.
+
+### Changed
+- **Tier-1 tool set revised**: added `wrap_up_session` (session lifecycle) and `update_identity` (profile updates); removed `extract_session_insights` and `export_engram` (moved to Tier-2)
+- **Quickstart simplified**: `pip install piia-engram && engram setup` is the complete flow; manual MCP JSON config moved to collapsible section
+- README tool tables reorganized: Tier-1 as main table, Tier-2 in collapsible `<details>` section
+
+### Improved
+- `engram doctor` shows info notice when configs lack `ENGRAM_TOOLS` setting
+- Extracted `MAX_KNOWLEDGE_ENTRIES` constant (was hardcoded `200` in 11 places)
+
 ## [3.12.3] - 2026-05-22
 
 ### Fixed
