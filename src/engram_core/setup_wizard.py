@@ -29,6 +29,18 @@ def _t(zh: str, en: str) -> str:
     """根据当前语言返回对应文案。"""
     return zh if _lang == "zh" else en
 
+
+def _safe_print(text: str) -> None:
+    """Print with fallback for consoles that can't handle certain Unicode chars (e.g. Windows GBK)."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Strip chars the console encoding can't handle
+        import sys
+        enc = sys.stdout.encoding or "ascii"
+        safe = text.encode(enc, errors="ignore").decode(enc)
+        print(safe)
+
 # ---------------------------------------------------------------------------
 # 智能扫描 + 分流导入
 # ---------------------------------------------------------------------------
@@ -586,15 +598,15 @@ def _run_seed_knowledge_onboarding(
             _e = _Engram()
             card = _e.export_identity_card()
             if card and len(card.strip().splitlines()) > 5:
-                print("────────────────────────────────────────")
-                print(_t("  🪪  你的 AI 身份卡预览：\n",
-                         "  🪪  Your AI identity card preview:\n"))
+                print("----------------------------------------")
+                print(_t("  [CARD] AI identity card preview:\n",
+                         "  [CARD] AI identity card preview:\n"))
                 for line in card.strip().splitlines():
-                    print(f"  {line}")
+                    _safe_print(f"  {line}")
                 print()
-                print("────────────────────────────────────────")
-                print(_t("  💡 任何 AI 工具调用 get_identity_card 就能看到这张卡。",
-                         "  💡 Any AI tool can see this card via get_identity_card."))
+                print("----------------------------------------")
+                print(_t("  Tip: AI tools can see this via get_identity_card.",
+                         "  Tip: AI tools can see this via get_identity_card."))
                 print()
         except Exception:
             pass  # Non-critical — skip silently

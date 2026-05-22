@@ -46,7 +46,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **394+ tests, 0 failures, 78%+ coverage**. All PRs must maintain this.
+Current baseline: **437+ tests, 0 failures, 78%+ coverage**. All PRs must maintain this.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash

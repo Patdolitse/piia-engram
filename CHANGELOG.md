@@ -4,6 +4,16 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.15.1] - 2026-05-22
+
+### Fixed
+- **GBK console safety**: Identity card preview in setup wizard now uses `_safe_print()` to avoid `UnicodeEncodeError` on Windows Chinese consoles (strips unsupported emoji, preserves CJK text)
+
+### Improved
+- **README**: Added PyPI download badge, "30 seconds" quick start framing, setup step 5-6 (privacy + identity card preview), updated "By the numbers" to v3.15.0 stats (437 tests), added CLI commands reference section
+- **README.zh-CN.md**: Synced all English README improvements
+- **CONTRIBUTING baselines**: 394+ → 437+ tests
+
 ## [3.15.0] - 2026-05-22
 
 Privacy-focused feature release: opt-in anonymous usage statistics, reconcile authorization gate, and setup wizard privacy step. Designed through cross-AI consultation (4 independent AI evaluations synthesized).
