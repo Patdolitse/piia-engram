@@ -2892,3 +2892,355 @@ def test_cjk_mixed_query(tmp_path: Path):
     results = engram.search_knowledge("Docker 部署")
     lessons = results.get("lessons", [])
     assert any("Docker" in l.get("summary", "") for l in lessons)
+
+
+# ── core.py 覆盖率补充测试 ──────────────────────────────────────────
+
+
+def test_parse_schema_version_invalid(tmp_path: Path):
+    """_parse_schema_version 应对无效输入返回 (0, 0)。"""
+    from engram_core.core import Engram
+    assert Engram._parse_schema_version("abc") == (0, 0)
+    assert Engram._parse_schema_version(None) == (0, 0)
+
+
+def test_migrate_v1_to_v2(tmp_path: Path):
+    """_migrate_v1_to_v2 应将 work_style 迁移为 preferences 并创建 trust_boundaries。"""
+    engram = make_engram(tmp_path)
+
+    # Set schema to v1.0
+    schema_path = tmp_path / "schema_version.json"
+    schema_path.write_text('{"schema_version": "1.0"}', encoding="utf-8")
+
+    # Create old-style work_style.json
+    identity_dir = tmp_path / "identity"
+    identity_dir.mkdir(exist_ok=True)
+    work_style_path = identity_dir / "work_style.json"
+    work_style_path.write_text(json.dumps({
+        "preferences": {"editor": "vim"},
+        "communication": "简洁直接",
+    }), encoding="utf-8")
+
+    # Remove trust_boundaries if it exists
+    tb_path = identity_dir / "trust_boundaries.json"
+    if tb_path.exists():
+        tb_path.unlink()
+
+    # Remove preferences.json if it exists
+    prefs_path = identity_dir / "preferences.json"
+    if prefs_path.exists():
+        prefs_path.unlink()
+
+    engram._migrate_v1_to_v2()
+
+    # preferences.json created
+    assert prefs_path.is_file()
+    prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+    assert prefs["work_patterns"] == {"editor": "vim"}
+    assert prefs["communication"] == "简洁直接"
+    assert prefs.get("migrated_from") == "work_style.json"
+
+    # trust_boundaries.json created
+    assert tb_path.is_file()
+
+    # schema version bumped
+    ver = json.loads(schema_path.read_text(encoding="utf-8"))
+    assert ver["schema_version"] == "2.0"
+
+
+def test_migrate_v1_to_v2_skips_if_already_v2(tmp_path: Path):
+    """已是 v2.0 时不应重复迁移。"""
+    engram = make_engram(tmp_path)
+    schema_path = tmp_path / "schema_version.json"
+    schema_path.write_text('{"schema_version": "2.0"}', encoding="utf-8")
+
+    engram._migrate_v1_to_v2()
+
+    # Should be a no-op, schema still v2.0
+    ver = json.loads(schema_path.read_text(encoding="utf-8"))
+    assert ver["schema_version"] == "2.0"
+
+
+def test_update_profile_all_rejected(tmp_path: Path):
+    """全部字段被拒绝时 update_profile 应直接返回。"""
+    engram = make_engram(tmp_path)
+    engram.update_profile({"evil_field": "bad", "injection": "data"})
+    profile = engram.get_profile()
+    assert "evil_field" not in profile
+
+
+def test_update_preferences_all_rejected(tmp_path: Path):
+    """全部字段被拒绝时 update_preferences 应直接返回。"""
+    engram = make_engram(tmp_path)
+    engram.update_preferences({"unknown_pref": "bad"})
+    prefs = engram.get_preferences()
+    assert "unknown_pref" not in prefs
+
+
+def test_update_trust_boundaries_all_rejected(tmp_path: Path):
+    """全部字段被拒绝时 update_trust_boundaries 应直接返回。"""
+    engram = make_engram(tmp_path)
+    engram.update_trust_boundaries({"evil": "field"})
+    tb = engram.get_trust_boundaries()
+    assert "evil" not in tb
+
+
+def test_update_quality_standards_all_rejected(tmp_path: Path):
+    """全部字段被拒绝时 update_quality_standards 应直接返回。"""
+    engram = make_engram(tmp_path)
+    engram.update_quality_standards({"unknown_rule": "nope"})
+    qs = engram.get_quality_standards()
+    assert "unknown_rule" not in qs
+
+
+def test_get_preferences_falls_back_to_work_style(tmp_path: Path):
+    """无 preferences.json 时应回退到 work_style.json。"""
+    engram = make_engram(tmp_path)
+    # Ensure no preferences.json
+    prefs_path = tmp_path / "identity" / "preferences.json"
+    if prefs_path.exists():
+        prefs_path.unlink()
+
+    engram.update_work_style({
+        "preferences": {"theme": "dark"},
+        "communication": "直接",
+    })
+    prefs = engram.get_preferences()
+    assert prefs["work_patterns"] == {"theme": "dark"}
+    assert prefs["communication"] == "直接"
+    assert prefs["tool_preferences"] == {}
+
+
+def test_sanitize_project_with_path(tmp_path: Path):
+    """_sanitize_project 应从路径中提取项目名。"""
+    from engram_core.core import Engram
+    assert Engram._sanitize_project("/home/user/projects/my-app") == "my-app"
+    assert Engram._sanitize_project("C:\\Users\\dev\\project") == "project"
+    assert Engram._sanitize_project("") == ""
+    assert Engram._sanitize_project("simple-name") == "simple-name"
+
+
+def test_ensure_fields_non_dict(tmp_path: Path):
+    """_ensure_fields 应将非 dict 输入转为 dict。"""
+    engram = make_engram(tmp_path)
+    result = engram._ensure_fields("not a dict", "lesson")
+    assert isinstance(result, dict)
+    assert "id" in result
+    assert "timestamp" in result
+
+
+def test_add_lesson_with_source_url(tmp_path: Path):
+    """add_lesson 应存储 source_url 字段。"""
+    engram = make_engram(tmp_path)
+    result = engram.add_lesson(
+        "来源测试",
+        domain="test",
+        source_url="https://example.com/article",
+    )
+    assert result.get("source_url") == "https://example.com/article"
+
+
+def test_add_decision_with_alternatives(tmp_path: Path):
+    """add_decision 应存储 alternatives 列表。"""
+    engram = make_engram(tmp_path)
+    result = engram.add_decision(
+        "选择框架",
+        choice="FastAPI",
+        alternatives=["Flask", "Django"],
+    )
+    assert result.get("alternatives") == ["Flask", "Django"]
+
+
+def test_lesson_eviction_overflow(tmp_path: Path):
+    """超过 MAX_KNOWLEDGE_ENTRIES 时应驱逐 staging 条目优先。"""
+    from engram_core.storage import MAX_KNOWLEDGE_ENTRIES, _read_json
+
+    engram = make_engram(tmp_path)
+    path = tmp_path / "knowledge" / "lessons.json"
+
+    # Pre-fill with MAX entries (mix of staging and verified)
+    entries = []
+    for i in range(MAX_KNOWLEDGE_ENTRIES):
+        tier = "staging" if i < 5 else "verified"
+        entries.append({
+            "id": f"lesson-{i:04d}",
+            "summary": f"lesson {i} unique content for eviction test",
+            "domain": "test",
+            "status": "active",
+            "tier": tier,
+            "timestamp": f"2026-01-{(i % 28) + 1:02d}T00:00:00",
+        })
+    from engram_core.storage import _write_json
+    _write_json(path, entries)
+
+    # Add one more → triggers eviction
+    result = engram.add_lesson("溢出测试条目", domain="overflow")
+    assert "status" not in result or result.get("status") != "duplicate"
+
+    lessons = _read_json(path)
+    assert len(lessons) <= MAX_KNOWLEDGE_ENTRIES
+
+
+def test_decision_eviction_overflow(tmp_path: Path):
+    """超过 MAX_KNOWLEDGE_ENTRIES 时应驱逐 staging 决策优先。"""
+    from engram_core.storage import MAX_KNOWLEDGE_ENTRIES, _read_json
+
+    engram = make_engram(tmp_path)
+    path = tmp_path / "knowledge" / "decisions.json"
+
+    entries = []
+    for i in range(MAX_KNOWLEDGE_ENTRIES):
+        tier = "staging" if i < 5 else "verified"
+        entries.append({
+            "id": f"decision-{i:04d}",
+            "question": f"decision {i} unique question for eviction test",
+            "choice": f"choice {i}",
+            "status": "active",
+            "tier": tier,
+            "timestamp": f"2026-01-{(i % 28) + 1:02d}T00:00:00",
+        })
+    from engram_core.storage import _write_json
+    _write_json(path, entries)
+
+    result = engram.add_decision({"question": "溢出决策", "choice": "测试"})
+    assert "status" not in result or result.get("status") != "duplicate"
+
+    decisions = _read_json(path)
+    assert len(decisions) <= MAX_KNOWLEDGE_ENTRIES
+
+
+def test_get_lessons_domain_filter(tmp_path: Path):
+    """get_lessons 应能按 domain 过滤。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("Python 优化技巧", domain="python")
+    engram.add_lesson("Docker 部署实践", domain="docker")
+
+    python_only = engram.get_lessons(domain="python")
+    assert all("python" in l.get("domain", "") for l in python_only)
+    assert len(python_only) >= 1
+
+
+def test_get_decisions_domain_filter(tmp_path: Path):
+    """get_decisions 应能按 domain 过滤。"""
+    engram = make_engram(tmp_path)
+    engram.add_decision({"question": "框架选择", "choice": "FastAPI", "domain": "python"})
+    engram.add_decision({"question": "数据库选型", "choice": "PostgreSQL", "domain": "database"})
+
+    python_only = engram.get_decisions(domain="python")
+    assert len(python_only) >= 1
+    assert all("python" in d.get("domain", "") for d in python_only)
+
+
+def test_update_lesson_not_found(tmp_path: Path):
+    """update_lesson 对不存在的 ID 应返回 error。"""
+    engram = make_engram(tmp_path)
+    result = engram.update_lesson("nonexistent-id", {"summary": "new"})
+    assert "error" in result
+
+
+def test_update_decision_not_found(tmp_path: Path):
+    """update_decision 对不存在的 ID 应返回 error。"""
+    engram = make_engram(tmp_path)
+    result = engram.update_decision("nonexistent-id", {"choice": "new"})
+    assert "error" in result
+
+
+def test_link_knowledge_not_found(tmp_path: Path):
+    """link_knowledge 对不存在的 ID 应返回 error。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("存在的条目", domain="test")
+    lid = lesson["id"]
+
+    # id_b not found
+    result = engram.link_knowledge(lid, "nonexistent")
+    assert "error" in result
+
+    # id_a not found
+    result = engram.link_knowledge("nonexistent", lid)
+    assert "error" in result
+
+
+def test_unlink_knowledge_not_found(tmp_path: Path):
+    """unlink_knowledge 对不存在的 ID 应返回 error。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("存在的条目", domain="test")
+    lid = lesson["id"]
+
+    result = engram.unlink_knowledge(lid, "nonexistent")
+    assert "error" in result
+
+    result = engram.unlink_knowledge("nonexistent", lid)
+    assert "error" in result
+
+
+def test_merge_knowledge_secondary_not_found(tmp_path: Path):
+    """merge_knowledge secondary 不存在时返回 error。"""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("主条目", domain="test")
+    result = engram.merge_knowledge(lesson["id"], "nonexistent")
+    assert "error" in result
+    assert "Secondary" in result["error"]
+
+
+def test_merge_knowledge_not_active(tmp_path: Path):
+    """merge_knowledge 对非 active 条目应返回 error。"""
+    engram = make_engram(tmp_path)
+    l1 = engram.add_lesson("主条目", domain="test")
+    l2 = engram.add_lesson("副条目", domain="test")
+    engram.archive_lesson(l2["id"])
+
+    result = engram.merge_knowledge(l1["id"], l2["id"])
+    assert "error" in result
+    assert "not active" in result["error"]
+
+
+def test_merge_knowledge_transfers_related(tmp_path: Path):
+    """merge_knowledge 应转移 secondary 的 related_ids 到 primary。"""
+    engram = make_engram(tmp_path)
+    l1 = engram.add_lesson("主条目", domain="test")
+    l2 = engram.add_lesson("副条目", domain="test")
+    l3 = engram.add_lesson("关联条目", domain="test")
+
+    # Link l2 ↔ l3
+    engram.link_knowledge(l2["id"], l3["id"])
+
+    # Merge l2 into l1 → l3's link should transfer to l1
+    result = engram.merge_knowledge(l1["id"], l2["id"])
+    assert result.get("success") is True
+    assert result.get("related_ids_transferred", 0) >= 1
+
+
+def test_import_all_overwrite_mode(tmp_path: Path):
+    """import_all(merge=False) 应覆盖而不是合并。"""
+    engram = make_engram(tmp_path)
+
+    # Set up initial data
+    engram.update_profile({"role": "原始角色"})
+    engram.update_work_style({"preferences": {"old": True}})
+    engram.update_quality_standards({"rules": ["旧规则"]})
+    engram.add_lesson("原始教训", domain="test")
+    engram.add_decision({"question": "原始决策", "choice": "A"})
+
+    # Export
+    export_path = engram.export_all(str(tmp_path / "backup.json"))
+
+    # Modify exported data
+    backup = json.loads(Path(export_path).read_text(encoding="utf-8"))
+    backup["identity"]["profile"] = {"role": "新角色", "name": "测试"}
+    backup["identity"]["work_style"] = {"preferences": {"new": True}}
+    backup["identity"]["quality_standards"] = {"rules": ["新规则"], "acceptance_threshold": 0.9}
+    backup["knowledge"]["lessons"] = [{"summary": "新教训", "domain": "new"}]
+    backup["knowledge"]["decisions"] = [{"question": "新决策", "choice": "B"}]
+    backup["knowledge"]["domains"] = {"new_domain": {"project_count": 5}}
+    backup["projects"] = {"proj1": {"title": "覆写项目", "project_folder": "/test"}}
+
+    modified_path = tmp_path / "modified_backup.json"
+    modified_path.write_text(json.dumps(backup, ensure_ascii=False), encoding="utf-8")
+
+    # Import with overwrite
+    result = engram.import_all(str(modified_path), merge=False)
+    assert result["status"] == "success"
+    assert result["mode"] == "overwrite"
+    assert "profile" in result["imported"]
+    assert "work_style" in result["imported"]
+    assert "quality_standards" in result["imported"]
