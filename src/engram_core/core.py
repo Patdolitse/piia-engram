@@ -2077,7 +2077,7 @@ class Engram:
         if stale_count > 5:
             sections["stale"] = (
                 "\n## stale_knowledge_warning\n"
-                f"- 有 {stale_count} 条知识超过 30 天未复习，建议运行 get_stale_knowledge 查看。"
+                f"- 有 {stale_count} 条知识超过 {STALE_KNOWLEDGE_DAYS} 天未复习，建议运行 get_stale_knowledge 查看。"
             )
 
         # Staging reminder
@@ -3553,7 +3553,7 @@ function copyResult() {{
         else:
             lines.extend(["暂无关键决策。", ""])
 
-        lines.extend(["## 待复查（超过 30 天未访问）", ""])
+        lines.extend([f"## 待复查（超过 {STALE_KNOWLEDGE_DAYS} 天未访问）", ""])
         stale_items = stale["lessons"] + stale["decisions"]
         if stale_items:
             for item in stale_items:
@@ -3561,7 +3561,7 @@ function copyResult() {{
                     f"- **{item.get('title', '')}** — 最后访问: {item.get('last_reviewed', '')}"
                 )
         else:
-            lines.append("暂无超过 30 天未访问的活跃知识。")
+            lines.append(f"暂无超过 {STALE_KNOWLEDGE_DAYS} 天未访问的活跃知识。")
         lines.append("")
 
         report = "\n".join(lines)
