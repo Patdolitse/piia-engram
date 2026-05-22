@@ -50,6 +50,7 @@ class ContextMixin:
     # budget is tight).  Display order is a separate axis so the output reads
     # naturally regardless of which sections survive the budget cut.
     _SECTION_PRIORITY: dict[str, int] = {
+        "fragmentation": 0,
         "profile": 1,
         "lessons": 2,
         "decisions": 3,
@@ -63,6 +64,7 @@ class ContextMixin:
         "sync": 11,
     }
     _SECTION_DISPLAY: dict[str, int] = {
+        "fragmentation": 0,
         "profile": 1,
         "preferences": 2,
         "quality": 3,
@@ -74,6 +76,17 @@ class ContextMixin:
         "stale": 9,
         "staging": 10,
         "sync": 11,
+    }
+
+    # Tiered context levels for cold-start latency control.
+    # quick:    profile + preferences only — pure JSON reads, no scans.
+    # standard: + quality, domains, top lessons/decisions, project snapshot.
+    # full:     everything (conflicts, stale, staging, auto-sync side effects).
+    _LEVEL_SECTIONS: dict[str, set[str] | None] = {
+        "quick": {"profile", "preferences"},
+        "standard": {"profile", "preferences", "quality", "domains",
+                     "lessons", "decisions", "project"},
+        "full": None,  # None means "include all sections"
     }
 
     # ------------------------------------------------------------------
@@ -309,6 +322,7 @@ class ContextMixin:
         self,
         project_folder: str | None = None,
         max_tokens: int | None = None,
+        level: str = "full",
     ) -> str:
         """Generate a concise context block that any AI can consume.
 
@@ -321,9 +335,42 @@ class ContextMixin:
                 by priority until the budget is exhausted.  Lower-priority
                 sections are dropped first.  When *None* (default), all
                 sections are included (backward-compatible).
+            level: Context detail tier — "quick" | "standard" | "full".
+                - "quick": profile + preferences only (pure JSON reads,
+                  no filesystem scans). Use for low-latency cold start.
+                - "standard": adds quality, domains, top lessons/decisions,
+                  and project snapshot. Skips expensive reconciliation.
+                - "full" (default): everything, including conflict detection,
+                  stale/staging warnings, and auto-reconcile side effects.
+                Backward-compatible: defaults to "full" so existing callers
+                see no behaviour change.
         """
+        # Normalise level; unknown values fall back to full for safety.
+        level = (level or "full").lower()
+        if level not in self._LEVEL_SECTIONS:
+            level = "full"
+        allowed = self._LEVEL_SECTIONS[level]
+
+        def _wants(section: str) -> bool:
+            """True iff this section should be built at the current level."""
+            return allowed is None or section in allowed
+
         # ── Build each section independently ──────────────────────────
         sections: dict[str, str] = {}
+
+        # Data fragmentation warning — surface before any content.
+        if getattr(self, "data_orphans", None):
+            lines = [
+                "## ⚠ 数据碎片警告",
+                f"当前数据目录: `{self.root}`",
+                "以下路径也包含 Engram 数据，但**未被读取**:",
+            ]
+            for orphan in self.data_orphans:
+                lines.append(f"- `{orphan}`")
+            lines.append("")
+            lines.append("这意味着部分经验教训或身份信息可能丢失。")
+            lines.append("请运行 `engram doctor` 或手动合并后删除多余目录。")
+            sections["fragmentation"] = "\n".join(lines)
 
         # Profile
         profile = self.get_safe_profile()
@@ -360,72 +407,83 @@ class ContextMixin:
             sections["preferences"] = "\n".join(pr)
 
         # Quality standards
-        standards = self.get_quality_standards()
-        if standards:
-            qs: list[str] = ["\n## 质量标准"]
-            if standards.get("acceptance_threshold"):
-                qs.append(f"- 验收严格度: {standards['acceptance_threshold']}/5")
-            if standards.get("rules"):
-                for rule in standards["rules"][:5]:
-                    qs.append(f"- {rule}")
-            sections["quality"] = "\n".join(qs)
+        if _wants("quality"):
+            standards = self.get_quality_standards()
+            if standards:
+                qs: list[str] = ["\n## 质量标准"]
+                if standards.get("acceptance_threshold"):
+                    qs.append(f"- 验收严格度: {standards['acceptance_threshold']}/5")
+                if standards.get("rules"):
+                    for rule in standards["rules"][:5]:
+                        qs.append(f"- {rule}")
+                sections["quality"] = "\n".join(qs)
 
         # Domains
-        domains = self.get_domains()
-        if domains:
-            dl: list[str] = ["\n## 经验领域"]
-            sorted_domains = sorted(
-                domains.items(),
-                key=lambda x: x[1].get("project_count", 0),
-                reverse=True,
-            )
-            for name, info in sorted_domains[:6]:
-                count = info.get("project_count", 0)
-                dl.append(f"- {name}: {count} 个项目经验")
-            sections["domains"] = "\n".join(dl)
+        if _wants("domains"):
+            domains = self.get_domains()
+            if domains:
+                dl: list[str] = ["\n## 经验领域"]
+                sorted_domains = sorted(
+                    domains.items(),
+                    key=lambda x: x[1].get("project_count", 0),
+                    reverse=True,
+                )
+                for name, info in sorted_domains[:6]:
+                    count = info.get("project_count", 0)
+                    dl.append(f"- {name}: {count} 个项目经验")
+                sections["domains"] = "\n".join(dl)
 
         # Lessons — _update_access=False: context injection ≠ user review
-        lessons = self.get_relevant_lessons(
-            project_folder=project_folder, limit=8, _update_access=False
-        )
-        if lessons:
-            ll: list[str] = ["\n## 相关经验教训（请在开发中主动避免）"]
-            for l in lessons:
-                ll.append(f"- {l.get('summary', '')}")
-            sections["lessons"] = "\n".join(ll)
+        # Note: lessons/decisions variables are reused by the "conflicts" section,
+        # so we initialise them as empty lists when skipped to keep that logic safe.
+        if _wants("lessons"):
+            lessons = self.get_relevant_lessons(
+                project_folder=project_folder, limit=8, _update_access=False
+            )
+            if lessons:
+                ll: list[str] = ["\n## 相关经验教训（请在开发中主动避免）"]
+                for l in lessons:
+                    ll.append(f"- {l.get('summary', '')}")
+                sections["lessons"] = "\n".join(ll)
+        else:
+            lessons = []
 
         # Decisions
-        decisions = self.get_decisions(limit=6, _update_access=False)
-        if decisions:
-            dc: list[str] = ["\n## 已做的关键决策（请遵循）"]
-            for d in decisions:
-                question = d.get("question") or d.get("title") or ""
-                choice = d.get("choice", "")
-                if question and choice:
-                    dc.append(f"- {question} → {choice}")
-                elif question:
-                    dc.append(f"- {question}")
-                elif choice:
-                    dc.append(f"- {choice}")
-            sections["decisions"] = "\n".join(dc)
+        if _wants("decisions"):
+            decisions = self.get_decisions(limit=6, _update_access=False)
+            if decisions:
+                dc: list[str] = ["\n## 已做的关键决策（请遵循）"]
+                for d in decisions:
+                    question = d.get("question") or d.get("title") or ""
+                    choice = d.get("choice", "")
+                    if question and choice:
+                        dc.append(f"- {question} → {choice}")
+                    elif question:
+                        dc.append(f"- {question}")
+                    elif choice:
+                        dc.append(f"- {choice}")
+                sections["decisions"] = "\n".join(dc)
+        else:
+            decisions = []
 
         # Conflicts
-        conflict_items: list[str] = []
-        if decisions:
-            for c in self._detect_decision_conflicts(decisions):
-                conflict_items.append(
-                    f"- 决策冲突: 「{c['q1']}→{c['c1']}」与「{c['q2']}→{c['c2']}」可能矛盾，请与用户确认以哪个为准"
-                )
-        if lessons:
-            for c in self._detect_lesson_conflicts(lessons):
-                conflict_items.append(
-                    f"- 经验冲突: 「{c['s1'][:30]}」与「{c['s2'][:30]}」给出矛盾建议，请与用户确认"
-                )
-        if conflict_items:
-            sections["conflicts"] = "\n## 知识冲突提醒\n" + "\n".join(conflict_items)
+        if _wants("conflicts"):
+            conflict_items: list[str] = []
+            if decisions:
+                for c in self._detect_decision_conflicts(decisions):
+                    conflict_items.append(
+                        f"- 决策冲突: 「{c['q1']}→{c['c1']}」与「{c['q2']}→{c['c2']}」可能矛盾，请与用户确认以哪个为准"
+                    )
+            if lessons:
+                for c in self._detect_lesson_conflicts(lessons):
+                    conflict_items.append(
+                        f"- 经验冲突: 「{c['s1'][:30]}」与「{c['s2'][:30]}」给出矛盾建议，请与用户确认"
+                    )
+            if conflict_items:
+                sections["conflicts"] = "\n## 知识冲突提醒\n" + "\n".join(conflict_items)
 
         # Project history
-        if project_folder:
+        if _wants("project") and project_folder:
             proj = self.get_project_snapshot(project_folder)
             if proj:
                 ph: list[str] = ["\n## 当前项目历史"]
@@ -442,48 +500,52 @@ class ContextMixin:
                 sections["project"] = "\n".join(ph)
 
         # Stale warning
-        stale = self.get_stale_knowledge(days=STALE_KNOWLEDGE_DAYS, limit=None)
-        stale_count = len(stale["lessons"]) + len(stale["decisions"])
-        if stale_count > 5:
-            sections["stale"] = (
-                "\n## stale_knowledge_warning\n"
-                f"- 有 {stale_count} 条知识超过 {STALE_KNOWLEDGE_DAYS} 天未复习，建议运行 get_stale_knowledge 查看。"
-            )
+        if _wants("stale"):
+            stale = self.get_stale_knowledge(days=STALE_KNOWLEDGE_DAYS, limit=None)
+            stale_count = len(stale["lessons"]) + len(stale["decisions"])
+            if stale_count > 5:
+                sections["stale"] = (
+                    "\n## stale_knowledge_warning\n"
+                    f"- 有 {stale_count} 条知识超过 {STALE_KNOWLEDGE_DAYS} 天未复习，建议运行 get_stale_knowledge 查看。"
+                )
 
         # Staging reminder
-        staging = self.get_staging_summary()
-        if staging["total_staging"] > 10:
-            sections["staging"] = (
-                "\n## staging_review_reminder\n"
-                f"- 有 {staging['total_staging']} 条自动导入的知识尚未审核。"
-                " 建议运行 review_knowledge 查看并确认或归档。"
-            )
-
-        # Auto-reconcile (side effects always run, text is lowest priority)
-        sync_msgs: list[str] = []
-        try:
-            reconcile = self.reconcile_memories()
-            if reconcile["imported"] > 0:
-                sync_msgs.append(
-                    f"- 记忆同步：导入了 {reconcile['imported']} 条外部 AI 记忆"
-                    f"（来源：{', '.join(reconcile['sources'][:5])}）"
+        if _wants("staging"):
+            staging = self.get_staging_summary()
+            if staging["total_staging"] > 10:
+                sections["staging"] = (
+                    "\n## staging_review_reminder\n"
+                    f"- 有 {staging['total_staging']} 条自动导入的知识尚未审核。"
+                    " 建议运行 review_knowledge 查看并确认或归档。"
                 )
-        except Exception as exc:
-            logger.warning("reconcile_memories failed: %s", exc)
 
-        try:
-            cfg_sync = self.reconcile_ai_configs()
-            if cfg_sync["imported"] > 0:
-                sync_msgs.append(
-                    f"- 配置对齐：从 {cfg_sync['scanned_files']} 个 AI 配置文件"
-                    f"导入了 {cfg_sync['imported']} 条规则"
-                    f"（来源：{', '.join(cfg_sync['sources'][:5])}）"
-                )
-        except Exception as exc:
-            logger.warning("reconcile_ai_configs failed: %s", exc)
+        # Auto-reconcile (filesystem-scanning side effects — only at "full" level).
+        # Skipping these is the main latency win for quick/standard cold start.
+        if _wants("sync"):
+            sync_msgs: list[str] = []
+            try:
+                reconcile = self.reconcile_memories()
+                if reconcile["imported"] > 0:
+                    sync_msgs.append(
+                        f"- 记忆同步：导入了 {reconcile['imported']} 条外部 AI 记忆"
+                        f"（来源：{', '.join(reconcile['sources'][:5])}）"
+                    )
+            except Exception as exc:
+                logger.warning("reconcile_memories failed: %s", exc)
 
-        if sync_msgs:
-            sections["sync"] = "\n## auto_sync\n" + "\n".join(sync_msgs)
+            try:
+                cfg_sync = self.reconcile_ai_configs()
+                if cfg_sync["imported"] > 0:
+                    sync_msgs.append(
+                        f"- 配置对齐：从 {cfg_sync['scanned_files']} 个 AI 配置文件"
+                        f"导入了 {cfg_sync['imported']} 条规则"
+                        f"（来源：{', '.join(cfg_sync['sources'][:5])}）"
+                    )
+            except Exception as exc:
+                logger.warning("reconcile_ai_configs failed: %s", exc)
+
+            if sync_msgs:
+                sections["sync"] = "\n## auto_sync\n" + "\n".join(sync_msgs)
 
         # ── Assemble ──────────────────────────────────────────────────
         if not sections:
@@ -506,6 +568,65 @@ class ContextMixin:
         # Re-sort to display order
         included.sort()
         return "\n".join(text for _, text in included)
+
+    # ------------------------------------------------------------------
+    # Quick-context snapshot file (cross-tool / offline fallback)
+    # ------------------------------------------------------------------
+
+    def refresh_quick_context(
+        self,
+        target: "Path | None" = None,
+        level: str = "standard",
+    ) -> "Path":
+        """Write a portable cold-start snapshot to ``<root>/quick_context.md``.
+
+        Any AI tool — even one without the Engram MCP server connected —
+        can `Read` this file to get the user's identity, preferences, and
+        top knowledge. Default level is "standard" so the file stays under
+        a few KB and free of expensive reconcile output.
+
+        Args:
+            target: Override output path. Defaults to ``self.root / "quick_context.md"``.
+            level: Detail tier for the snapshot ("quick" | "standard" | "full").
+                Defaults to "standard" — covers most cold-start needs.
+
+        Returns:
+            Path to the written file.
+        """
+        from datetime import datetime
+        import os as _os
+        import tempfile as _tempfile
+        from pathlib import Path as _Path
+
+        body = self.generate_context(level=level)
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        content = (
+            f"<!-- Engram quick_context snapshot — level={level} — generated {timestamp} -->\n"
+            f"<!-- This file is regenerated by Engram. Editing it has no effect. -->\n\n"
+            f"{body}\n"
+        )
+
+        path = _Path(target) if target else (self.root / "quick_context.md")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Atomic write: temp file in same dir + os.replace
+        fd, tmp_name = _tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        )
+        try:
+            with _os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                _os.fsync(f.fileno())
+            _os.replace(tmp_name, path)
+        except Exception:
+            try:
+                _Path(tmp_name).unlink()
+            except OSError:
+                pass
+            raise
+        return path
 
 
 # ---------------------------------------------------------------------------

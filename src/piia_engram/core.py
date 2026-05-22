@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 # All constants and I/O utilities live in storage.py — re-exported here
-# for backward compatibility (tests import from engram_core.core).
+# for backward compatibility (tests import from piia_engram.core).
 from .storage import (  # noqa: F401 — re-exports
     CONFLICT_C_CEILING,
     CONFLICT_Q_THRESHOLD,
@@ -37,6 +40,7 @@ from .storage import (  # noqa: F401 — re-exports
     _TERM_ALIASES,
     _atomic_write_json,
     _engram_root,
+    detect_data_fragmentation,
     _now_iso,
     _parse_iso,
     _project_id,
@@ -49,7 +53,7 @@ from .context import EXTRACTION_PROMPT, extract_knowledge, ingest_extraction  # 
 from .reconcile import ReconcileMixin
 from .reports import ReportsMixin
 # Compat helpers re-exported for backward compatibility (tests import these
-# from engram_core.core directly).
+# from piia_engram.core directly).
 from .compat import (  # noqa: F401
     export_to_openclaw,
     import_from_openclaw,
@@ -72,17 +76,26 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin):
         self._exports_dir = self.root / "exports"
 
         # Encryption engine (transparent when ENGRAM_SECRET is not set)
-        from engram_core.crypto import EncryptionEngine
+        from piia_engram.crypto import EncryptionEngine
         secret = os.environ.get("ENGRAM_SECRET", "").strip()
         self._crypto = EncryptionEngine(secret if secret else None)
 
         # Audit logger (disabled unless ENGRAM_AUDIT=1/true/yes)
-        from engram_core.audit import AuditLogger
+        from piia_engram.audit import AuditLogger
         audit_enabled = os.environ.get("ENGRAM_AUDIT", "").strip().lower() in ("1", "true", "yes")
         self._audit = AuditLogger(
             log_path=self.root / "audit.log" if audit_enabled else None,
             enabled=audit_enabled,
         )
+
+        # Data fragmentation detection — warn, don't silently split.
+        self.data_orphans = detect_data_fragmentation(self.root)
+        if self.data_orphans:
+            logger.warning(
+                "DATA FRAGMENTATION: active root is %s but data also "
+                "exists at: %s — knowledge may be incomplete!",
+                self.root, ", ".join(self.data_orphans),
+            )
 
         self._ensure_structure()
 
