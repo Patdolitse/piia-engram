@@ -178,7 +178,8 @@ def _read_json(path: Path) -> Any:
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        print(f"[engram] failed to read {path.name}: {exc}", file=sys.stderr)
         return {}
 
 
