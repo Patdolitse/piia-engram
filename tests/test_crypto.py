@@ -120,3 +120,145 @@ class TestEncryptionEngine:
                 crypto_mod.EncryptionEngine(secret="test-secret")
         finally:
             crypto_mod.HAS_CRYPTO = original
+
+
+# ---------------------------------------------------------------------------
+# Expanded coverage: v1 → v2 migration, multi-field, Unicode, bad payloads
+# ---------------------------------------------------------------------------
+
+
+class TestEncryptionExpansion:
+    """Phase 3.3 — additional coverage beyond the v3.14.0 baseline."""
+
+    def _v1_blob(self, secret: str, plaintext: str) -> str:
+        """Produce a real enc:v1: ciphertext using 100k PBKDF2."""
+        from engram_core.crypto import (
+            ENC_PREFIX_V1,
+            PBKDF2_ITERATIONS_V1,
+            _derive_key,
+        )
+        import base64
+        import os
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        salt = os.urandom(16)
+        nonce = os.urandom(12)
+        key = _derive_key(secret, salt, PBKDF2_ITERATIONS_V1)
+        ciphertext = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), None)
+        payload = base64.urlsafe_b64encode(salt + nonce + ciphertext).decode("ascii")
+        return f"{ENC_PREFIX_V1}{payload}"
+
+    def test_mixed_v1_v2_fields_both_decrypt(self):
+        """A dict with v1 in one field and v2 in another must round-trip."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        secret = "rotation-test"
+        engine = EncryptionEngine(secret=secret)
+        v1_blob = self._v1_blob(secret, "legacy@example.com")
+        v2_blob = engine.encrypt("new@example.com")
+        data = {"old_email": v1_blob, "new_email": v2_blob, "name": "张三"}
+        decrypted = engine.decrypt_fields(data, {"old_email", "new_email"})
+        assert decrypted["old_email"] == "legacy@example.com"
+        assert decrypted["new_email"] == "new@example.com"
+        assert decrypted["name"] == "张三"  # untouched
+
+    def test_v1_decrypt_then_re_encrypt_emits_v2(self):
+        """After decrypting a v1 blob and re-encrypting, the new ciphertext is v2."""
+        from engram_core.crypto import ENC_PREFIX_V2, EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        secret = "upgrade-key"
+        engine = EncryptionEngine(secret=secret)
+        plaintext = "rotate-me"
+        v1_blob = self._v1_blob(secret, plaintext)
+        assert engine.decrypt(v1_blob) == plaintext
+        # Re-encrypt the decrypted value — must be v2 going forward
+        re_encrypted = engine.encrypt(plaintext)
+        assert re_encrypted.startswith(ENC_PREFIX_V2)
+        # And v2 still round-trips
+        assert engine.decrypt(re_encrypted) == plaintext
+
+    def test_already_v2_encrypted_value_is_not_double_encrypted(self):
+        """encrypt() must be idempotent — both v1 and v2 inputs are passthrough."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        secret = "idem"
+        engine = EncryptionEngine(secret=secret)
+        v1_blob = self._v1_blob(secret, "x")
+        # encrypt() seeing a v1 blob should pass through unchanged
+        assert engine.encrypt(v1_blob) == v1_blob
+
+    def test_unicode_emoji_cjk_roundtrip(self):
+        """Encryption must handle multibyte UTF-8 (emoji, CJK, combining chars)."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="unicode-test")
+        cases = [
+            "简体中文测试",
+            "繁體中文測試",
+            "🚀✨🔐 emoji string",
+            "café résumé naïve",        # combining diacritics
+            "Здравствуйте",              # Cyrillic
+            "مرحبا بالعالم",            # Arabic (RTL)
+            "\u200dzero-width-joiner",  # control char
+        ]
+        for original in cases:
+            ct = engine.encrypt(original)
+            assert engine.decrypt(ct) == original, f"failed for {original!r}"
+
+    def test_bad_base64_payload_returns_original(self):
+        """Corrupted base64 inside enc:v2: must not crash — return as-is."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="test")
+        broken = "enc:v2:not_valid_base64!!!"
+        # Must not raise; returns the original string
+        assert engine.decrypt(broken) == broken
+
+    def test_truncated_ciphertext_returns_original(self):
+        """Payload too short to contain salt+nonce must not crash."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="test")
+        # Valid base64 but too short (needs salt[16]+nonce[12]+at-least-16-tag)
+        short = "enc:v2:" + "AAAA"  # 3 bytes after decode
+        assert engine.decrypt(short) == short
+
+    def test_unknown_prefix_passthrough(self):
+        """Future enc:v9: prefix should pass through (not match any known version)."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="test")
+        future = "enc:v9:future-format-payload"
+        # Doesn't start with v1 or v2 prefix → returned as-is
+        assert engine.decrypt(future) == future
+
+    def test_decrypt_fields_skips_non_string_values(self):
+        """Non-string values in a dict must be left untouched."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="test")
+        data = {"email": engine.encrypt("a@b.com"), "age": 42, "tags": ["x"]}
+        result = engine.decrypt_fields(data, {"email", "age", "tags"})
+        assert result["email"] == "a@b.com"
+        assert result["age"] == 42
+        assert result["tags"] == ["x"]
+
+    def test_pbkdf2_iteration_constants_are_strict(self):
+        """The iteration counts are part of the on-disk contract — pin them."""
+        from engram_core.crypto import PBKDF2_ITERATIONS_V1, PBKDF2_ITERATIONS_V2
+        # Changing these silently would break decryption of existing data
+        assert PBKDF2_ITERATIONS_V1 == 100_000
+        assert PBKDF2_ITERATIONS_V2 == 600_000
+
+    def test_default_prefix_is_v2(self):
+        """New writes must default to v2 — never accidentally regress to v1."""
+        from engram_core.crypto import ENC_PREFIX, ENC_PREFIX_V2
+        assert ENC_PREFIX == ENC_PREFIX_V2

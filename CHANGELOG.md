@@ -4,6 +4,22 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.14.2] - 2026-05-22
+
+### Tests
+- **386 passed** (up from 329 in v3.14.1, +57 new)
+- New `tests/test_mcp_tools.py` (37 tests) — direct coverage of MCP tool wrappers: identity reads, knowledge read/write, search, context, error catching, Tier-1 filtering, path validation
+- New `tests/test_review_page_xss.py` (10 tests) — verifies `_esc` escaping prevents HTML / attribute injection in the review HTML page (lesson summary, decision title, domain label, profile fields, source_tool, ampersand, CJK passthrough)
+- Expanded `tests/test_crypto.py` (+10 tests, now 19) — v1↔v2 mixed-field decryption, v1→v2 re-encryption upgrade, Unicode (emoji/CJK/RTL/combining chars), bad base64 / truncated payload / unknown prefix passthrough, non-string field skip, iteration-count pinning, default-prefix-is-v2 contract
+
+### Security
+- **Path validation**: new `_validate_path` helper in `mcp_server.py` rejects NUL bytes in user-supplied paths. Applied to `import_engram`, `export_engram`, `save_project_snapshot`. Engram remains local-first (not a sandbox), but null-byte handling now matches OWASP guidance for paths crossing trust boundaries.
+
+### Docs
+- New `docs/coverage_baseline_v3.14.2.md` — first published coverage baseline: **78% total**, 8 modules ≥85%, gaps documented for `mcp_server.py` (54%, SSE + uncalled wrappers) and `setup_wizard.py` (58%, interactive flow)
+- New `.coveragerc` — pins source root and exclude rules so future runs are reproducible
+- CONTRIBUTING baseline raised: 329+ tests → 386+ tests, 78%+ coverage required
+
 ## [3.14.1] - 2026-05-22
 
 ### Refactor

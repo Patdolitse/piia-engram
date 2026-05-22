@@ -33,3 +33,8 @@ my_ai_profile.html
 # Benchmark test outputs (results stay local, code & REPORT.md go in)
 experiments/benchmarks/**/results_*.json
 experiments/benchmarks/**/results_*.jsonl
+
+# Coverage artifacts
+.coverage
+htmlcov/
+docs/coverage/
