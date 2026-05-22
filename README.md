@@ -323,7 +323,7 @@ Engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools are loa
 | Feature | Engram | Claude Memory | Manual `CLAUDE.md` | Mem0 | Letta (MemGPT) |
 |---|---|---|---|---|---|
 | Primary purpose | User identity across tools | Per-conversation memory | Per-project notes | Agent vector memory | Agent self-editing memory |
-| Cross-tool by design | ✅ MCP-native (45 tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
+| Cross-tool by design | ✅ MCP-native (43 tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
 | Storage | Local JSON in `~/.engram/` | Cloud | Local | Vector DB + Mem0 Cloud | Postgres or Letta Cloud |
 | Local-first by default | ✅ | ❌ | ✅ | ⚠ Cloud is the default | ⚠ Cloud is the default |
 | Encryption at rest | ✅ AES-256-GCM, PBKDF2 600k (opt-in) | depends on Cloud | ❌ plain Markdown | depends on store config | depends on Postgres config |
@@ -340,7 +340,7 @@ These are factual claims about Engram itself, refreshed each minor release.
 
 | | v3.14.2 (2026-05-22) |
 |---|---|
-| MCP tools exposed | **45** (10 Tier-1 default, 35 opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools exposed | **43** (10 Tier-1 default, 33 opt-in via `ENGRAM_TOOLS=all`) |
 | Tests passing | **386** (unit + integration) |
 | Code coverage | **78%** total; 8/12 modules ≥85% ([baseline](docs/coverage_baseline_v3.14.2.md)) |
 | Lines in `core.py` | **1083** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |

@@ -4,6 +4,36 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.14.4] - 2026-05-22
+
+Patch driven by the v3.14.3 DeepSeek milestone evaluation ([report](docs/milestone_review_v3.14.3.md)).
+Two HIGH-severity findings addressed; full regression context in the evaluation report.
+
+### Security
+- **`crypto.py`: `DecryptionError` + `strict=True` mode**. The default `decrypt()` still returns the original ciphertext on failure (backward-compatible warning + passthrough), but new callers can now opt into `decrypt(value, strict=True)` / `decrypt_fields(..., strict=True)` to raise `DecryptionError` instead. Uses `raise from None` to avoid leaking timing-oracle info about which stage failed (b64 / key derivation / AEAD tag).
+- The default behavior preserves backward compatibility for any caller that may already depend on it, but the docstring now explicitly warns: "callers that don't validate the prefix after this call may treat ciphertext as plaintext — prefer strict=True in new code."
+
+### Fixed
+- **README MCP tool count inconsistency**. README's "By the numbers" / 量化数据 section claimed 45 tools while elsewhere said 43; actual count is **43** (`grep -c '^@mcp.tool' src/engram_core/mcp_server.py`). All documents now consistent at 43:
+  - `README.md` and `README.zh-CN.md` quantitative sections + comparison tables
+  - `docs/comparison.md`
+  - `docs/architecture.md` (3 references)
+  - `docs/coverage_baseline_v3.14.2.md`
+  - `experiments/evaluations/v3.14.3/evidence_pack.md` (with explicit erratum note)
+
+### Tests
+- **394 passed** (up from 386 in v3.14.2; v3.14.3 was docs-only)
+- New `TestDecryptionStrict` class in `tests/test_crypto.py` (8 tests): wrong-key raises, bad payload raises, truncated payload raises, unprefixed passthrough in strict mode, happy-path round trip, default mode unchanged, `__cause__` is None (no timing leak), `decrypt_fields(strict=True)` raises without mutating input dict
+- CONTRIBUTING baseline raised: 386+ → **394+ tests**
+
+### Docs
+- New `docs/milestone_review_v3.14.3.md` — full v3.13.2 → v3.14.3 evaluation closure (4-pass DeepSeek)
+  - Architecture score: 5.4 → 7.50 (+2.10, biggest movement)
+  - Overall: 6.9 → 7.90 (+1.00)
+  - Self-assessment calibration bias narrowed from +1.7 (security blind spot) to −0.5 (now slightly conservative)
+  - 15/21 v3.13.2 issues marked `fixed`, 5 `partial`, 1 `unverified`, 0 `regression`
+  - Roadmap items extracted for v3.15.0: split reports.py (1103 lines), explicit Mixin dependencies, add SSE integration tests, mock LLM extraction
+
 ## [3.14.3] - 2026-05-22
 
 ### Docs

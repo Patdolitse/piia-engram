@@ -20,7 +20,7 @@ It complements the user-facing [README](../README.md) (which answers *"what does
                          │ HTTP/SSE  (self-hosted shared instance)
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  mcp_server.py — exposes ~45 tools (Tier-1 by default, opt-in rest)  │
+│  mcp_server.py — exposes 43 tools (Tier-1 by default, opt-in rest)  │
 └────────────────────────┬────────────────────────────────────────────┘
                          │ Python method calls on a single shared
                          │ ``Engram`` instance
@@ -68,7 +68,7 @@ After the v3.14.1 refactor, the package is split into **7 focused modules + 5 su
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`mcp_server.py`](../src/engram_core/mcp_server.py) | 1300 | FastMCP server: ~45 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path` |
+| [`mcp_server.py`](../src/engram_core/mcp_server.py) | 1300 | FastMCP server: 43 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path` |
 | [`crypto.py`](../src/engram_core/crypto.py) | 119 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`setup_wizard.py`](../src/engram_core/setup_wizard.py) | 860 | `engram setup` + `engram doctor` CLI — interactive bilingual onboarding |
 | [`audit.py`](../src/engram_core/audit.py) | 56 | `AuditLogger` — opt-in audit trail (`ENGRAM_AUDIT=1`) to `~/.engram/audit.log` |
@@ -194,7 +194,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 
 ## 5. The MCP surface
 
-`mcp_server.py` exposes ~45 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions:
+`mcp_server.py` exposes 43 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions:
 
 | Tier-1 (default) | Why |
 |------------------|-----|
@@ -205,7 +205,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 | `get_identity_card`, `update_identity` | Identity reads/writes |
 | `get_project_context`, `save_project_snapshot` | Per-project state |
 
-Set `ENGRAM_TOOLS=all` to expose the full ~45 tools (review, health, link/unlink, OpenClaw bridge, bulk operations, etc.) for power users.
+Set `ENGRAM_TOOLS=all` to expose the full 43 tools (review, health, link/unlink, OpenClaw bridge, bulk operations, etc.) for power users.
 
 ### Transport modes
 

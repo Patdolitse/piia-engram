@@ -262,3 +262,93 @@ class TestEncryptionExpansion:
         """New writes must default to v2 — never accidentally regress to v1."""
         from engram_core.crypto import ENC_PREFIX, ENC_PREFIX_V2
         assert ENC_PREFIX == ENC_PREFIX_V2
+
+
+class TestDecryptionStrict:
+    """v3.14.4 — ``strict=True`` makes decryption failures raise instead of silently
+    returning the original ciphertext. Default behavior unchanged."""
+
+    def test_strict_wrong_key_raises(self):
+        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine_a = EncryptionEngine(secret="key-a")
+        engine_b = EncryptionEngine(secret="key-b")
+        ct = engine_a.encrypt("secret data")
+        with pytest.raises(DecryptionError):
+            engine_b.decrypt(ct, strict=True)
+
+    def test_strict_bad_payload_raises(self):
+        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="test")
+        with pytest.raises(DecryptionError):
+            engine.decrypt("enc:v2:not_valid_base64!!!", strict=True)
+
+    def test_strict_truncated_payload_raises(self):
+        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="test")
+        with pytest.raises(DecryptionError):
+            engine.decrypt("enc:v2:AAAA", strict=True)
+
+    def test_strict_passthrough_for_unprefixed(self):
+        """Non-encrypted values must pass through even in strict mode — not raise."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="test")
+        # Plain string: not prefixed → returned as-is, no exception
+        assert engine.decrypt("plain text", strict=True) == "plain text"
+
+    def test_strict_round_trip_works(self):
+        """Happy path: strict mode should not interfere when decryption succeeds."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine = EncryptionEngine(secret="test")
+        ct = engine.encrypt("hello")
+        assert engine.decrypt(ct, strict=True) == "hello"
+
+    def test_default_mode_unchanged(self):
+        """Backward compat: default decrypt with wrong key still returns original."""
+        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine_a = EncryptionEngine(secret="key-a")
+        engine_b = EncryptionEngine(secret="key-b")
+        ct = engine_a.encrypt("secret")
+        # No strict → still returns the ciphertext on failure (existing behavior)
+        assert engine_b.decrypt(ct) == ct
+
+    def test_strict_does_not_leak_cause_chain(self):
+        """``raise from None`` is used to hide the original exception's stage,
+        which could leak timing-oracle info about where decryption failed."""
+        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine_a = EncryptionEngine(secret="key-a")
+        engine_b = EncryptionEngine(secret="key-b")
+        ct = engine_a.encrypt("secret")
+        try:
+            engine_b.decrypt(ct, strict=True)
+        except DecryptionError as exc:
+            # __cause__ should be None (suppressed via `from None`)
+            assert exc.__cause__ is None
+        else:
+            pytest.fail("expected DecryptionError")
+
+    def test_decrypt_fields_strict_raises_on_any_failure(self):
+        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        if not HAS_CRYPTO:
+            pytest.skip("cryptography not installed")
+        engine_a = EncryptionEngine(secret="key-a")
+        engine_b = EncryptionEngine(secret="key-b")
+        bad = engine_a.encrypt("locked")
+        data = {"email": bad, "name": "plain"}
+        with pytest.raises(DecryptionError):
+            engine_b.decrypt_fields(data, {"email"}, strict=True)
+        # Input dict must not be mutated (decrypt_fields copies first)
+        assert data["email"] == bad

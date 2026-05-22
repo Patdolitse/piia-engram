@@ -19,7 +19,7 @@ If you only need a single agent to remember its own conversations, you don't nee
 | Capability | Engram | Letta (MemGPT) | Mem0 | Cline `memories/` | Claude Code `~/.claude/projects/*/memory/` |
 |---|---|---|---|---|---|
 | **Primary model** | User identity + lessons across tools | Agent self-edit + recall | Agent vector + KV store | Per-conversation notes (Cline only) | Per-project notes (Claude Code only) |
-| **Cross-tool by design** | ✅ MCP-native, ~45 tools | ⚠ via API, requires custom wiring per tool | ⚠ via SDK, requires custom wiring per tool | ❌ Cline-specific | ❌ Claude Code-specific |
+| **Cross-tool by design** | ✅ MCP-native, 43 tools | ⚠ via API, requires custom wiring per tool | ⚠ via SDK, requires custom wiring per tool | ❌ Cline-specific | ❌ Claude Code-specific |
 | **Storage location** | Local JSON in `~/.engram/` | Postgres (self-host) or Letta Cloud | Vector DB (Qdrant, etc.) + Mem0 Cloud | Local files in the project | Local files under home dir |
 | **Local-first** | ✅ default; cloud is opt-in (none today) | ⚠ self-host possible; Cloud is the default narrative | ⚠ self-host possible; Cloud is the default narrative | ✅ | ✅ |
 | **Network dependency** | Only `read_web_content` (optional) | API call per memory op | API call per memory op | None | None |
