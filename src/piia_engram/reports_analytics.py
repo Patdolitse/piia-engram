@@ -90,7 +90,22 @@ class AnalyticsMixin:
         items_needing_review.sort(key=lambda item: item.get("last_reviewed", ""))
         items_to_archive.sort(key=lambda item: item.get("last_reviewed", ""))
 
+        # ── Health score (0–100) with dimensional breakdown ──
+        total_active = len(active_lessons) + len(active_decisions)
+        health_score, dimensions = self._compute_health_score(
+            active_lessons=active_lessons,
+            active_decisions=active_decisions,
+            outdated_lessons=outdated_lessons,
+            outdated_decisions=outdated_decisions,
+            domain_counts=domain_counts,
+            duplicates=duplicates,
+            items_needing_review=items_needing_review,
+            items_to_archive=items_to_archive,
+        )
+
         return {
+            "health_score": health_score,
+            "dimensions": dimensions,
             "summary": {
                 "total_lessons": len(lessons),
                 "active_lessons": len(active_lessons),
@@ -106,6 +121,99 @@ class AnalyticsMixin:
             "items_to_archive": items_to_archive[:10],
             "warnings": warnings,
         }
+
+    def _compute_health_score(
+        self,
+        *,
+        active_lessons: list,
+        active_decisions: list,
+        outdated_lessons: list,
+        outdated_decisions: list,
+        domain_counts: dict,
+        duplicates: list,
+        items_needing_review: list,
+        items_to_archive: list,
+    ) -> tuple[int, dict]:
+        """Compute a 0–100 health score with four dimensions.
+
+        Dimensions (each 0–100, weighted equally at 25%):
+        - freshness: % of active items reviewed within STALE_KNOWLEDGE_DAYS
+        - quality: ratio of verified (non-staging) items to total active
+        - coverage: domain diversity — penalize if all items cluster in 1 domain
+        - cleanliness: absence of duplicates and archive candidates
+        """
+        total_active = len(active_lessons) + len(active_decisions)
+
+        # ── Freshness (25%) ──
+        if total_active == 0:
+            freshness = 100
+        else:
+            review_cutoff = datetime.now() - timedelta(days=STALE_KNOWLEDGE_DAYS)
+            fresh_count = 0
+            for item in active_lessons + active_decisions:
+                reviewed_at = self._reviewed_at(item)
+                if reviewed_at and reviewed_at > review_cutoff:
+                    fresh_count += 1
+            freshness = round(100 * fresh_count / total_active)
+
+        # ── Quality (25%) ──
+        if total_active == 0:
+            quality = 100
+        else:
+            total_outdated = len(outdated_lessons) + len(outdated_decisions)
+            total_all = total_active + total_outdated
+            staging_count = sum(
+                1 for item in active_lessons + active_decisions
+                if item.get("tier") == "staging"
+            )
+            verified_count = total_active - staging_count
+            quality = round(100 * verified_count / total_all) if total_all else 100
+
+        # ── Coverage (25%) ──
+        n_domains = len(domain_counts)
+        if total_active == 0:
+            coverage = 0
+        elif n_domains == 0:
+            coverage = 0
+        elif n_domains == 1:
+            coverage = 30
+        else:
+            # Shannon entropy normalized by log(n_domains), capped at 100
+            import math as _math
+            total_in_domains = sum(domain_counts.values())
+            entropy = 0.0
+            for count in domain_counts.values():
+                p = count / total_in_domains
+                if p > 0:
+                    entropy -= p * _math.log2(p)
+            max_entropy = _math.log2(n_domains)
+            evenness = entropy / max_entropy if max_entropy > 0 else 0
+            # Base 40 for having multiple domains + up to 60 for even spread
+            coverage = round(40 + 60 * evenness)
+
+        # ── Cleanliness (25%) ──
+        if total_active == 0:
+            cleanliness = 100
+        else:
+            penalty = 0
+            # Each duplicate pair costs 5 points (capped at 40)
+            penalty += min(len(duplicates) * 5, 40)
+            # Each archive candidate costs 3 points (capped at 30)
+            penalty += min(len(items_to_archive) * 3, 30)
+            # Each review-needed item costs 2 points (capped at 30)
+            penalty += min(len(items_needing_review) * 2, 30)
+            cleanliness = max(0, 100 - penalty)
+
+        # ── Composite ──
+        score = round((freshness + quality + coverage + cleanliness) / 4)
+
+        dimensions = {
+            "freshness": freshness,
+            "quality": quality,
+            "coverage": coverage,
+            "cleanliness": cleanliness,
+        }
+        return score, dimensions
 
     def _reviewed_at(self, item: dict) -> datetime | None:
         return (
@@ -173,6 +281,83 @@ class AnalyticsMixin:
             "limit": limit,
             "lessons": stale_lessons,
             "decisions": stale_decisions,
+        }
+
+    def suggest_merges(self, threshold: float = 0.45, limit: int = 10) -> dict:
+        """Scan all active knowledge and return merge candidates above *threshold*.
+
+        Returns actionable suggestions: each pair includes IDs, summaries,
+        similarity score, and a ready-to-call merge command hint.
+        """
+        threshold = max(0.2, min(float(threshold), 1.0))
+        limit = max(1, min(int(limit), 30))
+
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+        active_lessons = [l for l in lessons if l.get("status") == "active"]
+        active_decisions = [d for d in decisions if d.get("status") == "active"]
+
+        candidates: list[dict] = []
+
+        # Scan lessons
+        for i, first in enumerate(active_lessons):
+            for second in active_lessons[i + 1:]:
+                first_text = first.get("summary", "")
+                second_text = second.get("summary", "")
+                if min(len(first_text), len(second_text)) < 8:
+                    continue
+                sim = self._bigram_similarity(first_text, second_text)
+                if sim >= threshold:
+                    # Recommend keeping the one with more access
+                    a_access = first.get("access_count", 0)
+                    b_access = second.get("access_count", 0)
+                    if a_access >= b_access:
+                        primary, secondary = first, second
+                    else:
+                        primary, secondary = second, first
+                    candidates.append({
+                        "type": "lesson",
+                        "primary_id": primary.get("id"),
+                        "primary_summary": primary.get("summary", "")[:80],
+                        "secondary_id": secondary.get("id"),
+                        "secondary_summary": secondary.get("summary", "")[:80],
+                        "similarity": round(sim, 2),
+                        "action": f"merge_knowledge(primary_id='{primary.get('id')}', secondary_id='{secondary.get('id')}')",
+                    })
+
+        # Scan decisions
+        for i, first in enumerate(active_decisions):
+            for second in active_decisions[i + 1:]:
+                first_text = self._entry_identity_text(first, "decision")
+                second_text = self._entry_identity_text(second, "decision")
+                if min(len(first_text), len(second_text)) < 8:
+                    continue
+                sim = self._bigram_similarity(first_text, second_text)
+                if sim >= threshold:
+                    a_access = first.get("access_count", 0)
+                    b_access = second.get("access_count", 0)
+                    if a_access >= b_access:
+                        primary, secondary = first, second
+                    else:
+                        primary, secondary = second, first
+                    candidates.append({
+                        "type": "decision",
+                        "primary_id": primary.get("id"),
+                        "primary_summary": self._entry_identity_text(primary, "decision")[:80],
+                        "secondary_id": secondary.get("id"),
+                        "secondary_summary": self._entry_identity_text(secondary, "decision")[:80],
+                        "similarity": round(sim, 2),
+                        "action": f"merge_knowledge(primary_id='{primary.get('id')}', secondary_id='{secondary.get('id')}')",
+                    })
+
+        # Sort by similarity descending, take top N
+        candidates.sort(key=lambda c: c["similarity"], reverse=True)
+        candidates = candidates[:limit]
+
+        return {
+            "total_candidates": len(candidates),
+            "threshold": threshold,
+            "suggestions": candidates,
         }
 
     def get_knowledge_digest(self) -> dict:

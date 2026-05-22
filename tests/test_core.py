@@ -1065,6 +1065,168 @@ def test_knowledge_overview_invalid_section(tmp_path: Path):
     assert "error" in result
 
 
+# ── health score tests ──
+
+
+def test_health_score_empty_knowledge(tmp_path: Path):
+    """空知识库的健康评分应有合理默认值。"""
+    engram = make_engram(tmp_path)
+    report = engram.get_health_report()
+
+    assert "health_score" in report
+    assert "dimensions" in report
+    score = report["health_score"]
+    dims = report["dimensions"]
+    assert isinstance(score, int)
+    assert 0 <= score <= 100
+    for dim in ("freshness", "quality", "coverage", "cleanliness"):
+        assert dim in dims
+        assert 0 <= dims[dim] <= 100
+
+
+def test_health_score_with_data(tmp_path: Path):
+    """有数据时健康评分维度应反映实际状态。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("经验1", "python", source_tool="claude_code")
+    engram.add_lesson("经验2", "git", source_tool="codex")
+    engram.add_lesson("经验3", "testing", source_tool="claude_code")
+    engram.add_decision("架构选型", "FastAPI", "性能好", source_tool="claude_code")
+
+    report = engram.get_health_report()
+
+    assert report["health_score"] > 0
+    dims = report["dimensions"]
+    # All fresh → freshness should be high
+    assert dims["freshness"] >= 80
+    # All active, no staging → quality should be high
+    assert dims["quality"] >= 80
+    # 3 domains → coverage should reflect diversity
+    assert dims["coverage"] > 30
+    # No duplicates → cleanliness should be high
+    assert dims["cleanliness"] >= 80
+
+
+def test_health_score_stale_items_reduce_freshness(tmp_path: Path):
+    """过期知识应降低 freshness 维度。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson("老经验", "python")
+    # Mark as stale
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    lessons[0]["last_reviewed"] = (datetime.now() - timedelta(days=60)).isoformat()
+    engram._atomic_write(lessons_path, lessons)
+
+    report = engram.get_health_report()
+    dims = report["dimensions"]
+    assert dims["freshness"] == 0  # 100% stale
+
+
+def test_health_score_duplicates_reduce_cleanliness(tmp_path: Path):
+    """近似重复条目应降低 cleanliness 维度。"""
+    engram = make_engram(tmp_path)
+    # add_lesson deduplicates on ingestion, so write directly to bypass
+    base = "使用 pytest 进行 Python 单元测试覆盖率检查是最佳实践"
+    engram.add_lesson({"summary": base})
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    dup = dict(lessons[0])
+    dup["id"] = "dup-manual-id"
+    dup["summary"] = base + "之一"
+    lessons.append(dup)
+    engram._atomic_write(lessons_path, lessons)
+
+    report = engram.get_health_report()
+    assert len(report["potential_duplicates"]) >= 1
+    dims = report["dimensions"]
+    assert dims["cleanliness"] < 100
+
+
+# ── suggest_merges tests ──
+
+
+def test_suggest_merges_empty(tmp_path: Path):
+    """空知识库应返回 0 条建议。"""
+    engram = make_engram(tmp_path)
+    result = engram.suggest_merges()
+    assert result["total_candidates"] == 0
+    assert result["suggestions"] == []
+
+
+def test_suggest_merges_finds_duplicates(tmp_path: Path):
+    """近似重复条目应被建议合并。"""
+    engram = make_engram(tmp_path)
+    base = "Python 项目必须使用 pytest 框架进行完整的单元测试覆盖"
+    r1 = engram.add_lesson({"summary": base})
+    # Bypass ingestion dedup by writing directly
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    dup = dict(lessons[0])
+    dup["id"] = "dup-suggest-test"
+    dup["summary"] = base.replace("单元测试", "测试")
+    lessons.append(dup)
+    engram._atomic_write(lessons_path, lessons)
+
+    result = engram.suggest_merges(threshold=0.4)
+    assert result["total_candidates"] >= 1
+    suggestion = result["suggestions"][0]
+    assert "primary_id" in suggestion
+    assert "secondary_id" in suggestion
+    assert "similarity" in suggestion
+    assert suggestion["similarity"] >= 0.4
+    assert "action" in suggestion
+    assert "merge_knowledge" in suggestion["action"]
+
+
+def test_suggest_merges_respects_threshold(tmp_path: Path):
+    """高阈值应过滤掉低相似度对。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson({"summary": "Python 项目应该使用虚拟环境管理依赖"})
+    engram.add_lesson({"summary": "JavaScript 项目应该使用 package.json 管理依赖"})
+
+    high = engram.suggest_merges(threshold=0.9)
+    assert high["total_candidates"] == 0
+
+
+def test_suggest_merges_recommends_higher_access_as_primary(tmp_path: Path):
+    """访问量更高的条目应被推荐为主条目。"""
+    engram = make_engram(tmp_path)
+    base = "Git commit 消息必须遵循 Conventional Commits 规范格式"
+    r1 = engram.add_lesson({"summary": base})
+    # Bypass dedup, add similar lesson directly
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    dup = dict(lessons[0])
+    dup["id"] = "high-access-lesson"
+    dup["summary"] = base.replace("规范格式", "的格式规范")
+    dup["access_count"] = 10
+    lessons.append(dup)
+    engram._atomic_write(lessons_path, lessons)
+
+    result = engram.suggest_merges(threshold=0.4)
+    assert result["total_candidates"] >= 1
+    suggestion = result["suggestions"][0]
+    assert suggestion["primary_id"] == "high-access-lesson"
+
+
+def test_suggest_merges_limit(tmp_path: Path):
+    """limit 参数应限制返回数量。"""
+    engram = make_engram(tmp_path)
+    base = "数据库连接池配置最佳实践版本非常重要的经验总结"
+    engram.add_lesson({"summary": base})
+    # Bypass dedup, add variants directly
+    lessons_path = tmp_path / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+    for i in range(4):
+        dup = dict(lessons[0])
+        dup["id"] = f"dup-limit-{i}"
+        dup["summary"] = f"{base}第{i}版"
+        lessons.append(dup)
+    engram._atomic_write(lessons_path, lessons)
+
+    result = engram.suggest_merges(threshold=0.3, limit=2)
+    assert len(result["suggestions"]) <= 2
+
+
 def test_get_profile_safe_mode(tmp_path: Path):
     """safe=True 应过滤 restricted_fields 中列出的字段。"""
     engram = make_engram(tmp_path)

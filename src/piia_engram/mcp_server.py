@@ -195,7 +195,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
 
 # ===========================================================================
-# READ TOOLS (18)
+# READ TOOLS (19)
 # ===========================================================================
 
 
@@ -559,6 +559,23 @@ async def get_knowledge_overview(section: str = "all", stale_days: int = 30) -> 
         stale_days: 超过多少天算过期知识。 / Number of days after which knowledge is considered stale.
     """
     return _json(_engram.get_knowledge_overview(section, stale_days=stale_days))
+
+
+@mcp.tool()
+async def suggest_merges(threshold: float = 0.45, limit: int = 10) -> str:
+    """扫描全库，推荐可合并的相似/重复知识条目。 / Scan all knowledge and recommend similar or duplicate items that can be merged.
+
+    用途：定期维护时调用，一次性发现所有值得合并的近似条目，附带可直接执行的 merge 命令。
+    Purpose: Call during periodic maintenance to discover all near-duplicate items with actionable merge commands.
+
+    注意：如果已知某条的 ID 想查相似项，用 find_similar_knowledge 更直接；本工具是全库扫描。
+    Note: If you already have an item ID, find_similar_knowledge is more direct; this tool scans the entire knowledge base.
+
+    Args:
+        threshold: 相似度阈值（0.2–1.0，默认 0.45）。 / Similarity threshold (0.2–1.0, default 0.45).
+        limit: 最多返回多少组建议（默认 10，上限 30）。 / Maximum number of suggestions to return (default 10, max 30).
+    """
+    return _json(_engram.suggest_merges(threshold=threshold, limit=limit))
 
 
 @mcp.tool()
