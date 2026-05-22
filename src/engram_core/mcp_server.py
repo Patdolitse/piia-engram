@@ -157,7 +157,11 @@ async def get_user_context(project_folder: Optional[str] = None) -> str:
     Args:
         project_folder: 当前项目文件夹路径（可选，用于获取项目特定上下文）。 / Current project folder path (optional, used to include project-specific context).
     """
-    context = _engram.generate_context(project_folder)
+    try:
+        context = _engram.generate_context(project_folder)
+    except Exception as exc:
+        print(f"[engram] generate_context failed: {exc}", file=sys.stderr)
+        return f"Engram 上下文加载失败: {exc}"
     if not context:
         return "Engram 为空——这可能是新用户。尚无用户上下文可用。"
     return context
@@ -173,7 +177,11 @@ async def get_identity_card() -> str:
     注意：如果本会话只需要运行时上下文，用 get_user_context 更合适。
     Note: If the current session only needs runtime context, get_user_context is usually the better choice.
     """
-    card = _engram.export_identity_card()
+    try:
+        card = _engram.export_identity_card()
+    except Exception as exc:
+        print(f"[engram] export_identity_card failed: {exc}", file=sys.stderr)
+        return f"身份卡生成失败: {exc}"
     if not card:
         return "身份卡为空——尚未积累足够的知识。"
     return card
@@ -1048,20 +1056,28 @@ async def wrap_up_session(
     results = {}
 
     # Step 1: Extract insights
-    insights = _engram.extract_session_insights(summary, source_tool=source_tool)
-    results["insights"] = insights
+    try:
+        insights = _engram.extract_session_insights(summary, source_tool=source_tool)
+        results["insights"] = insights
+    except Exception as exc:
+        print(f"[engram] extract_session_insights failed: {exc}", file=sys.stderr)
+        results["insights"] = {"error": str(exc)}
 
     # Step 2: Save project snapshot (if project_folder provided)
     if project_folder:
-        snapshot_data: dict = {}
-        if project_title:
-            snapshot_data["title"] = project_title
-        if tech_stack:
-            snapshot_data["tech_stack"] = [s.strip() for s in tech_stack.split(",") if s.strip()]
-        if known_issues:
-            snapshot_data["known_issues"] = [s.strip() for s in known_issues.split(",") if s.strip()]
-        _engram.save_project_snapshot(project_folder, snapshot_data)
-        results["project_snapshot"] = {"saved": True, "folder": project_folder}
+        try:
+            snapshot_data: dict = {}
+            if project_title:
+                snapshot_data["title"] = project_title
+            if tech_stack:
+                snapshot_data["tech_stack"] = [s.strip() for s in tech_stack.split(",") if s.strip()]
+            if known_issues:
+                snapshot_data["known_issues"] = [s.strip() for s in known_issues.split(",") if s.strip()]
+            _engram.save_project_snapshot(project_folder, snapshot_data)
+            results["project_snapshot"] = {"saved": True, "folder": project_folder}
+        except Exception as exc:
+            print(f"[engram] save_project_snapshot failed: {exc}", file=sys.stderr)
+            results["project_snapshot"] = {"error": str(exc)}
 
     # Step 3: Auto-reconcile external AI memories and configs
     try:
