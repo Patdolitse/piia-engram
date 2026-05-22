@@ -4,6 +4,33 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.16.0] - 2026-05-22
+
+Code quality release: split the last monolithic module, brought mcp_server coverage to production-grade, and ran third-party milestone evaluation.
+
+### Changed
+- **`reports.py` split into 5 modules** (1103 lines → max 520 per file):
+  - `reports.py` (22 lines) — thin hub composing 4 sub-mixins
+  - `reports_rarity.py` (85 lines) — `RarityMixin`: quality classification + `RARITY_TIERS`
+  - `reports_review.py` (520 lines) — `ReviewMixin`: HTML review page, promote/archive
+  - `reports_identity.py` (97 lines) — `IdentityCardMixin`: Markdown identity card export
+  - `reports_analytics.py` (310 lines) — `AnalyticsMixin`: health reports, stale detection, digest, stats
+- Public API unchanged — `from engram_core.reports import ReportsMixin` still works
+- `architecture.md` updated to v3.16.0 with new module map and two-level mixin diagram
+- README "By the numbers" updated to v3.16.0 stats (490 tests, 83% coverage)
+- CONTRIBUTING test baselines updated: 490+ tests, 83%+ coverage
+
+### Tests
+- **490 passed** (up from 437 in v3.15.1; +53 new)
+- New `tests/test_mcp_coverage.py` (53 tests) — covers write tools, search, review/merge, identity update, import/export, workflow shortcuts, and all 7 MCP resources
+- `mcp_server.py` coverage: **58% → 86%** (+28pp)
+- Total coverage: **78% → 83%** (+5pp)
+
+### Evaluated
+- DeepSeek 3-pass milestone evaluation: architecture 8.0 (+0.5), security 8.0 (+0.5), overall 7.53
+- 5/5 v3.14.3 suggestions verified as fixed
+- Key feedback: architecture.md and CONTRIBUTING.md were lagging (now fixed)
+
 ## [3.15.1] - 2026-05-22
 
 ### Fixed
