@@ -2415,6 +2415,10 @@ class Engram:
             resolved = Path(gpath.replace("~", str(Path.home())))
             if resolved.is_file():
                 config_files.append(resolved)
+            elif resolved.is_dir():
+                # Glob for rule files inside directories (e.g. ~/.cursor/rules/*.mdc)
+                for ext in ("*.md", "*.mdc", "*.txt"):
+                    config_files.extend(sorted(resolved.glob(ext))[:10])
 
         # Project-level configs
         for root in self._discover_project_roots():
