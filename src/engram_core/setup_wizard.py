@@ -774,6 +774,19 @@ def run_doctor(fix: bool = False) -> int:
                 if server_script and not Path(server_script).is_file():
                     issues.append((config_path, f"mcp_server.py 路径不存在: {server_script}"))
 
+    # Info: remind about ENGRAM_TOOLS default change (v3.13+)
+    for _tool_id, cfg in _tool_configs().items():
+        for config_path in cfg["config_paths"]:
+            if not config_path.is_file():
+                continue
+            config = _read_mcp_config(config_path)
+            engram_entry = config.get("mcpServers", {}).get("engram", {})
+            if engram_entry and not engram_entry.get("env", {}).get("ENGRAM_TOOLS"):
+                print(f"  [info] {config_path}")
+                print("    -> Engram now defaults to 10 core tools (was 43).")
+                print('    -> Add "ENGRAM_TOOLS": "all" to env if you need all 43 tools.')
+                print()
+
     if not issues:
         print("  [ok] All configs look healthy.\n")
         return 0
@@ -834,8 +847,8 @@ def main() -> None:
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram stats            Show project growth metrics\n\n"
             "Tool tiers:\n"
-            "  Default: all MCP tools are loaded.\n"
-            "  Set ENGRAM_TOOLS=core to load only 核心工具 / core MCP tools.\n"
+            "  Default: 10 核心工具 / core MCP tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 43 tools.\n"
         )
         sys.exit(0)
 

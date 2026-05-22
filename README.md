@@ -207,9 +207,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 
 ## MCP Tools
 
-Engram exposes all 43 MCP tools by default. Set `ENGRAM_TOOLS=core` to load only Tier-1 Core tools for a smaller tool list.
-
-Common tools include:
+Engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools are loaded to keep the AI's context clean. Set `ENGRAM_TOOLS=all` in your MCP config `env` to unlock all 43 tools.
 
 ### Tier-1 Core (10 tools — daily workflow)
 
