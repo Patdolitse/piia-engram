@@ -26,6 +26,7 @@ _LEGACY_DIR_NAME = ".piia"
 SIMILARITY_THRESHOLD = 0.55
 SEARCH_RELEVANCE_THRESHOLD = 0.3   # minimum score for search results
 STALE_KNOWLEDGE_DAYS = 30          # days without access before knowledge is "stale"
+MAX_KNOWLEDGE_ENTRIES = 200        # cap per knowledge type (lessons / decisions)
 CONFLICT_Q_THRESHOLD = 0.25   # question similarity for potential decision conflict
 CONFLICT_C_CEILING = 0.80     # choice similarity ceiling — above means same choice, not conflict
 
@@ -744,11 +745,11 @@ class Engram:
                 }
 
         lessons.append(new_lesson)
-        if len(lessons) > 200:
+        if len(lessons) > MAX_KNOWLEDGE_ENTRIES:
             # Evict staging items first, then oldest; never drop verified
             staging = [l for l in lessons if l.get("tier") == "staging"]
             verified = [l for l in lessons if l.get("tier") != "staging"]
-            overflow = len(lessons) - 200
+            overflow = len(lessons) - MAX_KNOWLEDGE_ENTRIES
             if len(staging) >= overflow:
                 staging = staging[overflow:]  # drop oldest staging
             else:
@@ -853,7 +854,7 @@ class Engram:
 
         Returns: 最多 limit 条教训（相关度排序）
         """
-        all_lessons = self.get_lessons(limit=200, _update_access=_update_access)
+        all_lessons = self.get_lessons(limit=MAX_KNOWLEDGE_ENTRIES, _update_access=_update_access)
         if not all_lessons:
             return []
 
@@ -1046,10 +1047,10 @@ class Engram:
                 }
 
         decisions.append(new_decision)
-        if len(decisions) > 200:
+        if len(decisions) > MAX_KNOWLEDGE_ENTRIES:
             staging = [d for d in decisions if d.get("tier") == "staging"]
             verified = [d for d in decisions if d.get("tier") != "staging"]
-            overflow = len(decisions) - 200
+            overflow = len(decisions) - MAX_KNOWLEDGE_ENTRIES
             if len(staging) >= overflow:
                 staging = staging[overflow:]
             else:
@@ -3249,7 +3250,7 @@ function copyResult() {{
 
         warnings = []
         if len(active_lessons) > 150:
-            warnings.append(f"教训数量较多（{len(active_lessons)}/200），建议清理过时条目")
+            warnings.append(f"教训数量较多（{len(active_lessons)}/{MAX_KNOWLEDGE_ENTRIES}），建议清理过时条目")
         if duplicates:
             warnings.append(f"发现 {len(duplicates)} 对近似重复教训，建议合并")
         if outdated_lessons:
@@ -3727,11 +3728,11 @@ function copyResult() {{
                         existing.append(lesson)
                         existing_summaries.add(lesson.get("summary", ""))
                         new_count += 1
-                # Keep last 200
-                _write_json(self._knowledge_dir / "lessons.json", existing[-200:])
+                # Keep last MAX_KNOWLEDGE_ENTRIES
+                _write_json(self._knowledge_dir / "lessons.json", existing[-MAX_KNOWLEDGE_ENTRIES:])
                 imported.append(f"lessons(+{new_count})")
             else:
-                _write_json(self._knowledge_dir / "lessons.json", knowledge["lessons"][-200:])
+                _write_json(self._knowledge_dir / "lessons.json", knowledge["lessons"][-MAX_KNOWLEDGE_ENTRIES:])
                 imported.append(f"lessons({len(knowledge['lessons'])})")
 
         if knowledge.get("decisions"):
@@ -3744,10 +3745,10 @@ function copyResult() {{
                         existing.append(decision)
                         existing_questions.add(decision.get("question", ""))
                         new_count += 1
-                _write_json(self._knowledge_dir / "decisions.json", existing[-200:])
+                _write_json(self._knowledge_dir / "decisions.json", existing[-MAX_KNOWLEDGE_ENTRIES:])
                 imported.append(f"decisions(+{new_count})")
             else:
-                _write_json(self._knowledge_dir / "decisions.json", knowledge["decisions"][-200:])
+                _write_json(self._knowledge_dir / "decisions.json", knowledge["decisions"][-MAX_KNOWLEDGE_ENTRIES:])
                 imported.append(f"decisions({len(knowledge['decisions'])})")
 
         if knowledge.get("domains"):
@@ -4238,7 +4239,7 @@ def import_from_openclaw(
         if p.is_file():
             content = p.read_text(encoding="utf-8")
             existing_summaries = {
-                l.get("summary", "") for l in engram.get_lessons(limit=200)
+                l.get("summary", "") for l in engram.get_lessons(limit=MAX_KNOWLEDGE_ENTRIES)
             }
             new_count = 0
             current_section = ""
