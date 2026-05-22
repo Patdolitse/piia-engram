@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -48,4 +49,4 @@ class AuditLogger:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as exc:
-            print(f"[engram] audit write failed: {exc}", file=__import__('sys').stderr)
+            print(f"[engram] audit write failed: {exc}", file=sys.stderr)

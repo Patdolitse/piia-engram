@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import sys
 
 # Encryption prefix marker
 ENC_PREFIX = "enc:v1:"
@@ -72,7 +73,7 @@ class EncryptionEngine:
             return plaintext.decode("utf-8")
         except Exception as exc:
             # Decryption failed (wrong key, corrupt data) — return original, don't crash
-            print(f"[engram] decryption failed: {exc}", file=__import__('sys').stderr)
+            print(f"[engram] decryption failed: {exc}", file=sys.stderr)
             return value
 
     def encrypt_fields(self, data: dict, fields: set[str]) -> dict:
