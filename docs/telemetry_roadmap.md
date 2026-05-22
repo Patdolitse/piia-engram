@@ -52,7 +52,7 @@
 2. **At least 5 users have voluntarily shared their `telemetry.log`** (via GitHub Discussions, email, or any channel) — this proves real users exist and care enough to help
 3. **No negative community feedback** about Phase 1 (no issues/discussions objecting to the local log)
 
-### If prerequisites are met → Phase 2 (v3.16.0)
+### If prerequisites are met → Phase 2 (future version, TBD)
 
 - Deploy Cloudflare Worker + D1 as the receiving backend
 - Worker code will be **open source** in this repository

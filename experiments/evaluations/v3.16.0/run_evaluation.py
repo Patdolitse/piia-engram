@@ -192,7 +192,7 @@ def call_deepseek(
             {"role": "user",   "content": user_prompt},
         ],
         "temperature": 0.2,
-        "max_tokens": 4096,
+        "max_tokens": int(os.environ.get("DEEPSEEK_MAX_TOKENS", "4096")),
         "response_format": {"type": "json_object"},
     }
     data = json.dumps(payload).encode("utf-8")

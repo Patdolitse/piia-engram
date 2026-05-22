@@ -132,6 +132,35 @@ class TestPayloadValidation:
         payload = {"count": 42, "name": "ok"}
         assert _validate_payload(payload) is True
 
+    def test_key_too_long_rejected(self):
+        long_key = "a" * 81
+        payload = {long_key: "value"}
+        assert _validate_payload(payload) is False
+
+    def test_key_with_spaces_rejected(self):
+        payload = {"this is a sentence as key": "value"}
+        assert _validate_payload(payload) is False
+
+    def test_key_with_path_separator_rejected(self):
+        payload = {"/home/user/.engram/secrets": "value"}
+        assert _validate_payload(payload) is False
+
+    def test_key_with_backslash_rejected(self):
+        payload = {"C:\\Users\\data": "value"}
+        assert _validate_payload(payload) is False
+
+    def test_nested_bad_key_rejected(self):
+        payload = {"tool_calls": {"natural language key with spaces": {"success": 1}}}
+        assert _validate_payload(payload) is False
+
+    def test_normal_tool_name_keys_pass(self):
+        payload = {"tool_calls": {
+            "add_lesson": {"success": 5, "error": 0},
+            "get_user_context": {"success": 3, "error": 1},
+            "wrap_up_session": {"success": 1, "error": 0},
+        }}
+        assert _validate_payload(payload) is True
+
 
 # ---------------------------------------------------------------------------
 # Build payload

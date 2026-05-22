@@ -1,0 +1,84 @@
+{
+  "evaluator": "codex-gpt-5",
+  "timestamp": "2026-05-22T17:28:59+08:00",
+  "scores": {
+    "architecture": 8,
+    "testing": 8,
+    "security": 7,
+    "documentation": 7,
+    "positioning": 8,
+    "overall": 7.6
+  },
+  "scoring_rationale": {
+    "architecture": "reports.py is now a 20-line hub composing focused mixins, and Engram cleanly composes Retrieval/Context/Reconcile/Reports in core.py:64. The remaining architectural drag is mcp_server.py at 1411 lines plus telemetry side effects inside wrappers.",
+    "testing": "490 tests pass, total coverage is 83%, and mcp_server.py is 86%. tests/test_mcp_coverage.py has many real persistence/error assertions, but telemetry integration and full 43-tool tracking are not directly protected.",
+    "security": "Telemetry is opt-in/local-only in telemetry.py:174 and setup_wizard.py:685, XSS escaping is centralized in reports_review.py:28, and path hygiene rejects NUL bytes. Main gap: payload validation ignores dict keys.",
+    "documentation": "README stats match actual test/coverage/tool counts, and SECURITY.md now explains opt-in usage stats. However CONTRIBUTING.md still says no telemetry, docs/comparison.md keeps v3.14.2 numbers, and architecture line counts drift.",
+    "positioning": "The identity-layer positioning remains clear and differentiated: cross-tool, local-first, user-owned JSON, MCP-native. Trust wording around usage statistics is now mostly repaired, but residual old docs weaken the promise."
+  },
+  "top_3_issues": [
+    {
+      "severity": "medium",
+      "title": "Telemetry payload validator ignores dictionary keys",
+      "detail": "_validate_payload walks payload values but never validates keys. Because tool call names are encoded as dict keys, a future caller could accidentally log natural-language content or paths as a key even though long/natural-language values are rejected. Current mcp_server uses fixed literal names, so this is not an active leak in normal use, but the safety boundary is weaker than the docs imply.",
+      "file": "src/engram_core/telemetry.py",
+      "line": "139-155"
+    },
+    {
+      "severity": "medium",
+      "title": "Usage statistics do not cover the full MCP tool surface",
+      "detail": "mcp_server.py exposes 43 tools, but _track is only called for the Tier-1-style subset. Tools such as ingest_notes, extract_session_insights, update_knowledge, archive_knowledge, review_knowledge, start_project, import/export helpers, and resources are not counted. Also wrap_up_session flushes before recording its own call, so the session-ending tool is excluded from that day's flush.",
+      "file": "src/engram_core/mcp_server.py",
+      "line": "61, 1216-1235"
+    },
+    {
+      "severity": "low",
+      "title": "Documentation still has stale privacy and baseline claims",
+      "detail": "README and SECURITY are mostly aligned, but CONTRIBUTING.md still says '100% local - no cloud, no telemetry, no external calls'. docs/comparison.md still reports 386 tests / 78% coverage from v3.14.2, and docs/telemetry_roadmap.md labels Phase 2 as v3.16.0 even though v3.16.0 currently ships Phase 1 local-only behavior.",
+      "file": "CONTRIBUTING.md; docs/comparison.md; docs/telemetry_roadmap.md",
+      "line": "28; 34; 55"
+    }
+  ],
+  "top_3_strengths": [
+    {
+      "title": "Facts match the headline release quality claims",
+      "detail": "The required commands verified 490 passed tests, 83% total coverage, 86% mcp_server.py coverage, and 43 @mcp.tool wrappers."
+    },
+    {
+      "title": "Reports split is clean and low-risk",
+      "detail": "reports.py is a thin composition hub, with rarity/review/identity/analytics separated into understandable mixins and the public ReportsMixin import preserved."
+    },
+    {
+      "title": "Privacy UX is substantially better than typical telemetry",
+      "detail": "Usage statistics are default-off, setup explains exact fields, preview/status/off commands exist, Phase 1 has no network, and SECURITY.md documents the boundary."
+    }
+  ],
+  "next_3_priorities": [
+    {
+      "priority": 1,
+      "title": "Harden telemetry before any network phase",
+      "why": "Validate dict keys, restrict tool names to a fixed allowlist, add mcp_server integration tests for all tracked tools, and record wrap_up_session before flushing."
+    },
+    {
+      "priority": 2,
+      "title": "Finish documentation consistency sweep",
+      "why": "The project sells trust. Any stale 'no telemetry' or old test-count claim will look worse than the actual code."
+    },
+    {
+      "priority": 3,
+      "title": "Plan the next mcp_server.py decomposition",
+      "why": "reports.py was successfully split, but mcp_server.py is now the largest file at 1411 lines and carries transport, auth, resources, wrappers, tiering, and telemetry integration."
+    }
+  ],
+  "comparison_with_deepseek": {
+    "deepseek_scores": {
+      "architecture": 8.0,
+      "testing": 7.0,
+      "security": 8.0,
+      "documentation": 6.67,
+      "positioning": 8.0,
+      "overall": 7.53
+    },
+    "agree_or_disagree": "Overall I agree with DeepSeek's 7.53 direction and land at 7.6. I score testing higher because I ran the complete suite and saw real wrapper/persistence/error assertions, not just superficial calls. I score security lower because full-source review found the telemetry validator key blind spot and incomplete tool tracking. Documentation is slightly higher than DeepSeek because README/SECURITY are now substantially repaired, but still capped by stale CONTRIBUTING/comparison/roadmap claims."
+  }
+}

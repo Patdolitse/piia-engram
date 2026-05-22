@@ -1,125 +1,123 @@
 # Engram v3.16.0 — DeepSeek Milestone Evaluation
 
-**Run timestamp**: 20260522_163719
-**Evaluator**: deepseek-chat (3 passes)
+**Run timestamp**: 20260522_170255
+**Evaluator**: deepseek-v4-pro (3 passes)
 
 ## Average scores
 
 | Dimension | v3.14.3 (DeepSeek 4-pass) | v3.16.0 (this run) |
 |-----------|----------------------------|--------------------|
 | architecture | 7.5 | **8.0** |
-| testing | 8.0 | **7.0** |
+| testing | 8.0 | **7.67** |
 | security | 7.5 | **8.0** |
-| documentation | 8.5 | **6.67** |
-| positioning | 8.0 | **8.0** |
+| documentation | 8.5 | **7.67** |
+| positioning | 8.0 | **7.33** |
 | overall | 7.9 | **7.53** |
 
 ## Per-pass detail
 
 ### Pass 1
 
-**Scores**: {"architecture": 8, "testing": 7, "security": 8, "documentation": 7, "positioning": 8, "overall": 7.6}
+**Scores**: {"architecture": 8, "testing": 8, "security": 8, "documentation": 7, "positioning": 7, "overall": 7.6}
 
 **Verification of v3.14.3 suggestions**:
-- [fixed] #1: reports.py 1103 行仍需拆分 — reports.py 拆为 5 模块，最大 520 行（reports_review.py），hub 仅 22 行。
-- [fixed] #2: mcp_server.py 覆盖率偏低（54-58%） — mcp_server.py 覆盖率升至 86%，新增 53 个测试。
-- [fixed] #3: 增加更多集成测试 — 新增 tests/test_mcp_tools.py 和 tests/test_mcp_coverage.py，共 +53 个 MCP wrapper 测试。
-- [fixed] #4: 遥测设计安全（不泄露内容） — telemetry.py 实现 Payload 验证器（>200 字符拒绝、自然语言模式拒绝）、本地日志、无网络请求。
-- [fixed] #5: 冷启动质量可量化验证 — Round 10 基准测试 43/43 通过，覆盖 6 个维度。
+- [fixed] #1: reports.py 1103 行仍需拆分 — reports.py 拆为 5 模块，最大 520 行。证据包 section 一、二、四。
+- [fixed] #2: mcp_server.py 覆盖率偏低（54-58%） — 覆盖率升至 86%。证据包 section 一、三。tests_mcp_coverage.py 新增 53 个测试。
+- [fixed] #3: 增加更多集成测试 — 新增 tests_mcp_coverage.py (53 测试) 覆盖写工具、搜索、审查/合并、身份更新、导入/导出等。
+- [fixed] #4: 遥测设计安全（不泄露内容） — telemetry.py 实现 payload 验证器（拒 >200 字符、自然语言模式），日 ID 使用 HMAC，本地日志。
+- [fixed] #5: 冷启动质量可量化验证 — Round 10 基准测试 43 case 全过，覆盖 6 个维度。changelog 中提及。
 
 **Key Q&A**:
-- *q1_architecture_complexity*: 16 个源文件和两层 Mixin 嵌套是合理的。拆分降低了单文件复杂度（最大 520 行），Mixin 模式保持 API 不变。两层嵌套（ReportsMixin → 4 子 mixin）增加理解成本，但通过 hub 文件集中管理，可接受。
-- *q2_test_quality*: 490 个测试中，新增的 53 个 MCP 测试多为浅层调用验证（如 test_get_domains_with_data 仅检查返回 JSON 可解析），但关键路径（如冲突检测、加密、遥测）有深度测试。83% 覆盖率可信，但 mcp_server.py 的 86% 可能包含大量简单 wrapper 测试。
-- *q3_telemetry_security*: Payload 验证器足够：拒绝 >200 字符、自然语言模式、嵌套 >2 层。日 ID 用 HMAC 不可跨天关联。本地日志无网络请求，但日志文件本身可能意外暴露（如权限不足），建议在文档中提醒用户保护 ~/.engram/ 目录。
-- *q4_benchmark_rigor*: 43 case 100% 通过，但未提供测试用例具体内容，无法判断门槛是否宽松。建议公开测试用例或说明通过标准（如相似度阈值），否则存在过拟合风险。
-- *q5_doc_maintenance*: architecture.md 未更新（仍标注 v3.14.2），未反映 reports 拆分和 telemetry 模块。CONTRIBUTING.md 测试基线已更新至 437+，但未提及 490。文档维护滞后于代码。
-- *q6_html_in_python*: 520 行 HTML 在 Python 中（reports_review.py）是已知技术债。当前无模板引擎依赖，但长期应迁移至 Jinja2 等模板引擎以提升可维护性和 XSS 安全性。
-- *q7_version_strategy*: v3.14.3 → v3.16.0 跳版本号（跳过 3.15.0 和 3.15.1）不清晰。changelog 显示 3.15.0 和 3.15.1 存在，但评估材料未说明为何跳过。建议遵循语义化版本，避免混淆。
+- *q1_architecture_complexity*: 16 个源文件（原 12 个）和两层 Mixin 嵌套增加了间接性，但职责拆分清楚，公共 API 不变。ReportsMixin 薄 hub 组合 4 子 mixin 是合理的，未过度设计。对维护者有一定理解成本，但可接受。
+- *q2_test_quality*: 490 个测试覆盖核心路径、错误处理、边界情况，不是简单调用。tests_mcp_coverage 等验证了工具实际行为，测试质量较高。但仍有 17% 未覆盖区域，如 SSE 和某些错误路径，需进一步补充。
+- *q3_telemetry_security*: 当前 payload 验证已防止直接内容泄露（长度和自然语言模式检测）。所有数据仅存本地，无网络传输，日 ID 不可跨天关联。即使绕过验证，字段由代码生成，非用户输入，风险低。足够安全。
+- *q4_benchmark_rigor*: 43 case 全通过表明冷启动质量高，但未提供 case 具体定义和通过标准细节，无法独立评估门槛严谨性。可能过于简单或恰好匹配。建议公开基准测试案例以增强可信度。
+- *q5_doc_maintenance*: architecture.md 已更新模块图和描述，CONTRIBUTING 测试基线已升。但 coverage_baseline_v3.14.2.md 仍为旧版，未同步到 v3.16.0。核心文档更新到位，但基线文档滞后。
+- *q6_html_in_python*: 520 行 HTML 内嵌在 Python 中，目前有 XSS 测试保证安全。对小型库可接受，但长期维护困难，建议今后分离为模板文件或使用轻量引擎（如 Jinja2），降低代码与视图耦合。
+- *q7_version_strategy*: 版本号遵守语义化版本，但同一天内从 v3.14.3 连续发布至 v3.16.0，多个特性/补丁版本极快发布，可能让用户困惑且感觉不稳定。发布节奏应放缓，让每个版本有充分验证。
 
 **New findings**:
-- [medium] **architecture.md 未同步更新** — architecture.md 仍标注 v3.14.2，未反映 reports 拆分、telemetry 模块等 v3.15.0+ 变化。文档与代码脱节，增加新贡献者理解成本。
-- [medium] **CONTRIBUTING.md 测试基线未更新** — CONTRIBUTING.md 仍要求 437+ 测试，但实际已达 490。新贡献者可能误以为测试不足。
-- [low] **版本号跳跃缺乏说明** — 从 v3.14.3 到 v3.16.0 跳过了 3.15.0 和 3.15.1，但评估材料未解释原因。changelog 显示这些版本存在，但用户可能困惑。
-- [low] **Round 10 基准测试用例未公开** — 43 个 case 100% 通过，但未提供测试用例内容或通过标准，外部无法验证其严谨性。
+- [medium] **异常消息可能泄露内部实现细节** — mcp_server.py 中多个工具在捕获异常时直接返回 exc 信息（如 “失败: synthetic failure”），这可能向调用者暴露内部错误细节，增加攻击面。应统一返回通用错误信息，同时记录日志。
+- [low] **coverage_baseline 文档未随版本更新** — coverage_baseline_v3.14.2.md 仍引用旧版本覆盖率数据，虽 architecture.md 已更新，但基线文档滞后，可能误导新贡献者预期。
+- [low] **reports_review.py 仍较长 (520行)** — 虽已从 1103 行拆分，但 review 模块依然偏大，HTML 生成逻辑与业务逻辑混杂，未来可进一步拆分为模板与逻辑。
 
 **Suggested next 3**:
-1. **同步更新 architecture.md 和 CONTRIBUTING.md** — 文档与代码脱节会误导贡献者，降低项目可维护性。
-2. **公开 Round 10 基准测试用例和通过标准** — 提升基准测试的可信度和可复现性，避免过拟合风险。
-3. **考虑将 HTML 模板迁移至 Jinja2** — 减少 Python 中内嵌 HTML 的安全风险（XSS）和维护成本。
+1. **Publish benchmark case definitions and evaluation criteria** — Round 10 基准测试全通过，但缺少具体 case 详情，外部无法验证冷启动质量，公开细节可增强项目可信度并指导后续改进。
+2. **Refactor HTML generation out of reports_review.py** — 520 行 Python 包含 HTML 模板，可维护性差且易引入 XSS。分离模板并使用专职渲染（如 Jinja2 或静态文件）能降低风险并简化测试。
+3. **Slow down release cadence and stabilize versioning** — 一天内连续发布多个版本违背语义化版本精神，给用户不稳定印象。应积累充分变更后发布小版本，并在版本号中体现实际改进幅度。
 
-**Evaluator's own uncertainty**: 最大不确定性：Round 10 基准测试的 43 个 case 内容未知，无法判断通过门槛是否合理，可能高估了测试质量。
+**Evaluator's own uncertainty**: 基准测试缺乏细节是本次评估最大的不确定性，无法验证冷启动质量是否真正可靠。
 
 ---
 
 ### Pass 2
 
-**Scores**: {"architecture": 8, "testing": 7, "security": 8, "documentation": 6, "positioning": 8, "overall": 7.4}
+**Scores**: {"architecture": 8, "testing": 8, "security": 8, "documentation": 8, "positioning": 7, "overall": 7.5}
 
 **Verification of v3.14.3 suggestions**:
-- [fixed] #1: reports.py 1103 行仍需拆分 — reports.py 从 1103 行拆分为 22 行的 hub，4 个子模块最大 520 行（reports_review.py）。
-- [fixed] #2: mcp_server.py 覆盖率偏低（54-58%） — mcp_server.py 覆盖率从 54% 升至 86%，新增 53 个测试。
-- [fixed] #3: 增加更多集成测试 — 新增 53 个 MCP wrapper 测试，测试总数从 394 增至 490。
-- [fixed] #4: 遥测设计安全（不泄露内容） — telemetry.py 实现 payload 验证器（>200 字符拒绝、自然语言模式拒绝），仅本地日志，无网络请求。
-- [fixed] #5: 冷启动质量可量化验证 — 新增 Round 10 基准测试，43 case 100% 通过，覆盖 6 个维度。
+- [fixed] #1: reports.py 1103 行仍需拆分 — reports.py 已拆为 5 个模块（reports.py 22 行 hub + 4 子 mixin），最大 520 行（reports_review.py）。
+- [fixed] #2: mcp_server.py 覆盖率偏低（54-58%） — 新增 tests/test_mcp_coverage.py（53 个测试），mcp_server.py 覆盖率升至 86%。
+- [fixed] #3: 增加更多集成测试 — 测试总数从 394 增至 490，新增 53 个 MCP wrapper 测试覆盖了之前未覆盖的工具路径。
+- [fixed] #4: 遥测设计安全（不泄露内容） — telemetry.py 实现 Payload 验证器：拒绝 >200 字符或自然语言模式字符串，所有数据仅存本地日志，无网络请求。
+- [fixed] #5: 冷启动质量可量化验证 — 引入 Round 10 基准测试（43 个 case），全部通过，覆盖 6 个维度。
 
 **Key Q&A**:
-- *q1_architecture_complexity*: 16 个源文件略多，但拆分合理：reports 子模块职责清晰，Mixin 两层嵌套（ReportsMixin → 4 子 Mixin）增加理解成本，但公开 API 不变，且 hub 模式降低了耦合。整体可接受。
-- *q2_test_quality*: 490 个测试中，新增的 53 个 MCP 测试多为调用验证，部分测试（如 test_get_domains_with_data）仅检查返回非空，深度不足。83% 覆盖率主要来自核心模块，mcp_server.py 86% 的覆盖率包含大量浅层 wrapper 测试，关键路径（如冲突检测、上下文生成）的测试覆盖仍需加强。
-- *q3_telemetry_security*: payload 验证器足够防止内容泄露：拒绝 >200 字符、自然语言模式、嵌套 >2 层。日 ID 使用 HMAC 不可跨天关联。本地日志文件 ~/.engram/telemetry.log 为 JSONL 格式，若用户机器被完全控制则日志可读，但这是本地优先设计的固有风险，非遥测模块引入。
-- *q4_benchmark_rigor*: 43 case 100% 通过，但未提供 case 具体内容和通过标准，无法判断门槛是否宽松。建议公开 benchmark 用例和评分细则。
-- *q5_doc_maintenance*: architecture.md 仍标注 v3.14.2，未更新 reports 子模块和 telemetry 模块。CONTRIBUTING.md 测试基线更新为 437+，但未反映 490 的最新值。文档维护滞后。
-- *q6_html_in_python*: 520 行 HTML 内嵌 Python 字符串，缺乏语法高亮和模板继承，维护性差。建议使用 Jinja2 等模板引擎，但会增加依赖。当前实现可接受，但长期应重构。
-- *q7_version_strategy*: v3.14.3 → v3.16.0 跳过了 v3.15.0 和 v3.15.1 的补丁版本号，但 changelog 显示 v3.15.0 和 v3.15.1 实际存在。版本号跳跃可能因发布节奏或标记错误，但 changelog 记录完整，影响有限。
+- *q1_architecture_complexity*: 16 个源文件在正常范围内，拆分后职责清晰。两层 Mixin（ReportsMixin → 子 mixin）通过薄 hub（22 行）组合，对使用者透明，未显著增加理解成本；利大于弊。
+- *q2_test_quality*: 新增的 53 个测试主要覆盖了之前 MCP 工具包装器未测路径，避免大量浅层调用。虽然仍有改进空间（如端到端集成测试），但整体 83% 覆盖率下，关键路径（如 add_lesson 重复检测、错误捕获、路径验证）已有验证。
+- *q3_telemetry_security*: Payload 验证限制长度和自然语言比例是有效的第一层防护。但验证主要基于格式，不能完全防止短敏感字符串的意外泄露（如工具名本身为固定值，风险极低）。总体配合仅收集聚合计数的设计，安全风险可控。
+- *q4_benchmark_rigor*: 43 个 case 全部通过可能源于基准设计较宽松，但证据中未提供通过标准细节，无法判断严格性。至少验证了冷启动流程的基本正确性，加上已有的单元测试，提供了合理的质量基线。
+- *q5_doc_maintenance*: architecture.md 已更新至 v3.16.0，包括新模块图和 Mixin 层次；CONTRIBUTING.md 测试基线已更新至 490 tests、83% 覆盖率。文档维护及时。
+- *q6_html_in_python*: 520 行 HTML 内嵌在 Python 中不利于维护和协作，也增加 XSS 风险（尽管已有转义）。理想情况下应引入模板引擎（如 Jinja2），但这属于优化项而非紧急缺陷，当前规模尚可接受。
+- *q7_version_strategy*: 从 v3.14.3 → v3.14.4（补丁）→ v3.15.0（次要功能）→ v3.15.1（补丁）→ v3.16.0（次要功能）清晰遵循语义化版本，跳号无异常。
 
 **New findings**:
-- [medium] **architecture.md 未更新** — architecture.md 仍标注 v3.14.2，未反映 reports 子模块拆分和 telemetry 模块的添加。新贡献者可能参考过时文档。
-- [low] **CONTRIBUTING.md 测试基线过时** — CONTRIBUTING.md 声称基线为 437+ 测试，但实际为 490。新 PR 可能被错误要求维持 437+。
-- [low] **Round 10 基准测试缺乏透明度** — benchmark 的 43 个 case 未公开具体内容和通过标准，无法独立验证其严格性。
+- [low] **telemetry 日志人类可读无加密** — telemetry.log 为明文 JSONL，虽仅含聚合计数，但本地文件可能被意外访问，可考虑对日志文件做读权限限制。
+- [medium] **HTML 生成未使用模板可能导致长期维护困难** — reports_review.py 520 行 HTML 硬编码在 Python 中，若未来需要复杂 UI，将难以扩展。建议考虑引入模板引擎。
+- [low] **Mixin 继承深度可能增加调试难度** — ReportsMixin 继承自 4 个子 mixin，最终 Engram 类层次较多，但 MRO 确定性避免了冲突，风险可控。
 
 **Suggested next 3**:
-1. **更新 architecture.md 和 CONTRIBUTING.md** — 文档滞后于代码，影响贡献者 onboarding 和项目可信度。
-2. **公开 Round 10 基准测试用例和评分标准** — 提升 benchmark 透明度和可信度，便于社区验证和改进。
-3. **增加核心算法（冲突检测、上下文生成）的深度测试** — 当前测试多覆盖 wrapper 层，核心逻辑的边界条件和错误路径测试不足。
+1. **引入 HTML 模板引擎** — 520 行内嵌 HTML 代码不易维护和审计，可提高安全性和可读性，方便未来扩展。
+2. **增加端到端集成测试** — 当前测试以单元和 wrapper 测试为主，缺乏完整 MCP 对话模拟，可能隐藏真实场景下的集成问题。
+3. **细化 Round 基准测试通过标准并公开** — 43 case 全部通过但缺乏细节，外部难以评估冷启动质量保证的严格性，建议公布每个 case 的阈值和要求。
 
-**Evaluator's own uncertainty**: 最大不确定性：Round 10 基准测试的 43 个 case 未提供具体内容，无法判断其通过门槛是否合理，因此对测试质量的评分可能偏高。
+**Evaluator's own uncertainty**: 最大不确定性：Round 10 基准测试的具体通过门槛未知，无法独立判断冷启动质量的可靠性。
 
 ---
 
 ### Pass 3
 
-**Scores**: {"architecture": 8, "testing": 7, "security": 8, "documentation": 7, "positioning": 8, "overall": 7.6}
+**Scores**: {"architecture": 8, "testing": 7, "security": 8, "documentation": 8, "positioning": 8, "overall": 7.5}
 
 **Verification of v3.14.3 suggestions**:
-- [fixed] #1: reports.py 1103 行仍需拆分 — reports.py 已拆为 5 个模块（reports_rarity.py 85 行、reports_review.py 520 行、reports_identity.py 97 行、reports_analytics.py 310 行、reports.py 22 行 hub），最大单文件从 1103 行降至 520 行。
-- [fixed] #2: mcp_server.py 覆盖率偏低（54-58%） — mcp_server.py 测试覆盖率从 54% 升至 86%（+53 个新测试），证据包明确标注。
-- [fixed] #3: 增加更多集成测试 — 新增 53 个 MCP wrapper 测试（tests_mcp_coverage.py），测试总数从 394 增至 490。
-- [fixed] #4: 遥测设计安全（不泄露内容） — telemetry.py 实现 Payload 验证器：字符串 >200 字符拒绝、自然语言模式（>20% 空格且 >100 字符）拒绝、嵌套 >2 层拒绝；日 ID 用 HMAC 不可跨天关联；默认关闭，无网络请求。
-- [fixed] #5: 冷启动质量可量化验证 — 新增 Round 10 基准测试，43 个 case 全部通过，覆盖 6 个维度。
+- [fixed] #1: reports.py 1103 行仍需拆分 — reports.py 拆分为 5 模块：reports.py(22行) hub, reports_rarity.py(85行), reports_review.py(520行), reports_identity.py(97行), reports_analytics.py(310行)。最大单文件从1103行降至520行。
+- [fixed] #2: mcp_server.py 覆盖率偏低（54-58%） — mcp_server 覆盖率从 54% 提升至 86%，新增 tests/test_mcp_coverage.py 的 53 个测试。
+- [fixed] #3: 增加更多集成测试 — 新增 53 个 MCP wrapper 测试（test_mcp_coverage.py），覆盖写工具、搜索、审查/合并、身份更新、导入/导出、工作流快捷方式和所有 7 个 MCP 资源。
+- [fixed] #4: 遥测设计安全（不泄露内容） — telemetry.py 包含 Payload 验证器：拒绝 >200 字符的字符串、含自然语言模式（>20% 空格且 >100 字符）拒绝、嵌套层级 >2 拒绝。日 ID 使用 HMAC + 每日轮换，不可跨天关联。所有数据仅存储本地日志，无网络请求。
+- [fixed] #5: 冷启动质量可量化验证 — 引入了 Round 10 检索/注入质量基准测试，43 个 case 全部通过，覆盖 6 个维度。
 
 **Key Q&A**:
-- *q1_architecture_complexity*: 16 个源文件略多，但拆分合理：reports 子模块按职责分离（rarity/review/identity/analytics），两层 Mixin 嵌套（ReportsMixin → 4 子 Mixin）理解成本可控，因为公开 API 不变且 hub 仅 22 行。主要风险是未来维护者需理解 MRO，但当前设计是低破坏路径。
-- *q2_test_quality*: 490 个测试中，tests_mcp_coverage.py 的许多测试仅验证返回 JSON 结构（如 test_get_domains_with_data 只检查 'python' in parsed），未深入验证逻辑正确性。83% 覆盖率可能包含浅层调用测试，关键路径（如冲突检测、召回排序）的测试深度需进一步审查。
-- *q3_telemetry_security*: Payload 验证器足够防止内容泄露：长度限制（200 字符）、自然语言启发式（>20% 空格且 >100 字符）、嵌套限制。日 ID 用 HMAC 不可跨天关联。本地日志文件 ~/.engram/telemetry.log 是 JSONL 格式，若用户机器被完全控制则日志可读，但这是本地优先设计的固有风险，非 telemetry 特有。
-- *q4_benchmark_rigor*: 43 case 100% 通过可能门槛偏低。基准测试未提供具体 case 列表和通过标准，无法判断是否覆盖边界情况（如空知识库、极端长文本、多语言混合查询）。建议公开测试用例和评分细则。
-- *q5_doc_maintenance*: architecture.md 仍标注 v3.14.2，未更新 reports 子模块和 telemetry 模块。CONTRIBUTING.md 测试基线已更新至 437+，但未反映 490 的最新值。README 和 changelog 更新及时。
-- *q6_html_in_python*: reports_review.py 520 行 HTML 内嵌 Python 字符串，缺乏语法高亮和模板继承，维护性差。建议使用 Jinja2 等模板引擎，但引入新依赖需权衡。当前方案对小型项目可接受，但长期应重构。
-- *q7_version_strategy*: v3.14.3 → v3.16.0 跳了 3 个次版本号，但 changelog 显示 v3.15.0、v3.15.1、v3.16.0 均有实质变更（遥测、GBK 修复、代码拆分），版本跳跃合理。但 v3.15.0 和 v3.16.0 同一天发布（2026-05-22），可能暗示版本号膨胀。
+- *q1_architecture_complexity*: 16 个源文件较 12 个小幅增加，但 reports 拆分使单文件职责更清晰，最大文件从 1103 行降至 520 行。两层 Mixin 组合（ReportsMixin 继承 4 个子 mixin）对外部调用者透明，但内部开发者需要理解 MRO 顺序。整体可维护性提升，复杂度属于合理范围。
+- *q2_test_quality*: mcp_coverage 测试大多为浅层调用检查（传入参数，验证返回值类型），虽覆盖了各类工具但未模拟真实异常、复杂参数组合或并发场景。核心逻辑路径已在原有 test_core 等中覆盖。83% 覆盖率可靠，但 43 个基准 case 全过可能意味着基准设计偏简单，未引入对抗性边缘案例。
+- *q3_telemetry_security*: Payload 验证基本防止了内容泄露，但自然语言检测启发式（>20% 空格和 >100 字符）可能被无空格语言（如中文）或故意短文本绕过。另外，本地日志文件可能被其他进程读取，但默认权限控制未明确。整体风险较低，Phase 1 无网络传输是安全关键。
+- *q4_benchmark_rigor*: Round 10 是重要的量化检验，但 100% 通过率可能表明测试集未包含足够多样或具有挑战性的案例（如低相似度、多义词、跨领域边缘情况）。若无公开测试集描述，难以评估严厉度。建议补充失败案例的预期行为。
+- *q5_doc_maintenance*: architecture.md 更新了 v3.16.0 的模块图和新文件列表，明确了两层 mixin 结构。CHANGELOG 详细记录变化。CONTRIBUTING 测试基线已更新至 490+ 和 83%+。新模块在文档中得到充分体现。
+- *q6_html_in_python*: reports_review.py 中 520 行 HTML 硬编码在 Python 中，存在维护困难、易出错、无法独立测试渲染。对于当前规模尚可接受，但随着报告类型增加，应考虑使用 Jinja2 等模板引擎分离展示逻辑，提升可读性和安全性（如自动转义）。
+- *q7_version_strategy*: 版本号从 v3.14.3 跳过 v3.15.0 和 v3.15.1 到 v3.16.0，跳跃较大。Changelog 清晰记录了各版本独立发布，但缺乏明确的版本号分配规则（如功能增加为何是 minor 而非 patch）。从外部看，版本号递增直接且时间戳一致（同日），无混乱。
 
 **New findings**:
-- [medium] **architecture.md 未更新至 v3.16.0** — architecture.md 文件头标注版本 v3.14.2，模块列表未包含 telemetry.py、stats.py 及 reports 子模块（reports_rarity.py 等），可能误导新贡献者。
-- [medium] **CONTRIBUTING.md 测试基线过时** — CONTRIBUTING.md 声称基线为 437+ 测试，但实际 v3.16.0 已有 490 个测试，未同步更新。
-- [low] **reports_review.py 520 行 HTML 内嵌 Python 字符串** — HTML 模板直接写在 Python 字符串中，缺乏模板引擎支持，不利于维护和安全性审查（虽然已使用 _esc 转义）。
-- [low] **Round 10 基准测试详情未公开** — 证据包提到 Round 10 基准测试 43 case 全过，但未提供测试用例列表、评分标准或通过门槛，无法独立验证其严谨性。
+- [medium] **遥测本地日志文件权限未明确** — telemetry.log 存储于 ~/.engram/，默认权限依赖 umask，可能被同主机其他用户读取。虽内容匿名，但建议明确设置文件权限为仅用户可读（600）。
+- [medium] **Mixin 多层继承可能引发 MRO 冲突** — Engram 类继承自 RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin，而 ReportsMixin 又继承四个子 mixin。方法解析顺序复杂，未发现当前冲突，但新方法添加的命名约定不强，可能在未来引入无声错误。建议在测试中增加 MRO 一致性检查。
+- [low] **reports_review.py HTML 未使用模板引擎** — 520 行硬编码 HTML 字符串，缺少 XSS 防护验证（尽管提及 _esc 转义，但未见该函数具体实现）。长期维护成本高，且不利于非开发人员调整样式。
 
 **Suggested next 3**:
-1. **更新 architecture.md 和 CONTRIBUTING.md 至最新版本** — 文档是贡献者的第一入口，过时文档会误导新开发者，降低贡献效率。
-2. **公开 Round 10 基准测试详情** — 43 case 100% 通过缺乏透明度，公开测试用例和评分标准可增强可信度，并便于社区贡献新用例。
-3. **重构 reports_review.py 使用模板引擎** — 520 行 HTML 内嵌 Python 字符串难以维护，引入 Jinja2 等轻量模板引擎可提升可读性和安全性，但需评估依赖成本。
+1. **增强基准测试的严格性** — 当前 100% 通过率可能掩盖检索/注入函数的边缘情况弱点。应加入低相似度、多语言、同义改写等对抗性 case，确保系统在复杂真实场景下鲁棒。
+2. **审计并测试 Mixin MRO** — 随着更多 mixin 添加，方法名冲突风险增大。应编写自动化测试验证 Mixin 顺序正确，并在编码规范中要求方法名前缀规则，防止未来回归。
+3. **采用模板引擎分离 HTML** — reports_review.py 中的 HTML 硬编码难以维护且易引入安全漏洞。迁移到 Jinja2 或类似模板引擎可提升可维护性、自动转义和主题扩展能力。
 
-**Evaluator's own uncertainty**: 最大不确定性：Round 10 基准测试的 43 个 case 具体内容和通过标准未公开，无法判断其质量，可能高估了测试的 rigor。
+**Evaluator's own uncertainty**: 最大不确定性在于测试深度：仅凭测试数量无法判断关键路径的异常场景覆盖是否充分，未知基准测试的具体用例设计强度。
 
 ---
 
 ## Raw
 
-See `results_20260522_163719.json` and `raw_log_20260522_163719.jsonl`.
+See `results_20260522_170255.json` and `raw_log_20260522_170255.jsonl`.

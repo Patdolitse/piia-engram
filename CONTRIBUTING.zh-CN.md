@@ -8,19 +8,33 @@
 
 ```
 src/engram_core/
-    core.py          # 核心引擎：知识增删改查、搜索、上下文生成
-    mcp_server.py    # MCP 工具/资源定义（AI 调用的接口层）
-    setup_wizard.py  # 交互式安装向导
-    crypto.py        # AES-256-GCM 加密（敏感画像字段）
+    core.py            # 核心引擎：知识增删改查、身份管理、链接管理
+    retrieval.py       # RetrievalMixin — 搜索、排序、层级晋升
+    context.py         # ContextMixin — 冷启动上下文、内容摄取
+    reconcile.py       # ReconcileMixin — 跨工具记忆/配置同步
+    reports.py         # ReportsMixin — 薄 hub，组合 4 个子 mixin
+    mcp_server.py      # MCP 工具/资源定义（43 个工具，AI 接口层）
+    setup_wizard.py    # 交互式安装向导 + doctor 诊断
+    crypto.py          # AES-256-GCM 加密（敏感画像字段）
+    telemetry.py       # 可选匿名使用统计（Phase 1: 仅本地日志）
 tests/
-    test_core.py     # 单元测试（核心引擎）
-    test_reconcile.py# 自动同步、staging、冲突检测测试
+    test_core.py           # 核心引擎（188 个测试）
+    test_reconcile.py      # 自动同步、staging、冲突检测（58 个测试）
+    test_mcp_coverage.py   # MCP wrapper 覆盖（53 个测试）
+    test_setup_wizard.py   # 安装向导 + doctor + telemetry CLI（50 个测试）
+    test_mcp_tools.py      # MCP 工具封装（37 个测试）
+    test_telemetry.py      # 匿名使用统计（30 个测试）
+    test_crypto.py         # AES-256-GCM 加密（27 个测试）
+    test_packaging.py      # 包元数据、CI、MCP 工具验证（22 个测试）
+    test_stats.py          # GitHub/PyPI 统计（11 个测试）
+    test_review_page_xss.py # 审阅页 XSS 防护（10 个测试）
+    test_audit.py          # 审计日志（4 个测试）
 experiments/
     benchmarks/      # 召回/注入质量基准测试（Round 10）
 ```
 
 核心设计原则：
-- **100% 本地** — 无云端、无遥测、无外部请求
+- **默认 100% 本地** — 可选本地遥测（Phase 1 无网络），无云端
 - **用户拥有数据** — 所有知识以人类可读的 JSON 文件存储
 - **MCP 原生** — 每个能力都暴露为 MCP 工具或资源
 - **隐私优先** — 信任边界、静态加密、安全画像过滤
@@ -74,7 +88,7 @@ Engram 处理敏感个人数据，需格外小心：
 1. Fork 本仓库
 2. 创建功能分支：`git checkout -b feature/your-feature`
 3. 修改代码并编写测试
-4. 运行全量测试 — 281+ 测试必须全部通过
+4. 运行全量测试 — 490+ 测试必须全部通过
 5. 提交 PR，说明**改了什么**和**为什么**
 
 ## 报告问题

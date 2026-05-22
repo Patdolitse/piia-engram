@@ -8,24 +8,33 @@ Thanks for considering a contribution to Engram — the AI identity layer that s
 
 ```
 src/engram_core/
-    core.py          # Core engine: knowledge CRUD, search, context generation
-    mcp_server.py    # MCP tool/resource definitions (the AI-facing API)
-    setup_wizard.py  # Interactive setup CLI
-    crypto.py        # AES-256-GCM encryption for sensitive profile fields
+    core.py            # Core engine: knowledge CRUD, identity, link management
+    retrieval.py       # RetrievalMixin — search, ranking, tier promotion
+    context.py         # ContextMixin — cold-start context, ingestion helpers
+    reconcile.py       # ReconcileMixin — cross-tool memory/config sync
+    reports.py         # ReportsMixin — thin hub composing 4 sub-mixins
+    mcp_server.py      # MCP tool/resource definitions (43 tools, the AI-facing API)
+    setup_wizard.py    # Interactive setup CLI + doctor diagnostics
+    crypto.py          # AES-256-GCM encryption for sensitive profile fields
+    telemetry.py       # Opt-in anonymous usage statistics (Phase 1: local log only)
 tests/
-    test_core.py      # Unit tests: core engine (188 tests)
-    test_reconcile.py # Auto-sync, staging, conflict detection (56 tests)
-    test_packaging.py # Package metadata, CI, MCP tool verification (22 tests)
-    test_setup_wizard.py # Setup wizard + doctor diagnostics (15 tests)
-    test_stats.py     # GitHub/PyPI statistics (11 tests)
-    test_crypto.py    # AES-256-GCM encryption (7 tests)
-    test_audit.py     # Audit logging (4 tests)
+    test_core.py           # Core engine (188 tests)
+    test_reconcile.py      # Auto-sync, staging, conflict detection (58 tests)
+    test_mcp_coverage.py   # MCP wrapper coverage (53 tests)
+    test_setup_wizard.py   # Setup wizard + doctor + telemetry CLI (50 tests)
+    test_mcp_tools.py      # MCP tool wrappers (37 tests)
+    test_telemetry.py      # Anonymous usage statistics (30 tests)
+    test_crypto.py         # AES-256-GCM encryption (27 tests)
+    test_packaging.py      # Package metadata, CI, MCP tool verification (22 tests)
+    test_stats.py          # GitHub/PyPI statistics (11 tests)
+    test_review_page_xss.py # XSS prevention in review page (10 tests)
+    test_audit.py          # Audit logging (4 tests)
 experiments/
     benchmarks/      # Retrieval/injection quality benchmarks (Round 10)
 ```
 
 Key design principles:
-- **100% local** — no cloud, no telemetry, no external calls
+- **100% local by default** — opt-in local telemetry only (no network in Phase 1), no cloud
 - **User-owned data** — all knowledge stored as human-readable JSON files
 - **MCP-native** — every capability exposed as an MCP tool or resource
 - **Privacy by default** — trust boundaries, encryption at rest, safe profile filtering

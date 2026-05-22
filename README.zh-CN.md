@@ -222,7 +222,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | MCP 工具数 | **43** 个（默认开放 10 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 33 个）|
 | 测试通过 | **490** 个（单元 + 集成）|
 | 代码覆盖率 | **83%** 总体；mcp_server 86% ([基线](docs/coverage_baseline_v3.14.2.md))|
-| `core.py` 行数 | **1088** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
+| `core.py` 行数 | **1097** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | AES-256-GCM，每条数据随机 salt + nonce |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
