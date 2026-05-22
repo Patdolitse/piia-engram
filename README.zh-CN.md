@@ -272,6 +272,8 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 | `update_knowledge` | Tier-2 高级 | 更新一条经验教训或决策（自动检测类型） |
 | `archive_knowledge` | Tier-2 高级 | 废弃一条经验教训或决策（自动检测类型） |
 | `review_knowledge` | Tier-2 高级 | 标记一条经验教训或决策已复习 |
+| `request_outline_review` | Tier-2 高级 | 生成交互式 HTML 知识审查页面 |
+| `apply_review` | Tier-2 高级 | 处理审查结果——晋升确认的暂存条目、归档其余 |
 | `update_identity` | Tier-2 高级 | 更新身份画像、偏好、信任边界、工作方式或质量标准 |
 | `wrap_up_session` | Tier-2 高级 | 会话结束时自动提取知识并可选保存项目快照 |
 | `start_project` | Tier-2 高级 | 新项目启动时继承历史知识并建立项目档案 |
