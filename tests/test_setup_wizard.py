@@ -128,6 +128,12 @@ def test_seed_onboarding_saves_profile_and_lessons(tmp_path: Path, monkeypatch, 
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.setenv("USERPROFILE", str(fake_home))
 
+    # Mock environment probing to avoid subprocess calls
+    monkeypatch.setattr(
+        "piia_engram.setup_wizard._probe_environment",
+        lambda cwd=None: {},
+    )
+
     answers = iter([
         "全栈开发者",
         "Python + React",
@@ -151,13 +157,18 @@ def test_seed_onboarding_saves_profile_and_lessons(tmp_path: Path, monkeypatch, 
     assert profile["language"] == "中文"
     assert profile["tech_stack"] == "Python + React"
     assert "Python + React" in profile["description"]
-    assert [lesson["summary"] for lesson in lessons] == [
+    # User lessons come first, then seed templates
+    user_lessons = [l["summary"] for l in lessons if l.get("source_tool") == "engram_setup" and l.get("domain") == "setup"]
+    assert user_lessons == [
         "AI 总是忘记先跑测试",
         "提交前必须检查 git diff",
         "回答时先给结论",
     ]
     assert summary["lessons_added"] == 3
-    assert "经验：已录入 3 条" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "经验：已录入 3 条" in out
+    # Seed templates should have been injected
+    assert summary["seed_count"] > 0
 
 
 def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
@@ -166,6 +177,10 @@ def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setattr(
+        "piia_engram.setup_wizard._probe_environment",
+        lambda cwd=None: {},
+    )
     (tmp_path / "CLAUDE.md").write_text(
         "remember to run tests before claiming completion\n"
         "decided to keep project memory local first\n",
@@ -192,6 +207,10 @@ def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch,
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setattr(
+        "piia_engram.setup_wizard._probe_environment",
+        lambda cwd=None: {},
+    )
     answers = iter(["", "", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
@@ -204,6 +223,58 @@ def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch,
     assert engram.get_profile() == {}
     assert engram.get_lessons(limit=None, _update_access=False) == []
     assert summary["profile"] == {}
+    assert summary["seed_count"] == 0
+
+
+# ── Cold-start probing & seed template tests ──────────────────────────
+
+
+def test_probe_environment_detects_project_files(tmp_path: Path):
+    """_probe_environment should detect tech stack from project files."""
+    from piia_engram.setup_wizard import _probe_environment
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
+    (tmp_path / "package.json").write_text('{"name":"test"}')
+
+    signals = _probe_environment(cwd=tmp_path)
+    assert "Python" in signals.get("tech_stack_hint", "")
+    assert "JavaScript" in signals.get("tech_stack_hint", "")
+
+
+def test_probe_environment_empty_dir(tmp_path: Path):
+    """_probe_environment should return empty dict for empty directory."""
+    from piia_engram.setup_wizard import _probe_environment
+
+    signals = _probe_environment(cwd=tmp_path)
+    # No project files, no git — might only have name/email from global git config
+    assert isinstance(signals, dict)
+
+
+def test_apply_seed_templates_python(tmp_path: Path):
+    """_apply_seed_templates should inject Python + universal lessons."""
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import _apply_seed_templates
+
+    engram = Engram(root=tmp_path)
+    count = _apply_seed_templates(engram, "Python")
+
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    # Should have Python-specific + universal templates
+    assert count >= 4  # 2 Python + 3 universal (minus dedup)
+    assert any("commit" in l["summary"].lower() for l in lessons)
+
+
+def test_apply_seed_templates_no_duplicates(tmp_path: Path):
+    """Running _apply_seed_templates twice should not create duplicates."""
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import _apply_seed_templates
+
+    engram = Engram(root=tmp_path)
+    count1 = _apply_seed_templates(engram, "Python")
+    count2 = _apply_seed_templates(engram, "Python")
+
+    assert count1 > 0
+    assert count2 == 0  # All duplicates
 
 
 # ── Doctor tests ─────────────────────────────────────────────────────

@@ -232,7 +232,16 @@ async def get_user_context(
         logger.warning("generate_context failed: %s", exc)
         return f"Engram 上下文加载失败: {exc}"
     if not context:
-        return "Engram 为空——这可能是新用户。尚无用户上下文可用。"
+        return (
+            "Engram 为空——这是新用户。请帮助他们建立身份：\n"
+            "1. 问用户的角色（开发者/PM/学生等）→ 调用 update_identity(field='profile', updates_json='{\"role\":\"...\"}')\n"
+            "2. 问偏好的沟通语言 → update_identity(field='profile', updates_json='{\"language\":\"...\"}')\n"
+            "3. 问技术栈 → update_identity(field='profile', updates_json='{\"tech_stack\":\"...\"}')\n"
+            "4. 问有没有 AI 总是忘记的规则 → 调用 add_lesson(...)\n"
+            "5. 完成后调用 refresh_quick_context() 持久化\n\n"
+            "这只需要 30 秒，之后所有 AI 工具都能从第一条消息开始了解这位用户。\n"
+            "或者建议用户在终端运行 `piia-engram` 完成引导式设置。"
+        )
     return context
 
 
