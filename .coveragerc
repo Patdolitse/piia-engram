@@ -1,0 +1,23 @@
+[run]
+source = src/engram_core
+branch = false
+
+[report]
+# Pragmas / lines to exclude from coverage
+exclude_lines =
+    pragma: no cover
+    # Defensive imports
+    if TYPE_CHECKING:
+    # Unreachable code
+    raise NotImplementedError
+    # __main__ guards
+    if __name__ == .__main__.:
+
+skip_covered = false
+sort = cover
+precision = 0
+show_missing = false
+
+[html]
+directory = htmlcov
+title = Engram coverage report

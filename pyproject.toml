@@ -1,6 +1,6 @@
 [project]
 name = "piia-engram"
-version = "3.14.1"
+version = "3.14.2"
 description = "Engram — Your AI identity layer. Stores who you are, not just what you did. Local-first, MCP-compatible."
 readme = "README.md"
 license = "Apache-2.0"
