@@ -16,7 +16,7 @@ $pythonCandidates = @(
     "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python310\python.exe",
     # Codex App 捆绑 Python（fallback）
-    "E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+    "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 )
 
 $python = $null
