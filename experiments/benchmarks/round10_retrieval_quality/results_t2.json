@@ -1,0 +1,62 @@
+{
+  "test": "T2",
+  "timestamp": "2026-05-22T16:14:10.694336",
+  "scenario_count": 6,
+  "correct": 6,
+  "passed": true,
+  "dimensions": {
+    "D3_llm": {
+      "dimension": "D3_llm",
+      "name": "Recall Quality (LLM)",
+      "total": 1,
+      "correct": 1,
+      "passed": true,
+      "results": [
+        {
+          "id": "D3-QUALITY-01",
+          "correct": true,
+          "detail": "relevance_ratio=100%, threshold=75%"
+        }
+      ]
+    },
+    "D4": {
+      "dimension": "D4",
+      "name": "Identity Fidelity (LLM)",
+      "total": 5,
+      "correct": 5,
+      "passed": true,
+      "results": [
+        {
+          "id": "D4-ROLE-01",
+          "correct": true,
+          "detail": "expected_any_of=['senior', '高级', '全栈', '工程师'], answer_snippet=该用户是高级全栈工程师，专注 Python 后端和 MCP 开发，有5年经验。"
+        },
+        {
+          "id": "D4-PREF-01",
+          "correct": true,
+          "detail": "expected_any_of=['简洁', '直接', '不要废话'], answer_snippet=简洁直接，不要废话。用数据说话，先提测试覆盖情况，再讲实现问题。"
+        },
+        {
+          "id": "D4-QUALITY-01",
+          "correct": true,
+          "detail": "expected_any_of=['不会', '不接受', '必须', '测试'], answer_snippet=不会。根据用户的质量标准，验收严格度为4/5，明确要求“必须有测试覆盖”。没有测试覆盖的代码不会被接受。"
+        },
+        {
+          "id": "D4-DECISION-01",
+          "correct": true,
+          "detail": "expected_any_of=['pytest'], answer_snippet=pytest"
+        },
+        {
+          "id": "D4-LESSON-01",
+          "correct": true,
+          "detail": "expected_any_of=['同步阻塞', 'MCP', 'tool description', '同义词'], answer_snippet=MCP tool description 要覆盖同义词提高召回率。"
+        }
+      ]
+    }
+  },
+  "judge_info": {
+    "model": "deepseek-chat",
+    "api_calls": 23,
+    "runs_per_scenario": 3
+  }
+}
