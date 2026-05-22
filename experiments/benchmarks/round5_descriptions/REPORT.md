@@ -5,7 +5,7 @@
 - LLM：DeepSeek（`deepseek-chat`）
 - 温度：0.0
 - 每个场景：3 次取多数
-- 当前工具数：39（从 `src/engram_core/mcp_server.py` 实时抽取）
+- 当前工具数：39（从 `src/piia_engram/mcp_server.py` 实时抽取）
 - 总场景数：45
 - 总调用次数：135
 - 失败调用：0

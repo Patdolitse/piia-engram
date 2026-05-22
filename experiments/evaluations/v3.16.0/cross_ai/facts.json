@@ -3,7 +3,7 @@
   "timestamp": "2026-05-22T17:28:59+08:00",
   "commands_run": [
     "python -m pytest tests/ -q",
-    "python -m pytest tests/ --cov=engram_core --cov-report=term-missing -q",
+    "python -m pytest tests/ --cov=piia_engram --cov-report=term-missing -q",
     "python -m pytest tests/ -v --tb=short",
     "python -m compileall -q src"
   ],
@@ -12,7 +12,7 @@
   "coverage_mcp_server": 86,
   "source_file_count": 18,
   "max_single_file_lines": {
-    "file": "src/engram_core/mcp_server.py",
+    "file": "src/piia_engram/mcp_server.py",
     "lines": 1411
   },
   "core_py_lines": 1097,

@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from engram_core.core import Engram
+from piia_engram.core import Engram
 
 
 def run_t1() -> dict[str, Any]:

@@ -10,13 +10,13 @@ Scope: read full local codebase; no changes to `src/` or `tests/`.
 |---|---:|---|
 | Full test suite | 490 passed | `python -m pytest tests/ -q` -> `490 passed in 36.33s` |
 | Verbose test run | 490 passed | `python -m pytest tests/ -v --tb=short` -> `490 passed in 34.20s` |
-| Total coverage | 83% | `python -m pytest tests/ --cov=engram_core --cov-report=term-missing -q` |
+| Total coverage | 83% | `python -m pytest tests/ --cov=piia_engram --cov-report=term-missing -q` |
 | `mcp_server.py` coverage | 86% | coverage table |
-| Source `.py` files | 18 | `src/engram_core/*.py` |
-| Largest source file | `src/engram_core/mcp_server.py`, 1411 lines | line count |
+| Source `.py` files | 18 | `src/piia_engram/*.py` |
+| Largest source file | `src/piia_engram/mcp_server.py`, 1411 lines | line count |
 | `core.py` lines | 1097 | line count |
 | `reports.py` hub lines | 20 | line count |
-| MCP tools | 43 | `rg '^@mcp\\.tool' src/engram_core/mcp_server.py` |
+| MCP tools | 43 | `rg '^@mcp\\.tool' src/piia_engram/mcp_server.py` |
 | Compile check | passed | `python -m compileall -q src` |
 
 Changelog versions after v3.14.3: `3.16.0`, `3.15.1`, `3.15.0`, `3.14.4`.
@@ -51,7 +51,7 @@ I broadly agree with the overall band, but redistribute the score:
 
 Severity: **medium**
 
-`src/engram_core/telemetry.py:139-155` recursively validates values, but not keys. Current `mcp_server.py` mostly passes fixed literal tool names, so normal use is not leaking content today. But `ToolCallTracker.record(tool_name, ...)` accepts arbitrary strings, and tool names are serialized as dict keys. A future integration mistake could log natural language or file paths despite the "no content / no paths" guarantee.
+`src/piia_engram/telemetry.py:139-155` recursively validates values, but not keys. Current `mcp_server.py` mostly passes fixed literal tool names, so normal use is not leaking content today. But `ToolCallTracker.record(tool_name, ...)` accepts arbitrary strings, and tool names are serialized as dict keys. A future integration mistake could log natural language or file paths despite the "no content / no paths" guarantee.
 
 This is especially important because `tests/test_telemetry.py:159-170` claims to test content leakage but only checks that hard-coded strings are absent; it does not attempt malicious or accidental content in a dict key.
 

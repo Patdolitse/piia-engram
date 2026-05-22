@@ -8,7 +8,7 @@ class TestEncryptionEngine:
 
     def test_disabled_mode(self):
         """No secret → passthrough, no encryption."""
-        from engram_core.crypto import EncryptionEngine
+        from piia_engram.crypto import EncryptionEngine
         engine = EncryptionEngine(secret=None)
         assert not engine.enabled
         assert engine.encrypt("hello") == "hello"
@@ -16,7 +16,7 @@ class TestEncryptionEngine:
 
     def test_encrypt_decrypt_roundtrip(self):
         """Encrypt then decrypt should recover original."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test-passphrase")
@@ -29,7 +29,7 @@ class TestEncryptionEngine:
 
     def test_encrypt_idempotent(self):
         """Double-encrypting should not change the value."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test-passphrase")
@@ -39,7 +39,7 @@ class TestEncryptionEngine:
 
     def test_wrong_key_returns_ciphertext(self):
         """Wrong key should return original ciphertext, not crash."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine1 = EncryptionEngine(secret="key-1")
@@ -50,7 +50,7 @@ class TestEncryptionEngine:
 
     def test_encrypt_fields(self):
         """encrypt_fields should only encrypt specified fields."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -62,7 +62,7 @@ class TestEncryptionEngine:
 
     def test_decrypt_fields(self):
         """decrypt_fields should recover encrypted fields."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -73,7 +73,7 @@ class TestEncryptionEngine:
 
     def test_empty_string_not_encrypted(self):
         """Empty string should not be encrypted."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -85,7 +85,7 @@ class TestEncryptionEngine:
         Synthesize a v1 ciphertext by directly running the legacy derivation, then
         verify the engine accepts it and recovers the plaintext.
         """
-        from engram_core.crypto import (
+        from piia_engram.crypto import (
             EncryptionEngine,
             ENC_PREFIX_V1,
             HAS_CRYPTO,
@@ -112,7 +112,7 @@ class TestEncryptionEngine:
 
     def test_secret_without_crypto_raises(self):
         """Setting secret without cryptography package must raise RuntimeError."""
-        import engram_core.crypto as crypto_mod
+        import piia_engram.crypto as crypto_mod
         original = crypto_mod.HAS_CRYPTO
         try:
             crypto_mod.HAS_CRYPTO = False
@@ -132,7 +132,7 @@ class TestEncryptionExpansion:
 
     def _v1_blob(self, secret: str, plaintext: str) -> str:
         """Produce a real enc:v1: ciphertext using 100k PBKDF2."""
-        from engram_core.crypto import (
+        from piia_engram.crypto import (
             ENC_PREFIX_V1,
             PBKDF2_ITERATIONS_V1,
             _derive_key,
@@ -150,7 +150,7 @@ class TestEncryptionExpansion:
 
     def test_mixed_v1_v2_fields_both_decrypt(self):
         """A dict with v1 in one field and v2 in another must round-trip."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         secret = "rotation-test"
@@ -165,7 +165,7 @@ class TestEncryptionExpansion:
 
     def test_v1_decrypt_then_re_encrypt_emits_v2(self):
         """After decrypting a v1 blob and re-encrypting, the new ciphertext is v2."""
-        from engram_core.crypto import ENC_PREFIX_V2, EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import ENC_PREFIX_V2, EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         secret = "upgrade-key"
@@ -181,7 +181,7 @@ class TestEncryptionExpansion:
 
     def test_already_v2_encrypted_value_is_not_double_encrypted(self):
         """encrypt() must be idempotent — both v1 and v2 inputs are passthrough."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         secret = "idem"
@@ -192,7 +192,7 @@ class TestEncryptionExpansion:
 
     def test_unicode_emoji_cjk_roundtrip(self):
         """Encryption must handle multibyte UTF-8 (emoji, CJK, combining chars)."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="unicode-test")
@@ -211,7 +211,7 @@ class TestEncryptionExpansion:
 
     def test_bad_base64_payload_returns_original(self):
         """Corrupted base64 inside enc:v2: must not crash — return as-is."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -221,7 +221,7 @@ class TestEncryptionExpansion:
 
     def test_truncated_ciphertext_returns_original(self):
         """Payload too short to contain salt+nonce must not crash."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -231,7 +231,7 @@ class TestEncryptionExpansion:
 
     def test_unknown_prefix_passthrough(self):
         """Future enc:v9: prefix should pass through (not match any known version)."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -241,7 +241,7 @@ class TestEncryptionExpansion:
 
     def test_decrypt_fields_skips_non_string_values(self):
         """Non-string values in a dict must be left untouched."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -253,14 +253,14 @@ class TestEncryptionExpansion:
 
     def test_pbkdf2_iteration_constants_are_strict(self):
         """The iteration counts are part of the on-disk contract — pin them."""
-        from engram_core.crypto import PBKDF2_ITERATIONS_V1, PBKDF2_ITERATIONS_V2
+        from piia_engram.crypto import PBKDF2_ITERATIONS_V1, PBKDF2_ITERATIONS_V2
         # Changing these silently would break decryption of existing data
         assert PBKDF2_ITERATIONS_V1 == 100_000
         assert PBKDF2_ITERATIONS_V2 == 600_000
 
     def test_default_prefix_is_v2(self):
         """New writes must default to v2 — never accidentally regress to v1."""
-        from engram_core.crypto import ENC_PREFIX, ENC_PREFIX_V2
+        from piia_engram.crypto import ENC_PREFIX, ENC_PREFIX_V2
         assert ENC_PREFIX == ENC_PREFIX_V2
 
 
@@ -269,7 +269,7 @@ class TestDecryptionStrict:
     returning the original ciphertext. Default behavior unchanged."""
 
     def test_strict_wrong_key_raises(self):
-        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine_a = EncryptionEngine(secret="key-a")
@@ -279,7 +279,7 @@ class TestDecryptionStrict:
             engine_b.decrypt(ct, strict=True)
 
     def test_strict_bad_payload_raises(self):
-        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -287,7 +287,7 @@ class TestDecryptionStrict:
             engine.decrypt("enc:v2:not_valid_base64!!!", strict=True)
 
     def test_strict_truncated_payload_raises(self):
-        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -296,7 +296,7 @@ class TestDecryptionStrict:
 
     def test_strict_passthrough_for_unprefixed(self):
         """Non-encrypted values must pass through even in strict mode — not raise."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -305,7 +305,7 @@ class TestDecryptionStrict:
 
     def test_strict_round_trip_works(self):
         """Happy path: strict mode should not interfere when decryption succeeds."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
@@ -314,7 +314,7 @@ class TestDecryptionStrict:
 
     def test_default_mode_unchanged(self):
         """Backward compat: default decrypt with wrong key still returns original."""
-        from engram_core.crypto import EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine_a = EncryptionEngine(secret="key-a")
@@ -326,7 +326,7 @@ class TestDecryptionStrict:
     def test_strict_does_not_leak_cause_chain(self):
         """``raise from None`` is used to hide the original exception's stage,
         which could leak timing-oracle info about where decryption failed."""
-        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine_a = EncryptionEngine(secret="key-a")
@@ -341,7 +341,7 @@ class TestDecryptionStrict:
             pytest.fail("expected DecryptionError")
 
     def test_decrypt_fields_strict_raises_on_any_failure(self):
-        from engram_core.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
+        from piia_engram.crypto import DecryptionError, EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
         engine_a = EncryptionEngine(secret="key-a")

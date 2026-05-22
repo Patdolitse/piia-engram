@@ -64,7 +64,7 @@ Every module in the codebase is now at 90% coverage or above.
 ## How to reproduce
 
 ```bash
-python -m pytest --cov=engram_core --cov-report=term-missing tests/
+python -m pytest --cov=piia_engram --cov-report=term-missing tests/
 ```
 
 ## Trend

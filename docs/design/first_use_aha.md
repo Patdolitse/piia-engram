@@ -4,7 +4,7 @@
 
 新用户从 `pip install piia-engram && engram setup` 到"AI 回答出3条关于我的真实信息"，整个过程 <= 10 分钟。
 
-**合格标准**：用户在 AI 工具中问"请同步 Engram 上下文，然后告诉我你现在知道我什么"，AI 回答中至少包含 3 条来自导入内容的具体信息。
+**合格标准**：用户在 AI 工具中问"请同步 piia-engram 上下文，然后告诉我你现在知道我什么"，AI 回答中至少包含 3 条来自导入内容的具体信息。
 
 ## 现状分析
 
@@ -99,7 +99,7 @@ Step 4.5 — 智能导入
 
 ```
 ========================================
-  Engram 安装完成！
+  piia-engram 安装完成！
 
   身份：全栈开发者 | Python, TypeScript | 中文
   经验：已录入 3 条
@@ -107,10 +107,10 @@ Step 4.5 — 智能导入
 
   验证方法：打开你的 AI 工具，说这句话：
 
-    请同步 Engram 上下文，然后告诉我你现在知道我什么。
+    请同步 piia-engram 上下文，然后告诉我你现在知道我什么。
 
   如果 AI 能说出你的角色、语言偏好、技术栈，
-  就说明 Engram 已经在工作了。
+  就说明 piia-engram 已经在工作了。
 ========================================
 ```
 
@@ -136,8 +136,8 @@ Step 4.5 — 智能导入
 
 | 文件 | 变更 |
 |------|------|
-| `src/engram_core/setup_wizard.py` | 新增扫描/分流/导入函数，修改 onboarding 流程 |
-| `src/engram_core/core.py` | 可能需要新增 `update_preferences_from_rules()` 方法 |
+| `src/piia_engram/setup_wizard.py` | 新增扫描/分流/导入函数，修改 onboarding 流程 |
+| `src/piia_engram/core.py` | 可能需要新增 `update_preferences_from_rules()` 方法 |
 
 ## 验证方案
 

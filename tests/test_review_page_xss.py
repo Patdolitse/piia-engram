@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from engram_core.core import Engram
+from piia_engram.core import Engram
 
 
 @pytest.fixture()

@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from engram_core.core import Engram, _read_json, _write_json
+from piia_engram.core import Engram, _read_json, _write_json
 
 from .fixtures import RECALL_LESSONS, CJK_LESSONS, create_lessons_only
 

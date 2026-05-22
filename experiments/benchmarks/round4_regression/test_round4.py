@@ -76,7 +76,7 @@ def test_round4_judge_prompts_hide_r3_expected_category_and_write_raw(tmp_path):
 def test_round4_onboarding_seed_uses_isolated_engram(tmp_path):
     from experiments.benchmarks.round4_regression.scenarios_r1 import ONBOARDING_SCENARIOS
     from experiments.benchmarks.round4_regression.test_r1_onboarding import seed_onboarding_profile
-    from engram_core.core import Engram
+    from piia_engram.core import Engram
 
     engram = Engram(root=tmp_path / "engram")
     seed = seed_onboarding_profile(engram, ONBOARDING_SCENARIOS[0])

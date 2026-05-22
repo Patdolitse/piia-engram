@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from engram_core.core import Engram, _write_json
+from piia_engram.core import Engram, _write_json
 
 from .fixtures import create_full_engram
 
@@ -141,7 +141,7 @@ def _d2_long_summaries_01(tmp: Path) -> dict:
 def _d2_stale_warning_01(tmp: Path) -> dict:
     """10 stale items → warning adds < 200 chars overhead."""
     from datetime import datetime, timedelta
-    from engram_core.core import _read_json
+    from piia_engram.core import _read_json
 
     e = Engram(tmp)
     e.update_profile({"role": "test"})

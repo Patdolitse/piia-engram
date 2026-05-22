@@ -90,7 +90,7 @@ Engram
     └── AnalyticsMixin (reports_analytics.py)
 ```
 
-**关键变化**：reports.py 从一个 1103 行的单体 mixin 变成 4 个子 mixin 的组合 hub（22 行）。公开 API 完全不变 — `from engram_core.reports import ReportsMixin` 继续工作。
+**关键变化**：reports.py 从一个 1103 行的单体 mixin 变成 4 个子 mixin 的组合 hub（22 行）。公开 API 完全不变 — `from piia_engram.reports import ReportsMixin` 继续工作。
 
 ### 新模块文件（v3.15.0+）
 

@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from engram_core import mcp_server
-from engram_core.core import Engram
+from piia_engram import mcp_server
+from piia_engram.core import Engram
 
 
 # ---------------------------------------------------------------------------

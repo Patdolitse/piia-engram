@@ -55,17 +55,17 @@ EVIDENCE_FILES: tuple[tuple[str, str, int], ...] = (
     # — README: top half is the positioning we want to evaluate —
     ("README.md",                                        "readme_en",           250),
     # — Core source: focus on facade + new modules; skip large HTML/CSS blobs —
-    ("src/engram_core/core.py",                          "core_py",             400),
-    ("src/engram_core/storage.py",                       "storage_py",          9999),
-    ("src/engram_core/crypto.py",                        "crypto_py",           9999),
-    ("src/engram_core/retrieval.py",                     "retrieval_py",        300),
-    ("src/engram_core/context.py",                       "context_py",          250),
-    ("src/engram_core/reconcile.py",                     "reconcile_py",        300),
+    ("src/piia_engram/core.py",                          "core_py",             400),
+    ("src/piia_engram/storage.py",                       "storage_py",          9999),
+    ("src/piia_engram/crypto.py",                        "crypto_py",           9999),
+    ("src/piia_engram/retrieval.py",                     "retrieval_py",        300),
+    ("src/piia_engram/context.py",                       "context_py",          250),
+    ("src/piia_engram/reconcile.py",                     "reconcile_py",        300),
     # reports.py is 1103 lines mostly HTML — only include the Python tier logic
-    ("src/engram_core/reports.py",                       "reports_py",          150),
-    ("src/engram_core/compat.py",                        "compat_py",           80),
+    ("src/piia_engram/reports.py",                       "reports_py",          150),
+    ("src/piia_engram/compat.py",                        "compat_py",           80),
     # mcp_server: focus on the recently-added safety code
-    ("src/engram_core/mcp_server.py",                    "mcp_server_py",       250),
+    ("src/piia_engram/mcp_server.py",                    "mcp_server_py",       250),
     # — Tests: full files (each is small) —
     ("tests/test_crypto.py",                             "tests_crypto",        9999),
     ("tests/test_mcp_tools.py",                          "tests_mcp_tools",     9999),

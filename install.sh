@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Engram 一键安装脚本 (Mac/Linux)
-# 用法: curl -fsSL https://raw.githubusercontent.com/Patdolitse/engram/main/install.sh | bash
+# piia-engram 一键安装脚本 (Mac/Linux)
+# 用法: curl -fsSL https://raw.githubusercontent.com/Patdolitse/piia-engram/main/install.sh | bash
 set -e
 
 echo ""
 echo "========================================"
-echo "  Engram 安装程序 (Mac/Linux)"
+echo "  piia-engram 安装程序 (Mac/Linux)"
 echo "========================================"
 echo ""
 
@@ -38,4 +38,4 @@ echo "正在安装 Engram..."
 $PYTHON -m pip install --upgrade piia-engram
 
 echo ""
-$PYTHON -m engram_core.setup_wizard setup
+$PYTHON -m piia_engram.setup_wizard setup

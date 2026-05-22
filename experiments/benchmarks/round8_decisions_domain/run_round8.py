@@ -74,7 +74,7 @@ def render_report(t1: dict[str, Any], t2: dict[str, Any]) -> str:
         "- T1：Python 直接测试 `Engram(root=tempdir)`，不用 LLM，不污染用户数据。",
         f"- T2：DeepSeek `{judge_info.get('model', 'deepseek-chat')}`，从 Round 6 抽取 20 个核心场景，每场景 3 次取多数。",
         "- T2 抽样强制包含 `G2-GET-DECISIONS-01` 和 `G2-GET-DECISIONS-02`。",
-        f"- T2 工具数：{judge_info.get('tool_count', 0)}（从 `src/engram_core/mcp_server.py` 实时抽取）。",
+        f"- T2 工具数：{judge_info.get('tool_count', 0)}（从 `src/piia_engram/mcp_server.py` 实时抽取）。",
         f"- T2 调用次数：{judge_info.get('total_calls', 0)}，失败调用：{judge_info.get('failed_calls', 0)}。",
         f"- T2 usage：prompt={judge_info.get('usage', {}).get('prompt_tokens', 0)}，completion={judge_info.get('usage', {}).get('completion_tokens', 0)}，total={judge_info.get('usage', {}).get('total_tokens', 0)} tokens。",
         "",

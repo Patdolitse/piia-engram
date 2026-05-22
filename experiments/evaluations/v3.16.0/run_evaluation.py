@@ -51,14 +51,14 @@ EVIDENCE_FILES: tuple[tuple[str, str, int], ...] = (
     # — README: positioning —
     ("README.md",                                        "readme_en",           300),
     # — Core source modules —
-    ("src/engram_core/core.py",                          "core_py",             400),
-    ("src/engram_core/storage.py",                       "storage_py",          9999),
-    ("src/engram_core/reports.py",                       "reports_hub_py",      9999),
-    ("src/engram_core/reports_rarity.py",                "reports_rarity_py",   9999),
-    ("src/engram_core/reports_identity.py",              "reports_identity_py", 9999),
-    ("src/engram_core/reports_analytics.py",             "reports_analytics_py", 200),
-    ("src/engram_core/telemetry.py",                     "telemetry_py",        9999),
-    ("src/engram_core/mcp_server.py",                    "mcp_server_py",       350),
+    ("src/piia_engram/core.py",                          "core_py",             400),
+    ("src/piia_engram/storage.py",                       "storage_py",          9999),
+    ("src/piia_engram/reports.py",                       "reports_hub_py",      9999),
+    ("src/piia_engram/reports_rarity.py",                "reports_rarity_py",   9999),
+    ("src/piia_engram/reports_identity.py",              "reports_identity_py", 9999),
+    ("src/piia_engram/reports_analytics.py",             "reports_analytics_py", 200),
+    ("src/piia_engram/telemetry.py",                     "telemetry_py",        9999),
+    ("src/piia_engram/mcp_server.py",                    "mcp_server_py",       350),
     # — Tests —
     ("tests/test_mcp_tools.py",                          "tests_mcp_tools",     9999),
     ("tests/test_mcp_coverage.py",                       "tests_mcp_coverage",  300),

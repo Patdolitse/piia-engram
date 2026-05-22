@@ -228,46 +228,98 @@ def _import_with_split(
 def _tool_configs() -> dict:
     """返回各工具的 MCP 配置路径（运行时构建，确保 Path.home() 正确）。
 
-    覆盖所有 Engram 声称支持的 AI 工具。每个条目包含:
+    每个条目包含:
     - name: 工具显示名
     - config_paths: 配置文件路径列表
     - format: "json" | "toml"（默认 json）
+    - verified: True = 团队实测验证过, False = 社区级支持（路径来自官方文档，未实测）
+    - server_key: MCP servers 在配置中的顶层 key（默认 "mcpServers"）
     """
     home = Path.home()
     is_mac = platform.system() == "Darwin"
     is_win = platform.system() == "Windows"
+    appdata = Path(os.environ.get("APPDATA", "")) if is_win else None
+    vscode_storage = (appdata / "Code" / "User") if appdata else (
+        home / "Library" / "Application Support" / "Code" / "User" if is_mac
+        else home / ".config" / "Code" / "User"
+    )
 
     configs: dict = {
+        # ── 已验证（团队实测） ─────────────────────────────
         "claude_code": {
             "name": "Claude Code",
             "config_paths": [home / ".claude" / ".mcp.json"],
+            "verified": True,
         },
         "cursor": {
             "name": "Cursor",
             "config_paths": [home / ".cursor" / "mcp.json"],
+            "verified": True,
         },
         "claude_desktop": {
             "name": "Claude Desktop",
             "config_paths": (
                 [home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"]
                 if is_mac
-                else [Path(os.environ.get("APPDATA", home)) / "Claude" / "claude_desktop_config.json"]
-                if is_win
+                else [appdata / "Claude" / "claude_desktop_config.json"]
+                if appdata
                 else []
             ),
+            "verified": True,
         },
         "codex": {
             "name": "Codex",
             "config_paths": [home / ".codex" / "config.toml"],
             "format": "toml",
+            "server_key": "mcp_servers",
+            "verified": True,
         },
+
+        # ── 社区级支持（路径来自官方文档，未实测） ──────────
         "windsurf": {
             "name": "Windsurf",
             "config_paths": [home / ".codeium" / "windsurf" / "mcp_config.json"],
+            "verified": False,
         },
-        "trae": {
-            "name": "Trae",
-            "config_paths": [home / ".trae" / "mcp.json"],
+        "copilot_vscode": {
+            "name": "GitHub Copilot (VS Code)",
+            "config_paths": [vscode_storage / "mcp.json"] if vscode_storage else [],
+            "server_key": "servers",
+            "verified": False,
+        },
+        "cline": {
+            "name": "Cline",
+            "config_paths": [
+                vscode_storage / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
+            ] if vscode_storage else [],
+            "verified": False,
+        },
+        "roo_code": {
+            "name": "Roo Code",
+            "config_paths": [
+                vscode_storage / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json",
+            ] if vscode_storage else [],
+            "verified": False,
+        },
+        "amazon_q": {
+            "name": "Amazon Q Developer",
+            "config_paths": [home / ".aws" / "amazonq" / "mcp.json"],
+            "verified": False,
+        },
+        "augment": {
+            "name": "Augment Code",
+            "config_paths": [home / ".augment" / "settings.json"],
+            "verified": False,
+        },
+        "zed": {
+            "name": "Zed",
+            "config_paths": (
+                [home / ".config" / "zed" / "settings.json"] if not is_win
+                else [appdata / "Zed" / "settings.json"] if appdata
+                else []
+            ),
+            "server_key": "context_servers",
+            "verified": False,
         },
     }
     return configs
@@ -1054,14 +1106,16 @@ def auto_migrate() -> None:
 def _detect_installed_tools() -> list[dict]:
     """扫描系统中实际安装的 AI 工具。
 
-    不仅检查配置文件是否存在，还检查工具本身是否安装（可执行文件、目录结构）。
-    返回 [{tool_id, name, config_path, format, status}]。
-    - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram),
-              "config_only" (只有配置文件)
+    不仅检查配置文件是否存在，还检查工具本身是否安装（配置目录存在）。
+    返回 [{tool_id, name, config_path, format, verified, status, config, servers}]。
+    - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram)
+    - verified: True = 团队实测过, False = 社区级支持
     """
     results = []
     for tool_id, cfg in _tool_configs().items():
         fmt = cfg.get("format", "json")
+        server_key = cfg.get("server_key", "mcpServers")
+        verified = cfg.get("verified", False)
         for config_path in cfg["config_paths"]:
             # 检查工具是否安装（配置目录存在 = 工具装了）
             tool_dir = config_path.parent
@@ -1070,8 +1124,11 @@ def _detect_installed_tools() -> list[dict]:
 
             config = _read_mcp_config(config_path, fmt=fmt)
 
-            # 统一取 engram 条目：JSON 用 mcpServers，TOML 用 mcp_servers
-            servers = config.get("mcpServers", config.get("mcp_servers", {}))
+            # 按工具的 server_key 取 MCP servers 段
+            servers = config.get(server_key, {})
+            # TOML 回退：也检查下划线变体
+            if not servers and server_key == "mcpServers":
+                servers = config.get("mcp_servers", {})
             has_engram = "engram" in servers
 
             results.append({
@@ -1079,6 +1136,8 @@ def _detect_installed_tools() -> list[dict]:
                 "name": cfg["name"],
                 "config_path": config_path,
                 "format": fmt,
+                "server_key": server_key,
+                "verified": verified,
                 "status": "configured" if has_engram else "installed",
                 "config": config,
                 "servers": servers,
@@ -1161,20 +1220,38 @@ def run_doctor(fix: bool = False) -> int:
 
     if not tools:
         print("  [!] No supported AI tools detected on this system.\n")
-        print("  Supported tools: Claude Code, Claude Desktop, Cursor,")
-        print("  Codex, Windsurf, Trae\n")
+        print("  Verified: Claude Code, Claude Desktop, Cursor, Codex")
+        print("  Community: Windsurf, Copilot, Cline, Roo Code, Amazon Q, Augment, Zed\n")
         return 0
 
     print(f"  Detected {len(tools)} AI tool(s):\n")
+
+    verified_tools = [t for t in tools if t.get("verified")]
+    community_tools = [t for t in tools if not t.get("verified")]
     configured_count = 0
     unconfigured: list[dict] = []
-    for t in tools:
-        if t["status"] == "configured":
-            print(f"    [✓] {t['name']} — Engram configured")
-            configured_count += 1
-        else:
-            print(f"    [ ] {t['name']} — Engram NOT configured")
-            unconfigured.append(t)
+
+    if verified_tools:
+        print("  Verified (team tested):")
+        for t in verified_tools:
+            if t["status"] == "configured":
+                _safe_print(f"    [ok] {t['name']} — Engram configured")
+                configured_count += 1
+            else:
+                _safe_print(f"    [--] {t['name']} — Engram NOT configured")
+                unconfigured.append(t)
+
+    if community_tools:
+        if verified_tools:
+            print()
+        print("  Community-supported (untested by our team):")
+        for t in community_tools:
+            if t["status"] == "configured":
+                _safe_print(f"    [ok] {t['name']} — Engram configured")
+                configured_count += 1
+            else:
+                _safe_print(f"    [--] {t['name']} — installed, Engram not configured")
+                unconfigured.append(t)
     print()
 
     # ── 第二步：验证已配置的条目 ──

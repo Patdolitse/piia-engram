@@ -1,5 +1,5 @@
 [run]
-source = src/engram_core
+source = src/piia_engram
 branch = false
 
 [report]

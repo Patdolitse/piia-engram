@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from engram_core.core import Engram, _write_json
+from piia_engram.core import Engram, _write_json
 
 from .fixtures import create_full_engram
 

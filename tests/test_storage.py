@@ -1,4 +1,4 @@
-"""engram_core.storage 单元测试 — 覆盖 I/O helpers 和 edge-case 路径。"""
+"""piia_engram.storage 单元测试 — 覆盖 I/O helpers 和 edge-case 路径。"""
 
 import json
 import os
@@ -8,7 +8,7 @@ from unittest.mock import patch
 import portalocker
 import pytest
 
-from engram_core.storage import (
+from piia_engram.storage import (
     _atomic_write_json,
     _engram_root,
     _parse_iso,
@@ -92,7 +92,7 @@ def test_atomic_write_json_lock_timeout(tmp_path):
     path = tmp_path / "locked.json"
 
     with patch(
-        "engram_core.storage.portalocker.Lock",
+        "piia_engram.storage.portalocker.Lock",
         side_effect=portalocker.LockException("timeout"),
     ):
         with pytest.raises(RuntimeError, match="无法获取文件锁"):
@@ -108,7 +108,7 @@ def test_atomic_write_json_general_exception(tmp_path):
     path = tmp_path / "fail.json"
 
     with patch(
-        "engram_core.storage.portalocker.Lock",
+        "piia_engram.storage.portalocker.Lock",
         side_effect=OSError("disk full"),
     ):
         with pytest.raises(OSError, match="disk full"):

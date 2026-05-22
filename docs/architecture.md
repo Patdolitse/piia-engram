@@ -1,6 +1,6 @@
-# Engram — Architecture
+# piia-engram — Architecture
 
-This document describes how Engram is structured internally, why the structure exists, and where each piece lives.
+This document describes how piia-engram is structured internally, why the structure exists, and where each piece lives.
 
 It complements the user-facing [README](../README.md) (which answers *"what does it do"*) by answering *"how is it built and where would I extend it"*.
 
@@ -54,34 +54,34 @@ The whole thing fits in your laptop's RAM (typical user has < 1 MB on disk) and 
 
 After the v3.14.1 refactor and v3.16.0 reports split, the package is split into **11 focused modules + 7 supporting modules**.
 
-> **Line counts last verified**: v3.16.0 (2026-05-22). Run `wc -l src/engram_core/*.py` to check.
+> **Line counts last verified**: v3.16.0 (2026-05-22). Run `wc -l src/piia_engram/*.py` to check.
 
 ### Core modules
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`storage.py`](../src/engram_core/storage.py) | ~225 | Constants + I/O primitives (`_read_json`, `_write_json`, `_engram_root`, `_now_iso`) — the only place the rest of the code touches the filesystem |
-| [`core.py`](../src/engram_core/core.py) | ~1097 | `Engram` class facade — `__init__`, schema migration, identity CRUD (profile / preferences / trust_boundaries / quality_standards), knowledge CRUD (add/get/update/archive lessons & decisions), link management, domain & project methods, `export_all` / `import_all` |
-| [`retrieval.py`](../src/engram_core/retrieval.py) | ~639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
-| [`context.py`](../src/engram_core/context.py) | ~690 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
-| [`reconcile.py`](../src/engram_core/reconcile.py) | ~468 | `ReconcileMixin` — silent import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
-| [`reports.py`](../src/engram_core/reports.py) | 20 | `ReportsMixin` — thin composition hub, inherits from 4 sub-mixins below |
-| [`reports_rarity.py`](../src/engram_core/reports_rarity.py) | ~84 | `RarityMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `RARITY_TIERS` constant |
-| [`reports_review.py`](../src/engram_core/reports_review.py) | ~517 | `ReviewMixin` — `generate_review_page` (interactive HTML audit), `export_review_page`, `promote_knowledge`, `apply_review` |
-| [`reports_identity.py`](../src/engram_core/reports_identity.py) | ~101 | `IdentityCardMixin` — `export_identity_card` (portable Markdown for non-MCP tools) |
-| [`reports_analytics.py`](../src/engram_core/reports_analytics.py) | ~417 | `AnalyticsMixin` — `get_health_report`, `get_stale_knowledge`, `get_knowledge_digest`, `get_knowledge_overview`, `get_stats`, `export_knowledge_report` |
-| [`compat.py`](../src/engram_core/compat.py) | ~320 | Migration adapters — `migrate_from_oca_memory` (legacy OCA tool), `export_to_openclaw` / `import_from_openclaw` (SOUL.md / MEMORY.md / USER.md format) |
+| [`storage.py`](../src/piia_engram/storage.py) | ~225 | Constants + I/O primitives (`_read_json`, `_write_json`, `_engram_root`, `_now_iso`) — the only place the rest of the code touches the filesystem |
+| [`core.py`](../src/piia_engram/core.py) | ~1097 | `Engram` class facade — `__init__`, schema migration, identity CRUD (profile / preferences / trust_boundaries / quality_standards), knowledge CRUD (add/get/update/archive lessons & decisions), link management, domain & project methods, `export_all` / `import_all` |
+| [`retrieval.py`](../src/piia_engram/retrieval.py) | ~639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
+| [`context.py`](../src/piia_engram/context.py) | ~690 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
+| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~468 | `ReconcileMixin` — silent import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
+| [`reports.py`](../src/piia_engram/reports.py) | 20 | `ReportsMixin` — thin composition hub, inherits from 4 sub-mixins below |
+| [`reports_rarity.py`](../src/piia_engram/reports_rarity.py) | ~84 | `RarityMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `RARITY_TIERS` constant |
+| [`reports_review.py`](../src/piia_engram/reports_review.py) | ~517 | `ReviewMixin` — `generate_review_page` (interactive HTML audit), `export_review_page`, `promote_knowledge`, `apply_review` |
+| [`reports_identity.py`](../src/piia_engram/reports_identity.py) | ~101 | `IdentityCardMixin` — `export_identity_card` (portable Markdown for non-MCP tools) |
+| [`reports_analytics.py`](../src/piia_engram/reports_analytics.py) | ~417 | `AnalyticsMixin` — `get_health_report`, `get_stale_knowledge`, `get_knowledge_digest`, `get_knowledge_overview`, `get_stats`, `export_knowledge_report` |
+| [`compat.py`](../src/piia_engram/compat.py) | ~320 | Migration adapters — `migrate_from_oca_memory` (legacy OCA tool), `export_to_openclaw` / `import_from_openclaw` (SOUL.md / MEMORY.md / USER.md format) |
 
 ### Supporting modules
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`mcp_server.py`](../src/engram_core/mcp_server.py) | ~1411 | FastMCP server: 43 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
-| [`crypto.py`](../src/engram_core/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
-| [`telemetry.py`](../src/engram_core/telemetry.py) | ~311 | `ToolCallTracker` — opt-in anonymous usage statistics (Phase 1: local log only, no network), payload validation, HMAC daily ID, preview/status CLI support |
-| [`setup_wizard.py`](../src/engram_core/setup_wizard.py) | ~1155 | `engram setup` + `engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
-| [`audit.py`](../src/engram_core/audit.py) | ~54 | `AuditLogger` — opt-in audit trail (`ENGRAM_AUDIT=1`) to `~/.engram/audit.log` |
-| [`stats.py`](../src/engram_core/stats.py) | ~157 | `engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
+| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1411 | FastMCP server: 43 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
+| [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
+| [`telemetry.py`](../src/piia_engram/telemetry.py) | ~311 | `ToolCallTracker` — opt-in anonymous usage statistics (Phase 1: local log only, no network), payload validation, HMAC daily ID, preview/status CLI support |
+| [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~1155 | `engram setup` + `piia-engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
+| [`audit.py`](../src/piia_engram/audit.py) | ~54 | `AuditLogger` — opt-in audit trail (`ENGRAM_AUDIT=1`) to `~/.engram/audit.log` |
+| [`stats.py`](../src/piia_engram/stats.py) | ~157 | `piia-engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
 
 ### Why this shape?
 
@@ -96,8 +96,8 @@ The mixin pattern was chosen over alternatives because:
 | Approach | Pros | Cons |
 |----------|------|------|
 | **Mixins** (chosen) | Zero API change; methods call each other via `self`; tests already pass | Some IDE introspection limits; mixin order matters for MRO |
-| Standalone functions taking `engram` | Cleanest dependency graph | Every method becomes `function(engram, ...)` — breaks all existing call sites |
-| Composition (`engram.search.find(...)`) | Reads beautifully | Breaks every existing call site too; needs deprecation period |
+| Standalone functions taking `engram` | Cleanest dependency graph | Every method becomes `function(piia-engram, ...)` — breaks all existing call sites |
+| Composition (`piia-engram.search.find(...)`) | Reads beautifully | Breaks every existing call site too; needs deprecation period |
 | Stay monolithic | No churn | The pressures above keep growing |
 
 We took the lowest-disruption path that solved the immediate readability and test-isolation pressure. The other refactors stay open as future moves.
@@ -126,7 +126,7 @@ AI tool boots
 AI tool injects it as the first system message
 ```
 
-The cold start does light **silent reconcile** work — scanning other tools' memory dirs and CLAUDE.md files for items missing from Engram, importing them as `staging`-tier lessons (which require user confirmation via the review page before being trusted).
+The cold start does light **silent reconcile** work — scanning other tools' memory dirs and CLAUDE.md files for items missing from piia-engram, importing them as `staging`-tier lessons (which require user confirmation via the review page before being trusted).
 
 ### 3.2 Knowledge capture (during a session)
 
@@ -147,15 +147,15 @@ AI:   calls MCP `add_lesson(summary="...", domain="python,testing")`
 ### 3.3 Review and promotion
 
 ```
-User: opens browser-based review (engram review)
+User: opens browser-based review (piia-engram review)
    └─▶ generate_review_page() emits HTML with rarity-colored items
    └─▶ User unchecks 3 items (archive), keeps 5 staging items (confirm)
    └─▶ Click "Confirm Review" → downloads engram_review_*.json
-   └─▶ User: "engram apply_review engram_review_<date>.json"
+   └─▶ User: "piia-engram apply_review engram_review_<date>.json"
          └─▶ apply_review() → promote_knowledge() × 5, archive_knowledge() × 3
 ```
 
-Promotion is the explicit gate: only items the user keeps survive long-term. This is what separates Engram from "everything goes into the memory bag" approaches.
+Promotion is the explicit gate: only items the user keeps survive long-term. This is what separates piia-engram from "everything goes into the memory bag" approaches.
 
 ---
 
@@ -193,11 +193,11 @@ When `ENGRAM_SECRET` is set, fields in `ENCRYPTED_PROFILE_FIELDS` (email, phone,
 
 PBKDF2-SHA256 with 600,000 iterations derives the key from `ENGRAM_SECRET` + 16-byte salt. Legacy `enc:v1:` (100k iterations) values continue to decrypt for backward compatibility.
 
-If `ENGRAM_SECRET` is set but the `cryptography` package isn't installed, Engram **refuses to start** rather than silently storing plaintext.
+If `ENGRAM_SECRET` is set but the `cryptography` package isn't installed, piia-engram **refuses to start** rather than silently storing plaintext.
 
 ### Concurrent writes
 
-Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `portalocker` file lock on `<dir>/.engram-write.lock` serializes writes from multiple Engram processes (typical when multiple AI tools have a stdio MCP each).
+Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `portalocker` file lock on `<dir>/.piia-engram-write.lock` serializes writes from multiple piia-engram processes (typical when multiple AI tools have a stdio MCP each).
 
 ---
 
@@ -218,8 +218,8 @@ Set `ENGRAM_TOOLS=all` to expose the full 43 tools (review, health, link/unlink,
 
 ### Transport modes
 
-- **stdio** (default) — one Engram process per AI tool, isolated FDs, fastest
-- **SSE** (`engram serve --transport sse`) — shared HTTP/SSE instance; binds to `127.0.0.1` by default. Binding to `0.0.0.0` emits a stderr warning and requires `--token` (`secrets.compare_digest` check). `ENGRAM_CORS_ORIGINS` env var configures allowed origins.
+- **stdio** (default) — one piia-engram process per AI tool, isolated FDs, fastest
+- **SSE** (`piia-engram serve --transport sse`) — shared HTTP/SSE instance; binds to `127.0.0.1` by default. Binding to `0.0.0.0` emits a stderr warning and requires `--token` (`secrets.compare_digest` check). `ENGRAM_CORS_ORIGINS` env var configures allowed origins.
 
 ---
 

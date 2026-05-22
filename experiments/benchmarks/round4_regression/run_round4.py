@@ -214,7 +214,7 @@ def _collect_issues(r1: dict[str, Any], r2: dict[str, Any], r3: dict[str, Any]) 
                 "description": "onboarding 写入的身份字段无法稳定从冷启动上下文读回。",
                 "impact": "新用户第一次接入后，AI 可能拿不到角色或技术栈，冷启动体验失真。",
                 "repro": "运行 R1 onboarding 场景，查看失败用户类型的 get_user_context 输出。",
-                "location": "src/engram_core/setup_wizard.py:223, src/engram_core/core.py:1608",
+                "location": "src/piia_engram/setup_wizard.py:223, src/piia_engram/core.py:1608",
             }
         )
     if r1["summary"]["lesson_searchable"] < 4:
@@ -224,7 +224,7 @@ def _collect_issues(r1: dict[str, Any], r2: dict[str, Any], r3: dict[str, Any]) 
                 "description": "onboarding 种子 lesson 写入后无法稳定检索。",
                 "impact": "用户录入的基础偏好无法被后续工具召回。",
                 "repro": "运行 R1 后对 primary_search_query 调用 search_knowledge(scope='lessons')。",
-                "location": "src/engram_core/core.py:523, src/engram_core/core.py:616",
+                "location": "src/piia_engram/core.py:523, src/piia_engram/core.py:616",
             }
         )
     if r2["summary"]["key_decision_mentioned"] < 8:
@@ -234,7 +234,7 @@ def _collect_issues(r1: dict[str, Any], r2: dict[str, Any], r3: dict[str, Any]) 
                 "description": "get_user_context 冷启动上下文没有稳定包含近期 decision。",
                 "impact": "AI 会记得 lesson，但可能不知道用户已经做过的关键取舍。",
                 "repro": "运行 R2；临时 Engram 中有 3 条 decision，但 generate_context 只拼装 profile/preferences/lessons/project。",
-                "location": "src/engram_core/core.py:1608",
+                "location": "src/piia_engram/core.py:1608",
             }
         )
     if r2["summary"]["min_similarity"] < 0.85:
@@ -244,7 +244,7 @@ def _collect_issues(r1: dict[str, Any], r2: dict[str, Any], r3: dict[str, Any]) 
                 "description": "同一 Engram 状态下 get_user_context 多次输出语义不稳定。",
                 "impact": "不同 AI 会拿到漂移的冷启动信息。",
                 "repro": "运行 R2 并查看 similarity_matrix 中低于 0.85 的 pair。",
-                "location": "src/engram_core/core.py:1608, src/engram_core/core.py:660",
+                "location": "src/piia_engram/core.py:1608, src/piia_engram/core.py:660",
             }
         )
     if r3["summary"]["recall"] < 0.80:
@@ -254,7 +254,7 @@ def _collect_issues(r1: dict[str, Any], r2: dict[str, Any], r3: dict[str, Any]) 
                 "description": "extract_session_insights 对应沉淀的 lesson/decision 召回不足。",
                 "impact": "用户对话中的关键知识会漏存。",
                 "repro": "运行 R3，查看 recall_hit=false 的 lesson/decision 片段。",
-                "location": "src/engram_core/core.py:1417",
+                "location": "src/piia_engram/core.py:1417",
             }
         )
     if r3["summary"]["precision"] < 0.80 or r3["summary"]["false_positive_count"] > 2:
@@ -264,7 +264,7 @@ def _collect_issues(r1: dict[str, Any], r2: dict[str, Any], r3: dict[str, Any]) 
                 "description": "extract_session_insights 会把普通讨论误存为知识。",
                 "impact": "Engram 可能被临时协作噪声污染。",
                 "repro": "运行 R3 普通讨论组，查看 false_positive=true 的片段。",
-                "location": "src/engram_core/core.py:1417",
+                "location": "src/piia_engram/core.py:1417",
             }
         )
     if not issues:

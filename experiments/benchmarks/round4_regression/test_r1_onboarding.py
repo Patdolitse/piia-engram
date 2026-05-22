@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from engram_core.core import Engram
+from piia_engram.core import Engram
 
 from experiments.benchmarks.round4_regression.scenarios_r1 import ONBOARDING_SCENARIOS
 

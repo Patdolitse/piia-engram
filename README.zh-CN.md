@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="assets/social_preview_zh.png" alt="Engram — 你的 AI 身份层" width="640">
+<img src="assets/social_preview_zh.png" alt="piia-engram — 你的 AI 身份层" width="640">
 
-# Engram
+# piia-engram
 
-### AI 认识你的代码，但不认识你。Engram 解决这个问题。
+### AI 认识你的代码，但不认识你。piia-engram 解决这个问题。
 
 **一个本地身份层，让每个 AI 工具都从同一个起点认识你。**
 
@@ -22,7 +22,7 @@
 
 ---
 
-> **TL;DR：** Engram 是一个本地身份层——不是会话记忆，不是 Agent 框架，不是云端数据库。它把你是谁（画像、偏好、经验教训、关键决策）以本地 JSON 文件存储在你自己的电脑上，通过 MCP 让每个 AI 工具读取同一个你。一次写入，所有 AI 共享读取。本地优先，Apache 2.0。
+> **TL;DR：** piia-engram 是一个本地身份层——不是会话记忆，不是 Agent 框架，不是云端数据库。它把你是谁（画像、偏好、经验教训、关键决策）以本地 JSON 文件存储在你自己的电脑上，通过 MCP 让每个 AI 工具读取同一个你。一次写入，所有 AI 共享读取。本地优先，Apache 2.0。
 
 ---
 
@@ -32,17 +32,17 @@ AI 工具都很聪明，但它们不认识你。
 
 这是因为现在所有 AI 的记忆都绑在各自的平台上。记忆属于平台，不属于你。平台改了、升了、换了，你的上下文就没了。
 
-**Engram 给你一个独立于任何 AI 工具的本地身份层。** 你告诉它一次你是谁、你怎么工作、你学到了什么。之后不管你开多少个新对话、用哪个工具、工具怎么更新，AI 开口就认识你。
+**piia-engram 给你一个独立于任何 AI 工具的本地身份层。** 你告诉它一次你是谁、你怎么工作、你学到了什么。之后不管你开多少个新对话、用哪个工具、工具怎么更新，AI 开口就认识你。
 
-> **Engram 不是 Agent 记忆数据库。** Mem0、Zep、Letta 等工具存的是任务上下文和会话历史。Engram 存的是**你这个人**——你的身份、偏好、经验教训和关键决策。这是不同的一层：不是"这次任务做了什么"，而是"所有任务背后的人是谁"。
+> **piia-engram 不是 Agent 记忆数据库。** Mem0、Zep、Letta 等工具存的是任务上下文和会话历史。piia-engram 存的是**你这个人**——你的身份、偏好、经验教训和关键决策。这是不同的一层：不是"这次任务做了什么"，而是"所有任务背后的人是谁"。
 
-## 谁在用 Engram
+## 谁在用 piia-engram
 
-Engram 为同时使用多个 AI 编程工具、厌倦重复自我介绍的开发者而生。
+piia-engram 为同时使用多个 AI 编程工具、厌倦重复自我介绍的开发者而生。
 
-**如果你在 Claude Code、Codex、Cursor 之间切换** — 代码标准、架构决策、踩过的坑，每次都要重讲。Engram 让每个工具从同一个起点认识你。
+**如果你在 Claude Code、Codex、Cursor 之间切换** — 代码标准、架构决策、踩过的坑，每次都要重讲。piia-engram 让每个工具从同一个起点认识你。
 
-**如果你每周开 10+ 个 AI 对话框** — 每一个都从零开始。Engram 让每次对话从第一条消息就有你的完整上下文。
+**如果你每周开 10+ 个 AI 对话框** — 每一个都从零开始。piia-engram 让每次对话从第一条消息就有你的完整上下文。
 
 **如果你因为工具更新丢过偏好** — 你的身份存在自己电脑里，不在任何平台内部。更新、重置、迁移都不影响你的记忆。
 
@@ -50,31 +50,31 @@ Engram 为同时使用多个 AI 编程工具、厌倦重复自我介绍的开发
 <summary><strong>更多使用场景</strong></summary>
 
 **投资分析师**
-决策做了，但推理链丢了。Engram 存下每个决策的完整推理，六个月后"我当时为什么放弃那个机会"有真实答案。你的分析框架，不只是笔记，会跟着你进入每一次新分析。
+决策做了，但推理链丢了。piia-engram 存下每个决策的完整推理，六个月后"我当时为什么放弃那个机会"有真实答案。你的分析框架，不只是笔记，会跟着你进入每一次新分析。
 
 **系统架构师**
-架构决策需要上下文：选了什么、排除了什么、为什么。这些内容在 Wiki 里没人读，在记忆里会消失。Engram 保存活的架构决策记录，跨公司、跨项目可检索，AI 在你设计下一个系统时可以直接调用。
+架构决策需要上下文：选了什么、排除了什么、为什么。这些内容在 Wiki 里没人读，在记忆里会消失。piia-engram 保存活的架构决策记录，跨公司、跨项目可检索，AI 在你设计下一个系统时可以直接调用。
 
 **后端开发者**
-第三方 API 的坑、集成的隐患、性能权衡——这些隐性知识原本只活在你脑子里，换工作就归零。Engram 把它们变成可搜索的知识库，在新项目遇到同类问题时主动提醒你。
+第三方 API 的坑、集成的隐患、性能权衡——这些隐性知识原本只活在你脑子里，换工作就归零。piia-engram 把它们变成可搜索的知识库，在新项目遇到同类问题时主动提醒你。
 
 **前端与设计**
-你的设计哲学、真实用户反馈带来的 UX 教训、组件选型背后的理由，很少能以 AI 工具能用的方式记录下来。Engram 把这些存成可供 AI 调用的知识，每个新项目都从上一个结束的地方继续。
+你的设计哲学、真实用户反馈带来的 UX 教训、组件选型背后的理由，很少能以 AI 工具能用的方式记录下来。piia-engram 把这些存成可供 AI 调用的知识，每个新项目都从上一个结束的地方继续。
 
 **Vibe 编程用户**
-你用 AI 快速构建，每次开新会话却要重头解释：你的技术栈、你的风格偏好、你不想要的写法。Engram 让每个工具从第一条消息就认识你——同样的栈、同样的模式、同样的语气，不用再重复自己。
+你用 AI 快速构建，每次开新会话却要重头解释：你的技术栈、你的风格偏好、你不想要的写法。piia-engram 让每个工具从第一条消息就认识你——同样的栈、同样的模式、同样的语气，不用再重复自己。
 
 </details>
 
-## Engram 不只是存储
+## piia-engram 不只是存储
 
-大多数记忆工具是被动的：你放进去，它给你取出来。Engram 还是主动的。
+大多数记忆工具是被动的：你放进去，它给你取出来。piia-engram 还是主动的。
 
 **跨项目知识继承**  
 描述一个新项目，`get_knowledge_inheritance` 从你所有过往工作中自动提炼最相关的教训和决策，给你一份定制化的起步知识包。第十个项目从前九个的积累中受益——一个工具调用即可获取。
 
 **被动知识捕获**  
-把一次会话的摘要粘贴给 `extract_session_insights`，Engram 提取并存储其中的教训和决策。不需要手动记笔记，知识通过日常 AI 对话自然积累。
+把一次会话的摘要粘贴给 `extract_session_insights`，piia-engram 提取并存储其中的教训和决策。不需要手动记笔记，知识通过日常 AI 对话自然积累。
 
 **不支持 MCP 的工具也能用**  
 ChatGPT、Gemini、Kimi 没有 MCP 接口。`get_identity_card` 导出一张即粘即用的 Markdown 身份卡，你的 AI 上下文连不能直接连接的工具也能用上。
@@ -107,9 +107,9 @@ engram setup
 ```json
 {
   "mcpServers": {
-    "engram": {
+    "piia-engram": {
       "command": "python",
-      "args": ["/path/to/engram/src/engram_core/mcp_server.py"]
+      "args": ["/path/to/piia-engram/src/piia_engram/mcp_server.py"]
     }
   }
 }
@@ -123,18 +123,18 @@ engram setup
 pip install --upgrade piia-engram
 ```
 
-升级后，Engram 会在下次启动时自动迁移旧版 MCP 配置，无需手动操作。如果 AI 工具仍然显示"MCP 断开连接"，运行：
+升级后，piia-engram 会在下次启动时自动迁移旧版 MCP 配置，无需手动操作。如果 AI 工具仍然显示"MCP 断开连接"，运行：
 
 ```bash
-engram doctor        # 查看问题所在
-engram doctor --fix  # 一步自动修复
+piia-engram doctor        # 查看问题所在
+piia-engram doctor --fix  # 一步自动修复
 ```
 
 修复后重启对应的 AI 工具即可。`doctor` 命令会扫描 Claude Code、Cursor、Claude Desktop 的配置文件，移除过时的 server 条目并修复失效路径。
 
 ## 远程部署
 
-在自己的服务器上运行 Engram，从任何地方连接使用。
+在自己的服务器上运行 piia-engram，从任何地方连接使用。
 
 ### 服务器配置
 
@@ -147,7 +147,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 # 保存输出，例如 "abc123..."
 
 # 以 SSE 模式启动
-ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --host 0.0.0.0 --port 8767
+ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --host 0.0.0.0 --port 8767
 ```
 
 ### 客户端配置（Claude Code）
@@ -155,7 +155,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "engram": {
+    "piia-engram": {
       "url": "http://你的服务器:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -170,7 +170,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "engram": {
+    "piia-engram": {
       "url": "http://你的服务器:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -189,7 +189,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 
 ## 它解决什么
 
-| 没有 Engram | 有 Engram |
+| 没有 piia-engram | 有 piia-engram |
 |------------|-----------|
 | 新对话 = 从零开始 | 每次对话都已经认识你 |
 | 工具一更新，偏好可能没了 | 身份存在你电脑里，任何更新都不影响 |
@@ -199,7 +199,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 
 ## 对比
 
-| 特性 | Engram | Claude Memory | 手动 CLAUDE.md | Mem0 | Letta (MemGPT) |
+| 特性 | piia-engram | Claude Memory | 手动 CLAUDE.md | Mem0 | Letta (MemGPT) |
 |------|--------|--------------|----------------|------|----------------|
 | 主要定位 | 跨工具的用户身份 | 单对话记忆 | 单项目笔记 | Agent 向量记忆 | Agent 自编辑记忆 |
 | 跨工具协作 | ✅ MCP 原生（45 个工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
@@ -309,7 +309,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 
 ## 数据格式
 
-Engram 的数据全部存储在本地 `~/.engram/`，使用 JSON/Markdown 格式：
+piia-engram 的数据全部存储在本地 `~/.engram/`，使用 JSON/Markdown 格式：
 
 ```text
 ~/.engram/
@@ -345,15 +345,15 @@ Engram 的数据全部存储在本地 `~/.engram/`，使用 JSON/Markdown 格式
 
 ## 诞生故事
 
-Engram 是一个人和 AI 一起做出来的。
+piia-engram 是一个人和 AI 一起做出来的。
 
 创始人用 Claude Code 和 Codex 并行工作，AI 帮他写代码，他帮 AI 记住自己。做着做着发现：这个"帮 AI 记住我"的部分，本身就是一个产品。
 
-所以 Engram 从第一天起就是自己的用户——它的代码、架构决策、经验教训，全部存在 Engram 里，被两个 AI 工具共享读取。
+所以 piia-engram 从第一天起就是自己的用户——它的代码、架构决策、经验教训，全部存在 piia-engram 里，被两个 AI 工具共享读取。
 
 ## Built With
 
-Engram 由人驱动，AI 工具辅助开发：
+piia-engram 由人驱动，AI 工具辅助开发：
 
 | | 角色 |
 |------|------|
@@ -363,19 +363,19 @@ Engram 由人驱动，AI 工具辅助开发：
 
 ## 常见问题 FAQ
 
-**Engram 是什么？**
-Engram 是一个本地优先的 AI 身份层——不是会话记忆，不是 Agent 框架。它把你是谁、你怎么工作、你学到了什么、你做过哪些决策，以本地 JSON 文件保存在你自己的电脑上。每个 MCP 兼容的 AI 工具（Claude Code、Codex、Cursor）都读取同一个身份，新对话、工具更新、换工具都不会丢失你的上下文。
+**piia-engram 是什么？**
+piia-engram 是一个本地优先的 AI 身份层——不是会话记忆，不是 Agent 框架。它把你是谁、你怎么工作、你学到了什么、你做过哪些决策，以本地 JSON 文件保存在你自己的电脑上。每个 MCP 兼容的 AI 工具（Claude Code、Codex、Cursor）都读取同一个身份，新对话、工具更新、换工具都不会丢失你的上下文。
 
-**Engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
-那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。Engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
+**piia-engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
+那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。piia-engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
 
 **支持哪些 AI 工具？**
 任何支持 MCP 协议的工具：Claude Code、OpenAI Codex、Cursor、Claude Desktop 等。不支持 MCP 的工具（ChatGPT、Gemini、Kimi），可以导出 Markdown 身份卡手动粘贴。
 
-**为什么产品叫 Engram，但 PyPI 包名是 `piia-engram`？**
-项目最早是一个更大的个人 AI 计划 **PIIA**（Personal Intelligence Identity Asset，个人智能身份资产）的一部分，Engram 是这个体系下第一个、也是目前唯一发布的工具，所以 PyPI 包名保留了 `piia-` 前缀。日常使用中产品就叫 **Engram** —— CLI 命令是 `engram setup` / `engram doctor`，Python 包名是 `engram_core`，MCP server 名是 `engram`。`piia-` 前缀只在 `pip install` 时出现，未来主版本可能会去掉。
+**为什么产品叫 piia-engram，但 PyPI 包名是 `piia-engram`？**
+项目最早是一个更大的个人 AI 计划 **PIIA**（Personal Intelligence Identity Asset，个人智能身份资产）的一部分，piia-engram 是这个体系下第一个、也是目前唯一发布的工具，所以 PyPI 包名保留了 `piia-` 前缀。日常使用中产品就叫 **piia-engram** —— CLI 命令是 `engram setup` / `piia-engram doctor`，Python 包名是 `piia_engram`，MCP server 名是 `engram`。`piia-` 前缀只在 `pip install` 时出现，未来主版本可能会去掉。
 
-**如何安装 Engram？**
+**如何安装 piia-engram？**
 ```bash
 pip install piia-engram
 engram setup
@@ -383,20 +383,20 @@ engram setup
 安装向导会自动检测 AI 工具并配置 MCP。设置完成后重启 AI 工具，AI 会在每次新对话开始时调用 `get_user_context` 认识你。
 
 **升级后 AI 工具显示"MCP server disconnected"，怎么解决？**
-在终端运行 `engram doctor --fix`，然后重启 AI 工具。该命令会扫描所有已知 MCP 配置（Claude Code、Cursor、Claude Desktop），移除旧版 server 条目并修复失效路径，一步完成。Engram 在下次 server 启动时也会自动执行此迁移，大多数用户不会遇到这个问题。
+在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令会扫描所有已知 MCP 配置（Claude Code、Cursor、Claude Desktop），移除旧版 server 条目并修复失效路径，一步完成。piia-engram 在下次 server 启动时也会自动执行此迁移，大多数用户不会遇到这个问题。
 
-**Engram 会把数据发到云端吗？**
-所有身份和知识数据存在本地 `~/.engram/` 目录。身份和知识类核心工具均不发起网络请求。**匿名使用统计**（工具调用计数、知识条目总数、engram 版本——绝不包含内容、prompt 或文件路径）可在 `engram setup` 中选择开启，**默认关闭**。你可以用 `engram telemetry preview` 查看将发送的确切内容，用 `engram telemetry off` 随时关闭。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求——只有在你显式调用时才执行。
+**piia-engram 会把数据发到云端吗？**
+所有身份和知识数据存在本地 `~/.engram/` 目录。身份和知识类核心工具均不发起网络请求。**匿名使用统计**（工具调用计数、知识条目总数、piia-engram 版本——绝不包含内容、prompt 或文件路径）可在 `engram setup` 中选择开启，**默认关闭**。你可以用 `engram telemetry preview` 查看将发送的确切内容，用 `engram telemetry off` 随时关闭。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求——只有在你显式调用时才执行。
 
-**Engram 有多少个 MCP 工具？**
+**piia-engram 有多少个 MCP 工具？**
 43 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并、生命周期复习、健康度检查、工作流快捷操作和审计日志。
 
-**Engram 免费吗？**
-是的。Engram 是 Apache 2.0 开源项目，完全免费。
+**piia-engram 免费吗？**
+是的。piia-engram 是 Apache 2.0 开源项目，完全免费。
 
 ## 局限性说明
 
-Engram 可以正常使用，但以下功能目前尚未实现：
+piia-engram 可以正常使用，但以下功能目前尚未实现：
 
 | 方面 | 当前状态 | 计划版本 |
 |---|---|---|
@@ -405,14 +405,14 @@ Engram 可以正常使用，但以下功能目前尚未实现：
 | **加密** | 可选字段级 AES-256-GCM 加密，通过 `ENGRAM_SECRET` 环境变量启用。安装 `pip install piia-engram[secure]`。 | 全盘加密（v4.0）|
 | **审计日志** | 可选访问审计，通过 `ENGRAM_AUDIT=1` 环境变量启用。日志写入 `~/.engram/audit.log`。 | 按调用方审计（受 MCP 规范限制）|
 | **调用方身份** | MCP 协议不传递工具身份 | 受 MCP 规范限制 |
-| **并发写保护** | Engram JSON 写入已通过文件锁和原子替换保护 | 网络文件系统等边界场景不保证 |
+| **并发写保护** | piia-engram JSON 写入已通过文件锁和原子替换保护 | 网络文件系统等边界场景不保证 |
 
 **实际使用建议：**
-- 不要在 Engram 里存密码、API Key、客户隐私数据
+- 不要在 piia-engram 里存密码、API Key、客户隐私数据
 - `~/.engram/` 目录下的文件，本机有读权限的进程都可以读取
 - `restricted_fields` 能减少冷启动上下文暴露的画像字段，但不是加密，也不是真正的 ACL
 
-这不是劝你不用 Engram —— 而是对它本质的诚实描述：它是一个本地个人 AI 上下文层。用于存储个人偏好、项目决策、技术笔记等内容，今天就可以正常使用。
+这不是劝你不用 piia-engram —— 而是对它本质的诚实描述：它是一个本地个人 AI 上下文层。用于存储个人偏好、项目决策、技术笔记等内容，今天就可以正常使用。
 
 ## 安全配置
 
@@ -425,7 +425,7 @@ pip install piia-engram[secure]
 export ENGRAM_SECRET="选一个强口令"
 ```
 
-加密后的字段以 `enc:v1:...` 格式存储在 JSON 文件中。不设置 `ENGRAM_SECRET` 时，Engram 照常以明文工作（向后兼容）。
+加密后的字段以 `enc:v1:...` 格式存储在 JSON 文件中。不设置 `ENGRAM_SECRET` 时，piia-engram 照常以明文工作（向后兼容）。
 
 ### 审计日志（可选）
 
@@ -441,12 +441,12 @@ export ENGRAM_AUDIT=1
 
 ```bash
 engram setup            # 交互式安装向导
-engram doctor           # 检查配置健康状态（所有 AI 工具）
-engram doctor --fix     # 自动修复所有问题
-engram stats            # 查看项目增长数据（GitHub + PyPI）
-engram stats --log      # 追加统计快照到本地日志
+piia-engram doctor           # 检查配置健康状态（所有 AI 工具）
+piia-engram doctor --fix     # 自动修复所有问题
+piia-engram stats            # 查看项目增长数据（GitHub + PyPI）
+piia-engram stats --log      # 追加统计快照到本地日志
 engram telemetry        # 管理匿名使用统计
-engram privacy          # 查看 Engram 存了什么数据、存在哪里
+engram privacy          # 查看 piia-engram 存了什么数据、存在哪里
 ```
 
 ## Contributing
@@ -455,4 +455,4 @@ engram privacy          # 查看 Engram 存了什么数据、存在哪里
 
 ## License
 
-[Apache 2.0](LICENSE) — Engram 是自由软件，记忆属于你。
+[Apache 2.0](LICENSE) — piia-engram 是自由软件，记忆属于你。

@@ -7,7 +7,7 @@
 
 - **测试**: 490 passed, 0 failed, 0 warnings（47.31s）
 - **覆盖率**: 83% total（3765 stmts, 648 miss）；`mcp_server.py` **86%**（487 stmts, 70 miss）
-- **源文件**: 18 个 `.py`（`src/engram_core/`）
+- **源文件**: 18 个 `.py`（`src/piia_engram/`）
 - **测试文件**: 11 个（`tests/`）
 - **MCP 工具**: 43 个 `@mcp.tool()`（与 README 一致）
 - **最大单文件**: `mcp_server.py` — **1411 行**

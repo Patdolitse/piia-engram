@@ -5,7 +5,7 @@
 - 范围：验证知识生命周期改动；未修改主代码。
 - T1：Python 直接测试 `Engram(root=tempdir)`，不用 LLM，不污染用户数据。
 - T2：DeepSeek `deepseek-chat`，从 Round 6 抽取 20 个核心场景，每场景 3 次取多数。
-- T2 工具数：41（从 `src/engram_core/mcp_server.py` 实时抽取，应为 41）。
+- T2 工具数：41（从 `src/piia_engram/mcp_server.py` 实时抽取，应为 41）。
 - T2 调用次数：60，失败调用：0。
 - T2 usage：prompt=182877，completion=3225，total=186102 tokens。
 

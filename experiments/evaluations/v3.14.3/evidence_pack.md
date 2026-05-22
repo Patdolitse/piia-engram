@@ -19,7 +19,7 @@
   - `reconcile.py` (425) — `ReconcileMixin`: 外部 AI 记忆 + 配置同步
   - `reports.py` (1103) — `ReportsMixin`: 报告/身份卡/统计
   - `compat.py` (318) — OpenClaw/OCA 迁移
-- **公开 API 不变** — 所有 `from engram_core.core import X` 通过 re-export 继续工作
+- **公开 API 不变** — 所有 `from piia_engram.core import X` 通过 re-export 继续工作
 - **PBKDF2 100k → 600k 轮**（OWASP 2023+ 推荐底线），新前缀 `enc:v2:`
 - **向后兼容**：`enc:v1:` 旧密文仍可解密
 - **Schema 比较 bug 修复**：`_parse_schema_version` 转元组（避免 `"10.0" < "2.0"` 字典序）
@@ -104,10 +104,10 @@
 
 ### 4.2 代码核查（抽样）
 
-- `src/engram_core/core.py`（1083 行，看是否真正瘦身、向后兼容是否完整）
-- `src/engram_core/storage.py`（224 行，看是否真正成为单一 I/O 入口）
-- `src/engram_core/crypto.py`（看 PBKDF2 升级 + v1 兼容是否正确实现）
-- `src/engram_core/mcp_server.py`（前 200 行，看 `_validate_path`、`_apply_tool_tier` 等加固点）
+- `src/piia_engram/core.py`（1083 行，看是否真正瘦身、向后兼容是否完整）
+- `src/piia_engram/storage.py`（224 行，看是否真正成为单一 I/O 入口）
+- `src/piia_engram/crypto.py`（看 PBKDF2 升级 + v1 兼容是否正确实现）
+- `src/piia_engram/mcp_server.py`（前 200 行，看 `_validate_path`、`_apply_tool_tier` 等加固点）
 - `tests/test_mcp_tools.py`（37 个，看测试是否真覆盖 MCP wrapper）
 - `tests/test_review_page_xss.py`（10 个，看 XSS 测试是否到位）
 - `tests/test_crypto.py`（19 个，看 v1↔v2 兼容测试）
