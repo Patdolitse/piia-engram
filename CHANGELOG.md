@@ -4,6 +4,26 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.17.0] - 2026-05-23
+
+Quality & reliability release: 657 tests at 96% coverage (all modules ≥90%), cross-platform CI fixes, and Round 10 retrieval quality benchmark achieving 43/43 PASS.
+
+### Added
+- **Cold-start setup streamlining** — simplified first-run experience with guided setup flow
+- **Round 10 retrieval/injection quality benchmark** — 7-dimension, 43-case test suite; all 43 PASS with DeepSeek V4 Pro judge
+
+### Fixed
+- **CI stability** — safe tilde expansion (no `os.path.expanduser` on `~` in path literals), test auth hardening, job matrix reduced 12→6 for faster feedback
+- **Cross-platform path parsing** — `_sanitize_project()` uses `PureWindowsPath` so Windows paths parse correctly on all platforms
+
+### Tests
+- **657 passed** (up from 490 in v3.16.0; +167 new)
+- Total coverage: **83% → 96%** (+13pp); all modules ≥90%
+- Key module coverage: storage 100%, core 95%, reconcile 98%, mcp_server 99%, setup_wizard 93%, reports_identity 100%, stats 100%
+
+### Benchmarks
+- Round 10: retrieval quality 43/43 PASS across 7 dimensions (relevance, completeness, noise, format, latency, edge cases, injection safety)
+
 ## [3.16.0] - 2026-05-22
 
 Code quality release: split the last monolithic module, brought mcp_server coverage to production-grade, and ran third-party milestone evaluation.
@@ -15,7 +35,7 @@ Code quality release: split the last monolithic module, brought mcp_server cover
   - `reports_review.py` (520 lines) — `ReviewMixin`: HTML review page, promote/archive
   - `reports_identity.py` (97 lines) — `IdentityCardMixin`: Markdown identity card export
   - `reports_analytics.py` (310 lines) — `AnalyticsMixin`: health reports, stale detection, digest, stats
-- Public API unchanged — `from engram_core.reports import ReportsMixin` still works
+- Public API unchanged — `from piia_engram.reports import ReportsMixin` still works
 - `architecture.md` updated to v3.16.0 with new module map and two-level mixin diagram
 - README "By the numbers" updated to v3.16.0 stats (490 tests, 83% coverage)
 - CONTRIBUTING test baselines updated: 490+ tests, 83%+ coverage
@@ -87,7 +107,7 @@ Two HIGH-severity findings addressed; full regression context in the evaluation 
 - The default behavior preserves backward compatibility for any caller that may already depend on it, but the docstring now explicitly warns: "callers that don't validate the prefix after this call may treat ciphertext as plaintext — prefer strict=True in new code."
 
 ### Fixed
-- **README MCP tool count inconsistency**. README's "By the numbers" / 量化数据 section claimed 45 tools while elsewhere said 43; actual count is **43** (`grep -c '^@mcp.tool' src/engram_core/mcp_server.py`). All documents now consistent at 43:
+- **README MCP tool count inconsistency**. README's "By the numbers" / 量化数据 section claimed 45 tools while elsewhere said 43; actual count is **43** (`grep -c '^@mcp.tool' src/piia_engram/mcp_server.py`). All documents now consistent at 43:
   - `README.md` and `README.zh-CN.md` quantitative sections + comparison tables
   - `docs/comparison.md`
   - `docs/architecture.md` (3 references)
@@ -137,7 +157,7 @@ Two HIGH-severity findings addressed; full regression context in the evaluation 
 ## [3.14.1] - 2026-05-22
 
 ### Refactor
-- **`core.py` split**: 4277 → 1083 lines (-74.7%), extracted into 7 modules via mixin pattern. Public API unchanged — all imports from `engram_core.core` continue to work via re-exports.
+- **`core.py` split**: 4277 → 1083 lines (-74.7%), extracted into 7 modules via mixin pattern. Public API unchanged — all imports from `piia_engram.core` continue to work via re-exports.
   - `storage.py` (224) — constants + I/O primitives (`_read_json`, `_write_json`, `_engram_root`, etc.)
   - `retrieval.py` (639) — `RetrievalMixin`: search, scoring, tokenization, batch ops, conflict detection
   - `context.py` (688) — `ContextMixin`: `generate_context`, ingestion + standalone `extract_knowledge` / `ingest_extraction`
@@ -154,7 +174,7 @@ Two HIGH-severity findings addressed; full regression context in the evaluation 
 - **Schema version comparison**: `_migrate_v1_to_v2` used lexicographic string comparison (`"10.0" < "2.0"`). Now parses to tuples via `_parse_schema_version`.
 
 ### Changed
-- **`print(file=sys.stderr)` → `logging`** across all engram_core modules (audit, compat, context, crypto, mcp_server, setup_wizard, stats, storage). Each module gets `logger = logging.getLogger(__name__)`. Library output is now respectful of host application's logging config.
+- **`print(file=sys.stderr)` → `logging`** across all piia_engram modules (audit, compat, context, crypto, mcp_server, setup_wizard, stats, storage). Each module gets `logger = logging.getLogger(__name__)`. Library output is now respectful of host application's logging config.
 
 ### Tests
 - **329 passed** (up from 328 in v3.14.0)
