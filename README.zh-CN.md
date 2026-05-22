@@ -217,16 +217,17 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.16.0 (2026-05-22) |
+| | v3.19.0 (2026-05-23) |
 |---|---|
+| 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具数 | **43** 个（默认开放 10 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 33 个）|
-| 测试通过 | **490** 个（单元 + 集成）|
-| 代码覆盖率 | **83%** 总体；mcp_server 86% ([基线](docs/coverage_baseline_v3.14.2.md))|
+| 测试通过 | **678** 个（单元 + 集成）|
+| 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **1097** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | AES-256-GCM，每条数据随机 salt + nonce |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
-| 核心功能网络调用 | 默认 **0** —— 除可选的 `read_web_content` 和可选匿名使用统计外（[详情](docs/telemetry_roadmap.md)）|
+| 核心功能网络调用 | 默认 **0** —— 除可选的 `read_web_content` 外，遥测仅写本地日志不上传（[详情](docs/telemetry_roadmap.md)）|
 | 外部 AI 评测 | 4 个独立 AI 评审了使用统计设计；此前 3 次架构评测（见 [`docs/`](docs/)）|
 
 ## 核心功能
