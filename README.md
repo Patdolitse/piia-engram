@@ -350,16 +350,17 @@ piia-engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools ar
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.16.0 (2026-05-22) |
+| | v3.19.0 (2026-05-23) |
 |---|---|
+| Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools exposed | **43** (10 Tier-1 default, 33 opt-in via `ENGRAM_TOOLS=all`) |
-| Tests passing | **490** (unit + integration) |
-| Code coverage | **83%** total; mcp_server 86% ([baseline](docs/coverage_baseline_v3.14.2.md)) |
+| Tests passing | **678** (unit + integration) |
+| Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **1097** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | AES-256-GCM, per-value random salt + nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics ([details](docs/telemetry_roadmap.md)) |
+| Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics (local log only, no upload — [details](docs/telemetry_roadmap.md)) |
 | External AI evaluations | 4 independent AIs evaluated the telemetry design; 3 earlier evaluations on architecture (see [`docs/`](docs/)) |
 
 ## Built With
