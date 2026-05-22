@@ -299,7 +299,9 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin):
             return project
         # Detect file paths (contains slash/backslash or drive letter)
         if "/" in project or "\\" in project or (len(project) > 2 and project[1] == ":"):
-            name = Path(project).name
+            # Use PureWindowsPath to handle both / and \ on any OS
+            from pathlib import PureWindowsPath
+            name = PureWindowsPath(project).name
             return name if name else project
         return project
 
