@@ -1383,6 +1383,16 @@ def resource_stats() -> str:
 if __name__ == "__main__":
     args = _parse_args()
 
+    # ── Startup self-check: detect stale invocation paths ──
+    _invoked_via = sys.argv[0] if sys.argv else ""
+    if "engram_core" in _invoked_via:
+        print(
+            "[engram] WARNING: Invoked via deprecated path 'engram_core'. "
+            "Update your MCP config to use 'piia_engram.mcp_server'. "
+            "Run 'engram doctor --fix' to auto-repair.",
+            file=sys.stderr,
+        )
+
     # Auto-migrate legacy configs on first run after upgrade (stdio only;
     # must happen before mcp.run() to avoid polluting the MCP stdio channel).
     if args.transport == "stdio":
