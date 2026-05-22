@@ -101,8 +101,56 @@ def run_stats() -> None:
     print("\n  " + "=" * 44 + "\n")
 
 
+def log_stats() -> None:
+    """Append a JSON snapshot of current stats to ~/.engram/stats.log."""
+    import os
+    from pathlib import Path
+
+    data_dir = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    log_path = data_dir / "stats.log"
+
+    snapshot: dict = {"timestamp": datetime.utcnow().isoformat() + "Z"}
+
+    repo = _gh("")
+    if repo:
+        snapshot["github"] = {
+            "stars": repo.get("stargazers_count", 0),
+            "forks": repo.get("forks_count", 0),
+            "open_issues": repo.get("open_issues_count", 0),
+            "watchers": repo.get("subscribers_count", 0),
+        }
+
+    views = _gh("traffic/views")
+    if views:
+        snapshot["views_14d"] = {
+            "total": views.get("count", 0),
+            "unique": views.get("uniques", 0),
+        }
+
+    clones = _gh("traffic/clones")
+    if clones:
+        snapshot["clones_14d"] = {
+            "total": clones.get("count", 0),
+            "unique": clones.get("uniques", 0),
+        }
+
+    pypi = _pypi_recent()
+    if pypi and "data" in pypi:
+        snapshot["pypi"] = pypi["data"]
+
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
+
+    print(f"  Stats snapshot saved to {log_path}")
+
+
 def main() -> None:
-    run_stats()
+    import sys
+    if "--log" in sys.argv:
+        log_stats()
+    else:
+        run_stats()
 
 
 if __name__ == "__main__":

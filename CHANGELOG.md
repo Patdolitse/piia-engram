@@ -4,6 +4,42 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.15.0] - 2026-05-22
+
+Privacy-focused feature release: opt-in anonymous usage statistics, reconcile authorization gate, and setup wizard privacy step. Designed through cross-AI consultation (4 independent AI evaluations synthesized).
+
+### Added
+- **Anonymous usage statistics (Phase 1: local log only)** — `telemetry.py` module
+  - Off by default; opt-in during `engram setup` Step 5 or via `engram telemetry on`
+  - Collects only 4 fields: tool call distribution (success/error counts), knowledge entry totals, engram version, daily anonymous ID
+  - Daily ID via `HMAC(local_uuid, date)` — cannot link across days
+  - Payload validator rejects strings >200 chars or with natural language patterns (no content leakage possible)
+  - All data stored locally in `~/.engram/telemetry.log` (JSONL, human-readable)
+  - **No network requests** — Phase 2 gated by 30 days + 5 users sharing logs
+  - CLI: `engram telemetry status|preview|on|off`
+  - Env override: `ENGRAM_TELEMETRY=0|1`
+- **Reconcile authorization gate** — `reconcile.py`
+  - `reconcile_memories()` and `reconcile_ai_configs()` now require explicit authorization
+  - Controlled via `ENGRAM_RECONCILE` env var or `telemetry_config.json` preference
+  - Default: authorized (backward-compatible for existing users)
+  - New users explicitly choose during setup
+- **Setup wizard Step 5: Privacy Preferences**
+  - [1] Cross-tool memory sync authorization (default: Yes)
+  - [2] Anonymous usage statistics (default: **No**)
+  - Numeric selection UI (no free-text input)
+- **ToolCallTracker wired into MCP server** — 10 Tier-1 tools instrumented with success/error tracking; auto-flush during `wrap_up_session`
+- **`docs/telemetry_roadmap.md`** — Phase 1 spec, Phase 2 decision gate criteria, cross-AI consultation record
+
+### Changed
+- `README.md` / `README.zh-CN.md`: updated "0 network calls" claim to reflect opt-in statistics; FAQ rewritten
+- `SECURITY.md`: updated from "no telemetry" to describe opt-in anonymous statistics with preview/off instructions
+- `docs/comparison.md`: corrected "no opt-out telemetry" claim to describe opt-in model
+
+### Tests
+- **424 passed** (up from 394 in v3.14.4; +30 new)
+- New `tests/test_telemetry.py` (30 tests): config persistence, env overrides, daily ID properties, payload validation (length/language/nested), build_payload gating, local log append, preview, ToolCallTracker lifecycle, opt-out safety
+- CONTRIBUTING baseline raised: 394+ → **424+ tests**
+
 ## [3.14.4] - 2026-05-22
 
 Patch driven by the v3.14.3 DeepSeek milestone evaluation ([report](docs/milestone_review_v3.14.3.md)).
