@@ -341,12 +341,12 @@ Engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools are loa
 
 These are factual claims about Engram itself, refreshed each minor release.
 
-| | v3.15.0 (2026-05-22) |
+| | v3.16.0 (2026-05-22) |
 |---|---|
 | MCP tools exposed | **43** (10 Tier-1 default, 33 opt-in via `ENGRAM_TOOLS=all`) |
-| Tests passing | **437** (unit + integration) |
-| Code coverage | **78%** total; 8/12 modules ≥85% ([baseline](docs/coverage_baseline_v3.14.2.md)) |
-| Lines in `core.py` | **1083** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
+| Tests passing | **490** (unit + integration) |
+| Code coverage | **83%** total; mcp_server 86% ([baseline](docs/coverage_baseline_v3.14.2.md)) |
+| Lines in `core.py` | **1088** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | AES-256-GCM, per-value random salt + nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |

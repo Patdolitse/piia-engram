@@ -5,7 +5,7 @@ This document describes how Engram is structured internally, why the structure e
 It complements the user-facing [README](../README.md) (which answers *"what does it do"*) by answering *"how is it built and where would I extend it"*.
 
 > **Audience**: contributors, integrators, and anyone reading the code.
-> **Version**: v3.14.2 (2026-05-22)
+> **Version**: v3.16.0 (2026-05-22)
 
 ---
 
@@ -28,6 +28,8 @@ It complements the user-facing [README](../README.md) (which answers *"what does
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin) │
 │  ── facade in core.py, behavior in mixins ──                        │
+│  ReportsMixin = RarityMixin + ReviewMixin + IdentityCardMixin       │
+│                 + AnalyticsMixin                                    │
 └────────────────────────┬────────────────────────────────────────────┘
                          │ atomic file I/O with portalocker
                          ▼
@@ -50,29 +52,34 @@ The whole thing fits in your laptop's RAM (typical user has < 1 MB on disk) and 
 
 ## 2. Module map
 
-After the v3.14.1 refactor, the package is split into **7 focused modules + 5 supporting modules**.
+After the v3.14.1 refactor and v3.16.0 reports split, the package is split into **11 focused modules + 7 supporting modules**.
 
-### Core modules (post-refactor)
+### Core modules
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`storage.py`](../src/engram_core/storage.py) | 224 | Constants + I/O primitives (`_read_json`, `_write_json`, `_engram_root`, `_now_iso`) — the only place the rest of the code touches the filesystem |
-| [`core.py`](../src/engram_core/core.py) | 1083 | `Engram` class facade — `__init__`, schema migration, identity CRUD (profile / preferences / trust_boundaries / quality_standards), knowledge CRUD (add/get/update/archive lessons & decisions), link management, domain & project methods, `export_all` / `import_all` |
-| [`retrieval.py`](../src/engram_core/retrieval.py) | 639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
-| [`context.py`](../src/engram_core/context.py) | 688 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
-| [`reconcile.py`](../src/engram_core/reconcile.py) | 425 | `ReconcileMixin` — silent import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
-| [`reports.py`](../src/engram_core/reports.py) | 1103 | `ReportsMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `generate_review_page` (interactive HTML audit), `apply_review` (process user's review decisions), `export_identity_card` (portable Markdown for non-MCP tools), `get_health_report`, `get_stale_knowledge`, `get_knowledge_digest`, `get_knowledge_overview`, `get_stats`, `export_knowledge_report` |
-| [`compat.py`](../src/engram_core/compat.py) | 318 | Migration adapters — `migrate_from_oca_memory` (legacy OCA tool), `export_to_openclaw` / `import_from_openclaw` (SOUL.md / MEMORY.md / USER.md format) |
+| [`storage.py`](../src/engram_core/storage.py) | ~224 | Constants + I/O primitives (`_read_json`, `_write_json`, `_engram_root`, `_now_iso`) — the only place the rest of the code touches the filesystem |
+| [`core.py`](../src/engram_core/core.py) | ~1088 | `Engram` class facade — `__init__`, schema migration, identity CRUD (profile / preferences / trust_boundaries / quality_standards), knowledge CRUD (add/get/update/archive lessons & decisions), link management, domain & project methods, `export_all` / `import_all` |
+| [`retrieval.py`](../src/engram_core/retrieval.py) | ~639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
+| [`context.py`](../src/engram_core/context.py) | ~688 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
+| [`reconcile.py`](../src/engram_core/reconcile.py) | ~425 | `ReconcileMixin` — silent import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
+| [`reports.py`](../src/engram_core/reports.py) | 22 | `ReportsMixin` — thin composition hub, inherits from 4 sub-mixins below |
+| [`reports_rarity.py`](../src/engram_core/reports_rarity.py) | ~85 | `RarityMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `RARITY_TIERS` constant |
+| [`reports_review.py`](../src/engram_core/reports_review.py) | ~520 | `ReviewMixin` — `generate_review_page` (interactive HTML audit), `export_review_page`, `promote_knowledge`, `apply_review` |
+| [`reports_identity.py`](../src/engram_core/reports_identity.py) | ~97 | `IdentityCardMixin` — `export_identity_card` (portable Markdown for non-MCP tools) |
+| [`reports_analytics.py`](../src/engram_core/reports_analytics.py) | ~310 | `AnalyticsMixin` — `get_health_report`, `get_stale_knowledge`, `get_knowledge_digest`, `get_knowledge_overview`, `get_stats`, `export_knowledge_report` |
+| [`compat.py`](../src/engram_core/compat.py) | ~318 | Migration adapters — `migrate_from_oca_memory` (legacy OCA tool), `export_to_openclaw` / `import_from_openclaw` (SOUL.md / MEMORY.md / USER.md format) |
 
 ### Supporting modules
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`mcp_server.py`](../src/engram_core/mcp_server.py) | 1300 | FastMCP server: 43 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path` |
-| [`crypto.py`](../src/engram_core/crypto.py) | 119 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
-| [`setup_wizard.py`](../src/engram_core/setup_wizard.py) | 860 | `engram setup` + `engram doctor` CLI — interactive bilingual onboarding |
-| [`audit.py`](../src/engram_core/audit.py) | 56 | `AuditLogger` — opt-in audit trail (`ENGRAM_AUDIT=1`) to `~/.engram/audit.log` |
-| [`stats.py`](../src/engram_core/stats.py) | 107 | `engram stats` CLI — GitHub release / PyPI download counters |
+| [`mcp_server.py`](../src/engram_core/mcp_server.py) | ~1330 | FastMCP server: 43 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
+| [`crypto.py`](../src/engram_core/crypto.py) | ~119 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
+| [`telemetry.py`](../src/engram_core/telemetry.py) | ~130 | `ToolCallTracker` — opt-in anonymous usage statistics (Phase 1: local log only, no network), payload validation, HMAC daily ID |
+| [`setup_wizard.py`](../src/engram_core/setup_wizard.py) | ~650 | `engram setup` + `engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
+| [`audit.py`](../src/engram_core/audit.py) | ~56 | `AuditLogger` — opt-in audit trail (`ENGRAM_AUDIT=1`) to `~/.engram/audit.log` |
+| [`stats.py`](../src/engram_core/stats.py) | ~99 | `engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
 
 ### Why this shape?
 
