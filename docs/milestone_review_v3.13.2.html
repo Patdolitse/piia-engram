@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engram v3.13.2 里程碑评估报告</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --card: #ffffff;
+    --text: #1a1a2e;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --accent-light: #dbeafe;
+    --green: #059669;
+    --green-bg: #d1fae5;
+    --yellow: #d97706;
+    --yellow-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --purple: #7c3aed;
+    --purple-bg: #ede9fe;
+    --gray-bg: #f3f4f6;
+    --border: #e5e7eb;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.8rem; margin-bottom: 0.3rem; color: var(--text); }
+  h2 {
+    font-size: 1.35rem;
+    margin: 2.5rem 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--accent);
+    color: var(--accent);
+  }
+  h3 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: var(--text); }
+  h4 { font-size: 1rem; margin: 1.2rem 0 0.4rem; color: var(--text); }
+  p, li { font-size: 0.95rem; margin-bottom: 0.5rem; }
+  ul, ol { padding-left: 1.5rem; }
+  .meta {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .meta span { margin-right: 2rem; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+  }
+  th {
+    background: var(--accent);
+    color: white;
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    font-weight: 600;
+  }
+  td {
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+  }
+  tr:nth-child(even) td { background: var(--gray-bg); }
+  tr:hover td { background: var(--accent-light); }
+  .score-table th { text-align: center; }
+  .score-table td { text-align: center; }
+  .score-table td:first-child { text-align: left; font-weight: 500; }
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .badge-accept { background: var(--green-bg); color: var(--green); }
+  .badge-partial { background: var(--yellow-bg); color: var(--yellow); }
+  .badge-defer { background: var(--purple-bg); color: var(--purple); }
+  .badge-reject { background: var(--red-bg); color: var(--red); }
+  .badge-urgent { background: var(--red); color: white; }
+  .badge-verify { background: var(--gray-bg); color: var(--muted); }
+  .issue-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    margin: 0.8rem 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .issue-card h4 { margin-top: 0; }
+  .issue-meta {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-light);
+    padding: 1rem 1.2rem;
+    border-radius: 0 8px 8px 0;
+    margin: 1rem 0;
+  }
+  .callout-warn {
+    border-left-color: var(--yellow);
+    background: var(--yellow-bg);
+  }
+  .callout-danger {
+    border-left-color: var(--red);
+    background: var(--red-bg);
+  }
+  .callout-success {
+    border-left-color: var(--green);
+    background: var(--green-bg);
+  }
+  .phase-header {
+    background: var(--accent);
+    color: white;
+    padding: 0.6rem 1rem;
+    border-radius: 8px 8px 0 0;
+    font-weight: 600;
+    margin-top: 1.5rem;
+  }
+  .phase-body {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-top: 0;
+    border-radius: 0 0 8px 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+  }
+  .stat-card .number {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .stat-card .label {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--gray-bg);
+    margin: 0.3rem 0;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+  }
+  code {
+    background: var(--gray-bg);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.88rem;
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  }
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+  }
+  .toc ul { list-style: none; padding-left: 0; }
+  .toc li { padding: 0.2rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .verdict-row { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.3rem; }
+  .footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-align: center;
+  }
+  @media print {
+    body { padding: 1rem; font-size: 0.85rem; }
+    .issue-card { break-inside: avoid; }
+    h2 { break-before: page; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Engram v3.13.2 里程碑评估报告</h1>
+<div class="meta">
+  <span>评估日期: 2026-05-22</span>
+  <span>版本: v3.13.2</span>
+  <span>评估方式: 内部自评 + 5 家外部 AI 独立评测</span>
+</div>
+
+<div class="toc">
+  <strong>目录</strong>
+  <ul>
+    <li><a href="#sec1">一、综合评分</a></li>
+    <li><a href="#sec2">二、逐项回应（32 项）</a></li>
+    <li><a href="#sec3">三、自评盲区分析</a></li>
+    <li><a href="#sec4">四、行动计划</a></li>
+    <li><a href="#sec5">五、决策记录</a></li>
+    <li><a href="#sec6">六、附录：评测者特点</a></li>
+  </ul>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="sec1">一、综合评分</h2>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="number">6.9</div>
+    <div class="label">外部平均分</div>
+  </div>
+  <div class="stat-card">
+    <div class="number">7.5</div>
+    <div class="label">内部自评</div>
+  </div>
+  <div class="stat-card">
+    <div class="number">-0.6</div>
+    <div class="label">校准偏差</div>
+  </div>
+  <div class="stat-card">
+    <div class="number">32</div>
+    <div class="label">问题总数</div>
+  </div>
+</div>
+
+<table class="score-table">
+  <tr>
+    <th>维度</th><th>Cursor</th><th>Opus</th><th>Codex</th><th>GPT</th><th>DeepSeek</th><th>平均</th><th>自评</th><th>偏差</th>
+  </tr>
+  <tr>
+    <td>文档质量</td><td>8.2</td><td>7.0</td><td>8.0</td><td>7.0</td><td>8.5</td><td><strong>7.7</strong></td><td>—</td><td>—</td>
+  </tr>
+  <tr>
+    <td>代码架构</td><td>6.4</td><td>5.0</td><td>5.5</td><td>5.5</td><td>4.5</td><td><strong>5.4</strong></td><td>7</td><td style="color:#dc2626;font-weight:600">-1.6</td>
+  </tr>
+  <tr>
+    <td>MCP 实现</td><td>8.0</td><td>7.0</td><td>7.0</td><td>6.8</td><td>7.0</td><td><strong>7.2</strong></td><td>—</td><td>—</td>
+  </tr>
+  <tr>
+    <td>测试质量</td><td>7.6</td><td>7.0</td><td>8.2</td><td>7.2</td><td>6.0</td><td><strong>7.2</strong></td><td>7</td><td style="color:#059669">准确</td>
+  </tr>
+  <tr>
+    <td>安全隐私</td><td>7.1</td><td>7.0</td><td>6.0</td><td>6.4</td><td>5.0</td><td><strong>6.3</strong></td><td>8</td><td style="color:#dc2626;font-weight:600">-1.7</td>
+  </tr>
+  <tr>
+    <td>产品定位</td><td>7.2</td><td>5.0</td><td>7.6</td><td>7.5</td><td>8.0</td><td><strong>7.1</strong></td><td>7</td><td style="color:#059669">准确</td>
+  </tr>
+  <tr style="background:var(--accent-light)">
+    <td><strong>综合</strong></td><td><strong>7.3</strong></td><td><strong>6.5</strong></td><td><strong>7.1</strong></td><td><strong>7.0</strong></td><td><strong>6.4</strong></td><td><strong>6.9</strong></td><td><strong>7.5</strong></td><td style="color:#d97706;font-weight:600">-0.6</td>
+  </tr>
+</table>
+
+<div class="callout callout-danger">
+  <strong>最大自评盲区</strong>：安全维度高估 1.7 分（自评 8 → 外部 6.3），架构维度高估 1.6 分（自评 7 → 外部 5.4）。
+  根因：安全上犯了"实现了就以为安全了"的认知错误；架构上犯了"作者熟悉就以为清晰"的专家盲区。
+</div>
+
+<!-- ================================================================ -->
+<h2 id="sec2">二、逐项回应</h2>
+
+<p>五家评测共提出 <strong>32 项独立问题/建议</strong>，按结论分类统计：</p>
+
+<div class="stat-grid">
+  <div class="stat-card"><div class="number" style="color:#059669">24</div><div class="label">接受（含降级/部分）</div></div>
+  <div class="stat-card"><div class="number" style="color:#7c3aed">6</div><div class="label">暂缓</div></div>
+  <div class="stat-card"><div class="number" style="color:#dc2626">2</div><div class="label">不接受</div></div>
+</div>
+
+<!-- 2.1 Architecture -->
+<h3>2.1 代码架构（外部平均 5.4 / 自评 7）</h3>
+
+<div class="issue-card">
+  <h4>A. core.py 4277 行必须拆分 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：全部 5 家 | 置信度：最高</div>
+  <p><strong>理由</strong>：全票一致。单文件承载 CRUD + 搜索 + 冲突检测 + 上下文生成 + HTML 页面 + 导入导出 + 迁移，违反单一职责。外部贡献者和 AI 修改代码的回归成本持续上升。</p>
+  <p><strong>方案</strong>：拆为 8 模块（storage / retrieval / conflicts / context / reconcile / reports / compat / facade），无行为变化，每拆一块 327 测试全绿。</p>
+</div>
+
+<div class="issue-card">
+  <h4>B. print(stderr) → logging 模块 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：Opus / Codex / GPT / DeepSeek（4/5）</div>
+  <p>21 处 <code>print(..., file=sys.stderr)</code> 是 Python 反模式。MCP stdio server 裸写 stderr 有协议污染风险。伴随拆分同步完成。</p>
+</div>
+
+<div class="issue-card">
+  <h4>C. generate_review_page 414 行 HTML 在数据层 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：Opus / GPT / DeepSeek</div>
+  <p>表现层逻辑（HTML+CSS+JS f-string 拼接）在核心类里是最明显的 code smell。归入 reports.py 拆分阶段。</p>
+</div>
+
+<div class="issue-card">
+  <h4>D. schema 版本字符串比较 bug <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：Opus</div>
+  <p><code>"10.0" &lt; "2.0"</code> 在字符串比较中为 true。当前版本 "2.0" 短期无风险，storage.py 拆分时顺手修复。</p>
+</div>
+
+<div class="issue-card">
+  <h4>E. 引入 Pydantic / dataclass <span class="badge badge-defer">暂缓</span></h4>
+  <div class="issue-meta">提出者：Codex / GPT / DeepSeek</div>
+  <p>当前 dict + 327 测试维持住了。Pydantic 会增加核心依赖（当前仅 mcp + portalocker），违反轻量级定位。拆分完成后再评估。</p>
+</div>
+
+<div class="issue-card">
+  <h4>F. 异常层次结构 <span class="badge badge-defer">暂缓</span></h4>
+  <div class="issue-meta">提出者：DeepSeek</div>
+  <p>对单一维护者够用。等有第二个贡献者或 MCP 层统一返回值后一起引入。</p>
+</div>
+
+<div class="issue-card">
+  <h4>G. 常量迁移到独立 constants.py <span class="badge badge-reject">不接受</span></h4>
+  <div class="issue-meta">提出者：DeepSeek</div>
+  <p>常量已集中在 core.py 顶部 50 行。拆分后常量自然跟随模块（如 SEARCH_RELEVANCE_THRESHOLD 进 retrieval.py），不需要额外间接层。</p>
+</div>
+
+<div class="issue-card">
+  <h4>H. _read_json 中 sys 未导入 <span class="badge badge-verify">需验证</span></h4>
+  <div class="issue-meta">提出者：GPT / DeepSeek</div>
+  <p>具体的代码 bug 断言，需实际检查。如属实则立即修复。</p>
+</div>
+
+<!-- 2.2 Security -->
+<h3>2.2 安全与隐私（外部平均 6.3 / 自评 8）</h3>
+
+<div class="callout callout-danger">自评偏差最大的维度（高估 1.7 分）。以下每一项都需要认真对待。</div>
+
+<div class="issue-card">
+  <h4>I. SECURITY.md 写 Fernet，代码是 AES-GCM <span class="badge badge-urgent">紧急修复</span></h4>
+  <div class="issue-meta">提出者：全部 5 家 | 置信度：最高</div>
+  <p>安全文档把自己的加密原语说错，对主打隐私的项目是致命的信任伤害。</p>
+</div>
+
+<div class="issue-card">
+  <h4>J. 加密静默失效 — ENGRAM_SECRET 设了但 cryptography 未装 <span class="badge badge-urgent">紧急修复</span></h4>
+  <div class="issue-meta">提出者：DeepSeek（独有发现）</div>
+  <p>用户设了密钥以为安全，实际明文存储——"最危险的安全反模式"。应改为 <code>raise RuntimeError</code> 拒绝启动。</p>
+</div>
+
+<div class="issue-card">
+  <h4>K. SSE token 非恒定时间比较 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：Opus / Codex / GPT（3/5）</div>
+  <p><code>auth_header[7:] != self.token</code> 存在 timing attack 面。改用 <code>secrets.compare_digest</code>，一行修复。</p>
+</div>
+
+<div class="issue-card">
+  <h4>L. PBKDF2 100k 轮偏低 <span class="badge badge-partial">部分接受</span></h4>
+  <div class="issue-meta">提出者：Opus / Codex / GPT / DeepSeek（4/5）</div>
+  <p>提升到 600k 轮（OWASP 建议）。不引入 Argon2（避免新依赖）。用 <code>enc:v2:</code> 前缀处理兼容迁移。</p>
+</div>
+
+<div class="issue-card">
+  <h4>M. "100% 本地 / 零网络" 叙事需精确化 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：Opus / Codex / GPT / DeepSeek（4/5）</div>
+  <p>改为三层表述：(1) Core: 零网络 (2) Reader: 仅 localhost (3) SSE: 可选自托管+TLS</p>
+</div>
+
+<div class="issue-card">
+  <h4>N. 导入导出路径参数无校验 <span class="badge badge-partial">部分接受</span></h4>
+  <div class="issue-meta">提出者：Opus / Codex / GPT / DeepSeek（4/5）</div>
+  <p>默认限制为 <code>~/.engram/</code> 子目录；超出范围返回警告但不硬拒绝（本地信任模型）。</p>
+</div>
+
+<div class="issue-card">
+  <h4>O. CORS 默认 * 且无认证 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：DeepSeek（独有发现）</div>
+  <p>SSE 模式 host ≠ 127.0.0.1 且无 token 时，拒绝启动。CORS 默认限制为 localhost。</p>
+</div>
+
+<div class="issue-card">
+  <h4>P. restricted_fields 扩展到其他类型 <span class="badge badge-defer">暂缓</span></h4>
+  <div class="issue-meta">提出者：Codex / GPT</div>
+  <p>Profile 是唯一含 PII 的地方。Lessons/decisions 本身就是要注入给 AI 的，过滤会损害核心价值。</p>
+</div>
+
+<div class="issue-card">
+  <h4>Q. 密文未记录 KDF 参数 <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：GPT / DeepSeek</div>
+  <p>当前 <code>enc:v1:</code> 前缀已预留版本化空间。升级时用 <code>enc:v2:</code> 标记，解密按前缀选参数。</p>
+</div>
+
+<div class="issue-card">
+  <h4>R. HSM 支持 <span class="badge badge-reject">不接受</span></h4>
+  <div class="issue-meta">提出者：DeepSeek</div>
+  <p>Engram 是个人开发者工具，不是企业安全基础设施。HSM 完全超出目标用户场景。</p>
+</div>
+
+<!-- 2.3 MCP -->
+<h3>2.3 MCP 协议实现（外部平均 7.2）</h3>
+
+<div class="issue-card">
+  <h4>S. *_json 参数改结构化 schema <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：Cursor / Codex / GPT / DeepSeek（4/5）</div>
+  <p>用 FastMCP 支持的 Python type hints 替代字符串参数。先改 Tier-1 的 10 个工具，再改 Tier-2。</p>
+</div>
+
+<div class="issue-card">
+  <h4>T. 返回值格式不统一 <span class="badge badge-partial">部分接受</span></h4>
+  <div class="issue-meta">提出者：Codex / GPT / DeepSeek（3/5）</div>
+  <p>成功时 JSON 结构化；错误保持自然语言（LLM 理解更好），但包一层 <code>{"ok": false, "error": "..."}</code>。不做完整 envelope。</p>
+</div>
+
+<div class="issue-card">
+  <h4>U. 只读能力应作为 MCP Resources <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：DeepSeek（独有发现）</div>
+  <p>MCP 规范正确。但 FastMCP 对 Resources 的 LLM 集成不够成熟，Claude Code/Cursor 体验不统一。等生态成熟后迁移。</p>
+</div>
+
+<div class="issue-card">
+  <h4>V. 43 个工具偏多 <span class="badge badge-partial">部分接受</span></h4>
+  <div class="issue-meta">提出者：全部 5 家</div>
+  <p>Tier-1 默认 10 个已解决核心问题。不大幅合并（损失语义清晰度），但给 Tier-2 加分组标签和 "When NOT to use" 指引。</p>
+</div>
+
+<div class="issue-card">
+  <h4>W. ENGRAM_TOOLS 更细粒度模式 <span class="badge badge-defer">暂缓</span></h4>
+  <div class="issue-meta">提出者：GPT</div>
+  <p><code>core</code> / <code>all</code> 两档覆盖 95% 场景。等用户反馈后再加细分。</p>
+</div>
+
+<div class="issue-card">
+  <h4>X. 工具缺行为注解 <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：GPT</div>
+  <p>先在 docstring 补充行为说明，后续 MCP 规范支持时正式标注。</p>
+</div>
+
+<div class="issue-card">
+  <h4>Y. _apply_tool_tier 依赖 FastMCP 私有 API <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：Cursor / Codex</div>
+  <p>当前唯一方案。Pin FastMCP 版本，等公开 API 后迁移。</p>
+</div>
+
+<div class="issue-card">
+  <h4>Z. _apply_tool_tier 注释与行为矛盾 <span class="badge badge-urgent">紧急修复</span></h4>
+  <div class="issue-meta">提出者：Opus / GPT / Codex</div>
+  <p>注释写 "Keep all tools by default" 但默认值是 "core"。一行修复。</p>
+</div>
+
+<!-- 2.4 Testing -->
+<h3>2.4 测试与质量保障（外部平均 7.2 / 自评 7）</h3>
+
+<div class="issue-card">
+  <h4>AA. mcp_server.py 覆盖率 38% <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：Opus(实测) / Codex / GPT / DeepSeek</div>
+  <p>新增 <code>test_mcp_tools.py</code>，覆盖 Tier-1 全部 + Tier-2 高频 5 个。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AB. 缺 MCP stdio E2E 测试 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：全部 5 家</div>
+  <p>新增 <code>test_mcp_e2e.py</code>：子进程启动 server → list_tools → 调用核心工具 → 验证返回。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AC. 缺覆盖率门禁 <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：GPT / DeepSeek</div>
+  <p>先加覆盖率报告（不设门禁），拆分完成后再设阈值。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AD. 缺并发写压力测试 <span class="badge badge-defer">暂缓</span></h4>
+  <div class="issue-meta">提出者：Codex / GPT</div>
+  <p>单用户单进程场景，portalocker 已保证互斥。不是当前真实场景。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AE. 加密测试只有 7 个 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：DeepSeek</div>
+  <p>补充：错误密钥、损坏密文、cryptography 缺失、PBKDF2 升级兼容。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AF. 缺安全压力测试 <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：Codex / GPT / DeepSeek</div>
+  <p>reports.py 拆分后补充 XSS payload fixture。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AG. benchmark 不在 pytest 范围 <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：Codex</div>
+  <p>设计为独立脚本（需 API key）。可加为 nightly 可选 job。</p>
+</div>
+
+<!-- 2.5 Docs -->
+<h3>2.5 文档质量（外部平均 7.7）</h3>
+
+<div class="issue-card">
+  <h4>AH. FAQ 安装路径不一致 <span class="badge badge-urgent">紧急修复</span></h4>
+  <div class="issue-meta">提出者：Cursor / Codex / GPT（3/5）</div>
+</div>
+
+<div class="issue-card">
+  <h4>AI. README 未说明 ENGRAM_TOOLS 默认行为 <span class="badge badge-urgent">紧急修复</span></h4>
+  <div class="issue-meta">提出者：Opus / Codex / GPT（3/5）</div>
+</div>
+
+<div class="issue-card">
+  <h4>AJ. stale days 90 vs 代码 30 <span class="badge badge-urgent">紧急修复</span></h4>
+  <div class="issue-meta">提出者：Codex / GPT</div>
+</div>
+
+<div class="issue-card">
+  <h4>AK. 缺 architecture.md <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：GPT</div>
+  <p>core.py 拆分完成后再写（否则写完就过时了）。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AL. README 表格渲染问题 <span class="badge badge-verify">需验证</span></h4>
+  <div class="issue-meta">提出者：GPT</div>
+</div>
+
+<div class="issue-card">
+  <h4>AM. "automatically" 措辞过度承诺 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：GPT</div>
+</div>
+
+<!-- 2.6 Product -->
+<h3>2.6 产品差异化与市场定位（外部平均 7.1）</h3>
+
+<div class="issue-card">
+  <h4>AN. 赛道拥挤（OMEGA 等竞品）<span class="badge badge-partial">部分接受</span></h4>
+  <div class="issue-meta">提出者：Opus（独有深度分析）</div>
+  <p>信息有价值，但核心差异不在检索性能而在跨工具身份共享。在竞品对比中加入 OMEGA 等，明确差异点。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AO. 检索能力相对落后 <span class="badge badge-partial">部分接受</span></h4>
+  <div class="issue-meta">提出者：Opus</div>
+  <p>200 条规模够用。短期不加向量检索（避免重依赖），中期提供 embedding hook 接口。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AP. 缺可视化 demo/GIF <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：全部 5 家 | 置信度：最高</div>
+  <p>录制 60 秒跨工具 demo，嵌入 README 首屏。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AQ. ICP 铺太宽 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：Cursor / Codex / GPT / DeepSeek（4/5）</div>
+  <p>主文只保留"多工具 AI coding power users"，其他 persona 收入折叠区。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AR. piia-engram 包名品牌断裂 <span class="badge badge-partial">部分接受</span></h4>
+  <div class="issue-meta">提出者：Codex / GPT / DeepSeek（3/5）</div>
+  <p>短期 README 解释清楚，长期评估是否迁移。</p>
+</div>
+
+<div class="issue-card">
+  <h4>AS. "身份层"需要可检验定义 <span class="badge badge-accept">接受</span></h4>
+  <div class="issue-meta">提出者：GPT</div>
+</div>
+
+<div class="issue-card">
+  <h4>AT. 需要量化效果证据 <span class="badge badge-partial">接受(降级)</span></h4>
+  <div class="issue-meta">提出者：Cursor</div>
+  <p>Round 10 D4 测试完成后作为 README badge。</p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="sec3">三、自评盲区分析</h2>
+
+<div class="issue-card">
+  <h4>3.1 安全维度高估（偏差 -1.7 分）</h4>
+  <p><strong>根因</strong>：犯了"实现了就以为安全了"的认知错误。</p>
+  <ul>
+    <li>实现了加密但文档写错了算法名</li>
+    <li>实现了加密但依赖缺失时静默失效</li>
+    <li>实现了 token 认证但用了非恒定时间比较</li>
+    <li>宣传了"零网络"但有三个例外路径</li>
+  </ul>
+  <p><strong>教训</strong>：安全评估必须同时检查"做了什么"、"说了什么"（文档）、"没做什么"（失效路径）、"说过头了什么"（营销口径）。</p>
+</div>
+
+<div class="issue-card">
+  <h4>3.2 架构维度高估（偏差 -1.6 分）</h4>
+  <p><strong>根因</strong>：典型的"专家盲区"——作者对 4277 行文件的心智地图完整，感觉"结构清晰"。外部评测者（模拟新贡献者）普遍感到不可维护。</p>
+  <p><strong>教训</strong>：架构评估必须从"陌生人能否在 30 分钟内理解并安全修改"的角度出发。</p>
+</div>
+
+<div class="issue-card">
+  <h4>3.3 产品定位的评测者分歧</h4>
+  <p>Opus 给 5 分（赛道拥挤），其他四家给 7.2-8.0。Opus 做了最深的竞品扫描，发现了我们不知道的竞品。</p>
+  <p><strong>教训</strong>：叙事自洽 ≠ 市场安全。需要持续监控竞品动态。</p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="sec4">四、行动计划</h2>
+
+<div class="phase-header">Phase 1: 紧急修复（1-2 天）→ v3.14.0</div>
+<div class="phase-body">
+<table>
+  <tr><th>#</th><th>任务</th><th>问题</th><th>复杂度</th></tr>
+  <tr><td>1</td><td>SECURITY.md: Fernet → AES-256-GCM</td><td>I</td><td>低</td></tr>
+  <tr><td>2</td><td>加密静默失效 → raise RuntimeError</td><td>J</td><td>低</td></tr>
+  <tr><td>3</td><td>SSE token → secrets.compare_digest</td><td>K</td><td>低</td></tr>
+  <tr><td>4</td><td>_apply_tool_tier 注释修正</td><td>Z</td><td>低</td></tr>
+  <tr><td>5</td><td>README FAQ 安装路径统一</td><td>AH</td><td>低</td></tr>
+  <tr><td>6</td><td>README 加 ENGRAM_TOOLS 说明</td><td>AI</td><td>低</td></tr>
+  <tr><td>7</td><td>README stale days 90 → 30</td><td>AJ</td><td>低</td></tr>
+  <tr><td>8</td><td>"100% local" 叙事精确化</td><td>M</td><td>中</td></tr>
+  <tr><td>9</td><td>"automatically" 措辞修正</td><td>AM</td><td>低</td></tr>
+  <tr><td>10</td><td>SSE 安全加固（CORS + 无 token 警告）</td><td>O</td><td>中</td></tr>
+  <tr><td>11</td><td>验证 sys 导入问题</td><td>H</td><td>低</td></tr>
+</table>
+</div>
+
+<div class="phase-header">Phase 2: core.py 拆分（3-5 天）</div>
+<div class="phase-body">
+<table>
+  <tr><th>阶段</th><th>拆出模块</th><th>预估行数</th><th>依赖</th></tr>
+  <tr><td>2a</td><td>storage.py</td><td>~200</td><td>无</td></tr>
+  <tr><td>2b</td><td>retrieval.py + conflicts.py</td><td>~400</td><td>storage</td></tr>
+  <tr><td>2c</td><td>reports.py</td><td>~500</td><td>storage</td></tr>
+  <tr><td>2d</td><td>reconcile.py</td><td>~400</td><td>storage</td></tr>
+  <tr><td>2e</td><td>context.py</td><td>~200</td><td>retrieval, storage</td></tr>
+  <tr><td>2f</td><td>compat.py</td><td>~300</td><td>storage</td></tr>
+</table>
+<p>伴随完成：print→logging / schema 版本比较 / PBKDF2 600k 升级</p>
+</div>
+
+<div class="phase-header">Phase 3: MCP 加固 + 测试补全（3-5 天）</div>
+<div class="phase-body">
+<table>
+  <tr><th>#</th><th>任务</th><th>问题</th></tr>
+  <tr><td>1</td><td>test_mcp_tools.py: Tier-1 全部 + Tier-2 高频</td><td>AA</td></tr>
+  <tr><td>2</td><td>test_mcp_e2e.py: stdio 冒烟测试</td><td>AB</td></tr>
+  <tr><td>3</td><td>test_crypto.py 扩展到 20+</td><td>AE</td></tr>
+  <tr><td>4</td><td>*_json 参数结构化（Tier-1 先行）</td><td>S</td></tr>
+  <tr><td>5</td><td>返回值半结构化</td><td>T</td></tr>
+  <tr><td>6</td><td>路径参数校验</td><td>N</td></tr>
+  <tr><td>7</td><td>覆盖率报告</td><td>AC</td></tr>
+</table>
+</div>
+
+<div class="phase-header">Phase 4: 产品与文档（2-3 天）</div>
+<div class="phase-body">
+<table>
+  <tr><th>#</th><th>任务</th><th>问题</th></tr>
+  <tr><td>1</td><td>录制 60 秒跨工具 demo GIF</td><td>AP</td></tr>
+  <tr><td>2</td><td>README ICP 收窄</td><td>AQ</td></tr>
+  <tr><td>3</td><td>"身份层"可检验定义</td><td>AS</td></tr>
+  <tr><td>4</td><td>竞品对比加入 OMEGA 等</td><td>AN</td></tr>
+  <tr><td>5</td><td>piia-engram 品牌解释</td><td>AR</td></tr>
+  <tr><td>6</td><td>docs/architecture.md</td><td>AK</td></tr>
+</table>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="sec5">五、决策记录</h2>
+
+<ol>
+  <li><strong>core.py 拆分为 8 个模块</strong> — 全票一致，最高优先级</li>
+  <li><strong>不引入 Pydantic</strong> — 避免增加核心依赖</li>
+  <li><strong>不引入 Argon2</strong> — PBKDF2 600k 足够，避免新依赖</li>
+  <li><strong>不大幅合并 MCP 工具</strong> — Tier-1/Tier-2 分层已解决核心问题</li>
+  <li><strong>不加向量检索</strong> — 保持轻量级定位，预留 hook 接口</li>
+  <li><strong>不迁移 PyPI 包名</strong> — 短期解释清楚，长期再评估</li>
+  <li><strong>质量评估双轨制</strong> — 每个里程碑版本自评 + 外部评测</li>
+</ol>
+
+<!-- ================================================================ -->
+<h2 id="sec6">六、附录：各评测者特点与可信度</h2>
+
+<table>
+  <tr><th>评测者</th><th>评测方式</th><th>特点</th><th>最有价值发现</th></tr>
+  <tr><td>Cursor 2.5</td><td>静态阅读</td><td>最友好</td><td>generate_context 副作用</td></tr>
+  <tr><td>Opus 4.7</td><td><strong>clone + 跑测试 + 覆盖率</strong></td><td>最严格</td><td>OMEGA 竞品、38% 覆盖率、timing attack</td></tr>
+  <tr><td>Codex 5.5</td><td>clone + 跑测试</td><td>最实操</td><td>拆分顺序、MCP 契约文档</td></tr>
+  <tr><td>GPT Pro</td><td>静态 + MCP 规范</td><td>最合规</td><td>MCP Resources、sys bug、KDF 参数</td></tr>
+  <tr><td>DeepSeek</td><td>静态阅读</td><td>最关注安全</td><td>加密静默失效、CORS 风险</td></tr>
+</table>
+
+<div class="callout callout-success">
+  <strong>可信度加权</strong>：Opus 和 Codex 实际运行了代码，发现比静态阅读更精准。建议未来评测优先选择能执行代码的评测者。
+</div>
+
+<div class="footer">
+  Engram v3.13.2 里程碑评估报告 | 2026-05-22<br>
+  由内部 AI 助手（Claude Opus 4.6）基于 5 家外部 AI 评测结果整合编写
+</div>
+
+</body>
+</html>

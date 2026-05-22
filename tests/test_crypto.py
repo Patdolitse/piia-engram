@@ -78,3 +78,14 @@ class TestEncryptionEngine:
             pytest.skip("cryptography not installed")
         engine = EncryptionEngine(secret="test")
         assert engine.encrypt("") == ""
+
+    def test_secret_without_crypto_raises(self):
+        """Setting secret without cryptography package must raise RuntimeError."""
+        import engram_core.crypto as crypto_mod
+        original = crypto_mod.HAS_CRYPTO
+        try:
+            crypto_mod.HAS_CRYPTO = False
+            with pytest.raises(RuntimeError, match="cryptography.*not installed"):
+                crypto_mod.EncryptionEngine(secret="test-secret")
+        finally:
+            crypto_mod.HAS_CRYPTO = original

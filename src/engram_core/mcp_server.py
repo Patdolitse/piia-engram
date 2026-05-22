@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 from typing import Optional
@@ -80,7 +81,7 @@ mcp = FastMCP(
 
 
 def _apply_tool_tier() -> None:
-    """Keep all tools by default; allow ENGRAM_TOOLS=core to expose Tier-1 only."""
+    """Remove non-Tier-1 tools when ENGRAM_TOOLS=core (the default)."""
     if TOOL_TIER != "core":
         return
 
@@ -135,7 +136,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         auth_header = request.headers.get("authorization", "")
-        if not auth_header.startswith("Bearer ") or auth_header[7:] != self.token:
+        if not auth_header.startswith("Bearer ") or not secrets.compare_digest(auth_header[7:], self.token):
             return JSONResponse(
                 {"error": "Unauthorized. Set ENGRAM_AUTH_TOKEN."},
                 status_code=401,
@@ -1246,7 +1247,6 @@ if __name__ == "__main__":
         _mem = _engram.reconcile_memories()
         _cfg = _engram.reconcile_ai_configs()
         if _mem["imported"] or _cfg["imported"]:
-            import sys as _sys
             _msgs = []
             if _mem["imported"]:
                 _msgs.append(f"memories={_mem['imported']}")
@@ -1254,10 +1254,10 @@ if __name__ == "__main__":
                 _msgs.append(f"configs={_cfg['imported']}")
             print(
                 f"[engram] startup sync: {', '.join(_msgs)}",
-                file=_sys.stderr,
+                file=sys.stderr,
             )
     except Exception as exc:
-        print(f"[engram] startup sync failed: {exc}", file=_sys.stderr)
+        print(f"[engram] startup sync failed: {exc}", file=sys.stderr)
 
     if args.transport == "sse":
         token = os.environ.get("ENGRAM_AUTH_TOKEN", "").strip()
@@ -1272,10 +1272,28 @@ if __name__ == "__main__":
         mcp.settings.host = args.host
         mcp.settings.port = args.port
 
+        if args.host == "0.0.0.0":
+            print(
+                "WARNING: Binding to 0.0.0.0 exposes Engram to the network. "
+                "Use HTTPS (nginx/caddy) in production.",
+                file=sys.stderr,
+            )
+
+        allowed_origins = os.environ.get("ENGRAM_CORS_ORIGINS", "").strip()
+
         print(f"Engram MCP server (SSE) on http://{args.host}:{args.port}/sse")
 
         starlette_app = mcp.sse_app()
         starlette_app.add_middleware(TokenAuthMiddleware, token=token)
+
+        if allowed_origins:
+            from starlette.middleware.cors import CORSMiddleware
+            starlette_app.add_middleware(
+                CORSMiddleware,
+                allow_origins=[o.strip() for o in allowed_origins.split(",")],
+                allow_methods=["GET", "POST"],
+                allow_headers=["Authorization"],
+            )
 
         import uvicorn
         uvicorn.run(starlette_app, host=args.host, port=args.port)

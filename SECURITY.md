@@ -30,8 +30,8 @@ We will acknowledge receipt within **48 hours** and aim to release a fix within 
 
 Engram is designed with security in mind:
 
-- **100% local** — All data stays on the user's machine. No cloud, no telemetry, no external calls.
-- **Encryption** — Sensitive profile fields (email, phone, location, etc.) are encrypted at rest using Fernet symmetric encryption.
+- **Local-first** — All identity and knowledge data stays on the user's machine. No telemetry, no cloud sync. The optional `read_web_content` tool makes outbound HTTP to a local Reader service when explicitly invoked; core tools make no network requests.
+- **Encryption** — Sensitive profile fields (email, phone, location, etc.) are encrypted at rest using AES-256-GCM with PBKDF2-SHA256 key derivation. Requires `pip install piia-engram[secure]` and setting `ENGRAM_SECRET`.
 - **Trust boundaries** — Users can restrict which profile fields are exposed to AI tools.
 - **HTML escaping** — All user-controlled data in generated HTML (review page) is escaped to prevent XSS.
 - **No eval / no exec** — No dynamic code execution from user data.

@@ -4,6 +4,35 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.14.0] - 2026-05-22
+
+### Breaking
+- **Encryption fail-fast**: `EncryptionEngine` now raises `RuntimeError` when `ENGRAM_SECRET` is set but `cryptography` package is missing. Previously it silently disabled encryption, risking plaintext storage.
+
+### Security
+- **Timing attack fix**: SSE token comparison changed from `==` to `secrets.compare_digest`
+- **SECURITY.md corrected**: "Fernet" → "AES-256-GCM" to match actual implementation
+- **SSE hardening**: `0.0.0.0` bind emits HTTPS warning; new `ENGRAM_CORS_ORIGINS` env var for cross-origin restriction
+- **sys import fix**: `core.py` was missing top-level `import sys` — error handlers would have raised `NameError` instead of logging
+
+### Fixed
+- `_apply_tool_tier` docstring corrected (core is the default, not all)
+- Removed redundant `import sys as _sys` in mcp_server.py startup sync block
+- README: "100% local" → "local-first" (honest about `read_web_content` network path)
+- README: "automatically" → "one tool call away" (knowledge inheritance requires explicit call)
+- README: stale knowledge days 90 → 30 (matches `STALE_KNOWLEDGE_DAYS` constant)
+- README FAQ: installation path unified to `pip install piia-engram && engram setup`
+- README: added `ENGRAM_TOOLS=all` config example with JSON snippet
+- README: added `ENGRAM_CORS_ORIGINS` to SSE security notes
+- All fixes applied to both English and Chinese README
+
+### Tests
+- 328 passed (up from 327 in v3.13.2)
+- New: `test_secret_without_crypto_raises` — verifies fail-fast on missing cryptography
+
+### Docs
+- v3.13.2 milestone evaluation report (`docs/milestone_review_v3.13.2.md` + `.html`)
+
 ## [3.13.2] - 2026-05-22
 
 ### Tests

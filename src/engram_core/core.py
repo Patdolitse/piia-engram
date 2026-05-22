@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -3888,7 +3889,6 @@ def extract_knowledge(
         if match:
             return json.loads(match.group())
     except Exception as exc:
-        import sys
         print(f"[engram] extract_knowledge LLM call failed: {exc}", file=sys.stderr)
     return None
 

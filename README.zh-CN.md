@@ -8,7 +8,7 @@
 
 **一个本地身份层，让每个 AI 工具都从同一个起点认识你。**
 
-`一次写入` · `所有 AI 共享读取` · `100% 本地`
+`一次写入` · `所有 AI 共享读取` · `本地优先`
 
 [中文](README.zh-CN.md) | [ENGLISH](README.md)
 
@@ -21,7 +21,7 @@
 
 ---
 
-> **TL;DR：** Engram 是一个本地身份层——不是会话记忆，不是 Agent 框架，不是云端数据库。它把你是谁（画像、偏好、经验教训、关键决策）以本地 JSON 文件存储在你自己的电脑上，通过 MCP 让每个 AI 工具读取同一个你。一次写入，所有 AI 共享读取。100% 本地，Apache 2.0。
+> **TL;DR：** Engram 是一个本地身份层——不是会话记忆，不是 Agent 框架，不是云端数据库。它把你是谁（画像、偏好、经验教训、关键决策）以本地 JSON 文件存储在你自己的电脑上，通过 MCP 让每个 AI 工具读取同一个你。一次写入，所有 AI 共享读取。本地优先，Apache 2.0。
 
 ---
 
@@ -70,16 +70,16 @@ Engram 为同时使用多个 AI 编程工具、厌倦重复自我介绍的开发
 大多数记忆工具是被动的：你放进去，它给你取出来。Engram 还是主动的。
 
 **跨项目知识继承**  
-描述一个新项目，`get_knowledge_inheritance` 从你所有过往工作中自动提炼最相关的教训和决策，给你一份定制化的起步知识包。第十个项目从前九个的积累中受益——自动完成。
+描述一个新项目，`get_knowledge_inheritance` 从你所有过往工作中自动提炼最相关的教训和决策，给你一份定制化的起步知识包。第十个项目从前九个的积累中受益——一个工具调用即可获取。
 
 **被动知识捕获**  
-把一次会话的摘要粘贴给 `extract_session_insights`，Engram 自动提取并存储其中的教训和决策。不需要手动记笔记，知识在你不刻意思考的时候也在积累。
+把一次会话的摘要粘贴给 `extract_session_insights`，Engram 提取并存储其中的教训和决策。不需要手动记笔记，知识通过日常 AI 对话自然积累。
 
 **不支持 MCP 的工具也能用**  
 ChatGPT、Gemini、Kimi 没有 MCP 接口。`get_identity_card` 导出一张即粘即用的 Markdown 身份卡，你的 AI 上下文连不能直接连接的工具也能用上。
 
 **知识健康与发现**  
-`get_knowledge_overview` 找出久未复查的知识（90 天以上），给出健康度评分，提示哪些内容值得重新确认。`find_similar_knowledge` 找出重叠条目方便合并，`link_knowledge` 把相关教训和决策串联成可导航的知识网络。
+`get_knowledge_overview` 找出久未复查的知识（30 天以上），给出健康度评分，提示哪些内容值得重新确认。`find_similar_knowledge` 找出重叠条目方便合并，`link_knowledge` 把相关教训和决策串联成可导航的知识网络。
 
 ## 快速开始
 
@@ -181,6 +181,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 - 生产环境务必使用 HTTPS，放在 nginx/caddy 反向代理后面并配置 TLS。
 - 认证 token 保护你的身份数据，请妥善保管。
 - 默认绑定 `127.0.0.1`，仅本地可访问；`0.0.0.0` 仅在反向代理后使用。
+- 设置 `ENGRAM_CORS_ORIGINS` 限制跨域访问（如 `https://your-domain.com`）。
 - 数据始终在你自己的服务器上，不经过任何第三方云。
 
 ## 它解决什么
@@ -352,12 +353,10 @@ Engram 是一个本地优先的 AI 身份层——不是会话记忆，不是 Ag
 
 **如何安装 Engram？**
 ```bash
-git clone https://github.com/Patdolitse/engram.git
 pip install piia-engram
-# 或从源码安装：cd engram && pip install -e .
-python demos/setup_engram.py
+engram setup
 ```
-配置 MCP 后重启 AI 工具，AI 会在每次新对话开始时自动调用 `get_user_context` 认识你。
+安装向导会自动检测 AI 工具并配置 MCP。设置完成后重启 AI 工具，AI 会在每次新对话开始时调用 `get_user_context` 认识你。
 
 **升级后 AI 工具显示"MCP server disconnected"，怎么解决？**
 在终端运行 `engram doctor --fix`，然后重启 AI 工具。该命令会扫描所有已知 MCP 配置（Claude Code、Cursor、Claude Desktop），移除旧版 server 条目并修复失效路径，一步完成。Engram 在下次 server 启动时也会自动执行此迁移，大多数用户不会遇到这个问题。

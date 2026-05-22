@@ -8,7 +8,7 @@
 
 **A local identity layer that makes every AI tool start from the same understanding of who you are.**
 
-`Claude Code` | `Codex` | `Cursor` | `MCP compatible` | `100% local`
+`Claude Code` | `Codex` | `Cursor` | `MCP compatible` | `local-first`
 
 [ENGLISH](README.md) | [中文](README.zh-CN.md)
 
@@ -21,7 +21,7 @@
 
 ---
 
-> **TL;DR:** Engram is a local identity layer for AI tools — not session memory, not an agent framework, not a hosted database. It stores who you are (profile, preferences, lessons learned, key decisions) as local JSON files on your machine, and exposes them through MCP so every AI tool reads the same you. One write, every AI reads. 100% local, Apache 2.0.
+> **TL;DR:** Engram is a local identity layer for AI tools — not session memory, not an agent framework, not a hosted database. It stores who you are (profile, preferences, lessons learned, key decisions) as local JSON files on your machine, and exposes them through MCP so every AI tool reads the same you. One write, every AI reads. Local-first, Apache 2.0.
 
 ---
 
@@ -98,16 +98,16 @@ All data lives under `~/.engram/` as plain JSON and Markdown files you can open,
 Most memory tools are passive — you put things in, they give them back. Engram is also active.
 
 **Knowledge inheritance across projects**  
-Describe a new project in plain text. `get_knowledge_inheritance` returns a curated starter pack of the most relevant lessons and decisions from everything you have ever worked on. Your tenth project benefits from all nine before it — automatically.
+Describe a new project in plain text. `get_knowledge_inheritance` returns a curated starter pack of the most relevant lessons and decisions from everything you have ever worked on. Your tenth project benefits from all nine before it — one tool call away.
 
 **Passive knowledge capture**  
-Paste a session summary into `extract_session_insights` and Engram automatically extracts and stores the lessons and decisions. No manual note-taking. Knowledge accumulates even when you are not thinking about it.
+Paste a session summary into `extract_session_insights` and Engram extracts and stores the lessons and decisions. No manual note-taking. Knowledge accumulates through normal AI conversations.
 
 **Works with tools that do not support MCP**  
 ChatGPT, Gemini, Kimi — `get_identity_card` exports a ready-to-paste Markdown identity card. Your context travels even to tools that cannot connect directly.
 
 **Knowledge health and discovery**  
-`get_knowledge_overview` surfaces stale lessons (not reviewed in 90+ days), gives a health score, and flags gaps worth revisiting. `find_similar_knowledge` finds overlapping items to merge. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
+`get_knowledge_overview` surfaces stale lessons (not reviewed in 30+ days), gives a health score, and flags gaps worth revisiting. `find_similar_knowledge` finds overlapping items to merge. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
 
 ## Quick Start
 
@@ -209,11 +209,24 @@ ENGRAM_AUTH_TOKEN=abc123... python -m engram_core.mcp_server --transport sse --h
 - Always use HTTPS in production, behind nginx or caddy with TLS.
 - The auth token protects your identity data. Keep it secret.
 - Default bind is `127.0.0.1` for localhost only. Use `0.0.0.0` only behind a reverse proxy.
+- Set `ENGRAM_CORS_ORIGINS` to restrict cross-origin access (e.g. `https://your-domain.com`).
 - Data stays on your server and never touches third-party clouds.
 
 ## MCP Tools
 
-Engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools are loaded to keep the AI's context clean. Set `ENGRAM_TOOLS=all` in your MCP config `env` to unlock all 43 tools.
+Engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 43 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "python",
+      "args": ["-m", "engram_core.mcp_server"],
+      "env": { "ENGRAM_TOOLS": "all" }
+    }
+  }
+}
+```
 
 ### Tier-1 Core (10 tools — daily workflow)
 
@@ -340,12 +353,10 @@ Engram works with any MCP-compatible AI tool: Claude Code, OpenAI Codex, Cursor,
 
 **How do I install Engram?**
 ```bash
-git clone https://github.com/Patdolitse/engram.git
 pip install piia-engram
-# Or from source: cd engram && pip install -e .
-python demos/setup_engram.py
+engram setup
 ```
-Then add the MCP config and restart your AI tool. The AI will call `get_user_context` automatically at the start of each session.
+The setup wizard detects your AI tools and configures MCP automatically. Restart your AI tool after setup. The AI will call `get_user_context` at the start of each session.
 
 **After upgrading, my AI tool shows "MCP server disconnected". How do I fix it?**
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files (Claude Code, Cursor, Claude Desktop), removes outdated server entries, and repairs broken paths in one step. Engram also runs this migration automatically the next time its server starts, so most users will never see this message.
