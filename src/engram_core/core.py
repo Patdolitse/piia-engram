@@ -24,6 +24,8 @@ SCHEMA_VERSION = "2.0"
 _ENGRAM_DIR_NAME = ".engram"
 _LEGACY_DIR_NAME = ".piia"
 SIMILARITY_THRESHOLD = 0.55
+SEARCH_RELEVANCE_THRESHOLD = 0.3   # minimum score for search results
+STALE_KNOWLEDGE_DAYS = 30          # days without access before knowledge is "stale"
 CONFLICT_Q_THRESHOLD = 0.25   # question similarity for potential decision conflict
 CONFLICT_C_CEILING = 0.80     # choice similarity ceiling — above means same choice, not conflict
 
@@ -803,7 +805,7 @@ class Engram:
                 if lesson.get("status") != "active":
                     continue
                 score = self._score_item(lesson, terms)
-                if score >= 0.3:
+                if score >= SEARCH_RELEVANCE_THRESHOLD:
                     item = dict(lesson)
                     item["_score"] = round(score, 3)
                     results["lessons"].append(item)
@@ -820,7 +822,7 @@ class Engram:
                 if decision.get("status") != "active":
                     continue
                 score = self._score_item(decision, terms)
-                if score >= 0.3:
+                if score >= SEARCH_RELEVANCE_THRESHOLD:
                     item = dict(decision)
                     item["_score"] = round(score, 3)
                     results["decisions"].append(item)
@@ -2062,7 +2064,7 @@ class Engram:
                 sections["project"] = "\n".join(ph)
 
         # Stale warning
-        stale = self.get_stale_knowledge(days=30, limit=None)
+        stale = self.get_stale_knowledge(days=STALE_KNOWLEDGE_DAYS, limit=None)
         stale_count = len(stale["lessons"]) + len(stale["decisions"])
         if stale_count > 5:
             sections["stale"] = (
@@ -3246,7 +3248,7 @@ function copyResult() {{
         if outdated_lessons:
             warnings.append(f"{len(outdated_lessons)} 条教训已标记过时，可考虑清理")
 
-        review_cutoff = datetime.now() - timedelta(days=30)
+        review_cutoff = datetime.now() - timedelta(days=STALE_KNOWLEDGE_DAYS)
         archive_cutoff = datetime.now() - timedelta(days=60)
         lifecycle_items = [
             ("lesson", item)
@@ -3413,7 +3415,7 @@ function copyResult() {{
             key=lambda item: item.get("access_count", 0),
             reverse=True,
         )[:5]
-        stale = self.get_stale_knowledge(days=30)
+        stale = self.get_stale_knowledge(days=STALE_KNOWLEDGE_DAYS)
 
         return {
             "total_lessons": len(active_lessons),
@@ -3463,7 +3465,7 @@ function copyResult() {{
         active_lessons = [l for l in lessons if l.get("status") == "active"]
         active_decisions = [d for d in decisions if d.get("status") == "active"]
         domains = sorted({l.get("domain") for l in active_lessons if l.get("domain")})
-        stale = self.get_stale_knowledge(days=30)
+        stale = self.get_stale_knowledge(days=STALE_KNOWLEDGE_DAYS)
         title_by_id = {
             **{lesson.get("id", ""): lesson.get("summary", "") for lesson in lessons},
             **{
