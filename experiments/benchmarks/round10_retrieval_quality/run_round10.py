@@ -16,10 +16,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Ensure src is on path
-_src = Path(__file__).resolve().parent.parent.parent.parent / "src"
-if str(_src) not in sys.path:
-    sys.path.insert(0, str(_src))
+# Ensure src and repo root are on path
+_repo = Path(__file__).resolve().parent.parent.parent.parent
+_src = _repo / "src"
+for _p in [str(_src), str(_repo)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 ROUND10_DIR = Path(__file__).resolve().parent
 
@@ -75,8 +77,10 @@ def run_t1_group() -> dict[str, Any]:
 
 
 def run_t2_group() -> dict[str, Any]:
-    """Run LLM evaluation tests (D3_llm, D4)."""
-    from experiments.benchmarks.round10_retrieval_quality.llm_judge import DeepSeekJudge
+    """Run LLM evaluation tests (D3_llm, D4) using DeepSeek V4 Pro."""
+    from experiments.benchmarks.round10_retrieval_quality.llm_judge import (
+        DeepSeekJudge, MODEL_JUDGE,
+    )
     from experiments.benchmarks.round10_retrieval_quality.test_d3_recall_quality import run_d3_llm
     from experiments.benchmarks.round10_retrieval_quality.test_d4_identity_fidelity import run_d4
 
@@ -84,7 +88,10 @@ def run_t2_group() -> dict[str, Any]:
     if raw_path.exists():
         raw_path.unlink()
 
-    judge = DeepSeekJudge(raw_log_path=raw_path, runs_per_scenario=3)
+    judge = DeepSeekJudge(
+        raw_log_path=raw_path, runs_per_scenario=3, model=MODEL_JUDGE,
+    )
+    print(f"  Judge model: {judge.model}")
 
     dimensions = {}
     all_results = []
