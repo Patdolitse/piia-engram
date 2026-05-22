@@ -13,8 +13,13 @@ src/engram_core/
     setup_wizard.py  # Interactive setup CLI
     crypto.py        # AES-256-GCM encryption for sensitive profile fields
 tests/
-    test_core.py     # Unit tests (core engine)
-    test_reconcile.py# Auto-sync, staging, conflict detection tests
+    test_core.py      # Unit tests: core engine (142 tests)
+    test_reconcile.py # Auto-sync, staging, conflict detection (56 tests)
+    test_packaging.py # Package metadata, CI, MCP tool verification (22 tests)
+    test_setup_wizard.py # Setup wizard + doctor diagnostics (15 tests)
+    test_stats.py     # GitHub/PyPI statistics (11 tests)
+    test_crypto.py    # AES-256-GCM encryption (7 tests)
+    test_audit.py     # Audit logging (4 tests)
 experiments/
     benchmarks/      # Retrieval/injection quality benchmarks (Round 10)
 ```
@@ -41,7 +46,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **242+ tests, 0 failures**. All PRs must maintain this.
+Current baseline: **257+ tests, 0 failures**. All PRs must maintain this.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash
@@ -86,7 +91,7 @@ security: enforce trust boundaries in identity card export
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/your-feature`
 3. Make your changes with tests
-4. Run the full test suite — all 242+ tests must pass
+4. Run the full test suite — all 257+ tests must pass
 5. Open a PR explaining **what** changed and **why**
 
 PR titles should be under 70 characters. Use the description for details.
