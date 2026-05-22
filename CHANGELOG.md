@@ -4,6 +4,23 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.12.3] - 2026-05-22
+
+### Fixed
+- **JSON corruption logging**: `_read_json()` now warns to stderr on parse failure instead of silently returning empty data
+- Last 3 silent exception blocks (stats.py, crypto.py) now log to stderr — **zero silent exceptions** across all source files
+
+### Improved
+- Extracted `SEARCH_RELEVANCE_THRESHOLD` and `STALE_KNOWLEDGE_DAYS` as module constants (was hardcoded in 6 places)
+- CI workflow: added pip caching for faster runs
+- README tool tables now list all 43 tools (was missing `apply_review` and `request_outline_review`)
+- Replaced `__import__('sys')` hacks with proper imports
+
+### Tests
+- 257 passed (up from 242 in v3.12.2)
+- New: 12 tests for staging/review/rarity workflow (classify_rarity, evaluate_tiers, apply_review, promote_knowledge)
+- New: 3 tests for export_all/import_all error handling
+
 ## [3.12.2] - 2026-05-22
 
 ### Added
