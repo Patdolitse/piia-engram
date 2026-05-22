@@ -320,15 +320,35 @@ Engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools are loa
 
 ## Comparison
 
-| Feature | Engram | Claude Memory | Manual `CLAUDE.md` | Mem0 |
-|---|---|---|---|---|
-| Cross-tool sharing | Yes | Claude only | Tool-specific | Yes |
-| Local storage | Yes | Cloud | Local | Cloud / hosted |
-| Directly editable data | JSON / Markdown | Not visible | Yes | API-based |
-| MCP standard | Yes | Not applicable | Not applicable | Yes |
-| Portable backup | Copy files or export JSON | Limited | Copy files | API export |
-| Model-agnostic | Yes | Claude-focused | Depends on the tool | Yes |
-| Price | Free and open source | Included in subscription | Free | Free / paid tiers |
+| Feature | Engram | Claude Memory | Manual `CLAUDE.md` | Mem0 | Letta (MemGPT) |
+|---|---|---|---|---|---|
+| Primary purpose | User identity across tools | Per-conversation memory | Per-project notes | Agent vector memory | Agent self-editing memory |
+| Cross-tool by design | ✅ MCP-native (45 tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
+| Storage | Local JSON in `~/.engram/` | Cloud | Local | Vector DB + Mem0 Cloud | Postgres or Letta Cloud |
+| Local-first by default | ✅ | ❌ | ✅ | ⚠ Cloud is the default | ⚠ Cloud is the default |
+| Encryption at rest | ✅ AES-256-GCM, PBKDF2 600k (opt-in) | depends on Cloud | ❌ plain Markdown | depends on store config | depends on Postgres config |
+| Knowledge tiers (user gate) | ✅ staging → verified | ❌ | ❌ | ❌ | ❌ |
+| Conflict detection | ✅ | ❌ | ❌ | ❌ | ❌ |
+| MCP-native | ✅ | n/a | n/a | ⚠ third-party | ⚠ third-party |
+| Price | Free, Apache 2.0 | Subscription-bundled | Free | Free / Cloud tiers | Free / Cloud tiers |
+
+📊 **For the full side-by-side**, including when to choose a competitor over Engram, see [`docs/comparison.md`](docs/comparison.md).
+
+## By the numbers
+
+These are factual claims about Engram itself, refreshed each minor release.
+
+| | v3.14.2 (2026-05-22) |
+|---|---|
+| MCP tools exposed | **45** (10 Tier-1 default, 35 opt-in via `ENGRAM_TOOLS=all`) |
+| Tests passing | **386** (unit + integration) |
+| Code coverage | **78%** total; 8/12 modules ≥85% ([baseline](docs/coverage_baseline_v3.14.2.md)) |
+| Lines in `core.py` | **1083** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
+| PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
+| Encryption | AES-256-GCM, per-value random salt + nonce |
+| Cold-start time | < 100 ms typical (local JSON, no network) |
+| Network calls from core | **0** — except optional `read_web_content` |
+| External AI evaluations | 3 (GPT-5 + DeepSeek-V3 + GPT-5-mini), see [`docs/milestone_review_v3.13.2.md`](docs/milestone_review_v3.13.2.md) |
 
 ## Built With
 
@@ -350,6 +370,9 @@ Those tools store task context and session history for AI agents — what happen
 
 **Which AI tools does Engram support?**
 Engram works with any MCP-compatible AI tool: Claude Code, OpenAI Codex, Cursor, Claude Desktop, and others. For tools without MCP support (ChatGPT, Gemini, Kimi), you can export a Markdown identity card and paste it in manually.
+
+**Why is the PyPI package called `piia-engram` if the product is just "Engram"?**
+The project started as part of a larger personal-AI initiative called **PIIA** (Personal Intelligence Identity Asset) — Engram is the first and currently the only released tool in that line, so it kept the `piia-` prefix on PyPI. Day-to-day the product is just **Engram** — that's the CLI command (`engram setup`, `engram doctor`), the import name (`import engram_core`), and the MCP server name (`engram`). The `piia-` prefix only shows up at install time and may be retired in a future major version.
 
 **How do I install Engram?**
 ```bash

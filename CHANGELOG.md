@@ -4,6 +4,17 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.14.3] - 2026-05-22
+
+### Docs
+- New `docs/architecture.md` — 30-second mental model diagram, complete module map (post v3.14.1 refactor), three canonical data flows (cold start / capture / review), storage layout, MCP surface, conventions, "where to add things" matrix
+- New `docs/comparison.md` — factual side-by-side with Letta, Mem0, Cline memories, Claude Code memory; explicit "choose someone else when..." section; identity-layer vs memory-layer architectural framing
+- README upgrade: comparison table expanded to 5 competitors with clearer dimensions (purpose, locality, encryption, knowledge tiers, conflict detection); new "By the numbers" section with v3.14.2 quantitative claims (45 MCP tools, 386 tests, 78% coverage, PBKDF2 600k, < 100ms cold start, 0 network calls in core); both English and Chinese
+- README FAQ: explanation of the `piia-engram` PyPI name vs the "Engram" product brand (English + Chinese)
+
+### Tests
+- Unchanged — 386 passed (no code changes in this release)
+
 ## [3.14.2] - 2026-05-22
 
 ### Tests
