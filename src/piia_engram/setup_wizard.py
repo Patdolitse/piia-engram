@@ -672,6 +672,130 @@ def _get_engram_class():
     return Engram
 
 
+# ---------------------------------------------------------------------------
+# Cold-start: environment probing
+# ---------------------------------------------------------------------------
+
+def _probe_environment(cwd: Path | None = None) -> dict:
+    """Silently extract identity signals from the user's dev environment.
+
+    Returns a dict with discovered signals:
+      name, email, language_hint, tech_stack_hint, commit_style
+    All fields are optional — any failure is silently ignored.
+    """
+    signals: dict = {}
+    current_dir = cwd or Path.cwd()
+
+    # 1. Git config → name, email
+    for key, field in [("user.name", "name"), ("user.email", "email")]:
+        try:
+            r = subprocess.run(
+                ["git", "config", "--global", key],
+                capture_output=True, timeout=5,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                signals[field] = r.stdout.strip().decode("utf-8", errors="replace")
+        except Exception:
+            pass
+
+    # 2. Git log → language hint, commit style
+    try:
+        r = subprocess.run(
+            ["git", "log", "--format=%s", "-50"],
+            capture_output=True, timeout=5,
+            cwd=str(current_dir),
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            msgs = r.stdout.strip().decode("utf-8", errors="replace").splitlines()
+            # Language detection: if >40% messages contain CJK → zh
+            cjk_count = sum(1 for m in msgs if any('\u4e00' <= c <= '\u9fff' for c in m))
+            if msgs and cjk_count / len(msgs) > 0.4:
+                signals["language_hint"] = "中文"
+            # Conventional commits detection
+            conventional = sum(1 for m in msgs if re.match(r'^(feat|fix|chore|docs|refactor|test|ci|build)[:(]', m))
+            if msgs and conventional / len(msgs) > 0.3:
+                signals["commit_style"] = "conventional commits"
+    except Exception:
+        pass
+
+    # 3. Project file detection → tech stack hint
+    tech_hints: list[str] = []
+    detectors = [
+        ("pyproject.toml", "Python"), ("setup.py", "Python"),
+        ("requirements.txt", "Python"), ("Pipfile", "Python"),
+        ("package.json", "TypeScript / JavaScript"),
+        ("tsconfig.json", "TypeScript"),
+        ("Cargo.toml", "Rust"), ("go.mod", "Go"),
+        ("pom.xml", "Java"), ("build.gradle", "Java"),
+        ("Gemfile", "Ruby"),
+    ]
+    for filename, tech in detectors:
+        if (current_dir / filename).exists() and tech not in tech_hints:
+            tech_hints.append(tech)
+    if tech_hints:
+        signals["tech_stack_hint"] = " + ".join(tech_hints[:3])
+
+    return signals
+
+
+# ---------------------------------------------------------------------------
+# Cold-start: seed templates
+# ---------------------------------------------------------------------------
+
+_SEED_TEMPLATES: dict[str, list[dict]] = {
+    "Python": [
+        {"summary": "Pin dependency versions in pyproject.toml or requirements.txt", "domain": "python"},
+        {"summary": "Use virtual environments (venv/conda) to isolate project dependencies", "domain": "python"},
+    ],
+    "TypeScript / JavaScript": [
+        {"summary": "Enable strict mode in tsconfig.json for better type safety", "domain": "javascript"},
+        {"summary": "Prefer named exports over default exports for refactoring ease", "domain": "javascript"},
+    ],
+    "TypeScript": [
+        {"summary": "Enable strict mode in tsconfig.json for better type safety", "domain": "javascript"},
+    ],
+    "Go": [
+        {"summary": "Always check returned errors — never use blank identifier for errors", "domain": "go"},
+    ],
+    "Rust": [
+        {"summary": "Prefer Result over unwrap in production code paths", "domain": "rust"},
+    ],
+    "Java": [
+        {"summary": "Use try-with-resources for auto-closeable objects", "domain": "java"},
+    ],
+    "_universal": [
+        {"summary": "Write commit messages explaining why, not just what", "domain": "git"},
+        {"summary": "Add comments for non-obvious business logic, not for self-documenting code", "domain": "best-practices"},
+        {"summary": "Test edge cases, not just happy paths", "domain": "testing"},
+    ],
+}
+
+
+def _apply_seed_templates(engram, tech_stack: str) -> int:
+    """Inject starter lessons based on detected tech stack. Returns count added."""
+    templates: list[dict] = list(_SEED_TEMPLATES.get("_universal", []))
+
+    # Match tech stack keywords
+    for key, items in _SEED_TEMPLATES.items():
+        if key.startswith("_"):
+            continue
+        if key.lower() in tech_stack.lower():
+            templates.extend(items)
+
+    added = 0
+    for t in templates:
+        try:
+            result = engram.add_lesson(
+                t["summary"], domain=t["domain"],
+                source_tool="engram_setup", tier="staging",
+            )
+            if result.get("status") != "duplicate":
+                added += 1
+        except Exception:
+            pass
+    return added
+
+
 def _run_seed_knowledge_onboarding(
     data_dir: str | None = None,
     cwd: Path | None = None,
@@ -683,8 +807,53 @@ def _run_seed_knowledge_onboarding(
     engram = Engram(root=root)
     current_dir = cwd or Path.cwd()
 
+    # --- Environment probing (zero-interaction) ---
+    print(_t("  🔍 正在探测开发环境…", "  🔍 Probing dev environment…"))
+    env_signals = _probe_environment(cwd=current_dir)
+
+    probed_parts: list[str] = []
+    if env_signals.get("name"):
+        probed_parts.append(_t(f"姓名: {env_signals['name']}", f"Name: {env_signals['name']}"))
+    if env_signals.get("tech_stack_hint"):
+        probed_parts.append(_t(f"技术栈: {env_signals['tech_stack_hint']}", f"Tech: {env_signals['tech_stack_hint']}"))
+    if env_signals.get("language_hint"):
+        probed_parts.append(_t(f"语言: {env_signals['language_hint']}", f"Language: {env_signals['language_hint']}"))
+    if env_signals.get("commit_style"):
+        probed_parts.append(_t(f"提交风格: {env_signals['commit_style']}", f"Commits: {env_signals['commit_style']}"))
+
+    if probed_parts:
+        print(_t("  ✅ 自动探测到：", "  ✅ Auto-detected:"))
+        for p in probed_parts:
+            _safe_print(f"     {p}")
+        print()
+    else:
+        print(_t("  （未探测到额外信息）\n", "  (no extra signals detected)\n"))
+
+    # Auto-fill name from git config
+    if env_signals.get("name"):
+        existing_profile = engram.get_profile()
+        if not existing_profile.get("name"):
+            engram.update_profile({"name": env_signals["name"]})
+
     print(_t("Step 2/3 — 录入种子知识（输入 0 跳过）\n",
              "Step 2/3 — Seed knowledge (enter 0 to skip)\n"))
+
+    # Pre-select tech stack options: put detected stack first
+    tech_options = [
+        "Python",
+        "TypeScript / JavaScript",
+        "Go",
+        "Java",
+        "Rust",
+        "Python + TypeScript",
+    ]
+    detected_tech = env_signals.get("tech_stack_hint", "")
+    # Move detected tech to front if it matches an option
+    for i, opt in enumerate(tech_options):
+        if detected_tech and opt.lower() in detected_tech.lower():
+            tech_options.insert(0, tech_options.pop(i))
+            break
+
     role = _choice(_t("你的角色是什么？", "What is your role?"), [
         _t("全栈开发者", "Full-stack developer"),
         _t("后端开发者", "Backend developer"),
@@ -694,21 +863,23 @@ def _run_seed_knowledge_onboarding(
         _t("学生", "Student"),
     ])
     print()
-    tech_stack = _choice(_t("你常用什么编程语言/技术栈？", "Primary language / tech stack?"), [
-        "Python",
-        "TypeScript / JavaScript",
-        "Go",
-        "Java",
-        "Rust",
-        "Python + TypeScript",
-    ])
+    tech_stack = _choice(_t("你常用什么编程语言/技术栈？", "Primary language / tech stack?"), tech_options)
     print()
-    language = _choice(_t("你偏好 AI 用什么语言跟你沟通？",
-                          "Preferred language for AI communication?"), [
+
+    # Pre-select language: put detected language first
+    lang_options = [
         "中文",
         "English",
         _t("日本语", "Japanese"),
-    ])
+    ]
+    if env_signals.get("language_hint") == "中文":
+        pass  # already first
+    elif env_signals.get("language_hint"):
+        # Non-Chinese detected, move English first
+        lang_options = ["English", "中文", _t("日本语", "Japanese")]
+
+    language = _choice(_t("你偏好 AI 用什么语言跟你沟通？",
+                          "Preferred language for AI communication?"), lang_options)
 
     profile_updates: dict[str, str] = {}
     if role:
@@ -743,6 +914,17 @@ def _run_seed_knowledge_onboarding(
         result = engram.add_lesson(lesson, domain="setup", source_tool="engram_setup")
         if result.get("status") != "duplicate":
             lessons_added += 1
+
+    # --- Seed templates (auto-inject best practices) ---
+    effective_tech = tech_stack or env_signals.get("tech_stack_hint", "")
+    seed_count = 0
+    if effective_tech:
+        seed_count = _apply_seed_templates(engram, effective_tech)
+        if seed_count:
+            print(_t(f"\n  🌱 已注入 {seed_count} 条通用最佳实践（基于 {effective_tech}）",
+                     f"\n  🌱 Injected {seed_count} starter best practices (based on {effective_tech})"))
+            print(_t("     这些标记为 staging——使用 3 次后自动晋升为 verified。",
+                     "     These are marked staging — auto-promoted to verified after 3 uses."))
 
     # Step 4.5 — 智能扫描 + 分流导入
     print(_t("\n  智能导入规则文件",
@@ -802,6 +984,9 @@ def _run_seed_knowledge_onboarding(
     if total_imported > 0:
         print(_t(f"  导入：{total_imported} 条规则（{import_result['user_count']} 条身份 + {import_result['project_count']} 条项目）",
                  f"  Imported: {total_imported} rules ({import_result['user_count']} identity + {import_result['project_count']} project)"))
+    if seed_count > 0:
+        print(_t(f"  种子：{seed_count} 条最佳实践（staging 层级）",
+                 f"  Seeds: {seed_count} best practices (staging tier)"))
     print()
     print(_t("  验证方法：打开你的 AI 工具，说这句话：",
              "  To verify: open your AI tool and say:"))
@@ -840,9 +1025,21 @@ def _run_seed_knowledge_onboarding(
         except Exception:
             pass  # Non-critical — skip silently
 
+    # --- Refresh quick_context.md so all tools can read it immediately ---
+    try:
+        _e2 = Engram(root=root)
+        _e2.refresh_quick_context()
+        print(_t("  📄 quick_context.md 已刷新 — 所有 AI 工具都可以立即读取。",
+                 "  📄 quick_context.md refreshed — all AI tools can read it immediately."))
+        print()
+    except Exception:
+        pass
+
     return {
         "profile": profile_updates,
         "lessons_added": lessons_added,
+        "seed_count": seed_count,
+        "env_signals": env_signals,
         "imported_files": import_result["files"],
         "import_user_count": import_result["user_count"],
         "import_project_count": import_result["project_count"],
