@@ -17,10 +17,10 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 README = ROOT / "README.md"
 README_ZH = ROOT / "README.zh-CN.md"
-MCP_SERVER = ROOT / "src" / "engram_core" / "mcp_server.py"
+MCP_SERVER = ROOT / "src" / "piia_engram" / "mcp_server.py"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
-SETUP_WIZARD = ROOT / "src" / "engram_core" / "setup_wizard.py"
+SETUP_WIZARD = ROOT / "src" / "piia_engram" / "setup_wizard.py"
 
 CORE_MCP_TOOLS = {
     "get_user_context",
@@ -51,7 +51,7 @@ def _registered_mcp_tools(tmp_path: Path, tools_tier: str | None = None) -> list
 
     script = (
         "import json\n"
-        "import engram_core.mcp_server as server\n"
+        "import piia_engram.mcp_server as server\n"
         "print(json.dumps(sorted(server.mcp._tool_manager._tools.keys())))\n"
     )
     result = subprocess.run(
@@ -79,14 +79,14 @@ def test_required_fields():
 def test_has_scripts_entry():
     """应有 engram CLI 入口。"""
     data = _load()
-    assert data["project"].get("scripts", {}).get("engram") == "engram_core.setup_wizard:main"
+    assert data["project"].get("scripts", {}).get("engram") == "piia_engram.setup_wizard:main"
 
 
 def test_has_project_urls():
     """应有 Homepage URL。"""
     data = _load()
     urls = data["project"].get("urls", {})
-    assert urls["Homepage"] == "https://github.com/Patdolitse/engram"
+    assert urls["Homepage"] == "https://github.com/Patdolitse/piia-engram"
     assert "Repository" in urls
     assert "Bug Tracker" in urls
 

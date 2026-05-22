@@ -1,10 +1,10 @@
-"""engram_core.stats 单元测试。"""
+"""piia_engram.stats 单元测试。"""
 
 import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from engram_core.stats import _gh, _pypi_recent, log_stats, main, run_stats
+from piia_engram.stats import _gh, _pypi_recent, log_stats, main, run_stats
 
 
 # ── _gh tests ────────────────────────────────────────────────────────
@@ -16,21 +16,21 @@ def test_gh_success():
     result = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=json.dumps(payload).encode()
     )
-    with patch("engram_core.stats.subprocess.run", return_value=result):
+    with patch("piia_engram.stats.subprocess.run", return_value=result):
         assert _gh("") == payload
 
 
 def test_gh_nonzero_returncode():
     """非零退出码时返回 None。"""
     result = subprocess.CompletedProcess(args=[], returncode=1, stdout=b"")
-    with patch("engram_core.stats.subprocess.run", return_value=result):
+    with patch("piia_engram.stats.subprocess.run", return_value=result):
         assert _gh("") is None
 
 
 def test_gh_exception():
     """subprocess 异常时返回 None，不崩溃。"""
     with patch(
-        "engram_core.stats.subprocess.run",
+        "piia_engram.stats.subprocess.run",
         side_effect=FileNotFoundError("gh not found"),
     ):
         assert _gh("") is None
@@ -39,7 +39,7 @@ def test_gh_exception():
 def test_gh_timeout():
     """超时时返回 None。"""
     with patch(
-        "engram_core.stats.subprocess.run",
+        "piia_engram.stats.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="gh", timeout=15),
     ):
         assert _gh("traffic/views") is None
@@ -50,7 +50,7 @@ def test_gh_invalid_json():
     result = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=b"not valid json"
     )
-    with patch("engram_core.stats.subprocess.run", return_value=result):
+    with patch("piia_engram.stats.subprocess.run", return_value=result):
         assert _gh("") is None
 
 
@@ -62,11 +62,11 @@ def test_gh_endpoint_formatting():
         calls.append(args)
         return subprocess.CompletedProcess(args=[], returncode=1, stdout=b"")
 
-    with patch("engram_core.stats.subprocess.run", side_effect=capture_run):
+    with patch("piia_engram.stats.subprocess.run", side_effect=capture_run):
         _gh("traffic/views")
 
     assert len(calls) == 1
-    assert "repos/Patdolitse/engram/traffic/views" in calls[0][2]
+    assert "repos/Patdolitse/piia-engram/traffic/views" in calls[0][2]
 
 
 # ── _pypi_recent tests ───────────────────────────────────────────────
@@ -117,8 +117,8 @@ def test_run_stats_all_available(capsys):
         return mapping.get(endpoint.rstrip("/"))
 
     with (
-        patch("engram_core.stats._gh", side_effect=mock_gh),
-        patch("engram_core.stats._pypi_recent", return_value=pypi_data),
+        patch("piia_engram.stats._gh", side_effect=mock_gh),
+        patch("piia_engram.stats._pypi_recent", return_value=pypi_data),
     ):
         run_stats()
 
@@ -136,8 +136,8 @@ def test_run_stats_all_available(capsys):
 def test_run_stats_no_apis(capsys):
     """所有 API 不可用时应打印警告而不崩溃。"""
     with (
-        patch("engram_core.stats._gh", return_value=None),
-        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("piia_engram.stats._gh", return_value=None),
+        patch("piia_engram.stats._pypi_recent", return_value=None),
     ):
         run_stats()
 
@@ -163,8 +163,8 @@ def test_run_stats_with_daily_views(capsys):
         return None
 
     with (
-        patch("engram_core.stats._gh", side_effect=mock_gh),
-        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("piia_engram.stats._gh", side_effect=mock_gh),
+        patch("piia_engram.stats._pypi_recent", return_value=None),
     ):
         run_stats()
 
@@ -190,8 +190,8 @@ def test_run_stats_with_daily_clones(capsys):
         return None
 
     with (
-        patch("engram_core.stats._gh", side_effect=mock_gh),
-        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("piia_engram.stats._gh", side_effect=mock_gh),
+        patch("piia_engram.stats._pypi_recent", return_value=None),
     ):
         run_stats()
 
@@ -222,8 +222,8 @@ def test_log_stats_creates_file(tmp_path, monkeypatch, capsys):
         return mapping.get(endpoint.rstrip("/"))
 
     with (
-        patch("engram_core.stats._gh", side_effect=mock_gh),
-        patch("engram_core.stats._pypi_recent", return_value=pypi_data),
+        patch("piia_engram.stats._gh", side_effect=mock_gh),
+        patch("piia_engram.stats._pypi_recent", return_value=pypi_data),
     ):
         log_stats()
 
@@ -246,8 +246,8 @@ def test_log_stats_no_apis(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
 
     with (
-        patch("engram_core.stats._gh", return_value=None),
-        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("piia_engram.stats._gh", return_value=None),
+        patch("piia_engram.stats._pypi_recent", return_value=None),
     ):
         log_stats()
 
@@ -262,8 +262,8 @@ def test_log_stats_appends(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
 
     with (
-        patch("engram_core.stats._gh", return_value=None),
-        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("piia_engram.stats._gh", return_value=None),
+        patch("piia_engram.stats._pypi_recent", return_value=None),
     ):
         log_stats()
         log_stats()
@@ -279,8 +279,8 @@ def test_log_stats_appends(tmp_path, monkeypatch, capsys):
 def test_main_default_runs_stats(capsys):
     """main() without --log should call run_stats."""
     with (
-        patch("engram_core.stats._gh", return_value=None),
-        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("piia_engram.stats._gh", return_value=None),
+        patch("piia_engram.stats._pypi_recent", return_value=None),
         patch("sys.argv", ["engram", "stats"]),
     ):
         main()
@@ -294,8 +294,8 @@ def test_main_log_runs_log_stats(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
 
     with (
-        patch("engram_core.stats._gh", return_value=None),
-        patch("engram_core.stats._pypi_recent", return_value=None),
+        patch("piia_engram.stats._gh", return_value=None),
+        patch("piia_engram.stats._pypi_recent", return_value=None),
         patch("sys.argv", ["engram", "stats", "--log"]),
     ):
         main()
