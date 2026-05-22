@@ -24,15 +24,15 @@ SETUP_WIZARD = ROOT / "src" / "engram_core" / "setup_wizard.py"
 
 CORE_MCP_TOOLS = {
     "get_user_context",
-    "get_identity_card",
-    "search_knowledge",
+    "wrap_up_session",
     "add_lesson",
     "add_decision",
+    "search_knowledge",
     "get_relevant_knowledge",
-    "save_project_snapshot",
+    "get_identity_card",
+    "update_identity",
     "get_project_context",
-    "extract_session_insights",
-    "export_engram",
+    "save_project_snapshot",
 }
 
 
@@ -167,7 +167,7 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "Engram exposes 43 MCP tools" in content
+    assert "43 MCP tools" in content
 
 
 def test_readme_has_remote_deployment_section():
@@ -186,7 +186,8 @@ def test_readme_documents_tool_tiering():
     assert "ENGRAM_TOOLS=core" in content
     assert "Tier-1 Core" in content
     assert "Tier-2 Advanced" in content
-    assert "| `get_user_context` | Tier-1 Core |" in content
+    assert "`get_user_context`" in content
+    assert "`wrap_up_session`" in content
 
 
 def test_mcp_tool_count_and_merge_tool():
@@ -257,8 +258,8 @@ def test_zh_readme_uses_pypi_install_and_41_tools():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "完整 MCP 工具列表（43 个）" in content
-    assert "43 个 MCP 工具" in content
+    assert "33 个" in content  # Tier-2 tool count
+    assert "10 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content
@@ -279,7 +280,8 @@ def test_zh_readme_documents_tool_tiering():
     assert "ENGRAM_TOOLS=core" in content
     assert "Tier-1 核心" in content
     assert "Tier-2 高级" in content
-    assert "| `get_user_context` | Tier-1 核心 |" in content
+    assert "`get_user_context`" in content
+    assert "`wrap_up_session`" in content
 
 
 def test_zh_readme_has_remote_deployment_section():

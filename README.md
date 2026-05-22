@@ -211,51 +211,63 @@ Engram exposes all 43 MCP tools by default. Set `ENGRAM_TOOLS=core` to load only
 
 Common tools include:
 
-| Tool | Tier | Purpose |
-|---|---|---|
-| `get_user_context` | Tier-1 Core | Load the complete user context at the start of a session |
-| `get_identity_card` | Tier-1 Core | Export a Markdown identity card for tools without MCP |
-| `search_knowledge` | Tier-1 Core | Search lessons and decisions by weighted multi-term relevance |
-| `add_lesson` | Tier-1 Core | Add a lesson learned |
-| `add_decision` | Tier-1 Core | Add a key decision |
-| `get_relevant_knowledge` | Tier-1 Core | Find knowledge relevant to a project |
-| `save_project_snapshot` | Tier-1 Core | Save project context for later sessions |
-| `get_project_context` | Tier-1 Core | Read a saved project snapshot |
-| `extract_session_insights` | Tier-1 Core | Extract lessons and decisions from session summaries |
-| `export_engram` | Tier-1 Core | Export a full backup |
-| `get_profile` | Tier-2 Advanced | Read the user profile (safe=true by default, respects trust boundaries) |
-| `get_work_style` | Tier-2 Advanced | Read work style preferences |
-| `get_preferences` | Tier-2 Advanced | Read communication and workflow preferences |
-| `get_trust_boundaries` | Tier-2 Advanced | Read data access boundaries |
-| `get_quality_standards` | Tier-2 Advanced | Read quality expectations |
-| `get_lessons` | Tier-2 Advanced | Read reusable lessons learned |
-| `get_decisions` | Tier-2 Advanced | Read key decisions and reasons |
-| `get_domains` | Tier-2 Advanced | Read domain experience stats |
-| `get_knowledge_inheritance` | Tier-2 Advanced | Build a cross-project knowledge starter pack from free text |
-| `list_projects` | Tier-2 Advanced | List saved project snapshots |
-| `bulk_add_knowledge` | Tier-2 Advanced | Add multiple lessons or decisions in one call |
-| `ingest_notes` | Tier-2 Advanced | Parse free-form notes into lessons and decisions |
-| `import_engram` | Tier-2 Advanced | Import a backup |
-| `export_engram_to_openclaw` | Tier-2 Advanced | Export OpenClaw-compatible files |
-| `import_engram_from_openclaw` | Tier-2 Advanced | Import OpenClaw-compatible files |
-| `read_web_content` | Tier-2 Advanced | Read webpage content through the local Reader service |
-| `get_knowledge_overview` | Tier-2 Advanced | Knowledge overview: digest, health report, and stale checks |
-| `get_related_knowledge` | Tier-2 Advanced | Follow links between lessons and decisions |
-| `find_similar_knowledge` | Tier-2 Advanced | Find similar lessons and decisions by content |
-| `export_knowledge_report` | Tier-2 Advanced | Export a readable Markdown knowledge report |
-| `get_stale_knowledge` | Tier-2 Advanced | List knowledge items that need review |
-| `link_knowledge` | Tier-2 Advanced | Create a bidirectional link between two knowledge items |
-| `unlink_knowledge` | Tier-2 Advanced | Remove a bidirectional knowledge link |
-| `merge_knowledge` | Tier-2 Advanced | Merge a duplicate knowledge item into the primary item |
-| `update_knowledge` | Tier-2 Advanced | Update a lesson or decision by ID |
-| `archive_knowledge` | Tier-2 Advanced | Archive a lesson or decision by ID |
-| `review_knowledge` | Tier-2 Advanced | Mark a lesson or decision as reviewed |
-| `request_outline_review` | Tier-2 Advanced | Generate an interactive HTML knowledge review page |
-| `apply_review` | Tier-2 Advanced | Process review results — promote confirmed staging items, archive others |
-| `update_identity` | Tier-2 Advanced | Update profile, preferences, trust boundaries, work style, or quality standards |
-| `get_audit_log` | Tier-2 Advanced | Get recent audit log entries |
-| `wrap_up_session` | Tier-2 Advanced | End a session by extracting knowledge and optionally saving a project snapshot |
-| `start_project` | Tier-2 Advanced | Start a project with inherited knowledge and a new project snapshot |
+### Tier-1 Core (10 tools — daily workflow)
+
+| Tool | Purpose |
+|---|---|
+| `get_user_context` | Load identity + knowledge at session start |
+| `wrap_up_session` | Save insights + sync at session end |
+| `add_lesson` | Store a reusable lesson learned |
+| `add_decision` | Record a key decision with reasoning |
+| `search_knowledge` | Search lessons and decisions by weighted relevance |
+| `get_relevant_knowledge` | Find knowledge relevant to current project |
+| `get_identity_card` | Export Markdown identity card for non-MCP tools |
+| `update_identity` | Update profile, preferences, or quality standards |
+| `get_project_context` | Read a saved project snapshot |
+| `save_project_snapshot` | Persist project state for future sessions |
+
+### Tier-2 Advanced (33 tools — knowledge management, review, import/export)
+
+<details>
+<summary>Click to expand full tool list</summary>
+
+| Tool | Purpose |
+|---|---|
+| `get_profile` | Read user profile (safe=true by default) |
+| `get_work_style` | Read work style preferences |
+| `get_preferences` | Read communication and workflow preferences |
+| `get_trust_boundaries` | Read data access boundaries |
+| `get_quality_standards` | Read quality expectations |
+| `get_lessons` | List reusable lessons learned |
+| `get_decisions` | List key decisions and reasons |
+| `get_domains` | Read domain experience stats |
+| `get_knowledge_inheritance` | Build cross-project knowledge starter pack |
+| `list_projects` | List saved project snapshots |
+| `extract_session_insights` | Extract lessons and decisions from session text |
+| `bulk_add_knowledge` | Add multiple lessons or decisions in one call |
+| `ingest_notes` | Parse free-form notes into structured knowledge |
+| `update_knowledge` | Update a lesson or decision by ID |
+| `archive_knowledge` | Archive a lesson or decision by ID |
+| `review_knowledge` | Mark a knowledge item as reviewed |
+| `merge_knowledge` | Merge a duplicate into the primary item |
+| `link_knowledge` | Create a bidirectional link between items |
+| `unlink_knowledge` | Remove a bidirectional knowledge link |
+| `get_knowledge_overview` | Knowledge digest, health report, stale checks |
+| `get_related_knowledge` | Follow links between knowledge items |
+| `find_similar_knowledge` | Find similar items by content |
+| `get_stale_knowledge` | List items that need review |
+| `export_knowledge_report` | Export a readable Markdown knowledge report |
+| `request_outline_review` | Generate an interactive HTML review page |
+| `apply_review` | Process review results (promote/archive staging items) |
+| `export_engram` | Export a full backup |
+| `import_engram` | Import a backup |
+| `export_engram_to_openclaw` | Export OpenClaw-compatible files |
+| `import_engram_from_openclaw` | Import OpenClaw-compatible files |
+| `read_web_content` | Read webpage via local Reader service |
+| `get_audit_log` | Get recent audit log entries |
+| `start_project` | Start a project with inherited knowledge |
+
+</details>
 
 ## Data Layout
 

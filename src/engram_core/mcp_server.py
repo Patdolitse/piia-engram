@@ -52,16 +52,20 @@ IDENTITY_FIELDS = frozenset({
 
 TOOL_TIER = os.environ.get("ENGRAM_TOOLS", "all").strip().lower() or "all"
 TIER1_TOOLS = frozenset({
-    "get_user_context",
-    "get_identity_card",
-    "search_knowledge",
-    "add_lesson",
-    "add_decision",
-    "get_relevant_knowledge",
-    "save_project_snapshot",
-    "get_project_context",
-    "extract_session_insights",
-    "export_engram",
+    # Session lifecycle
+    "get_user_context",          # cold-start: load identity + context
+    "wrap_up_session",           # session end: save insights + sync
+    # Knowledge read/write
+    "add_lesson",                # store reusable experience
+    "add_decision",              # record decision + reasoning
+    "search_knowledge",          # search across all knowledge
+    "get_relevant_knowledge",    # project-aware knowledge retrieval
+    # Identity
+    "get_identity_card",         # export identity for non-MCP tools
+    "update_identity",           # update profile/preferences/standards
+    # Project context
+    "get_project_context",       # current project state
+    "save_project_snapshot",     # persist project state
 })
 
 mcp = FastMCP(
