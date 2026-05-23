@@ -98,6 +98,8 @@ class _SessionTracker:
     # Minimum non-cold-start calls to trigger auto-save
     _MIN_CALLS = 2
 
+    _CHECKPOINT_EVERY = 20  # interim save every N real tool calls
+
     def __init__(self) -> None:
         self.session_id = f"auto-{_dt.now().strftime('%Y-%m-%dT%H-%M-%S')}"
         self.start_time = _dt.now()
@@ -105,6 +107,8 @@ class _SessionTracker:
         self.project_folder: str = ""   # detected project path
         self.calls: list[dict[str, str]] = []
         self.saved = False
+        self._real_call_count = 0       # non-cold-start call counter
+        self._checkpoint_seq = 0        # checkpoint sequence number
 
     def record(self, tool_called: str, args_summary: str = "") -> None:
         self.calls.append({
@@ -112,6 +116,11 @@ class _SessionTracker:
             "timestamp": _dt.now().strftime("%H:%M:%S"),
             "args_summary": args_summary,
         })
+        if tool_called not in self._COLD_START_TOOLS:
+            self._real_call_count += 1
+            if (self._real_call_count % self._CHECKPOINT_EVERY == 0
+                    and self._real_call_count > 0):
+                self._interim_save()
 
     def detect_tool(self, tool: str) -> None:
         if not self.tool_name and tool:
@@ -120,6 +129,40 @@ class _SessionTracker:
     def detect_project(self, folder: str) -> None:
         if not self.project_folder and folder:
             self.project_folder = folder
+
+    def _interim_save(self) -> None:
+        """Save a mid-session checkpoint without marking session as done."""
+        self._checkpoint_seq += 1
+        tool = self.tool_name or "mcp_auto"
+        duration = max(1, int((_dt.now() - self.start_time).total_seconds() / 60))
+
+        seen: dict[str, None] = {}
+        for c in self.calls:
+            seen.setdefault(c["tool_called"], None)
+
+        content = (
+            f"[中间检查点 #{self._checkpoint_seq}] 会话时长: {duration} 分钟\n"
+            f"工具调用次数: {len(self.calls)}\n"
+            f"使用的工具: {', '.join(seen.keys())}\n"
+        )
+        actions = [
+            {
+                "tool_called": c["tool_called"],
+                "arguments_summary": c.get("args_summary", ""),
+                "result_summary": "",
+            }
+            for c in self.calls[-30:]
+        ]
+        try:
+            _engram.save_agent_context(
+                tool=tool,
+                content=content,
+                session_id=f"{self.session_id}-cp{self._checkpoint_seq}",
+                project_folder=self.project_folder,
+                actions=actions,
+            )
+        except Exception:
+            pass  # silent — checkpoints are best-effort
 
     def auto_save(self) -> None:
         """Save accumulated session log. Called by atexit handler."""
