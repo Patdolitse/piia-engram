@@ -1714,7 +1714,7 @@ def main() -> None:
             "  engram privacy          Show what data Engram stores\n\n"
             "Tool tiers:\n"
             "  Default: 13 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 46 tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 48 tools.\n"
         )
         sys.exit(0)
 

@@ -170,7 +170,7 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "46 MCP tools" in content
+    assert "48 MCP tools" in content
 
 
 def test_readme_has_remote_deployment_section():
@@ -194,7 +194,7 @@ def test_readme_documents_tool_tiering():
 
 
 def test_mcp_tool_count_and_merge_tool():
-    """MCP server 应暴露 46 个工具且包含统一知识生命周期工具。"""
+    """MCP server 应暴露 48 个工具且包含统一知识生命周期工具。"""
     tree = ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
     tools = []
     for node in ast.walk(tree):
@@ -208,7 +208,7 @@ def test_mcp_tool_count_and_merge_tool():
             ):
                 tools.append(node.name)
                 break
-    assert len(tools) >= 46
+    assert len(tools) >= 48
     assert "update_knowledge" in tools
     assert "bulk_add_knowledge" in tools
     assert "get_knowledge_overview" in tools
@@ -237,10 +237,10 @@ def test_mcp_tools_default_to_core_tier(tmp_path: Path):
 
 
 def test_mcp_tools_all_tier_registers_all_tools(tmp_path: Path):
-    """ENGRAM_TOOLS=all 时应暴露全部 46 个工具。"""
+    """ENGRAM_TOOLS=all 时应暴露全部 48 个工具。"""
     tools = _registered_mcp_tools(tmp_path, tools_tier="all")
 
-    assert len(tools) >= 46
+    assert len(tools) >= 48
     assert set(CORE_MCP_TOOLS).issubset(tools)
     assert "get_profile" in tools
     assert "bulk_add_knowledge" in tools
@@ -261,8 +261,8 @@ def test_zh_readme_uses_pypi_install_and_41_tools():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "33 个" in content  # Tier-2 tool count
-    assert "10 个" in content  # Tier-1 tool count
+    assert "35 个" in content  # Tier-2 tool count
+    assert "13 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content
