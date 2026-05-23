@@ -25,6 +25,7 @@ from .storage import (
     DECISION_TRIGGERS,
     DOMAIN_KEYWORDS,
     LESSON_TRIGGERS,
+    PLAYBOOK_TRIGGERS,
     STALE_KNOWLEDGE_DAYS,
     _now_iso,
 )
@@ -58,10 +59,11 @@ class ContextMixin:
         "quality": 5,
         "conflicts": 6,
         "project": 7,
-        "domains": 8,
-        "stale": 9,
-        "staging": 10,
-        "sync": 11,
+        "tools": 8,
+        "domains": 9,
+        "stale": 10,
+        "staging": 11,
+        "sync": 12,
     }
     _SECTION_DISPLAY: dict[str, int] = {
         "fragmentation": 0,
@@ -69,13 +71,14 @@ class ContextMixin:
         "preferences": 2,
         "quality": 3,
         "domains": 4,
-        "lessons": 5,
-        "decisions": 6,
-        "conflicts": 7,
-        "project": 8,
-        "stale": 9,
-        "staging": 10,
-        "sync": 11,
+        "tools": 5,
+        "lessons": 6,
+        "decisions": 7,
+        "conflicts": 8,
+        "project": 9,
+        "stale": 10,
+        "staging": 11,
+        "sync": 12,
     }
 
     # Tiered context levels for cold-start latency control.
@@ -85,7 +88,7 @@ class ContextMixin:
     _LEVEL_SECTIONS: dict[str, set[str] | None] = {
         "quick": {"profile", "preferences"},
         "standard": {"profile", "preferences", "quality", "domains",
-                     "lessons", "decisions", "project"},
+                     "tools", "lessons", "decisions", "project"},
         "full": None,  # None means "include all sections"
     }
 
@@ -315,6 +318,299 @@ class ContextMixin:
         }
 
     # ------------------------------------------------------------------
+    # Playbook auto-extraction from session data
+    # ------------------------------------------------------------------
+
+    # Sequential markers that indicate step-by-step procedures
+    _SEQ_MARKERS = [
+        "先", "然后", "接着", "最后", "之后", "随后", "完成后", "接下来",
+        "first", "then", "next", "finally", "after that", "subsequently",
+        "step 1", "step 2", "step 3",
+    ]
+    # Action verbs that indicate operational (not analytical) work
+    _ACTION_VERBS = [
+        "安装", "配置", "部署", "发布", "执行", "运行", "创建", "更新",
+        "下载", "编译", "构建", "推送", "上传", "提交", "打包", "上架",
+        "install", "configure", "deploy", "publish", "execute", "run",
+        "create", "update", "download", "build", "push", "upload",
+        "commit", "package", "release",
+    ]
+    # Pitfall indicators
+    _PITFALL_MARKERS = [
+        "踩坑", "报错", "失败", "不行", "不能", "不被接受", "需要改",
+        "注意", "小心", "陷阱", "坑",
+        "error", "failed", "rejected", "gotcha", "caveat", "workaround",
+    ]
+
+    # Sensitive-info patterns for redaction before storing playbooks.
+    # Compiled once at class level for performance.
+    _SENSITIVE_PATTERNS: list[tuple["re.Pattern[str]", str]] = [
+        # API keys / tokens (sk-..., Bearer ..., token=..., key=...)
+        (re.compile(
+            r'(sk-|api[_\-]?key\s*[=:]\s*|token\s*[=:]\s*|Bearer\s+|password\s*[=:]\s*)'
+            r'[A-Za-z0-9._\-]{16,}',
+            re.IGNORECASE,
+        ), r'\1{{REDACTED}}'),
+        # Absolute Windows paths  (C:\Users\... etc.)
+        (re.compile(r'[A-Za-z]:\\(?:[^\s,;，。！？]+)'), '{{PATH}}'),
+        # Absolute Unix paths (/home/..., /Users/..., /var/... etc.)
+        (re.compile(r'/(?:home|Users|var|etc|opt|tmp|root)/[^\s,;，。！？]+'), '{{PATH}}'),
+        # Email addresses
+        (re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'), '{{EMAIL}}'),
+        # Env-var secrets  (SECRET_KEY=xxx, AUTH_TOKEN=xxx etc.)
+        (re.compile(
+            r'((?:SECRET|PASSWORD|TOKEN|CREDENTIAL|AUTH)[_A-Z]*)\s*[=:]\s*\S+',
+            re.IGNORECASE,
+        ), r'\1={{REDACTED}}'),
+    ]
+
+    @classmethod
+    def _redact_sensitive(cls, text: str) -> str:
+        """Strip tokens, passwords, absolute paths, and emails from text."""
+        if not text:
+            return text
+        for pattern, replacement in cls._SENSITIVE_PATTERNS:
+            text = pattern.sub(replacement, text)
+        return text
+
+    @staticmethod
+    def _count_matches(text_lower: str, wordlist: list[str]) -> int:
+        """Count keyword matches with proper word boundaries.
+
+        Chinese terms use substring matching (each char is a word).
+        ASCII terms use ``\\b`` word boundaries to prevent "run" matching
+        inside "runbook", etc.
+        """
+        count = 0
+        for word in wordlist:
+            if word.isascii():
+                if re.search(rf'\b{re.escape(word)}\b', text_lower):
+                    count += 1
+            else:
+                if word in text_lower:
+                    count += 1
+        return count
+
+    def _detect_procedural_workflow(self, text: str) -> bool:
+        """Check if text describes a multi-step operational workflow.
+
+        Only uses text signals (sequential markers + action verbs).
+        Checkpoint-based detection is handled by the caller
+        (extract_playbook_from_session) which bypasses this method entirely
+        when enough checkpoints exist.
+        """
+        if not text or len(text) < 20:
+            return False
+        text_lower = text.lower()
+        seq_count = self._count_matches(text_lower, self._SEQ_MARKERS)
+        action_count = self._count_matches(text_lower, self._ACTION_VERBS)
+        trigger_count = self._count_matches(text_lower, list(PLAYBOOK_TRIGGERS))
+        # Rule 1: sequential markers + action verbs → procedure
+        if seq_count >= 2 and action_count >= 3:
+            return True
+        # Rule 2: playbook trigger keywords MUST be backed by at least one
+        # action verb that is NOT itself a trigger — prevents "讨论了发布流程"
+        # (where 发布 is both trigger and verb) from double-counting.
+        trigger_set = set(PLAYBOOK_TRIGGERS)
+        non_trigger_verbs = [v for v in self._ACTION_VERBS if v not in trigger_set]
+        non_trigger_actions = self._count_matches(text_lower, non_trigger_verbs)
+        if trigger_count >= 3 and non_trigger_actions >= 1:
+            return True
+        return False
+
+    def _extract_steps_from_checkpoints(self, session_content: str) -> list[dict]:
+        """Extract ordered steps from context checkpoint content."""
+        steps = []
+        # Checkpoints have "### HH:MM" headers with content like
+        # "已完成：..." or "当前任务：..." or free text
+        sections = re.split(r"###\s+\d{1,2}:\d{2}", session_content)
+        order = 0
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+            # Look for "已完成" items
+            completed = re.findall(
+                r"(?:已完成|完成|done|completed)[：:]\s*(.+?)(?:\n|$)",
+                section, re.IGNORECASE,
+            )
+            for item in completed:
+                item = item.strip().rstrip("。.")
+                if item and len(item) > 3:
+                    order += 1
+                    steps.append({"order": order, "action": item[:200]})
+        return steps
+
+    def _extract_steps_from_summary(self, summary: str) -> list[dict]:
+        """Extract ordered steps from summary text by splitting on sequential markers."""
+        steps = []
+        # Try numbered list first: "1. xxx 2. xxx 3. xxx"
+        numbered = re.findall(
+            r"(?:^|\n)\s*(\d+)[.、）)]\s*(.+?)(?=\n\s*\d+[.、）)]|\n\n|$)",
+            summary, re.DOTALL,
+        )
+        if len(numbered) >= 3:
+            for order_str, action in numbered:
+                action = action.strip().rstrip("。.")
+                if action and len(action) > 3:
+                    steps.append({"order": int(order_str), "action": action[:200]})
+            return steps
+
+        # Split by sequential markers
+        marker_pattern = "|".join(re.escape(m) for m in self._SEQ_MARKERS if len(m) > 1)
+        segments = re.split(
+            rf"[,，。.;；]\s*(?:{marker_pattern})",
+            summary, flags=re.IGNORECASE,
+        )
+        order = 0
+        for seg in segments:
+            seg = seg.strip().rstrip("。.")
+            # Must contain an action verb to be a step
+            seg_lower = seg.lower()
+            has_action = any(v in seg_lower for v in self._ACTION_VERBS)
+            if seg and len(seg) > 5 and has_action:
+                order += 1
+                steps.append({"order": order, "action": seg[:200]})
+        return steps
+
+    def _extract_pitfalls(self, text: str) -> list[str]:
+        """Extract pitfall/caveat sentences from text."""
+        pitfalls = []
+        sentences = re.split(r"[。！？.!?\n]+", text)
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence or len(sentence) < 8:
+                continue
+            sentence_lower = sentence.lower()
+            if any(m in sentence_lower for m in self._PITFALL_MARKERS):
+                pitfalls.append(sentence[:300])
+        return pitfalls[:5]  # cap at 5
+
+    def _infer_playbook_title(self, summary: str, steps: list[dict]) -> str:
+        """Infer a concise playbook title from summary and steps."""
+        # Take the first line/sentence as candidate
+        first_line = summary.strip().split("\n")[0].strip()
+        # Remove common prefixes
+        for prefix in ["完成", "本次完成", "已完成", "finished", "completed"]:
+            if first_line.lower().startswith(prefix):
+                first_line = first_line[len(prefix):].lstrip("了：:, ")
+        # If too long, truncate
+        if len(first_line) > 60:
+            first_line = first_line[:57] + "..."
+        return first_line or "操作流程"
+
+    def _extract_triggers_from_text(self, text: str) -> list[str]:
+        """Extract trigger keywords from text for playbook retrieval."""
+        triggers = []
+        text_lower = text.lower()
+        # Add matched PLAYBOOK_TRIGGERS
+        for t in PLAYBOOK_TRIGGERS:
+            if t in text_lower and t not in triggers:
+                triggers.append(t)
+        # Add domain keywords
+        domain = self._infer_domain(text)
+        if domain:
+            for d in domain.split(","):
+                d = d.strip()
+                if d and d not in triggers:
+                    triggers.append(d)
+        return triggers[:8]
+
+    def extract_playbook_from_session(
+        self,
+        summary: str,
+        source_tool: str = "",
+        session_id: str = "",
+    ) -> dict | None:
+        """Try to auto-extract a Playbook draft from session data.
+
+        Detection priority:
+        1. Checkpoints (save_agent_context) ≥ 3 → high confidence, skip text scan
+        2. Text-based detection (sequential markers + action verbs) → medium confidence
+
+        Returns the saved playbook dict (tier=staging, with confidence field)
+        if a procedural workflow is detected, otherwise None.
+        """
+        if not summary or not summary.strip():
+            return None
+
+        # ── Step 0: Check kill-switch ───────────────────────────────
+        prefs = self.get_preferences()
+        if prefs.get("playbook_auto_extract") is False:
+            return None
+
+        # ── Step 1: Collect evidence — checkpoints first ────────────
+        checkpoint_steps: list[dict] = []
+        if session_id and source_tool:
+            try:
+                sessions = self.get_recent_context(tool=source_tool, limit=5)
+                for s in sessions:
+                    if s.get("session_id") == session_id:
+                        checkpoint_steps = self._extract_steps_from_checkpoints(
+                            s.get("content", "")
+                        )
+                        break
+            except Exception:
+                pass  # checkpoints are optional
+
+        # ── Step 2: Detection — checkpoints are strongest signal ────
+        confidence = "none"
+        if len(checkpoint_steps) >= 3:
+            # Strong evidence: actual execution checkpoints with timestamps
+            confidence = "high"
+        elif self._detect_procedural_workflow(summary):
+            # Weaker evidence: text pattern matching on summary
+            confidence = "medium"
+
+        if confidence == "none":
+            return None
+
+        # ── Step 3: Extract steps ───────────────────────────────────
+        if len(checkpoint_steps) >= 3:
+            steps = checkpoint_steps
+        else:
+            steps = self._extract_steps_from_summary(summary)
+
+        if len(steps) < 3:
+            return None
+
+        # ── Step 4: Extract metadata ────────────────────────────────
+        title = self._infer_playbook_title(summary, steps)
+        triggers = self._extract_triggers_from_text(summary)
+        pitfalls = self._extract_pitfalls(summary)
+        domain = self._infer_domain(summary)
+
+        # ── Step 5: Redact sensitive info before persisting ─────────
+        steps = [
+            {"order": s["order"], "action": self._redact_sensitive(s["action"])}
+            for s in steps
+        ]
+        pitfalls = [self._redact_sensitive(p) for p in pitfalls]
+        description = self._redact_sensitive(summary[:500])
+
+        playbook = {
+            "title": title,
+            "triggers": triggers,
+            "steps": steps,
+            "description": description,
+            "domain": domain,
+            "pitfalls": pitfalls,
+            "source_tool": source_tool,
+            "tier": "staging",
+            "confidence": confidence,
+        }
+
+        # Save via add_playbook (inherits duplicate detection)
+        result = self.add_playbook(playbook, source_tool=source_tool)
+
+        if result.get("status") == "duplicate":
+            return None
+        if result.get("error"):
+            return None
+
+        return result
+
+    # ------------------------------------------------------------------
     # Smart cold-start context generation
     # ------------------------------------------------------------------
 
@@ -432,6 +728,24 @@ class ContextMixin:
                     count = info.get("project_count", 0)
                     dl.append(f"- {name}: {count} 个项目经验")
                 sections["domains"] = "\n".join(dl)
+
+        # Environment tools summary
+        if _wants("tools"):
+            tools = self.list_tools()
+            if tools:
+                tl: list[str] = ["\n## 本地工具环境"]
+                for t in tools[:10]:
+                    line = f"- {t.get('name', '?')}"
+                    if t.get("version"):
+                        line += f" v{t['version']}"
+                    if t.get("path"):
+                        line += f" → `{t['path']}`"
+                    if t.get("notes"):
+                        line += f"  ⚠ {t['notes']}"
+                    tl.append(line)
+                if len(tools) > 10:
+                    tl.append(f"- ...及其他 {len(tools) - 10} 个工具（用 list_tools 查看完整列表）")
+                sections["tools"] = "\n".join(tl)
 
         # Lessons — _update_access=False: context injection ≠ user review
         # Note: lessons/decisions variables are reused by the "conflicts" section,

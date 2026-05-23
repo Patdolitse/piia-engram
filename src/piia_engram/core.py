@@ -29,12 +29,14 @@ from .storage import (  # noqa: F401 — re-exports
     SEARCH_RELEVANCE_THRESHOLD,
     SIMILARITY_THRESHOLD,
     STALE_KNOWLEDGE_DAYS,
+    TOOL_CATEGORIES,
     _AFFIRMATION_MARKERS,
     _ALIAS_LOOKUP,
     _ALLOWED_PLAYBOOK_UPDATE_FIELDS,
     _ALLOWED_PREFERENCES_FIELDS,
     _ALLOWED_PROFILE_FIELDS,
     _ALLOWED_QUALITY_FIELDS,
+    _ALLOWED_TOOL_UPDATE_FIELDS,
     _ALLOWED_TRUST_FIELDS,
     _ENGRAM_DIR_NAME,
     _LEGACY_DIR_NAME,
@@ -78,6 +80,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         self._playbooks_dir = self.root / "playbooks"
         self._projects_dir = self.root / "projects"
         self._exports_dir = self.root / "exports"
+        self._environment_dir = self.root / "environment"
 
         # Encryption engine (transparent when ENGRAM_SECRET is not set)
         from piia_engram.crypto import EncryptionEngine
@@ -105,7 +108,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
 
     def _ensure_structure(self) -> None:
         """Create directory structure if it doesn't exist."""
-        for sub in ["identity", "knowledge", "playbooks", "projects", "exports", "compat", "contexts"]:
+        for sub in ["identity", "knowledge", "playbooks", "projects", "exports", "compat", "contexts", "environment"]:
             (self.root / sub).mkdir(parents=True, exist_ok=True)
         # Write schema version
         ver_path = self.root / "schema_version.json"
@@ -846,6 +849,142 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 result.append(pb)
         return result
 
+    # ------------------------------------------------------------------
+    # Tools Registry — local environment tool/program tracking
+    # ------------------------------------------------------------------
+
+    def _read_tools(self) -> list[dict]:
+        """Read the tools registry."""
+        path = self._environment_dir / "tools.json"
+        data = _read_json(path)
+        if isinstance(data, list):
+            return data
+        return []
+
+    def _write_tools(self, tools: list[dict]) -> None:
+        _write_json(self._environment_dir / "tools.json", tools)
+
+    def _ensure_tool_fields(self, entry: dict) -> dict:
+        """Backfill metadata fields on a tool entry."""
+        if not isinstance(entry, dict):
+            entry = {}
+        now = _now_iso()
+        if not entry.get("id"):
+            name = str(entry.get("name") or "")
+            path = str(entry.get("path") or "")
+            seed = f"{name}{path}"
+            entry["id"] = hashlib.sha256(seed.encode()).hexdigest()[:12]
+        entry.setdefault("category", "other")
+        entry.setdefault("status", "active")
+        entry.setdefault("created_at", now)
+        entry.setdefault("updated_at", now)
+        entry.setdefault("registered_by", "")
+        entry.setdefault("os_platform", "")
+        entry.setdefault("version", "")
+        entry.setdefault("install_method", "")
+        entry.setdefault("notes", "")
+        return entry
+
+    def register_tool(
+        self,
+        tool: dict,
+        registered_by: str = "",
+    ) -> dict:
+        """Register a local tool/program in the environment registry.
+
+        If a tool with the same name already exists, update it instead.
+        """
+        new_tool = dict(tool)
+        if not new_tool.get("name"):
+            return {"error": "Tool must have a name"}
+
+        if registered_by:
+            new_tool["registered_by"] = registered_by
+
+        new_tool = self._ensure_tool_fields(new_tool)
+        tools = self._read_tools()
+
+        # Check for existing tool with same name (case-insensitive) — update it
+        new_name = str(new_tool.get("name", "")).lower()
+        for i, existing in enumerate(tools):
+            if str(existing.get("name", "")).lower() == new_name:
+                # Update existing entry
+                for key in ("path", "version", "purpose", "install_method",
+                            "os_platform", "category", "notes", "status"):
+                    if new_tool.get(key):
+                        existing[key] = new_tool[key]
+                existing["updated_at"] = _now_iso()
+                if registered_by:
+                    existing["registered_by"] = registered_by
+                tools[i] = existing
+                self._write_tools(tools)
+                self._audit.log("write", "environment/tools", detail=f"updated {new_name}")
+                return {**existing, "_action": "updated"}
+
+        # New tool
+        tools.append(new_tool)
+        self._write_tools(tools)
+        self._audit.log("write", "environment/tools", detail=f"registered {new_name}")
+        return {**new_tool, "_action": "registered"}
+
+    def find_tool(self, query: str) -> list[dict]:
+        """Search tools by name, category, purpose, or path keyword."""
+        tools = self._read_tools()
+        if not query or not query.strip():
+            return [t for t in tools if t.get("status") == "active"]
+
+        terms = query.lower().split()
+        results = []
+        for tool in tools:
+            if tool.get("status") != "active":
+                continue
+            searchable = " ".join([
+                str(tool.get("name", "")),
+                str(tool.get("category", "")),
+                str(tool.get("purpose", "")),
+                str(tool.get("path", "")),
+                str(tool.get("notes", "")),
+                str(tool.get("install_method", "")),
+            ]).lower()
+            if all(term in searchable for term in terms):
+                results.append(tool)
+        self._audit.log("read", "environment/tools", detail=f"found {len(results)} for '{query}'")
+        return results
+
+    def list_tools(self, category: str | None = None) -> list[dict]:
+        """List all registered tools, optionally filtered by category."""
+        tools = self._read_tools()
+        result = []
+        for tool in tools:
+            if tool.get("status") != "active":
+                continue
+            if category and tool.get("category") != category:
+                continue
+            result.append(tool)
+        self._audit.log("read", "environment/tools", detail=f"listed {len(result)} tools")
+        return result
+
+    def update_tool(self, tool_id: str, updates: dict) -> dict:
+        """Update fields on a registered tool."""
+        tools = self._read_tools()
+        for tool in tools:
+            if tool.get("id") == tool_id:
+                for key, value in updates.items():
+                    if key in _ALLOWED_TOOL_UPDATE_FIELDS:
+                        tool[key] = value
+                tool["updated_at"] = _now_iso()
+                self._write_tools(tools)
+                return tool
+        return {"error": f"Tool not found: {tool_id}"}
+
+    def remove_tool(self, tool_id: str) -> dict:
+        """Mark a tool as removed (soft delete)."""
+        return self.update_tool(tool_id, {"status": "removed"})
+
+    def _export_tools(self) -> list[dict]:
+        """Export all tools for backup."""
+        return self._read_tools()
+
     def update_knowledge(self, item_id: str, updates: dict) -> dict:
         """Update a lesson, decision, or playbook by ID (auto-detects type)."""
         item_type, _ = self._find_item_by_id(item_id)
@@ -977,6 +1116,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         pb = self._read_playbook_by_id(item_id)
         if pb is not None:
             return "playbook", pb
+        # Fall through to tools registry
+        for tool in self._read_tools():
+            if tool.get("id") == item_id:
+                return "tool", tool
         return None, None
 
     def _knowledge_title(self, item_type: str | None, item: dict | None) -> str:
@@ -1192,6 +1335,9 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 "domains": self.get_domains(),
                 "playbooks": self._export_playbooks(),
             },
+            "environment": {
+                "tools": self._export_tools(),
+            },
             "projects": {},
         }
 
@@ -1337,6 +1483,25 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             if new_count:
                 self._write_playbook_index(existing_index)
             imported.append(f"playbooks(+{new_count})" if merge else f"playbooks({len(knowledge['playbooks'])})")
+
+        # Environment (tools registry)
+        environment = data.get("environment", {})
+        if environment.get("tools"):
+            if merge:
+                existing = self._read_tools()
+                existing_names = {t.get("name", "").lower() for t in existing}
+                new_count = 0
+                for tool in environment["tools"]:
+                    if tool.get("name", "").lower() not in existing_names:
+                        tool = self._ensure_tool_fields(tool)
+                        existing.append(tool)
+                        existing_names.add(tool.get("name", "").lower())
+                        new_count += 1
+                self._write_tools(existing)
+                imported.append(f"tools(+{new_count})")
+            else:
+                self._write_tools(environment["tools"])
+                imported.append(f"tools({len(environment['tools'])})")
 
         # Projects
         projects = data.get("projects", {})

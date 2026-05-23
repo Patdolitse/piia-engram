@@ -68,21 +68,9 @@ class RetrievalMixin:
             if changed:
                 _write_json(path, entries)
 
-        # Playbook tier promotion (individual files)
-        index = self._read_playbook_index()
-        for idx_entry in index:
-            if idx_entry.get("status") != "active":
-                continue
-            pb_id = idx_entry.get("id", "")
-            pb = self._read_playbook_by_id(pb_id)
-            if not pb:
-                continue
-            if pb.get("tier") == "staging" and pb.get("access_count", 0) >= self._PROMOTE_ACCESS_COUNT:
-                pb["tier"] = "verified"
-                pb["promoted_at"] = _now_iso()
-                pb["promotion_reason"] = f"referenced {pb['access_count']} times"
-                _write_json(self._playbooks_dir / f"{pb_id}.json", pb)
-                promoted += 1
+        # Playbooks are deliberately excluded from access-count auto-promotion.
+        # Playbook errors can cause operational harm, so promotion requires
+        # explicit user confirmation or successful reuse — not just reads.
 
         return {"promoted": promoted}
 

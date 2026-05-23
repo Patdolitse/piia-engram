@@ -1,6 +1,6 @@
 [project]
 name = "piia-engram"
-version = "3.24.0"
+version = "3.25.0"
 description = "Persistent AI memory across tools — remember your preferences, code standards, and decisions across Claude Code, Cursor, Codex, and any MCP tool. Local-first, zero-cloud."
 readme = "README.md"
 license = "Apache-2.0"
