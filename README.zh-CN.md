@@ -250,7 +250,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.21.0 (2026-05-23) |
+| | v3.22.0 (2026-05-23) |
 |---|---|
 | 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具数 | **48** 个（默认开放 13 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 35 个）|

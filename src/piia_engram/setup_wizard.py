@@ -1202,8 +1202,8 @@ def run_setup(advanced: bool = False) -> None:
                  "❌ mcp_server.py not found. Please ensure piia-engram is installed."))
         sys.exit(1)
 
-    # 数据目录 — 自动使用默认
-    default_data_dir = str(Path.home() / ".engram")
+    # 数据目录 — 优先读 ENGRAM_DIR 环境变量
+    default_data_dir = os.environ.get("ENGRAM_DIR") or str(Path.home() / ".engram")
     data_dir: str | None = None
     print(_t(f"  ✅ 数据目录: {default_data_dir}",
              f"  ✅ Data dir: {default_data_dir}"))
