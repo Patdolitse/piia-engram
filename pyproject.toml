@@ -8,7 +8,7 @@ requires-python = ">=3.10"
 authors = [
     {name = "Engram Contributors"},
 ]
-keywords = ["ai", "identity", "mcp", "memory", "personal-knowledge", "llm", "context"]
+keywords = ["ai", "identity", "mcp", "memory", "personal-knowledge", "llm", "context", "claude-code", "cursor", "codex", "mcp-server", "ai-agent", "local-first", "cross-tool", "vibe-coding"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
