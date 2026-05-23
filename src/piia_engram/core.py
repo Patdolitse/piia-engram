@@ -978,7 +978,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 "status": "pending",
             })
 
-        return {
+        result = {
             "playbook_id": playbook_id,
             "title": pb.get("title", ""),
             "execution_plan": execution_plan,
@@ -986,6 +986,8 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "pitfalls": pb.get("pitfalls", []),
             "preconditions": pb.get("preconditions", []),
         }
+        self.save_execution_plan(result)
+        return result
 
     # ------------------------------------------------------------------
     # Playbook execution tracking

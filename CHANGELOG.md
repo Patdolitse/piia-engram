@@ -4,6 +4,51 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.28.0] - 2026-05-23
+
+Session auto-tracking and execution plan fix.
+
+### Added
+- MCP server session auto-tracking via `_SessionTracker` — records all tool calls during session
+- `atexit` auto-save: persists session context on MCP server shutdown (tool list, call count, duration)
+- Claude Code Stop Hook script (`scripts/auto_save_on_stop.py`) — saves session metadata when conversation ends
+- Three-layer session protection: AI manual save (high quality) → MCP atexit (medium) → Stop Hook (basic)
+
+### Fixed
+- `prepare_playbook_execution` now auto-saves execution plan in core layer (previously only saved at MCP layer, causing data loss when called via Python API)
+- Removed redundant `save_execution_plan` call from MCP layer (now handled by core)
+
+## [3.27.1] - 2026-05-23
+
+### Fixed
+- Telemetry opt-in now part of normal setup wizard flow, not hidden behind `--advanced`
+- Identity card content quality: limit domains, filter config directives, clean XML artifacts
+
+## [3.27.0] - 2026-05-23
+
+Execution tracking, stats i18n, and steps format compatibility.
+
+### Added
+- Playbook execution tracking: `prepare_playbook_execution` → `update_execution_step` → `get_execution_status`
+- i18n module with `t(zh, en)` for bilingual output in stats
+
+### Fixed
+- Handle string-format steps in playbook parameter extraction, merge, and execution
+
+## [3.26.0] - 2026-05-23
+
+Playbook lifecycle, bilingual UX, knowledge intelligence.
+
+### Added
+- Playbook auto-extraction improvements
+- Tools registry as Tier-1 knowledge type
+
+## [3.25.0] - 2026-05-23
+
+### Changed
+- Playbook auto-extraction P0 improvements
+- Bumped MCP Registry server.json version
+
 ## [3.24.0] - 2026-05-23
 
 Phase 2 remote telemetry with Cloudflare Worker dashboard.
