@@ -5,11 +5,11 @@
 
 # piia-engram
 
-### Remember who you are across every AI tool
+### One memory. Every AI tool. Yours to keep.
 
-**Your preferences, code standards, lessons learned, and decisions — persistent across Claude Code, Cursor, Codex, and any MCP tool. Local-first, zero-cloud.**
+**Tell AI once — your preferences, standards, and lessons follow you across Claude Code, Cursor, Codex, and any MCP-compatible tool. Local-first, no cloud, no account.**
 
-`persistent memory` | `cross-tool context` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `MCP` | `local-first`
+`cross-tool memory` | `local-first` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `MCP`
 
 [ENGLISH](README.md) | [中文](README.zh-CN.md)
 
@@ -326,7 +326,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 60 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 60 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 60 MCP tools. By default, only the 12 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 60 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -340,7 +340,7 @@ piia-engram ships 60 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 }
 ```
 
-### Tier-1 Core (17 tools — daily workflow)
+### Tier-1 Core (12 tools — daily workflow)
 
 | Tool | Purpose |
 |---|---|
@@ -353,22 +353,22 @@ piia-engram ships 60 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 | `get_relevant_knowledge` | Find knowledge relevant to current project |
 | `get_identity_card` | Export Markdown identity card for non-MCP tools |
 | `update_identity` | Update profile, preferences, or quality standards |
-| `register_tool` | Register a local tool, runtime, or CLI to the environment map |
-| `find_tool` | Look up a registered tool by name |
-| `list_tools` | List all registered tools (optionally filter by category) |
 | `get_project_context` | Read a saved project snapshot |
 | `save_project_snapshot` | Persist project state for future sessions |
-| `save_agent_context` | Auto-save AI session checkpoint for crash recovery |
 | `get_recent_context` | Recover lost session context after restart |
-| `list_agent_sessions` | Browse saved session records across tools |
 
-### Tier-2 Advanced (43 tools — knowledge management, review, import/export)
+### Tier-2 Advanced (48 tools — knowledge management, review, import/export)
 
 <details>
 <summary>Click to expand full tool list</summary>
 
 | Tool | Purpose |
 |---|---|
+| `register_tool` | Register a local tool, runtime, or CLI to the environment map |
+| `find_tool` | Look up a registered tool by name |
+| `list_tools` | List all registered tools (optionally filter by category) |
+| `save_agent_context` | Save AI session checkpoint (also runs automatically) |
+| `list_agent_sessions` | Browse saved session records across tools |
 | `refresh_quick_context` | Refresh local `quick_context.md` snapshot for offline/cross-tool use |
 | `get_profile` | Read user profile (safe=true by default) |
 | `get_work_style` | Read work style preferences |
@@ -528,7 +528,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | | v3.26.0 (2026-05-23) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools exposed | **60** (17 Tier-1 default, 43 opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools exposed | **60** (12 Tier-1 default, 48 opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
 | Tests passing | **768** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
@@ -563,6 +563,9 @@ The official `@modelcontextprotocol/server-memory` stores a generic knowledge gr
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.
 
+**Why not just use AGENTS.md / CLAUDE.md / .cursorrules?**
+Those config files are great for **repo-specific** rules (build steps, coding conventions). piia-engram is for **you** — your preferences, lessons, and decisions that follow you across every repo and every AI tool. They complement each other: use AGENTS.md for the project, piia-engram for the person. See the full comparison in [docs/comparison.md](docs/comparison.md).
+
 **Can I use piia-engram with multiple AI tools at once?**
 Yes. That's the primary use case. piia-engram uses local file storage (`~/.engram/`) with atomic writes and file locking. Claude Code, Cursor, Codex, and any other MCP client can connect simultaneously. A lesson recorded in Claude Code is immediately available in Cursor.
 
@@ -586,7 +589,7 @@ Run `engram doctor --fix` in a terminal, then restart your AI tool. This command
 No. All core tools make zero network requests. Optional anonymous usage statistics (tool call counts, never content) can be enabled during setup but are **off by default**. You can inspect the payload with `engram telemetry preview` and disable anytime with `engram telemetry off`.
 
 **How many MCP tools does piia-engram provide?**
-60 tools: 17 Tier-1 Core tools loaded by default (identity, knowledge, playbooks, tools registry, project context, session recovery) plus 43 Tier-2 Advanced tools for knowledge management, review, import/export, and audit logging. Enable all with `ENGRAM_TOOLS=all`.
+60 tools: 12 Tier-1 Core tools loaded by default (identity, knowledge, playbooks, project context, session recovery) plus 48 Tier-2 Advanced tools for tools registry, knowledge management, review, import/export, and audit logging. Enable all with `ENGRAM_TOOLS=all`.
 
 **Is piia-engram free?**
 Yes. Free and open source under the Apache 2.0 license. No subscription, no cloud tiers, no vendor lock-in.

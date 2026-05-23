@@ -342,17 +342,11 @@ TIER1_TOOLS = frozenset({
     # Identity
     "get_identity_card",         # export identity for non-MCP tools
     "update_identity",           # update profile/preferences/standards
-    # Environment tools registry
-    "register_tool",             # register local tool/program
-    "find_tool",                 # search registered tools
-    "list_tools",                # list all registered tools
     # Project context
     "get_project_context",       # current project state
     "save_project_snapshot",     # persist project state
     # Agent context recovery
-    "save_agent_context",        # auto-save session checkpoint
     "get_recent_context",        # recover lost session context
-    "list_agent_sessions",       # browse session history
 })
 
 mcp = FastMCP(
@@ -2072,9 +2066,6 @@ async def start_project(
     return _json(results)
 
 
-_apply_tool_tier()
-
-
 # ===========================================================================
 # RESOURCES (5)
 # ===========================================================================
@@ -2213,6 +2204,10 @@ async def list_agent_sessions(
     sessions = _engram.list_agent_sessions(tool=tool, limit=limit)
     _track("list_agent_sessions", success=True)
     return _json({"sessions": sessions, "total": len(sessions)})
+
+
+# Apply tool tier filter AFTER all @mcp.tool() decorators have run
+_apply_tool_tier()
 
 
 # ===========================================================================

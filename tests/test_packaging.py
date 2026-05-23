@@ -32,14 +32,9 @@ CORE_MCP_TOOLS = {
     "get_relevant_knowledge",
     "get_identity_card",
     "update_identity",
-    "register_tool",
-    "find_tool",
-    "list_tools",
     "get_project_context",
     "save_project_snapshot",
-    "save_agent_context",
     "get_recent_context",
-    "list_agent_sessions",
 }
 
 
@@ -270,8 +265,8 @@ def test_zh_readme_uses_pypi_install_and_41_tools():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "43 个" in content  # Tier-2 tool count
-    assert "17 个" in content  # Tier-1 tool count
+    assert "48 个" in content  # Tier-2 tool count
+    assert "12 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content

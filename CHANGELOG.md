@@ -6,10 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [3.28.1] - 2026-05-24
 
-Telemetry default-on and auto project snapshots.
+Auto project snapshots and mid-session checkpoints.
 
 ### Added
-- Telemetry defaults to enabled for new installs (no setup wizard needed)
 - Auto project snapshot on MCP server exit — collects version, module count, test count, MCP tool count
 - `_collect_project_info()` helper for filesystem-based project metrics
 - Stop Hook (`auto_save_on_stop.py`) also updates project snapshots

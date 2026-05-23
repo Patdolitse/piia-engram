@@ -1422,21 +1422,8 @@ def auto_migrate() -> None:
                     f.write(line + "\n")
                 f.write("  Restart affected AI tools to apply changes.\n")
 
-        # Telemetry: default to enabled if no config exists yet
-        telemetry_cfg = data_dir / "telemetry_config.json"
-        if not telemetry_cfg.is_file():
-            import uuid as _uuid
-            _now = datetime.now(timezone.utc).isoformat()
-            _cfg = {
-                "enabled": True,
-                "local_uuid": str(_uuid.uuid4()),
-                "opted_in_at": _now,
-                "remote_enabled": True,
-                "remote_opted_in_at": _now,
-            }
-            telemetry_cfg.write_text(
-                json.dumps(_cfg, indent=2) + "\n", encoding="utf-8",
-            )
+        # Telemetry: stays off by default — user opts in via `engram setup`
+        # or `engram telemetry on`. Local-first trust > data collection.
 
     except Exception as exc:
         logger.warning("migration failed: %s", exc)

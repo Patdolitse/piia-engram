@@ -14,6 +14,46 @@ If you only need a single agent to remember its own conversations, you don't nee
 
 ---
 
+## vs. config files (AGENTS.md / CLAUDE.md / .cursorrules)
+
+The most common question: **"Why not just use AGENTS.md?"**
+
+Fair question. Here's the honest answer.
+
+| | AGENTS.md | CLAUDE.md | .cursorrules | piia-engram |
+|---|---|---|---|---|
+| **Scope** | Per-repo | Global or per-project | Per-project | **Per-user, all projects** |
+| **Works in** | Codex | Claude Code | Cursor | Claude Code, Codex, Cursor, Windsurf, and any MCP tool |
+| **Content** | Free-text instructions | Free-text instructions | Free-text rules | Structured: profile, lessons, decisions, playbooks |
+| **Searchable** | ❌ AI reads the whole file | ❌ AI reads the whole file | ❌ AI reads the whole file | ✅ Weighted search, project-aware filtering |
+| **Learns over time** | ❌ You edit manually | ❌ You edit manually | ❌ You edit manually | ✅ AI proposes, you review |
+| **Cross-tool** | ❌ | ❌ | ❌ | ✅ |
+| **Survives tool switch** | ❌ Stays in the repo | ❌ Stays in Claude Code | ❌ Stays in Cursor | ✅ Follows you |
+| **Project knowledge** | ✅ (repo-specific) | ⚠ (project dir) | ✅ (repo-specific) | ✅ (via project snapshots) |
+
+### When config files are enough
+
+- You use **one AI tool** and don't plan to switch.
+- Your instructions are **project-specific** (build steps, repo conventions).
+- You don't need to accumulate knowledge over time — you just need a static prompt.
+
+**In these cases, use the config file.** It's simpler. No MCP needed.
+
+### When you need piia-engram
+
+- You use **2+ AI tools** and want them to share the same context about you.
+- You want your **personal** preferences and lessons to follow you across repos — not be copy-pasted into every project.
+- You want to **accumulate** knowledge (lessons, decisions, playbooks) over months, not rewrite instructions from scratch.
+- You want the AI to **search** relevant knowledge instead of reading a giant file.
+
+### They work together
+
+piia-engram doesn't replace AGENTS.md — it complements it. Use AGENTS.md for **repo-specific** rules ("this project uses tabs, runs on Python 3.11"). Use piia-engram for **you** ("I prefer concise responses, I've learned X, I decided Y").
+
+---
+
+## vs. AI memory tools
+
 ## At a glance
 
 | Capability | Engram | Letta (MemGPT) | Mem0 | Cline `memories/` | Claude Code `~/.claude/projects/*/memory/` |
