@@ -50,7 +50,7 @@ class TestConfig:
     def test_set_enabled_persists(self, isolated_engram_dir):
         set_enabled(True)
         assert is_enabled() is True
-        cfg = json.loads((isolated_engram_dir / "telemetry_config.json").read_text())
+        cfg = json.loads((isolated_engram_dir / "telemetry_config.json").read_text(encoding="utf-8"))
         assert cfg["enabled"] is True
         assert "local_uuid" in cfg
         assert "opted_in_at" in cfg
@@ -59,7 +59,7 @@ class TestConfig:
         set_enabled(True)
         set_enabled(False)
         assert is_enabled() is False
-        cfg = json.loads((isolated_engram_dir / "telemetry_config.json").read_text())
+        cfg = json.loads((isolated_engram_dir / "telemetry_config.json").read_text(encoding="utf-8"))
         assert cfg["enabled"] is False
         assert "opted_out_at" in cfg
 

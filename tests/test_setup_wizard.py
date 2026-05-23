@@ -46,7 +46,7 @@ def test_write_mcp_config_creates_file(tmp_path: Path):
     config_path = tmp_path / "test_mcp.json"
     _write_mcp_config(config_path, "/usr/bin/python3", "/path/to/mcp_server.py")
     assert config_path.is_file()
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     assert "mcpServers" in config
     assert "engram" in config["mcpServers"]
     assert config["mcpServers"]["engram"]["command"] == "/usr/bin/python3"
@@ -61,7 +61,7 @@ def test_write_mcp_config_merges(tmp_path: Path):
 
     _write_mcp_config(config_path, "/usr/bin/python3", "/path/to/mcp_server.py")
 
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     assert "other-tool" in config["mcpServers"]   # 原有配置保留
     assert "engram" in config["mcpServers"]        # engram 已添加
 
@@ -75,7 +75,7 @@ def test_write_mcp_config_with_data_dir(tmp_path: Path):
         "/path/to/mcp_server.py",
         data_dir="/custom/engram",
     )
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     assert config["mcpServers"]["engram"]["env"]["ENGRAM_DIR"] == "/custom/engram"
 
 
@@ -88,7 +88,7 @@ def test_write_mcp_config_no_env_without_data_dir(tmp_path: Path):
         "/path/to/mcp_server.py",
         data_dir=None,
     )
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     assert "env" not in config["mcpServers"]["engram"]
 
 
@@ -97,7 +97,7 @@ def test_write_mcp_config_overwrites_existing_engram(tmp_path: Path):
     config_path = tmp_path / "mcp.json"
     _write_mcp_config(config_path, "/old/python", "/old/mcp_server.py")
     _write_mcp_config(config_path, "/new/python", "/new/mcp_server.py")
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     assert config["mcpServers"]["engram"]["command"] == "/new/python"
 
 

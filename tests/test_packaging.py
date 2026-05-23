@@ -65,6 +65,7 @@ def _registered_mcp_tools(tmp_path: Path, tools_tier: str | None = None) -> list
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
         timeout=10,
     )
