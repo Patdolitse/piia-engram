@@ -20,7 +20,7 @@ Agent context auto-save release — recover lost AI conversations.
 
 ### Changed
 - MCP Tier-1 tools increased: 10 → 13 (added save_agent_context, get_recent_context, list_agent_sessions)
-- MCP tool count increased: 43 → 46
+- MCP tool count increased: 45 → 48
 - Directory structure: `contexts/` added to `~/.engram/` on init
 
 ## [3.20.0] - 2026-05-23
