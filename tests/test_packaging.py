@@ -174,7 +174,7 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "58 MCP tools" in content
+    assert "60 MCP tools" in content
 
 
 def test_readme_has_remote_deployment_section():
@@ -212,7 +212,7 @@ def test_mcp_tool_count_and_merge_tool():
             ):
                 tools.append(node.name)
                 break
-    assert len(tools) >= 55
+    assert len(tools) >= 57
     assert "update_knowledge" in tools
     assert "update_playbook" in tools
     assert "archive_playbook" in tools
@@ -224,6 +224,8 @@ def test_mcp_tool_count_and_merge_tool():
     assert "get_audit_log" in tools
     assert "review_knowledge" in tools
     assert "get_stale_knowledge" in tools
+    assert "update_execution_step" in tools
+    assert "get_execution_status" in tools
     assert "get_safe_profile" not in tools
     assert "update_lesson" not in tools
     assert "update_decision" not in tools
@@ -246,7 +248,7 @@ def test_mcp_tools_all_tier_registers_all_tools(tmp_path: Path):
     """ENGRAM_TOOLS=all 时应暴露全部工具（含 update/archive playbook）。"""
     tools = _registered_mcp_tools(tmp_path, tools_tier="all")
 
-    assert len(tools) >= 55
+    assert len(tools) >= 57
     assert set(CORE_MCP_TOOLS).issubset(tools)
     assert "get_profile" in tools
     assert "bulk_add_knowledge" in tools
@@ -267,7 +269,7 @@ def test_zh_readme_uses_pypi_install_and_41_tools():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "41 个" in content  # Tier-2 tool count
+    assert "43 个" in content  # Tier-2 tool count
     assert "17 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
