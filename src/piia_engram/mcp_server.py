@@ -63,7 +63,7 @@ def _track(tool_name: str, success: bool = True) -> None:
 
     Phase 1 scope: only Tier-1 tools (TIER1_TOOLS) are tracked. This covers
     the 10 most-used tools representing ~95% of typical sessions. Extending
-    to all 46 tools is planned for Phase 2 if usage statistics prove useful.
+    to all 48 tools is planned for Phase 2 if usage statistics prove useful.
     """
     if _tracker is not None:
         _tracker.record(tool_name, success=success)
