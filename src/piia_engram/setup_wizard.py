@@ -1479,7 +1479,8 @@ def run_doctor(fix: bool = False) -> int:
     if not issues:
         if configured_count > 0:
             print("  [ok] All configured tools look healthy.\n")
-        return 0
+        func_issues = _run_functional_checks()
+        return func_issues
 
     print(f"  [!] Found {len(issues)} issue(s):\n")
     for t, desc in issues:
@@ -1519,7 +1520,69 @@ def run_doctor(fix: bool = False) -> int:
 
     remaining = len(issues) - fixed
     print(f"\n  Done: {fixed} config(s) updated. Restart your AI tools to apply changes.\n")
-    return remaining
+    func_issues = _run_functional_checks()
+    return remaining + func_issues
+
+
+def _run_functional_checks() -> int:
+    """运行功能性验证：MCP server 能否启动、知识库能否读写、quick_context 是否可用。
+
+    Returns:
+        发现的问题数量（0 = 健康）。
+    """
+    print("  ── Functional Checks ──\n")
+    problems = 0
+
+    # 1. 核心库导入
+    try:
+        from piia_engram.core import Engram  # noqa: F811
+
+        print("    [ok] piia_engram.core importable")
+    except Exception as exc:
+        print(f"    [!!] piia_engram.core import failed: {exc}")
+        problems += 1
+        return problems  # 后续检查都依赖 core
+
+    # 2. Engram 实例化（读取 ~/.engram/）
+    try:
+        eng = Engram()
+        print(f"    [ok] Engram initialized ({eng.root})")
+    except Exception as exc:
+        print(f"    [!!] Engram init failed: {exc}")
+        problems += 1
+        return problems
+
+    # 3. 身份数据读取
+    try:
+        profile = eng.get_profile()
+        role = profile.get("role", "")
+        if role:
+            print(f"    [ok] Identity loaded (role: {role})")
+        else:
+            print("    [--] Identity empty — run 'engram setup' to create your profile")
+    except Exception as exc:
+        print(f"    [!!] Profile read failed: {exc}")
+        problems += 1
+
+    # 4. quick_context.md 可用性
+    qc = eng.root / "quick_context.md"
+    if qc.exists() and qc.stat().st_size > 0:
+        print(f"    [ok] quick_context.md ready ({qc.stat().st_size} bytes)")
+    else:
+        print("    [--] quick_context.md missing or empty — cold-start will be slower")
+
+    # 5. MCP server 工具注册
+    try:
+        from piia_engram import mcp_server  # noqa: F811
+
+        tool_count = len(mcp_server.mcp._tool_manager._tools)
+        print(f"    [ok] MCP server: {tool_count} tools registered")
+    except Exception as exc:
+        print(f"    [!!] MCP server import failed: {exc}")
+        problems += 1
+
+    print()
+    return problems
 
 
 def _run_telemetry_cli(sub_args: list[str]) -> None:
