@@ -127,6 +127,40 @@ The setup wizard will:
 
 Restart your AI tool after setup. The first conversation will call `get_user_context` automatically — your AI already knows you.
 
+### See It in Action
+
+```
+You  → "Help me refactor this auth module"
+
+# WITHOUT piia-engram: AI starts from scratch
+AI   → "What language? What framework? What's your testing preference?"
+
+# WITH piia-engram: AI already knows you
+AI   → "Based on your preference for pytest + 90% coverage, and your
+        lesson about always separating auth middleware from business
+        logic (from the March incident), here's my approach..."
+```
+
+After setup, run `engram doctor` to verify everything is connected:
+
+```
+$ engram doctor
+
+  Detected 3 AI tool(s):
+    [ok] Claude Code — Engram configured
+    [ok] Cursor — Engram configured
+    [ok] Codex — Engram configured
+
+  [ok] All configured tools look healthy.
+
+  ── Functional Checks ──
+    [ok] piia_engram.core importable
+    [ok] Engram initialized (~/.engram)
+    [ok] Identity loaded (role: Senior Backend Developer)
+    [ok] quick_context.md ready (4096 bytes)
+    [ok] MCP server: 13 tools registered
+```
+
 <details>
 <summary><strong>Manual MCP configuration</strong></summary>
 
