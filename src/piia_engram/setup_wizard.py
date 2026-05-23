@@ -1374,7 +1374,7 @@ def auto_migrate() -> None:
     """
     try:
         import os as _os
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         # 确定数据目录和哨兵文件
         data_dir = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
@@ -1421,6 +1421,22 @@ def auto_migrate() -> None:
                 for line in log_lines:
                     f.write(line + "\n")
                 f.write("  Restart affected AI tools to apply changes.\n")
+
+        # Telemetry: default to enabled if no config exists yet
+        telemetry_cfg = data_dir / "telemetry_config.json"
+        if not telemetry_cfg.is_file():
+            import uuid as _uuid
+            _now = datetime.now(timezone.utc).isoformat()
+            _cfg = {
+                "enabled": True,
+                "local_uuid": str(_uuid.uuid4()),
+                "opted_in_at": _now,
+                "remote_enabled": True,
+                "remote_opted_in_at": _now,
+            }
+            telemetry_cfg.write_text(
+                json.dumps(_cfg, indent=2) + "\n", encoding="utf-8",
+            )
 
     except Exception as exc:
         logger.warning("migration failed: %s", exc)
