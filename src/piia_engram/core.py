@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -666,6 +667,31 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         data = _read_json(path)
         return data if isinstance(data, dict) else None
 
+    @staticmethod
+    def _extract_parameters(playbook: dict) -> list[str]:
+        """Extract ${variable} placeholders from playbook steps and description."""
+        _PARAM_RE = re.compile(r"\$\{(\w+)\}")
+        params: list[str] = []
+        seen: set[str] = set()
+        # Scan steps
+        for step in playbook.get("steps", []):
+            for field in ("action", "detail"):
+                text = step.get(field) or ""
+                for m in _PARAM_RE.finditer(text):
+                    name = m.group(1)
+                    if name not in seen:
+                        params.append(name)
+                        seen.add(name)
+        # Scan description and outcome
+        for field in ("description", "outcome"):
+            text = playbook.get(field) or ""
+            for m in _PARAM_RE.finditer(text):
+                name = m.group(1)
+                if name not in seen:
+                    params.append(name)
+                    seen.add(name)
+        return params
+
     def _ensure_playbook_fields(self, entry: dict) -> dict:
         """Backfill metadata fields on a playbook entry."""
         if not isinstance(entry, dict):
@@ -794,7 +820,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         return result
 
     def get_playbook(self, playbook_id: str, _update_access: bool = True) -> dict:
-        """Get a single playbook by ID."""
+        """Get a single playbook by ID. Includes extracted parameters list."""
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
@@ -804,7 +830,19 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             pb["access_count"] = pb.get("access_count", 0) + 1
             _write_json(self._playbooks_dir / f"{playbook_id}.json", pb)
 
+        # Always include dynamic parameters extraction
+        pb["parameters"] = self._extract_parameters(pb)
         return pb
+
+    def get_recent_playbooks(self, limit: int = 5) -> list[dict]:
+        """Return recently used active playbooks, sorted by last_reviewed descending."""
+        all_pbs = self._export_playbooks()
+        active = [pb for pb in all_pbs if pb.get("status") == "active"]
+        active.sort(key=lambda pb: pb.get("last_reviewed", ""), reverse=True)
+        result = active[:limit]
+        for pb in result:
+            pb["parameters"] = self._extract_parameters(pb)
+        return result
 
     def update_playbook(self, playbook_id: str, updates: dict) -> dict:
         """Update fields on a playbook entry."""
@@ -838,6 +876,104 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
     def archive_playbook(self, playbook_id: str) -> dict:
         """Mark a playbook as outdated without deleting it."""
         return self.update_playbook(playbook_id, {"status": "outdated"})
+
+    def merge_playbooks(self, target_id: str, source: dict) -> dict:
+        """Merge steps and pitfalls from *source* dict into existing playbook *target_id*.
+
+        Steps are de-duplicated by action text similarity. Pitfalls and triggers
+        are union-merged. The target playbook is updated in-place.
+        """
+        target = self._read_playbook_by_id(target_id)
+        if target is None:
+            return {"error": f"Playbook not found: {target_id}"}
+
+        # Merge steps (de-dup by similarity)
+        existing_actions = {s.get("action", ""): True for s in target.get("steps", [])}
+        next_order = max((s.get("order", 0) for s in target.get("steps", [])), default=0)
+        merged_steps = list(target.get("steps", []))
+        for s in source.get("steps", []):
+            action = s.get("action", "")
+            # Skip if already exists (exact or highly similar)
+            is_dup = False
+            for existing_action in existing_actions:
+                if self._bigram_similarity(action, existing_action) >= 0.6:
+                    is_dup = True
+                    break
+            if not is_dup and action:
+                next_order += 1
+                merged_steps.append({"order": next_order, "action": action})
+                existing_actions[action] = True
+
+        # Merge pitfalls (union)
+        existing_pitfalls = set(target.get("pitfalls", []))
+        merged_pitfalls = list(target.get("pitfalls", []))
+        for p in source.get("pitfalls", []):
+            if p not in existing_pitfalls:
+                merged_pitfalls.append(p)
+                existing_pitfalls.add(p)
+
+        # Merge triggers (union)
+        existing_triggers = set(target.get("triggers", []))
+        merged_triggers = list(target.get("triggers", []))
+        for t in source.get("triggers", []):
+            if t not in existing_triggers:
+                merged_triggers.append(t)
+                existing_triggers.add(t)
+
+        updates = {
+            "steps": merged_steps,
+            "pitfalls": merged_pitfalls,
+            "triggers": merged_triggers,
+        }
+        result = self.update_playbook(target_id, updates)
+        result["merged"] = True
+        return result
+
+    def prepare_playbook_execution(
+        self, playbook_id: str, params: dict[str, str] | None = None,
+    ) -> dict:
+        """Prepare a playbook for guided execution with parameter substitution.
+
+        Returns a copy of the playbook with ``${variable}`` placeholders
+        replaced by values from *params*, plus per-step status tracking fields.
+        Does NOT auto-execute — the AI tool should walk through steps one by one.
+
+        Args:
+            playbook_id: ID of the playbook to prepare.
+            params: ``{variable_name: value}`` for ``${variable}`` substitution.
+
+        Returns:
+            ``{playbook_id, title, execution_plan: [{order, action, status}], parameters_used}``
+        """
+        pb = self.get_playbook(playbook_id, _update_access=True)
+        if pb.get("error"):
+            return pb
+
+        params = params or {}
+
+        # Substitute parameters in steps
+        execution_plan = []
+        for step in pb.get("steps", []):
+            action = step.get("action", "")
+            detail = step.get("detail", "")
+            for var_name, var_value in params.items():
+                action = action.replace(f"${{{var_name}}}", var_value)
+                detail = detail.replace(f"${{{var_name}}}", var_value)
+            execution_plan.append({
+                "order": step.get("order", 0),
+                "action": action,
+                "detail": detail,
+                "status": "pending",
+            })
+
+        return {
+            "playbook_id": playbook_id,
+            "title": pb.get("title", ""),
+            "execution_plan": execution_plan,
+            "parameters_used": params,
+            "pitfalls": pb.get("pitfalls", []),
+            "preconditions": pb.get("preconditions", []),
+        }
 
     def _export_playbooks(self) -> list[dict]:
         """Export all playbooks as a list for backup."""
@@ -1008,15 +1144,16 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         return self.archive_decision(item_id)
 
     def review_knowledge(self, knowledge_id: str) -> dict:
-        """Mark a lesson or decision as reviewed without changing its content."""
-        lessons, decisions = self._read_link_collections()
-        item_type, item = self._find_item_in_collections(knowledge_id, lessons, decisions)
+        """Mark a lesson, decision, or playbook as reviewed without changing its content."""
+        lessons, decisions, playbooks = self._read_link_collections()
+        item_type, item = self._find_item_in_collections(knowledge_id, lessons, decisions, playbooks)
         if item is None or item_type is None:
             return {"error": f"Item not found: {knowledge_id}"}
 
         item["last_reviewed"] = _now_iso()
         item["access_count"] = item.get("access_count", 0) + 1
-        self._write_link_collections(lessons, decisions)
+        modified_pbs = [item] if item_type == "playbook" else None
+        self._write_link_collections(lessons, decisions, modified_pbs)
         self._audit.log("write", "knowledge/review", detail=knowledge_id)
         return item
 
@@ -1025,9 +1162,9 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if primary_id == secondary_id:
             return {"error": "Cannot merge an item with itself"}
 
-        lessons, decisions = self._read_link_collections()
-        primary_type, primary = self._find_item_in_collections(primary_id, lessons, decisions)
-        secondary_type, secondary = self._find_item_in_collections(secondary_id, lessons, decisions)
+        lessons, decisions, playbooks = self._read_link_collections()
+        primary_type, primary = self._find_item_in_collections(primary_id, lessons, decisions, playbooks)
+        secondary_type, secondary = self._find_item_in_collections(secondary_id, lessons, decisions, playbooks)
 
         if primary is None:
             return {"error": f"Primary item not found: {primary_id}"}
@@ -1057,7 +1194,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         for related_id in secondary_related:
             if related_id in (primary_id, secondary_id):
                 continue
-            _, related_item = self._find_item_in_collections(related_id, lessons, decisions)
+            _, related_item = self._find_item_in_collections(related_id, lessons, decisions, playbooks)
             if related_item is None:
                 continue
             related_ids = set(related_item.get("related_ids", []))
@@ -1069,7 +1206,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         secondary["status"] = "outdated"
         secondary["merged_into"] = primary_id
         secondary["last_updated"] = _now_iso()
-        self._write_link_collections(lessons, decisions)
+        # Write back any playbooks that were involved in the merge
+        involved_ids = {primary_id, secondary_id} | set(secondary_related)
+        modified_pbs = [pb for pb in playbooks if pb.get("id") in involved_ids]
+        self._write_link_collections(lessons, decisions, modified_pbs or None)
 
         return {
             "success": True,
@@ -1081,22 +1221,34 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "secondary_title": self._knowledge_title(secondary_type, secondary),
         }
 
-    def _read_link_collections(self) -> tuple[list[dict], list[dict]]:
+    def _read_link_collections(self) -> tuple[list[dict], list[dict], list[dict]]:
         lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
         decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
-        return lessons, decisions
+        playbooks = self._export_playbooks()
+        return lessons, decisions, playbooks
 
-    def _write_link_collections(self, lessons: list[dict], decisions: list[dict]) -> None:
-        # Each write is individually atomic, but the two writes together are not.
+    def _write_link_collections(
+        self,
+        lessons: list[dict],
+        decisions: list[dict],
+        playbooks: list[dict] | None = None,
+    ) -> None:
+        # Each write is individually atomic, but the writes together are not.
         # A crash between them could leave a one-sided link. Acceptable for local single-user use.
         _write_json(self._knowledge_dir / "lessons.json", lessons)
         _write_json(self._knowledge_dir / "decisions.json", decisions)
+        if playbooks is not None:
+            for pb in playbooks:
+                pb_id = pb.get("id")
+                if pb_id:
+                    _write_json(self._playbooks_dir / f"{pb_id}.json", pb)
 
     def _find_item_in_collections(
         self,
         item_id: str,
         lessons: list[dict],
         decisions: list[dict],
+        playbooks: list[dict] | None = None,
     ) -> tuple[str | None, dict | None]:
         for item in lessons:
             if item.get("id") == item_id:
@@ -1104,18 +1256,18 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         for item in decisions:
             if item.get("id") == item_id:
                 return "decision", item
+        if playbooks is not None:
+            for item in playbooks:
+                if item.get("id") == item_id:
+                    return "playbook", item
         return None, None
 
     def _find_item_by_id(self, item_id: str) -> tuple[str | None, dict | None]:
-        """Find a lesson, decision, or playbook by id without updating access metadata."""
-        lessons, decisions = self._read_link_collections()
-        item_type, item = self._find_item_in_collections(item_id, lessons, decisions)
+        """Find a lesson, decision, playbook, or tool by id without updating access metadata."""
+        lessons, decisions, playbooks = self._read_link_collections()
+        item_type, item = self._find_item_in_collections(item_id, lessons, decisions, playbooks)
         if item_type is not None:
             return item_type, item
-        # Fall through to playbook file-based lookup
-        pb = self._read_playbook_by_id(item_id)
-        if pb is not None:
-            return "playbook", pb
         # Fall through to tools registry
         for tool in self._read_tools():
             if tool.get("id") == item_id:
@@ -1158,10 +1310,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         }
 
     def link_knowledge(self, id_a: str, id_b: str) -> dict:
-        """Create a bidirectional link between two knowledge items."""
-        lessons, decisions = self._read_link_collections()
-        type_a, item_a = self._find_item_in_collections(id_a, lessons, decisions)
-        type_b, item_b = self._find_item_in_collections(id_b, lessons, decisions)
+        """Create a bidirectional link between two knowledge items (lessons, decisions, or playbooks)."""
+        lessons, decisions, playbooks = self._read_link_collections()
+        type_a, item_a = self._find_item_in_collections(id_a, lessons, decisions, playbooks)
+        type_b, item_b = self._find_item_in_collections(id_b, lessons, decisions, playbooks)
 
         if item_a is None:
             return {"error": f"Item not found: {id_a}"}
@@ -1172,7 +1324,11 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             item_a["related_ids"].append(id_b)
         if id_a not in item_b["related_ids"]:
             item_b["related_ids"].append(id_a)
-        self._write_link_collections(lessons, decisions)
+
+        # Only write back playbooks that were modified
+        modified_pbs = [pb for pb in playbooks
+                        if pb.get("id") in (id_a, id_b)]
+        self._write_link_collections(lessons, decisions, modified_pbs or None)
 
         title_a = self._knowledge_title(type_a, item_a)
         title_b = self._knowledge_title(type_b, item_b)
@@ -1180,9 +1336,9 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
 
     def unlink_knowledge(self, id_a: str, id_b: str) -> dict:
         """Remove the bidirectional link between two knowledge items."""
-        lessons, decisions = self._read_link_collections()
-        type_a, item_a = self._find_item_in_collections(id_a, lessons, decisions)
-        type_b, item_b = self._find_item_in_collections(id_b, lessons, decisions)
+        lessons, decisions, playbooks = self._read_link_collections()
+        type_a, item_a = self._find_item_in_collections(id_a, lessons, decisions, playbooks)
+        type_b, item_b = self._find_item_in_collections(id_b, lessons, decisions, playbooks)
 
         if item_a is None:
             return {"error": f"Item not found: {id_a}"}
@@ -1191,16 +1347,19 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
 
         item_a["related_ids"] = [item_id for item_id in item_a["related_ids"] if item_id != id_b]
         item_b["related_ids"] = [item_id for item_id in item_b["related_ids"] if item_id != id_a]
-        self._write_link_collections(lessons, decisions)
+
+        modified_pbs = [pb for pb in playbooks
+                        if pb.get("id") in (id_a, id_b)]
+        self._write_link_collections(lessons, decisions, modified_pbs or None)
 
         title_a = self._knowledge_title(type_a, item_a)
         title_b = self._knowledge_title(type_b, item_b)
         return {"success": True, "message": f"Unlinked: {title_a} ↔ {title_b}"}
 
     def get_related_knowledge(self, item_id: str) -> dict:
-        """Return all knowledge items linked to a lesson or decision id."""
-        lessons, decisions = self._read_link_collections()
-        item_type, item = self._find_item_in_collections(item_id, lessons, decisions)
+        """Return all knowledge items linked to a lesson, decision, or playbook id."""
+        lessons, decisions, playbooks = self._read_link_collections()
+        item_type, item = self._find_item_in_collections(item_id, lessons, decisions, playbooks)
         if item is None or item_type is None:
             return {"error": f"Item not found: {item_id}"}
 
@@ -1210,6 +1369,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 related_id,
                 lessons,
                 decisions,
+                playbooks,
             )
             if related_item is not None and related_type is not None:
                 related.append(self._knowledge_view(related_type, related_item))

@@ -165,6 +165,12 @@ def _json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
 
 
+def _user_lang() -> str:
+    """Detect user language from profile. Returns 'zh' or 'en'."""
+    from piia_engram.i18n import get_lang
+    return get_lang()
+
+
 def _validate_path(value: str, *, allow_empty: bool = False) -> str | None:
     """Light path hygiene for user-supplied filesystem paths.
 
@@ -863,6 +869,151 @@ async def get_playbook(playbook_id: str) -> str:
 
 
 @mcp.tool()
+async def get_recent_playbooks(limit: int = 5) -> str:
+    """获取最近使用过的 Playbook（按 last_reviewed 倒序）。 / Get recently used Playbooks sorted by last_reviewed descending.
+
+    用途：冷启动或会话开始时，主动浮现用户最近用过的操作流程，方便快速复用。
+    Purpose: Surface recently used playbooks at session start for quick reuse.
+
+    Args:
+        limit: 返回条数上限（默认 5）。 / Maximum items to return (default 5).
+    """
+    try:
+        result = _engram.get_recent_playbooks(limit=limit)
+        _track("get_recent_playbooks", success=True)
+    except Exception as exc:
+        _track("get_recent_playbooks", success=False)
+        return f"获取近期 Playbook 失败: {exc}"
+    if not result:
+        return "尚无最近使用的 Playbook。 / No recently used Playbooks."
+    return _json(result)
+
+
+@mcp.tool()
+async def update_playbook(
+    playbook_id: str,
+    title: str = "",
+    triggers: str = "",
+    steps_json: str = "",
+    description: str = "",
+    domain: str = "",
+    preconditions: str = "",
+    pitfalls: str = "",
+    outcome: str = "",
+    status: str = "",
+) -> str:
+    """更新已有 Playbook 的字段。 / Update fields on an existing Playbook.
+
+    用途：修正或补充已记录的操作手册内容，如添加新步骤、更新触发词、修改描述等。
+    Purpose: Correct or enrich an existing playbook — add steps, update triggers, fix descriptions, etc.
+
+    只传入需要更新的字段，未传入的字段保持不变。版本号自动递增。
+    Only pass the fields you want to change; omitted fields stay unchanged. Version auto-increments.
+
+    Args:
+        playbook_id: 要更新的 Playbook ID。 / ID of the Playbook to update.
+        title: 新标题（可选）。 / New title (optional).
+        triggers: 新触发词，逗号分隔（可选）。 / New trigger keywords, comma-separated (optional).
+        steps_json: 新步骤 JSON 数组（可选）。 / New steps as a JSON array (optional).
+        description: 新描述（可选）。 / New description (optional).
+        domain: 新领域（可选）。 / New domain (optional).
+        preconditions: 新前提条件，逗号分隔（可选）。 / New preconditions, comma-separated (optional).
+        pitfalls: 新陷阱，逗号分隔（可选）。 / New pitfalls, comma-separated (optional).
+        outcome: 新预期结果（可选）。 / New expected outcome (optional).
+        status: 新状态，如 active/outdated/staging（可选）。 / New status, e.g., active/outdated/staging (optional).
+    """
+    updates: dict = {}
+    if title:
+        updates["title"] = title
+    if triggers:
+        updates["triggers"] = [t.strip() for t in triggers.split(",") if t.strip()]
+    if steps_json:
+        try:
+            steps = json.loads(steps_json)
+            if isinstance(steps, list):
+                updates["steps"] = steps
+        except json.JSONDecodeError:
+            return "steps_json 格式错误，需要有效的 JSON 数组"
+    if description:
+        updates["description"] = description
+    if domain:
+        updates["domain"] = domain
+    if preconditions:
+        updates["preconditions"] = [p.strip() for p in preconditions.split(",") if p.strip()]
+    if pitfalls:
+        updates["pitfalls"] = [p.strip() for p in pitfalls.split(",") if p.strip()]
+    if outcome:
+        updates["outcome"] = outcome
+    if status:
+        updates["status"] = status
+    if not updates:
+        return "未提供任何更新字段。 / No update fields provided."
+    try:
+        result = _engram.update_playbook(playbook_id, updates)
+        _track("update_playbook", success=True)
+    except Exception as exc:
+        _track("update_playbook", success=False)
+        return f"更新 Playbook 失败: {exc}"
+    if result.get("error"):
+        return _json(result)
+    return f"Playbook 已更新: {result.get('title', playbook_id)} (v{result.get('version', '?')})"
+
+
+@mcp.tool()
+async def prepare_playbook_execution(
+    playbook_id: str,
+    params_json: str = "{}",
+) -> str:
+    """准备 Playbook 引导执行计划（参数替换 + 逐步状态跟踪）。 / Prepare a Playbook execution plan with parameter substitution and per-step tracking.
+
+    用途："按上次流程来" — 调取已有 Playbook，替换参数后返回可执行计划。AI 逐步确认执行，不自动运行。
+    Purpose: "Follow the previous procedure" — fetch a Playbook, substitute parameters, return an executable plan. AI confirms each step; no auto-execution.
+
+    Args:
+        playbook_id: Playbook ID。 / The Playbook ID.
+        params_json: 参数 JSON 对象，键值对替换步骤中的 ${variable}（可选）。 / Parameters JSON object for ${variable} substitution (optional).
+    """
+    params = {}
+    if params_json and params_json != "{}":
+        try:
+            parsed = json.loads(params_json)
+            if isinstance(parsed, dict):
+                params = parsed
+        except json.JSONDecodeError:
+            return "params_json 格式错误，需要有效的 JSON 对象"
+    try:
+        result = _engram.prepare_playbook_execution(playbook_id, params=params)
+        _track("prepare_playbook_execution", success=True)
+    except Exception as exc:
+        _track("prepare_playbook_execution", success=False)
+        return f"准备执行计划失败: {exc}"
+    if result.get("error"):
+        return _json(result)
+    return _json(result)
+
+
+@mcp.tool()
+async def archive_playbook(playbook_id: str) -> str:
+    """归档 Playbook（标记为过时但不删除）。 / Archive a Playbook (mark as outdated without deleting).
+
+    用途：当某个操作流程已不再使用或有新版本替代时，将其归档。
+    Purpose: When a procedure is no longer in use or has been superseded, archive it.
+
+    Args:
+        playbook_id: 要归档的 Playbook ID。 / ID of the Playbook to archive.
+    """
+    try:
+        result = _engram.archive_playbook(playbook_id)
+        _track("archive_playbook", success=True)
+    except Exception as exc:
+        _track("archive_playbook", success=False)
+        return f"归档 Playbook 失败: {exc}"
+    if result.get("error"):
+        return _json(result)
+    return f"Playbook 已归档: {result.get('title', playbook_id)}"
+
+
+@mcp.tool()
 async def register_tool(
     name: str,
     path: str = "",
@@ -1481,6 +1632,13 @@ async def wrap_up_session(
         )
         if playbook:
             pb_confidence = playbook.get("confidence", "medium")
+            _zh = _user_lang() == "zh"
+            if pb_confidence == "high":
+                _pb_msg = ("检测到可复用的操作流程，已生成 Playbook 草稿。" if _zh
+                           else "Reusable workflow detected — Playbook draft generated.")
+            else:
+                _pb_msg = ("检测到可能的操作流程，已静默存入草稿。" if _zh
+                           else "Possible workflow detected — silently saved as draft.")
             results["playbook_draft"] = {
                 "title": playbook.get("title", ""),
                 "playbook_id": playbook.get("id", ""),
@@ -1488,11 +1646,7 @@ async def wrap_up_session(
                 "pitfalls_count": len(playbook.get("pitfalls", [])),
                 "tier": "staging",
                 "confidence": pb_confidence,
-                "message": (
-                    "检测到可复用的操作流程，已生成 Playbook 草稿。"
-                    if pb_confidence == "high"
-                    else "检测到可能的操作流程，已静默存入草稿。"
-                ),
+                "message": _pb_msg,
             }
     except Exception as exc:
         logger.warning("playbook extraction failed: %s", exc)
@@ -1540,13 +1694,23 @@ async def wrap_up_session(
     try:
         staging = _engram.get_staging_summary()
         if staging["total_staging"] > 0:
-            results["staging_reminder"] = {
-                "message": (
+            _zh = _user_lang() == "zh"
+            if _zh:
+                _stg_msg = (
                     f"有 {staging['total_staging']} 条待审知识"
                     f"（{staging['staging_lessons']} 条经验 + "
                     f"{staging['staging_decisions']} 条决策）。"
                     "建议使用 review_knowledge 审查。"
-                ),
+                )
+            else:
+                _stg_msg = (
+                    f"{staging['total_staging']} knowledge items pending review "
+                    f"({staging['staging_lessons']} lessons + "
+                    f"{staging['staging_decisions']} decisions). "
+                    "Consider using review_knowledge to review them."
+                )
+            results["staging_reminder"] = {
+                "message": _stg_msg,
                 **staging,
             }
     except Exception as exc:
@@ -1689,6 +1853,7 @@ async def save_agent_context(
     content: str,
     session_id: str = "",
     project_folder: str = "",
+    actions_json: str = "",
 ) -> str:
     """自动保存 AI 对话上下文检查点。 / Auto-save an AI conversation context checkpoint.
 
@@ -1703,12 +1868,22 @@ async def save_agent_context(
         content: 上下文内容（当前任务、进度、下一步，自由文本）。 / Context content (current tasks, progress, next steps, free text).
         session_id: 会话 ID（可选）。留空则新建会话，填入已有 ID 则追加到同一会话文件。 / Session ID (optional). Empty creates new session; existing ID appends to same file.
         project_folder: 项目路径（可选，写入文件头）。 / Project folder path (optional, written to file header).
+        actions_json: 结构化动作日志（可选），JSON 数组，每个元素含 tool_called, arguments_summary, result_summary。用于 Playbook 自动提取。 / Structured action log (optional), JSON array of {tool_called, arguments_summary, result_summary}. Used for higher-fidelity Playbook extraction.
     """
+    actions = None
+    if actions_json:
+        try:
+            parsed = json.loads(actions_json)
+            if isinstance(parsed, list):
+                actions = parsed
+        except json.JSONDecodeError:
+            pass
     result = _engram.save_agent_context(
         tool=tool,
         content=content,
         session_id=session_id,
         project_folder=project_folder,
+        actions=actions,
     )
     _track("save_agent_context", success=True)
     return _json(result)

@@ -55,15 +55,16 @@ class ContextMixin:
         "profile": 1,
         "lessons": 2,
         "decisions": 3,
-        "preferences": 4,
-        "quality": 5,
-        "conflicts": 6,
-        "project": 7,
-        "tools": 8,
-        "domains": 9,
-        "stale": 10,
-        "staging": 11,
-        "sync": 12,
+        "playbooks": 4,
+        "preferences": 5,
+        "quality": 6,
+        "conflicts": 7,
+        "project": 8,
+        "tools": 9,
+        "domains": 10,
+        "stale": 11,
+        "staging": 12,
+        "sync": 13,
     }
     _SECTION_DISPLAY: dict[str, int] = {
         "fragmentation": 0,
@@ -74,11 +75,12 @@ class ContextMixin:
         "tools": 5,
         "lessons": 6,
         "decisions": 7,
-        "conflicts": 8,
-        "project": 9,
-        "stale": 10,
-        "staging": 11,
-        "sync": 12,
+        "playbooks": 8,
+        "conflicts": 9,
+        "project": 10,
+        "stale": 11,
+        "staging": 12,
+        "sync": 13,
     }
 
     # Tiered context levels for cold-start latency control.
@@ -88,7 +90,7 @@ class ContextMixin:
     _LEVEL_SECTIONS: dict[str, set[str] | None] = {
         "quick": {"profile", "preferences"},
         "standard": {"profile", "preferences", "quality", "domains",
-                     "tools", "lessons", "decisions", "project"},
+                     "tools", "lessons", "decisions", "playbooks", "project"},
         "full": None,  # None means "include all sections"
     }
 
@@ -418,6 +420,33 @@ class ContextMixin:
             return True
         return False
 
+    def _extract_steps_from_actions(self, session_content: str) -> list[dict]:
+        """Extract ordered steps from structured #### Actions blocks in context files."""
+        steps = []
+        # Actions blocks are formatted as:
+        # #### Actions
+        # 1. `tool_name` — args_summary → result_summary
+        action_blocks = re.findall(
+            r"####\s+Actions\n((?:\d+\.\s+`.+`.*\n?)+)",
+            session_content,
+        )
+        order = 0
+        for block in action_blocks:
+            for line in block.strip().splitlines():
+                m = re.match(
+                    r"\d+\.\s+`([^`]+)`(?:\s*[—–-]\s*(.+?))?(?:\s*→\s*(.+))?$",
+                    line.strip(),
+                )
+                if m:
+                    tool_called = m.group(1)
+                    args_summary = (m.group(2) or "").strip()
+                    action_text = tool_called
+                    if args_summary:
+                        action_text = f"{tool_called}: {args_summary}"
+                    order += 1
+                    steps.append({"order": order, "action": action_text[:200]})
+        return steps
+
     def _extract_steps_from_checkpoints(self, session_content: str) -> list[dict]:
         """Extract ordered steps from context checkpoint content."""
         steps = []
@@ -539,24 +568,32 @@ class ContextMixin:
         if prefs.get("playbook_auto_extract") is False:
             return None
 
-        # ── Step 1: Collect evidence — checkpoints first ────────────
+        # ── Step 1: Collect evidence — structured actions > checkpoints > text ──
+        action_steps: list[dict] = []
         checkpoint_steps: list[dict] = []
         if session_id and source_tool:
             try:
                 sessions = self.get_recent_context(tool=source_tool, limit=5)
                 for s in sessions:
                     if s.get("session_id") == session_id:
-                        checkpoint_steps = self._extract_steps_from_checkpoints(
-                            s.get("content", "")
-                        )
+                        session_content = s.get("content", "")
+                        # Structured actions are highest fidelity
+                        action_steps = self._extract_steps_from_actions(session_content)
+                        if not action_steps:
+                            checkpoint_steps = self._extract_steps_from_checkpoints(
+                                session_content
+                            )
                         break
             except Exception:
-                pass  # checkpoints are optional
+                pass  # session data is optional
 
-        # ── Step 2: Detection — checkpoints are strongest signal ────
+        # ── Step 2: Detection — structured actions > checkpoints > text ──
         confidence = "none"
-        if len(checkpoint_steps) >= 3:
-            # Strong evidence: actual execution checkpoints with timestamps
+        if len(action_steps) >= 3:
+            # Highest evidence: actual tool call sequences
+            confidence = "high"
+        elif len(checkpoint_steps) >= 3:
+            # Strong evidence: execution checkpoints with timestamps
             confidence = "high"
         elif self._detect_procedural_workflow(summary):
             # Weaker evidence: text pattern matching on summary
@@ -566,7 +603,9 @@ class ContextMixin:
             return None
 
         # ── Step 3: Extract steps ───────────────────────────────────
-        if len(checkpoint_steps) >= 3:
+        if len(action_steps) >= 3:
+            steps = action_steps
+        elif len(checkpoint_steps) >= 3:
             steps = checkpoint_steps
         else:
             steps = self._extract_steps_from_summary(summary)
@@ -604,11 +643,39 @@ class ContextMixin:
         result = self.add_playbook(playbook, source_tool=source_tool)
 
         if result.get("status") == "duplicate":
+            # Cross-session merge: if the existing playbook is staging, merge instead
+            existing_id = result.get("existing_id")
+            if existing_id:
+                existing_pb = self._read_playbook_by_id(existing_id)
+                if existing_pb and existing_pb.get("tier") == "staging":
+                    merged = self.merge_playbooks(existing_id, playbook)
+                    if not merged.get("error"):
+                        merged["confidence"] = confidence
+                        return merged
             return None
         if result.get("error"):
             return None
 
+        # ── Step 6: Auto-link related knowledge ────────────────────
+        pb_id = result.get("id")
+        if pb_id and title:
+            self._auto_link_playbook_knowledge(pb_id, title)
+
         return result
+
+    def _auto_link_playbook_knowledge(self, playbook_id: str, playbook_title: str) -> None:
+        """Auto-link a playbook to recently added lessons/decisions with similar titles."""
+        try:
+            lessons = self.get_lessons(limit=10, _update_access=False)
+            decisions = self.get_decisions(limit=10, _update_access=False)
+            for item in lessons + decisions:
+                item_text = item.get("summary") or item.get("question") or item.get("title") or ""
+                if item_text and self._bigram_similarity(playbook_title, item_text) > 0.3:
+                    item_id = item.get("id")
+                    if item_id:
+                        self.link_knowledge(playbook_id, item_id)
+        except Exception:
+            pass  # Auto-linking is best-effort
 
     # ------------------------------------------------------------------
     # Smart cold-start context generation
@@ -779,6 +846,23 @@ class ContextMixin:
                 sections["decisions"] = "\n".join(dc)
         else:
             decisions = []
+
+        # Recent playbooks
+        if _wants("playbooks"):
+            recent_pbs = self.get_recent_playbooks(limit=5)
+            if recent_pbs:
+                pb_lines: list[str] = ["\n## 近期操作手册"]
+                for pb in recent_pbs:
+                    title = pb.get("title", "")
+                    triggers = ", ".join(pb.get("triggers", []))
+                    params = pb.get("parameters", [])
+                    line = f"- {title}"
+                    if triggers:
+                        line += f"（触发: {triggers}）"
+                    if params:
+                        line += f" [参数: {', '.join(params)}]"
+                    pb_lines.append(line)
+                sections["playbooks"] = "\n".join(pb_lines)
 
         # Conflicts
         if _wants("conflicts"):

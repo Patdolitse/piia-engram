@@ -309,7 +309,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | 特性 | piia-engram | Claude Memory | 手动 CLAUDE.md | Mem0 | Letta (MemGPT) |
 |------|--------|--------------|----------------|------|----------------|
 | 主要定位 | 跨工具的用户身份 | 单对话记忆 | 单项目笔记 | Agent 向量记忆 | Agent 自编辑记忆 |
-| 跨工具协作 | ✅ MCP 原生（51 个工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
+| 跨工具协作 | ✅ MCP 原生（58 个工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
 | 存储位置 | 本地 JSON (`~/.engram/`) | 云端 | 本地 | 向量库 + Mem0 Cloud | Postgres 或 Letta Cloud |
 | 默认本地优先 | ✅ | ❌ | ✅ | ⚠ Cloud 是默认路径 | ⚠ Cloud 是默认路径 |
 | 静态加密 | ✅ AES-256-GCM, PBKDF2 600k（可选）| 视云端策略 | ❌ 明文 Markdown | 视存储后端配置 | 视 Postgres 配置 |
@@ -324,12 +324,12 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.25.0 (2026-05-23) |
+| | v3.26.0 (2026-05-23) |
 |---|---|
 | 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
-| MCP 工具数 | **51** 个（默认开放 17 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 34 个）|
+| MCP 工具数 | **58** 个（默认开放 17 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 41 个）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **721** 个（单元 + 集成）|
+| 测试通过 | **768** 个（单元 + 集成）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **1097** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -379,9 +379,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_recent_context` | 重启后找回丢失的会话上下文 |
 | `list_agent_sessions` | 浏览各工具的历史会话记录 |
 
-默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 51 个工具。
+默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 58 个工具。
 
-### Tier-2 高级工具（34 个 — 知识管理、审查、导入导出）
+### Tier-2 高级工具（41 个 — 知识管理、审查、导入导出）
 
 <details>
 <summary>点击展开完整工具列表</summary>
@@ -396,6 +396,10 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_quality_standards` | 读取质量标准 |
 | `get_playbooks` | 列出已保存的操作手册 |
 | `get_playbook` | 获取单条操作手册的完整内容 |
+| `get_recent_playbooks` | 按最近使用时间列出操作手册 |
+| `update_playbook` | 更新操作手册的步骤、触发词等字段 |
+| `archive_playbook` | 归档不再使用的操作手册 |
+| `prepare_playbook_execution` | 参数替换后生成可执行的操作计划 |
 | `get_lessons` | 列出经验教训 |
 | `get_decisions` | 列出关键决策 |
 | `get_domains` | 读取领域经验图谱 |
@@ -549,7 +553,7 @@ piia-engram。运行 `pip install piia-engram && engram setup`，两个工具就
 piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。每个 MCP 兼容的 AI 工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）读取同一个上下文，新对话、工具更新、换工具都不会丢失你的信息。
 
 **piia-engram 和官方 MCP memory server 有什么区别？**
-官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 51 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望每个 AI 工具都了解你的编码偏好和过往经验，用 piia-engram。
+官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 58 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望每个 AI 工具都了解你的编码偏好和过往经验，用 piia-engram。
 
 **piia-engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
 那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。piia-engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
@@ -577,7 +581,7 @@ engram setup
 不会。所有核心工具均不发起网络请求。可选的匿名使用统计（工具调用计数，绝不包含内容）可在 setup 中开启，**默认关闭**。随时用 `engram telemetry preview` 查看、`engram telemetry off` 关闭。
 
 **piia-engram 有多少个 MCP 工具？**
-51 个：17 个 Tier-1 核心工具默认加载（身份、知识、操作手册、工具图谱、项目上下文、会话恢复），34 个 Tier-2 高级工具用于知识管理、审查、导入导出和审计日志。通过 `ENGRAM_TOOLS=all` 开启全部。
+58 个：17 个 Tier-1 核心工具默认加载（身份、知识、操作手册、工具图谱、项目上下文、会话恢复），41 个 Tier-2 高级工具用于知识管理、审查、导入导出和审计日志。通过 `ENGRAM_TOOLS=all` 开启全部。
 
 **piia-engram 免费吗？**
 是的。Apache 2.0 开源，完全免费。无订阅，无云端计费，无厂商锁定。

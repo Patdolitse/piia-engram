@@ -22,12 +22,10 @@ LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
 # i18n — 双语支持（中文/English）
 # ---------------------------------------------------------------------------
 
+from piia_engram.i18n import set_lang as _set_lang, get_lang as _get_lang, t as _t
+
+# Backward compat: _lang is still readable but writes go through i18n module.
 _lang = "zh"  # 默认中文，setup 开始时由用户选择
-
-
-def _t(zh: str, en: str) -> str:
-    """根据当前语言返回对应文案。"""
-    return zh if _lang == "zh" else en
 
 
 def _safe_print(text: str) -> None:
@@ -323,6 +321,65 @@ def _tool_configs() -> dict:
         },
     }
     return configs
+
+
+# Tool-specific restart instructions (key = tool config key from _tool_configs)
+_RESTART_HINTS: dict[str, tuple[str, str]] = {
+    "claude_code": (
+        "关闭并重开 VS Code 终端（或命令行窗口）",
+        "Close and reopen your VS Code terminal (or command-line window)",
+    ),
+    "cursor": (
+        "Ctrl+Shift+P → Reload Window",
+        "Ctrl+Shift+P → Reload Window",
+    ),
+    "claude_desktop": (
+        "完全退出 Claude Desktop 再重新打开",
+        "Quit Claude Desktop completely and reopen it",
+    ),
+    "codex": (
+        "关闭 Codex 终端窗口后重新启动",
+        "Close the Codex terminal window and restart it",
+    ),
+    "copilot_vscode": (
+        "Ctrl+Shift+P → Reload Window",
+        "Ctrl+Shift+P → Reload Window",
+    ),
+    "windsurf": (
+        "关闭并重开 Windsurf 窗口",
+        "Close and reopen your Windsurf window",
+    ),
+}
+
+
+def _print_restart_hints(configured_tools: list[str] | None = None) -> None:
+    """Print tool-specific restart instructions for configured tools."""
+    if not configured_tools:
+        # Detect configured tools
+        configs = _tool_configs()
+        configured_tools = []
+        for key, tool in configs.items():
+            for path in tool.get("config_paths", []):
+                if Path(path).is_file():
+                    configured_tools.append(key)
+                    break
+
+    if not configured_tools:
+        print(_t("  重启你的 AI 工具即可使用。",
+                 "  Restart your AI tool to apply changes."))
+        return
+
+    hints_shown = False
+    for key in configured_tools:
+        if key in _RESTART_HINTS:
+            zh_hint, en_hint = _RESTART_HINTS[key]
+            name = _tool_configs().get(key, {}).get("name", key)
+            print(f"    {name}: {_t(zh_hint, en_hint)}")
+            hints_shown = True
+
+    if not hints_shown:
+        print(_t("  重启你的 AI 工具即可使用。",
+                 "  Restart your AI tool to apply changes."))
 
 
 # ---------------------------------------------------------------------------
@@ -1039,8 +1096,8 @@ def _run_seed_knowledge_onboarding(
     print("========================================")
     print(_t("  接下来：", "  Next steps:"))
     print("========================================\n")
-    print(_t("  1. 重启你的 AI 工具（Claude Code / Cursor / Codex 等）",
-             "  1. Restart your AI tool (Claude Code / Cursor / Codex etc.)"))
+    print(_t("  1. 重启你的 AI 工具：", "  1. Restart your AI tool:"))
+    _print_restart_hints()
     print(_t("  2. 对 AI 说：请同步 Engram 上下文",
              '  2. Say to AI: "Sync Engram context"'))
     print(_t("  3. 确认 AI 能说出你的角色和偏好",
@@ -1205,6 +1262,7 @@ def run_setup(advanced: bool = False) -> None:
     print("    2. English")
     lang_answer = _prompt("  Choose / 请选择", "1").strip()
     _lang = "en" if lang_answer == "2" else "zh"
+    _set_lang(_lang)
     print()
 
     print("========================================")
@@ -1266,8 +1324,9 @@ def run_setup(advanced: bool = False) -> None:
         _run_privacy_defaults(selected_data_dir)
 
     # 完成
-    print(_t("  重启你的 AI 工具（Claude Code / Cursor）即可使用。",
-             "  Restart your AI tool (Claude Code / Cursor) to get started."))
+    print(_t("  重启你的 AI 工具即可使用：",
+             "  Restart your AI tool to get started:"))
+    _print_restart_hints()
     print()
     print(_t("  觉得有用？来聊聊你怎么用的：",
              "  Find Engram useful? Share how you use it:"))
@@ -1517,7 +1576,7 @@ def run_doctor(fix: bool = False) -> int:
     if not issues:
         if configured_count > 0:
             print("  [ok] All configured tools look healthy.\n")
-        func_issues = _run_functional_checks()
+        func_issues = _run_functional_checks(fix=fix)
         return func_issues
 
     print(f"  [!] Found {len(issues)} issue(s):\n")
@@ -1557,13 +1616,19 @@ def run_doctor(fix: bool = False) -> int:
             print(f"  [error] {t['name']} ({path}): {exc}")
 
     remaining = len(issues) - fixed
-    print(f"\n  Done: {fixed} config(s) updated. Restart your AI tools to apply changes.\n")
-    func_issues = _run_functional_checks()
+    print(f"\n  Done: {fixed} config(s) updated.")
+    print(_t("  重启以下工具生效：", "  Restart the following tools to apply:"))
+    _print_restart_hints()
+    print()
+    func_issues = _run_functional_checks(fix=fix)
     return remaining + func_issues
 
 
-def _run_functional_checks() -> int:
+def _run_functional_checks(*, fix: bool = False) -> int:
     """运行功能性验证：MCP server 能否启动、知识库能否读写、quick_context 是否可用。
+
+    Args:
+        fix: If True, attempt to auto-repair issues (e.g. refresh stale quick_context.md).
 
     Returns:
         发现的问题数量（0 = 健康）。
@@ -1602,12 +1667,45 @@ def _run_functional_checks() -> int:
         print(f"    [!!] Profile read failed: {exc}")
         problems += 1
 
-    # 4. quick_context.md 可用性
+    # 4. quick_context.md 可用性 + 过期检测
     qc = eng.root / "quick_context.md"
     if qc.exists() and qc.stat().st_size > 0:
-        print(f"    [ok] quick_context.md ready ({qc.stat().st_size} bytes)")
+        # Check staleness: compare mtime with identity/knowledge files
+        qc_mtime = qc.stat().st_mtime
+        stale = False
+        source_dirs = [eng.root / "identity", eng.root / "knowledge"]
+        for src_dir in source_dirs:
+            if not src_dir.is_dir():
+                continue
+            for src_file in src_dir.iterdir():
+                if src_file.is_file() and src_file.stat().st_mtime > qc_mtime:
+                    stale = True
+                    break
+            if stale:
+                break
+        if stale:
+            if fix:
+                try:
+                    eng.refresh_quick_context()
+                    print(f"    [fixed] quick_context.md refreshed ({qc.stat().st_size} bytes)")
+                except Exception as exc:
+                    print(f"    [!!] quick_context.md refresh failed: {exc}")
+                    problems += 1
+            else:
+                print("    [--] quick_context.md is stale (identity/knowledge updated since last generation)")
+                print("         Run 'engram doctor --fix' to regenerate.")
+        else:
+            print(f"    [ok] quick_context.md ready ({qc.stat().st_size} bytes)")
     else:
-        print("    [--] quick_context.md missing or empty — cold-start will be slower")
+        if fix:
+            try:
+                eng.refresh_quick_context()
+                print(f"    [fixed] quick_context.md generated ({qc.stat().st_size} bytes)")
+            except Exception as exc:
+                print(f"    [!!] quick_context.md generation failed: {exc}")
+                problems += 1
+        else:
+            print("    [--] quick_context.md missing or empty — cold-start will be slower")
 
     # 5. MCP server 工具注册
     try:
