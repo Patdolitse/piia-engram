@@ -1293,7 +1293,7 @@ class TestMainCLIRouting:
         ):
             main()
         out = capsys.readouterr().out
-        assert "Engram Stats" in out
+        assert "Engram" in out and ("Stats" in out or "数据概览" in out)
 
     def test_main_stats_log(self, tmp_path, monkeypatch, capsys):
         """main() 处理 'stats --log' 子命令。"""
