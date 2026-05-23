@@ -76,13 +76,109 @@ def _flush_telemetry(force: bool = False) -> None:
         pass  # never let telemetry affect MCP tools
 
 
-# Register atexit handler so data is flushed when the MCP server exits
+# ---------------------------------------------------------------------------
+# Session auto-tracking: record tool calls, auto-save on exit
+# ---------------------------------------------------------------------------
+from datetime import datetime as _dt
+
+
+class _SessionTracker:
+    """Track tool calls during this MCP server session.
+
+    On process exit, automatically saves the accumulated operation log
+    via save_agent_context so sessions are never lost — even when the
+    AI tool forgets to call save_agent_context explicitly.
+    """
+
+    # Tools that indicate cold-start, not real work
+    _COLD_START_TOOLS = frozenset({
+        "get_user_context", "refresh_quick_context", "get_identity_card",
+    })
+    # Minimum non-cold-start calls to trigger auto-save
+    _MIN_CALLS = 2
+
+    def __init__(self) -> None:
+        self.session_id = f"auto-{_dt.now().strftime('%Y-%m-%dT%H-%M-%S')}"
+        self.start_time = _dt.now()
+        self.tool_name: str = ""        # detected connecting tool
+        self.project_folder: str = ""   # detected project path
+        self.calls: list[dict[str, str]] = []
+        self.saved = False
+
+    def record(self, tool_called: str, args_summary: str = "") -> None:
+        self.calls.append({
+            "tool_called": tool_called,
+            "timestamp": _dt.now().strftime("%H:%M:%S"),
+            "args_summary": args_summary,
+        })
+
+    def detect_tool(self, tool: str) -> None:
+        if not self.tool_name and tool:
+            self.tool_name = tool
+
+    def detect_project(self, folder: str) -> None:
+        if not self.project_folder and folder:
+            self.project_folder = folder
+
+    def auto_save(self) -> None:
+        """Save accumulated session log. Called by atexit handler."""
+        if self.saved:
+            return
+        # Check minimum work threshold
+        real_calls = [
+            c for c in self.calls
+            if c["tool_called"] not in self._COLD_START_TOOLS
+        ]
+        if len(real_calls) < self._MIN_CALLS:
+            return
+        self.saved = True
+
+        tool = self.tool_name or "mcp_auto"
+        duration = max(1, int((_dt.now() - self.start_time).total_seconds() / 60))
+
+        # Deduplicated tool list preserving order
+        seen: dict[str, None] = {}
+        for c in self.calls:
+            seen.setdefault(c["tool_called"], None)
+        unique_tools = list(seen.keys())
+
+        content = (
+            f"[MCP 自动记录] 会话时长: {duration} 分钟\n"
+            f"工具调用次数: {len(self.calls)}\n"
+            f"使用的工具: {', '.join(unique_tools)}\n"
+        )
+
+        # Keep last 50 actions to prevent oversized files
+        actions = [
+            {
+                "tool_called": c["tool_called"],
+                "arguments_summary": c.get("args_summary", ""),
+                "result_summary": "",
+            }
+            for c in self.calls[-50:]
+        ]
+
+        try:
+            _engram.save_agent_context(
+                tool=tool,
+                content=content,
+                session_id=self.session_id,
+                project_folder=self.project_folder,
+                actions=actions,
+            )
+        except Exception as exc:
+            logger.warning("session auto-save failed: %s", exc)
+
+
+_session = _SessionTracker()
+
+# Register atexit handler: auto-save session first, then flush telemetry
 import atexit
-atexit.register(lambda: _flush_telemetry(force=True))
+atexit.register(lambda: (_session.auto_save(), _flush_telemetry(force=True)))
 
 
-def _track(tool_name: str, success: bool = True) -> None:
-    """Record a tool call for anonymous usage statistics (if tracker available).
+def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None:
+    """Record a tool call for telemetry and session auto-tracking.
 
     Flushes every _FLUSH_EVERY calls to avoid losing data when the
     MCP server process is killed without a clean wrap_up_session.
@@ -94,6 +190,8 @@ def _track(tool_name: str, success: bool = True) -> None:
         if _track_count >= _FLUSH_EVERY:
             _track_count = 0
             _flush_telemetry(force=True)
+    # Session auto-tracking
+    _session.record(tool_name, args_summary)
 
 IDENTITY_FIELDS = frozenset({
     "profile",
@@ -266,6 +364,8 @@ async def get_user_context(
         project_folder: 当前项目文件夹路径（可选）。 / Current project folder path (optional).
         level: "quick" | "standard" | "full"，默认 "standard"。 / Tier — defaults to "standard".
     """
+    if project_folder:
+        _session.detect_project(project_folder)
     try:
         context = _engram.generate_context(project_folder, level=level)
         _track("get_user_context", success=True)
@@ -490,6 +590,7 @@ async def get_project_context(project_folder: str) -> str:
     Args:
         project_folder: 项目文件夹路径。 / Project folder path.
     """
+    _session.detect_project(project_folder)
     try:
         snapshot = _engram.get_project_snapshot(project_folder)
         _track("get_project_context", success=True)
@@ -989,8 +1090,6 @@ async def prepare_playbook_execution(
         return f"准备执行计划失败: {exc}"
     if result.get("error"):
         return _json(result)
-    # Auto-save execution plan for step tracking
-    _engram.save_execution_plan(result)
     return _json(result)
 
 
@@ -1665,6 +1764,10 @@ async def wrap_up_session(
         tech_stack: 技术栈（可选，逗号分隔）。 / Tech stack (optional, comma-separated).
         known_issues: 已知问题（可选，逗号分隔）。 / Known issues (optional, comma-separated).
     """
+    _session.detect_tool(source_tool)
+    if project_folder:
+        _session.detect_project(project_folder)
+
     results = {}
 
     # Step 1: Extract insights
@@ -1920,6 +2023,9 @@ async def save_agent_context(
         project_folder: 项目路径（可选，写入文件头）。 / Project folder path (optional, written to file header).
         actions_json: 结构化动作日志（可选），JSON 数组，每个元素含 tool_called, arguments_summary, result_summary。用于 Playbook 自动提取。 / Structured action log (optional), JSON array of {tool_called, arguments_summary, result_summary}. Used for higher-fidelity Playbook extraction.
     """
+    _session.detect_tool(tool)
+    if project_folder:
+        _session.detect_project(project_folder)
     actions = None
     if actions_json:
         try:
