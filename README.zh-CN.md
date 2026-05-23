@@ -1,14 +1,15 @@
+<!-- mcp-name: io.github.Patdolitse/piia-engram -->
 <div align="center">
 
-<img src="assets/social_preview_zh.png" alt="piia-engram — 你的 AI 身份层" width="640">
+<img src="assets/social_preview_zh.png" alt="piia-engram — 跨工具持久 AI 记忆" width="640">
 
 # piia-engram
 
-### 你的 AI 身份层
+### 让每个 AI 工具都记住你是谁
 
-**一份身份，所有工具都认识你。上下文属于你，不属于平台。**
+**你的偏好、代码标准、经验教训和关键决策——跨 Claude Code、Cursor、Codex 等所有 MCP 工具持久共享。本地存储，零云端。**
 
-`AI 身份层` · `一次写入` · `所有 AI 共享读取` · `本地优先`
+`持久记忆` · `跨工具上下文` · `Claude Code` · `Codex` · `Cursor` · `Windsurf` · `MCP` · `本地优先`
 
 [中文](README.zh-CN.md) | [ENGLISH](README.md)
 
@@ -17,22 +18,23 @@
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
 [![Downloads](https://img.shields.io/pypi/dm/piia-engram)](https://pypi.org/project/piia-engram/)
+[![Official MCP Registry](https://img.shields.io/badge/MCP_Registry-official-green.svg)](https://registry.modelcontextprotocol.io)
 
 </div>
 
 ---
 
-> **TL;DR：** piia-engram 是一个本地身份层——不是会话记忆，不是 Agent 框架，不是云端数据库。它把你是谁（画像、偏好、经验教训、关键决策）以本地 JSON 文件存储在你自己的电脑上，通过 MCP 让每个 AI 工具读取同一个你。一次写入，所有 AI 共享读取。本地优先，Apache 2.0。
+> **TL;DR：** piia-engram 把你的身份、偏好、经验教训和关键决策以本地 JSON 文件存储，通过 MCP 让每个 AI 工具读取同一个你。设置一次，所有 AI 都记住你。零云端，Apache 2.0。
 
 ---
 
-AI 工具都很聪明，但它们不认识你。
+**每次换工具或开新对话，AI 就忘了你是谁。** piia-engram 解决这个问题。
 
 每次开一个新对话框，你就被忘了。换个工具，又要从头自我介绍。工具一更新，之前设好的偏好可能直接没了。
 
 这是因为现在所有 AI 的记忆都绑在各自的平台上。记忆属于平台，不属于你。平台改了、升了、换了，你的上下文就没了。
 
-**piia-engram 给你一个独立于任何 AI 工具的本地身份层。** 你告诉它一次你是谁、你怎么工作、你学到了什么。之后不管你开多少个新对话、用哪个工具、工具怎么更新，AI 开口就认识你。
+**piia-engram 给你跨工具的持久记忆，存在你自己的电脑上。** 你告诉它一次你是谁、你怎么工作、你学到了什么。之后不管你开多少个新对话、用哪个工具、工具怎么更新，AI 开口就认识你。
 
 > **piia-engram 不是 Agent 记忆数据库。** Mem0、Zep、Letta 等工具存的是任务上下文和会话历史。piia-engram 存的是**你这个人**——你的身份、偏好、经验教训和关键决策。这是不同的一层：不是"这次任务做了什么"，而是"所有任务背后的人是谁"。
 
@@ -132,21 +134,87 @@ $ engram doctor
     [ok] MCP server: 13 tools registered
 ```
 
+### 各工具配置方法
+
+<details open>
+<summary><strong>Claude Code</strong></summary>
+
+```bash
+# 自动配置（推荐）
+engram setup
+# 或手动添加：
+claude mcp add piia-engram -- python -m piia_engram.mcp_server
+```
+
+</details>
+
 <details>
-<summary><strong>手动 MCP 配置</strong></summary>
+<summary><strong>Cursor</strong></summary>
 
-如果你更喜欢手动配置，添加到你的 AI 工具 MCP 配置中：
-
+添加到 `~/.cursor/mcp.json`：
 ```json
 {
   "mcpServers": {
     "piia-engram": {
       "command": "python",
-      "args": ["/path/to/piia-engram/src/piia_engram/mcp_server.py"]
+      "args": ["-m", "piia_engram.mcp_server"]
     }
   }
 }
 ```
+
+</details>
+
+<details>
+<summary><strong>Codex (OpenAI)</strong></summary>
+
+添加到 `~/.codex/mcp.json`：
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Claude Desktop</strong></summary>
+
+添加到 `claude_desktop_config.json`：
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Windsurf / Copilot / Cline / 其他 MCP 客户端</strong></summary>
+
+任何支持 MCP stdio 传输的工具都可以使用以下配置：
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+不支持 MCP 的工具（ChatGPT、Gemini、Kimi）：在任意 MCP 工具中运行 `get_identity_card`，将导出的 Markdown 身份卡粘贴到对话中。
 
 </details>
 
@@ -250,7 +318,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.22.0 (2026-05-23) |
+| | v3.22.1 (2026-05-23) |
 |---|---|
 | 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具数 | **48** 个（默认开放 13 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 35 个）|
@@ -412,17 +480,26 @@ piia-engram 由人驱动，AI 工具辅助开发：
 
 ## 常见问题 FAQ
 
+**哪个 MCP 服务器可以在 Claude Code 和 Cursor 之间共享记忆？**
+piia-engram。运行 `pip install piia-engram && engram setup`，两个工具就会从 `~/.engram/` 读取同一份身份、偏好和经验教训。无需云端，无需同步服务——它们读的是同一组本地 JSON 文件。
+
 **piia-engram 是什么？**
-piia-engram 是一个本地优先的 AI 身份层——不是会话记忆，不是 Agent 框架。它把你是谁、你怎么工作、你学到了什么、你做过哪些决策，以本地 JSON 文件保存在你自己的电脑上。每个 MCP 兼容的 AI 工具（Claude Code、Codex、Cursor）都读取同一个身份，新对话、工具更新、换工具都不会丢失你的上下文。
+piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。每个 MCP 兼容的 AI 工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）读取同一个上下文，新对话、工具更新、换工具都不会丢失你的信息。
+
+**piia-engram 和官方 MCP memory server 有什么区别？**
+官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 48 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望每个 AI 工具都了解你的编码偏好和过往经验，用 piia-engram。
 
 **piia-engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
 那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。piia-engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
 
-**支持哪些 AI 工具？**
-任何支持 MCP 协议的工具：Claude Code、OpenAI Codex、Cursor、Claude Desktop 等。不支持 MCP 的工具（ChatGPT、Gemini、Kimi），可以导出 Markdown 身份卡手动粘贴。
+**可以同时在多个 AI 工具中使用 piia-engram 吗？**
+可以。这正是 piia-engram 的主要使用场景。它使用本地文件存储（`~/.engram/`），通过原子写入和文件锁保证一致性。Claude Code、Cursor、Codex 和其他 MCP 客户端可以同时连接。在 Claude Code 中记录的经验教训，Cursor 中立即可用。
 
-**为什么产品叫 piia-engram，但 PyPI 包名是 `piia-engram`？**
-项目最早是一个更大的个人 AI 计划 **PIIA**（Personal Intelligence Identity Asset，个人智能身份资产）的一部分，piia-engram 是这个体系下第一个、也是目前唯一发布的工具，所以 PyPI 包名保留了 `piia-` 前缀。日常使用中产品就叫 **piia-engram** —— CLI 命令是 `engram setup` / `piia-engram doctor`，Python 包名是 `piia_engram`，MCP server 名是 `engram`。`piia-` 前缀只在 `pip install` 时出现，未来主版本可能会去掉。
+**支持哪些 AI 工具？**
+任何支持 MCP 协议的工具：Claude Code、OpenAI Codex、Cursor、Claude Desktop、Windsurf、GitHub Copilot、Cline、Roo Code、Amazon Q、Augment、Zed 等。不支持 MCP 的工具（ChatGPT、Gemini、Kimi），可以用 `get_identity_card` 导出 Markdown 身份卡粘贴使用。
+
+**我的数据存在哪里？**
+所有数据以 JSON 和 Markdown 文件存储在本地 `~/.engram/` 目录。无需账号，无需订阅。你可以直接打开、编辑、备份或迁移这些文件。可选 AES-256-GCM 加密：`pip install piia-engram[secure]`。
 
 **如何安装 piia-engram？**
 ```bash
@@ -432,16 +509,16 @@ engram setup
 安装向导会自动检测 AI 工具并配置 MCP。设置完成后重启 AI 工具，AI 会在每次新对话开始时调用 `get_user_context` 认识你。
 
 **升级后 AI 工具显示"MCP server disconnected"，怎么解决？**
-在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令会扫描所有已知 MCP 配置（Claude Code、Cursor、Claude Desktop），移除旧版 server 条目并修复失效路径，一步完成。piia-engram 在下次 server 启动时也会自动执行此迁移，大多数用户不会遇到这个问题。
+在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令扫描所有已知 MCP 配置，移除旧版 server 条目并修复失效路径，一步完成。
 
 **piia-engram 会把数据发到云端吗？**
-所有身份和知识数据存在本地 `~/.engram/` 目录。身份和知识类核心工具均不发起网络请求。**匿名使用统计**（工具调用计数、知识条目总数、piia-engram 版本——绝不包含内容、prompt 或文件路径）可在 `engram setup` 中选择开启，**默认关闭**。你可以用 `engram telemetry preview` 查看将发送的确切内容，用 `engram telemetry off` 随时关闭。可选工具 `read_web_content` 会向本地 Reader 服务（`localhost:7890`）发起请求——只有在你显式调用时才执行。
+不会。所有核心工具均不发起网络请求。可选的匿名使用统计（工具调用计数，绝不包含内容）可在 setup 中开启，**默认关闭**。随时用 `engram telemetry preview` 查看、`engram telemetry off` 关闭。
 
 **piia-engram 有多少个 MCP 工具？**
-48 个 MCP 工具，覆盖身份管理、经验教训、关键决策、项目快照、会话上下文恢复、批量输入、笔记摄入、会话洞见提取、加权知识搜索、相似知识发现、摘要、报告、知识关联、知识合并、生命周期复习、健康度检查、工作流快捷操作和审计日志。
+48 个：13 个 Tier-1 核心工具默认加载（身份、知识、项目上下文、会话恢复），35 个 Tier-2 高级工具用于知识管理、审查、导入导出和审计日志。通过 `ENGRAM_TOOLS=all` 开启全部。
 
 **piia-engram 免费吗？**
-是的。piia-engram 是 Apache 2.0 开源项目，完全免费。
+是的。Apache 2.0 开源，完全免费。无订阅，无云端计费，无厂商锁定。
 
 ## 局限性说明
 
