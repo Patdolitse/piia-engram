@@ -459,7 +459,7 @@ piia-engram ships 48 MCP tools. By default, only the 13 **Tier-1 Core** tools ar
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.22.1 (2026-05-23) |
+| | v3.22.2 (2026-05-23) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools exposed | **48** (13 Tier-1 default, 35 opt-in via `ENGRAM_TOOLS=all`) |
