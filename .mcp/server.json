@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Patdolitse/piia-engram",
-  "description": "AI identity layer — stores who you are, not just what you did. Syncs identity, preferences, lessons, and decisions across Claude Code, Codex, Cursor, and any MCP-compatible tool.",
+  "description": "AI identity layer — syncs who you are across Claude Code, Codex, Cursor and any MCP tool.",
   "repository": {
     "url": "https://github.com/Patdolitse/piia-engram",
     "source": "github"
   },
-  "version": "3.22.0",
+  "version": "3.22.1",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "piia-engram",
-      "version": "3.22.0",
+      "version": "3.22.1",
       "transport": {
         "type": "stdio"
       }

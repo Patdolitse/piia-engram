@@ -4,6 +4,18 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.22.1] - 2026-05-23
+
+MCP Registry distribution release.
+
+### Added
+- Official MCP Registry `server.json` (`.mcp/server.json`)
+- `mcp-name` tag in README for PyPI ownership verification
+- CODE_OF_CONDUCT.md (Contributor Covenant v2.0)
+
+### Changed
+- Smithery listing published and set to public
+
 ## [3.22.0] - 2026-05-23
 
 Doctor upgrade and onboarding polish release.
