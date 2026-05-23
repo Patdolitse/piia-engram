@@ -99,6 +99,39 @@ engram setup
 
 设置完成后重启 AI 工具。第一次对话会自动调用 `get_user_context`——AI 已经认识你了。
 
+### 效果预览
+
+```
+你   → "帮我重构这个认证模块"
+
+# 没有 piia-engram：AI 从零开始
+AI   → "你用什么语言？什么框架？测试偏好是什么？"
+
+# 有 piia-engram：AI 已经认识你
+AI   → "根据你偏好 pytest + 90% 覆盖率的标准，以及你 3 月那次事故
+        后总结的'认证中间件必须和业务逻辑分离'的经验，我的方案是..."
+```
+
+setup 完成后，运行 `engram doctor` 验证一切就绪：
+
+```
+$ engram doctor
+
+  Detected 3 AI tool(s):
+    [ok] Claude Code — Engram configured
+    [ok] Cursor — Engram configured
+    [ok] Codex — Engram configured
+
+  [ok] All configured tools look healthy.
+
+  ── Functional Checks ──
+    [ok] piia_engram.core importable
+    [ok] Engram initialized (~/.engram)
+    [ok] Identity loaded (role: 后端开发工程师)
+    [ok] quick_context.md ready (4096 bytes)
+    [ok] MCP server: 13 tools registered
+```
+
 <details>
 <summary><strong>手动 MCP 配置</strong></summary>
 

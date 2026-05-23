@@ -1035,6 +1035,19 @@ def _run_seed_knowledge_onboarding(
     except Exception:
         pass
 
+    # --- Post-setup checklist ---
+    print("========================================")
+    print(_t("  接下来：", "  Next steps:"))
+    print("========================================\n")
+    print(_t("  1. 重启你的 AI 工具（Claude Code / Cursor / Codex 等）",
+             "  1. Restart your AI tool (Claude Code / Cursor / Codex etc.)"))
+    print(_t("  2. 对 AI 说：请同步 Engram 上下文",
+             '  2. Say to AI: "Sync Engram context"'))
+    print(_t("  3. 确认 AI 能说出你的角色和偏好",
+             "  3. Confirm AI knows your role and preferences"))
+    print(_t("  4. 随时运行 engram doctor 检查健康状态\n",
+             "  4. Run 'engram doctor' anytime to check health\n"))
+
     return {
         "profile": profile_updates,
         "lessons_added": lessons_added,

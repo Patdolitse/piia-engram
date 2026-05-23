@@ -4,6 +4,21 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.22.0] - 2026-05-23
+
+Doctor upgrade and onboarding polish release.
+
+### Added
+- **`engram doctor` functional checks**: After config health scan, doctor now verifies core library import, Engram initialization, identity profile, quick_context.md, and MCP tool registration
+- **Setup post-completion verification guide**: Clear next-step instructions after setup finishes
+
+### Changed
+- CI workflows opt into Node.js 24 (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`), eliminating GitHub deprecation warnings
+- Shared instructions cleaned up: removed 30 lines of stale version history, updated Tier-1 tool list to 13 tools
+
+### Fixed
+- CHANGELOG v3.21.0 tool count corrected (was 43→46, now 45→48)
+
 ## [3.21.0] - 2026-05-23
 
 Agent context auto-save release — recover lost AI conversations.
