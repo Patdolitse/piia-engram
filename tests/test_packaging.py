@@ -33,6 +33,9 @@ CORE_MCP_TOOLS = {
     "update_identity",
     "get_project_context",
     "save_project_snapshot",
+    "save_agent_context",
+    "get_recent_context",
+    "list_agent_sessions",
 }
 
 
@@ -234,10 +237,10 @@ def test_mcp_tools_default_to_core_tier(tmp_path: Path):
 
 
 def test_mcp_tools_all_tier_registers_all_tools(tmp_path: Path):
-    """ENGRAM_TOOLS=all 时应暴露全部 43 个工具。"""
+    """ENGRAM_TOOLS=all 时应暴露全部 46 个工具。"""
     tools = _registered_mcp_tools(tmp_path, tools_tier="all")
 
-    assert len(tools) >= 43
+    assert len(tools) >= 46
     assert set(CORE_MCP_TOOLS).issubset(tools)
     assert "get_profile" in tools
     assert "bulk_add_knowledge" in tools
