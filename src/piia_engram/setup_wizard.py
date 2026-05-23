@@ -1223,21 +1223,50 @@ def _run_privacy_preferences(data_dir: str) -> None:
 
 
 def _run_privacy_defaults(data_dir: str) -> None:
-    """Apply safe privacy defaults without prompting (reconcile=on, telemetry=off).
-
-    For interactive privacy configuration, use ``engram setup --advanced``.
-    """
-    from piia_engram.telemetry import _load_config, _save_config, set_enabled
+    """Set reconcile=on by default, then ask about telemetry."""
+    from piia_engram.telemetry import (
+        _load_config, _save_config, set_enabled, set_remote_enabled,
+    )
 
     cfg = _load_config()
     cfg["reconcile_authorized"] = True
     _save_config(cfg)
-    set_enabled(False)
 
-    print(_t("  隐私设置：跨工具同步=开启，匿名统计=关闭（默认）",
-             "  Privacy: cross-tool sync=on, anonymous stats=off (defaults)"))
-    print(_t("  可随时通过 'engram setup --advanced' 或 'engram telemetry on' 修改。\n",
-             "  Change anytime via 'engram setup --advanced' or 'engram telemetry on'.\n"))
+    # --- Ask about telemetry (not hidden behind --advanced) ---
+    print(_t("  [匿名使用统计]",
+             "  [Anonymous Usage Statistics]"))
+    print(_t("      帮助我们了解哪些功能被使用、哪些需要改进。",
+             "      Help us understand which features are used and need improvement."))
+    print(_t("      仅记录：工具名称+调用次数、知识条目数、版本号",
+             "      Only logs: tool names + counts, knowledge totals, version"))
+    print(_t("      绝不发送：知识内容、prompt、文件路径、邮箱、IP",
+             "      Never sent: knowledge content, prompts, file paths, email, IP"))
+    print(_t("      随时关闭：engram telemetry off\n",
+             "      Disable anytime: engram telemetry off\n"))
+
+    telemetry_enabled = _yn(
+        _t("  开启匿名使用统计？",
+           "  Enable anonymous usage statistics?"),
+        default=True,
+    )
+    set_enabled(telemetry_enabled)
+    if telemetry_enabled:
+        remote_enabled = _yn(
+            _t("  同时发送到开发团队（HTTPS 加密，无第三方）？",
+               "  Also send to dev team (HTTPS encrypted, no third parties)?"),
+            default=True,
+        )
+        set_remote_enabled(remote_enabled)
+        if remote_enabled:
+            print(_t("  ✅ 匿名统计已开启（本地+远程）\n",
+                     "  ✅ Anonymous stats enabled (local + remote)\n"))
+        else:
+            print(_t("  ✅ 匿名统计已开启（仅本地）\n",
+                     "  ✅ Anonymous stats enabled (local only)\n"))
+    else:
+        set_remote_enabled(False)
+        print(_t("  ℹ️  未开启。可随时运行 engram telemetry on 改变。\n",
+                 "  ℹ️  Not enabled. Run engram telemetry on to change anytime.\n"))
 
 
 # ---------------------------------------------------------------------------
