@@ -1,15 +1,15 @@
 <!-- mcp-name: io.github.Patdolitse/piia-engram -->
 <div align="center">
 
-<img src="assets/social_preview.png" alt="piia-engram - Your AI identity layer" width="640">
+<img src="assets/social_preview.png" alt="piia-engram — persistent AI memory across tools" width="640">
 
 # piia-engram
 
-### Your AI Identity Layer
+### Remember who you are across every AI tool
 
-**One identity. Every AI tool. Your context stays yours.**
+**Your preferences, code standards, lessons learned, and decisions — persistent across Claude Code, Cursor, Codex, and any MCP tool. Local-first, zero-cloud.**
 
-`AI Identity Layer` | `Claude Code` | `Codex` | `Cursor` | `MCP compatible` | `local-first`
+`persistent memory` | `cross-tool context` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `MCP` | `local-first`
 
 [ENGLISH](README.md) | [中文](README.zh-CN.md)
 
@@ -18,16 +18,17 @@
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
 [![Downloads](https://img.shields.io/pypi/dm/piia-engram)](https://pypi.org/project/piia-engram/)
+[![Official MCP Registry](https://img.shields.io/badge/MCP_Registry-official-green.svg)](https://registry.modelcontextprotocol.io)
 
 </div>
 
 ---
 
-> **TL;DR:** piia-engram is a local identity layer for AI tools — not session memory, not an agent framework, not a hosted database. It stores who you are (profile, preferences, lessons learned, key decisions) as local JSON files on your machine, and exposes them through MCP so every AI tool reads the same you. One write, every AI reads. Local-first, Apache 2.0.
+> **TL;DR:** piia-engram stores your identity, preferences, lessons learned, and key decisions as local JSON files — and shares them with every AI tool through MCP. Set up once, every AI tool remembers you. No cloud, no lock-in, Apache 2.0.
 
 ---
 
-AI coding tools are powerful, but they don't know *you*.
+**Your AI forgets you every time you switch tools or start a new chat.** piia-engram fixes that.
 
 Every time you open a new chat window, switch from Claude Code to Codex, update your AI tool, or move into a different project, you're back to zero:
 
@@ -38,7 +39,7 @@ Every time you open a new chat window, switch from Claude Code to Codex, update 
 
 This happens because AI memory today is locked inside each platform. It belongs to the tool, not to you. The tool updates, resets, or gets replaced — and your context disappears with it.
 
-**piia-engram gives you a personal identity layer that lives on your machine, independent of any AI tool.** You tell it once who you are, how you work, and what you've learned. Every MCP-compatible tool reads the same context. New chat, new tool, new version — your identity persists.
+**piia-engram gives you persistent memory that lives on your machine, independent of any AI tool.** You tell it once who you are, how you work, and what you've learned. Every MCP-compatible tool reads the same context. New chat, new tool, new version — your identity persists.
 
 > **piia-engram is not an agent memory database.** Tools like Mem0, Zep, and Letta store task context and session history for AI agents. piia-engram stores *who you are as a person* — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: not what happened in a task, but who is behind every task.
 
@@ -128,6 +129,90 @@ The setup wizard will:
 
 Restart your AI tool after setup. The first conversation will call `get_user_context` automatically — your AI already knows you.
 
+### Configure for Your AI Tool
+
+<details open>
+<summary><strong>Claude Code</strong></summary>
+
+```bash
+# Automatic (recommended)
+engram setup
+# Or manual:
+claude mcp add piia-engram -- python -m piia_engram.mcp_server
+```
+
+</details>
+
+<details>
+<summary><strong>Cursor</strong></summary>
+
+Add to `~/.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Codex (OpenAI)</strong></summary>
+
+Add to `~/.codex/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Claude Desktop</strong></summary>
+
+Add to `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Windsurf / Copilot / Cline / Other MCP clients</strong></summary>
+
+Any tool that supports MCP over stdio works. Use this config:
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+For tools without MCP support (ChatGPT, Gemini, Kimi): run `get_identity_card` in any MCP tool and paste the exported Markdown card into your chat.
+
+</details>
+
 ### See It in Action
 
 ```
@@ -162,23 +247,6 @@ $ engram doctor
     [ok] MCP server: 13 tools registered
 ```
 
-<details>
-<summary><strong>Manual MCP configuration</strong></summary>
-
-If you prefer to configure manually, add to your AI tool's MCP config:
-
-```json
-{
-  "mcpServers": {
-    "piia-engram": {
-      "command": "python",
-      "args": ["/path/to/piia-engram/src/piia_engram/mcp_server.py"]
-    }
-  }
-}
-```
-
-</details>
 
 ## Upgrading
 
@@ -391,7 +459,7 @@ piia-engram ships 48 MCP tools. By default, only the 13 **Tier-1 Core** tools ar
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.22.0 (2026-05-23) |
+| | v3.22.1 (2026-05-23) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools exposed | **48** (13 Tier-1 default, 35 opt-in via `ENGRAM_TOOLS=all`) |
@@ -416,17 +484,26 @@ piia-engram is a human-directed, AI-assisted open-source project.
 
 ## FAQ
 
+**What MCP server lets me share memory between Claude Code and Cursor?**
+piia-engram. Install with `pip install piia-engram && engram setup`, and both tools read the same identity, preferences, and lessons from `~/.engram/`. No cloud, no sync service — they both read local JSON files through MCP.
+
 **What is piia-engram?**
-piia-engram is a local-first AI identity layer — not session memory, not an agent framework. It stores who you are, how you work, what you've learned, and the decisions you've made — as local JSON files on your machine. Every MCP-compatible AI tool (Claude Code, Codex, Cursor) reads the same identity, so new chats, tool updates, and tool switches never erase your context.
+piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Every MCP-compatible AI tool (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) reads the same context, so new chats, tool updates, and tool switches never erase who you are.
+
+**How is piia-engram different from the official MCP memory server?**
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 48 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want every AI tool to know your coding preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.
 
-**Which AI tools does piia-engram support?**
-piia-engram works with any MCP-compatible AI tool: Claude Code, OpenAI Codex, Cursor, Claude Desktop, and others. For tools without MCP support (ChatGPT, Gemini, Kimi), you can export a Markdown identity card and paste it in manually.
+**Can I use piia-engram with multiple AI tools at once?**
+Yes. That's the primary use case. piia-engram uses local file storage (`~/.engram/`) with atomic writes and file locking. Claude Code, Cursor, Codex, and any other MCP client can connect simultaneously. A lesson recorded in Claude Code is immediately available in Cursor.
 
-**Why is the PyPI package called `piia-engram` if the product is just "piia-engram"?**
-The project started as part of a larger personal-AI initiative called **PIIA** (Personal Intelligence Identity Asset) — piia-engram is the first and currently the only released tool in that line, so it kept the `piia-` prefix on PyPI. Day-to-day the product is just **piia-engram** — that's the CLI command (`engram setup`, `piia-engram doctor`), the import name (`import piia_engram`), and the MCP server name (`engram`). The `piia-` prefix only shows up at install time and may be retired in a future major version.
+**Which AI tools does piia-engram support?**
+Any MCP-compatible tool: Claude Code, OpenAI Codex, Cursor, Claude Desktop, Windsurf, GitHub Copilot, Cline, Roo Code, Amazon Q, Augment, Zed, and more. For tools without MCP support (ChatGPT, Gemini, Kimi), export a Markdown identity card with `get_identity_card` and paste it in.
+
+**Where is my data stored?**
+All data lives in `~/.engram/` on your local machine as plain JSON and Markdown files. No cloud, no account, no subscription. You can open, edit, back up, or migrate the files yourself. Optional AES-256-GCM encryption is available via `pip install piia-engram[secure]`.
 
 **How do I install piia-engram?**
 ```bash
@@ -436,16 +513,16 @@ engram setup
 The setup wizard detects your AI tools and configures MCP automatically. Restart your AI tool after setup. The AI will call `get_user_context` at the start of each session.
 
 **After upgrading, my AI tool shows "MCP server disconnected". How do I fix it?**
-Run `piia-engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files (Claude Code, Cursor, Claude Desktop), removes outdated server entries, and repairs broken paths in one step. piia-engram also runs this migration automatically the next time its server starts, so most users will never see this message.
+Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files, removes outdated server entries, and repairs broken paths in one step.
 
 **Does piia-engram send data to the cloud?**
-All identity and knowledge data is stored in `~/.engram/` on your local machine. Core identity and knowledge tools make no network requests. **Anonymous usage statistics** (tool call counts, knowledge totals, piia-engram version — never content, prompts, or file paths) can be optionally enabled during `engram setup`; they are **off by default**. You can inspect the exact payload with `engram telemetry preview` and disable anytime with `engram telemetry off`. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked.
+No. All core tools make zero network requests. Optional anonymous usage statistics (tool call counts, never content) can be enabled during setup but are **off by default**. You can inspect the payload with `engram telemetry preview` and disable anytime with `engram telemetry off`.
 
 **How many MCP tools does piia-engram provide?**
-piia-engram exposes 48 MCP tools covering identity management, lessons learned, key decisions, project snapshots, agent context recovery, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, lifecycle review, digesting, reporting, linking, health checks, workflow shortcuts, and audit logging.
+48 tools: 13 Tier-1 Core tools loaded by default (identity, knowledge, project context, session recovery) plus 35 Tier-2 Advanced tools for knowledge management, review, import/export, and audit logging. Enable all with `ENGRAM_TOOLS=all`.
 
 **Is piia-engram free?**
-Yes. piia-engram is free and open source under the Apache 2.0 license.
+Yes. Free and open source under the Apache 2.0 license. No subscription, no cloud tiers, no vendor lock-in.
 
 ## Limitations
 

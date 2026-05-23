@@ -1,14 +1,14 @@
 [project]
 name = "piia-engram"
 version = "3.22.1"
-description = "Engram — Your AI identity layer. Stores who you are, not just what you did. Local-first, MCP-compatible."
+description = "Persistent AI memory across tools — remember your preferences, code standards, and decisions across Claude Code, Cursor, Codex, and any MCP tool. Local-first, zero-cloud."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
     {name = "Engram Contributors"},
 ]
-keywords = ["ai", "identity", "mcp", "memory", "personal-knowledge", "llm", "context", "claude-code", "cursor", "codex", "mcp-server", "ai-agent", "local-first", "cross-tool", "vibe-coding"]
+keywords = ["ai", "identity", "mcp", "memory", "persistent-memory", "personal-knowledge", "llm", "context", "claude-code", "cursor", "codex", "mcp-server", "ai-agent", "local-first", "cross-tool", "cross-session", "developer-preferences", "user-profile", "knowledge-management", "vibe-coding"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
