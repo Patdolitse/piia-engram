@@ -117,6 +117,10 @@ TIER1_TOOLS = frozenset({
     # Identity
     "get_identity_card",         # export identity for non-MCP tools
     "update_identity",           # update profile/preferences/standards
+    # Environment tools registry
+    "register_tool",             # register local tool/program
+    "find_tool",                 # search registered tools
+    "list_tools",                # list all registered tools
     # Project context
     "get_project_context",       # current project state
     "save_project_snapshot",     # persist project state
@@ -859,6 +863,104 @@ async def get_playbook(playbook_id: str) -> str:
 
 
 @mcp.tool()
+async def register_tool(
+    name: str,
+    path: str = "",
+    category: str = "other",
+    version: str = "",
+    purpose: str = "",
+    install_method: str = "",
+    notes: str = "",
+    source_tool: str = "",
+) -> str:
+    """注册本地工具/程序到环境图谱（已存在则更新）。 / Register a local tool or program in the environment registry; updates if it already exists.
+
+    用途：安装、发现或确认某个工具/程序/运行时的位置和版本后调用，让所有 AI 工具都能快速查到。
+    Purpose: Call after installing, discovering, or confirming a tool's location and version, so all AI tools can find it.
+
+    写入时机 / When to call:
+    - 安装新工具后（pip install, npm install -g, 手动下载等）
+    - 发现系统上已有工具的准确路径后
+    - 工具版本升级后
+    - 发现某些路径不能用时（如 Windows Store stub）更新 notes 警告
+
+    Args:
+        name: 工具名称（如 'Python', 'gh', 'wrangler'）。 / Tool name, e.g., 'Python', 'gh', 'wrangler'.
+        path: 可执行文件或配置文件的完整路径。 / Full path to executable or config file.
+        category: 分类：runtime, cli, library, credential, config, service, other。 / Category.
+        version: 版本号。 / Version string.
+        purpose: 用途简述。 / Brief description of what this tool is for.
+        install_method: 安装方式（pip, npm, manual, system 等）。 / How it was installed.
+        notes: 备注（注意事项、陷阱、替代方案等）。 / Notes, caveats, alternatives.
+        source_tool: 哪个 AI 工具登记的（如 'claude_code', 'codex'）。 / Which AI tool registered this.
+    """
+    tool_entry: dict = {"name": name}
+    if path:
+        tool_entry["path"] = path
+    if category:
+        tool_entry["category"] = category
+    if version:
+        tool_entry["version"] = version
+    if purpose:
+        tool_entry["purpose"] = purpose
+    if install_method:
+        tool_entry["install_method"] = install_method
+    if notes:
+        tool_entry["notes"] = notes
+    try:
+        result = _engram.register_tool(tool_entry, registered_by=source_tool)
+        _track("register_tool", success=True)
+    except Exception as exc:
+        _track("register_tool", success=False)
+        return f"注册工具失败: {exc}"
+    action = result.pop("_action", "registered")
+    action_zh = "已更新" if action == "updated" else "已注册"
+    return f"工具{action_zh}: {name}" + (f" ({path})" if path else "")
+
+
+@mcp.tool()
+async def find_tool(query: str) -> str:
+    """搜索已注册的本地工具/程序。 / Search for registered local tools and programs.
+
+    用途：需要查找某个工具的路径、版本或安装方式时调用。避免重复搜索或重新安装已有工具。
+    Purpose: Call when you need a tool's path, version, or install method. Prevents re-searching or re-installing.
+
+    Args:
+        query: 搜索关键词（名称、分类、用途均可匹配）。 / Search keywords matching name, category, purpose, or path.
+    """
+    try:
+        results = _engram.find_tool(query)
+        _track("find_tool", success=True)
+    except Exception as exc:
+        _track("find_tool", success=False)
+        return f"搜索工具失败: {exc}"
+    if not results:
+        return f"未找到匹配 '{query}' 的工具。"
+    return _json(results)
+
+
+@mcp.tool()
+async def list_tools(category: str = "") -> str:
+    """列出所有已注册的本地工具/程序。 / List all registered local tools and programs.
+
+    用途：查看当前环境中所有已知的工具、运行时和程序。
+    Purpose: View all known tools, runtimes, and programs in the current environment.
+
+    Args:
+        category: 按分类筛选（runtime, cli, library, credential, config, service, other），留空列出全部。 / Filter by category; empty lists all.
+    """
+    try:
+        results = _engram.list_tools(category=category or None)
+        _track("list_tools", success=True)
+    except Exception as exc:
+        _track("list_tools", success=False)
+        return f"列出工具失败: {exc}"
+    if not results:
+        return "尚无已注册的工具。"
+    return _json(results)
+
+
+@mcp.tool()
 async def bulk_add_knowledge(items_json: str, item_type: str = "lesson", source_tool: str = "") -> str:
     """批量记录多条 lessons 或 decisions。 / Batch-add multiple lessons or decisions in one call.
 
@@ -1105,7 +1207,7 @@ async def update_identity(field: str, updates_json: str) -> str:
 
     Field-specific keys / 字段专用键:
         profile: role, language, technical_level, description / role、language、technical_level、description。
-        preferences: work_patterns (dict), communication (str), tool_preferences (dict) / work_patterns（字典）、communication（字符串）、tool_preferences（字典）。
+        preferences: work_patterns (dict), communication (str), tool_preferences (dict), playbook_auto_extract (bool, default true) / work_patterns（字典）、communication（字符串）、tool_preferences（字典）、playbook_auto_extract（布尔，默认 true）。
         trust_boundaries: default_sharing, tool_access, private_fields, restricted_fields / default_sharing、tool_access、private_fields、restricted_fields。
         work_style: preferences (dict), communication (str) / preferences（字典）、communication（字符串）。
         quality_standards: acceptance_threshold (1-5), rules (list) / acceptance_threshold（1-5）、rules（列表）。
@@ -1343,10 +1445,13 @@ async def wrap_up_session(
     tech_stack: str = "",
     known_issues: str = "",
 ) -> str:
-    """会话结束一键收尾：自动提取知识并保存项目快照。 / Wrap up a session in one step: extract knowledge and save a project snapshot.
+    """会话结束一键收尾：自动提取知识、操作流程并保存项目快照。 / Wrap up a session in one step: extract knowledge, detect playbooks, and save a project snapshot.
 
-    用途：一次对话结束时调用，把会话摘要交给 Engram 自动提取 lessons 和 decisions，并可选更新项目快照。
-    Purpose: Call at the end of a conversation to let Engram extract lessons and decisions from the summary and optionally update the project snapshot.
+    用途：一次对话结束时调用，把会话摘要交给 Engram 自动提取 lessons、decisions 和 Playbook 草稿，并可选更新项目快照。
+    Purpose: Call at the end of a conversation to let Engram extract lessons, decisions, and playbook drafts from the summary and optionally update the project snapshot.
+
+    Playbook 自动提取：如果摘要描述了一个多步骤操作流程（3+ 步骤，含顺序标记和操作动词），会自动生成 Playbook 草稿存入 staging。返回值中会包含 playbook_draft 字段（含 confidence: high/medium），AI 工具应根据 confidence 决定是否提示用户。可通过 update_preferences(playbook_auto_extract=false) 关闭此功能。
+    Playbook auto-extraction: If the summary describes a multi-step operational workflow (3+ steps with sequential markers and action verbs), a Playbook draft is auto-generated into staging. The return value includes a playbook_draft field (with confidence: high/medium); AI tools should decide whether to notify the user based on confidence. Disable via update_preferences(playbook_auto_extract=false).
 
     注意：如果只想提取知识不用保存项目，用 extract_session_insights；如果只想保存项目快照，用 save_project_snapshot。
     Note: Use extract_session_insights when you only want extraction, and save_project_snapshot when you only want to save a project snapshot.
@@ -1368,6 +1473,29 @@ async def wrap_up_session(
     except Exception as exc:
         logger.warning("extract_session_insights failed: %s", exc)
         results["insights"] = {"error": str(exc)}
+
+    # Step 1.5: Auto-extract Playbook if session looks like a procedure
+    try:
+        playbook = _engram.extract_playbook_from_session(
+            summary, source_tool=source_tool,
+        )
+        if playbook:
+            pb_confidence = playbook.get("confidence", "medium")
+            results["playbook_draft"] = {
+                "title": playbook.get("title", ""),
+                "playbook_id": playbook.get("id", ""),
+                "steps_count": len(playbook.get("steps", [])),
+                "pitfalls_count": len(playbook.get("pitfalls", [])),
+                "tier": "staging",
+                "confidence": pb_confidence,
+                "message": (
+                    "检测到可复用的操作流程，已生成 Playbook 草稿。"
+                    if pb_confidence == "high"
+                    else "检测到可能的操作流程，已静默存入草稿。"
+                ),
+            }
+    except Exception as exc:
+        logger.warning("playbook extraction failed: %s", exc)
 
     # Step 2: Save project snapshot (if project_folder provided)
     if project_folder:

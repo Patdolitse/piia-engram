@@ -3830,3 +3830,434 @@ def test_playbook_domain_filter(tmp_path: Path):
     docker_pbs = engram.get_playbooks(domain="docker")
     assert len(docker_pbs) == 1
     assert docker_pbs[0]["title"] == "Docker 部署"
+
+
+# ===========================================================================
+# Tools Registry Tests
+# ===========================================================================
+
+
+def test_init_creates_environment_dir(tmp_path: Path):
+    """初始化应创建 environment 目录。"""
+    engram = make_engram(tmp_path)
+    assert (tmp_path / "environment").is_dir()
+
+
+def test_register_and_list_tools(tmp_path: Path):
+    """注册工具后应能列出。"""
+    engram = make_engram(tmp_path)
+    result = engram.register_tool({
+        "name": "Python",
+        "path": "/usr/bin/python3",
+        "category": "runtime",
+        "version": "3.12",
+        "purpose": "Python interpreter",
+    })
+    assert result.get("name") == "Python"
+    assert result.get("_action") == "registered"
+
+    tools = engram.list_tools()
+    assert len(tools) == 1
+    assert tools[0]["name"] == "Python"
+    assert tools[0]["path"] == "/usr/bin/python3"
+    assert tools[0]["id"]  # should have generated an ID
+
+
+def test_register_tool_update_existing(tmp_path: Path):
+    """同名工具重复注册应更新而非新增。"""
+    engram = make_engram(tmp_path)
+    engram.register_tool({"name": "gh", "path": "/usr/bin/gh", "version": "2.50"})
+    result = engram.register_tool({"name": "gh", "path": "/usr/local/bin/gh", "version": "2.88"})
+    assert result.get("_action") == "updated"
+    assert result["path"] == "/usr/local/bin/gh"
+    assert result["version"] == "2.88"
+
+    tools = engram.list_tools()
+    assert len(tools) == 1  # not duplicated
+
+
+def test_register_tool_name_required(tmp_path: Path):
+    """没有 name 的工具应返回错误。"""
+    engram = make_engram(tmp_path)
+    result = engram.register_tool({"path": "/usr/bin/something"})
+    assert "error" in result
+
+
+def test_find_tool(tmp_path: Path):
+    """按关键词搜索工具。"""
+    engram = make_engram(tmp_path)
+    engram.register_tool({"name": "Python", "category": "runtime", "purpose": "解释器"})
+    engram.register_tool({"name": "gh", "category": "cli", "purpose": "GitHub CLI"})
+    engram.register_tool({"name": "wrangler", "category": "cli", "purpose": "Cloudflare Workers"})
+
+    # Search by name
+    results = engram.find_tool("python")
+    assert len(results) == 1
+    assert results[0]["name"] == "Python"
+
+    # Search by purpose
+    results = engram.find_tool("github")
+    assert len(results) == 1
+    assert results[0]["name"] == "gh"
+
+    # Search by category
+    results = engram.find_tool("cli")
+    assert len(results) == 2
+
+    # Empty query returns all active
+    results = engram.find_tool("")
+    assert len(results) == 3
+
+
+def test_list_tools_by_category(tmp_path: Path):
+    """按分类筛选工具。"""
+    engram = make_engram(tmp_path)
+    engram.register_tool({"name": "Python", "category": "runtime"})
+    engram.register_tool({"name": "gh", "category": "cli"})
+
+    runtimes = engram.list_tools(category="runtime")
+    assert len(runtimes) == 1
+    assert runtimes[0]["name"] == "Python"
+
+    clis = engram.list_tools(category="cli")
+    assert len(clis) == 1
+
+
+def test_update_tool(tmp_path: Path):
+    """按 ID 更新工具字段。"""
+    engram = make_engram(tmp_path)
+    result = engram.register_tool({"name": "Node.js", "version": "20.0"})
+    tool_id = result["id"]
+
+    updated = engram.update_tool(tool_id, {"version": "22.0", "notes": "LTS"})
+    assert updated["version"] == "22.0"
+    assert updated["notes"] == "LTS"
+
+
+def test_remove_tool(tmp_path: Path):
+    """软删除工具后不应出现在列表中。"""
+    engram = make_engram(tmp_path)
+    result = engram.register_tool({"name": "old-tool", "category": "cli"})
+    tool_id = result["id"]
+
+    engram.remove_tool(tool_id)
+    tools = engram.list_tools()
+    assert len(tools) == 0  # removed tools don't appear
+
+
+def test_find_item_by_id_tool(tmp_path: Path):
+    """通用 ID 查找应找到工具。"""
+    engram = make_engram(tmp_path)
+    result = engram.register_tool({"name": "curl", "path": "/usr/bin/curl"})
+    tool_id = result["id"]
+
+    item_type, item = engram._find_item_by_id(tool_id)
+    assert item_type == "tool"
+    assert item["name"] == "curl"
+
+
+def test_tools_export_import(tmp_path: Path):
+    """导出导入应保留工具注册信息。"""
+    engram = make_engram(tmp_path)
+    engram.register_tool({"name": "Python", "path": "/usr/bin/python3", "version": "3.12"})
+    engram.register_tool({"name": "gh", "path": "/usr/bin/gh", "version": "2.88"})
+
+    export_path = engram.export_all()
+    exported = json.loads(Path(export_path).read_text(encoding="utf-8"))
+    assert len(exported["environment"]["tools"]) == 2
+
+    # Import into fresh Engram
+    engram2 = make_engram(tmp_path / "import_target")
+    result = engram2.import_all(export_path, merge=True)
+    assert "tools(+2)" in result["imported"]
+
+    tools = engram2.list_tools()
+    assert len(tools) == 2
+
+    # Re-import should not duplicate
+    result2 = engram2.import_all(export_path, merge=True)
+    assert "tools(+0)" in result2["imported"]
+    assert len(engram2.list_tools()) == 2
+
+
+# ===========================================================================
+# Playbook Auto-Extraction Tests
+# ===========================================================================
+
+
+def test_detect_procedural_workflow(tmp_path: Path):
+    """含顺序标记和操作动词的文本应被识别为流程。"""
+    engram = make_engram(tmp_path)
+    # Positive: clear procedure
+    assert engram._detect_procedural_workflow(
+        "先更新版本号，然后提交推送到 GitHub，接着发布到 PyPI，最后上架到 Registry"
+    )
+    # Negative: too short
+    assert not engram._detect_procedural_workflow("简单修复")
+    # Negative: no sequential markers
+    assert not engram._detect_procedural_workflow(
+        "今天讨论了数据库选型，分析了 PostgreSQL 和 MySQL 的优缺点"
+    )
+
+
+def test_detect_procedural_workflow_english(tmp_path: Path):
+    """English procedural text should also be detected."""
+    engram = make_engram(tmp_path)
+    assert engram._detect_procedural_workflow(
+        "First install the CLI tool, then configure the API token, "
+        "next deploy the worker, finally publish to the registry"
+    )
+
+
+def test_extract_steps_from_summary_numbered(tmp_path: Path):
+    """数字列表格式应正确提取步骤。"""
+    engram = make_engram(tmp_path)
+    summary = (
+        "1. 更新版本号\n"
+        "2. 提交并推送代码\n"
+        "3. 等 CI 通过后构建\n"
+        "4. 发布到 PyPI"
+    )
+    steps = engram._extract_steps_from_summary(summary)
+    assert len(steps) >= 3
+    assert steps[0]["order"] == 1
+
+
+def test_extract_steps_from_summary_sequential(tmp_path: Path):
+    """顺序标记格式应正确提取步骤。"""
+    engram = make_engram(tmp_path)
+    summary = "先更新版本号，然后提交推送代码，接着构建发布到 PyPI，最后创建 Release"
+    steps = engram._extract_steps_from_summary(summary)
+    assert len(steps) >= 3
+
+
+def test_extract_pitfalls(tmp_path: Path):
+    """应从文本中提取陷阱/注意事项。"""
+    engram = make_engram(tmp_path)
+    text = (
+        "完成了发布。过程中踩坑了 API Key 的格式不对。"
+        "另外注意 JWT 会过期需要重新授权。"
+    )
+    pitfalls = engram._extract_pitfalls(text)
+    assert len(pitfalls) >= 1
+
+
+def test_extract_playbook_from_session_positive(tmp_path: Path):
+    """包含多步骤流程的摘要应自动生成 Playbook 草稿。"""
+    engram = make_engram(tmp_path)
+    summary = (
+        "完成 v3.24.0 发布流程。先同步更新了三处版本号，"
+        "然后提交推送到 GitHub，接着等 CI 通过后发布到 PyPI，"
+        "最后用 mcp-publisher 上架到 MCP Registry。"
+        "过程中踩坑了 cfk_ 前缀的 Key 不被接受。"
+    )
+    result = engram.extract_playbook_from_session(summary, source_tool="claude_code")
+    assert result is not None
+    assert result.get("title")
+    assert len(result.get("steps", [])) >= 3
+    assert result.get("tier") == "staging"
+    assert result.get("id")
+
+    # Should be findable via search
+    found = engram.get_playbooks()
+    assert len(found) >= 1
+
+
+def test_extract_playbook_from_session_negative(tmp_path: Path):
+    """非流程性摘要不应生成 Playbook。"""
+    engram = make_engram(tmp_path)
+    summary = "今天和用户讨论了产品定位，确认了 ICP 是多工具开发者"
+    result = engram.extract_playbook_from_session(summary)
+    assert result is None
+
+
+def test_extract_playbook_dedup(tmp_path: Path):
+    """相同流程不应重复生成 Playbook。"""
+    engram = make_engram(tmp_path)
+    summary = (
+        "先更新版本号，然后提交推送到 GitHub，"
+        "接着发布到 PyPI，最后上架到 Registry"
+    )
+    result1 = engram.extract_playbook_from_session(summary)
+    assert result1 is not None
+
+    result2 = engram.extract_playbook_from_session(summary)
+    assert result2 is None  # duplicate detected
+
+
+def test_extract_steps_from_checkpoints(tmp_path: Path):
+    """应从 context 检查点内容中提取步骤。"""
+    engram = make_engram(tmp_path)
+    checkpoint_content = (
+        "# Session: claude_code @ 2026-05-23 14:00\n"
+        "### 14:00\n"
+        "当前任务：发布新版本\n"
+        "### 14:15\n"
+        "已完成：版本号三处同步更新\n"
+        "### 14:30\n"
+        "已完成：commit+push 并等 CI 通过\n"
+        "### 14:45\n"
+        "已完成：PyPI 发布成功\n"
+        "### 15:00\n"
+        "已完成：MCP Registry 上架完成\n"
+    )
+    steps = engram._extract_steps_from_checkpoints(checkpoint_content)
+    assert len(steps) >= 3
+    assert steps[0]["order"] == 1
+    assert "版本号" in steps[0]["action"]
+
+
+# --- P0 improvements: detection, redaction, promotion ---
+
+
+def test_detect_keywords_only_no_action_verb(tmp_path: Path):
+    """纯关键词（无操作动词）不应触发检测 — 防止元讨论误报。"""
+    engram = make_engram(tmp_path)
+    # This text has many playbook trigger keywords but zero action verbs
+    text = (
+        "我们讨论了发布流程的步骤设计，分析了操作手册的结构，"
+        "评估了 runbook 的可复用性和 workflow 的自动化方案"
+    )
+    assert not engram._detect_procedural_workflow(text)
+
+
+def test_detect_keywords_with_action_verb(tmp_path: Path):
+    """关键词 + 至少 1 个操作动词应触发。"""
+    engram = make_engram(tmp_path)
+    text = (
+        "这个发布流程的步骤是：先构建包，操作手册记录了部署细节"
+    )
+    assert engram._detect_procedural_workflow(text)
+
+
+def test_checkpoint_bypasses_text_detection(tmp_path: Path):
+    """有 3+ 检查点时，即使 summary 不像流程也应生成草稿。"""
+    engram = make_engram(tmp_path)
+    # Save a session with 3+ checkpoints
+    engram.save_agent_context(
+        tool="test_tool",
+        content=(
+            "### 10:00\n已完成：初始化项目\n"
+            "### 10:15\n已完成：配置数据库\n"
+            "### 10:30\n已完成：部署到服务器\n"
+            "### 10:45\n已完成：验证上线成功\n"
+        ),
+        project_folder="/test",
+        session_id="sess_checkpoint_test",
+    )
+    # Summary is intentionally vague — would NOT pass text detection
+    bland_summary = "完成了一些配置工作"
+    result = engram.extract_playbook_from_session(
+        bland_summary,
+        source_tool="test_tool",
+        session_id="sess_checkpoint_test",
+    )
+    assert result is not None
+    assert result.get("confidence") == "high"
+    assert len(result.get("steps", [])) >= 3
+
+
+def test_extract_playbook_confidence_medium(tmp_path: Path):
+    """无检查点的文本检测应返回 medium confidence。"""
+    engram = make_engram(tmp_path)
+    summary = (
+        "先更新版本号，然后提交推送到 GitHub，"
+        "接着发布到 PyPI，最后上架到 Registry"
+    )
+    result = engram.extract_playbook_from_session(summary, source_tool="test")
+    assert result is not None
+    assert result.get("confidence") == "medium"
+
+
+def test_redact_sensitive_tokens(tmp_path: Path):
+    """敏感信息应被脱敏。"""
+    from piia_engram.context import ContextMixin
+    assert "{{REDACTED}}" in ContextMixin._redact_sensitive(
+        "使用 sk-9d970b7bc6094c409a09f2f9be88d64b 发布"
+    )
+    assert "{{PATH}}" in ContextMixin._redact_sensitive(
+        "路径是 C:\\Users\\john\\projects\\app"
+    )
+    assert "{{EMAIL}}" in ContextMixin._redact_sensitive(
+        "联系 admin@example.com 获取权限"
+    )
+    assert "{{PATH}}" in ContextMixin._redact_sensitive(
+        "文件在 /home/user/.ssh/id_rsa"
+    )
+    # Non-sensitive text should pass through unchanged
+    assert ContextMixin._redact_sensitive("更新版本号") == "更新版本号"
+
+
+def test_redact_applied_to_playbook_steps(tmp_path: Path):
+    """自动提取的 Playbook 步骤和 pitfall 应经过脱敏。"""
+    engram = make_engram(tmp_path)
+    summary = (
+        "先用 token sk-abcdef1234567890abcdef 登录，"
+        "然后部署到 C:\\Projects\\myapp 目录，"
+        "接着运行构建命令，最后发布到 Registry。"
+        "过程中踩坑了 admin@corp.com 的权限不对。"
+    )
+    result = engram.extract_playbook_from_session(summary, source_tool="test")
+    assert result is not None
+    # Check that steps are redacted
+    all_steps_text = " ".join(s["action"] for s in result.get("steps", []))
+    assert "sk-abcdef" not in all_steps_text
+    # Check that pitfalls are redacted
+    all_pitfalls_text = " ".join(result.get("pitfalls", []))
+    assert "admin@corp.com" not in all_pitfalls_text
+
+
+def test_playbook_no_auto_promote(tmp_path: Path):
+    """Playbook 不应通过访问次数自动晋升 — 需要用户确认。"""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({
+        "title": "测试流程",
+        "triggers": ["test"],
+        "steps": [{"order": 1, "action": "step1"}],
+        "tier": "staging",
+    })
+    pb_id = pb["id"]
+
+    # Simulate 5 accesses (well above the threshold of 3)
+    for _ in range(5):
+        engram.get_playbook(pb_id)
+
+    # Run tier evaluation
+    engram.evaluate_tiers()
+
+    # Should still be staging — NOT promoted
+    updated = engram.get_playbook(pb_id, _update_access=False)
+    assert updated.get("tier") == "staging"
+
+
+def test_discussion_flow_not_triggered(tmp_path: Path):
+    """讨论流程设计的对话不应生成 Playbook。"""
+    engram = make_engram(tmp_path)
+    # Simulates a conversation about playbook design — full of keywords
+    # but no actual execution
+    summary = (
+        "讨论了 Playbook 自动提取方案的检测规则。"
+        "分析了流程关键词、操作动词、顺序标记的判定逻辑。"
+        "评估了 runbook 模式和 workflow 提取策略。"
+    )
+    result = engram.extract_playbook_from_session(summary)
+    assert result is None
+
+
+def test_playbook_auto_extract_kill_switch(tmp_path: Path):
+    """用户关闭 playbook_auto_extract 后不应自动提取。"""
+    engram = make_engram(tmp_path)
+    # This summary would normally trigger extraction
+    summary = (
+        "先更新版本号，然后提交推送到 GitHub，"
+        "接着发布到 PyPI，最后上架到 Registry"
+    )
+    # Turn off the switch
+    engram.update_preferences({"playbook_auto_extract": False})
+    result = engram.extract_playbook_from_session(summary, source_tool="test")
+    assert result is None
+
+    # Turn it back on
+    engram.update_preferences({"playbook_auto_extract": True})
+    result = engram.extract_playbook_from_session(summary, source_tool="test")
+    assert result is not None

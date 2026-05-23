@@ -54,6 +54,7 @@ _ALLOWED_PROFILE_FIELDS: frozenset = frozenset({
 })
 _ALLOWED_PREFERENCES_FIELDS: frozenset = frozenset({
     "work_patterns", "communication", "tool_preferences",
+    "playbook_auto_extract",
     "updated_at", "migrated_from",
 })
 _ALLOWED_TRUST_FIELDS: frozenset = frozenset({
@@ -91,6 +92,13 @@ _ALLOWED_PLAYBOOK_UPDATE_FIELDS: frozenset = frozenset({
     "preconditions", "pitfalls", "outcome", "source_tool",
     "source_url", "status",
 })
+_ALLOWED_TOOL_UPDATE_FIELDS: frozenset = frozenset({
+    "name", "category", "path", "version", "purpose",
+    "install_method", "os_platform", "status", "notes",
+})
+TOOL_CATEGORIES = frozenset({
+    "runtime", "cli", "library", "credential", "config", "service", "other",
+})
 DOMAIN_KEYWORDS = {
     "python": ["python", "pip", "pytest", "django", "fastapi", "pydantic"],
     "javascript": ["js", "javascript", "node", "npm", "react", "vue", "typescript"],
@@ -102,13 +110,16 @@ DOMAIN_KEYWORDS = {
 }
 FIELD_WEIGHTS: dict[str, float] = {
     "triggers": 4.0,
+    "name": 3.0,
     "summary": 3.0,
     "title": 3.0,
     "question": 2.5,
+    "purpose": 2.0,
     "description": 2.0,
     "detail": 1.5,
     "choice": 1.0,
     "reasoning": 1.0,
+    "category": 0.8,
     "domain": 0.5,
 }
 _TERM_ALIASES: dict[str, list[str]] = {
