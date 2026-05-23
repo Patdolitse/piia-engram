@@ -84,6 +84,7 @@ TIER1_TOOLS = frozenset({
     # Knowledge read/write
     "add_lesson",                # store reusable experience
     "add_decision",              # record decision + reasoning
+    "add_playbook",              # record operational procedure
     "search_knowledge",          # search across all knowledge
     "get_relevant_knowledge",    # project-aware knowledge retrieval
     # Identity
@@ -526,18 +527,18 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
 
 @mcp.tool()
 async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> str:
-    """按关键词搜索经验教训和决策（你知道要找什么）。 / Search lessons and decisions by keyword when you know what to look for.
+    r"""Search lessons, decisions, and playbooks by keyword.
 
-    用途：用户说“帮我找一下关于 X 的经验”时调用。
-    Purpose: Call when the user asks to find knowledge about a specific topic X.
+    Call when the user asks to find knowledge about a specific topic,
+    or recalls a procedure ('X how to' / 'X steps').
 
-    注意：如果你只有项目路径、没有搜索词，用 get_relevant_knowledge；如果有已有知识 ID 想找相似项，用 find_similar_knowledge。
-    Note: If you only have a project path and no query, use get_relevant_knowledge; if you have an existing knowledge ID, use find_similar_knowledge.
+    If you only have a project path and no query, use get_relevant_knowledge;
+    if you have an existing knowledge ID, use find_similar_knowledge.
 
     Args:
-        query: 搜索关键词。 / Search query keywords.
-        scope: 搜索范围：'all'、'lessons' 或 'decisions'。 / Search scope: 'all', 'lessons', or 'decisions'.
-        limit: 最多返回多少条（默认 10）。 / Maximum number of items to return (default 10).
+        query: Search query keywords.
+        scope: Search scope: 'all', 'lessons', 'decisions', or 'playbooks'.
+        limit: Maximum number of items to return (default 10).
     """
     try:
         result = _engram.search_knowledge(query, scope=scope, limit=limit)
@@ -687,15 +688,15 @@ async def add_decision(
 ) -> str:
     """记录单条关键决策（用户明确选了某个方案）。 / Record one key decision when the user explicitly chose an option.
 
-    用途：用户说“我们决定用 X”或“以后都用 Y”时调用。
+    用途：用户说"我们决定用 X"或"以后都用 Y"时调用。
     Purpose: Call when the user says they decided to use X or will use Y going forward.
 
     注意：如果用户给了一段会话摘要让你自动提取，请用 extract_session_insights 而不是本工具。
     Note: If the user gives a session summary for automatic extraction, use extract_session_insights instead.
 
     Args:
-        question: 决策的问题，如“数据库选型”。 / Decision question, such as 'database choice'.
-        choice: 做出的选择，如“PostgreSQL”。 / Chosen option, such as 'PostgreSQL'.
+        question: 决策的问题，如"数据库选型"。 / Decision question, such as 'database choice'.
+        choice: 做出的选择，如"PostgreSQL"。 / Chosen option, such as 'PostgreSQL'.
         reasoning: 选择的理由（可选）。 / Reasoning for the choice (optional).
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
         project: 关联项目（可选）。 / Related project (optional).
@@ -719,6 +720,115 @@ async def add_decision(
     if result.get("status") == "duplicate":
         return _json(result)
     return f"决策已记录: {question} → {choice}"
+
+
+@mcp.tool()
+async def add_playbook(
+    title: str,
+    triggers: str,
+    steps_json: str = "[]",
+    description: str = "",
+    domain: str = "",
+    preconditions: str = "",
+    pitfalls: str = "",
+    outcome: str = "",
+    source_tool: str = "",
+) -> str:
+    """记录操作手册（Playbook）— 结构化的多步骤流程。 / Record an operational playbook — a structured multi-step procedure.
+
+    用途：完成一个多步骤操作流程后（如发布到 Registry、上架应用等），将步骤和经验记录为 Playbook，
+    方便日后调取复用，避免重复摸索。
+    Purpose: After completing a multi-step operational process (publishing to a registry, app deployment, etc.),
+    record the steps as a Playbook for future retrieval.
+
+    每条 Playbook 独立存储为单个文件，通过 triggers（记忆点关键词）快速调取。
+    Each Playbook is stored as an individual file, quickly retrievable via trigger keywords.
+
+    Args:
+        title: 流程名称，如 'MCP Registry 发布流程'。 / Playbook name, e.g., 'MCP Registry publish workflow'.
+        triggers: 记忆点关键词，逗号分隔，如 '发布,registry,上架'。 / Trigger keywords (comma-separated) for quick retrieval.
+        steps_json: 步骤 JSON 数组，每个元素含 order/action/detail。 / Steps as a JSON array, each with order/action/detail.
+        description: 流程概述（可选）。 / Brief description (optional).
+        domain: 技术领域，逗号分隔（可选）。 / Domain labels, comma-separated (optional).
+        preconditions: 前提条件，逗号分隔（可选）。 / Preconditions, comma-separated (optional).
+        pitfalls: 常见陷阱，逗号分隔（可选）。 / Common pitfalls, comma-separated (optional).
+        outcome: 预期结果（可选）。 / Expected outcome (optional).
+        source_tool: 来源工具（可选）。 / Source tool (optional).
+    """
+    playbook: dict = {"title": title}
+    playbook["triggers"] = [t.strip() for t in triggers.split(",") if t.strip()]
+    try:
+        steps = json.loads(steps_json)
+        if isinstance(steps, list):
+            playbook["steps"] = steps
+    except json.JSONDecodeError:
+        return "steps_json 格式错误，需要有效的 JSON 数组"
+    if description:
+        playbook["description"] = description
+    if domain:
+        playbook["domain"] = domain
+    if preconditions:
+        playbook["preconditions"] = [p.strip() for p in preconditions.split(",") if p.strip()]
+    if pitfalls:
+        playbook["pitfalls"] = [p.strip() for p in pitfalls.split(",") if p.strip()]
+    if outcome:
+        playbook["outcome"] = outcome
+    if source_tool:
+        playbook["source_tool"] = source_tool
+    try:
+        result = _engram.add_playbook(playbook)
+        _track("add_playbook", success=True)
+    except Exception as exc:
+        _track("add_playbook", success=False)
+        return f"添加 Playbook 失败: {exc}"
+    if result.get("status") == "duplicate":
+        return _json(result)
+    if result.get("error"):
+        return _json(result)
+    return f"Playbook 已记录: {title} (triggers: {triggers})"
+
+
+@mcp.tool()
+async def get_playbooks(domain: str = "", limit: int = 20) -> str:
+    """列出已保存的操作手册（Playbooks）。 / List saved operational playbooks.
+
+    用途：查看有哪些已记录的操作流程，可按领域筛选。
+    Purpose: Browse recorded operational procedures, optionally filtered by domain.
+
+    Args:
+        domain: 按领域筛选（可选）。 / Filter by domain (optional).
+        limit: 返回条数上限（默认 20）。 / Maximum items to return (default 20).
+    """
+    try:
+        result = _engram.get_playbooks(domain=domain or None, limit=limit)
+        _track("get_playbooks", success=True)
+    except Exception as exc:
+        _track("get_playbooks", success=False)
+        return f"获取 Playbooks 失败: {exc}"
+    if not result:
+        return "尚无已保存的 Playbook。"
+    return _json(result)
+
+
+@mcp.tool()
+async def get_playbook(playbook_id: str) -> str:
+    """获取单条 Playbook 的完整内容。 / Get the full content of a single Playbook by ID.
+
+    用途：根据 ID 调取某条操作手册的详细步骤。
+    Purpose: Retrieve detailed steps for a specific operational playbook by its ID.
+
+    Args:
+        playbook_id: Playbook ID。 / The Playbook ID.
+    """
+    try:
+        result = _engram.get_playbook(playbook_id)
+        _track("get_playbook", success=True)
+    except Exception as exc:
+        _track("get_playbook", success=False)
+        return f"获取 Playbook 失败: {exc}"
+    if result.get("error"):
+        return _json(result)
+    return _json(result)
 
 
 @mcp.tool()
@@ -819,7 +929,7 @@ async def archive_knowledge(item_id: str) -> str:
 
 @mcp.tool()
 async def review_knowledge(knowledge_id: str) -> str:
-    """标记一条知识为“已复习”（刷新 last_reviewed 时间戳，不改内容）。 / Mark one knowledge item as reviewed, refreshing last_reviewed without changing content.
+    """标记一条知识为"已复习"（刷新 last_reviewed 时间戳，不改内容）。 / Mark one knowledge item as reviewed, refreshing last_reviewed without changing content.
 
     用途：用户确认某条经验或决策仍然有效时调用，防止它被标记为过期。
     Purpose: Call when the user confirms a lesson or decision is still valid, preventing it from being treated as stale.

@@ -244,7 +244,7 @@ $ engram doctor
     [ok] Engram initialized (~/.engram)
     [ok] Identity loaded (role: Senior Backend Developer)
     [ok] quick_context.md ready (4096 bytes)
-    [ok] MCP server: 13 tools registered
+    [ok] MCP server: 14 tools registered
 ```
 
 
@@ -320,7 +320,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 48 MCP tools. By default, only the 13 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 48 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 51 MCP tools. By default, only the 14 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 51 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -334,7 +334,7 @@ piia-engram ships 48 MCP tools. By default, only the 13 **Tier-1 Core** tools ar
 }
 ```
 
-### Tier-1 Core (13 tools — daily workflow)
+### Tier-1 Core (14 tools — daily workflow)
 
 | Tool | Purpose |
 |---|---|
@@ -342,7 +342,8 @@ piia-engram ships 48 MCP tools. By default, only the 13 **Tier-1 Core** tools ar
 | `wrap_up_session` | Save insights + sync at session end |
 | `add_lesson` | Store a reusable lesson learned |
 | `add_decision` | Record a key decision with reasoning |
-| `search_knowledge` | Search lessons and decisions by weighted relevance |
+| `add_playbook` | Record an operational playbook (multi-step procedure with trigger keywords) |
+| `search_knowledge` | Search lessons, decisions, and playbooks by weighted relevance |
 | `get_relevant_knowledge` | Find knowledge relevant to current project |
 | `get_identity_card` | Export Markdown identity card for non-MCP tools |
 | `update_identity` | Update profile, preferences, or quality standards |
@@ -352,7 +353,7 @@ piia-engram ships 48 MCP tools. By default, only the 13 **Tier-1 Core** tools ar
 | `get_recent_context` | Recover lost session context after restart |
 | `list_agent_sessions` | Browse saved session records across tools |
 
-### Tier-2 Advanced (35 tools — knowledge management, review, import/export)
+### Tier-2 Advanced (37 tools — knowledge management, review, import/export)
 
 <details>
 <summary>Click to expand full tool list</summary>
@@ -365,6 +366,8 @@ piia-engram ships 48 MCP tools. By default, only the 13 **Tier-1 Core** tools ar
 | `get_preferences` | Read communication and workflow preferences |
 | `get_trust_boundaries` | Read data access boundaries |
 | `get_quality_standards` | Read quality expectations |
+| `get_playbooks` | List saved operational playbooks |
+| `get_playbook` | Get full content of a single playbook by ID |
 | `get_lessons` | List reusable lessons learned |
 | `get_decisions` | List key decisions and reasons |
 | `get_domains` | Read domain experience stats |
@@ -459,11 +462,12 @@ piia-engram ships 48 MCP tools. By default, only the 13 **Tier-1 Core** tools ar
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.22.2 (2026-05-23) |
+| | v3.23.0 (2026-05-23) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools exposed | **48** (13 Tier-1 default, 35 opt-in via `ENGRAM_TOOLS=all`) |
-| Tests passing | **704** (unit + integration) |
+| MCP tools exposed | **51** (14 Tier-1 default, 37 opt-in via `ENGRAM_TOOLS=all`) |
+| Knowledge types | **3** (lessons, decisions, playbooks) |
+| Tests passing | **721** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **1097** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |

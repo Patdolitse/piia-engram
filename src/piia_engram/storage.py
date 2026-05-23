@@ -82,6 +82,15 @@ LESSON_TRIGGERS = [
     "发现", "注意", "学到", "坑", "问题", "记住", "经验", "教训",
     "learned", "noted", "discovered", "remember", "gotcha", "caveat", "pitfall", "tip",
 ]
+PLAYBOOK_TRIGGERS = [
+    "流程", "步骤", "怎么做", "操作", "发布", "部署", "上架",
+    "playbook", "procedure", "how to", "steps", "workflow", "runbook",
+]
+_ALLOWED_PLAYBOOK_UPDATE_FIELDS: frozenset = frozenset({
+    "title", "description", "triggers", "domain", "steps",
+    "preconditions", "pitfalls", "outcome", "source_tool",
+    "source_url", "status",
+})
 DOMAIN_KEYWORDS = {
     "python": ["python", "pip", "pytest", "django", "fastapi", "pydantic"],
     "javascript": ["js", "javascript", "node", "npm", "react", "vue", "typescript"],
@@ -92,9 +101,11 @@ DOMAIN_KEYWORDS = {
     "database": ["sql", "database", "query", "index", "migration", "schema"],
 }
 FIELD_WEIGHTS: dict[str, float] = {
+    "triggers": 4.0,
     "summary": 3.0,
     "title": 3.0,
     "question": 2.5,
+    "description": 2.0,
     "detail": 1.5,
     "choice": 1.0,
     "reasoning": 1.0,
@@ -131,6 +142,8 @@ _TERM_ALIASES: dict[str, list[str]] = {
     "document": ["document", "文档", "doc"],
     "framework": ["framework", "框架"],
     "dependency": ["dependency", "依赖", "dep"],
+    "playbook": ["playbook", "流程", "操作手册", "runbook"],
+    "publish": ["publish", "发布", "上架"],
 }
 _ALIAS_LOOKUP: dict[str, str] = {}
 for _canonical, _aliases in _TERM_ALIASES.items():

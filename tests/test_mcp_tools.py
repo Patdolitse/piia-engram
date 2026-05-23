@@ -235,7 +235,7 @@ class TestSearchTools:
     ):
         isolated_engram.add_lesson({"summary": "some lesson"})
         result = json.loads(_run(mcp_server.search_knowledge("")))
-        assert result == {"lessons": [], "decisions": []}
+        assert result == {"lessons": [], "decisions": [], "playbooks": []}
 
 
 # ---------------------------------------------------------------------------

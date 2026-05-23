@@ -67,6 +67,23 @@ class RetrievalMixin:
                         changed = True
             if changed:
                 _write_json(path, entries)
+
+        # Playbook tier promotion (individual files)
+        index = self._read_playbook_index()
+        for idx_entry in index:
+            if idx_entry.get("status") != "active":
+                continue
+            pb_id = idx_entry.get("id", "")
+            pb = self._read_playbook_by_id(pb_id)
+            if not pb:
+                continue
+            if pb.get("tier") == "staging" and pb.get("access_count", 0) >= self._PROMOTE_ACCESS_COUNT:
+                pb["tier"] = "verified"
+                pb["promoted_at"] = _now_iso()
+                pb["promotion_reason"] = f"referenced {pb['access_count']} times"
+                _write_json(self._playbooks_dir / f"{pb_id}.json", pb)
+                promoted += 1
+
         return {"promoted": promoted}
 
     def get_staging_summary(self) -> dict:
@@ -83,14 +100,23 @@ class RetrievalMixin:
             for decision in decisions
             if decision.get("tier") == "staging" and decision.get("status") == "active"
         ]
+        staging_playbooks = []
+        for idx_entry in self._read_playbook_index():
+            if idx_entry.get("status") != "active":
+                continue
+            pb = self._read_playbook_by_id(idx_entry.get("id", ""))
+            if pb and pb.get("tier") == "staging":
+                staging_playbooks.append(pb)
+        all_staging = staging_lessons + staging_decisions
         return {
             "staging_lessons": len(staging_lessons),
             "staging_decisions": len(staging_decisions),
-            "total_staging": len(staging_lessons) + len(staging_decisions),
+            "staging_playbooks": len(staging_playbooks),
+            "total_staging": len(staging_lessons) + len(staging_decisions) + len(staging_playbooks),
             "oldest_staging": min(
                 (
                     entry.get("created_at", "")
-                    for entry in staging_lessons + staging_decisions
+                    for entry in all_staging
                     if entry.get("created_at", "")
                 ),
                 default="",
@@ -174,7 +200,11 @@ class RetrievalMixin:
         score = 0.0
         all_matched: set[str] = set()
         for field, weight in FIELD_WEIGHTS.items():
-            value = str(item.get(field, "")).lower()
+            raw = item.get(field, "")
+            if isinstance(raw, list):
+                value = " ".join(str(v) for v in raw).lower()
+            else:
+                value = str(raw).lower()
             if not value:
                 continue
             field_tokens = self._tokenize(value)
@@ -199,6 +229,15 @@ class RetrievalMixin:
             score += self._bigram_similarity(query_str, primary) * 1.5
 
         score += math.log1p(item.get("access_count", 0)) * 0.1
+
+        # Trigger exact-match bonus (playbooks)
+        triggers = item.get("triggers")
+        if triggers and isinstance(triggers, list):
+            query_lower = {t.lower() for t in terms}
+            trigger_lower = {str(t).lower() for t in triggers}
+            exact_hits = query_lower & trigger_lower
+            score += len(exact_hits) * 5.0
+
         return score
 
     # ------------------------------------------------------------------
@@ -206,9 +245,9 @@ class RetrievalMixin:
     # ------------------------------------------------------------------
 
     def search_knowledge(self, query: str, scope: str = "all", limit: int = 10) -> dict:
-        """Search lessons and decisions by weighted multi-term relevance."""
+        """Search lessons, decisions, and playbooks by weighted multi-term relevance."""
         terms = [term for term in (query or "").lower().split() if term]
-        results = {"lessons": [], "decisions": []}
+        results: dict = {"lessons": [], "decisions": [], "playbooks": []}
         limit = max(0, int(limit))
         if not terms or limit == 0:
             return results
@@ -243,6 +282,25 @@ class RetrievalMixin:
                     results["decisions"].append(item)
             results["decisions"] = sorted(
                 results["decisions"],
+                key=lambda item: item["_score"],
+                reverse=True,
+            )[:limit]
+
+        if scope in ("all", "playbooks"):
+            index = self._read_playbook_index()
+            for entry in index:
+                if entry.get("status") != "active":
+                    continue
+                pb = self._read_playbook_by_id(entry.get("id", ""))
+                if not pb:
+                    continue
+                score = self._score_item(pb, terms)
+                if score >= SEARCH_RELEVANCE_THRESHOLD:
+                    item = dict(pb)
+                    item["_score"] = round(score, 3)
+                    results["playbooks"].append(item)
+            results["playbooks"] = sorted(
+                results["playbooks"],
                 key=lambda item: item["_score"],
                 reverse=True,
             )[:limit]

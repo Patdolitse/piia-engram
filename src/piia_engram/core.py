@@ -24,12 +24,14 @@ from .storage import (  # noqa: F401 — re-exports
     FIELD_WEIGHTS,
     LESSON_TRIGGERS,
     MAX_KNOWLEDGE_ENTRIES,
+    PLAYBOOK_TRIGGERS,
     SCHEMA_VERSION,
     SEARCH_RELEVANCE_THRESHOLD,
     SIMILARITY_THRESHOLD,
     STALE_KNOWLEDGE_DAYS,
     _AFFIRMATION_MARKERS,
     _ALIAS_LOOKUP,
+    _ALLOWED_PLAYBOOK_UPDATE_FIELDS,
     _ALLOWED_PREFERENCES_FIELDS,
     _ALLOWED_PROFILE_FIELDS,
     _ALLOWED_QUALITY_FIELDS,
@@ -73,6 +75,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         self.root = root or _engram_root()
         self._identity_dir = self.root / "identity"
         self._knowledge_dir = self.root / "knowledge"
+        self._playbooks_dir = self.root / "playbooks"
         self._projects_dir = self.root / "projects"
         self._exports_dir = self.root / "exports"
 
@@ -102,7 +105,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
 
     def _ensure_structure(self) -> None:
         """Create directory structure if it doesn't exist."""
-        for sub in ["identity", "knowledge", "projects", "exports", "compat", "contexts"]:
+        for sub in ["identity", "knowledge", "playbooks", "projects", "exports", "compat", "contexts"]:
             (self.root / sub).mkdir(parents=True, exist_ok=True)
         # Write schema version
         ver_path = self.root / "schema_version.json"
@@ -322,6 +325,8 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
     def _entry_identity_text(self, entry: dict, entry_type: str) -> str:
         if entry_type == "decision":
             return str(entry.get("title") or entry.get("question") or "")
+        if entry_type == "playbook":
+            return str(entry.get("title") or "")
         return str(entry.get("summary") or "")
 
     def _ensure_fields(self, entry: dict, entry_type: str) -> dict:
@@ -636,22 +641,231 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         """Mark a decision as outdated without deleting it."""
         return self.update_decision(decision_id, {"status": "outdated"})
 
+    # ------------------------------------------------------------------
+    # Playbook CRUD — independent file-per-playbook storage
+    # ------------------------------------------------------------------
+
+    def _read_playbook_index(self) -> list[dict]:
+        """Read the lightweight playbook index."""
+        data = _read_json(self._playbooks_dir / "_index.json")
+        if isinstance(data, list):
+            return data
+        return []
+
+    def _write_playbook_index(self, entries: list[dict]) -> None:
+        _write_json(self._playbooks_dir / "_index.json", entries)
+
+    def _read_playbook_by_id(self, playbook_id: str) -> dict | None:
+        """Read a single playbook file by ID."""
+        path = self._playbooks_dir / f"{playbook_id}.json"
+        if not path.exists():
+            return None
+        data = _read_json(path)
+        return data if isinstance(data, dict) else None
+
+    def _ensure_playbook_fields(self, entry: dict) -> dict:
+        """Backfill metadata fields on a playbook entry."""
+        if not isinstance(entry, dict):
+            entry = {}
+        if not entry.get("timestamp"):
+            entry["timestamp"] = _now_iso()
+        entry.setdefault("created_at", entry.get("timestamp", _now_iso()))
+        entry.setdefault("last_reviewed", entry.get("created_at", _now_iso()))
+        if not entry.get("id"):
+            title = str(entry.get("title") or "")
+            seed = f"{title}{entry.get('timestamp', '')}"
+            entry["id"] = hashlib.sha256(seed.encode()).hexdigest()[:12]
+        entry.setdefault("status", "active")
+        entry.setdefault("access_count", 0)
+        entry.setdefault("tier", "verified")
+        if not isinstance(entry.get("related_ids"), list):
+            entry["related_ids"] = []
+        if not isinstance(entry.get("triggers"), list):
+            entry["triggers"] = []
+        if not isinstance(entry.get("steps"), list):
+            entry["steps"] = []
+        if not isinstance(entry.get("preconditions"), list):
+            entry["preconditions"] = []
+        if not isinstance(entry.get("pitfalls"), list):
+            entry["pitfalls"] = []
+        entry.setdefault("version", 1)
+        return entry
+
+    def _playbook_index_entry(self, pb: dict) -> dict:
+        """Extract lightweight index entry from a full playbook."""
+        return {
+            "id": pb.get("id", ""),
+            "title": pb.get("title", ""),
+            "triggers": pb.get("triggers", []),
+            "domain": pb.get("domain", ""),
+            "status": pb.get("status", "active"),
+            "updated_at": pb.get("last_updated") or pb.get("created_at") or _now_iso(),
+        }
+
+    def add_playbook(
+        self,
+        playbook: dict,
+        source_tool: str = "",
+        **extra: Any,
+    ) -> dict:
+        """Add an operational playbook.
+
+        Each playbook is stored as an individual file in ~/.engram/playbooks/.
+        An index file (_index.json) is maintained for fast search.
+        """
+        new_pb = dict(playbook)
+        if source_tool:
+            new_pb["source_tool"] = source_tool
+        for key, value in extra.items():
+            if value is not None:
+                new_pb[key] = value
+
+        if not new_pb.get("title"):
+            return {"error": "Playbook must have a title"}
+
+        new_pb["timestamp"] = new_pb.get("timestamp") or _now_iso()
+        new_pb = self._ensure_playbook_fields(new_pb)
+
+        # Duplicate detection against existing playbooks
+        index = self._read_playbook_index()
+        new_title = str(new_pb.get("title", ""))
+        for entry in index:
+            if entry.get("status") != "active":
+                continue
+            sim = self._bigram_similarity(new_title, entry.get("title", ""))
+            if sim >= SIMILARITY_THRESHOLD:
+                return {
+                    "status": "duplicate",
+                    "similarity": round(sim, 2),
+                    "existing_id": entry.get("id"),
+                    "existing_title": entry.get("title"),
+                    "message": f"与现有 Playbook 相似度 {sim:.0%}，未重复添加",
+                }
+
+        # Write individual playbook file
+        pb_path = self._playbooks_dir / f"{new_pb['id']}.json"
+        _write_json(pb_path, new_pb)
+
+        # Update index
+        index.append(self._playbook_index_entry(new_pb))
+        self._write_playbook_index(index)
+
+        self._audit.log("write", "playbooks", detail=new_title[:100])
+        if new_pb.get("domain"):
+            for _d in new_pb["domain"].split(","):
+                _d = _d.strip()
+                if _d:
+                    self.increment_domain_usage(_d)
+        return new_pb
+
+    def get_playbooks(
+        self,
+        domain: str | None = None,
+        limit: int | None = 20,
+        _update_access: bool = True,
+    ) -> list[dict]:
+        """List active playbooks, optionally filtered by domain."""
+        index = self._read_playbook_index()
+        result = []
+        for entry in index:
+            if entry.get("status") != "active":
+                continue
+            if domain:
+                pb_domains = {d.strip() for d in (entry.get("domain") or "").split(",") if d.strip()}
+                if domain not in pb_domains:
+                    continue
+            pb = self._read_playbook_by_id(entry.get("id", ""))
+            if pb:
+                result.append(pb)
+
+        result = result[-limit:] if limit is not None else result
+
+        if _update_access and result:
+            now = _now_iso()
+            for pb in result:
+                pb["last_reviewed"] = now
+                pb["access_count"] = pb.get("access_count", 0) + 1
+                _write_json(self._playbooks_dir / f"{pb['id']}.json", pb)
+
+        self._audit.log("read", "playbooks", detail=f"returned {len(result)} items")
+        return result
+
+    def get_playbook(self, playbook_id: str, _update_access: bool = True) -> dict:
+        """Get a single playbook by ID."""
+        pb = self._read_playbook_by_id(playbook_id)
+        if pb is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+
+        if _update_access:
+            pb["last_reviewed"] = _now_iso()
+            pb["access_count"] = pb.get("access_count", 0) + 1
+            _write_json(self._playbooks_dir / f"{playbook_id}.json", pb)
+
+        return pb
+
+    def update_playbook(self, playbook_id: str, updates: dict) -> dict:
+        """Update fields on a playbook entry."""
+        pb = self._read_playbook_by_id(playbook_id)
+        if pb is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+
+        for key, value in updates.items():
+            if key in _ALLOWED_PLAYBOOK_UPDATE_FIELDS:
+                pb[key] = value
+        pb["last_updated"] = _now_iso()
+        pb["version"] = pb.get("version", 1) + 1
+        _write_json(self._playbooks_dir / f"{playbook_id}.json", pb)
+
+        # Update index entry
+        index = self._read_playbook_index()
+        idx_entry = self._playbook_index_entry(pb)
+        updated = False
+        for i, entry in enumerate(index):
+            if entry.get("id") == playbook_id:
+                index[i] = idx_entry
+                updated = True
+                break
+        if not updated:
+            index.append(idx_entry)
+        self._write_playbook_index(index)
+
+        self._audit.log("write", "playbooks", detail=f"updated {playbook_id}")
+        return pb
+
+    def archive_playbook(self, playbook_id: str) -> dict:
+        """Mark a playbook as outdated without deleting it."""
+        return self.update_playbook(playbook_id, {"status": "outdated"})
+
+    def _export_playbooks(self) -> list[dict]:
+        """Export all playbooks as a list for backup."""
+        index = self._read_playbook_index()
+        result = []
+        for entry in index:
+            pb = self._read_playbook_by_id(entry.get("id", ""))
+            if pb:
+                result.append(pb)
+        return result
+
     def update_knowledge(self, item_id: str, updates: dict) -> dict:
-        """Update a lesson or decision by ID (auto-detects type)."""
+        """Update a lesson, decision, or playbook by ID (auto-detects type)."""
         item_type, _ = self._find_item_by_id(item_id)
         if item_type is None:
             return {"error": f"Item not found: {item_id}"}
         if item_type == "lesson":
             return self.update_lesson(item_id, updates)
+        if item_type == "playbook":
+            return self.update_playbook(item_id, updates)
         return self.update_decision(item_id, updates)
 
     def archive_knowledge(self, item_id: str) -> dict:
-        """Archive a lesson or decision by ID (auto-detects type)."""
+        """Archive a lesson, decision, or playbook by ID (auto-detects type)."""
         item_type, _ = self._find_item_by_id(item_id)
         if item_type is None:
             return {"error": f"Item not found: {item_id}"}
         if item_type == "lesson":
             return self.archive_lesson(item_id)
+        if item_type == "playbook":
+            return self.archive_playbook(item_id)
         return self.archive_decision(item_id)
 
     def review_knowledge(self, knowledge_id: str) -> dict:
@@ -754,15 +968,24 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         return None, None
 
     def _find_item_by_id(self, item_id: str) -> tuple[str | None, dict | None]:
-        """Find a lesson or decision by id without updating access metadata."""
+        """Find a lesson, decision, or playbook by id without updating access metadata."""
         lessons, decisions = self._read_link_collections()
-        return self._find_item_in_collections(item_id, lessons, decisions)
+        item_type, item = self._find_item_in_collections(item_id, lessons, decisions)
+        if item_type is not None:
+            return item_type, item
+        # Fall through to playbook file-based lookup
+        pb = self._read_playbook_by_id(item_id)
+        if pb is not None:
+            return "playbook", pb
+        return None, None
 
     def _knowledge_title(self, item_type: str | None, item: dict | None) -> str:
         if not item:
             return ""
         if item_type == "decision":
             return self._entry_identity_text(item, "decision")
+        if item_type == "playbook":
+            return item.get("title", "")
         return item.get("summary", "")
 
     def _knowledge_view(self, item_type: str, item: dict) -> dict:
@@ -773,6 +996,15 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 "title": self._entry_identity_text(item, "decision"),
                 "choice": item.get("choice", ""),
                 "rationale": item.get("reasoning", ""),
+            }
+        if item_type == "playbook":
+            return {
+                "id": item.get("id", ""),
+                "type": "playbook",
+                "title": item.get("title", ""),
+                "triggers": item.get("triggers", []),
+                "description": item.get("description", ""),
+                "domain": item.get("domain", ""),
             }
         return {
             "id": item.get("id", ""),
@@ -958,6 +1190,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 "lessons": _read_json(self._knowledge_dir / "lessons.json") or [],
                 "decisions": _read_json(self._knowledge_dir / "decisions.json") or [],
                 "domains": self.get_domains(),
+                "playbooks": self._export_playbooks(),
             },
             "projects": {},
         }
@@ -1089,6 +1322,21 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             else:
                 _write_json(self._knowledge_dir / "domains.json", knowledge["domains"])
             imported.append("domains")
+
+        if knowledge.get("playbooks"):
+            new_count = 0
+            existing_index = self._read_playbook_index()
+            existing_titles = {e.get("title", "") for e in existing_index}
+            for pb in knowledge["playbooks"]:
+                if pb.get("title") not in existing_titles:
+                    pb = self._ensure_playbook_fields(pb)
+                    _write_json(self._playbooks_dir / f"{pb['id']}.json", pb)
+                    existing_index.append(self._playbook_index_entry(pb))
+                    existing_titles.add(pb.get("title", ""))
+                    new_count += 1
+            if new_count:
+                self._write_playbook_index(existing_index)
+            imported.append(f"playbooks(+{new_count})" if merge else f"playbooks({len(knowledge['playbooks'])})")
 
         # Projects
         projects = data.get("projects", {})

@@ -27,6 +27,7 @@ CORE_MCP_TOOLS = {
     "wrap_up_session",
     "add_lesson",
     "add_decision",
+    "add_playbook",
     "search_knowledge",
     "get_relevant_knowledge",
     "get_identity_card",
@@ -170,7 +171,7 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "48 MCP tools" in content
+    assert "51 MCP tools" in content
 
 
 def test_readme_has_remote_deployment_section():
@@ -261,8 +262,8 @@ def test_zh_readme_uses_pypi_install_and_41_tools():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "35 个" in content  # Tier-2 tool count
-    assert "13 个" in content  # Tier-1 tool count
+    assert "37 个" in content  # Tier-2 tool count
+    assert "14 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content
