@@ -673,10 +673,13 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         _PARAM_RE = re.compile(r"\$\{(\w+)\}")
         params: list[str] = []
         seen: set[str] = set()
-        # Scan steps
+        # Scan steps (handle both string and dict formats)
         for step in playbook.get("steps", []):
-            for field in ("action", "detail"):
-                text = step.get(field) or ""
+            if isinstance(step, str):
+                texts = [step]
+            else:
+                texts = [step.get(f) or "" for f in ("action", "detail")]
+            for text in texts:
                 for m in _PARAM_RE.finditer(text):
                     name = m.group(1)
                     if name not in seen:
@@ -887,12 +890,18 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if target is None:
             return {"error": f"Playbook not found: {target_id}"}
 
-        # Merge steps (de-dup by similarity)
-        existing_actions = {s.get("action", ""): True for s in target.get("steps", [])}
-        next_order = max((s.get("order", 0) for s in target.get("steps", [])), default=0)
+        # Merge steps (de-dup by similarity, handle both string and dict formats)
+        def _step_action(s: Any) -> str:
+            return s if isinstance(s, str) else s.get("action", "")
+
+        def _step_order(s: Any) -> int:
+            return s.get("order", 0) if isinstance(s, dict) else 0
+
+        existing_actions = {_step_action(s): True for s in target.get("steps", [])}
+        next_order = max((_step_order(s) for s in target.get("steps", [])), default=0)
         merged_steps = list(target.get("steps", []))
         for s in source.get("steps", []):
-            action = s.get("action", "")
+            action = _step_action(s)
             # Skip if already exists (exact or highly similar)
             is_dup = False
             for existing_action in existing_actions:
@@ -951,16 +960,19 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
 
         params = params or {}
 
-        # Substitute parameters in steps
+        # Substitute parameters in steps (handle both string and dict formats)
         execution_plan = []
-        for step in pb.get("steps", []):
-            action = step.get("action", "")
-            detail = step.get("detail", "")
+        for i, step in enumerate(pb.get("steps", []), 1):
+            if isinstance(step, str):
+                action, detail = step, ""
+            else:
+                action = step.get("action", "")
+                detail = step.get("detail", "")
             for var_name, var_value in params.items():
                 action = action.replace(f"${{{var_name}}}", var_value)
                 detail = detail.replace(f"${{{var_name}}}", var_value)
             execution_plan.append({
-                "order": step.get("order", 0),
+                "order": step.get("order", i) if isinstance(step, dict) else i,
                 "action": action,
                 "detail": detail,
                 "status": "pending",
