@@ -13,7 +13,7 @@ src/piia_engram/
     context.py         # ContextMixin — 冷启动上下文、内容摄取
     reconcile.py       # ReconcileMixin — 跨工具记忆/配置同步
     reports.py         # ReportsMixin — 薄 hub，组合 4 个子 mixin
-    mcp_server.py      # MCP 工具/资源定义（43 个工具，AI 接口层）
+    mcp_server.py      # MCP 工具/资源定义（60 个工具，AI 接口层）
     setup_wizard.py    # 交互式安装向导 + doctor 诊断
     crypto.py          # AES-256-GCM 加密（敏感画像字段）
     telemetry.py       # 可选匿名使用统计（Phase 1: 仅本地日志）
