@@ -4,13 +4,13 @@
 
 # piia-engram
 
-### One identity. Every AI tool. Your context stays yours.
+### Your AI Identity Layer
 
-**A local identity layer that makes every AI tool start from the same understanding of who you are.**
+**One identity. Every AI tool. Your context stays yours.**
 
 <sub>*(Originally released as `engram`; renamed to `piia-engram` to avoid confusion with same-name projects. The CLI command `engram` still works as an alias.)*</sub>
 
-`Claude Code` | `Codex` | `Cursor` | `MCP compatible` | `local-first`
+`AI Identity Layer` | `Claude Code` | `Codex` | `Cursor` | `MCP compatible` | `local-first`
 
 [ENGLISH](README.md) | [中文](README.zh-CN.md)
 
@@ -351,11 +351,11 @@ piia-engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools ar
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.19.0 (2026-05-23) |
+| | v3.20.0 (2026-05-23) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools exposed | **43** (10 Tier-1 default, 33 opt-in via `ENGRAM_TOOLS=all`) |
-| Tests passing | **678** (unit + integration) |
+| Tests passing | **690** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **1097** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
