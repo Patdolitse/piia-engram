@@ -4,11 +4,11 @@
 
 # piia-engram
 
-### 一份 AI 工作身份，所有工具都认识你。上下文属于你，不属于平台。
+### 你的 AI 身份层
 
-**一个本地身份层，让每个 AI 工具都从同一个起点认识你。**
+**一份身份，所有工具都认识你。上下文属于你，不属于平台。**
 
-`一次写入` · `所有 AI 共享读取` · `本地优先`
+`AI 身份层` · `一次写入` · `所有 AI 共享读取` · `本地优先`
 
 [中文](README.zh-CN.md) | [ENGLISH](README.md)
 
@@ -217,11 +217,11 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.19.0 (2026-05-23) |
+| | v3.20.0 (2026-05-23) |
 |---|---|
 | 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具数 | **43** 个（默认开放 10 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 33 个）|
-| 测试通过 | **678** 个（单元 + 集成）|
+| 测试通过 | **690** 个（单元 + 集成）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **1097** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
