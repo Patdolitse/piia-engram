@@ -14,6 +14,7 @@ from piia_engram.setup_wizard import (
     _find_mcp_server,
     _find_python,
     _import_with_split,
+    _inject_claude_code_hook,
     _inject_instruction_snippet,
     _INSTRUCTION_MARKER,
     _INSTRUCTION_MARKER_END,
@@ -1660,3 +1661,78 @@ class TestSaveSetupReport:
         monkeypatch.setattr("piia_engram.setup_wizard.json.dumps", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
         # Should not raise
         _save_setup_report(str(tmp_path), [], [], [])
+
+
+# ---------------------------------------------------------------------------
+# _inject_claude_code_hook
+# ---------------------------------------------------------------------------
+
+
+class TestInjectClaudeCodeHook:
+    """Claude Code Stop hook 注册。"""
+
+    def test_creates_settings_with_hook(self, tmp_path, monkeypatch):
+        """Should create settings.json with Stop hook when no file exists."""
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        # Create a fake hook script
+        scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+        assert (scripts_dir / "auto_save_on_stop.py").is_file()
+
+        result = _inject_claude_code_hook(sys.executable)
+        assert result is not None
+
+        settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+        hooks = settings["hooks"]["Stop"][0]["hooks"]
+        assert any("auto_save_on_stop" in h.get("command", "") for h in hooks)
+
+    def test_appends_to_existing_hooks(self, tmp_path, monkeypatch):
+        """Should append to existing Stop hooks without overwriting."""
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "Stop": [{"hooks": [{"type": "command", "command": "echo existing", "timeout": 10}]}]
+            }
+        }
+        (claude_dir / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        result = _inject_claude_code_hook(sys.executable)
+        assert result is not None
+
+        settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+        hooks = settings["hooks"]["Stop"][0]["hooks"]
+        assert len(hooks) == 2
+        assert hooks[0]["command"] == "echo existing"
+        assert "auto_save_on_stop" in hooks[1]["command"]
+
+    def test_idempotent_skip_if_exists(self, tmp_path, monkeypatch):
+        """Should return None if engram hook already registered."""
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "Stop": [{"hooks": [{"type": "command", "command": "python auto_save_on_stop.py"}]}]
+            }
+        }
+        (claude_dir / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        result = _inject_claude_code_hook(sys.executable)
+        assert result is None  # Already registered
+
+    def test_preserves_other_settings(self, tmp_path, monkeypatch):
+        """Should preserve non-hook settings in settings.json."""
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {"statusLine": {"type": "text"}, "foo": "bar"}
+        (claude_dir / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        _inject_claude_code_hook(sys.executable)
+
+        settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+        assert settings["statusLine"] == {"type": "text"}
+        assert settings["foo"] == "bar"

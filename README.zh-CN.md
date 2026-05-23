@@ -7,7 +7,9 @@
 
 ### 一份记忆，所有 AI 工具，完全属于你
 
-**告诉 AI 一次——你的偏好、标准和经验会跟随你到 Claude Code、Cursor、Codex 等所有 MCP 工具。本地存储，无云端，无账号。**
+### AI 可以建议记忆，但只有你确认后才算数
+
+**告诉 AI 一次——你的偏好、标准和经验会跟随你到 Claude Code、Cursor、Codex 等所有 MCP 工具。AI 提议知识，你决定什么留下。本地存储，无云端，无账号。**
 
 `跨工具记忆` · `本地优先` · `Claude Code` · `Codex` · `Cursor` · `Windsurf` · `MCP`
 

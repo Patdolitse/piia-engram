@@ -518,6 +518,74 @@ def _remove_instruction_snippet(tool_id: str) -> bool:
         return False
 
 
+def _inject_claude_code_hook(python_path: str) -> str | None:
+    """Register Engram Stop hook in Claude Code settings.json.
+
+    Adds the auto_save_on_stop.py hook to Claude Code's Stop event.
+    Idempotent: skips if engram hook already registered.
+
+    Returns the settings path if injected, None otherwise.
+    """
+    try:
+        settings_path = Path.home() / ".claude" / "settings.json"
+
+        # Find the hook script
+        hook_script = Path(__file__).resolve().parent.parent.parent / "scripts" / "auto_save_on_stop.py"
+        if not hook_script.is_file():
+            # Fallback: try installed package location
+            import importlib.util
+            spec = importlib.util.find_spec("piia_engram")
+            if spec and spec.origin:
+                pkg_root = Path(spec.origin).parent.parent.parent
+                hook_script = pkg_root / "scripts" / "auto_save_on_stop.py"
+            if not hook_script.is_file():
+                return None
+
+        hook_script_str = str(hook_script).replace("\\", "\\\\")
+        python_path_str = python_path.replace("\\", "\\\\")
+        engram_command = f'{python_path_str} "{hook_script_str}"'
+
+        # Read or create settings
+        settings: dict = {}
+        if settings_path.is_file():
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+
+        hooks = settings.setdefault("hooks", {})
+        stop_events = hooks.setdefault("Stop", [])
+
+        # Check if engram hook already registered
+        for event_group in stop_events:
+            for hook in event_group.get("hooks", []):
+                cmd = hook.get("command", "")
+                if "auto_save_on_stop" in cmd or "piia_engram" in cmd:
+                    return None  # Already registered
+
+        # Add the hook
+        engram_hook = {
+            "type": "command",
+            "command": engram_command,
+            "timeout": 30,
+            "async": True,
+            "statusMessage": "Engram 会话自动保存...",
+        }
+
+        if stop_events:
+            # Append to existing first event group
+            stop_events[0].setdefault("hooks", []).append(engram_hook)
+        else:
+            stop_events.append({"hooks": [engram_hook]})
+
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(
+            json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return str(settings_path)
+
+    except Exception:
+        return None
+
+
 # Tool-specific restart instructions (key = tool config key from _tool_configs)
 _RESTART_HINTS: dict[str, tuple[str, str]] = {
     "claude_code": (
@@ -1551,6 +1619,13 @@ def run_setup(advanced: bool = False) -> None:
                      "  📝 Injected AI instructions (ensures AI calls Engram proactively):"))
             for path in injected:
                 print(f"    {path}")
+
+        # Register Claude Code Stop hook for session auto-save
+        if "claude_code" in configured_tool_ids:
+            hook_result = _inject_claude_code_hook(python_path)
+            if hook_result:
+                print(_t(f"  🔗 已注册 Claude Code 会话结束 Hook：{hook_result}",
+                         f"  🔗 Registered Claude Code Stop hook: {hook_result}"))
     print()
 
     # Step 2 — 录入身份信息
@@ -2063,6 +2138,41 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print()
         print("    [info] No AI instruction snippets found.")
         print("           Run 'engram setup' to inject them.")
+
+    # ── Claude Code Stop Hook ──
+    print()
+    _safe_print("  -- Claude Code Stop Hook --\n")
+    settings_path = Path.home() / ".claude" / "settings.json"
+    hook_found = False
+    if settings_path.is_file():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            for event_group in settings.get("hooks", {}).get("Stop", []):
+                for hook in event_group.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    if "auto_save_on_stop" in cmd or "piia_engram" in cmd:
+                        hook_found = True
+                        _safe_print(f"    [ok] Stop hook registered in {settings_path}")
+                        break
+                if hook_found:
+                    break
+        except Exception:
+            pass
+
+    if not hook_found:
+        _safe_print("    [--] No Engram Stop hook in Claude Code settings")
+        if fix:
+            python_path = _find_python()
+            if python_path:
+                result = _inject_claude_code_hook(python_path)
+                if result:
+                    _safe_print(f"    [fixed] Stop hook registered: {result}")
+                else:
+                    _safe_print("    [info] Could not register hook (script not found)")
+            else:
+                _safe_print("    [info] Cannot fix: Python not found")
+        else:
+            print("           Run 'engram doctor --fix' or 'engram setup' to register.")
 
     print()
     return problems

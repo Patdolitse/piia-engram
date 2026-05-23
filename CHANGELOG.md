@@ -6,20 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [3.29.0] - 2026-05-24
 
-AI instruction auto-injection and activation funnel infrastructure.
+AI instruction auto-injection, hooks adapter, activation funnel, competitive scan.
 
 ### Added
 - **AI instruction auto-injection**: `engram setup` now injects instruction snippets into each tool's native config file (`CLAUDE.md`, `.cursorrules`/`.mdc`, `AGENTS.md`) so AI proactively calls Engram without relying solely on MCP server instructions
+- **Claude Code Stop hook auto-registration**: `engram setup` registers the session auto-save hook in Claude Code's `settings.json`; `engram doctor --fix` can repair it
+- **Stop hook enhanced**: `auto_save_on_stop.py` now calls `wrap_up_session()` for substantial sessions (10+ messages), extracting lessons/decisions/playbook drafts into staging
+- `engram doctor` checks Claude Code Stop hook registration status
 - `_inject_instruction_snippet()` / `_remove_instruction_snippet()` — programmatic injection with marker-based idempotent updates
-- `engram doctor` now reports AI instruction snippet status for each configured tool
-- `engram doctor --fix` auto-injects missing instruction snippets
 - Setup problem Issue template (`.github/ISSUE_TEMPLATE/setup_problem.md`) for activation funnel feedback
 - Issue template chooser config (`.github/ISSUE_TEMPLATE/config.yml`) with Discussions and Security links
 - `setup_report.jsonl` — local setup result tracking for activation funnel analysis
-- 10 new tests for instruction injection (inject, update, remove, multilingual)
+- 20 new tests: instruction injection (10), setup report (6), hook registration (4)
+- 37-project competitive landscape scan (`experiments/competitive_landscape_2026Q2.md`)
 
 ### Changed
 - MCP server instructions rewritten: structured "WHEN TO CALL" format with 5 explicit trigger points
+- README tagline updated: "AI can suggest memories. You decide what becomes true."
+- `docs/comparison.md` rewritten with 3-category structure (agent memory / project memory / personal identity)
 - `engram doctor` now calls `_configure_utf8_stdio()` to fix Chinese display on Windows GBK consoles
 - Doctor section headers use ASCII-safe characters instead of box-drawing Unicode
 

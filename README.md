@@ -7,7 +7,9 @@
 
 ### One memory. Every AI tool. Yours to keep.
 
-**Tell AI once — your preferences, standards, and lessons follow you across Claude Code, Cursor, Codex, and any MCP-compatible tool. Local-first, no cloud, no account.**
+### AI can suggest memories. You decide what becomes true.
+
+**Tell AI once — your preferences, standards, and lessons follow you across Claude Code, Cursor, Codex, and any MCP-compatible tool. AI proposes knowledge; you approve what sticks. Local-first, no cloud, no account.**
 
 `cross-tool memory` | `local-first` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `MCP`
 

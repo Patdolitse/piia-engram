@@ -145,6 +145,22 @@ def main() -> None:
             project_folder=cwd,
         )
 
+        # Extract lessons/decisions/playbook drafts into staging
+        # Only for substantial sessions (10+ messages indicate real work)
+        if msg_count >= 10:
+            summary = f"Claude Code 会话 ({duration_str}, {msg_count} 消息)\n"
+            summary += f"工作目录: {cwd}\n"
+            if tool_calls:
+                summary += f"使用工具: {', '.join(tool_calls[:20])}\n"
+            try:
+                engram.wrap_up_session(
+                    summary=summary,
+                    project_folder=cwd or "",
+                    source_tool="claude_code",
+                )
+            except Exception:
+                pass  # wrap_up_session failure should not block
+
         # Auto-update project snapshot with filesystem metrics
         if cwd:
             _root = Path(cwd)

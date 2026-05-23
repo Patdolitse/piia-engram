@@ -2,15 +2,74 @@
 
 This page is a **factual** comparison of where Engram sits in the AI-memory space. It is **not** a marketing pitch — we link to each project's own docs and call out where they're stronger than us.
 
-> Last reviewed: 2026-05-24. We re-check this each minor release. If you spot an inaccuracy, please open an issue.
+> Last reviewed: 2026-05-24, based on a [37-project competitive scan](../experiments/competitive_landscape_2026Q2.md). We re-check this each minor release. If you spot an inaccuracy, please open an issue.
 
 ---
 
 ## The space, in one sentence
 
-Most "AI memory" tools store **what the agent did**. Engram stores **who the user is** — identity, preferences, quality standards, and lessons that survive across every tool the user ever uses.
+Most "AI memory" tools store **what the agent did**. Engram stores **who the user is** — identity, preferences, quality standards, and lessons that survive across every tool the user ever uses. AI proposes knowledge; you approve what becomes permanent.
 
 If you only need a single agent to remember its own conversations, you don't need Engram. If you want your identity to follow you from Claude Code to Cursor to Codex without re-training each one, Engram is built for that.
+
+---
+
+## Three categories of AI memory
+
+The AI memory space has three distinct categories. Most confusion comes from treating them as one.
+
+### 1. Agent memory — what the agent did
+
+Tools that store task context, conversation history, and session state **for the agent**. The agent writes and reads its own memory automatically.
+
+| Project | Stars | Storage | Auto-capture | Governance |
+|---|---|---|---|---|
+| [Mem0](https://github.com/mem0ai/mem0) | 56k | Vector DB / cloud | Strong | None |
+| [MemPalace](https://github.com/MemPalace/mempalace) | 52k | ChromaDB / pluggable | Strong (hooks) | None |
+| [Graphiti](https://github.com/getzep/graphiti) | 26k | Temporal knowledge graph | Strong | None |
+| [Letta](https://github.com/letta-ai/letta) | 22k | Postgres / cloud | Agent self-edit | Agent-owned |
+| [agentmemory](https://github.com/rohitg00/agentmemory) | 16k | SQLite / Postgres / KG | Strong (hooks) | Weak |
+| [memU](https://github.com/NevaMind-AI/memU) | 13k | Vector / KG | Strong | None |
+| [MemOS](https://github.com/MemTensor/MemOS) | 9k | Memory OS abstraction | Strong | None |
+
+**When to use these:** You need an agent to remember its own work across sessions, build knowledge graphs from conversations, or do semantic retrieval over large document sets.
+
+**Why not Engram:** Engram doesn't do agent self-editing memory. These tools are better at that.
+
+### 2. Project / repo memory — what happened in this codebase
+
+Tools that store project-specific context: codebase structure, repo conventions, coding decisions within a project.
+
+| Project | Stars | Storage | Focus |
+|---|---|---|---|
+| [Basic Memory](https://github.com/basicmachines-co/basic-memory) | 3k | Markdown + KG | Zettelkasten-style knowledge |
+| [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) | 2.5k | Code intelligence graph | 155-language code indexing |
+| [MemSearch](https://github.com/zilliztech/memsearch) | 1.8k | Markdown + Milvus | Unified memory via vector DB |
+| [mcp-memory-service](https://github.com/doobidoo/mcp-memory-service) | 1.8k | SQLite / vector / KG | 14+ AI client support |
+| [Nocturne Memory](https://github.com/Dataojitori/nocturne_memory) | 1.1k | Graph-like structured | Rollbackable / visual |
+| [Context Portal](https://github.com/GreatScottyMac/context-portal) | 764 | SQLite project KG | Project-specific RAG |
+| Config files (AGENTS.md, CLAUDE.md, .cursorrules) | n/a | Plain text | Static per-repo rules |
+
+**When to use these:** You need project-specific conventions, code indexing, or repo-scoped knowledge graphs.
+
+**Why not Engram:** Engram stores *you*, not your repo. Use AGENTS.md for repo rules, Engram for personal knowledge. They work together — `engram setup` auto-injects instruction snippets into your existing CLAUDE.md, .cursorrules, and AGENTS.md files.
+
+### 3. Cross-tool personal identity — who you are
+
+Tools that store the **user's** identity, preferences, and accumulated knowledge across multiple AI tools.
+
+| Project | Stars | Storage | Governance | Unique angle |
+|---|---|---|---|---|
+| **piia-engram** | 80 | Local JSON | **staging → verified** (user approves) | Identity layer: lessons, decisions, playbooks |
+| [Gentleman Engram](https://github.com/Gentleman-Programming/engram) | 3.7k | SQLite + FTS5 | None | Go single binary, 8+ tools |
+| [mcp-memory-service](https://github.com/doobidoo/mcp-memory-service) | 1.8k | SQLite / vector / KG | Weak | 14+ client support |
+| [ByteRover](https://github.com/campfirein/byterover-cli) | 4.7k | Portable memory layer | Weak | "Portable memory layer" narrative |
+| [Remnic](https://github.com/joshuaswarren/remnic) | 74 | SQLite + vector | Provenance / correction | User-aware agents |
+| [@modelcontextprotocol/server-memory](https://github.com/modelcontextprotocol/servers) | 86k* | Local knowledge graph | None | Official reference implementation |
+
+*\* monorepo star count; individual memory server is one of many packages*
+
+**This is where piia-engram lives.** No other project in this category uses staging → verified as a default governance model. The closest are Remnic (provenance/correction) and Vestige (contradiction/audit).
 
 ---
 
@@ -54,48 +113,18 @@ In fact, `engram setup` **auto-injects a small instruction snippet** into your e
 
 ---
 
-## vs. AI memory tools
+## Where competitors are stronger (honest assessment)
 
-## At a glance
+We believe in honest positioning. Here's where other tools beat us today:
 
-| Capability | Engram | Letta (MemGPT) | Mem0 | Cline `memories/` | Claude Code `~/.claude/projects/*/memory/` |
-|---|---|---|---|---|---|
-| **Primary model** | User identity + lessons across tools | Agent self-edit + recall | Agent vector + KV store | Per-conversation notes (Cline only) | Per-project notes (Claude Code only) |
-| **Cross-tool by design** | ✅ MCP-native, 43 tools | ⚠ via API, requires custom wiring per tool | ⚠ via SDK, requires custom wiring per tool | ❌ Cline-specific | ❌ Claude Code-specific |
-| **Storage location** | Local JSON in `~/.engram/` | Postgres (self-host) or Letta Cloud | Vector DB (Qdrant, etc.) + Mem0 Cloud | Local files in the project | Local files under home dir |
-| **Local-first** | ✅ default; cloud is opt-in (none today) | ⚠ self-host possible; Cloud is the default narrative | ⚠ self-host possible; Cloud is the default narrative | ✅ | ✅ |
-| **Network dependency** | Only `read_web_content` (optional) | API call per memory op | API call per memory op | None | None |
-| **Embeddings / vector DB** | ❌ deliberately not — n-gram + alias tokenization | ✅ pluggable | ✅ pluggable | ❌ | ❌ |
-| **Encryption at rest** | ✅ AES-256-GCM, PBKDF2 600k (opt-in via `ENGRAM_SECRET`) | depends on Postgres/Cloud config | depends on store + Cloud config | ❌ plain Markdown | ❌ plain Markdown |
-| **MCP-native** | ✅ built around MCP | ⚠ third-party MCP wrappers exist | ⚠ third-party MCP wrappers exist | n/a | n/a |
-| **Cold-start context budget** | ✅ token-budgeted, priority + display ordering | ✅ but consumes its own LLM cycles for self-editing | ⚠ retrieval, not budget shaping | ❌ raw file load | ❌ raw file load |
-| **Conflict detection** | ✅ surfaces contradictory decisions/lessons | ❌ | ❌ | ❌ | ❌ |
-| **User-facing audit** | ✅ HTML review page with rarity tiers + opt-in audit log | ⚠ via UI in Letta Cloud | ⚠ via Mem0 dashboard | ✅ files are plain Markdown | ✅ files are plain Markdown |
-| **Knowledge tiers** | ✅ staging → verified, manual promotion gate | ❌ | ❌ | ❌ | ❌ |
-| **OSS license** | Apache-2.0 | Apache-2.0 | Apache-2.0 | Apache-2.0 | Anthropic ToS |
-| **Total tests** | 791, 96% coverage (v3.29.0) | (varies; not our number to publish) | (varies; not our number to publish) | n/a | n/a |
-
-External docs we drew from:
-- Letta: <https://github.com/letta-ai/letta>, <https://docs.letta.com>
-- Mem0: <https://github.com/mem0ai/mem0>, <https://docs.mem0.ai>
-- Cline `memories/`: <https://docs.cline.bot/features/memory>
-- Claude Code memory: <https://docs.anthropic.com/en/docs/claude-code/memory>
-
----
-
-## When to choose Engram
-
-✅ **Choose Engram when:**
-- You use **more than one** AI coding tool (Claude Code + Cursor + Codex + …) and want them to share your identity, preferences, and lessons.
-- You want **local-first by default** — no API calls per memory operation, no cloud lock-in.
-- You want a **user-curated knowledge base**, not a vector dump. The staging/verified tier + review page are designed around the user being the editor.
-- You're building **agent-to-tool workflows over MCP** and want a turnkey identity surface.
-
-⚠ **Choose something else when:**
-- **You want a single agent to remember its own conversation context across sessions.** That's what Letta/MemGPT does well — its "self-editing memory" model is purpose-built for agent autonomy. Engram doesn't do that.
-- **You need semantic search over a million-document corpus.** Mem0 (with a vector DB backend) is built for that. Engram intentionally uses n-gram + alias tokenization because the typical Engram store has 200–500 items, where exact-ish recall beats embeddings.
-- **You're inside a single tool (Cline-only, Claude-Code-only) and don't plan to switch.** The native per-tool memory will be lighter-weight and tighter-integrated than wiring up Engram.
-- **You need a managed multi-user SaaS with team sharing.** Engram is single-user, local. No team features.
+| Area | Who does it better | Why |
+|---|---|---|
+| **Installation simplicity** | Gentleman Engram, Vestige, remindb | Single binary / `brew install`. piia-engram requires `pip install` + MCP config |
+| **Auto-capture via hooks** | MemPalace, claude-memory-compiler, ClawMem | Hooks bypass "AI forgets to call the tool" problem. piia-engram uses instruction injection (v3.29.0+) |
+| **Semantic retrieval** | Mem0, Graphiti, agentmemory | Vector DB + embeddings. piia-engram uses n-gram search (fast, offline, but less "smart") |
+| **Benchmark narrative** | MemPalace (96.6%), Mem0 (94.8%) | LongMemEval scores. piia-engram focuses on governance metrics, not recall benchmarks |
+| **Visual experience** | Vestige (3D dashboard), Nocturne (rollback UI) | piia-engram has CLI + HTML review page |
+| **Ecosystem scale** | Mem0 (742k weekly downloads), Graphiti (146k) | piia-engram has ~4k weekly downloads |
 
 ---
 
@@ -131,4 +160,5 @@ You could absolutely run **Engram + Letta + Mem0** together: Engram for who you 
 
 - [README](../README.md) — what Engram is and how to install
 - [architecture.md](architecture.md) — internal structure of Engram itself
+- [competitive_landscape_2026Q2.md](../experiments/competitive_landscape_2026Q2.md) — full 37-project competitive scan with data cards
 - [milestone_review_v3.13.2.md](milestone_review_v3.13.2.md) — external AI audit that drove the v3.14.x positioning work
