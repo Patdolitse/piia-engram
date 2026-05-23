@@ -1065,12 +1065,14 @@ def _run_seed_knowledge_onboarding(
 
 def _run_privacy_preferences(data_dir: str) -> None:
     """Ask user about auto-reconcile and anonymous usage statistics."""
-    from piia_engram.telemetry import _load_config, _save_config, set_enabled
+    from piia_engram.telemetry import (
+        _load_config, _save_config, set_enabled, set_remote_enabled,
+    )
 
     cfg = _load_config()
 
     print(_t("\nStep 5 — 隐私与数据偏好", "\nStep 5 — Privacy & data preferences"))
-    print(_t("  你的数据默认只留在本机。以下两项可选功能需要你明确同意。\n",
+    print(_t("  你的数据默认只留在本机。以下可选功能需要你明确同意。\n",
              "  Your data stays local by default. The following optional features require your explicit consent.\n"))
 
     # --- Reconcile authorization ---
@@ -1108,14 +1110,12 @@ def _run_privacy_preferences(data_dir: str) -> None:
              "        • Tool call counts (names + counts only, no arguments or content)"))
     print(_t("        • 知识条目总数（只有数字，无内容）",
              "        • Knowledge entry totals (counts only, no content)"))
-    print(_t("        • Engram 版本号",
-             "        • Engram version"))
+    print(_t("        • Engram 版本号 / 操作系统 / Python 版本",
+             "        • Engram version / OS / Python version"))
     print(_t("      绝不发送：知识内容、prompt、文件路径、邮箱、IP 地址",
              "      Never sent: knowledge content, prompts, file paths, email, IP"))
-    print(_t("      当前为 Phase 1：仅记录到本地文件，不发送网络请求。",
-             "      Current Phase 1: logged to local file only, no network requests."))
-    print(_t(f"      日志位置：{data_dir}/telemetry.log",
-             f"      Log location: {data_dir}/telemetry.log"))
+    print(_t(f"      本地日志位置：{data_dir}/telemetry.log",
+             f"      Local log location: {data_dir}/telemetry.log"))
     print(_t("      查看将记录的内容：engram telemetry preview",
              "      Preview what's logged: engram telemetry preview"))
     print(_t("      随时关闭：engram telemetry off\n",
@@ -1128,9 +1128,34 @@ def _run_privacy_preferences(data_dir: str) -> None:
     )
     set_enabled(telemetry_enabled)
     if telemetry_enabled:
-        print(_t("  ✅ 已开启（仅本地日志，Phase 1 不发送网络请求）\n",
-                 "  ✅ Enabled (local log only, Phase 1 sends no network requests)\n"))
+        print(_t("  ✅ 已开启本地统计\n",
+                 "  ✅ Local statistics enabled\n"))
+        # --- Remote sending (Phase 2) ---
+        print(_t("  [2b] 远程匿名统计（帮助开发者改进 Engram）",
+                 "  [2b] Remote anonymous statistics (help improve Engram)"))
+        print(_t("      同样的匿名数据，每日发送一次到 Engram 开发团队。",
+                 "      Same anonymous data, sent once daily to the Engram team."))
+        print(_t("      数据通过 HTTPS 发送到 Cloudflare Worker，不经过任何第三方。",
+                 "      Data sent via HTTPS to Cloudflare Worker, no third parties."))
+        print(_t("      发送失败不会影响任何功能（静默跳过）。",
+                 "      Send failures are silently ignored (never affects functionality)."))
+        print(_t("      随时关闭：engram telemetry remote off\n",
+                 "      Disable anytime: engram telemetry remote off\n"))
+
+        remote_enabled = _yn(
+            _t("  同时开启远程发送？",
+               "  Also enable remote sending?"),
+            default=False,
+        )
+        set_remote_enabled(remote_enabled)
+        if remote_enabled:
+            print(_t("  ✅ 远程统计已开启\n",
+                     "  ✅ Remote statistics enabled\n"))
+        else:
+            print(_t("  ℹ️  仅本地统计。可随时运行 engram telemetry remote on 开启远程。\n",
+                     "  ℹ️  Local only. Run engram telemetry remote on to enable remote anytime.\n"))
     else:
+        set_remote_enabled(False)
         print(_t("  ℹ️  未开启。可随时运行 engram telemetry on 改变。\n",
                  "  ℹ️  Not enabled. Run engram telemetry on to change anytime.\n"))
 
@@ -1602,6 +1627,7 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
     """Handle `engram telemetry <subcommand>`."""
     from piia_engram.telemetry import (
         get_status, is_enabled, preview_payload, set_enabled,
+        set_remote_enabled,
     )
 
     sub = sub_args[0] if sub_args else "status"
@@ -1609,12 +1635,17 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
     if sub == "status":
         status = get_status()
         state = "ON" if status["enabled"] else "OFF"
+        remote_state = "ON" if status.get("remote_enabled") else "OFF"
         print(f"\n  Anonymous usage statistics: {state}")
+        print(f"  Remote sending: {remote_state}")
         print(f"  Phase: {status['phase']}")
         print(f"  Config: {status['config_path']}")
         print(f"  Log: {status['log_path']}")
         if status["enabled"]:
             print(f"  Opted in: {status['opted_in_at']}")
+        if status.get("remote_enabled"):
+            print(f"  Remote opted in: {status.get('remote_opted_in_at', '(unknown)')}")
+            print(f"  Endpoint: {status.get('endpoint', '(unknown)')}")
         print()
 
     elif sub == "preview":
@@ -1624,16 +1655,37 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
 
     elif sub in ("off", "disable"):
         set_enabled(False)
-        print("\n  ✅ Anonymous usage statistics disabled.")
+        set_remote_enabled(False)
+        print("\n  ✅ Anonymous usage statistics disabled (local + remote).")
         print("  No data will be logged or sent.\n")
 
     elif sub in ("on", "enable"):
         set_enabled(True)
-        print("\n  ✅ Anonymous usage statistics enabled (Phase 1: local log only).")
-        print("  Run 'engram telemetry preview' to see what will be logged.\n")
+        print("\n  ✅ Anonymous usage statistics enabled.")
+        print("  Run 'engram telemetry preview' to see what will be logged.")
+        print("  Run 'engram telemetry remote on' to also enable remote sending.\n")
+
+    elif sub == "remote":
+        remote_sub = sub_args[1] if len(sub_args) > 1 else "status"
+        if remote_sub in ("on", "enable"):
+            if not is_enabled():
+                set_enabled(True)
+                print("\n  ✅ Local statistics also enabled (required for remote).")
+            set_remote_enabled(True)
+            print("  ✅ Remote anonymous statistics enabled.")
+            print("  Data will be sent via HTTPS to Cloudflare Worker.\n")
+        elif remote_sub in ("off", "disable"):
+            set_remote_enabled(False)
+            print("\n  ✅ Remote sending disabled. Local logging continues if enabled.\n")
+        else:
+            status = get_status()
+            remote_state = "ON" if status.get("remote_enabled") else "OFF"
+            print(f"\n  Remote sending: {remote_state}")
+            if status.get("remote_enabled"):
+                print(f"  Endpoint: {status.get('endpoint', '(unknown)')}")
+            print()
 
     elif sub == "--show-payload":
-        # Alias for preview (ChatGPT Pro recommendation)
         print("\n  Next payload (if enabled):\n")
         print(preview_payload())
         print()
@@ -1645,6 +1697,8 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             "  engram telemetry preview      Show what data will be logged\n"
             "  engram telemetry on           Enable anonymous usage statistics\n"
             "  engram telemetry off          Disable anonymous usage statistics\n"
+            "  engram telemetry remote on    Enable remote sending (Phase 2)\n"
+            "  engram telemetry remote off   Disable remote sending\n"
         )
 
 
@@ -1713,7 +1767,10 @@ def _run_privacy_report() -> None:
         from piia_engram.telemetry import get_status
         status = get_status()
         state = "ON" if status["enabled"] else "OFF"
-        print(f"        Status: {state}")
+        remote_state = "ON" if status.get("remote_enabled") else "OFF"
+        print(f"        Local: {state}")
+        print(f"        Remote: {remote_state}")
+        print(f"        Phase: {status['phase']}")
         print(f"        Config: {status['config_path']}")
         log_path = Path(status["log_path"])
         if log_path.is_file():
@@ -1723,8 +1780,10 @@ def _run_privacy_report() -> None:
         else:
             print("        Log: (no entries yet)")
         print("        Collected: tool names + counts, knowledge totals, version, daily anonymous ID")
-        print("        NOT collected: text content, prompts, file paths, PII, IP, OS info")
-        print("        Network: Phase 1 = local only, NO network requests")
+        print("        NOT collected: text content, prompts, file paths, PII, IP")
+        if status.get("remote_enabled"):
+            print(f"        Endpoint: {status.get('endpoint', '(unknown)')}")
+        print("        Optional: telemetry Phase 2 (remote to Cloudflare Worker, requires re-consent)")
     except ImportError:
         print("        (telemetry module not available)")
     print()

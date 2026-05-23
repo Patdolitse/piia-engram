@@ -433,7 +433,8 @@ class TestPrivacyPreferences:
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
         monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
-        answers = iter(["", "y"])  # reconcile default, telemetry yes
+        # reconcile default, telemetry yes, remote default (no)
+        answers = iter(["", "y", ""])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
         _run_privacy_preferences(str(tmp_path))
