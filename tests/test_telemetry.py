@@ -1,4 +1,4 @@
-"""Tests for piia_engram.telemetry — anonymous usage statistics (Phase 1)."""
+"""Tests for piia_engram.telemetry — anonymous usage statistics (Phase 1 & 2)."""
 
 import json
 import os
@@ -10,13 +10,17 @@ import pytest
 from piia_engram.telemetry import (
     ToolCallTracker,
     _daily_id,
+    _send_remote,
     _validate_payload,
     build_payload,
+    get_endpoint,
     get_status,
     is_enabled,
+    is_remote_enabled,
     log_payload,
     preview_payload,
     set_enabled,
+    set_remote_enabled,
 )
 
 
@@ -28,8 +32,10 @@ from piia_engram.telemetry import (
 def isolated_engram_dir(tmp_path, monkeypatch):
     """Redirect ENGRAM_DIR to a temp directory for every test."""
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-    # Clear any ENGRAM_TELEMETRY env override
+    # Clear any env overrides
     monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+    monkeypatch.delenv("ENGRAM_TELEMETRY_REMOTE", raising=False)
+    monkeypatch.delenv("ENGRAM_TELEMETRY_URL", raising=False)
     return tmp_path
 
 
@@ -69,6 +75,7 @@ class TestConfig:
     def test_get_status_structure(self):
         status = get_status()
         assert "enabled" in status
+        assert "remote_enabled" in status
         assert "config_path" in status
         assert "log_path" in status
         assert "phase" in status
@@ -321,3 +328,154 @@ class TestOptOutSafety:
         tracker.record("test", success=True)
         result = tracker.flush(engram_version="3.15.0")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Remote config
+# ---------------------------------------------------------------------------
+
+class TestRemoteConfig:
+    def test_remote_default_disabled(self):
+        assert is_remote_enabled() is False
+
+    def test_remote_requires_local_enabled(self, isolated_engram_dir):
+        """Remote cannot be enabled if local stats are off."""
+        set_remote_enabled(True)
+        assert is_remote_enabled() is False  # local still off
+
+    def test_remote_enabled_when_both_on(self, isolated_engram_dir):
+        set_enabled(True)
+        set_remote_enabled(True)
+        assert is_remote_enabled() is True
+
+    def test_remote_disable(self, isolated_engram_dir):
+        set_enabled(True)
+        set_remote_enabled(True)
+        assert is_remote_enabled() is True
+        set_remote_enabled(False)
+        assert is_remote_enabled() is False
+
+    def test_remote_env_override_off(self, isolated_engram_dir, monkeypatch):
+        set_enabled(True)
+        set_remote_enabled(True)
+        monkeypatch.setenv("ENGRAM_TELEMETRY_REMOTE", "0")
+        assert is_remote_enabled() is False
+
+    def test_remote_env_override_on(self, isolated_engram_dir, monkeypatch):
+        set_enabled(True)
+        monkeypatch.setenv("ENGRAM_TELEMETRY_REMOTE", "1")
+        assert is_remote_enabled() is True
+
+    def test_get_status_shows_remote(self, isolated_engram_dir):
+        set_enabled(True)
+        set_remote_enabled(True)
+        status = get_status()
+        assert status["remote_enabled"] is True
+        assert "remote" in status["phase"].lower()
+        assert status["endpoint"] != "(disabled)"
+
+    def test_get_status_disabled_remote(self):
+        status = get_status()
+        assert status["remote_enabled"] is False
+        assert status["endpoint"] == "(disabled)"
+
+    def test_custom_endpoint(self, monkeypatch):
+        monkeypatch.setenv("ENGRAM_TELEMETRY_URL", "https://custom.example.com/events")
+        assert get_endpoint() == "https://custom.example.com/events"
+
+    def test_default_endpoint(self):
+        assert "engram-telemetry" in get_endpoint()
+        assert get_endpoint().startswith("https://")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Remote sender
+# ---------------------------------------------------------------------------
+
+class TestRemoteSender:
+    def test_send_remote_disabled_returns_false(self):
+        """When remote is off, _send_remote should return False immediately."""
+        result = _send_remote({"schema": 1, "daily_id": "test"})
+        assert result is False
+
+    def test_send_remote_never_raises_on_network_error(self, isolated_engram_dir):
+        """Even with invalid endpoint, _send_remote must never raise."""
+        set_enabled(True)
+        set_remote_enabled(True)
+        # Point to a guaranteed-unreachable endpoint
+        os.environ["ENGRAM_TELEMETRY_URL"] = "https://127.0.0.1:1/invalid"
+        try:
+            result = _send_remote({"schema": 1, "daily_id": "test"})
+            # Must not raise — returns False on failure
+            assert result is False
+        finally:
+            os.environ.pop("ENGRAM_TELEMETRY_URL", None)
+
+    def test_send_remote_never_raises_on_bad_url(self, isolated_engram_dir):
+        """Even with completely invalid URL, must not raise."""
+        set_enabled(True)
+        set_remote_enabled(True)
+        os.environ["ENGRAM_TELEMETRY_URL"] = "not-a-url"
+        try:
+            result = _send_remote({"schema": 1, "daily_id": "test"})
+            assert result is False
+        finally:
+            os.environ.pop("ENGRAM_TELEMETRY_URL", None)
+
+    def test_flush_with_remote_never_raises(self, isolated_engram_dir):
+        """ToolCallTracker.flush must complete even if remote sending fails."""
+        set_enabled(True)
+        set_remote_enabled(True)
+        os.environ["ENGRAM_TELEMETRY_URL"] = "https://127.0.0.1:1/invalid"
+        try:
+            tracker = ToolCallTracker()
+            tracker.record("test_tool", success=True)
+            # flush should succeed (local log written) despite remote failure
+            result = tracker.flush(engram_version="test")
+            assert result is not None
+            assert result.exists()
+        finally:
+            os.environ.pop("ENGRAM_TELEMETRY_URL", None)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Payload includes new fields
+# ---------------------------------------------------------------------------
+
+class TestPayloadNewFields:
+    def test_payload_includes_os_platform(self, isolated_engram_dir):
+        set_enabled(True)
+        payload = build_payload(engram_version="3.24.0")
+        assert payload is not None
+        assert "os_platform" in payload
+        assert payload["os_platform"] in ("win32", "darwin", "linux", "cygwin")
+
+    def test_payload_includes_python_version(self, isolated_engram_dir):
+        set_enabled(True)
+        payload = build_payload(engram_version="3.24.0")
+        assert payload is not None
+        assert "python_version" in payload
+        # Should be "major.minor" format
+        parts = payload["python_version"].split(".")
+        assert len(parts) == 2
+        assert all(p.isdigit() for p in parts)
+
+    def test_payload_includes_tools_tier(self, isolated_engram_dir):
+        set_enabled(True)
+        payload = build_payload(engram_version="3.24.0", tools_tier="all")
+        assert payload is not None
+        assert payload["tools_tier"] == "all"
+
+    def test_payload_default_tier_is_core(self, isolated_engram_dir, monkeypatch):
+        monkeypatch.delenv("ENGRAM_TOOLS", raising=False)
+        set_enabled(True)
+        payload = build_payload(engram_version="3.24.0")
+        assert payload is not None
+        assert payload["tools_tier"] == "core"
+
+    def test_preview_includes_new_fields(self):
+        result = preview_payload(engram_version="3.24.0")
+        parsed = json.loads(result)
+        assert "os_platform" in parsed
+        assert "python_version" in parsed
+        assert "tools_tier" in parsed
