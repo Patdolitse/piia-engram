@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.Patdolitse/piia-engram -->
 <div align="center">
 
 <img src="assets/social_preview.png" alt="piia-engram - Your AI identity layer" width="640">
