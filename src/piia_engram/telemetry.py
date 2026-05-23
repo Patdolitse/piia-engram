@@ -1,17 +1,20 @@
-"""Engram anonymous usage statistics — Phase 1: local-only logging.
+"""Engram anonymous usage statistics — Phase 1 & 2.
 
-This module implements opt-in anonymous usage statistics for Engram.
-When enabled, it records aggregated daily counts to a local log file.
-No network requests are made in Phase 1.
+Phase 1 (local-only): records aggregated daily counts to a local log file.
+Phase 2 (remote): sends the same payload to a Cloudflare Worker endpoint.
+Remote sending requires separate opt-in (re-consent).
 
 Data collected (when opted in):
 1. Tool call distribution (name + success/fail count) — no arguments or content
 2. Knowledge entry totals (lesson/decision counts) — no content
 3. Engram version
 4. Daily anonymous ID (HMAC-derived, cannot be linked across days)
+5. OS platform (win32/darwin/linux) — no detailed version
+6. Python major.minor version
+7. Tool tier (core/all)
 
 Never collected: lesson/decision content, prompts, file paths, IP, email,
-device fingerprint, OS details, or any user-identifiable information.
+device fingerprint, or any user-identifiable information.
 """
 
 from __future__ import annotations
@@ -21,12 +24,20 @@ import hmac
 import json
 import logging
 import os
+import platform
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
+
+# Phase 2 remote endpoint (Cloudflare Worker)
+_DEFAULT_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/events"
+_REMOTE_TIMEOUT = 3  # seconds — fail fast, never block MCP tools
 
 
 # ---------------------------------------------------------------------------
@@ -92,17 +103,53 @@ def set_enabled(enabled: bool) -> None:
     _save_config(cfg)
 
 
+def is_remote_enabled() -> bool:
+    """Check if remote usage statistics (Phase 2) are enabled.
+
+    Requires BOTH local stats enabled AND explicit remote consent.
+    Respects ENGRAM_TELEMETRY_REMOTE env var override.
+    """
+    if not is_enabled():
+        return False
+    env = os.environ.get("ENGRAM_TELEMETRY_REMOTE", "").strip().lower()
+    if env in ("0", "false", "off", "no"):
+        return False
+    if env in ("1", "true", "on", "yes"):
+        return True
+    return _load_config().get("remote_enabled", False)
+
+
+def set_remote_enabled(enabled: bool) -> None:
+    """Persist the remote sending opt-in/opt-out choice."""
+    cfg = _load_config()
+    cfg["remote_enabled"] = enabled
+    if enabled:
+        cfg["remote_opted_in_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        cfg["remote_opted_out_at"] = datetime.now(timezone.utc).isoformat()
+    _save_config(cfg)
+
+
+def get_endpoint() -> str:
+    """Return the remote telemetry endpoint URL."""
+    return os.environ.get("ENGRAM_TELEMETRY_URL", "").strip() or _DEFAULT_ENDPOINT
+
+
 def get_status() -> dict[str, Any]:
     """Return current telemetry status for display."""
     cfg = _load_config()
+    remote = is_remote_enabled()
     return {
         "enabled": is_enabled(),
+        "remote_enabled": remote,
         "config_path": str(_config_path()),
         "log_path": str(_log_path()),
         "local_uuid": cfg.get("local_uuid", "(not set)"),
         "opted_in_at": cfg.get("opted_in_at", "(never)"),
         "opted_out_at": cfg.get("opted_out_at", "(never)"),
-        "phase": "1 (local log only, no network)",
+        "remote_opted_in_at": cfg.get("remote_opted_in_at", "(never)"),
+        "endpoint": get_endpoint() if remote else "(disabled)",
+        "phase": "2 (local + remote)" if remote else "1 (local log only)",
     }
 
 
@@ -186,6 +233,7 @@ def build_payload(
     tool_calls: dict[str, dict[str, int]] | None = None,
     knowledge_counts: dict[str, int] | None = None,
     engram_version: str = "",
+    tools_tier: str = "",
 ) -> dict[str, Any] | None:
     """Build an anonymous usage statistics payload.
 
@@ -193,6 +241,7 @@ def build_payload(
         tool_calls: {tool_name: {"success": N, "error": N}}
         knowledge_counts: {"lessons": N, "decisions": N, "domains": N}
         engram_version: e.g. "3.15.0"
+        tools_tier: "core" or "all"
 
     Returns:
         The payload dict, or None if validation fails or stats are disabled.
@@ -210,6 +259,9 @@ def build_payload(
         "daily_id": _daily_id(local_uuid),
         "engram_version": engram_version,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "os_platform": sys.platform,
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "tools_tier": tools_tier or os.environ.get("ENGRAM_TOOLS", "core"),
     }
 
     if tool_calls:
@@ -260,6 +312,9 @@ def preview_payload(
         "daily_id": daily_id,
         "engram_version": engram_version or "(current version)",
         "timestamp": "(next daily report time)",
+        "os_platform": sys.platform,
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "tools_tier": os.environ.get("ENGRAM_TOOLS", "core"),
     }
     if tool_calls:
         payload["tool_calls"] = tool_calls
@@ -279,6 +334,34 @@ def preview_payload(
         }
 
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Remote sender (fire-and-forget, never raises)
+# ---------------------------------------------------------------------------
+
+def _send_remote(payload: dict[str, Any]) -> bool:
+    """Send payload to remote endpoint. Returns True on success.
+
+    CRITICAL: This function NEVER raises. All errors are silently logged
+    at DEBUG level. A failed remote send must NEVER affect MCP tool behavior.
+    """
+    if not is_remote_enabled():
+        return False
+    try:
+        endpoint = get_endpoint()
+        data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        req = Request(
+            endpoint,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req, timeout=_REMOTE_TIMEOUT) as resp:
+            return 200 <= resp.status < 300
+    except (URLError, OSError, ValueError, Exception) as exc:
+        logger.debug("telemetry remote send failed (silent): %s", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -313,25 +396,46 @@ class ToolCallTracker:
         return today != self._last_flush_date
 
     def flush(self, *, knowledge_counts: dict[str, int] | None = None,
-              engram_version: str = "") -> Path | None:
-        """Flush current counts to the local log if enabled and due.
+              engram_version: str = "",
+              tools_tier: str = "",
+              force: bool = False) -> Path | None:
+        """Flush current counts to local log and optionally send remotely.
+
+        Phase 1: always writes to local log.
+        Phase 2: if remote is enabled, also sends to Cloudflare Worker.
+        Remote failure is silently ignored — never affects MCP tools.
+
+        Args:
+            force: If True, skip the daily rate limit check. Used for
+                   session end / process exit to avoid losing data.
 
         Returns the log path if written, None otherwise.
         """
         if not is_enabled():
             return None
-        if not self.should_flush():
+        if not force and not self.should_flush():
+            return None
+        if not self._calls:
             return None
 
         payload = build_payload(
             tool_calls=self.get_counts(),
             knowledge_counts=knowledge_counts,
             engram_version=engram_version,
+            tools_tier=tools_tier,
         )
         if payload is None:
             return None
 
+        # Phase 1: local log (always)
         result = log_payload(payload)
+
+        # Phase 2: remote send (if opted in, never raises)
+        try:
+            _send_remote(payload)
+        except Exception:
+            pass  # defense in depth — _send_remote already catches everything
+
         self._last_flush_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self._calls.clear()
         return result

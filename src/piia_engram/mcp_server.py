@@ -56,17 +56,44 @@ except ImportError:
         _ToolCallTracker = None  # type: ignore
 
 _tracker = _ToolCallTracker() if _ToolCallTracker else None
+_track_count = 0  # count calls for periodic flush
+_FLUSH_EVERY = 10  # flush every N tool calls to avoid data loss
+
+
+def _flush_telemetry(force: bool = False) -> None:
+    """Flush telemetry data. Called periodically and on exit."""
+    if _tracker is None:
+        return
+    try:
+        from importlib.metadata import version as _pkg_version
+        try:
+            _ver = _pkg_version("piia-engram")
+        except Exception:
+            _ver = "dev"
+        _tier = os.environ.get("ENGRAM_TOOLS", "core")
+        _tracker.flush(engram_version=_ver, tools_tier=_tier, force=force)
+    except Exception:
+        pass  # never let telemetry affect MCP tools
+
+
+# Register atexit handler so data is flushed when the MCP server exits
+import atexit
+atexit.register(lambda: _flush_telemetry(force=True))
 
 
 def _track(tool_name: str, success: bool = True) -> None:
     """Record a tool call for anonymous usage statistics (if tracker available).
 
-    Phase 1 scope: only Tier-1 tools (TIER1_TOOLS) are tracked. This covers
-    the 10 most-used tools representing ~95% of typical sessions. Extending
-    to all 48 tools is planned for Phase 2 if usage statistics prove useful.
+    Flushes every _FLUSH_EVERY calls to avoid losing data when the
+    MCP server process is killed without a clean wrap_up_session.
     """
+    global _track_count
     if _tracker is not None:
         _tracker.record(tool_name, success=success)
+        _track_count += 1
+        if _track_count >= _FLUSH_EVERY:
+            _track_count = 0
+            _flush_telemetry(force=True)
 
 IDENTITY_FIELDS = frozenset({
     "profile",
@@ -1400,7 +1427,8 @@ async def wrap_up_session(
     # Step 6: Record this tool call BEFORE flushing so it's included
     _track("wrap_up_session", success=True)
 
-    # Step 7: Flush anonymous usage statistics (local log only)
+    # Step 7: Flush anonymous usage statistics (local + optional remote)
+    # force=True: wrap_up_session is the last chance before process exit
     try:
         if _tracker is not None:
             from importlib.metadata import version as _pkg_version
@@ -1415,7 +1443,13 @@ async def wrap_up_session(
                 k_counts["domains"] = len(_engram.get_domains())
             except Exception:
                 pass
-            _tracker.flush(knowledge_counts=k_counts, engram_version=_ver)
+            _tier = os.environ.get("ENGRAM_TOOLS", "core")
+            _tracker.flush(
+                knowledge_counts=k_counts,
+                engram_version=_ver,
+                tools_tier=_tier,
+                force=True,
+            )
     except Exception as exc:
         logger.debug("telemetry flush skipped: %s", exc)
 

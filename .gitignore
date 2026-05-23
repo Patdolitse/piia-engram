@@ -54,3 +54,4 @@ experiments/**/chatgpt_scores.json
 .coverage
 htmlcov/
 docs/coverage/
+worker/.wrangler/
