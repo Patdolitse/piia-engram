@@ -3,4 +3,4 @@
 from .core import Engram
 from .core import export_to_openclaw, import_from_openclaw
 
-__version__ = "3.19.0"
+__version__ = "3.21.0"

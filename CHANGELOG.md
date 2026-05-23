@@ -4,6 +4,25 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.21.0] - 2026-05-23
+
+Agent context auto-save release — recover lost AI conversations.
+
+### Added
+- **Agent context auto-save**: Office-style autosave for AI session context. Silently records work state at key checkpoints (task start, milestone, direction change); recoverable on demand after tool restart or session disconnect
+- **`save_agent_context` MCP tool**: Save or append context checkpoints per tool, with session ID for multi-checkpoint sessions
+- **`get_recent_context` MCP tool**: Retrieve the most recent session context after context loss (tool restart, session disconnect)
+- **`list_agent_sessions` MCP tool**: Browse available session records across all tools (metadata only)
+- **`ContextStoreMixin`** (contexts.py): New mixin with per-tool session file storage in `~/.engram/contexts/{tool}/`
+- Storage: append-only markdown files, never auto-expire or auto-delete
+- 14 new tests for context save, append, recovery, listing, and tool isolation
+- All 3 context tools added to Tier-1 (always available)
+
+### Changed
+- MCP Tier-1 tools increased: 10 → 13 (added save_agent_context, get_recent_context, list_agent_sessions)
+- MCP tool count increased: 43 → 46
+- Directory structure: `contexts/` added to `~/.engram/` on init
+
 ## [3.20.0] - 2026-05-23
 
 Knowledge health scoring and smart deduplication release.
