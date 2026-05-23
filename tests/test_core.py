@@ -4072,7 +4072,7 @@ def test_extract_playbook_from_session_negative(tmp_path: Path):
 
 
 def test_extract_playbook_dedup(tmp_path: Path):
-    """相同流程不应重复生成 Playbook。"""
+    """相同流程应合并到已有 staging Playbook，而非重复创建。"""
     engram = make_engram(tmp_path)
     summary = (
         "先更新版本号，然后提交推送到 GitHub，"
@@ -4080,9 +4080,13 @@ def test_extract_playbook_dedup(tmp_path: Path):
     )
     result1 = engram.extract_playbook_from_session(summary)
     assert result1 is not None
+    original_id = result1.get("id")
 
+    # Same summary triggers merge (staging tier) instead of discard
     result2 = engram.extract_playbook_from_session(summary)
-    assert result2 is None  # duplicate detected
+    assert result2 is not None  # merged, not discarded
+    assert result2.get("id") == original_id  # same playbook
+    assert result2.get("merged") is True
 
 
 def test_extract_steps_from_checkpoints(tmp_path: Path):

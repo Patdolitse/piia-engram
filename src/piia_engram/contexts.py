@@ -45,6 +45,7 @@ class ContextStoreMixin:
         content: str,
         session_id: str = "",
         project_folder: str = "",
+        actions: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Save or append a context checkpoint for a tool session.
 
@@ -54,6 +55,9 @@ class ContextStoreMixin:
             session_id: Reuse to append to an existing session file.
                         If empty, a new session file is created.
             project_folder: Optional project path (written in the header).
+            actions: Optional structured action log — list of dicts with
+                     ``tool_called``, ``arguments_summary``, ``result_summary``.
+                     Used by playbook auto-extraction for higher-fidelity steps.
 
         Returns:
             ``{session_id, file, tool, appended}``
@@ -71,15 +75,30 @@ class ContextStoreMixin:
         timestamp = now.strftime("%H:%M")
         appended = file_path.exists()
 
+        # Build checkpoint body
+        body = content
+        if actions:
+            body += "\n\n#### Actions\n"
+            for i, act in enumerate(actions, 1):
+                tool_called = act.get("tool_called", "")
+                args_summary = act.get("arguments_summary", "")
+                result_summary = act.get("result_summary", "")
+                body += f"{i}. `{tool_called}`"
+                if args_summary:
+                    body += f" — {args_summary}"
+                if result_summary:
+                    body += f" → {result_summary}"
+                body += "\n"
+
         if appended:
             existing = file_path.read_text(encoding="utf-8")
-            entry = f"\n### {timestamp}\n{content}\n"
+            entry = f"\n### {timestamp}\n{body}\n"
             file_path.write_text(existing + entry, encoding="utf-8")
         else:
             header = f"# Session: {tool} @ {now.strftime('%Y-%m-%d %H:%M')}\n"
             if project_folder:
                 header += f"## Project: {project_folder}\n"
-            header += f"\n### {timestamp}\n{content}\n"
+            header += f"\n### {timestamp}\n{body}\n"
             file_path.write_text(header, encoding="utf-8")
 
         return {
