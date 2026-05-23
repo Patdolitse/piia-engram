@@ -31,9 +31,14 @@ def isolated_engram(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engram:
 
     Tools read the global ``mcp_server._engram`` directly, so we patch the
     attribute rather than the underlying Engram class.
+
+    Also resets ``_session`` to prevent test tool calls from leaking into the
+    real ``~/.engram/`` directory via the atexit handler.
     """
     engram = Engram(root=tmp_path)
     monkeypatch.setattr(mcp_server, "_engram", engram)
+    # Reset session tracker so test calls don't pollute real data on atexit
+    monkeypatch.setattr(mcp_server, "_session", mcp_server._SessionTracker())
     return engram
 
 
