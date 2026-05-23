@@ -4,6 +4,23 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.24.0] - 2026-05-23
+
+Phase 2 remote telemetry with Cloudflare Worker dashboard.
+
+### Added
+- Opt-in remote anonymous usage statistics via Cloudflare Worker + D1
+- Visual telemetry dashboard (Chinese, password-protected) with PyPI download stats
+- Periodic telemetry flush (every 10 tool calls) to prevent data loss on exit
+- `atexit` handler as fallback flush on MCP server shutdown
+- `force` parameter on `ToolCallTracker.flush()` to bypass daily rate limit
+- Remote consent: `engram telemetry remote on/off/status` CLI commands
+- 18 new telemetry tests (remote config, sender, payload fields)
+
+### Changed
+- `wrap_up_session` now force-flushes telemetry (previously skipped if already flushed today)
+- Telemetry payload includes `os_platform`, `python_version`, `tools_tier` fields
+
 ## [3.23.0] - 2026-05-23
 
 New knowledge type: **Playbook** — structured operational procedures stored as individual files for future sharing.
