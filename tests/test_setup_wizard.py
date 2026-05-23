@@ -1344,3 +1344,48 @@ class TestScanRuleFilesGlobs:
         found = _scan_rule_files(tmp_path)
         paths = [str(f["path"]) for f in found]
         assert any("CLAUDE.md" in p for p in paths)
+
+
+class TestSetupIsolation:
+    """Tests must never modify the real ~/.engram/ profile."""
+
+    def test_setup_with_engram_dir_does_not_touch_real_profile(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """run_setup with ENGRAM_DIR should only write to the custom dir."""
+        from piia_engram.setup_wizard import run_setup
+
+        real_profile = Path.home() / ".engram" / "identity" / "profile.json"
+        before = None
+        if real_profile.exists():
+            before = real_profile.read_text(encoding="utf-8")
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+
+        answers = iter([
+            "1",    # language
+            "",     # role
+            "",     # tech_stack
+            "",     # language pref
+            "",     # no lessons
+            "",     # privacy
+            "",     # telemetry
+        ])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+        monkeypatch.setattr("piia_engram.setup_wizard._detect_tools", lambda: [])
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3"
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._find_mcp_server",
+            lambda: "/path/to/mcp_server.py",
+        )
+
+        run_setup()
+
+        # Real profile must be unchanged
+        if before is not None:
+            after = real_profile.read_text(encoding="utf-8")
+            assert after == before, "run_setup modified the real ~/.engram/identity/profile.json!"
