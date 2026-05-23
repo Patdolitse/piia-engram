@@ -4,6 +4,27 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.23.0] - 2026-05-23
+
+New knowledge type: **Playbook** — structured operational procedures stored as individual files for future sharing.
+
+### Added
+- Playbook knowledge type: multi-step operational procedures with trigger keywords
+- Independent file storage (`~/.engram/playbooks/<id>.json`) with lightweight index
+- Trigger-based retrieval: keyword anchors for instant recall (e.g., search "发布 registry" to find publish workflow)
+- MCP tools: `add_playbook` (Tier-1), `get_playbooks`, `get_playbook`
+- `search_knowledge` extended with `scope="playbooks"` support
+- Trigger exact-match scoring bonus (weight 5.0 per hit) for high-precision retrieval
+- Playbook support in `export_all` / `import_all` for backup and migration
+- Playbook support in `update_knowledge` / `archive_knowledge` / `_find_item_by_id`
+- Playbook tier promotion in `evaluate_tiers`
+- 15 new tests covering full playbook lifecycle
+
+### Changed
+- `FIELD_WEIGHTS` extended with `triggers` (4.0) and `description` (2.0)
+- `_score_item` now handles list-type fields (backward compatible)
+- `_TERM_ALIASES` expanded with playbook/publish vocabulary
+
 ## [3.22.2] - 2026-05-23
 
 Search discovery and conversion optimization release.

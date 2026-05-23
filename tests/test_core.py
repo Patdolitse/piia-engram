@@ -3601,3 +3601,232 @@ def test_refresh_quick_context_custom_target(tmp_path: Path):
     assert path == target
     assert target.exists()
     assert "PM" in target.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Playbook CRUD Tests
+# ---------------------------------------------------------------------------
+
+def _sample_playbook() -> dict:
+    """创建一个测试用的 Playbook。"""
+    return {
+        "title": "MCP Registry 发布流程",
+        "triggers": ["发布", "registry", "上架", "mcp-publisher"],
+        "domain": "mcp,发布",
+        "description": "从版本号更新到 MCP Registry 上架的完整流程",
+        "preconditions": ["mcp-publisher 已下载", "GitHub OAuth 已授权"],
+        "steps": [
+            {"order": 1, "action": "版本号同步更新", "detail": "__init__.py + pyproject.toml + server.json"},
+            {"order": 2, "action": "提交推送打 tag", "detail": "CI 自动发布到 PyPI"},
+            {"order": 3, "action": "执行 mcp-publisher publish", "detail": "等 PyPI 传播后执行"},
+        ],
+        "pitfalls": ["不能重复发布同一版本号", "PyPI 传播需 ~10s"],
+        "outcome": "MCP Registry 显示新版本",
+        "source_tool": "test",
+    }
+
+
+def test_init_creates_playbooks_dir(tmp_path: Path):
+    """初始化应创建 playbooks 目录。"""
+    engram = make_engram(tmp_path)
+    assert (tmp_path / "playbooks").is_dir()
+
+
+def test_add_and_get_playbook(tmp_path: Path):
+    """添加 Playbook 后应能获取到。"""
+    engram = make_engram(tmp_path)
+    result = engram.add_playbook(_sample_playbook())
+    assert "id" in result
+    assert result["title"] == "MCP Registry 发布流程"
+    assert len(result["steps"]) == 3
+
+    playbooks = engram.get_playbooks()
+    assert len(playbooks) == 1
+    assert playbooks[0]["title"] == "MCP Registry 发布流程"
+
+
+def test_get_playbook_by_id(tmp_path: Path):
+    """通过 ID 获取单条 Playbook。"""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook(_sample_playbook())
+    pb_id = added["id"]
+
+    pb = engram.get_playbook(pb_id)
+    assert pb["title"] == "MCP Registry 发布流程"
+    assert pb["triggers"] == ["发布", "registry", "上架", "mcp-publisher"]
+
+
+def test_playbook_index_consistency(tmp_path: Path):
+    """索引应与实际文件保持一致。"""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook(_sample_playbook())
+
+    index = engram._read_playbook_index()
+    assert len(index) == 1
+    assert index[0]["id"] == added["id"]
+    assert index[0]["title"] == "MCP Registry 发布流程"
+    assert index[0]["triggers"] == ["发布", "registry", "上架", "mcp-publisher"]
+
+    # 文件也应存在
+    pb_file = tmp_path / "playbooks" / f"{added['id']}.json"
+    assert pb_file.exists()
+
+
+def test_playbook_duplicate_detection(tmp_path: Path):
+    """标题相似的 Playbook 应被去重。"""
+    engram = make_engram(tmp_path)
+    engram.add_playbook(_sample_playbook())
+
+    dup = engram.add_playbook({
+        "title": "MCP Registry 发布流程",
+        "triggers": ["发布"],
+    })
+    assert dup.get("status") == "duplicate"
+
+
+def test_playbook_update(tmp_path: Path):
+    """更新 Playbook 应持久化并更新索引。"""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook(_sample_playbook())
+    pb_id = added["id"]
+
+    result = engram.update_playbook(pb_id, {
+        "description": "更新后的描述",
+        "outcome": "更新后的预期结果",
+    })
+    assert result["description"] == "更新后的描述"
+    assert result["version"] == 2
+
+    # 重新读取应保持
+    pb = engram.get_playbook(pb_id)
+    assert pb["description"] == "更新后的描述"
+
+
+def test_playbook_archive(tmp_path: Path):
+    """归档后 Playbook 不应出现在活跃列表中。"""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook(_sample_playbook())
+    pb_id = added["id"]
+
+    engram.archive_playbook(pb_id)
+
+    # 活跃列表应为空
+    playbooks = engram.get_playbooks()
+    assert len(playbooks) == 0
+
+    # 但文件仍在（非删除）
+    pb = engram.get_playbook(pb_id)
+    assert pb["status"] == "outdated"
+
+
+def test_search_knowledge_playbooks(tmp_path: Path):
+    """通过 trigger 关键词搜索应命中 Playbook。"""
+    engram = make_engram(tmp_path)
+    engram.add_playbook(_sample_playbook())
+
+    results = engram.search_knowledge("发布 registry")
+    assert "playbooks" in results
+    assert len(results["playbooks"]) >= 1
+    assert results["playbooks"][0]["title"] == "MCP Registry 发布流程"
+
+
+def test_search_knowledge_playbooks_scope(tmp_path: Path):
+    """scope='playbooks' 应只搜索 Playbook，不返回 lessons/decisions。"""
+    engram = make_engram(tmp_path)
+    engram.add_playbook(_sample_playbook())
+    engram.add_lesson({"summary": "发布流程的经验", "domain": "mcp"})
+
+    results = engram.search_knowledge("发布", scope="playbooks")
+    assert len(results.get("playbooks", [])) >= 1
+    assert len(results.get("lessons", [])) == 0
+
+
+def test_search_knowledge_lessons_scope_unaffected(tmp_path: Path):
+    """scope='lessons' 不应返回 playbook 结果。"""
+    engram = make_engram(tmp_path)
+    engram.add_playbook(_sample_playbook())
+
+    results = engram.search_knowledge("发布", scope="lessons")
+    assert len(results.get("playbooks", [])) == 0
+
+
+def test_find_item_by_id_playbook(tmp_path: Path):
+    """_find_item_by_id 应能找到 Playbook。"""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook(_sample_playbook())
+    pb_id = added["id"]
+
+    item_type, item = engram._find_item_by_id(pb_id)
+    assert item_type == "playbook"
+    assert item["title"] == "MCP Registry 发布流程"
+
+
+def test_update_knowledge_playbook(tmp_path: Path):
+    """update_knowledge 应能分派到 Playbook 更新。"""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook(_sample_playbook())
+    pb_id = added["id"]
+
+    result = engram.update_knowledge(pb_id, {"description": "通用更新测试"})
+    assert result["description"] == "通用更新测试"
+
+
+def test_archive_knowledge_playbook(tmp_path: Path):
+    """archive_knowledge 应能分派到 Playbook 归档。"""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook(_sample_playbook())
+    pb_id = added["id"]
+
+    engram.archive_knowledge(pb_id)
+    pb = engram.get_playbook(pb_id)
+    assert pb["status"] == "outdated"
+
+
+def test_playbook_export_import(tmp_path: Path):
+    """export → import 循环应保持 Playbook 完整性。"""
+    engram = make_engram(tmp_path)
+    engram.add_playbook(_sample_playbook())
+
+    export_path = engram.export_all()
+
+    # 在新目录导入
+    new_root = tmp_path / "imported"
+    new_engram = Engram(root=new_root)
+    result = new_engram.import_all(export_path)
+
+    assert any("playbooks" in item for item in result["imported"])
+
+    imported_pbs = new_engram.get_playbooks()
+    assert len(imported_pbs) == 1
+    assert imported_pbs[0]["title"] == "MCP Registry 发布流程"
+    assert len(imported_pbs[0]["steps"]) == 3
+
+
+def test_playbook_title_required(tmp_path: Path):
+    """没有 title 的 Playbook 应返回错误。"""
+    engram = make_engram(tmp_path)
+    result = engram.add_playbook({"triggers": ["test"]})
+    assert result.get("error")
+
+
+def test_playbook_domain_filter(tmp_path: Path):
+    """get_playbooks 的 domain 筛选应正常工作。"""
+    engram = make_engram(tmp_path)
+    engram.add_playbook({
+        "title": "MCP 发布",
+        "triggers": ["mcp"],
+        "domain": "mcp,发布",
+    })
+    engram.add_playbook({
+        "title": "Docker 部署",
+        "triggers": ["docker"],
+        "domain": "docker,部署",
+    })
+
+    mcp_pbs = engram.get_playbooks(domain="mcp")
+    assert len(mcp_pbs) == 1
+    assert mcp_pbs[0]["title"] == "MCP 发布"
+
+    docker_pbs = engram.get_playbooks(domain="docker")
+    assert len(docker_pbs) == 1
+    assert docker_pbs[0]["title"] == "Docker 部署"

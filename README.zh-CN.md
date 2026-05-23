@@ -131,7 +131,7 @@ $ engram doctor
     [ok] Engram initialized (~/.engram)
     [ok] Identity loaded (role: 后端开发工程师)
     [ok] quick_context.md ready (4096 bytes)
-    [ok] MCP server: 13 tools registered
+    [ok] MCP server: 14 tools registered
 ```
 
 ### 各工具配置方法
@@ -318,11 +318,12 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.22.2 (2026-05-23) |
+| | v3.23.0 (2026-05-23) |
 |---|---|
 | 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
-| MCP 工具数 | **48** 个（默认开放 13 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 35 个）|
-| 测试通过 | **704** 个（单元 + 集成）|
+| MCP 工具数 | **51** 个（默认开放 14 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 37 个）|
+| 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
+| 测试通过 | **721** 个（单元 + 集成）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **1097** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -338,6 +339,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | **冷启动上下文** | 新对话开始时调用 `get_user_context`，AI 立即了解你 |
 | **经验教训** | `add_lesson` 记录可复用经验，按领域分类，跨工具共享 |
 | **关键决策** | `add_decision` 记录选择和理由，保持长期一致性 |
+| **操作手册** | `add_playbook` 记录多步骤操作流程（如发布、部署），通过关键词锚点快速调取 |
 | **知识输入提速** | 批量写入经验/决策，并从自由文本笔记中提取知识 |
 | **用户画像** | 角色、语言、技术水平、工作偏好、质量标准 |
 | **项目快照** | 按项目保存上下文，新任务快速接续 |
@@ -349,7 +351,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | **知识质量** | 发现久未复查的知识，生成摘要和 Markdown 报告 |
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
-### Tier-1 核心工具（13 个 — 日常工作流）
+### Tier-1 核心工具（14 个 — 日常工作流）
 
 | 工具 | 功能 |
 |------|------|
@@ -357,7 +359,8 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `wrap_up_session` | 会话结束：提取知识 + 同步 |
 | `add_lesson` | 记录可复用的经验教训 |
 | `add_decision` | 记录关键决策及理由 |
-| `search_knowledge` | 多词加权搜索知识 |
+| `add_playbook` | 记录操作手册（多步骤流程 + 关键词锚点，方便日后调取） |
+| `search_knowledge` | 多词加权搜索经验、决策和操作手册 |
 | `get_relevant_knowledge` | 按当前项目检索相关知识 |
 | `get_identity_card` | 导出 Markdown 身份卡（给无 MCP 工具用） |
 | `update_identity` | 更新身份画像、偏好或质量标准 |
@@ -367,9 +370,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_recent_context` | 重启后找回丢失的会话上下文 |
 | `list_agent_sessions` | 浏览各工具的历史会话记录 |
 
-默认只加载以上 13 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 48 个工具。
+默认只加载以上 14 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 51 个工具。
 
-### Tier-2 高级工具（35 个 — 知识管理、审查、导入导出）
+### Tier-2 高级工具（37 个 — 知识管理、审查、导入导出）
 
 <details>
 <summary>点击展开完整工具列表</summary>
@@ -382,6 +385,8 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_preferences` | 读取沟通与工作流偏好 |
 | `get_trust_boundaries` | 读取信任边界 |
 | `get_quality_standards` | 读取质量标准 |
+| `get_playbooks` | 列出已保存的操作手册 |
+| `get_playbook` | 获取单条操作手册的完整内容 |
 | `get_lessons` | 列出经验教训 |
 | `get_decisions` | 列出关键决策 |
 | `get_domains` | 读取领域经验图谱 |
@@ -515,7 +520,7 @@ engram setup
 不会。所有核心工具均不发起网络请求。可选的匿名使用统计（工具调用计数，绝不包含内容）可在 setup 中开启，**默认关闭**。随时用 `engram telemetry preview` 查看、`engram telemetry off` 关闭。
 
 **piia-engram 有多少个 MCP 工具？**
-48 个：13 个 Tier-1 核心工具默认加载（身份、知识、项目上下文、会话恢复），35 个 Tier-2 高级工具用于知识管理、审查、导入导出和审计日志。通过 `ENGRAM_TOOLS=all` 开启全部。
+51 个：14 个 Tier-1 核心工具默认加载（身份、知识、操作手册、项目上下文、会话恢复），37 个 Tier-2 高级工具用于知识管理、审查、导入导出和审计日志。通过 `ENGRAM_TOOLS=all` 开启全部。
 
 **piia-engram 免费吗？**
 是的。Apache 2.0 开源，完全免费。无订阅，无云端计费，无厂商锁定。
