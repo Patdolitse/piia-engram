@@ -989,6 +989,56 @@ async def prepare_playbook_execution(
         return f"准备执行计划失败: {exc}"
     if result.get("error"):
         return _json(result)
+    # Auto-save execution plan for step tracking
+    _engram.save_execution_plan(result)
+    return _json(result)
+
+
+@mcp.tool()
+async def update_execution_step(
+    playbook_id: str,
+    step_order: int,
+    status: str,
+    notes: str = "",
+) -> str:
+    """更新执行计划中某一步的状态。 / Update the status of a step in an execution plan.
+
+    在 prepare_playbook_execution 之后逐步调用，标记每一步的完成情况。
+    Call step-by-step after prepare_playbook_execution to track progress.
+
+    Args:
+        playbook_id: Playbook ID。
+        step_order: 步骤序号（order 字段）。 / Step order number.
+        status: "completed" | "skipped" | "failed"
+        notes: 可选备注（如失败原因）。 / Optional note (e.g. failure reason).
+    """
+    try:
+        result = _engram.update_execution_step(playbook_id, step_order, status, notes)
+        _track("update_execution_step", success=True)
+    except Exception as exc:
+        _track("update_execution_step", success=False)
+        return f"更新步骤状态失败: {exc}"
+    if result.get("error"):
+        return _json(result)
+    return _json(result)
+
+
+@mcp.tool()
+async def get_execution_status(playbook_id: str) -> str:
+    """查看 Playbook 的当前执行进度。 / Get current execution progress of a Playbook.
+
+    返回每一步的状态和整体完成度。
+    Returns step-by-step status and overall completion.
+
+    Args:
+        playbook_id: Playbook ID。
+    """
+    try:
+        result = _engram.get_execution_status(playbook_id)
+        _track("get_execution_status", success=True)
+    except Exception as exc:
+        _track("get_execution_status", success=False)
+        return f"查询执行状态失败: {exc}"
     return _json(result)
 
 

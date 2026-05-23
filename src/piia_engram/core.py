@@ -987,6 +987,102 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "preconditions": pb.get("preconditions", []),
         }
 
+    # ------------------------------------------------------------------
+    # Playbook execution tracking
+    # ------------------------------------------------------------------
+
+    def _executions_dir(self) -> Path:
+        d = self.root / "playbooks" / "executions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _execution_path(self, playbook_id: str) -> Path:
+        return self._executions_dir() / f"{playbook_id}.json"
+
+    def save_execution_plan(self, plan: dict) -> dict:
+        """Persist an execution plan returned by prepare_playbook_execution."""
+        pid = plan.get("playbook_id", "")
+        if not pid:
+            return {"error": "missing playbook_id"}
+        plan["started_at"] = _now_iso()
+        plan["updated_at"] = _now_iso()
+        _write_json(self._execution_path(pid), plan)
+        return {"status": "saved", "playbook_id": pid}
+
+    def update_execution_step(
+        self,
+        playbook_id: str,
+        step_order: int,
+        status: str,
+        notes: str = "",
+    ) -> dict:
+        """Update the status of a step in a saved execution plan.
+
+        Args:
+            playbook_id: ID of the playbook being executed.
+            step_order: The ``order`` number of the step to update.
+            status: One of ``"completed"``, ``"skipped"``, ``"failed"``.
+            notes: Optional note (e.g. error message for failed steps).
+
+        Returns:
+            ``{status, step_order, playbook_id, completed, total}``
+        """
+        valid = {"completed", "skipped", "failed"}
+        if status not in valid:
+            return {"error": f"status must be one of {valid}"}
+
+        path = self._execution_path(playbook_id)
+        plan = _read_json(path)
+        if not plan:
+            return {"error": f"no execution plan found for {playbook_id}"}
+
+        updated = False
+        for step in plan.get("execution_plan", []):
+            if step.get("order") == step_order:
+                step["status"] = status
+                if notes:
+                    step["notes"] = notes
+                step["updated_at"] = _now_iso()
+                updated = True
+                break
+
+        if not updated:
+            return {"error": f"step {step_order} not found in execution plan"}
+
+        plan["updated_at"] = _now_iso()
+
+        steps = plan.get("execution_plan", [])
+        completed = sum(1 for s in steps if s.get("status") in ("completed", "skipped"))
+        total = len(steps)
+        if completed == total:
+            plan["completed_at"] = _now_iso()
+
+        _write_json(path, plan)
+        return {
+            "status": "updated",
+            "step_order": step_order,
+            "step_status": status,
+            "playbook_id": playbook_id,
+            "completed": completed,
+            "total": total,
+        }
+
+    def get_execution_status(self, playbook_id: str) -> dict:
+        """Return the current execution state for a playbook."""
+        plan = _read_json(self._execution_path(playbook_id))
+        if not plan:
+            return {"error": f"no execution plan found for {playbook_id}"}
+        steps = plan.get("execution_plan", [])
+        return {
+            "playbook_id": playbook_id,
+            "title": plan.get("title", ""),
+            "started_at": plan.get("started_at"),
+            "completed_at": plan.get("completed_at"),
+            "steps": steps,
+            "completed": sum(1 for s in steps if s.get("status") in ("completed", "skipped")),
+            "total": len(steps),
+        }
+
     def _export_playbooks(self) -> list[dict]:
         """Export all playbooks as a list for backup."""
         index = self._read_playbook_index()
