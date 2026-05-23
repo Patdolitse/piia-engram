@@ -6,8 +6,29 @@ Provided as ``IdentityCardMixin`` so the methods can be composed onto the
 
 from __future__ import annotations
 
+import re
+
 from .i18n import get_lang
 from .storage import _now_iso
+
+# Patterns that indicate config-file directives, not real lessons
+_CONFIG_PATTERNS = re.compile(
+    r"^\[(?:CLAUDE|AGENTS|README)\.md\]|"
+    r"^\[.*\.md\]\s",
+    re.IGNORECASE,
+)
+
+# XML/parameter tag remnants — cut everything from first tag onward
+_XML_CUT = re.compile(
+    r"</?(?:choice|parameter|reasoning)[^>]*>.*",
+    re.DOTALL,
+)
+
+_MAX_CHOICE_LEN = 200
+
+_MAX_DOMAINS = 15
+_MAX_LESSONS = 10
+_MAX_DECISIONS = 8
 
 
 class IdentityCardMixin:
@@ -65,27 +86,41 @@ class IdentityCardMixin:
         domains = self.get_domains()
         if domains:
             lines.append("## 我的经验" if zh else "## My Experience")
-            for name, info in sorted(
+            top_domains = sorted(
                 domains.items(),
                 key=lambda x: x[1].get("project_count", 0),
                 reverse=True,
-            ):
+            )[:_MAX_DOMAINS]
+            for name, info in top_domains:
                 count = info.get("project_count", 0)
                 unit = "个项目" if zh else "projects"
                 lines.append(f"- {name} ({count} {unit})")
+            remaining = len(domains) - len(top_domains)
+            if remaining > 0:
+                lbl = f"及其他 {remaining} 个领域" if zh else f"and {remaining} more domains"
+                lines.append(f"- ...{lbl}")
             lines.append("")
 
-        lessons = self.get_lessons(limit=10)
+        lessons = self.get_lessons(limit=30)
         if lessons:
-            lines.append(
-                "## 我踩过的坑（请帮我避免）" if zh
-                else "## Lessons Learned (Please Help Me Avoid)"
-            )
+            filtered = []
             for l in lessons:
-                lines.append(f"- {l.get('summary', '')}")
-            lines.append("")
+                summary = l.get("summary", "")
+                if not summary or _CONFIG_PATTERNS.match(summary):
+                    continue
+                filtered.append(summary)
+                if len(filtered) >= _MAX_LESSONS:
+                    break
+            if filtered:
+                lines.append(
+                    "## 我踩过的坑（请帮我避免）" if zh
+                    else "## Lessons Learned (Please Help Me Avoid)"
+                )
+                for s in filtered:
+                    lines.append(f"- {s}")
+                lines.append("")
 
-        decisions = self.get_decisions(limit=8, _update_access=False)
+        decisions = self.get_decisions(limit=_MAX_DECISIONS, _update_access=False)
         if decisions:
             lines.append(
                 "## 我的关键决策（请遵循）" if zh
@@ -94,6 +129,14 @@ class IdentityCardMixin:
             for d in decisions:
                 question = d.get("question") or d.get("title") or ""
                 choice = d.get("choice", "")
+                # Cut everything from first XML tag onward
+                question = _XML_CUT.sub("", question).strip()
+                choice = _XML_CUT.sub("", choice).strip()
+                # Truncate overly long choices
+                if len(choice) > _MAX_CHOICE_LEN:
+                    choice = choice[:_MAX_CHOICE_LEN].rsplit(",", 1)[0] + "..."
+                if not question and not choice:
+                    continue
                 if question and choice:
                     lines.append(f"- {question} → {choice}")
                 elif question:
