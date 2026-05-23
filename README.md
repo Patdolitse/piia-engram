@@ -127,13 +127,20 @@ engram setup
 
 The setup wizard will:
 1. Detect your Python environment
-2. Find and configure your AI tools (Claude Code, Cursor, Claude Desktop)
-3. Walk you through seed knowledge (role, tech stack, language)
-4. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
-5. Show your privacy preferences (cross-tool sync, anonymous statistics — both optional)
-6. **Preview your AI identity card** — immediate proof of value
+2. Find and configure your AI tools (Claude Code, Cursor, Claude Desktop, Codex)
+3. **Inject AI instructions** into each tool's native config (`CLAUDE.md`, `.cursorrules`, `AGENTS.md`) so AI proactively calls Engram
+4. Walk you through seed knowledge (role, tech stack, language)
+5. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
+6. Show your privacy preferences (cross-tool sync, anonymous statistics — both optional)
+7. **Preview your AI identity card** — immediate proof of value
 
 Restart your AI tool after setup. The first conversation will call `get_user_context` automatically — your AI already knows you.
+
+Check health anytime:
+```bash
+engram doctor        # diagnose all tools
+engram doctor --fix  # auto-repair issues + inject missing instructions
+```
 
 ### Configure for Your AI Tool
 

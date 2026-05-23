@@ -14,12 +14,18 @@ from piia_engram.setup_wizard import (
     _find_mcp_server,
     _find_python,
     _import_with_split,
+    _inject_instruction_snippet,
+    _INSTRUCTION_MARKER,
+    _INSTRUCTION_MARKER_END,
+    _INSTRUCTION_SNIPPETS,
     _read_mcp_config,
     _read_rule_file,
+    _remove_instruction_snippet,
     _run_privacy_preferences,
     _run_privacy_report,
     _run_seed_knowledge_onboarding,
     _run_telemetry_cli,
+    _save_setup_report,
     _scan_rule_files,
     _write_mcp_config,
     main,
@@ -1390,3 +1396,267 @@ class TestSetupIsolation:
         if before is not None:
             after = real_profile.read_text(encoding="utf-8")
             assert after == before, "run_setup modified the real ~/.engram/identity/profile.json!"
+
+
+# ── Instruction injection tests ────────────────────────────────────
+
+
+class TestInstructionInjection:
+    def test_inject_claude_code_creates_file(self, tmp_path, monkeypatch):
+        """_inject_instruction_snippet should create CLAUDE.md with marker."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_MARKER_END,
+            _INSTRUCTION_SNIPPETS,
+        )
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: tmp_path / "CLAUDE.md",
+        )
+        result = _inject_instruction_snippet("claude_code", lang="zh")
+        assert result is not None
+        content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert _INSTRUCTION_MARKER in content
+        assert _INSTRUCTION_MARKER_END in content
+        assert "get_user_context" in content
+        assert "add_lesson" in content
+
+    def test_inject_appends_to_existing(self, tmp_path, monkeypatch):
+        """Should append to existing CLAUDE.md without overwriting."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_SNIPPETS,
+        )
+        target = tmp_path / "CLAUDE.md"
+        target.write_text("# My existing rules\n\nDo not break things.\n", encoding="utf-8")
+
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: target,
+        )
+        _inject_instruction_snippet("claude_code", lang="en")
+        content = target.read_text(encoding="utf-8")
+        assert "My existing rules" in content
+        assert "Do not break things" in content
+        assert _INSTRUCTION_MARKER in content
+
+    def test_inject_updates_existing_snippet(self, tmp_path, monkeypatch):
+        """Calling inject twice should replace, not duplicate."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_SNIPPETS,
+        )
+        target = tmp_path / "CLAUDE.md"
+        target.write_text("# Existing\n", encoding="utf-8")
+
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: target,
+        )
+        _inject_instruction_snippet("claude_code", lang="zh")
+        _inject_instruction_snippet("claude_code", lang="en")
+        content = target.read_text(encoding="utf-8")
+        # Should have exactly one marker pair
+        assert content.count(_INSTRUCTION_MARKER) == 1
+
+    def test_inject_cursor_creates_mdc(self, tmp_path, monkeypatch):
+        """Cursor injection should create a .mdc file."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_SNIPPETS,
+        )
+        mdc_path = tmp_path / "rules" / "engram.mdc"
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["cursor"],
+            "path_fn",
+            lambda _home: mdc_path,
+        )
+        result = _inject_instruction_snippet("cursor", lang="zh")
+        assert result is not None
+        content = mdc_path.read_text(encoding="utf-8")
+        assert "alwaysApply: true" in content
+        assert "get_user_context" in content
+
+    def test_inject_codex_creates_agents_md(self, tmp_path, monkeypatch):
+        """Codex injection should create AGENTS.md with marker."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_SNIPPETS,
+        )
+        agents_path = tmp_path / "AGENTS.md"
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["codex"],
+            "path_fn",
+            lambda _home: agents_path,
+        )
+        result = _inject_instruction_snippet("codex", lang="en")
+        assert result is not None
+        content = agents_path.read_text(encoding="utf-8")
+        assert _INSTRUCTION_MARKER in content
+        assert "wrap_up_session" in content
+
+    def test_inject_unknown_tool_returns_none(self):
+        """Unknown tool_id should return None."""
+        from piia_engram.setup_wizard import _inject_instruction_snippet
+        assert _inject_instruction_snippet("unknown_tool") is None
+
+    def test_remove_claude_code_snippet(self, tmp_path, monkeypatch):
+        """_remove_instruction_snippet should cleanly remove injected section."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _remove_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_SNIPPETS,
+        )
+        target = tmp_path / "CLAUDE.md"
+        target.write_text("# My rules\n\nKeep these.\n", encoding="utf-8")
+
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: target,
+        )
+        _inject_instruction_snippet("claude_code", lang="zh")
+        assert _INSTRUCTION_MARKER in target.read_text(encoding="utf-8")
+
+        removed = _remove_instruction_snippet("claude_code")
+        assert removed is True
+        content = target.read_text(encoding="utf-8")
+        assert _INSTRUCTION_MARKER not in content
+        assert "My rules" in content
+        assert "Keep these" in content
+
+    def test_remove_cursor_snippet(self, tmp_path, monkeypatch):
+        """Removing cursor snippet should delete the .mdc file."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _remove_instruction_snippet,
+            _INSTRUCTION_SNIPPETS,
+        )
+        mdc_path = tmp_path / "engram.mdc"
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["cursor"],
+            "path_fn",
+            lambda _home: mdc_path,
+        )
+        _inject_instruction_snippet("cursor")
+        assert mdc_path.is_file()
+
+        removed = _remove_instruction_snippet("cursor")
+        assert removed is True
+        assert not mdc_path.is_file()
+
+    def test_remove_nonexistent_returns_false(self, tmp_path, monkeypatch):
+        """Removing when no snippet exists should return False."""
+        from piia_engram.setup_wizard import (
+            _remove_instruction_snippet,
+            _INSTRUCTION_SNIPPETS,
+        )
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: tmp_path / "nonexistent.md",
+        )
+        assert _remove_instruction_snippet("claude_code") is False
+
+    def test_inject_en_variant(self, tmp_path, monkeypatch):
+        """English snippet should contain English text."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_SNIPPETS,
+        )
+        target = tmp_path / "CLAUDE.md"
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: target,
+        )
+        _inject_instruction_snippet("claude_code", lang="en")
+        content = target.read_text(encoding="utf-8")
+        assert "Memory Layer" in content
+        assert "conversation" in content.lower()
+
+
+# ---------------------------------------------------------------------------
+# _save_setup_report
+# ---------------------------------------------------------------------------
+
+
+class TestSaveSetupReport:
+    """_save_setup_report 生成 JSONL 激活漏斗报告。"""
+
+    def test_creates_valid_jsonl(self, tmp_path):
+        """Should create a valid JSONL file with all required fields."""
+        tools = [{"name": "Claude Code", "id": "claude_code"}]
+        _save_setup_report(str(tmp_path), tools, ["Claude Code"], [])
+
+        report_path = tmp_path / "setup_report.jsonl"
+        assert report_path.is_file()
+        line = report_path.read_text(encoding="utf-8").strip()
+        report = json.loads(line)
+        assert "timestamp" in report
+        assert "version" in report
+        assert "os" in report
+        assert "python" in report
+        assert report["tools_detected"] == ["Claude Code"]
+        assert report["tools_configured"] == ["Claude Code"]
+        assert report["tools_failed"] == []
+        assert report["status"] == "success"
+
+    def test_no_tools_writes_empty_lists(self, tmp_path):
+        """When no tools detected, lists should be empty, status success."""
+        _save_setup_report(str(tmp_path), [], [], [])
+
+        report_path = tmp_path / "setup_report.jsonl"
+        assert report_path.is_file()
+        report = json.loads(report_path.read_text(encoding="utf-8").strip())
+        assert report["tools_detected"] == []
+        assert report["tools_configured"] == []
+        assert report["tools_failed"] == []
+        assert report["status"] == "success"
+
+    def test_partial_failure_status(self, tmp_path):
+        """When some tools fail, status should be 'partial'."""
+        tools = [
+            {"name": "Claude Code", "id": "claude_code"},
+            {"name": "Cursor", "id": "cursor"},
+        ]
+        _save_setup_report(str(tmp_path), tools, ["Claude Code"], ["Cursor (err)"])
+
+        report = json.loads(
+            (tmp_path / "setup_report.jsonl").read_text(encoding="utf-8").strip()
+        )
+        assert report["status"] == "partial"
+        assert report["tools_configured"] == ["Claude Code"]
+        assert report["tools_failed"] == ["Cursor (err)"]
+
+    def test_appends_multiple_runs(self, tmp_path):
+        """Multiple calls should append lines, not overwrite."""
+        _save_setup_report(str(tmp_path), [], [], [])
+        _save_setup_report(str(tmp_path), [{"name": "X"}], ["X"], [])
+
+        lines = (tmp_path / "setup_report.jsonl").read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 2
+        # Both lines should be valid JSON
+        for line in lines:
+            json.loads(line)
+
+    def test_creates_parent_dirs(self, tmp_path):
+        """Should create nested parent directories if needed."""
+        nested = str(tmp_path / "a" / "b" / "c")
+        _save_setup_report(nested, [], [], [])
+        assert (Path(nested) / "setup_report.jsonl").is_file()
+
+    def test_never_raises(self, tmp_path, monkeypatch):
+        """Should silently swallow errors, never crashing setup."""
+        # Make json.dumps raise to simulate failure
+        monkeypatch.setattr("piia_engram.setup_wizard.json.dumps", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
+        # Should not raise
+        _save_setup_report(str(tmp_path), [], [], [])

@@ -4,6 +4,25 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.29.0] - 2026-05-24
+
+AI instruction auto-injection and activation funnel infrastructure.
+
+### Added
+- **AI instruction auto-injection**: `engram setup` now injects instruction snippets into each tool's native config file (`CLAUDE.md`, `.cursorrules`/`.mdc`, `AGENTS.md`) so AI proactively calls Engram without relying solely on MCP server instructions
+- `_inject_instruction_snippet()` / `_remove_instruction_snippet()` — programmatic injection with marker-based idempotent updates
+- `engram doctor` now reports AI instruction snippet status for each configured tool
+- `engram doctor --fix` auto-injects missing instruction snippets
+- Setup problem Issue template (`.github/ISSUE_TEMPLATE/setup_problem.md`) for activation funnel feedback
+- Issue template chooser config (`.github/ISSUE_TEMPLATE/config.yml`) with Discussions and Security links
+- `setup_report.jsonl` — local setup result tracking for activation funnel analysis
+- 10 new tests for instruction injection (inject, update, remove, multilingual)
+
+### Changed
+- MCP server instructions rewritten: structured "WHEN TO CALL" format with 5 explicit trigger points
+- `engram doctor` now calls `_configure_utf8_stdio()` to fix Chinese display on Windows GBK consoles
+- Doctor section headers use ASCII-safe characters instead of box-drawing Unicode
+
 ## [3.28.1] - 2026-05-24
 
 Auto project snapshots and mid-session checkpoints.

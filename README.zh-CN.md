@@ -99,13 +99,20 @@ engram setup
 
 安装向导会自动完成：
 1. 检测 Python 环境
-2. 发现并配置你的 AI 工具（Claude Code、Cursor、Claude Desktop）
-3. 引导你录入种子知识（角色、技术栈、语言）
-4. 智能导入你已有的 `CLAUDE.md` / `.cursorrules` 规则文件
-5. 隐私偏好设置（跨工具同步、匿名使用统计——均可选）
-6. **预览你的 AI 身份卡**——安装即见效
+2. 发现并配置你的 AI 工具（Claude Code、Cursor、Claude Desktop、Codex）
+3. **注入 AI 指令**到每个工具的原生配置（`CLAUDE.md`、`.cursorrules`、`AGENTS.md`），确保 AI 主动调用 Engram
+4. 引导你录入种子知识（角色、技术栈、语言）
+5. 智能导入你已有的 `CLAUDE.md` / `.cursorrules` 规则文件
+6. 隐私偏好设置（跨工具同步、匿名使用统计——均可选）
+7. **预览你的 AI 身份卡**——安装即见效
 
 设置完成后重启 AI 工具。第一次对话会自动调用 `get_user_context`——AI 已经认识你了。
+
+随时检查健康状态：
+```bash
+engram doctor        # 诊断所有工具
+engram doctor --fix  # 自动修复 + 注入缺失的 AI 指令
+```
 
 ### 效果预览
 

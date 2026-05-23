@@ -2,7 +2,7 @@
 
 This page is a **factual** comparison of where Engram sits in the AI-memory space. It is **not** a marketing pitch — we link to each project's own docs and call out where they're stronger than us.
 
-> Last reviewed: 2026-05-22. We re-check this each minor release. If you spot an inaccuracy, please open an issue.
+> Last reviewed: 2026-05-24. We re-check this each minor release. If you spot an inaccuracy, please open an issue.
 
 ---
 
@@ -50,6 +50,8 @@ Fair question. Here's the honest answer.
 
 piia-engram doesn't replace AGENTS.md — it complements it. Use AGENTS.md for **repo-specific** rules ("this project uses tabs, runs on Python 3.11"). Use piia-engram for **you** ("I prefer concise responses, I've learned X, I decided Y").
 
+In fact, `engram setup` **auto-injects a small instruction snippet** into your existing CLAUDE.md, .cursorrules, and AGENTS.md files. This snippet tells the AI to call Engram at conversation start — so the two systems work together automatically. The snippet is clearly marked and can be removed with one function call.
+
 ---
 
 ## vs. AI memory tools
@@ -71,7 +73,7 @@ piia-engram doesn't replace AGENTS.md — it complements it. Use AGENTS.md for *
 | **User-facing audit** | ✅ HTML review page with rarity tiers + opt-in audit log | ⚠ via UI in Letta Cloud | ⚠ via Mem0 dashboard | ✅ files are plain Markdown | ✅ files are plain Markdown |
 | **Knowledge tiers** | ✅ staging → verified, manual promotion gate | ❌ | ❌ | ❌ | ❌ |
 | **OSS license** | Apache-2.0 | Apache-2.0 | Apache-2.0 | Apache-2.0 | Anthropic ToS |
-| **Total tests** | 678, 96% coverage (v3.19.0) | (varies; not our number to publish) | (varies; not our number to publish) | n/a | n/a |
+| **Total tests** | 791, 96% coverage (v3.29.0) | (varies; not our number to publish) | (varies; not our number to publish) | n/a | n/a |
 
 External docs we drew from:
 - Letta: <https://github.com/letta-ai/letta>, <https://docs.letta.com>

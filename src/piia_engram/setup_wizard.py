@@ -323,6 +323,201 @@ def _tool_configs() -> dict:
     return configs
 
 
+# ---------------------------------------------------------------------------
+# Client instruction snippets — injected into each tool's native instruction
+# file so the AI knows to call Engram proactively without relying solely on
+# MCP server instructions (which not all clients read reliably).
+# ---------------------------------------------------------------------------
+
+_INSTRUCTION_MARKER = "<!-- piia-engram:auto-injected -->"
+_INSTRUCTION_MARKER_END = "<!-- /piia-engram -->"
+
+# Map: tool_id → (instruction_file_path_fn, snippet)
+# instruction_file_path_fn takes Path.home() and returns the file path
+
+_INSTRUCTION_SNIPPETS: dict[str, dict] = {
+    "claude_code": {
+        "path_fn": lambda home: home / ".claude" / "CLAUDE.md",
+        "snippet_zh": (
+            "\n{marker}\n"
+            "## Engram 记忆层\n\n"
+            "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
+            "- **对话开头**：调用 `get_user_context` 了解用户身份和偏好\n"
+            "- **学到经验/踩坑**：调用 `add_lesson` 存入\n"
+            "- **做出决策**：调用 `add_decision` 记录选择和理由\n"
+            "- **对话结束**：调用 `wrap_up_session` 保存上下文\n"
+            "- **搜索历史知识**：调用 `search_knowledge`\n"
+            "{marker_end}\n"
+        ),
+        "snippet_en": (
+            "\n{marker}\n"
+            "## Engram Memory Layer\n\n"
+            "PIIA Engram (MCP memory layer) is installed on this machine.\n\n"
+            "- **Start of conversation**: call `get_user_context` to learn user identity and preferences\n"
+            "- **Lessons learned**: call `add_lesson` to save\n"
+            "- **Decisions made**: call `add_decision` to record choice and reasoning\n"
+            "- **End of conversation**: call `wrap_up_session` to save context\n"
+            "- **Search past knowledge**: call `search_knowledge`\n"
+            "{marker_end}\n"
+        ),
+    },
+    "cursor": {
+        "path_fn": lambda home: home / ".cursor" / "rules" / "engram.mdc",
+        "snippet_zh": (
+            "---\n"
+            "description: Engram 记忆层 — AI 记住用户身份和经验\n"
+            "globs:\n"
+            "alwaysApply: true\n"
+            "---\n\n"
+            "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
+            "- 对话开头调用 `get_user_context` 了解用户\n"
+            "- 学到经验时调用 `add_lesson`\n"
+            "- 做决策时调用 `add_decision`\n"
+            "- 对话结束调用 `wrap_up_session`\n"
+            "- 搜索知识用 `search_knowledge`\n"
+        ),
+        "snippet_en": (
+            "---\n"
+            "description: Engram memory layer — AI remembers user identity and experience\n"
+            "globs:\n"
+            "alwaysApply: true\n"
+            "---\n\n"
+            "PIIA Engram (MCP memory layer) is installed.\n\n"
+            "- Start of conversation: call `get_user_context` to learn user\n"
+            "- Lessons learned: call `add_lesson`\n"
+            "- Decisions made: call `add_decision`\n"
+            "- End of conversation: call `wrap_up_session`\n"
+            "- Search knowledge: call `search_knowledge`\n"
+        ),
+    },
+    "codex": {
+        "path_fn": lambda home: home / ".codex" / "AGENTS.md",
+        "snippet_zh": (
+            "\n{marker}\n"
+            "## Engram 记忆层\n\n"
+            "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
+            "- 任务开始：调用 `get_user_context` 了解用户身份和偏好\n"
+            "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
+            "- 做出决策：调用 `add_decision` 记录\n"
+            "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
+            "{marker_end}\n"
+        ),
+        "snippet_en": (
+            "\n{marker}\n"
+            "## Engram Memory Layer\n\n"
+            "PIIA Engram (MCP memory layer) is installed.\n\n"
+            "- Task start: call `get_user_context` to learn user identity and preferences\n"
+            "- Lessons learned: call `add_lesson`\n"
+            "- Decisions made: call `add_decision`\n"
+            "- Task end: call `wrap_up_session` to save context\n"
+            "{marker_end}\n"
+        ),
+    },
+}
+
+
+def _inject_instruction_snippet(tool_id: str, lang: str = "zh") -> str | None:
+    """Inject Engram instruction snippet into a tool's native instruction file.
+
+    Returns the file path on success, or None if skipped/failed.
+    Uses marker comments to detect existing snippets and update them.
+    Cursor uses .mdc files (no marker needed — entire file is ours).
+    """
+    snippet_info = _INSTRUCTION_SNIPPETS.get(tool_id)
+    if not snippet_info:
+        return None
+
+    home = Path.home()
+    target_path: Path = snippet_info["path_fn"](home)
+    snippet_key = "snippet_zh" if lang == "zh" else "snippet_en"
+    snippet = snippet_info[snippet_key]
+
+    # Format markers into snippet
+    snippet = snippet.format(
+        marker=_INSTRUCTION_MARKER,
+        marker_end=_INSTRUCTION_MARKER_END,
+    )
+
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if tool_id == "cursor":
+            # Cursor .mdc: entire file is ours, just overwrite
+            target_path.write_text(snippet, encoding="utf-8")
+            return str(target_path)
+
+        # For CLAUDE.md / AGENTS.md: append or replace marked section
+        existing = ""
+        if target_path.is_file():
+            existing = target_path.read_text(encoding="utf-8")
+
+        if _INSTRUCTION_MARKER in existing:
+            # Replace existing snippet
+            start = existing.index(_INSTRUCTION_MARKER)
+            end_marker_pos = existing.find(_INSTRUCTION_MARKER_END, start)
+            if end_marker_pos >= 0:
+                end = end_marker_pos + len(_INSTRUCTION_MARKER_END)
+                # Include trailing newline if present
+                if end < len(existing) and existing[end] == "\n":
+                    end += 1
+                existing = existing[:start] + existing[end:]
+
+        # Append snippet
+        new_content = existing.rstrip("\n") + "\n" + snippet
+        target_path.write_text(new_content, encoding="utf-8")
+        return str(target_path)
+
+    except Exception as exc:
+        logger.warning("instruction injection failed for %s: %s", tool_id, exc)
+        return None
+
+
+def _remove_instruction_snippet(tool_id: str) -> bool:
+    """Remove Engram instruction snippet from a tool's native instruction file.
+
+    Returns True if removed, False if not found or failed.
+    """
+    snippet_info = _INSTRUCTION_SNIPPETS.get(tool_id)
+    if not snippet_info:
+        return False
+
+    home = Path.home()
+    target_path: Path = snippet_info["path_fn"](home)
+
+    try:
+        if tool_id == "cursor":
+            if target_path.is_file():
+                target_path.unlink()
+                return True
+            return False
+
+        if not target_path.is_file():
+            return False
+
+        content = target_path.read_text(encoding="utf-8")
+        if _INSTRUCTION_MARKER not in content:
+            return False
+
+        start = content.index(_INSTRUCTION_MARKER)
+        end_marker_pos = content.find(_INSTRUCTION_MARKER_END, start)
+        if end_marker_pos < 0:
+            return False
+
+        end = end_marker_pos + len(_INSTRUCTION_MARKER_END)
+        if end < len(content) and content[end] == "\n":
+            end += 1
+        # Also remove leading newline if present
+        if start > 0 and content[start - 1] == "\n":
+            start -= 1
+
+        new_content = content[:start] + content[end:]
+        target_path.write_text(new_content, encoding="utf-8")
+        return True
+
+    except Exception:
+        return False
+
+
 # Tool-specific restart instructions (key = tool config key from _tool_configs)
 _RESTART_HINTS: dict[str, tuple[str, str]] = {
     "claude_code": (
@@ -1322,24 +1517,40 @@ def run_setup(advanced: bool = False) -> None:
 
     # 工具检测 — 自动配置
     tools = _detect_tools()
+    success: list[str] = []
+    failed: list[str] = []
     if not tools:
         print(_t("  ⚠️  未检测到 AI 工具（Claude Code / Cursor / Claude Desktop）",
                  "  ⚠️  No AI tools detected (Claude Code / Cursor / Claude Desktop)"))
         print(_t("  安装后重新运行 'engram setup' 即可。\n",
                  "  Re-run 'engram setup' after installing.\n"))
     else:
-        success = []
-        failed = []
+        configured_tool_ids = []
         for tool in tools:
             try:
                 _write_mcp_config(tool["config_path"], python_path, mcp_server_path, data_dir)
                 success.append(tool["name"])
+                configured_tool_ids.append(tool["id"])
             except Exception as exc:
                 failed.append(f"{tool['name']} ({exc})")
         for name in success:
             print(_t(f"  ✅ {name} 已配置", f"  ✅ {name} configured"))
         for name in failed:
             print(_t(f"  ❌ {name} 配置失败", f"  ❌ {name} failed"))
+
+        # Inject instruction snippets into each tool's native instruction file
+        # so AI proactively calls Engram (not relying solely on MCP instructions)
+        injected = []
+        for tool_id in configured_tool_ids:
+            result = _inject_instruction_snippet(tool_id, _lang)
+            if result:
+                injected.append(result)
+        if injected:
+            print()
+            print(_t("  📝 已注入 AI 指令（确保 AI 主动调用 Engram）：",
+                     "  📝 Injected AI instructions (ensures AI calls Engram proactively):"))
+            for path in injected:
+                print(f"    {path}")
     print()
 
     # Step 2 — 录入身份信息
@@ -1363,6 +1574,49 @@ def run_setup(advanced: bool = False) -> None:
     print(_t("  遇到问题？",
              "  Issues?"))
     print("  https://github.com/Patdolitse/piia-engram/issues\n")
+
+    # Save setup report for activation funnel tracking (local only)
+    _save_setup_report(selected_data_dir, tools, success, failed)
+
+
+def _save_setup_report(
+    data_dir: str,
+    detected_tools: list[dict],
+    success: list[str],
+    failed: list[str],
+) -> None:
+    """Save a local setup report for activation funnel tracking.
+
+    Appends to ~/.engram/setup_report.jsonl (one JSON line per setup run).
+    No network calls — purely local for later analysis.
+    """
+    try:
+        from datetime import datetime, timezone
+
+        try:
+            from importlib.metadata import version as _pkg_version
+            ver = _pkg_version("piia-engram")
+        except Exception:
+            ver = "unknown"
+
+        report = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "version": ver,
+            "os": platform.system(),
+            "python": platform.python_version(),
+            "tools_detected": [t.get("name", t.get("id", "?")) for t in detected_tools],
+            "tools_configured": success,
+            "tools_failed": failed,
+            "language": _lang,
+            "status": "success" if not failed else "partial",
+        }
+
+        report_path = Path(data_dir) / "setup_report.jsonl"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(report_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(report, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # Non-critical — never fail setup over reporting
 
 
 def auto_migrate() -> None:
@@ -1537,6 +1791,7 @@ def run_doctor(fix: bool = False) -> int:
     Returns:
         发现的问题数量（0 = 健康）。
     """
+    _configure_utf8_stdio()
     print("\n========================================")
     print("  Engram Doctor - Config Health Check")
     print("========================================\n")
@@ -1665,7 +1920,7 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     Returns:
         发现的问题数量（0 = 健康）。
     """
-    print("  ── Functional Checks ──\n")
+    _safe_print("  -- Functional Checks --\n")
     problems = 0
 
     # 1. 核心库导入
@@ -1748,6 +2003,66 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     except Exception as exc:
         print(f"    [!!] MCP server import failed: {exc}")
         problems += 1
+
+    # 6. AI instruction snippet injection status
+    print()
+    _safe_print("  -- AI Instruction Snippets --\n")
+    home = Path.home()
+    snippet_found = False
+    missing_snippets: list[str] = []
+    for tool_id, info in _INSTRUCTION_SNIPPETS.items():
+        target_path = info["path_fn"](home)
+        if tool_id == "cursor":
+            if target_path.is_file():
+                _safe_print(f"    [ok] {tool_id}: {target_path}")
+                snippet_found = True
+            else:
+                _safe_print(f"    [--] {tool_id}: no instruction file")
+                missing_snippets.append(tool_id)
+        else:
+            if target_path.is_file():
+                try:
+                    content = target_path.read_text(encoding="utf-8")
+                    if _INSTRUCTION_MARKER in content:
+                        _safe_print(f"    [ok] {tool_id}: snippet injected in {target_path}")
+                        snippet_found = True
+                    else:
+                        _safe_print(f"    [--] {tool_id}: file exists but no Engram snippet")
+                        missing_snippets.append(tool_id)
+                except Exception:
+                    _safe_print(f"    [--] {tool_id}: file exists but unreadable")
+            else:
+                _safe_print(f"    [--] {tool_id}: no instruction file")
+                missing_snippets.append(tool_id)
+
+    if missing_snippets and fix:
+        # Detect language from existing identity
+        lang = "zh"
+        try:
+            profile = eng.get_profile()
+            pref_lang = profile.get("language", "")
+            if pref_lang and "en" in pref_lang.lower():
+                lang = "en"
+        except Exception:
+            pass
+        fixed_snippets = []
+        for tool_id in missing_snippets:
+            result = _inject_instruction_snippet(tool_id, lang=lang)
+            if result:
+                fixed_snippets.append(f"{tool_id}: {result}")
+        if fixed_snippets:
+            print()
+            for s in fixed_snippets:
+                _safe_print(f"    [fixed] {s}")
+    elif missing_snippets and not fix:
+        print()
+        print("    [info] Missing AI instruction snippets.")
+        print("           Run 'engram doctor --fix' to inject them.")
+        print("           Without snippets, AI may not proactively call Engram.")
+    elif not snippet_found:
+        print()
+        print("    [info] No AI instruction snippets found.")
+        print("           Run 'engram setup' to inject them.")
 
     print()
     return problems

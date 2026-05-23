@@ -352,10 +352,13 @@ TIER1_TOOLS = frozenset({
 mcp = FastMCP(
     "engram",
     instructions=(
-        "Engram — AI 记忆印记。\n"
-        "This server gives you access to the user's personal knowledge: "
-        "who they are, how they work, what they've learned, and their quality standards.\n\n"
-        "START every new conversation by calling get_user_context to understand the user."
+        "Engram — the user's personal memory layer across all AI tools.\n\n"
+        "WHEN TO CALL (do not wait for the user to ask):\n"
+        "- Conversation start → get_user_context (learn who the user is)\n"
+        "- You learn something reusable → add_lesson\n"
+        "- A decision is made → add_decision\n"
+        "- Conversation end → wrap_up_session\n"
+        "- Need past knowledge → search_knowledge\n"
     ),
 )
 

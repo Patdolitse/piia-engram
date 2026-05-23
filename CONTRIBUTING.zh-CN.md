@@ -14,20 +14,23 @@ src/piia_engram/
     reconcile.py       # ReconcileMixin — 跨工具记忆/配置同步
     reports.py         # ReportsMixin — 薄 hub，组合 4 个子 mixin
     mcp_server.py      # MCP 工具/资源定义（60 个工具，AI 接口层）
-    setup_wizard.py    # 交互式安装向导 + doctor 诊断
+    setup_wizard.py    # 交互式安装向导 + doctor 诊断 + 指令注入
     crypto.py          # AES-256-GCM 加密（敏感画像字段）
     telemetry.py       # 可选匿名使用统计（Phase 1: 仅本地日志）
 tests/
-    test_core.py           # 核心引擎（188 个测试）
-    test_reconcile.py      # 自动同步、staging、冲突检测（58 个测试）
-    test_mcp_coverage.py   # MCP wrapper 覆盖（53 个测试）
-    test_setup_wizard.py   # 安装向导 + doctor + telemetry CLI（50 个测试）
-    test_mcp_tools.py      # MCP 工具封装（37 个测试）
-    test_telemetry.py      # 匿名使用统计（30 个测试）
+    test_core.py           # 核心引擎（296 个测试）
+    test_setup_wizard.py   # 安装向导 + doctor + telemetry CLI + 指令注入（111 个测试）
+    test_reconcile.py      # 自动同步、staging、冲突检测（82 个测试）
+    test_mcp_tools.py      # MCP 工具封装（72 个测试）
+    test_mcp_coverage.py   # MCP wrapper 覆盖（56 个测试）
+    test_telemetry.py      # 匿名使用统计（55 个测试）
     test_crypto.py         # AES-256-GCM 加密（27 个测试）
     test_packaging.py      # 包元数据、CI、MCP 工具验证（22 个测试）
-    test_stats.py          # GitHub/PyPI 统计（11 个测试）
+    test_stats.py          # GitHub/PyPI 统计（17 个测试）
+    test_storage.py        # 存储原语（14 个测试）
+    test_contexts.py       # 上下文管理（14 个测试）
     test_review_page_xss.py # 审阅页 XSS 防护（10 个测试）
+    test_backcompat_engram_core.py # 向后兼容（5 个测试）
     test_audit.py          # 审计日志（4 个测试）
 experiments/
     benchmarks/      # 召回/注入质量基准测试（Round 10）
@@ -55,7 +58,7 @@ pip install -e ".[dev]"
 python -m pytest tests/ -v
 ```
 
-当前基线：**490+ 测试，0 失败，83%+ 覆盖率**。所有 PR 必须维持此基线。
+当前基线：**791+ 测试，0 失败**（v3.29.0）。所有 PR 必须维持此基线。
 
 ## 代码规范
 
@@ -88,7 +91,7 @@ piia-engram 处理敏感个人数据，需格外小心：
 1. Fork 本仓库
 2. 创建功能分支：`git checkout -b feature/your-feature`
 3. 修改代码并编写测试
-4. 运行全量测试 — 490+ 测试必须全部通过
+4. 运行全量测试 — 791+ 测试必须全部通过
 5. 提交 PR，说明**改了什么**和**为什么**
 
 ## 报告问题

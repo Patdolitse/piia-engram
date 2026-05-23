@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions / 讨论区
+    url: https://github.com/Patdolitse/piia-engram/discussions
+    about: Ask questions, share how you use Engram, or discuss ideas / 提问、分享你的用法、讨论想法
+  - name: Security Report / 安全漏洞
+    url: mailto:piia-engram-security@proton.me
+    about: Report security vulnerabilities privately / 私下报告安全漏洞

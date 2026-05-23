@@ -13,21 +13,22 @@ src/piia_engram/
     context.py         # ContextMixin — cold-start context, ingestion helpers
     reconcile.py       # ReconcileMixin — cross-tool memory/config sync
     reports.py         # ReportsMixin — thin hub composing 4 sub-mixins
-    mcp_server.py      # MCP tool/resource definitions (43 tools, the AI-facing API)
-    setup_wizard.py    # Interactive setup CLI + doctor diagnostics
+    mcp_server.py      # MCP tool/resource definitions (60 tools, the AI-facing API)
+    setup_wizard.py    # Interactive setup CLI + doctor diagnostics + instruction injection
     crypto.py          # AES-256-GCM encryption for sensitive profile fields
     telemetry.py       # Opt-in anonymous usage statistics (Phase 1: local log only)
 tests/
-    test_core.py           # Core engine (243 tests)
+    test_core.py           # Core engine (296 tests)
+    test_setup_wizard.py   # Setup wizard + doctor + telemetry CLI + instruction injection (111 tests)
     test_reconcile.py      # Auto-sync, staging, conflict detection (82 tests)
-    test_setup_wizard.py   # Setup wizard + doctor + telemetry CLI (81 tests)
-    test_mcp_tools.py      # MCP tool wrappers (65 tests)
-    test_mcp_coverage.py   # MCP wrapper coverage (53 tests)
-    test_telemetry.py      # Anonymous usage statistics (36 tests)
+    test_mcp_tools.py      # MCP tool wrappers (72 tests)
+    test_mcp_coverage.py   # MCP wrapper coverage (56 tests)
+    test_telemetry.py      # Anonymous usage statistics (55 tests)
     test_crypto.py         # AES-256-GCM encryption (27 tests)
     test_packaging.py      # Package metadata, CI, MCP tool verification (22 tests)
     test_stats.py          # GitHub/PyPI statistics (17 tests)
     test_storage.py        # Storage primitives (14 tests)
+    test_contexts.py       # Context management (14 tests)
     test_review_page_xss.py # XSS prevention in review page (10 tests)
     test_backcompat_engram_core.py # Backward compatibility (5 tests)
     test_audit.py          # Audit logging (4 tests)
@@ -57,7 +58,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **678 tests, 0 failures, 96% coverage** (v3.19.0). All PRs must maintain this.
+Current baseline: **791 tests, 0 failures, 96% coverage** (v3.29.0). All PRs must maintain this.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash
@@ -102,7 +103,7 @@ security: enforce trust boundaries in identity card export
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/your-feature`
 3. Make your changes with tests
-4. Run the full test suite — all 678 tests must pass
+4. Run the full test suite — all 791 tests must pass
 5. Open a PR explaining **what** changed and **why**
 
 PR titles should be under 70 characters. Use the description for details.
