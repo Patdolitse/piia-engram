@@ -1713,8 +1713,8 @@ def main() -> None:
             "  engram telemetry        Manage anonymous usage statistics\n"
             "  engram privacy          Show what data Engram stores\n\n"
             "Tool tiers:\n"
-            "  Default: 10 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 43 tools.\n"
+            "  Default: 13 核心工具 / core MCP tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 46 tools.\n"
         )
         sys.exit(0)
 

@@ -170,7 +170,7 @@ def test_readme_uses_pypi_install_and_badge():
     content = README.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "43 MCP tools" in content
+    assert "46 MCP tools" in content
 
 
 def test_readme_has_remote_deployment_section():
@@ -194,7 +194,7 @@ def test_readme_documents_tool_tiering():
 
 
 def test_mcp_tool_count_and_merge_tool():
-    """MCP server 应暴露 43 个工具且包含统一知识生命周期工具。"""
+    """MCP server 应暴露 46 个工具且包含统一知识生命周期工具。"""
     tree = ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
     tools = []
     for node in ast.walk(tree):
@@ -208,7 +208,7 @@ def test_mcp_tool_count_and_merge_tool():
             ):
                 tools.append(node.name)
                 break
-    assert len(tools) >= 43
+    assert len(tools) >= 46
     assert "update_knowledge" in tools
     assert "bulk_add_knowledge" in tools
     assert "get_knowledge_overview" in tools

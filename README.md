@@ -219,7 +219,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 43 MCP tools. By default, only the 10 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 43 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 46 MCP tools. By default, only the 13 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 43 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -354,7 +354,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | | v3.20.0 (2026-05-23) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools exposed | **43** (10 Tier-1 default, 33 opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools exposed | **46** (13 Tier-1 default, 33 opt-in via `ENGRAM_TOOLS=all`) |
 | Tests passing | **690** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **1097** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
@@ -402,7 +402,7 @@ Run `piia-engram doctor --fix` in a terminal, then restart your AI tool. This co
 All identity and knowledge data is stored in `~/.engram/` on your local machine. Core identity and knowledge tools make no network requests. **Anonymous usage statistics** (tool call counts, knowledge totals, piia-engram version — never content, prompts, or file paths) can be optionally enabled during `engram setup`; they are **off by default**. You can inspect the exact payload with `engram telemetry preview` and disable anytime with `engram telemetry off`. The optional `read_web_content` tool makes outbound HTTP requests to a local Reader service (`localhost:7890`) which may in turn fetch external URLs — but only when explicitly invoked.
 
 **How many MCP tools does piia-engram provide?**
-piia-engram exposes 43 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, lifecycle review, digesting, reporting, linking, health checks, workflow shortcuts, and audit logging.
+piia-engram exposes 46 MCP tools covering identity management, lessons learned, key decisions, project snapshots, bulk input, note ingestion, session insight extraction, weighted knowledge search, similarity discovery, merging, lifecycle review, digesting, reporting, linking, health checks, workflow shortcuts, and audit logging.
 
 **Is piia-engram free?**
 Yes. piia-engram is free and open source under the Apache 2.0 license.
