@@ -1,0 +1,14 @@
+# Smithery.ai configuration for piia-engram
+# AI Identity Layer — syncs who you are across Claude Code, Codex, Cursor, and 10+ MCP tools
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties: {}
+  commandFunction:
+    |-
+    (config) => ({
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"],
+      "env": {}
+    })
