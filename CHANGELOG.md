@@ -4,6 +4,18 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.22.2] - 2026-05-23
+
+Search discovery and conversion optimization release.
+
+### Changed
+- README rewritten with pain-point language for GEO/SEO/AIEO search discovery
+- Per-client config blocks added (Claude Code, Cursor, Codex, Claude Desktop, Windsurf)
+- FAQ rewritten with search-optimized Q&A for AI citation
+- Chinese README synced with English version
+- pyproject.toml description and keywords updated for search discovery
+- MCP Registry description updated to "persistent memory" framing
+
 ## [3.22.1] - 2026-05-23
 
 MCP Registry distribution release.
