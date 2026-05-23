@@ -52,6 +52,7 @@ from .context import ContextMixin
 from .context import EXTRACTION_PROMPT, extract_knowledge, ingest_extraction  # noqa: F401
 from .reconcile import ReconcileMixin
 from .reports import ReportsMixin
+from .contexts import ContextStoreMixin
 # Compat helpers re-exported for backward compatibility (tests import these
 # from piia_engram.core directly).
 from .compat import (  # noqa: F401
@@ -65,7 +66,7 @@ from .compat import (  # noqa: F401
 # Engram Core Class
 # ---------------------------------------------------------------------------
 
-class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin):
+class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, ContextStoreMixin):
     """Read/write interface to the user's global Engram."""
 
     def __init__(self, root: Path | None = None):
@@ -101,7 +102,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin):
 
     def _ensure_structure(self) -> None:
         """Create directory structure if it doesn't exist."""
-        for sub in ["identity", "knowledge", "projects", "exports", "compat"]:
+        for sub in ["identity", "knowledge", "projects", "exports", "compat", "contexts"]:
             (self.root / sub).mkdir(parents=True, exist_ok=True)
         # Write schema version
         ver_path = self.root / "schema_version.json"

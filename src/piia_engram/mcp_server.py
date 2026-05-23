@@ -92,6 +92,10 @@ TIER1_TOOLS = frozenset({
     # Project context
     "get_project_context",       # current project state
     "save_project_snapshot",     # persist project state
+    # Agent context recovery
+    "save_agent_context",        # auto-save session checkpoint
+    "get_recent_context",        # recover lost session context
+    "list_agent_sessions",       # browse session history
 })
 
 mcp = FastMCP(
@@ -1400,6 +1404,85 @@ def resource_domains() -> str:
 def resource_stats() -> str:
     """知识资产统计。"""
     return _json(_engram.get_stats())
+
+
+# ===========================================================================
+# AGENT CONTEXT RECOVERY (3)
+# ===========================================================================
+
+
+@mcp.tool()
+async def save_agent_context(
+    tool: str,
+    content: str,
+    session_id: str = "",
+    project_folder: str = "",
+) -> str:
+    """自动保存 AI 对话上下文检查点。 / Auto-save an AI conversation context checkpoint.
+
+    用途：在关键节点（任务启动、阶段完成、方向变更）自动调用，静默记录工作状态。
+    Purpose: Call at key moments (task start, milestone, direction change) to silently record work state.
+
+    设计理念：像 Office 自动保存 — 平时无感，崩溃/重启时可找回。
+    Design: Like Office autosave — invisible during work, recoverable after crash/restart.
+
+    Args:
+        tool: 调用来源工具名，如 'claude_code', 'codex', 'cursor'。 / Source tool name.
+        content: 上下文内容（当前任务、进度、下一步，自由文本）。 / Context content (current tasks, progress, next steps, free text).
+        session_id: 会话 ID（可选）。留空则新建会话，填入已有 ID 则追加到同一会话文件。 / Session ID (optional). Empty creates new session; existing ID appends to same file.
+        project_folder: 项目路径（可选，写入文件头）。 / Project folder path (optional, written to file header).
+    """
+    result = _engram.save_agent_context(
+        tool=tool,
+        content=content,
+        session_id=session_id,
+        project_folder=project_folder,
+    )
+    _track("save_agent_context", success=True)
+    return _json(result)
+
+
+@mcp.tool()
+async def get_recent_context(
+    tool: str = "",
+    limit: int = 1,
+) -> str:
+    """找回最近的 AI 对话上下文。 / Retrieve the most recent AI conversation context.
+
+    用途：上下文丢失时（工具重启、会话断开）调用，找回之前的工作状态。
+    Purpose: Call after context loss (tool restart, session disconnect) to recover previous work state.
+
+    不会自动加载到新会话 — 只在你需要时才读取。
+    Does NOT auto-load into new sessions — only reads when you ask.
+
+    Args:
+        tool: 工具名（可选）。留空则搜索所有工具的上下文。 / Tool name (optional). Empty searches all tools.
+        limit: 最多返回几个会话（默认 1 = 最近一次）。 / Max sessions to return (default 1 = most recent).
+    """
+    sessions = _engram.get_recent_context(tool=tool, limit=limit)
+    _track("get_recent_context", success=True)
+    if not sessions:
+        return _json({"message": "没有找到保存的上下文记录。", "sessions": []})
+    return _json({"sessions": sessions})
+
+
+@mcp.tool()
+async def list_agent_sessions(
+    tool: str = "",
+    limit: int = 20,
+) -> str:
+    """列出可用的 AI 对话上下文记录（仅元数据）。 / List available AI context sessions (metadata only).
+
+    用途：查看有哪些历史会话记录可以找回。
+    Purpose: See which historical session records are available for recovery.
+
+    Args:
+        tool: 工具名（可选）。留空则列出所有工具。 / Tool name (optional). Empty lists all tools.
+        limit: 最多返回多少条（默认 20）。 / Max entries to return (default 20).
+    """
+    sessions = _engram.list_agent_sessions(tool=tool, limit=limit)
+    _track("list_agent_sessions", success=True)
+    return _json({"sessions": sessions, "total": len(sessions)})
 
 
 # ===========================================================================
