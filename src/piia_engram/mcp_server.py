@@ -17,6 +17,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 from pathlib import Path
@@ -168,6 +169,89 @@ class _SessionTracker:
             )
         except Exception as exc:
             logger.warning("session auto-save failed: %s", exc)
+
+        # Auto-update project snapshot with current metrics
+        if self.project_folder:
+            try:
+                project_info = _collect_project_info(self.project_folder)
+                if project_info:
+                    project_info["last_auto_snapshot"] = _dt.now().isoformat()
+                    _engram.save_project_snapshot(
+                        self.project_folder, project_info,
+                    )
+            except Exception as exc:
+                logger.warning("project snapshot auto-update failed: %s", exc)
+
+
+def _collect_project_info(project_folder: str) -> dict:
+    """Collect lightweight project metrics from the filesystem.
+
+    Returns a dict suitable for save_project_snapshot() merge.
+    Returns empty dict if project_folder is invalid or not a Python project.
+    Safe: no exceptions raised, no heavy deps, no blocking I/O.
+    """
+    if not project_folder:
+        return {}
+
+    root = Path(project_folder)
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return {}
+
+    info: dict = {}
+
+    # 1. Version from pyproject.toml
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        if m:
+            info["version"] = m.group(1)
+    except Exception:
+        pass
+
+    # 2. Module count: .py files in src/ (excluding __pycache__)
+    try:
+        src_dir = root / "src"
+        if src_dir.is_dir():
+            info["module_count"] = sum(
+                1 for p in src_dir.rglob("*.py")
+                if "__pycache__" not in str(p)
+            )
+    except Exception:
+        pass
+
+    # 3. Test count: def test_ functions in tests/
+    try:
+        tests_dir = root / "tests"
+        if tests_dir.is_dir():
+            tc = 0
+            for tf in tests_dir.rglob("*.py"):
+                if "__pycache__" in str(tf):
+                    continue
+                try:
+                    for line in tf.read_text(encoding="utf-8").splitlines():
+                        s = line.lstrip()
+                        if s.startswith("def test_") or s.startswith("async def test_"):
+                            tc += 1
+                except Exception:
+                    continue
+            info["test_count"] = tc
+    except Exception:
+        pass
+
+    # 4. MCP tool count: @mcp.tool() decorators
+    try:
+        for pkg_dir in (root / "src").iterdir():
+            server_py = pkg_dir / "mcp_server.py"
+            if server_py.is_file():
+                info["mcp_tool_definitions"] = server_py.read_text(
+                    encoding="utf-8",
+                ).count("@mcp.tool()")
+                break
+    except Exception:
+        pass
+
+    return info
 
 
 _session = _SessionTracker()

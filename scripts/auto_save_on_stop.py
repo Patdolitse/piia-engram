@@ -144,6 +144,53 @@ def main() -> None:
             session_id=session_id,
             project_folder=cwd,
         )
+
+        # Auto-update project snapshot with filesystem metrics
+        if cwd:
+            _root = Path(cwd)
+            _pyproject = _root / "pyproject.toml"
+            if _pyproject.is_file():
+                import re as _re
+
+                snap: dict = {}
+                try:
+                    _text = _pyproject.read_text(encoding="utf-8")
+                    _m = _re.search(
+                        r'^version\s*=\s*"([^"]+)"', _text, _re.MULTILINE,
+                    )
+                    if _m:
+                        snap["version"] = _m.group(1)
+                except Exception:
+                    pass
+                try:
+                    _src = _root / "src"
+                    if _src.is_dir():
+                        snap["module_count"] = sum(
+                            1 for p in _src.rglob("*.py")
+                            if "__pycache__" not in str(p)
+                        )
+                except Exception:
+                    pass
+                try:
+                    _tests = _root / "tests"
+                    if _tests.is_dir():
+                        _tc = 0
+                        for _tf in _tests.rglob("*.py"):
+                            if "__pycache__" in str(_tf):
+                                continue
+                            try:
+                                for _ln in _tf.read_text(encoding="utf-8").splitlines():
+                                    _s = _ln.lstrip()
+                                    if _s.startswith("def test_") or _s.startswith("async def test_"):
+                                        _tc += 1
+                            except Exception:
+                                continue
+                        snap["test_count"] = _tc
+                except Exception:
+                    pass
+                if snap:
+                    snap["last_auto_snapshot"] = datetime.now().isoformat()
+                    engram.save_project_snapshot(cwd, snap)
     except Exception:
         # Silent failure — hooks should never block Claude Code
         pass

@@ -993,3 +993,71 @@ class TestWrapUpSessionErrors:
         monkeypatch.setattr(mcp_server, "_tracker", ExplodingTracker())
         result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
         assert "insights" in result
+
+
+# ---------------------------------------------------------------------------
+# _collect_project_info tests
+# ---------------------------------------------------------------------------
+
+
+class TestCollectProjectInfo:
+    """Tests for the _collect_project_info helper."""
+
+    def test_empty_folder_returns_empty(self):
+        assert mcp_server._collect_project_info("") == {}
+
+    def test_no_pyproject_returns_empty(self, tmp_path: Path):
+        assert mcp_server._collect_project_info(str(tmp_path)) == {}
+
+    def test_collects_version(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nversion = "1.2.3"\n', encoding="utf-8",
+        )
+        info = mcp_server._collect_project_info(str(tmp_path))
+        assert info["version"] == "1.2.3"
+
+    def test_collects_module_count(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nversion = "0.1.0"\n', encoding="utf-8",
+        )
+        src = tmp_path / "src" / "mypkg"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text("", encoding="utf-8")
+        (src / "core.py").write_text("pass", encoding="utf-8")
+        info = mcp_server._collect_project_info(str(tmp_path))
+        assert info["module_count"] == 2
+
+    def test_collects_test_count(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nversion = "0.1.0"\n', encoding="utf-8",
+        )
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_a.py").write_text(
+            "def test_one(): pass\ndef test_two(): pass\n", encoding="utf-8",
+        )
+        info = mcp_server._collect_project_info(str(tmp_path))
+        assert info["test_count"] == 2
+
+    def test_collects_mcp_tool_count(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nversion = "0.1.0"\n', encoding="utf-8",
+        )
+        pkg = tmp_path / "src" / "mypkg"
+        pkg.mkdir(parents=True)
+        (pkg / "mcp_server.py").write_text(
+            "@mcp.tool()\nasync def a(): ...\n@mcp.tool()\nasync def b(): ...\n",
+            encoding="utf-8",
+        )
+        info = mcp_server._collect_project_info(str(tmp_path))
+        assert info["mcp_tool_definitions"] == 2
+
+    def test_no_crash_on_missing_dirs(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nversion = "0.1.0"\n', encoding="utf-8",
+        )
+        # No src/ or tests/ dirs
+        info = mcp_server._collect_project_info(str(tmp_path))
+        assert info.get("version") == "0.1.0"
+        assert "module_count" not in info
+        assert "test_count" not in info
