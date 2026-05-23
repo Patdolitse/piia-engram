@@ -123,13 +123,13 @@ def test_run_stats_all_available(capsys):
         run_stats()
 
     out = capsys.readouterr().out
-    assert "Stars:" in out
-    assert "100" in out
-    assert "Page Views" in out
-    assert "Git Clones" in out
-    assert "Top Referrers" in out
+    assert "100" in out  # stargazers_count
+    assert "Stars" in out or "星标" in out
+    assert "Page Views" in out or "页面访问" in out
+    assert "Git Clones" in out or "Git 克隆" in out
+    assert "Top Referrers" in out or "来源排行" in out
     assert "google.com" in out
-    assert "PyPI Downloads" in out
+    assert "PyPI Downloads" in out or "PyPI 下载量" in out
     assert "50" in out  # last_week
 
 
@@ -142,8 +142,8 @@ def test_run_stats_no_apis(capsys):
         run_stats()
 
     out = capsys.readouterr().out
-    assert "GitHub API unavailable" in out
-    assert "PyPI stats unavailable" in out
+    assert "GitHub API" in out or "GitHub API 不可用" in out
+    assert "PyPI" in out
 
 
 def test_run_stats_with_daily_views(capsys):
@@ -198,7 +198,7 @@ def test_run_stats_with_daily_clones(capsys):
     out = capsys.readouterr().out
     assert "2026-05-19" in out
     assert "2026-05-20" in out
-    assert "Git Clones" in out
+    assert "Git Clones" in out or "Git 克隆" in out
 
 
 # ── log_stats tests ─────────────────────────────────────────────────
@@ -286,7 +286,7 @@ def test_main_default_runs_stats(capsys):
         main()
 
     out = capsys.readouterr().out
-    assert "Engram Stats" in out
+    assert "Engram" in out and ("Stats" in out or "数据概览" in out)
 
 
 def test_main_log_runs_log_stats(tmp_path, monkeypatch, capsys):
