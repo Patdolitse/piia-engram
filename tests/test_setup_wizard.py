@@ -14,6 +14,7 @@ from piia_engram.setup_wizard import (
     _find_mcp_server,
     _find_python,
     _import_with_split,
+    _build_feedback_report,
     _inject_claude_code_hook,
     _inject_instruction_snippet,
     _INSTRUCTION_MARKER,
@@ -1736,3 +1737,90 @@ class TestInjectClaudeCodeHook:
         settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
         assert settings["statusLine"] == {"type": "text"}
         assert settings["foo"] == "bar"
+
+
+# ---------------------------------------------------------------------------
+# _build_feedback_report
+# ---------------------------------------------------------------------------
+
+
+class TestFeedbackReport:
+    """内测反馈报告生成。"""
+
+    def test_empty_data_dir(self, tmp_path):
+        """Should return valid report even with empty data dir."""
+        report = _build_feedback_report(str(tmp_path))
+        assert report["report_type"] == "engram_beta_feedback"
+        assert report["report_version"] == 1
+        k = report["knowledge"]
+        assert k["total"] == 0
+        assert k["staging"] == 0
+        assert k["verified"] == 0
+        assert k["promotion_rate"] is None
+
+    def test_counts_staging_and_verified(self, tmp_path):
+        """Should correctly count staging vs verified items."""
+        kdir = tmp_path / "knowledge"
+        kdir.mkdir(parents=True)
+        lessons = [
+            {"id": "1", "tier": "staging", "created_at": "2026-05-20T00:00:00Z"},
+            {"id": "2", "tier": "verified", "created_at": "2026-05-18T00:00:00Z"},
+            {"id": "3", "tier": "verified", "created_at": "2026-05-15T00:00:00Z"},
+        ]
+        (kdir / "lessons.json").write_text(json.dumps(lessons), encoding="utf-8")
+        decisions = [
+            {"id": "4", "tier": "staging", "created_at": "2026-05-21T00:00:00Z"},
+        ]
+        (kdir / "decisions.json").write_text(json.dumps(decisions), encoding="utf-8")
+
+        report = _build_feedback_report(str(tmp_path))
+        k = report["knowledge"]
+        assert k["total"] == 4
+        assert k["staging"] == 2
+        assert k["verified"] == 2
+        assert k["promotion_rate"] == 0.5
+        assert k["lessons"]["staging"] == 1
+        assert k["lessons"]["verified"] == 2
+        assert k["decisions"]["staging"] == 1
+
+    def test_domain_distribution(self, tmp_path):
+        """Should count domain occurrences."""
+        kdir = tmp_path / "knowledge"
+        kdir.mkdir(parents=True)
+        lessons = [
+            {"id": "1", "tier": "verified", "domain": "python,testing"},
+            {"id": "2", "tier": "verified", "domain": "python"},
+        ]
+        (kdir / "lessons.json").write_text(json.dumps(lessons), encoding="utf-8")
+        (kdir / "decisions.json").write_text("[]", encoding="utf-8")
+
+        report = _build_feedback_report(str(tmp_path))
+        assert report["top_domains"]["python"] == 2
+        assert report["top_domains"]["testing"] == 1
+
+    def test_no_content_leaked(self, tmp_path):
+        """Report must never contain knowledge content."""
+        kdir = tmp_path / "knowledge"
+        kdir.mkdir(parents=True)
+        lessons = [
+            {"id": "1", "tier": "verified", "summary": "SECRET CONTENT HERE",
+             "detail": "PRIVATE DETAIL", "domain": "test",
+             "created_at": "2026-05-20T00:00:00Z"},
+        ]
+        (kdir / "lessons.json").write_text(json.dumps(lessons), encoding="utf-8")
+        (kdir / "decisions.json").write_text("[]", encoding="utf-8")
+
+        report = _build_feedback_report(str(tmp_path))
+        report_str = json.dumps(report)
+        assert "SECRET CONTENT" not in report_str
+        assert "PRIVATE DETAIL" not in report_str
+
+    def test_session_count(self, tmp_path):
+        """Should count context session files."""
+        ctx_dir = tmp_path / "contexts"
+        ctx_dir.mkdir(parents=True)
+        for i in range(3):
+            (ctx_dir / f"session_{i}.json").write_text("{}", encoding="utf-8")
+
+        report = _build_feedback_report(str(tmp_path))
+        assert report["session_count"] == 3

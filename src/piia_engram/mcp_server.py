@@ -2026,6 +2026,18 @@ async def wrap_up_session(
 
 
 @mcp.tool()
+async def export_feedback_report() -> str:
+    """导出匿名内测反馈报告。 / Export anonymous beta feedback report.
+
+    用途：用户想分享使用反馈时调用。报告只包含计数和分布，不含知识内容或个人信息。
+    Purpose: Call when the user wants to share usage feedback. The report contains only counts and distributions — no knowledge content or personal information.
+    """
+    from piia_engram.setup_wizard import _build_feedback_report
+    report = _build_feedback_report()
+    return _json(report)
+
+
+@mcp.tool()
 async def start_project(
     description: str,
     project_folder: str,

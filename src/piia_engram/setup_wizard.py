@@ -2369,8 +2369,242 @@ def _run_privacy_report() -> None:
     print()
 
 
+# ---------------------------------------------------------------------------
+# engram feedback — 内测反馈报告
+# ---------------------------------------------------------------------------
+
+
+def _build_feedback_report(data_dir: str | None = None) -> dict:
+    """Build an anonymous usage/governance report from local Engram data.
+
+    Reads knowledge files and computes governance metrics without any
+    network calls. No lesson/decision content is included — only counts,
+    distributions, and timing statistics.
+
+    Returns a dict suitable for JSON export.
+    """
+    from datetime import datetime, timezone
+
+    root = Path(data_dir) if data_dir else Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    knowledge_dir = root / "knowledge"
+    playbooks_dir = root / "playbooks"
+    contexts_dir = root / "contexts"
+
+    report: dict = {
+        "report_type": "engram_beta_feedback",
+        "report_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Version
+    try:
+        from importlib.metadata import version as _pkg_version
+        report["engram_version"] = _pkg_version("piia-engram")
+    except Exception:
+        report["engram_version"] = "unknown"
+
+    report["os"] = platform.system()
+    report["python"] = platform.python_version()
+
+    # Lessons
+    lessons_path = knowledge_dir / "lessons.json"
+    lessons: list[dict] = []
+    if lessons_path.is_file():
+        try:
+            lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    staging_lessons = [l for l in lessons if l.get("tier") == "staging"]
+    verified_lessons = [l for l in lessons if l.get("tier") != "staging"]
+
+    # Decisions
+    decisions_path = knowledge_dir / "decisions.json"
+    decisions: list[dict] = []
+    if decisions_path.is_file():
+        try:
+            decisions = json.loads(decisions_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    staging_decisions = [d for d in decisions if d.get("tier") == "staging"]
+    verified_decisions = [d for d in decisions if d.get("tier") != "staging"]
+
+    # Playbooks
+    playbooks_index = playbooks_dir / "_index.json"
+    playbooks: list[dict] = []
+    if playbooks_index.is_file():
+        try:
+            playbooks = json.loads(playbooks_index.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    staging_playbooks = [p for p in playbooks if p.get("tier") == "staging"]
+    verified_playbooks = [p for p in playbooks if p.get("tier") != "staging"]
+
+    total_staging = len(staging_lessons) + len(staging_decisions) + len(staging_playbooks)
+    total_verified = len(verified_lessons) + len(verified_decisions) + len(verified_playbooks)
+    total = total_staging + total_verified
+
+    report["knowledge"] = {
+        "total": total,
+        "staging": total_staging,
+        "verified": total_verified,
+        "promotion_rate": round(total_verified / total, 2) if total > 0 else None,
+        "lessons": {"staging": len(staging_lessons), "verified": len(verified_lessons)},
+        "decisions": {"staging": len(staging_decisions), "verified": len(verified_decisions)},
+        "playbooks": {"staging": len(staging_playbooks), "verified": len(verified_playbooks)},
+    }
+
+    # Domain distribution (top 10, no content)
+    domain_counts: dict[str, int] = {}
+    for item in lessons + decisions:
+        domain = item.get("domain", "")
+        if domain:
+            for d in domain.split(","):
+                d = d.strip()
+                if d:
+                    domain_counts[d] = domain_counts.get(d, 0) + 1
+    top_domains = sorted(domain_counts.items(), key=lambda x: -x[1])[:10]
+    report["top_domains"] = {k: v for k, v in top_domains}
+
+    # Source tool distribution
+    tool_counts: dict[str, int] = {}
+    for item in lessons + decisions:
+        src = item.get("source_tool", "unknown")
+        tool_counts[src] = tool_counts.get(src, 0) + 1
+    report["source_tools"] = tool_counts
+
+    # Timing: days since first knowledge, avg staging age
+    now = datetime.now(timezone.utc)
+    all_items = lessons + decisions + playbooks
+    created_dates: list[datetime] = []
+    staging_ages: list[float] = []
+    for item in all_items:
+        ts = item.get("created_at", "")
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            # Ensure timezone-aware for comparison
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            created_dates.append(dt)
+            if item.get("tier") == "staging":
+                staging_ages.append((now - dt).total_seconds() / 86400)
+        except Exception:
+            pass
+
+    if created_dates:
+        report["first_knowledge_date"] = min(created_dates).strftime("%Y-%m-%d")
+        report["days_with_knowledge"] = (now - min(created_dates)).days
+    report["avg_staging_age_days"] = round(sum(staging_ages) / len(staging_ages), 1) if staging_ages else None
+
+    # Session contexts count
+    session_count = 0
+    if contexts_dir.is_dir():
+        try:
+            session_count = sum(1 for f in contexts_dir.iterdir() if f.suffix == ".json")
+        except Exception:
+            pass
+    report["session_count"] = session_count
+
+    # MCP tool call log (from telemetry.log if exists)
+    telemetry_log = root / "telemetry.log"
+    tool_call_totals: dict[str, int] = {}
+    if telemetry_log.is_file():
+        try:
+            for line in telemetry_log.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                    for tool_name, counts in entry.get("tool_calls", {}).items():
+                        if isinstance(counts, dict):
+                            n = counts.get("success", 0) + counts.get("error", 0)
+                        else:
+                            n = int(counts)
+                        tool_call_totals[tool_name] = tool_call_totals.get(tool_name, 0) + n
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    if tool_call_totals:
+        top_tools = sorted(tool_call_totals.items(), key=lambda x: -x[1])[:15]
+        report["top_mcp_tools"] = {k: v for k, v in top_tools}
+
+    # Configured AI tools (from setup_report)
+    setup_report = root / "setup_report.jsonl"
+    if setup_report.is_file():
+        try:
+            lines = setup_report.read_text(encoding="utf-8").strip().split("\n")
+            if lines:
+                last = json.loads(lines[-1])
+                report["configured_tools"] = last.get("tools_configured", [])
+        except Exception:
+            pass
+
+    return report
+
+
+def run_feedback() -> None:
+    """Generate and display an anonymous beta feedback report.
+
+    The report contains only counts and distributions — no knowledge content,
+    no file paths, no personal information. Users can copy-paste it.
+    """
+    _configure_utf8_stdio()
+
+    print("\n  ========================================")
+    print("  PIIA Engram 内测反馈报告 / Beta Feedback Report")
+    print("  ========================================\n")
+
+    report = _build_feedback_report()
+
+    # Pretty print
+    k = report.get("knowledge", {})
+    print(f"  Engram 版本: {report.get('engram_version', '?')}")
+    print(f"  OS: {report.get('os', '?')} | Python: {report.get('python', '?')}")
+    print(f"  使用天数: {report.get('days_with_knowledge', '?')} 天")
+    print(f"  会话数: {report.get('session_count', 0)}")
+    print()
+
+    print("  ── 知识治理 ──")
+    print(f"  总知识数: {k.get('total', 0)} (staging: {k.get('staging', 0)}, verified: {k.get('verified', 0)})")
+    pr = k.get("promotion_rate")
+    if pr is not None:
+        print(f"  确认率 (promotion rate): {pr:.0%}")
+    avg_age = report.get("avg_staging_age_days")
+    if avg_age is not None:
+        print(f"  Staging 平均滞留: {avg_age} 天")
+    print(f"    Lessons:   staging={k.get('lessons', {}).get('staging', 0)}, verified={k.get('lessons', {}).get('verified', 0)}")
+    print(f"    Decisions: staging={k.get('decisions', {}).get('staging', 0)}, verified={k.get('decisions', {}).get('verified', 0)}")
+    print(f"    Playbooks: staging={k.get('playbooks', {}).get('staging', 0)}, verified={k.get('playbooks', {}).get('verified', 0)}")
+    print()
+
+    if report.get("top_domains"):
+        print("  ── 领域分布 ──")
+        for d, c in report["top_domains"].items():
+            print(f"    {d}: {c}")
+        print()
+
+    if report.get("source_tools"):
+        print("  ── 来源工具 ──")
+        for t, c in report["source_tools"].items():
+            print(f"    {t}: {c}")
+        print()
+
+    if report.get("configured_tools"):
+        print(f"  ── 已配置工具 ──")
+        print(f"    {', '.join(report['configured_tools'])}")
+        print()
+
+    # JSON for copy-paste
+    report_json = json.dumps(report, ensure_ascii=False, indent=2)
+    print("  ── 可复制 JSON（粘贴到反馈帖即可）──")
+    print(f"  ```json\n{report_json}\n  ```")
+    print()
+    print("  此报告不含任何知识内容、文件路径或个人信息。")
+    print("  This report contains no knowledge content, file paths, or personal info.\n")
+
+
 def main() -> None:
-    """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy"""
+    """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy / engram feedback"""
     args = sys.argv[1:]
     if not args or args[0] == "setup":
         if "--advanced" in args:
@@ -2390,6 +2624,8 @@ def main() -> None:
         _run_telemetry_cli(args[1:])
     elif args[0] == "privacy":
         _run_privacy_report()
+    elif args[0] == "feedback":
+        run_feedback()
     else:
         print(
             "Engram CLI\n\n"
@@ -2398,6 +2634,7 @@ def main() -> None:
             "  engram setup --advanced Full interactive setup with privacy prompts\n"
             "  engram doctor           Check config health (all AI tools)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
+            "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram stats            Show project growth metrics\n"
             "  engram stats --log      Append stats snapshot to local log\n"
             "  engram telemetry        Manage anonymous usage statistics\n"
