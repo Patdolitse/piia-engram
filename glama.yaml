@@ -11,15 +11,6 @@ metadata:
     - mcp
 
 spec:
-  docker:
-    buildContext: .
-    dockerfile: Dockerfile
-
-  runtime:
-    command: ["python", "-m", "piia_engram.mcp_server"]
-    workingDir: /app
-    user: mcp
-
   mcp:
     protocol: stdio
     capabilities: ["tools", "resources"]
