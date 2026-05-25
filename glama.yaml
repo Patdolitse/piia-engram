@@ -1,0 +1,108 @@
+metadata:
+  name: piia-engram
+  description: "Personal intelligence identity layer — one memory across all AI tools. Local-first, user-governed, 60 MCP tools."
+  version: 3.29.0
+  tags:
+    - memory
+    - identity
+    - knowledge
+    - cross-tool
+    - local-first
+    - mcp
+
+spec:
+  docker:
+    buildContext: .
+    dockerfile: Dockerfile
+
+  runtime:
+    command: ["python", "-m", "piia_engram.mcp_server"]
+    workingDir: /app
+    user: mcp
+
+  mcp:
+    protocol: stdio
+    capabilities: ["tools", "resources"]
+
+  resources:
+    memory: 256Mi
+    cpu: 0.25
+
+  environment:
+    ENGRAM_TOOLS:
+      type: string
+      description: "Tool tier: 'core' (12 tools) or 'all' (60 tools)"
+      default: "all"
+    ENGRAM_DIR:
+      type: string
+      description: "Custom data directory path (default: ~/.engram)"
+      default: ""
+
+  tools:
+    # Session lifecycle
+    - name: get_user_context
+      description: "Cold-start identity + knowledge loader with tiered latency control"
+    - name: wrap_up_session
+      description: "End-of-session one-step: extract knowledge, detect playbooks, save snapshot"
+    # Knowledge write
+    - name: add_lesson
+      description: "Record one reusable lesson learned"
+    - name: add_decision
+      description: "Record a key decision with reasoning"
+    - name: add_playbook
+      description: "Record a multi-step operational procedure"
+    # Knowledge read
+    - name: search_knowledge
+      description: "Weighted search across all knowledge types"
+    - name: get_relevant_knowledge
+      description: "Project-aware knowledge retrieval"
+    - name: get_stale_knowledge
+      description: "Find knowledge items needing review"
+    # Identity
+    - name: get_identity_card
+      description: "Export markdown identity card for non-MCP tools"
+    - name: update_identity
+      description: "Update profile, preferences, or quality standards"
+    # Project context
+    - name: get_project_context
+      description: "Load current project state and snapshot"
+    - name: save_project_snapshot
+      description: "Persist project state for cross-session continuity"
+    # Agent context
+    - name: get_recent_context
+      description: "Recover lost session context from recent saves"
+    - name: save_agent_context
+      description: "Save agent checkpoint for session recovery"
+    # Knowledge management
+    - name: update_knowledge
+      description: "Edit existing lesson or decision content"
+    - name: archive_knowledge
+      description: "Archive outdated knowledge without deleting"
+    - name: review_knowledge
+      description: "Mark knowledge as reviewed, refresh timestamp"
+    - name: merge_knowledge
+      description: "Merge duplicate knowledge entries"
+    - name: link_knowledge
+      description: "Create relationships between knowledge items"
+    # Tools registry
+    - name: register_tool
+      description: "Register a local tool/program in the tool graph"
+    - name: find_tool
+      description: "Search the tool registry by name or capability"
+    # Review and reports
+    - name: request_outline_review
+      description: "Generate interactive HTML knowledge review page"
+    - name: apply_review
+      description: "Execute review results — archive marked items"
+    - name: export_feedback_report
+      description: "Generate anonymous usage metrics report"
+
+documentation:
+  quickStart: |
+    pip install piia-engram
+    engram setup
+    # Restart your AI tool — first conversation auto-loads your identity
+
+deployment:
+  categories: ["knowledge-management", "developer-tools", "memory"]
+  useCases: ["cross-tool-memory", "identity-persistence", "knowledge-governance"]
