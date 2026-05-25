@@ -25,6 +25,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+from piia_engram.beta_tracker import track_event as _beta
+
 # Starlette imports are deferred to SSE mode — not needed for stdio.
 # Importing eagerly can slow startup and fail in minimal Docker images.
 try:
@@ -500,6 +502,7 @@ async def get_user_context(
     try:
         context = _engram.generate_context(project_folder, level=level)
         _track("get_user_context", success=True)
+        _beta("cold_start", level=level)
     except Exception as exc:
         _track("get_user_context", success=False)
         logger.warning("generate_context failed: %s", exc)
@@ -938,6 +941,10 @@ async def add_lesson(
     try:
         result = _engram.add_lesson(lesson)
         _track("add_lesson", success=True)
+        _beta("knowledge_created", kind="lesson",
+              domain=domain[:80] if domain else "",
+              source_tool=source_tool[:40] if source_tool else "",
+              tier=result.get("tier", "staging") if isinstance(result, dict) else "staging")
     except Exception as exc:
         _track("add_lesson", success=False)
         return f"添加教训失败: {exc}"
@@ -983,6 +990,10 @@ async def add_decision(
     try:
         result = _engram.add_decision(decision)
         _track("add_decision", success=True)
+        _beta("knowledge_created", kind="decision",
+              domain=domain[:80] if domain else "",
+              source_tool=source_tool[:40] if source_tool else "",
+              tier=result.get("tier", "staging") if isinstance(result, dict) else "staging")
     except Exception as exc:
         _track("add_decision", success=False)
         return f"添加决策失败: {exc}"
@@ -1484,7 +1495,9 @@ async def archive_knowledge(item_id: str) -> str:
     Args:
         item_id: 要归档的 lesson 或 decision ID。 / ID of the lesson or decision to archive.
     """
-    return _json(_engram.archive_knowledge(item_id))
+    result = _engram.archive_knowledge(item_id)
+    _beta("knowledge_rejected", action="archive")
+    return _json(result)
 
 
 @mcp.tool()
@@ -1500,7 +1513,9 @@ async def review_knowledge(knowledge_id: str) -> str:
     Args:
         knowledge_id: 要复习的知识条目 ID。 / ID of the knowledge item to review.
     """
-    return _json(_engram.review_knowledge(knowledge_id))
+    result = _engram.review_knowledge(knowledge_id)
+    _beta("knowledge_reviewed")
+    return _json(result)
 
 
 @mcp.tool()
@@ -1952,10 +1967,12 @@ async def wrap_up_session(
             results["project_snapshot"] = {"error": str(exc)}
 
     # Step 3: Auto-reconcile external AI memories and configs
+    _reconcile_imported = 0
     try:
         reconcile = _engram.reconcile_memories()
         if reconcile["imported"] > 0:
             results["memory_sync"] = reconcile
+            _reconcile_imported += reconcile["imported"]
     except Exception as exc:
         logger.warning("reconcile_memories failed: %s", exc)
 
@@ -1963,14 +1980,19 @@ async def wrap_up_session(
         cfg_sync = _engram.reconcile_ai_configs()
         if cfg_sync["imported"] > 0:
             results["config_sync"] = cfg_sync
+            _reconcile_imported += cfg_sync["imported"]
     except Exception as exc:
         logger.warning("reconcile_ai_configs failed: %s", exc)
+
+    if _reconcile_imported > 0:
+        _beta("reconcile", imported=_reconcile_imported)
 
     # Step 4: Evaluate tier promotions (staging->verified based on access evidence)
     try:
         tier_result = _engram.evaluate_tiers()
         if tier_result["promoted"] > 0:
             results["tier_promotions"] = tier_result
+            _beta("knowledge_promoted", count=tier_result["promoted"], method="auto_access")
     except Exception as exc:
         logger.warning("evaluate_tiers failed: %s", exc)
 
@@ -2000,7 +2022,13 @@ async def wrap_up_session(
     except Exception as exc:
         logger.warning("get_staging_summary failed: %s", exc)
 
-    # Step 6: Record this tool call BEFORE flushing so it's included
+    # Step 6: Beta event — session end
+    _beta("session_end",
+          source_tool=source_tool[:40] if source_tool else "",
+          has_project=bool(project_folder),
+          insights=bool(results.get("insights")))
+
+    # Step 7: Record this tool call BEFORE flushing so it's included
     _track("wrap_up_session", success=True)
 
     # Step 7: Flush anonymous usage statistics (local + optional remote)

@@ -2539,6 +2539,15 @@ def _build_feedback_report(data_dir: str | None = None) -> dict:
         except Exception:
             pass
 
+    # Beta event tracking aggregate
+    try:
+        from piia_engram.beta_tracker import aggregate_events
+        beta = aggregate_events()
+        if beta:
+            report["beta_events"] = beta
+    except Exception:
+        pass
+
     return report
 
 
@@ -2592,6 +2601,29 @@ def run_feedback() -> None:
     if report.get("configured_tools"):
         print(f"  ── 已配置工具 ──")
         print(f"    {', '.join(report['configured_tools'])}")
+        print()
+
+    beta = report.get("beta_events", {})
+    if beta:
+        print("  ── 行为埋点 ──")
+        print(f"  总事件数: {beta.get('total_events', 0)}")
+        if beta.get("tracking_days"):
+            print(f"  追踪天数: {beta['tracking_days']} 天")
+        ec = beta.get("event_counts", {})
+        if ec:
+            for ev_name, ev_count in sorted(ec.items(), key=lambda x: -x[1]):
+                print(f"    {ev_name}: {ev_count}")
+        prom = beta.get("promotions", {})
+        if prom:
+            print(f"  晋升总数: {prom.get('total', 0)}")
+            for m, c in prom.get("methods", {}).items():
+                print(f"    方式 {m}: {c}")
+        cs = beta.get("cold_starts", {})
+        if cs:
+            print(f"  冷启动级别: {cs}")
+        rec = beta.get("reconcile", {})
+        if rec:
+            print(f"  跨工具同步: {rec.get('sync_count', 0)} 次, 导入 {rec.get('total_imported', 0)} 条")
         print()
 
     # JSON for copy-paste
