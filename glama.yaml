@@ -15,10 +15,6 @@ spec:
     protocol: stdio
     capabilities: ["tools", "resources"]
 
-  resources:
-    memory: 256Mi
-    cpu: 0.25
-
   environment:
     ENGRAM_TOOLS:
       type: string

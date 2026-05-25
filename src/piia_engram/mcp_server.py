@@ -25,9 +25,15 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
+# Starlette imports are deferred to SSE mode — not needed for stdio.
+# Importing eagerly can slow startup and fail in minimal Docker images.
+try:
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    _HAS_STARLETTE = True
+except ImportError:
+    _HAS_STARLETTE = False
 
 # ---------------------------------------------------------------------------
 # Sibling import setup (same pattern as local_llm_bridge.py)
@@ -441,21 +447,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv[1:] if argv is not None else None)
 
 
-class TokenAuthMiddleware(BaseHTTPMiddleware):
-    """Simple Bearer token auth for remote SSE mode."""
+if _HAS_STARLETTE:
+    class TokenAuthMiddleware(BaseHTTPMiddleware):
+        """Simple Bearer token auth for remote SSE mode."""
 
-    def __init__(self, app, token: str):
-        super().__init__(app)
-        self.token = token
+        def __init__(self, app, token: str):
+            super().__init__(app)
+            self.token = token
 
-    async def dispatch(self, request: Request, call_next):
-        auth_header = request.headers.get("authorization", "")
-        if not auth_header.startswith("Bearer ") or not secrets.compare_digest(auth_header[7:], self.token):
-            return JSONResponse(
-                {"error": "Unauthorized. Set ENGRAM_AUTH_TOKEN."},
-                status_code=401,
-            )
-        return await call_next(request)
+        async def dispatch(self, request: Request, call_next):
+            auth_header = request.headers.get("authorization", "")
+            if not auth_header.startswith("Bearer ") or not secrets.compare_digest(auth_header[7:], self.token):
+                return JSONResponse(
+                    {"error": "Unauthorized. Set ENGRAM_AUTH_TOKEN."},
+                    status_code=401,
+                )
+            return await call_next(request)
 
 
 # ===========================================================================
@@ -2242,9 +2249,17 @@ if __name__ == "__main__":
             file=sys.stderr,
         )
 
+    # Detect ephemeral/Docker environments where no local AI tools exist.
+    # Skip auto_migrate and reconcile to speed up startup (critical for
+    # mcp-proxy which has short connection timeouts).
+    _is_ephemeral = (
+        os.path.isfile("/.dockerenv")
+        or os.environ.get("ENGRAM_EPHEMERAL", "").strip().lower() in ("1", "true", "yes")
+    )
+
     # Auto-migrate legacy configs on first run after upgrade (stdio only;
     # must happen before mcp.run() to avoid polluting the MCP stdio channel).
-    if args.transport == "stdio":
+    if args.transport == "stdio" and not _is_ephemeral:
         try:
             from piia_engram.setup_wizard import auto_migrate  # type: ignore[import]
         except ImportError:
@@ -2258,23 +2273,28 @@ if __name__ == "__main__":
     # Auto-reconcile on MCP server startup — runs once regardless of which
     # AI tool connects.  This ensures cross-tool memory sync happens even if
     # the AI tool never calls get_user_context.
-    try:
-        _mem = _engram.reconcile_memories()
-        _cfg = _engram.reconcile_ai_configs()
-        if _mem["imported"] or _cfg["imported"]:
-            _msgs = []
-            if _mem["imported"]:
-                _msgs.append(f"memories={_mem['imported']}")
-            if _cfg["imported"]:
-                _msgs.append(f"configs={_cfg['imported']}")
-            print(
-                f"[engram] startup sync: {', '.join(_msgs)}",
-                file=sys.stderr,
-            )
-    except Exception as exc:
-        logger.warning("startup sync failed: %s", exc)
+    # Skip in ephemeral containers — no AI tool configs to scan.
+    if not _is_ephemeral:
+        try:
+            _mem = _engram.reconcile_memories()
+            _cfg = _engram.reconcile_ai_configs()
+            if _mem["imported"] or _cfg["imported"]:
+                _msgs = []
+                if _mem["imported"]:
+                    _msgs.append(f"memories={_mem['imported']}")
+                if _cfg["imported"]:
+                    _msgs.append(f"configs={_cfg['imported']}")
+                print(
+                    f"[engram] startup sync: {', '.join(_msgs)}",
+                    file=sys.stderr,
+                )
+        except Exception as exc:
+            logger.warning("startup sync failed: %s", exc)
 
     if args.transport == "sse":
+        if not _HAS_STARLETTE:
+            print("ERROR: SSE mode requires starlette. Install: pip install piia-engram[remote]")
+            sys.exit(1)
         token = os.environ.get("ENGRAM_AUTH_TOKEN", "").strip()
         if not token:
             print("ERROR: ENGRAM_AUTH_TOKEN environment variable is required for SSE mode.")
