@@ -433,6 +433,15 @@ def _validate_path(value: str, *, allow_empty: bool = False) -> str | None:
     return None
 
 
+def _safe_err(exc: Exception) -> str:
+    """Return a sanitized error message without internal filesystem paths."""
+    msg = str(exc)
+    # Strip any Windows/Unix absolute paths from the message
+    msg = re.sub(r'[A-Za-z]:\\[\w\\. -]+', '<path>', msg)
+    msg = re.sub(r'/[\w/. -]{3,}', '<path>', msg)
+    return msg
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for transport configuration."""
     parser = argparse.ArgumentParser(description="Engram MCP Server")
@@ -524,7 +533,7 @@ async def get_user_context(
     except Exception as exc:
         _track("get_user_context", success=False)
         logger.warning("generate_context failed: %s", exc)
-        return f"Engram 上下文加载失败: {exc}"
+        return f"Engram 上下文加载失败: {_safe_err(exc)}"
     if not context:
         return (
             "Engram 为空——这是新用户。请帮助他们建立身份：\n"
@@ -577,7 +586,7 @@ async def refresh_quick_context(level: str = "standard") -> str:
     except Exception as exc:
         _track("refresh_quick_context", success=False)
         logger.warning("refresh_quick_context failed: %s", exc)
-        return f"快照写入失败: {exc}"
+        return f"快照写入失败: {_safe_err(exc)}"
 
 
 @mcp.tool()
@@ -596,7 +605,7 @@ async def get_identity_card() -> str:
     except Exception as exc:
         _track("get_identity_card", success=False)
         logger.warning("export_identity_card failed: %s", exc)
-        return f"身份卡生成失败: {exc}"
+        return f"身份卡生成失败: {_safe_err(exc)}"
     if not card:
         return "身份卡为空——尚未积累足够的知识。"
     return card
@@ -877,7 +886,7 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
         _track("search_knowledge", success=True)
     except Exception as exc:
         _track("search_knowledge", success=False)
-        return f"搜索失败: {exc}"
+        return f"搜索失败: {_safe_err(exc)}"
     return _json(result)
 
 
@@ -1045,7 +1054,7 @@ async def memory_store(
             return f"Playbook 已记录: {label}"
     except Exception as exc:
         _track("memory_store", success=False)
-        return f"memory_store 失败: {exc}"
+        return f"memory_store 失败: {_safe_err(exc)}"
 
 
 @mcp.tool()
@@ -1092,7 +1101,7 @@ async def add_lesson(
               tier=result.get("tier", "staging") if isinstance(result, dict) else "staging")
     except Exception as exc:
         _track("add_lesson", success=False)
-        return f"添加教训失败: {exc}"
+        return f"添加教训失败: {_safe_err(exc)}"
     if result.get("status") == "duplicate":
         return _json(result)
     return f"教训已记录: {summary}"
@@ -1144,7 +1153,7 @@ async def add_decision(
               tier=result.get("tier", "staging") if isinstance(result, dict) else "staging")
     except Exception as exc:
         _track("add_decision", success=False)
-        return f"添加决策失败: {exc}"
+        return f"添加决策失败: {_safe_err(exc)}"
     if result.get("status") == "duplicate":
         return _json(result)
     return f"决策已记录: {question} → {choice}"
@@ -1208,7 +1217,7 @@ async def add_playbook(
         _track("add_playbook", success=True)
     except Exception as exc:
         _track("add_playbook", success=False)
-        return f"添加 Playbook 失败: {exc}"
+        return f"添加 Playbook 失败: {_safe_err(exc)}"
     if result.get("status") == "duplicate":
         return _json(result)
     if result.get("error"):
@@ -1232,7 +1241,7 @@ async def get_playbooks(domain: str = "", limit: int = 20) -> str:
         _track("get_playbooks", success=True)
     except Exception as exc:
         _track("get_playbooks", success=False)
-        return f"获取 Playbooks 失败: {exc}"
+        return f"获取 Playbooks 失败: {_safe_err(exc)}"
     if not result:
         return "尚无已保存的 Playbook。"
     return _json(result)
@@ -1253,7 +1262,7 @@ async def get_playbook(playbook_id: str) -> str:
         _track("get_playbook", success=True)
     except Exception as exc:
         _track("get_playbook", success=False)
-        return f"获取 Playbook 失败: {exc}"
+        return f"获取 Playbook 失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
     return _json(result)
@@ -1274,7 +1283,7 @@ async def get_recent_playbooks(limit: int = 5) -> str:
         _track("get_recent_playbooks", success=True)
     except Exception as exc:
         _track("get_recent_playbooks", success=False)
-        return f"获取近期 Playbook 失败: {exc}"
+        return f"获取近期 Playbook 失败: {_safe_err(exc)}"
     if not result:
         return "尚无最近使用的 Playbook。 / No recently used Playbooks."
     return _json(result)
@@ -1344,7 +1353,7 @@ async def update_playbook(
         _track("update_playbook", success=True)
     except Exception as exc:
         _track("update_playbook", success=False)
-        return f"更新 Playbook 失败: {exc}"
+        return f"更新 Playbook 失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
     return f"Playbook 已更新: {result.get('title', playbook_id)} (v{result.get('version', '?')})"
@@ -1377,7 +1386,7 @@ async def prepare_playbook_execution(
         _track("prepare_playbook_execution", success=True)
     except Exception as exc:
         _track("prepare_playbook_execution", success=False)
-        return f"准备执行计划失败: {exc}"
+        return f"准备执行计划失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
     return _json(result)
@@ -1406,7 +1415,7 @@ async def update_execution_step(
         _track("update_execution_step", success=True)
     except Exception as exc:
         _track("update_execution_step", success=False)
-        return f"更新步骤状态失败: {exc}"
+        return f"更新步骤状态失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
     return _json(result)
@@ -1427,7 +1436,7 @@ async def get_execution_status(playbook_id: str) -> str:
         _track("get_execution_status", success=True)
     except Exception as exc:
         _track("get_execution_status", success=False)
-        return f"查询执行状态失败: {exc}"
+        return f"查询执行状态失败: {_safe_err(exc)}"
     return _json(result)
 
 
@@ -1446,7 +1455,7 @@ async def archive_playbook(playbook_id: str) -> str:
         _track("archive_playbook", success=True)
     except Exception as exc:
         _track("archive_playbook", success=False)
-        return f"归档 Playbook 失败: {exc}"
+        return f"归档 Playbook 失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
     return f"Playbook 已归档: {result.get('title', playbook_id)}"
@@ -1502,7 +1511,7 @@ async def register_tool(
         _track("register_tool", success=True)
     except Exception as exc:
         _track("register_tool", success=False)
-        return f"注册工具失败: {exc}"
+        return f"注册工具失败: {_safe_err(exc)}"
     action = result.pop("_action", "registered")
     action_zh = "已更新" if action == "updated" else "已注册"
     return f"工具{action_zh}: {name}" + (f" ({path})" if path else "")
@@ -1523,7 +1532,7 @@ async def find_tool(query: str) -> str:
         _track("find_tool", success=True)
     except Exception as exc:
         _track("find_tool", success=False)
-        return f"搜索工具失败: {exc}"
+        return f"搜索工具失败: {_safe_err(exc)}"
     if not results:
         return f"未找到匹配 '{query}' 的工具。"
     return _json(results)
@@ -1544,7 +1553,7 @@ async def list_tools(category: str = "") -> str:
         _track("list_tools", success=True)
     except Exception as exc:
         _track("list_tools", success=False)
-        return f"列出工具失败: {exc}"
+        return f"列出工具失败: {_safe_err(exc)}"
     if not results:
         return "尚无已注册的工具。"
     return _json(results)
@@ -1852,6 +1861,8 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
         data = json.loads(data_json)
     except json.JSONDecodeError:
         return "错误: data_json 必须是合法的 JSON。"
+    if not isinstance(data, dict):
+        return "错误: data_json 应为 JSON 对象（{}），不能是数组或标量。"
     _engram.save_project_snapshot(project_folder, data)
     _track("save_project_snapshot", success=True)
     return f"项目快照已保存: {project_folder}"
@@ -1897,7 +1908,7 @@ async def read_web_content(url: str) -> str:
     except urllib.error.URLError:
         return "Engram Reader 服务未运行。请先启动: python reader_server.py"
     except Exception as e:
-        return f"读取失败: {e}"
+        return f"读取失败: {_safe_err(e)}"
 
 
 # ===========================================================================
@@ -1925,7 +1936,7 @@ async def export_engram(output_path: Optional[str] = None) -> str:
         path = _engram.export_all(output_path)
         return f"导出成功: {path}"
     except Exception as e:
-        return f"导出失败: {e}"
+        return f"导出失败: {_safe_err(e)}"
 
 
 @mcp.tool()
@@ -1970,7 +1981,7 @@ async def export_engram_to_openclaw(output_dir: str = "") -> str:
             return _json(files)
         return _json(result)
     except Exception as e:
-        return f"导出 OpenClaw 兼容格式失败: {e}"
+        return f"导出 OpenClaw 兼容格式失败: {_safe_err(e)}"
 
 
 @mcp.tool()
@@ -1996,7 +2007,7 @@ async def import_engram_from_openclaw(
         result = import_from_openclaw(_engram, soul_path, memory_path, user_path)
         return _json(result)
     except Exception as e:
-        return f"从 OpenClaw 兼容格式导入失败: {e}"
+        return f"从 OpenClaw 兼容格式导入失败: {_safe_err(e)}"
 
 
 @mcp.tool()
@@ -2017,15 +2028,36 @@ async def get_audit_log(limit: int = 50) -> str:
     log_path = _engram.root / "audit.log"
     if not log_path.is_file():
         return _json({"entries": [], "total": 0, "message": "Audit logging not enabled. Set ENGRAM_AUDIT=1."})
-    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+
+    # Tail-read: only load enough bytes from the end to cover *limit* entries,
+    # avoiding reading potentially large log files entirely into memory.
+    _APPROX_LINE_SIZE = 512  # generous estimate per JSONL entry
+    file_size = log_path.stat().st_size
+    read_size = min(file_size, limit * _APPROX_LINE_SIZE)
+
+    with open(log_path, "rb") as f:
+        if read_size < file_size:
+            f.seek(-read_size, 2)  # seek from end
+            partial = f.read().decode("utf-8", errors="replace")
+            # first line may be partial — discard it
+            tail_lines = partial.split("\n")[1:]
+        else:
+            tail_lines = f.read().decode("utf-8", errors="replace").split("\n")
+
     entries = []
-    for line in reversed(lines[-limit:]):
+    for line in reversed(tail_lines):
+        line = line.strip()
+        if not line:
+            continue
         try:
             entries.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-    _engram._audit.log("read", "audit_log", detail=f"returned {len(entries)}/{len(lines)}")
-    return _json({"entries": entries, "total": len(lines)})
+        if len(entries) >= limit:
+            break
+
+    _engram._audit.log("read", "audit_log", detail=f"returned {len(entries)}")
+    return _json({"entries": entries, "total": len(entries)})
 
 
 # ===========================================================================
@@ -2210,6 +2242,16 @@ async def wrap_up_session(
             )
     except Exception as exc:
         logger.debug("telemetry flush skipped: %s", exc)
+
+    # Step 8: Periodic anonymous feedback report (weekly, if opted in)
+    try:
+        from piia_engram.telemetry import is_feedback_enabled, _feedback_due, send_feedback
+        if is_feedback_enabled() and _feedback_due():
+            from piia_engram.setup_wizard import _build_feedback_report
+            report = _build_feedback_report()
+            send_feedback(report)
+    except Exception as exc:
+        logger.debug("feedback send skipped: %s", exc)
 
     return _json(results)
 

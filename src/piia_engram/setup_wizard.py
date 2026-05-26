@@ -1488,46 +1488,38 @@ def _run_privacy_preferences(data_dir: str) -> None:
 def _run_privacy_defaults(data_dir: str) -> None:
     """Set reconcile=on by default, then ask about telemetry."""
     from piia_engram.telemetry import (
-        _load_config, _save_config, set_enabled, set_remote_enabled,
+        _load_config, _save_config, set_enabled, set_feedback_enabled,
+        set_remote_enabled,
     )
 
     cfg = _load_config()
     cfg["reconcile_authorized"] = True
     _save_config(cfg)
 
-    # --- Ask about telemetry (not hidden behind --advanced) ---
+    # --- Ask about telemetry — one question, all-or-nothing ---
     print(_t("  [匿名使用统计]",
              "  [Anonymous Usage Statistics]"))
     print(_t("      帮助我们了解哪些功能被使用、哪些需要改进。",
              "      Help us understand which features are used and need improvement."))
-    print(_t("      仅记录：工具名称+调用次数、知识条目数、版本号",
-             "      Only logs: tool names + counts, knowledge totals, version"))
-    print(_t("      绝不发送：知识内容、prompt、文件路径、邮箱、IP",
-             "      Never sent: knowledge content, prompts, file paths, email, IP"))
+    print(_t("      包含：工具调用次数、知识条目数、每周治理概况",
+             "      Includes: tool call counts, knowledge totals, weekly governance summary"))
+    print(_t("      绝不包含：知识内容、prompt、文件路径、邮箱、IP",
+             "      Never includes: knowledge content, prompts, file paths, email, IP"))
     print(_t("      随时关闭：engram telemetry off\n",
              "      Disable anytime: engram telemetry off\n"))
 
-    telemetry_enabled = _yn(
+    enabled = _yn(
         _t("  开启匿名使用统计？",
            "  Enable anonymous usage statistics?"),
         default=True,
     )
-    set_enabled(telemetry_enabled)
-    if telemetry_enabled:
-        remote_enabled = _yn(
-            _t("  同时发送到开发团队（HTTPS 加密，无第三方）？",
-               "  Also send to dev team (HTTPS encrypted, no third parties)?"),
-            default=True,
-        )
-        set_remote_enabled(remote_enabled)
-        if remote_enabled:
-            print(_t("  ✅ 匿名统计已开启（本地+远程）\n",
-                     "  ✅ Anonymous stats enabled (local + remote)\n"))
-        else:
-            print(_t("  ✅ 匿名统计已开启（仅本地）\n",
-                     "  ✅ Anonymous stats enabled (local only)\n"))
+    set_enabled(enabled)
+    set_remote_enabled(enabled)
+    set_feedback_enabled(enabled)
+    if enabled:
+        print(_t("  ✅ 已开启（含每周匿名反馈报告）\n",
+                 "  ✅ Enabled (including weekly anonymous feedback reports)\n"))
     else:
-        set_remote_enabled(False)
         print(_t("  ℹ️  未开启。可随时运行 engram telemetry on 改变。\n",
                  "  ℹ️  Not enabled. Run engram telemetry on to change anytime.\n"))
 
@@ -2240,6 +2232,25 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
                 print(f"  Endpoint: {status.get('endpoint', '(unknown)')}")
             print()
 
+    elif sub == "feedback":
+        from piia_engram.telemetry import is_feedback_enabled, set_feedback_enabled
+        fb_sub = sub_args[1] if len(sub_args) > 1 else "status"
+        if fb_sub in ("on", "enable"):
+            if not is_enabled():
+                set_enabled(True)
+                print("\n  ✅ Local statistics also enabled (required for feedback).")
+            set_remote_enabled(True)
+            set_feedback_enabled(True)
+            print("  ✅ Weekly anonymous feedback reports enabled.")
+            print("  Reports are sent automatically during wrap_up_session.\n")
+        elif fb_sub in ("off", "disable"):
+            set_feedback_enabled(False)
+            print("\n  ✅ Feedback reports disabled. Other telemetry settings unchanged.\n")
+        else:
+            fb_state = "ON" if is_feedback_enabled() else "OFF"
+            print(f"\n  Weekly feedback reports: {fb_state}")
+            print("  Toggle: engram telemetry feedback on/off\n")
+
     elif sub == "--show-payload":
         print("\n  Next payload (if enabled):\n")
         print(preview_payload())
@@ -2248,12 +2259,14 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
     else:
         print(
             "\nUsage:\n"
-            "  engram telemetry status       Show current status\n"
-            "  engram telemetry preview      Show what data will be logged\n"
-            "  engram telemetry on           Enable anonymous usage statistics\n"
-            "  engram telemetry off          Disable anonymous usage statistics\n"
-            "  engram telemetry remote on    Enable remote sending (Phase 2)\n"
-            "  engram telemetry remote off   Disable remote sending\n"
+            "  engram telemetry status         Show current status\n"
+            "  engram telemetry preview        Show what data will be logged\n"
+            "  engram telemetry on             Enable anonymous usage statistics\n"
+            "  engram telemetry off            Disable anonymous usage statistics\n"
+            "  engram telemetry remote on      Enable remote sending (Phase 2)\n"
+            "  engram telemetry remote off     Disable remote sending\n"
+            "  engram telemetry feedback on    Enable weekly feedback reports\n"
+            "  engram telemetry feedback off   Disable weekly feedback reports\n"
         )
 
 
@@ -2626,9 +2639,26 @@ def run_feedback() -> None:
             print(f"  跨工具同步: {rec.get('sync_count', 0)} 次, 导入 {rec.get('total_imported', 0)} 条")
         print()
 
+    # Auto-send if feedback reporting is opted in
+    try:
+        from piia_engram.telemetry import is_feedback_enabled, send_feedback
+        if is_feedback_enabled():
+            print("  ── 自动上报 ──")
+            ok = send_feedback(report)
+            if ok:
+                print("  ✅ 反馈已匿名发送到 Engram 开发团队。")
+                print("     关闭自动上报: engram telemetry feedback off\n")
+            else:
+                print("  ⚠️  自动上报失败（网络问题？），报告仅保留在本地。\n")
+        else:
+            print("  ── 自动上报未开启 ──")
+            print("  开启后每周自动发送: engram telemetry feedback on\n")
+    except Exception:
+        pass
+
     # JSON for copy-paste
     report_json = json.dumps(report, ensure_ascii=False, indent=2)
-    print("  ── 可复制 JSON（粘贴到反馈帖即可）──")
+    print("  ── 可复制 JSON（备用，粘贴到反馈帖即可）──")
     print(f"  ```json\n{report_json}\n  ```")
     print()
     print("  此报告不含任何知识内容、文件路径或个人信息。")

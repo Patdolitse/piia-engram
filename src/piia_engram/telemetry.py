@@ -37,7 +37,9 @@ logger = logging.getLogger(__name__)
 
 # Phase 2 remote endpoint (Cloudflare Worker)
 _DEFAULT_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/events"
+_DEFAULT_FEEDBACK_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/feedback"
 _REMOTE_TIMEOUT = 3  # seconds — fail fast, never block MCP tools
+_FEEDBACK_INTERVAL_DAYS = 7  # send feedback at most once per week
 
 
 # ---------------------------------------------------------------------------
@@ -439,3 +441,84 @@ class ToolCallTracker:
         self._last_flush_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self._calls.clear()
         return result
+
+
+# ---------------------------------------------------------------------------
+# Feedback reporting — richer anonymous governance/usage reports
+# ---------------------------------------------------------------------------
+
+def is_feedback_enabled() -> bool:
+    """Check if anonymous feedback reporting is enabled.
+
+    Requires BOTH local stats enabled AND explicit feedback consent.
+    Respects ENGRAM_FEEDBACK env var override.
+    """
+    if not is_enabled():
+        return False
+    env = os.environ.get("ENGRAM_FEEDBACK", "").strip().lower()
+    if env in ("0", "false", "off", "no"):
+        return False
+    if env in ("1", "true", "on", "yes"):
+        return True
+    return _load_config().get("feedback_enabled", False)
+
+
+def set_feedback_enabled(enabled: bool) -> None:
+    """Persist the feedback reporting opt-in/opt-out choice."""
+    cfg = _load_config()
+    cfg["feedback_enabled"] = enabled
+    if enabled:
+        cfg["feedback_opted_in_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        cfg["feedback_opted_out_at"] = datetime.now(timezone.utc).isoformat()
+    _save_config(cfg)
+
+
+def _feedback_due() -> bool:
+    """Check if enough time has passed since the last feedback send."""
+    cfg = _load_config()
+    last = cfg.get("last_feedback_sent", "")
+    if not last:
+        return True
+    try:
+        last_dt = datetime.fromisoformat(last)
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds() / 86400
+        return elapsed >= _FEEDBACK_INTERVAL_DAYS
+    except (TypeError, ValueError):
+        return True
+
+
+def send_feedback(report: dict[str, Any]) -> bool:
+    """Send a feedback report to the remote endpoint. Returns True on success.
+
+    Injects the daily_id for anonymous tracking. NEVER raises.
+    """
+    if not is_feedback_enabled():
+        return False
+    try:
+        cfg = _load_config()
+        local_uuid = cfg.get("local_uuid", "")
+        if not local_uuid:
+            return False
+
+        report["daily_id"] = _daily_id(local_uuid)
+
+        endpoint = os.environ.get("ENGRAM_FEEDBACK_URL", "").strip() or _DEFAULT_FEEDBACK_ENDPOINT
+        data = json.dumps(report, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        req = Request(
+            endpoint,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req, timeout=5) as resp:
+            success = 200 <= resp.status < 300
+            if success:
+                cfg["last_feedback_sent"] = datetime.now(timezone.utc).isoformat()
+                _save_config(cfg)
+            return success
+    except (URLError, OSError, ValueError, Exception) as exc:
+        logger.debug("feedback send failed (silent): %s", exc)
+        return False

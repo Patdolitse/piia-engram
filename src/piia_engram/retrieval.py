@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -263,8 +264,14 @@ class RetrievalMixin:
                     return False
             if "date_after" in filters:
                 ts = item.get("timestamp") or item.get("created") or ""
-                if ts and ts < filters["date_after"]:
-                    return False
+                if ts:
+                    try:
+                        item_dt = datetime.fromisoformat(ts)
+                        cutoff_dt = datetime.fromisoformat(filters["date_after"])
+                        if item_dt < cutoff_dt:
+                            return False
+                    except (TypeError, ValueError):
+                        return False
             return True
 
         if scope in ("all", "lessons"):

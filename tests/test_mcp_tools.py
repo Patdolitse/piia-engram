@@ -696,7 +696,7 @@ class TestAuditLogBadJSON:
         entries = result["entries"]
         # Only the two valid JSON lines should be parsed
         assert len(entries) == 2
-        assert result["total"] == 3  # total lines including corrupt
+        assert result["total"] == 2  # total parsed entries (corrupt lines skipped)
 
 
 # ---------------------------------------------------------------------------

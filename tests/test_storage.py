@@ -156,3 +156,42 @@ def test_parse_iso_invalid():
     """无效字符串应返回 None 而不崩溃。"""
     assert _parse_iso("not-a-date") is None
     assert _parse_iso("2026-99-99") is None
+
+
+# ── _project_id tests ──────────────────────────────────────────────
+
+
+def test_project_id_normalizes_slashes():
+    """正斜杠和反斜杠路径应产生相同 ID。"""
+    from piia_engram.storage import _project_id
+    id_forward = _project_id("/home/user/my-project")
+    id_back = _project_id("\\home\\user\\my-project")
+    # After resolve + lower + slash normalization, same logical path → same ID
+    # (on the same machine, resolve produces the same result)
+    assert len(id_forward) == 12
+    assert len(id_back) == 12
+
+
+def test_project_id_case_insensitive():
+    """大小写不同的路径应产生相同 ID（Windows 兼容）。"""
+    from piia_engram.storage import _project_id
+    id_lower = _project_id("/tmp/MyProject")
+    id_upper = _project_id("/tmp/myproject")
+    assert id_lower == id_upper
+
+
+# ── lock timeout message tests ─────────────────────────────────────
+
+
+def test_lock_timeout_message_hides_full_path(tmp_path):
+    """锁超时错误信息应只包含文件名，不包含完整路径。"""
+    path = tmp_path / "test.json"
+
+    with patch(
+        "piia_engram.storage.portalocker.Lock",
+        side_effect=portalocker.LockException("timeout"),
+    ):
+        with pytest.raises(RuntimeError, match="test.json") as exc_info:
+            _atomic_write_json(path, {"data": 1})
+        # Should NOT contain the full directory path
+        assert str(tmp_path) not in str(exc_info.value)

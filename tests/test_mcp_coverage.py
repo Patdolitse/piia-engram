@@ -545,3 +545,53 @@ class TestMemoryStore:
         found = [d for d in decisions if "Redis" in d.get("title", "")]
         assert found
         assert found[0].get("tier") == "staging"
+
+
+# ---------------------------------------------------------------------------
+# F-04: save_project_snapshot rejects non-dict data_json
+# ---------------------------------------------------------------------------
+
+
+class TestSaveProjectSnapshotValidation:
+    def test_rejects_array_data_json(self, eng: Engram):
+        """data_json 为数组时应返回错误。"""
+        result = _run(mcp_server.save_project_snapshot(
+            project_folder="/tmp/test-project",
+            data_json='[1, 2, 3]',
+        ))
+        assert "JSON 对象" in result
+
+    def test_rejects_scalar_data_json(self, eng: Engram):
+        """data_json 为标量时应返回错误。"""
+        result = _run(mcp_server.save_project_snapshot(
+            project_folder="/tmp/test-project",
+            data_json='"just a string"',
+        ))
+        assert "JSON 对象" in result
+
+
+# ---------------------------------------------------------------------------
+# F-07: _safe_err strips filesystem paths from error messages
+# ---------------------------------------------------------------------------
+
+
+class TestSafeErr:
+    def test_strips_windows_path(self):
+        """Windows 绝对路径应被替换为 <path>。"""
+        from piia_engram.mcp_server import _safe_err
+        err = Exception(r"FileNotFoundError: C:\Users\test\data\file.json not found")
+        assert r"C:\Users" not in _safe_err(err)
+        assert "<path>" in _safe_err(err)
+
+    def test_strips_unix_path(self):
+        """Unix 绝对路径应被替换为 <path>。"""
+        from piia_engram.mcp_server import _safe_err
+        err = Exception("Permission denied: /home/user/.engram/data.json")
+        assert "/home/user" not in _safe_err(err)
+        assert "<path>" in _safe_err(err)
+
+    def test_preserves_non_path_message(self):
+        """不含路径的错误信息应保持不变。"""
+        from piia_engram.mcp_server import _safe_err
+        err = Exception("invalid JSON format")
+        assert _safe_err(err) == "invalid JSON format"

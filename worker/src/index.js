@@ -111,6 +111,81 @@ function validatePayload(data) {
   return null;
 }
 
+// --- Feedback 校验 ---
+
+const MAX_FEEDBACK_SIZE = 16384;
+const FEEDBACK_ALLOWED_FIELDS = new Set([
+  'report_type', 'report_version', 'generated_at', 'daily_id',
+  'engram_version', 'os', 'python',
+  'knowledge', 'top_domains', 'source_tools',
+  'first_knowledge_date', 'days_with_knowledge', 'avg_staging_age_days',
+  'session_count', 'top_mcp_tools', 'configured_tools', 'beta_events',
+]);
+
+function validateFeedback(data) {
+  if (!data || typeof data !== 'object') return 'invalid JSON';
+  if (!data.daily_id || typeof data.daily_id !== 'string') return 'missing daily_id';
+  if (data.daily_id.length > 64) return 'daily_id too long';
+  // Relaxed field check — allow unknown fields but store them in raw_json
+  return null;
+}
+
+// --- Feedback 接收 ---
+
+async function handleFeedback(request, env) {
+  const contentLength = parseInt(request.headers.get('content-length') || '0');
+  if (contentLength > MAX_FEEDBACK_SIZE) {
+    return new Response(JSON.stringify({ error: 'payload too large' }), {
+      status: 413, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
+  }
+
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'invalid JSON' }), {
+      status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const err = validateFeedback(data);
+  if (err) {
+    return new Response(JSON.stringify({ error: err }), {
+      status: 422, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const k = data.knowledge || {};
+  await env.DB.prepare(
+    `INSERT INTO feedback (daily_id, version, os, py,
+       knowledge_total, staging_count, verified_count, promotion_rate, avg_staging_age,
+       session_count, days_active, source_tools, top_domains, top_mcp_tools, beta_events, raw_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    data.daily_id,
+    data.engram_version || '',
+    data.os || '',
+    data.python || '',
+    k.total || 0,
+    k.staging || 0,
+    k.verified || 0,
+    k.promotion_rate ?? null,
+    data.avg_staging_age_days ?? null,
+    data.session_count || 0,
+    data.days_with_knowledge || 0,
+    JSON.stringify(data.source_tools || {}),
+    JSON.stringify(data.top_domains || {}),
+    JSON.stringify(data.top_mcp_tools || {}),
+    JSON.stringify(data.beta_events || {}),
+    JSON.stringify(data),
+  ).run();
+
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  });
+}
+
 // --- 事件接收 ---
 
 async function handleEvent(request, env) {
@@ -297,6 +372,33 @@ async function getStatsData(env) {
   // PyPI 下载统计
   const pypi = await fetchPypiStats();
 
+  // Feedback 报告汇总
+  const feedbackTotals = await env.DB.prepare(`
+    SELECT COUNT(*) AS total, COUNT(DISTINCT daily_id) AS unique_users,
+           AVG(knowledge_total) AS avg_knowledge, AVG(session_count) AS avg_sessions,
+           AVG(promotion_rate) AS avg_promotion_rate, AVG(avg_staging_age) AS avg_staging_age,
+           MAX(received) AS last_feedback
+    FROM feedback
+  `).first();
+
+  const feedbackRecent = await env.DB.prepare(`
+    SELECT received, daily_id, version, os, knowledge_total, staging_count,
+           verified_count, promotion_rate, avg_staging_age, session_count, days_active,
+           source_tools
+    FROM feedback ORDER BY received DESC LIMIT 10
+  `).all();
+
+  // Feedback 来源工具聚合
+  const feedbackToolAgg = {};
+  for (const row of feedbackRecent.results) {
+    try {
+      const tools = JSON.parse(row.source_tools);
+      for (const [name, count] of Object.entries(tools)) {
+        feedbackToolAgg[name] = (feedbackToolAgg[name] || 0) + count;
+      }
+    } catch {}
+  }
+
   return {
     totals, today, week, month,
     versions: versions.results,
@@ -310,6 +412,11 @@ async function getStatsData(env) {
     knowledge_counts: knowledgeCounts,
     recent_events: recentEvents.results,
     pypi,
+    feedback: {
+      totals: feedbackTotals,
+      recent: feedbackRecent.results,
+      tool_aggregate: feedbackToolAgg,
+    },
   };
 }
 
@@ -600,6 +707,42 @@ function renderDashboard(stats) {
     </table>
   </div>
 
+  <!-- Feedback 报告 -->
+  <div class="section-title">&#128203; 用户反馈报告</div>
+  ${(() => {
+    const fb = stats.feedback || {};
+    const ft = fb.totals || {};
+    if (!ft.total) return '<div class="card"><div class="empty">暂无反馈报告</div></div>';
+    const avgPR = ft.avg_promotion_rate != null ? (ft.avg_promotion_rate * 100).toFixed(1) + '%' : '-';
+    const avgAge = ft.avg_staging_age != null ? ft.avg_staging_age.toFixed(1) + ' 天' : '-';
+    const fbRows = (fb.recent || []).map(r => {
+      const pr = r.promotion_rate != null ? (r.promotion_rate * 100).toFixed(0) + '%' : '-';
+      const age = r.avg_staging_age != null ? r.avg_staging_age.toFixed(1) : '-';
+      let srcTools = '-';
+      try { const st = JSON.parse(r.source_tools); srcTools = Object.keys(st).join(', ') || '-'; } catch {}
+      return '<tr>' +
+        '<td style="white-space:nowrap">' + r.received + '</td>' +
+        '<td title="' + r.daily_id + '">' + r.daily_id.substring(0,8) + '...</td>' +
+        '<td>' + (r.version || '-') + '</td>' +
+        '<td>' + r.knowledge_total + ' (' + r.staging_count + 'S/' + r.verified_count + 'V)</td>' +
+        '<td>' + pr + '</td>' +
+        '<td>' + age + '</td>' +
+        '<td>' + r.session_count + '</td>' +
+        '<td>' + r.days_active + '</td>' +
+        '<td>' + srcTools + '</td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="9" class="empty">暂无</td></tr>';
+
+    return '<div class="metrics four">' +
+      '<div class="metric highlight"><div class="period-label">反馈总数</div><div class="period-row"><span class="period-val">' + ft.total + '</span><span class="period-unit">份报告</span></div><div class="period-row"><span class="period-val">' + (ft.unique_users || 0) + '</span><span class="period-unit">独立用户</span></div></div>' +
+      '<div class="metric"><div class="period-label">平均知识量</div><div class="period-row"><span class="period-val">' + Math.round(ft.avg_knowledge || 0) + '</span><span class="period-unit">条知识</span></div><div class="period-row"><span class="period-val">' + Math.round(ft.avg_sessions || 0) + '</span><span class="period-unit">会话数</span></div></div>' +
+      '<div class="metric"><div class="period-label">治理指标</div><div class="period-row"><span class="period-val">' + avgPR + '</span><span class="period-unit">确认率</span></div><div class="period-row"><span class="period-val">' + avgAge + '</span><span class="period-unit">staging 滞留</span></div></div>' +
+      '<div class="metric"><div class="period-label">最后报告</div><div class="period-row"><span class="period-unit">' + (ft.last_feedback || '暂无') + '</span></div></div>' +
+    '</div>' +
+    '<div class="card" style="margin-top:1rem;margin-bottom:1.5rem"><h2>最近反馈明细</h2>' +
+    '<table><thead><tr><th>时间</th><th>用户</th><th>版本</th><th>知识(S/V)</th><th>确认率</th><th>滞留天</th><th>会话</th><th>活跃天</th><th>来源工具</th></tr></thead><tbody>' + fbRows + '</tbody></table></div>';
+  })()}
+
   <div class="footer">
     基于 <a href="https://github.com/Patdolitse/piia-engram">Engram</a> ·
     Cloudflare Workers + D1 ·
@@ -634,6 +777,9 @@ export default {
     // 公开接口
     if (url.pathname === '/v1/events' && request.method === 'POST') {
       return handleEvent(request, env);
+    }
+    if (url.pathname === '/v1/feedback' && request.method === 'POST') {
+      return handleFeedback(request, env);
     }
     if (url.pathname === '/v1/health') {
       return new Response(JSON.stringify({ status: 'ok', service: 'engram-telemetry' }), {

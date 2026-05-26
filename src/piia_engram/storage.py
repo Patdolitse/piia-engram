@@ -271,7 +271,7 @@ def _atomic_write_json(path: Path, data: Any) -> None:
             os.close(fd)
         if tmp_path.exists():
             tmp_path.unlink()
-        raise RuntimeError(f"无法获取文件锁（超时 5s）：{path}") from exc
+        raise RuntimeError(f"无法获取文件锁（超时 5s）：{path.name}") from exc
     except Exception:
         if fd != -1:
             os.close(fd)
@@ -299,4 +299,5 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 def _project_id(folder: str) -> str:
     """Stable short hash for a project folder path."""
-    return hashlib.sha256(folder.encode()).hexdigest()[:12]
+    normalized = str(Path(folder).resolve()).replace("\\", "/").lower()
+    return hashlib.sha256(normalized.encode()).hexdigest()[:12]
