@@ -336,7 +336,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | | v3.26.0 (2026-05-23) |
 |---|---|
 | 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
-| MCP 工具数 | **60** 个（默认开放 12 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 48 个）|
+| MCP 工具数 | **61** 个（默认开放 13 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 48 个）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
 | 测试通过 | **768** 个（单元 + 集成）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
@@ -366,16 +366,17 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | **知识质量** | 发现久未复查的知识，生成摘要和 Markdown 报告 |
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
-### Tier-1 核心工具（12 个 — 日常工作流）
+### Tier-1 核心工具（13 个 — 日常工作流）
 
 | 工具 | 功能 |
 |------|------|
-| `get_user_context` | 冷启动：加载身份 + 知识上下文 |
-| `wrap_up_session` | 会话结束：提取知识 + 同步 |
+| `get_user_context` | **启动阶段** — 冷启动：加载身份 + 知识上下文（支持 `token_budget` 控制上下文大小） |
+| `wrap_up_session` | **会话结束** — 提取知识 + 同步 |
+| `memory_store` | **写回阶段** — 统一知识写入入口：按 `kind` 路由到 add_lesson / add_decision / add_playbook |
 | `add_lesson` | 记录可复用的经验教训 |
 | `add_decision` | 记录关键决策及理由 |
 | `add_playbook` | 记录操作手册（多步骤流程 + 关键词锚点，方便日后调取） |
-| `search_knowledge` | 多词加权搜索经验、决策和操作手册 |
+| `search_knowledge` | **检索阶段** — 多词加权搜索经验、决策和操作手册（支持 `filters_json` 按领域/层级/日期过滤） |
 | `get_relevant_knowledge` | 按当前项目检索相关知识 |
 | `get_identity_card` | 导出 Markdown 身份卡（给无 MCP 工具用） |
 | `update_identity` | 更新身份画像、偏好或质量标准 |
@@ -383,7 +384,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `save_project_snapshot` | 保存项目状态 |
 | `get_recent_context` | 重启后找回丢失的会话上下文 |
 
-默认只加载以上 12 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 60 个工具。
+默认只加载以上 13 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 61 个工具。
 
 ### Tier-2 高级工具（48 个 — 知识管理、审查、导入导出）
 
@@ -595,7 +596,7 @@ engram setup
 不会。所有核心工具均不发起网络请求。可选的匿名使用统计（工具调用计数，绝不包含内容）可在 setup 中开启，**默认关闭**。随时用 `engram telemetry preview` 查看、`engram telemetry off` 关闭。
 
 **piia-engram 有多少个 MCP 工具？**
-60 个：12 个 Tier-1 核心工具默认加载（身份、知识、操作手册、项目上下文、会话恢复），48 个 Tier-2 高级工具用于工具图谱、知识管理、审查、导入导出和审计日志。通过 `ENGRAM_TOOLS=all` 开启全部。
+61 个：13 个 Tier-1 核心工具默认加载（身份、知识、操作手册、项目上下文、会话恢复、统一 `memory_store` 写入入口），48 个 Tier-2 高级工具用于工具图谱、知识管理、审查、导入导出和审计日志。通过 `ENGRAM_TOOLS=all` 开启全部。
 
 **piia-engram 免费吗？**
 是的。Apache 2.0 开源，完全免费。无订阅，无云端计费，无厂商锁定。

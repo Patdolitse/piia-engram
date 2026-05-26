@@ -335,7 +335,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 60 MCP tools. By default, only the 12 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 60 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 61 MCP tools. By default, only the 13 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 61 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -349,16 +349,17 @@ piia-engram ships 60 MCP tools. By default, only the 12 **Tier-1 Core** tools ar
 }
 ```
 
-### Tier-1 Core (12 tools — daily workflow)
+### Tier-1 Core (13 tools — daily workflow)
 
 | Tool | Purpose |
 |---|---|
-| `get_user_context` | Load identity + knowledge at session start |
-| `wrap_up_session` | Save insights + sync at session end |
+| `get_user_context` | **Startup** — Load identity + knowledge at session start (supports `token_budget` for context size control) |
+| `wrap_up_session` | **Session end** — Save insights + sync at session end |
+| `memory_store` | **Writeback** — Unified write endpoint: routes to add_lesson / add_decision / add_playbook by `kind` |
 | `add_lesson` | Store a reusable lesson learned |
 | `add_decision` | Record a key decision with reasoning |
 | `add_playbook` | Record an operational playbook (multi-step procedure with trigger keywords) |
-| `search_knowledge` | Search lessons, decisions, and playbooks by weighted relevance |
+| `search_knowledge` | **Retrieval** — Search lessons, decisions, and playbooks (supports `filters_json` for domain/tier/date filtering) |
 | `get_relevant_knowledge` | Find knowledge relevant to current project |
 | `get_identity_card` | Export Markdown identity card for non-MCP tools |
 | `update_identity` | Update profile, preferences, or quality standards |
@@ -537,7 +538,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | | v3.26.0 (2026-05-23) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools exposed | **60** (12 Tier-1 default, 48 opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools exposed | **61** (13 Tier-1 default, 48 opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
 | Tests passing | **768** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
@@ -598,7 +599,7 @@ Run `engram doctor --fix` in a terminal, then restart your AI tool. This command
 No. All core tools make zero network requests. Optional anonymous usage statistics (tool call counts, never content) can be enabled during setup but are **off by default**. You can inspect the payload with `engram telemetry preview` and disable anytime with `engram telemetry off`.
 
 **How many MCP tools does piia-engram provide?**
-60 tools: 12 Tier-1 Core tools loaded by default (identity, knowledge, playbooks, project context, session recovery) plus 48 Tier-2 Advanced tools for tools registry, knowledge management, review, import/export, and audit logging. Enable all with `ENGRAM_TOOLS=all`.
+61 tools: 13 Tier-1 Core tools loaded by default (identity, knowledge, playbooks, project context, session recovery, unified `memory_store` write endpoint) plus 48 Tier-2 Advanced tools for tools registry, knowledge management, review, import/export, and audit logging. Enable all with `ENGRAM_TOOLS=all`.
 
 **Is piia-engram free?**
 Yes. Free and open source under the Apache 2.0 license. No subscription, no cloud tiers, no vendor lock-in.
