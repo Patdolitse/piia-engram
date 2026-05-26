@@ -2564,11 +2564,14 @@ def _build_feedback_report(data_dir: str | None = None) -> dict:
     return report
 
 
-def run_feedback() -> None:
+def run_feedback(*, dry_run: bool = False) -> None:
     """Generate and display an anonymous beta feedback report.
 
     The report contains only counts and distributions — no knowledge content,
     no file paths, no personal information. Users can copy-paste it.
+
+    Args:
+        dry_run: If True, show the exact payload that would be sent but do not send.
     """
     _configure_utf8_stdio()
 
@@ -2639,6 +2642,27 @@ def run_feedback() -> None:
             print(f"  跨工具同步: {rec.get('sync_count', 0)} 次, 导入 {rec.get('total_imported', 0)} 条")
         print()
 
+    # --dry-run: show exactly what would be sent, then stop
+    if dry_run:
+        print("  ── Dry-run: 以下是将要发送的完整 payload ──")
+        print("  (实际运行时不会发送，仅展示)\n")
+        preview = report.copy()
+        try:
+            from piia_engram.telemetry import _daily_id, _load_config
+            cfg = _load_config()
+            local_uuid = cfg.get("local_uuid", "")
+            if local_uuid:
+                preview["daily_id"] = _daily_id(local_uuid)
+            else:
+                preview["daily_id"] = "<would be generated at send time>"
+        except Exception:
+            preview["daily_id"] = "<would be generated at send time>"
+        preview_json = json.dumps(preview, ensure_ascii=False, indent=2)
+        print(f"  ```json\n{preview_json}\n  ```\n")
+        print("  此 payload 只包含计数和分布，不含任何知识内容或个人信息。")
+        print("  确认无误后，运行 engram feedback（不加 --dry-run）即可发送。")
+        return
+
     # Auto-send if feedback reporting is opted in
     try:
         from piia_engram.telemetry import is_feedback_enabled, send_feedback
@@ -2687,7 +2711,7 @@ def main() -> None:
     elif args[0] == "privacy":
         _run_privacy_report()
     elif args[0] == "feedback":
-        run_feedback()
+        run_feedback(dry_run="--dry-run" in args)
     else:
         print(
             "Engram CLI\n\n"
@@ -2697,6 +2721,7 @@ def main() -> None:
             "  engram doctor           Check config health (all AI tools)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
+            "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram stats            Show project growth metrics\n"
             "  engram stats --log      Append stats snapshot to local log\n"
             "  engram telemetry        Manage anonymous usage statistics\n"

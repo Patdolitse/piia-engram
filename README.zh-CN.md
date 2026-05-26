@@ -318,7 +318,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | 特性 | piia-engram | Claude Memory | 手动 CLAUDE.md | Mem0 | Letta (MemGPT) |
 |------|--------|--------------|----------------|------|----------------|
 | 主要定位 | 跨工具的用户身份 | 单对话记忆 | 单项目笔记 | Agent 向量记忆 | Agent 自编辑记忆 |
-| 跨工具协作 | ✅ MCP 原生（60 个工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
+| 跨工具协作 | ✅ MCP 原生（13 个核心工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
 | 存储位置 | 本地 JSON (`~/.engram/`) | 云端 | 本地 | 向量库 + Mem0 Cloud | Postgres 或 Letta Cloud |
 | 默认本地优先 | ✅ | ❌ | ✅ | ⚠ Cloud 是默认路径 | ⚠ Cloud 是默认路径 |
 | 静态加密 | ✅ AES-256-GCM, PBKDF2 600k（可选）| 视云端策略 | ❌ 明文 Markdown | 视存储后端配置 | 视 Postgres 配置 |
@@ -333,18 +333,18 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.26.0 (2026-05-23) |
+| | v3.29.1 (2026-05-26) |
 |---|---|
 | 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
-| MCP 工具数 | **61** 个（默认开放 13 个 Tier-1，`ENGRAM_TOOLS=all` 开放全部 48 个）|
+| MCP 工具 | **13 个核心**（默认加载）+ **48 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **768** 个（单元 + 集成）|
+| 测试通过 | **800+** 个（单元 + 集成）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **1097** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | AES-256-GCM，每条数据随机 salt + nonce |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
-| 核心功能网络调用 | 默认 **0** —— 除可选的 `read_web_content` 外，遥测仅写本地日志不上传（[详情](docs/telemetry_roadmap.md)）|
+| 核心功能网络调用 | 默认 **0** —— 除可选的 `read_web_content` 外，匿名使用统计可选开启（[隐私详情](PRIVACY.md)、[遥测路线图](docs/telemetry_roadmap.md)）|
 | 外部 AI 评测 | 4 个独立 AI 评审了使用统计设计；此前 3 次架构评测（见 [`docs/`](docs/)）|
 
 ## 核心功能
@@ -384,7 +384,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `save_project_snapshot` | 保存项目状态 |
 | `get_recent_context` | 重启后找回丢失的会话上下文 |
 
-默认只加载以上 13 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 61 个工具。
+默认只加载以上 13 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 48 个高级工具。
 
 ### Tier-2 高级工具（48 个 — 知识管理、审查、导入导出）
 
@@ -593,10 +593,17 @@ engram setup
 在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令扫描所有已知 MCP 配置，移除旧版 server 条目并修复失效路径，一步完成。
 
 **piia-engram 会把数据发到云端吗？**
-不会。所有核心工具均不发起网络请求。可选的匿名使用统计（工具调用计数，绝不包含内容）可在 setup 中开启，**默认关闭**。随时用 `engram telemetry preview` 查看、`engram telemetry off` 关闭。
+不会。所有核心工具均不发起网络请求。可选的匿名使用统计（工具调用计数，绝不包含内容）可在 setup 中开启，**默认关闭**。随时用 `engram telemetry preview` 查看、`engram telemetry off` 关闭。详见 **[PRIVACY.md](PRIVACY.md)**。
 
 **piia-engram 有多少个 MCP 工具？**
-61 个：13 个 Tier-1 核心工具默认加载（身份、知识、操作手册、项目上下文、会话恢复、统一 `memory_store` 写入入口），48 个 Tier-2 高级工具用于工具图谱、知识管理、审查、导入导出和审计日志。通过 `ENGRAM_TOOLS=all` 开启全部。
+两层设计，大多数用户只会看到 13 个工具：
+
+| 层级 | 工具数 | 功能 | 加载方式 |
+|------|--------|------|----------|
+| **核心** | 13 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
+| **高级** | 48 | 知识审查、合并、健康评分、工具图谱、导入导出、审计 | `ENGRAM_TOOLS=all` |
+
+大多数用户无需开启高级工具 —— 核心工具覆盖日常使用。
 
 **piia-engram 免费吗？**
 是的。Apache 2.0 开源，完全免费。无订阅，无云端计费，无厂商锁定。

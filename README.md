@@ -520,7 +520,7 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 | Feature | piia-engram | Claude Memory | Manual `CLAUDE.md` | Mem0 | Letta (MemGPT) |
 |---|---|---|---|---|---|
 | Primary purpose | User identity across tools | Per-conversation memory | Per-project notes | Agent vector memory | Agent self-editing memory |
-| Cross-tool by design | ✅ MCP-native (60 tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
+| Cross-tool by design | ✅ MCP-native (13 core tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
 | Storage | Local JSON in `~/.engram/` | Cloud | Local | Vector DB + Mem0 Cloud | Postgres or Letta Cloud |
 | Local-first by default | ✅ | ❌ | ✅ | ⚠ Cloud is the default | ⚠ Cloud is the default |
 | Encryption at rest | ✅ AES-256-GCM, PBKDF2 600k (opt-in) | depends on Cloud | ❌ plain Markdown | depends on store config | depends on Postgres config |
@@ -535,18 +535,18 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.26.0 (2026-05-23) |
+| | v3.29.1 (2026-05-26) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools exposed | **61** (13 Tier-1 default, 48 opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools | **13 Core** (loaded by default) + **48 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **768** (unit + integration) |
+| Tests passing | **800+** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **1097** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | AES-256-GCM, per-value random salt + nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics (Phase 2: local + optional remote — [details](docs/telemetry_roadmap.md)) |
+| Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics (local + optional remote — [privacy details](PRIVACY.md), [telemetry roadmap](docs/telemetry_roadmap.md)) |
 | External AI evaluations | 4 independent AIs evaluated the telemetry design; 3 earlier evaluations on architecture (see [`docs/`](docs/)) |
 
 ## Built With
@@ -596,10 +596,17 @@ The setup wizard detects your AI tools and configures MCP automatically. Restart
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files, removes outdated server entries, and repairs broken paths in one step.
 
 **Does piia-engram send data to the cloud?**
-No. All core tools make zero network requests. Optional anonymous usage statistics (tool call counts, never content) can be enabled during setup but are **off by default**. You can inspect the payload with `engram telemetry preview` and disable anytime with `engram telemetry off`.
+No. All core tools make zero network requests. Optional anonymous usage statistics (tool call counts, never content) can be enabled during setup but are **off by default**. You can inspect the payload with `engram telemetry preview` and disable anytime with `engram telemetry off`. See **[PRIVACY.md](PRIVACY.md)** for the full data flow diagram, what is and isn't collected, and your data rights.
 
 **How many MCP tools does piia-engram provide?**
-61 tools: 13 Tier-1 Core tools loaded by default (identity, knowledge, playbooks, project context, session recovery, unified `memory_store` write endpoint) plus 48 Tier-2 Advanced tools for tools registry, knowledge management, review, import/export, and audit logging. Enable all with `ENGRAM_TOOLS=all`.
+Two tiers, designed so most users only see 13 tools:
+
+| Tier | Tools | What they do | Loaded by |
+|------|-------|-------------|-----------|
+| **Core** | 13 | Identity, knowledge read/write, project context, session recovery | Default |
+| **Advanced** | 48 | Knowledge review, merge, health scoring, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
+
+Most users never need to enable Advanced tools — Core covers everyday use.
 
 **Is piia-engram free?**
 Yes. Free and open source under the Apache 2.0 license. No subscription, no cloud tiers, no vendor lock-in.
