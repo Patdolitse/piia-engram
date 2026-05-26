@@ -51,6 +51,7 @@ from .storage import (  # noqa: F401 — re-exports
     _project_id,
     _read_json,
     _write_json,
+    DataCorruptionError,
 )
 from .retrieval import RetrievalMixin
 from .context import ContextMixin

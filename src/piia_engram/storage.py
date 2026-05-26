@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -218,14 +219,31 @@ def detect_data_fragmentation(active_root: Path) -> list[str]:
 # Low-level I/O
 # ---------------------------------------------------------------------------
 
-def _read_json(path: Path) -> Any:
+class DataCorruptionError(Exception):
+    """Raised when a JSON data file exists but cannot be parsed."""
+
+
+def _read_json(path: Path, *, allow_corrupt: bool = False) -> Any:
     if not path.is_file():
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         logger.warning("failed to read %s: %s", path.name, exc)
-        return {}
+        # Back up the corrupted file so it can be recovered manually
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup = path.with_suffix(f".corrupt.{ts}.json")
+            shutil.copy2(path, backup)
+            logger.warning("corrupted file backed up to %s", backup.name)
+        except OSError:
+            pass
+        if allow_corrupt:
+            return {}
+        raise DataCorruptionError(
+            f"{path.name} is corrupted and cannot be read. "
+            f"A backup has been saved. Please check or delete the file."
+        ) from exc
 
 
 def _atomic_write_json(path: Path, data: Any) -> None:

@@ -537,7 +537,19 @@ async def get_user_context(
             "或者建议用户在终端运行 `piia-engram` 完成引导式设置。"
         )
     if user_prompt:
-        context += f"\n\n## 当前用户提问\n{user_prompt}"
+        suffix = f"\n\n## 当前用户提问\n{user_prompt}"
+        if token_budget is not None:
+            # Rough token estimate: 1 token ≈ 3 chars for mixed CJK/English
+            used = len(context) // 3
+            suffix_cost = len(suffix) // 3
+            if used + suffix_cost > token_budget:
+                # Truncate prompt to fit remaining budget
+                remaining = max(0, (token_budget - used) * 3 - len("\n\n## 当前用户提问\n"))
+                if remaining > 20:
+                    suffix = f"\n\n## 当前用户提问\n{user_prompt[:remaining]}…"
+                else:
+                    suffix = ""
+        context += suffix
     return context
 
 
@@ -850,6 +862,16 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             filters = json.loads(filters_json)
         except (json.JSONDecodeError, TypeError):
             return "filters_json 格式错误，应为 JSON 字符串"
+        if not isinstance(filters, dict):
+            return "filters_json 应为 JSON 对象（{}）"
+        _allowed_keys = {"domain", "tier", "date_after"}
+        for k, v in filters.items():
+            if k not in _allowed_keys:
+                return f"filters 不支持的键: {k}。可用: {', '.join(sorted(_allowed_keys))}"
+            if not isinstance(v, str):
+                return f"filters['{k}'] 应为字符串"
+        if "tier" in filters and filters["tier"] not in ("staging", "verified"):
+            return "filters['tier'] 仅支持 'staging' 或 'verified'"
     try:
         result = _engram.search_knowledge(query, scope=scope, limit=limit, filters=filters)
         _track("search_knowledge", success=True)
@@ -975,10 +997,32 @@ async def memory_store(
     except (json.JSONDecodeError, TypeError):
         return "content_json 格式错误，应为 JSON 字符串"
 
+    if not isinstance(content, dict):
+        return "content_json 应为 JSON 对象（{}），不能是数组或标量"
+
     if source_tool:
         content["source_tool"] = source_tool
 
     kind = kind.strip().lower()
+
+    # Schema validation per kind
+    if kind == "lesson":
+        if not content.get("summary", "").strip():
+            return "lesson 必须包含非空的 summary 字段"
+    elif kind == "decision":
+        q = content.get("question", "") or content.get("title", "")
+        if not q.strip() or not content.get("choice", "").strip():
+            return "decision 必须包含非空的 question（或 title）和 choice 字段"
+    elif kind == "playbook":
+        if not content.get("title", "").strip():
+            return "playbook 必须包含非空的 title 字段"
+    elif kind:
+        _track("memory_store", success=False)
+        return f"不支持的 kind: {kind}。可用: lesson, decision, playbook"
+    else:
+        _track("memory_store", success=False)
+        return "kind 不能为空。可用: lesson, decision, playbook"
+
     try:
         if kind == "lesson":
             result = _engram.add_lesson(content)
@@ -994,14 +1038,11 @@ async def memory_store(
             if result.get("status") == "duplicate":
                 return _json(result)
             return f"决策已记录: {label}"
-        elif kind == "playbook":
+        else:  # playbook
             result = _engram.add_playbook(content)
             label = content.get("title", "")[:60]
             _track("memory_store", success=True)
             return f"Playbook 已记录: {label}"
-        else:
-            _track("memory_store", success=False)
-            return f"不支持的 kind: {kind}。可用: lesson, decision, playbook"
     except Exception as exc:
         _track("memory_store", success=False)
         return f"memory_store 失败: {exc}"

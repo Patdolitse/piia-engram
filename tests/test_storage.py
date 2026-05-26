@@ -9,6 +9,7 @@ import portalocker
 import pytest
 
 from piia_engram.storage import (
+    DataCorruptionError,
     _atomic_write_json,
     _engram_root,
     _parse_iso,
@@ -62,19 +63,31 @@ def test_read_json_valid(tmp_path):
 
 
 def test_read_json_corrupt(tmp_path):
-    """损坏的 JSON 应返回 {} 而不崩溃。"""
+    """损坏的 JSON 应抛 DataCorruptionError 并备份文件。"""
     path = tmp_path / "bad.json"
     path.write_text("not json!", encoding="utf-8")
-    assert _read_json(path) == {}
+    with pytest.raises(DataCorruptionError):
+        _read_json(path)
+    # Backup file should be created
+    backups = list(tmp_path.glob("bad.corrupt.*.json"))
+    assert len(backups) >= 1
+
+
+def test_read_json_corrupt_allow_corrupt(tmp_path):
+    """allow_corrupt=True 时损坏 JSON 应返回 {} 而不抛异常。"""
+    path = tmp_path / "bad.json"
+    path.write_text("not json!", encoding="utf-8")
+    assert _read_json(path, allow_corrupt=True) == {}
 
 
 def test_read_json_permission_error(tmp_path):
-    """读取异常时应返回 {} 而不崩溃。"""
+    """读取权限异常时应抛 DataCorruptionError。"""
     path = tmp_path / "locked.json"
     path.write_text('{"ok": true}', encoding="utf-8")
 
     with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
-        assert _read_json(path) == {}
+        with pytest.raises(DataCorruptionError):
+            _read_json(path)
 
 
 # ── _atomic_write_json tests ────────────────────────────────────────
