@@ -468,3 +468,80 @@ class TestResourcesCoverage:
         result = mcp_server.resource_stats()
         parsed = json.loads(result)
         assert "schema_version" in parsed
+
+
+# ---------------------------------------------------------------------------
+# memory_store 统一入口测试
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryStore:
+    """memory_store 路由、错误处理、落库验证。"""
+
+    def test_memory_store_lesson_routes_to_add_lesson(self, eng: Engram):
+        result = _run(mcp_server.memory_store(
+            kind="lesson",
+            content_json='{"summary": "Always pin dependencies"}',
+            source_tool="test_tool",
+        ))
+        assert "教训已记录" in result
+        lessons = eng.get_lessons(limit=50)
+        found = [l for l in lessons if "pin dependencies" in l.get("summary", "")]
+        assert found
+        assert found[0].get("source_tool") == "test_tool"
+
+    def test_memory_store_decision_routes_to_add_decision(self, eng: Engram):
+        result = _run(mcp_server.memory_store(
+            kind="decision",
+            content_json='{"question": "ORM choice", "choice": "SQLAlchemy"}',
+            source_tool="test_tool",
+        ))
+        assert "决策已记录" in result
+        decisions = eng.get_decisions(limit=50)
+        found = [d for d in decisions if "ORM" in d.get("question", "") or "ORM" in d.get("title", "")]
+        assert found
+
+    def test_memory_store_playbook_routes_to_add_playbook(self, eng: Engram):
+        result = _run(mcp_server.memory_store(
+            kind="playbook",
+            content_json=json.dumps({
+                "title": "Deploy to staging",
+                "triggers": "deploy,staging",
+                "steps": [{"order": 1, "action": "build", "detail": "run build"}],
+            }),
+        ))
+        assert "Playbook 已记录" in result
+
+    def test_memory_store_invalid_json(self, eng: Engram):
+        result = _run(mcp_server.memory_store(
+            kind="lesson", content_json="not json{",
+        ))
+        assert "content_json 格式错误" in result
+
+    def test_memory_store_unsupported_kind(self, eng: Engram):
+        result = _run(mcp_server.memory_store(
+            kind="unknown", content_json='{"summary": "test"}',
+        ))
+        assert "不支持的 kind" in result
+        assert "lesson" in result  # should list available kinds
+
+    def test_memory_store_duplicate_returns_json_status(self, eng: Engram):
+        content = '{"summary": "Always check return values"}'
+        _run(mcp_server.memory_store(kind="lesson", content_json=content))
+        result2 = _run(mcp_server.memory_store(kind="lesson", content_json=content))
+        parsed = json.loads(result2)
+        assert parsed.get("status") == "duplicate"
+
+    def test_mcp_extract_session_insights_persists_staging_tier(self, eng: Engram):
+        """MCP wrapper extract_session_insights 落库的知识也应为 staging。"""
+        result = _run(mcp_server.extract_session_insights(
+            summary="我们决定使用 Redis 做缓存层，因为延迟最低。",
+            source_tool="test",
+        ))
+        parsed = json.loads(result)
+        assert parsed["saved_decisions"] >= 1
+
+        decisions = eng.get_decisions(limit=50)
+        found = [d for d in decisions if "Redis" in d.get("title", "")]
+        assert found
+        assert found[0].get("tier") == "staging"

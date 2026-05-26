@@ -338,13 +338,15 @@ IDENTITY_FIELDS = frozenset({
 
 TOOL_TIER = os.environ.get("ENGRAM_TOOLS", "core").strip().lower() or "core"
 TIER1_TOOLS = frozenset({
-    # Session lifecycle
+    # Session lifecycle (startup)
     "get_user_context",          # cold-start: load identity + context
     "wrap_up_session",           # session end: save insights + sync
-    # Knowledge read/write
+    # Knowledge write (writeback)
+    "memory_store",              # unified write endpoint (provider-compatible)
     "add_lesson",                # store reusable experience
     "add_decision",              # record decision + reasoning
     "add_playbook",              # record operational procedure
+    # Knowledge read (retrieval)
     "search_knowledge",          # search across all knowledge
     "get_relevant_knowledge",    # project-aware knowledge retrieval
     # Identity
@@ -361,12 +363,17 @@ mcp = FastMCP(
     "engram",
     instructions=(
         "Engram — the user's personal memory layer across all AI tools.\n\n"
-        "WHEN TO CALL (do not wait for the user to ask):\n"
-        "- Conversation start → get_user_context (learn who the user is)\n"
-        "- You learn something reusable → add_lesson\n"
-        "- A decision is made → add_decision\n"
+        "Memory lifecycle (act on each phase without waiting for the user to ask):\n\n"
+        "1. STARTUP  — get_user_context: inject user identity & context at conversation start.\n"
+        "2. RETRIEVAL — search_knowledge / get_relevant_knowledge: look up past knowledge mid-conversation.\n"
+        "3. WRITEBACK — memory_store (or add_lesson / add_decision / add_playbook): persist new knowledge.\n"
+        "4. SESSION END — wrap_up_session: save session context & sync.\n\n"
+        "Quick reference:\n"
+        "- Conversation start → get_user_context(level='standard')\n"
+        "- Need past knowledge → search_knowledge(query, filters_json='{\"tier\":\"verified\"}')\n"
+        "- Learned something reusable → memory_store(kind='lesson', content_json=...)\n"
+        "- Decision made → memory_store(kind='decision', content_json=...)\n"
         "- Conversation end → wrap_up_session\n"
-        "- Need past knowledge → search_knowledge\n"
     ),
 )
 
@@ -476,8 +483,13 @@ if _HAS_STARLETTE:
 async def get_user_context(
     project_folder: Optional[str] = None,
     level: str = "standard",
+    token_budget: Optional[int] = None,
+    user_prompt: str = "",
 ) -> str:
     """获取用户的个性化上下文（冷启动，分层延迟可控）。 / Get tiered cold-start user context with latency control.
+
+    **Lifecycle: startup** — 对话开始时调用，为 AI 注入用户身份和上下文。
+    Lifecycle: startup — call at conversation start to inject user identity and context.
 
     用途：在每次新对话开始时调用，了解用户是谁、如何工作、学到了什么、质量标准是什么。
     Purpose: Call at the start of each new conversation to understand who the user is, how they work, what they have learned, and their quality bar.
@@ -496,11 +508,17 @@ async def get_user_context(
     Args:
         project_folder: 当前项目文件夹路径（可选）。 / Current project folder path (optional).
         level: "quick" | "standard" | "full"，默认 "standard"。 / Tier — defaults to "standard".
+        token_budget: 上下文 token 预算（可选）。设定后按优先级裁剪 section，低优先级 section 先丢弃。不设则返回全量。
+            Optional token budget. When set, sections are included by priority until budget is exhausted.
+        user_prompt: 用户当前提问（可选）。传入后 Engram 可据此优化上下文相关性（未来增强）。
+            Optional current user prompt. Passed through for future context-relevance optimization.
     """
     if project_folder:
         _session.detect_project(project_folder)
     try:
-        context = _engram.generate_context(project_folder, level=level)
+        context = _engram.generate_context(
+            project_folder, level=level, max_tokens=token_budget,
+        )
         _track("get_user_context", success=True)
         _beta("cold_start", level=level)
     except Exception as exc:
@@ -518,6 +536,8 @@ async def get_user_context(
             "这只需要 30 秒，之后所有 AI 工具都能从第一条消息开始了解这位用户。\n"
             "或者建议用户在终端运行 `piia-engram` 完成引导式设置。"
         )
+    if user_prompt:
+        context += f"\n\n## 当前用户提问\n{user_prompt}"
     return context
 
 
@@ -756,6 +776,9 @@ async def list_projects() -> str:
 async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
     """按项目路径自动推荐最相关的经验教训（无需搜索词）。 / Automatically recommend the most relevant lessons for a project path, without search keywords.
 
+    **Lifecycle: retrieval** — 在对话中需要项目相关的历史知识时调用。
+    Lifecycle: retrieval — call mid-conversation when project-relevant past knowledge is needed.
+
     用途：你知道当前项目路径但不知道该搜什么词时调用，Engram 根据项目技术栈自动筛选。
     Purpose: Call when you know the current project path but not the right search terms; Engram filters by project tech stack.
 
@@ -798,8 +821,12 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
 
 
 @mcp.tool()
-async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> str:
-    r"""Search lessons, decisions, and playbooks by keyword.
+async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
+                           filters_json: str = "") -> str:
+    r"""搜索知识库（lessons/decisions/playbooks）。 / Search lessons, decisions, and playbooks by keyword.
+
+    **Lifecycle: retrieval** — 在对话中需要检索历史知识时调用。
+    Lifecycle: retrieval — call during conversation when past knowledge is needed.
 
     Call when the user asks to find knowledge about a specific topic,
     or recalls a procedure ('X how to' / 'X steps').
@@ -811,9 +838,20 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10) -> s
         query: Search query keywords.
         scope: Search scope: 'all', 'lessons', 'decisions', or 'playbooks'.
         limit: Maximum number of items to return (default 10).
+        filters_json: Optional JSON string with filter criteria. Supported keys:
+            - "domain": str — only items whose domain contains this value
+            - "tier": str — only items matching this tier ('staging' or 'verified')
+            - "date_after": str — ISO date string, only items created after this date
+            Example: '{"tier": "verified", "domain": "python"}'
     """
+    filters = None
+    if filters_json:
+        try:
+            filters = json.loads(filters_json)
+        except (json.JSONDecodeError, TypeError):
+            return "filters_json 格式错误，应为 JSON 字符串"
     try:
-        result = _engram.search_knowledge(query, scope=scope, limit=limit)
+        result = _engram.search_knowledge(query, scope=scope, limit=limit, filters=filters)
         _track("search_knowledge", success=True)
     except Exception as exc:
         _track("search_knowledge", success=False)
@@ -902,8 +940,71 @@ async def export_knowledge_report() -> str:
 
 
 # ===========================================================================
-# WRITE TOOLS (17)
+# WRITE TOOLS (18)
 # ===========================================================================
+
+
+@mcp.tool()
+async def memory_store(
+    kind: str,
+    content_json: str,
+    source_tool: str = "",
+) -> str:
+    """统一知识写入入口 — 根据 kind 自动路由到 add_lesson / add_decision / add_playbook。
+    Unified knowledge write endpoint — routes to add_lesson / add_decision / add_playbook based on kind.
+
+    **Lifecycle: writeback** — 对话中产生值得长期保留的知识时调用。
+    Lifecycle: writeback — call when the conversation produces knowledge worth persisting.
+
+    这是 Provider 兼容的统一写入接口。如果你已经明确知道要写 lesson/decision/playbook，
+    也可以直接调用对应的专用工具。本工具的优势在于：调用方不需要知道 Engram 内部的分类体系。
+    This is a provider-compatible unified write interface. You may also call the specialized
+    tools directly. The advantage here: callers don't need to know Engram's internal taxonomy.
+
+    Args:
+        kind: 知识类型 — 'lesson' | 'decision' | 'playbook'。 / Knowledge type.
+        content_json: 知识内容 JSON 字符串。格式因 kind 而异：
+            - lesson: {"summary": "...", "detail": "...", "domain": "..."}
+            - decision: {"question": "...", "choice": "...", "reasoning": "..."}
+            - playbook: {"title": "...", "triggers": "...", "steps_json": "[...]"}
+            Content JSON string. Schema varies by kind (see above).
+        source_tool: 调用来源工具（可选），如 'claude_code', 'cursor'。 / Source tool (optional).
+    """
+    try:
+        content = json.loads(content_json)
+    except (json.JSONDecodeError, TypeError):
+        return "content_json 格式错误，应为 JSON 字符串"
+
+    if source_tool:
+        content["source_tool"] = source_tool
+
+    kind = kind.strip().lower()
+    try:
+        if kind == "lesson":
+            result = _engram.add_lesson(content)
+            label = content.get("summary", "")[:60]
+            _track("memory_store", success=True)
+            if result.get("status") == "duplicate":
+                return _json(result)
+            return f"教训已记录: {label}"
+        elif kind == "decision":
+            result = _engram.add_decision(content)
+            label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
+            _track("memory_store", success=True)
+            if result.get("status") == "duplicate":
+                return _json(result)
+            return f"决策已记录: {label}"
+        elif kind == "playbook":
+            result = _engram.add_playbook(content)
+            label = content.get("title", "")[:60]
+            _track("memory_store", success=True)
+            return f"Playbook 已记录: {label}"
+        else:
+            _track("memory_store", success=False)
+            return f"不支持的 kind: {kind}。可用: lesson, decision, playbook"
+    except Exception as exc:
+        _track("memory_store", success=False)
+        return f"memory_store 失败: {exc}"
 
 
 @mcp.tool()
@@ -915,6 +1016,9 @@ async def add_lesson(
     source_url: str = "",
 ) -> str:
     """记录单条经验教训（你已经知道要记什么）。 / Record one lesson learned when you already know what to save.
+
+    **Lifecycle: writeback** — 对话中学到可复用的经验时调用。
+    Lifecycle: writeback — call when reusable experience is learned during conversation.
 
     用途：用户明确说出一条踩坑经验或技术发现时调用。
     Purpose: Call when the user explicitly states a lesson, pitfall, or technical finding.
@@ -963,6 +1067,9 @@ async def add_decision(
     domain: str = "",
 ) -> str:
     """记录单条关键决策（用户明确选了某个方案）。 / Record one key decision when the user explicitly chose an option.
+
+    **Lifecycle: writeback** — 对话中做出明确决策时调用。
+    Lifecycle: writeback — call when an explicit decision is made during conversation.
 
     用途：用户说"我们决定用 X"或"以后都用 Y"时调用。
     Purpose: Call when the user says they decided to use X or will use Y going forward.
@@ -1448,6 +1555,9 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
 async def extract_session_insights(summary: str, source_tool: str = "") -> str:
     """从会话摘要中批量自动提取经验教训和决策（你不需要自己分类）。 / Automatically extract lessons and decisions from a session summary without manually classifying them.
 
+    **Lifecycle: writeback (auto)** — 自动提取的知识默认进入 staging 层，需要 review 后才升级为 verified。
+    Lifecycle: writeback (auto) — auto-extracted knowledge defaults to staging tier and requires review before promotion to verified.
+
     用途：会话结束时，把一段自由文本摘要交给 Engram，它会自动解析出 lessons 和 decisions 并存入知识库。
     Purpose: Call at the end of a session with a free-text summary so Engram can parse and store lessons and decisions.
 
@@ -1892,6 +2002,9 @@ async def wrap_up_session(
     known_issues: str = "",
 ) -> str:
     """会话结束一键收尾：自动提取知识、操作流程并保存项目快照。 / Wrap up a session in one step: extract knowledge, detect playbooks, and save a project snapshot.
+
+    **Lifecycle: session-end** — 对话结束时调用，完成知识提取和上下文保存。
+    Lifecycle: session-end — call at conversation end to extract knowledge and persist session context.
 
     用途：一次对话结束时调用，把会话摘要交给 Engram 自动提取 lessons、decisions 和 Playbook 草稿，并可选更新项目快照。
     Purpose: Call at the end of a conversation to let Engram extract lessons, decisions, and playbook drafts from the summary and optionally update the project snapshot.

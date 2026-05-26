@@ -1066,3 +1066,60 @@ class TestCollectProjectInfo:
         assert info.get("version") == "0.1.0"
         assert "module_count" not in info
         assert "test_count" not in info
+
+
+# ---------------------------------------------------------------------------
+# Provider 兼容层参数测试
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_search_knowledge_filters_json_passes_filters(isolated_engram: Engram):
+    """MCP search_knowledge 的 filters_json 应正确解析并过滤结果。"""
+    isolated_engram.add_lesson({"summary": "staging tip about caching", "tier": "staging"})
+    isolated_engram.add_lesson({"summary": "verified tip about caching", "tier": "verified"})
+
+    result = _run(mcp_server.search_knowledge(
+        query="caching", filters_json='{"tier": "staging"}',
+    ))
+    parsed = json.loads(result)
+    assert len(parsed["lessons"]) >= 1
+    assert all(l.get("tier") == "staging" for l in parsed["lessons"])
+
+
+def test_mcp_search_knowledge_invalid_filters_json(isolated_engram: Engram):
+    """MCP search_knowledge 非法 filters_json 应返回友好错误。"""
+    result = _run(mcp_server.search_knowledge(
+        query="anything", filters_json="not valid json{",
+    ))
+    assert "filters_json 格式错误" in result
+
+
+def test_get_user_context_passes_token_budget(
+    isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
+):
+    """MCP get_user_context 的 token_budget 应传为 generate_context(max_tokens=...)。"""
+    captured = {}
+    original = isolated_engram.generate_context
+
+    def spy(project_folder=None, max_tokens=None, level="full"):
+        captured["max_tokens"] = max_tokens
+        return original(project_folder, max_tokens=max_tokens, level=level)
+
+    monkeypatch.setattr(isolated_engram, "generate_context", spy)
+    _run(mcp_server.get_user_context(token_budget=42))
+    assert captured.get("max_tokens") == 42
+
+
+def test_get_user_context_appends_user_prompt(isolated_engram: Engram):
+    """MCP get_user_context 传 user_prompt 时应追加到输出末尾。"""
+    isolated_engram.update_profile({"role": "developer"})
+    result = _run(mcp_server.get_user_context(user_prompt="如何优化启动速度？"))
+    assert "## 当前用户提问" in result
+    assert "如何优化启动速度？" in result
+
+
+def test_get_user_context_no_user_prompt_omits_section(isolated_engram: Engram):
+    """MCP get_user_context 不传 user_prompt 时不应有「当前用户提问」section。"""
+    isolated_engram.update_profile({"role": "developer"})
+    result = _run(mcp_server.get_user_context())
+    assert "当前用户提问" not in result

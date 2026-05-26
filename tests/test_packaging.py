@@ -25,6 +25,7 @@ SETUP_WIZARD = ROOT / "src" / "piia_engram" / "setup_wizard.py"
 CORE_MCP_TOOLS = {
     "get_user_context",
     "wrap_up_session",
+    "memory_store",
     "add_lesson",
     "add_decision",
     "add_playbook",
@@ -299,3 +300,14 @@ def test_zh_readme_has_remote_deployment_section():
     assert "ENGRAM_AUTH_TOKEN" in content
     assert '"Authorization": "Bearer abc123..."' in content
     assert "数据始终在你自己的服务器上" in content
+
+
+def test_fastmcp_instructions_include_lifecycle_contract():
+    """FastMCP instructions 应包含 provider lifecycle 关键术语。"""
+    source = MCP_SERVER.read_text(encoding="utf-8")
+    # Find the FastMCP instructions string
+    assert "STARTUP" in source, "instructions should mention STARTUP phase"
+    assert "RETRIEVAL" in source, "instructions should mention RETRIEVAL phase"
+    assert "WRITEBACK" in source, "instructions should mention WRITEBACK phase"
+    assert "SESSION END" in source, "instructions should mention SESSION END phase"
+    assert "memory_store" in source, "instructions should recommend memory_store"

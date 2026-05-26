@@ -269,6 +269,7 @@ class ContextMixin:
                     "choice": "",
                     "domain": item_domain,
                     "source_tool": source_tool,
+                    "tier": "staging",
                 })
                 if result.get("status") == "duplicate":
                     duplicates += 1
@@ -292,6 +293,7 @@ class ContextMixin:
                     "summary": sentence,
                     "domain": item_domain,
                     "source_tool": source_tool,
+                    "tier": "staging",
                 })
                 if result.get("status") == "duplicate":
                     duplicates += 1

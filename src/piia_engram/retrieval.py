@@ -232,19 +232,48 @@ class RetrievalMixin:
     # Search API
     # ------------------------------------------------------------------
 
-    def search_knowledge(self, query: str, scope: str = "all", limit: int = 10) -> dict:
-        """Search lessons, decisions, and playbooks by weighted multi-term relevance."""
+    def search_knowledge(self, query: str, scope: str = "all", limit: int = 10,
+                         filters: dict | None = None) -> dict:
+        """Search lessons, decisions, and playbooks by weighted multi-term relevance.
+
+        Args:
+            query: Search keywords (space-separated).
+            scope: 'all', 'lessons', 'decisions', or 'playbooks'.
+            limit: Max results per category.
+            filters: Optional dict with keys:
+                - domain: str — only items whose domain contains this value
+                - tier: str — only items matching this tier ('staging' or 'verified')
+                - date_after: str — ISO date, only items with timestamp >= this
+        """
         terms = [term for term in (query or "").lower().split() if term]
         results: dict = {"lessons": [], "decisions": [], "playbooks": []}
         limit = max(0, int(limit))
         if not terms or limit == 0:
             return results
 
+        filters = filters or {}
+
+        def _matches_filters(item: dict) -> bool:
+            if "domain" in filters:
+                item_domain = (item.get("domain") or "").lower()
+                if filters["domain"].lower() not in item_domain:
+                    return False
+            if "tier" in filters:
+                if item.get("tier", "verified") != filters["tier"]:
+                    return False
+            if "date_after" in filters:
+                ts = item.get("timestamp") or item.get("created") or ""
+                if ts and ts < filters["date_after"]:
+                    return False
+            return True
+
         if scope in ("all", "lessons"):
             path = self._knowledge_dir / "lessons.json"
             lessons = self._read_entries(path, "lesson")
             for lesson in lessons:
                 if lesson.get("status") != "active":
+                    continue
+                if not _matches_filters(lesson):
                     continue
                 score = self._score_item(lesson, terms)
                 if score >= SEARCH_RELEVANCE_THRESHOLD:
@@ -262,6 +291,8 @@ class RetrievalMixin:
             decisions = self._read_entries(path, "decision")
             for decision in decisions:
                 if decision.get("status") != "active":
+                    continue
+                if not _matches_filters(decision):
                     continue
                 score = self._score_item(decision, terms)
                 if score >= SEARCH_RELEVANCE_THRESHOLD:
@@ -281,6 +312,8 @@ class RetrievalMixin:
                     continue
                 pb = self._read_playbook_by_id(entry.get("id", ""))
                 if not pb:
+                    continue
+                if not _matches_filters(pb):
                     continue
                 score = self._score_item(pb, terms)
                 if score >= SEARCH_RELEVANCE_THRESHOLD:

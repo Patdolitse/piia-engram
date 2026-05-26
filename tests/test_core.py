@@ -4265,3 +4265,77 @@ def test_playbook_auto_extract_kill_switch(tmp_path: Path):
     engram.update_preferences({"playbook_auto_extract": True})
     result = engram.extract_playbook_from_session(summary, source_tool="test")
     assert result is not None
+
+
+# ── Provider 兼容层测试 ─────────────────────────────────────────────────
+
+
+def test_extract_session_insights_saves_lesson_as_staging(tmp_path: Path):
+    """自动提取的 lesson 应默认 tier=staging，不直接进 verified。"""
+    engram = make_engram(tmp_path)
+    summary = "注意：部署前必须检查环境变量是否齐全，否则会启动失败。"
+    engram.extract_session_insights(summary, source_tool="test")
+
+    lessons = engram.get_lessons(limit=50)
+    found = [l for l in lessons if "环境变量" in l.get("summary", "")]
+    assert found, "lesson should be extracted"
+    assert found[0].get("tier") == "staging"
+
+
+def test_extract_session_insights_saves_decision_as_staging(tmp_path: Path):
+    """自动提取的 decision 应默认 tier=staging，不直接进 verified。"""
+    engram = make_engram(tmp_path)
+    summary = "我们决定采用 SQLite 作为本地搜索索引，因为零依赖。"
+    engram.extract_session_insights(summary, source_tool="test")
+
+    decisions = engram.get_decisions(limit=50)
+    found = [d for d in decisions if "SQLite" in d.get("title", "")]
+    assert found, "decision should be extracted"
+    assert found[0].get("tier") == "staging"
+
+
+def test_search_knowledge_filters_by_domain(tmp_path: Path):
+    """search_knowledge filters={"domain": ...} 应只返回匹配 domain 的条目。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson({"summary": "Python GIL limits threading", "domain": "python"})
+    engram.add_lesson({"summary": "Docker layer caching saves build time", "domain": "docker"})
+
+    result = engram.search_knowledge("caching threading", filters={"domain": "python"})
+    summaries = [l["summary"] for l in result["lessons"]]
+    assert any("GIL" in s for s in summaries)
+    assert not any("Docker" in s for s in summaries)
+
+
+def test_search_knowledge_filters_by_tier(tmp_path: Path):
+    """search_knowledge filters={"tier": ...} 应只返回匹配 tier 的条目。"""
+    engram = make_engram(tmp_path)
+    engram.add_lesson({"summary": "staging draft about async error handling", "tier": "staging"})
+    engram.add_lesson({"summary": "confirmed practice for async retry logic", "tier": "verified"})
+
+    staging_only = engram.search_knowledge("async", filters={"tier": "staging"})
+    verified_only = engram.search_knowledge("async", filters={"tier": "verified"})
+
+    assert len(staging_only["lessons"]) >= 1
+    assert all(l.get("tier") == "staging" for l in staging_only["lessons"])
+    assert len(verified_only["lessons"]) >= 1
+    assert all(l.get("tier") == "verified" for l in verified_only["lessons"])
+
+
+def test_search_knowledge_filters_by_date_after(tmp_path: Path):
+    """search_knowledge filters={"date_after": ...} 应排除更早的条目。"""
+    engram = make_engram(tmp_path)
+    old_ts = "2024-01-01T00:00:00"
+    new_ts = "2026-05-20T00:00:00"
+    engram.add_lesson({
+        "summary": "legacy migration guide for database schema upgrades",
+        "timestamp": old_ts,
+    })
+    engram.add_lesson({
+        "summary": "container orchestration patterns for database scaling",
+        "timestamp": new_ts,
+    })
+
+    result = engram.search_knowledge("database", filters={"date_after": "2025-01-01"})
+    summaries = [l["summary"] for l in result["lessons"]]
+    assert any("container" in s for s in summaries)
+    assert not any("legacy" in s for s in summaries)
