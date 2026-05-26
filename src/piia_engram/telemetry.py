@@ -356,7 +356,10 @@ def _send_remote(payload: dict[str, Any]) -> bool:
         req = Request(
             endpoint,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "engram-telemetry/1",
+            },
             method="POST",
         )
         with urlopen(req, timeout=_REMOTE_TIMEOUT) as resp:
@@ -510,7 +513,10 @@ def send_feedback(report: dict[str, Any]) -> bool:
         req = Request(
             endpoint,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "engram-telemetry/1",
+            },
             method="POST",
         )
         with urlopen(req, timeout=5) as resp:
