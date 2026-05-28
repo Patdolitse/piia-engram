@@ -4,6 +4,14 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.33.1] - 2026-05-28
+
+混合搜索补丁：代码审查发现的索引新鲜度修复。
+
+### Fixed
+- **换嵌入模型后索引未重建**：`ENGRAM_EMBED_MODEL` 变更（或默认模型升级）但知识内容不变时，索引新鲜度指纹此前只算内容、不含模型，导致不会触发重建——旧维度的向量表残留，向量信号被静默禁用（KNN 维度不符 → 被吞 → 返回空）直到内容变动或手动 `engram reindex`。现已把嵌入模型纳入指纹，换模型即触发重建。
+- 非向量索引不再写入 `embed_model` 标记，避免误标维度漂移。
+
 ## [3.33.0] - 2026-05-28
 
 混合搜索（hybrid search）正式可用，opt-in，默认行为不变。

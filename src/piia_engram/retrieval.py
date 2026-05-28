@@ -271,12 +271,22 @@ class RetrievalMixin:
 
     @staticmethod
     def _entries_fingerprint(entries: list[dict]) -> str:
-        """Content fingerprint: changes iff any indexed entry's text changes."""
+        """Freshness fingerprint: changes iff any indexed entry's text OR the
+        active embedding model changes.
+
+        Including the model is essential — otherwise swapping
+        ``ENGRAM_EMBED_MODEL`` (or upgrading the default) without touching
+        content would NOT trigger a rebuild, leaving a stale vector table at
+        the old dimension and silently disabling the vector signal until the
+        next content edit / manual reindex.
+        """
+        from . import search_index as _si  # read EMBED_MODEL at call time
         parts = sorted(
             f"{e.get('id')}:{_content_hash(_entry_document(e))}"
             for e in entries if e.get("id")
         )
-        return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+        blob = _si.EMBED_MODEL + "\n" + "\n".join(parts)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
     def _ensure_index_fresh(self, entries: list[dict]) -> SearchIndex:
         """Lazily (re)build the index when the source content changed.

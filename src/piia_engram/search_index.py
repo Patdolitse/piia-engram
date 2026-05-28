@@ -268,10 +268,13 @@ class SearchIndex:
                 self._rebuild_vectors(con, docs)
 
             # --- markers: embed model (for dim-change detection) + freshness ---
-            con.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('embed_model', ?)",
-                (EMBED_MODEL,),
-            )
+            # Only record the model when the vector layer is actually in use,
+            # so the marker can't misrepresent a non-vector index.
+            if self.vector_enabled:
+                con.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES ('embed_model', ?)",
+                    (EMBED_MODEL,),
+                )
             if fingerprint is not None:
                 con.execute(
                     "INSERT OR REPLACE INTO meta(key, value) VALUES ('fingerprint', ?)",

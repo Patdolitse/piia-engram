@@ -53,6 +53,21 @@ def test_index_fingerprint_stable_until_content_changes(tmp_path):
     assert fp2 != fp1
 
 
+def test_fingerprint_changes_when_embed_model_changes(tmp_path, monkeypatch):
+    """Swapping the embedding model (content unchanged) MUST change the
+    fingerprint so the index rebuilds — otherwise a stale vector table at
+    the old dimension silently disables the vector signal (v3.33.1 fix)."""
+    import piia_engram.search_index as si
+
+    eng = _engram(tmp_path)
+    entries = eng._all_indexable_entries()
+    monkeypatch.setattr(si, "EMBED_MODEL", "model-A")
+    fp_a = eng._entries_fingerprint(entries)
+    monkeypatch.setattr(si, "EMBED_MODEL", "model-B")
+    fp_b = eng._entries_fingerprint(entries)
+    assert fp_a != fp_b
+
+
 # ── search_knowledge: flag off (keyword) vs on (hybrid) ─────────────────
 
 
