@@ -4,6 +4,19 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.32.0] - 2026-05-28
+
+发布流程加固续作：把发布前的安全检查再往前推一步。
+
+### Changed
+- **pre-commit 钩子现在同时跑发布白名单检查**：`python scripts/install_git_hooks.py` 安装的提交前钩子，除了脱敏扫描，还会校验暂存内容是否都在 `.publishallow` 白名单内 —— 新增一个未登记的跟踪文件会在提交时就被拦下，而不必等到 CI。（可用 `git commit --no-verify` 临时绕过。）
+
+### Security / Hardening
+- **脱敏扫描器新增多行扫描**：此前只逐行匹配，跨行折行（例如 docstring 里被换行拆开）的内部叙述会漏检；现在对 `.py` / `.md` 等文本文件额外做一次整篇扫描，只报告确实跨行的命中，不与逐行结果重复。
+
+### Release Evidence
+- 全量回归测试通过。
+
 ## [3.31.0] - 2026-05-28
 
 跨工具自动接续补全 + 知识 tier 管理 + 发布流程加固。

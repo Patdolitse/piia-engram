@@ -9,13 +9,17 @@ Usage (from repo root):
     python scripts/install_git_hooks.py          # install
     python scripts/install_git_hooks.py --uninstall
 
-The hook runs:
+The hook runs two checks:
 
     python scripts/release_sanitize_check.py --staged --internal --strict
+    python scripts/check_publish_allowlist.py
 
-and blocks the commit (exit 1) on any HIGH hit. warn-level hits print a
-notice but don't block unless you keep --strict (default here blocks on
-warn too — flip ``BLOCK_ON_WARN`` below if that's too aggressive).
+The first blocks the commit (exit 1) on any HIGH hit; warn-level hits
+block too while ``BLOCK_ON_WARN`` is ``--strict`` (flip it below if that's
+too aggressive). The second enforces the default-deny publish allowlist:
+because ``git ls-files`` already includes files you just ``git add``-ed,
+staging a new tracked file that isn't on ``.publishallow`` blocks the
+commit — the same gate CI runs, moved one step earlier.
 
 Cross-platform: the hook is a portable POSIX shell script. On Windows,
 git invokes it through the bundled Git-Bash, so it works there too.
@@ -30,7 +34,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_MARKER = "# piia-engram-sanitize-hook v1"
+HOOK_MARKER = "# piia-engram-sanitize-hook v2"
+
+# Older markers we still recognize as "ours" so install --upgrade can
+# safely overwrite a hook a previous version installed.
+_KNOWN_MARKERS = (
+    "# piia-engram-sanitize-hook v1",
+    "# piia-engram-sanitize-hook v2",
+)
 
 # Set to "" to make warn-level hits non-blocking (HIGH always blocks).
 BLOCK_ON_WARN = "--strict"
@@ -38,7 +49,7 @@ BLOCK_ON_WARN = "--strict"
 HOOK_BODY = f"""#!/bin/sh
 {HOOK_MARKER}
 # Auto-installed by scripts/install_git_hooks.py — runs the release
-# sanitization scanner on staged files before each commit.
+# sanitization scanner AND the publish-allowlist check before each commit.
 #
 # To bypass once (NOT recommended): git commit --no-verify
 
@@ -49,18 +60,26 @@ if [ -z "$PY" ]; then
     if command -v python >/dev/null 2>&1; then PY=python;
     elif command -v python3 >/dev/null 2>&1; then PY=python3;
     else
-        echo "[pre-commit] no python found; skipping sanitize scan" >&2
+        echo "[pre-commit] no python found; skipping pre-commit checks" >&2
         exit 0
     fi
 fi
 
+rc=0
+
 "$PY" scripts/release_sanitize_check.py --staged --internal {BLOCK_ON_WARN}
-rc=$?
+if [ "$?" -ne 0 ]; then rc=1; fi
+
+# Default-deny publish allowlist: git ls-files already sees staged adds,
+# so a newly tracked file missing from .publishallow blocks the commit.
+"$PY" scripts/check_publish_allowlist.py
+if [ "$?" -ne 0 ]; then rc=1; fi
+
 if [ "$rc" -ne 0 ]; then
     echo "" >&2
-    echo "[pre-commit] sanitize scan blocked the commit (exit $rc)." >&2
+    echo "[pre-commit] a pre-commit check blocked the commit." >&2
     echo "  Fix the flagged content, or bypass with: git commit --no-verify" >&2
-    exit "$rc"
+    exit 1
 fi
 exit 0
 """
@@ -83,12 +102,12 @@ def install() -> int:
 
     if hook_path.exists():
         existing = hook_path.read_text(encoding="utf-8", errors="ignore")
-        if HOOK_MARKER not in existing:
+        if not any(marker in existing for marker in _KNOWN_MARKERS):
             print(f"[warn] {hook_path} already exists and is NOT ours.")
             print("       Refusing to overwrite. Inspect it, then either")
             print("       merge our scan call in or remove the file and re-run.")
             return 1
-        # ours — safe to overwrite (upgrade)
+        # ours (any known version) — safe to overwrite (upgrade)
 
     hook_path.write_text(HOOK_BODY, encoding="utf-8", newline="\n")
     # chmod +x (no-op effect on Windows but harmless)
@@ -97,6 +116,7 @@ def install() -> int:
     print(f"[ok] installed pre-commit hook → {hook_path}")
     print("     Runs: release_sanitize_check.py --staged --internal "
           f"{BLOCK_ON_WARN}")
+    print("           check_publish_allowlist.py")
     print("     Bypass once with: git commit --no-verify")
     return 0
 
@@ -107,7 +127,7 @@ def uninstall() -> int:
         print("[ok] no pre-commit hook to remove.")
         return 0
     existing = hook_path.read_text(encoding="utf-8", errors="ignore")
-    if HOOK_MARKER not in existing:
+    if not any(marker in existing for marker in _KNOWN_MARKERS):
         print(f"[warn] {hook_path} is not ours; leaving it alone.")
         return 1
     hook_path.unlink()

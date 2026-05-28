@@ -141,3 +141,51 @@ def test_ordinary_code_does_not_false_positive(sc, tmp_path):
 def test_staged_files_helper_exists(sc):
     assert hasattr(sc, "_git_staged_files")
     assert callable(sc._git_staged_files)
+
+
+# ── v3.32 P1: multi-line docstring scanning ─────────────────────────────
+
+
+def test_multiline_catches_phrase_wrapped_in_docstring(sc, tmp_path):
+    """A line-by-line scan misses an internal phrase split across a line
+    break inside a docstring; the multiline pass catches it."""
+    f = tmp_path / "mod.py"
+    f.write_text(
+        '"""Module.\n\nThis is our industry-\nfirst snapshot approach.\n"""\n',
+        encoding="utf-8",
+    )
+    # per-line scanner does NOT see the wrapped phrase
+    line_hits = sc._scan_file(f, [], sc._INTERNAL_DISCLOSURE_PATTERNS)
+    assert not any("industry" in label for label, *_ in line_hits)
+    # multiline scanner DOES
+    ml_hits = sc._scan_file_multiline(f, sc._INTERNAL_DISCLOSURE_PATTERNS)
+    assert any("industry-first" in label for label, *_ in ml_hits)
+    assert all("(multiline)" in label for label, *_ in ml_hits)
+
+
+def test_multiline_skips_single_line_hits(sc, tmp_path):
+    """Single-line matches stay the responsibility of _scan_file — the
+    multiline pass must not double-report them."""
+    f = tmp_path / "mod.py"
+    f.write_text('x = "our industry-first thing"\n', encoding="utf-8")
+    assert sc._scan_file_multiline(f, sc._INTERNAL_DISCLOSURE_PATTERNS) == []
+
+
+def test_multiline_only_scans_text_extensions(sc, tmp_path):
+    """Non-prose extensions are skipped to keep the scan cheap/targeted."""
+    f = tmp_path / "data.json"
+    f.write_text("industry-\nfirst\n", encoding="utf-8")
+    assert f.suffix.lower() not in sc._MULTILINE_EXTS
+    assert sc._scan_file_multiline(f, sc._INTERNAL_DISCLOSURE_PATTERNS) == []
+
+
+def test_multiline_reports_correct_start_line(sc, tmp_path):
+    f = tmp_path / "mod.py"
+    f.write_text(
+        "line1\nline2\nx = 'industry-\nfirst'\n",
+        encoding="utf-8",
+    )
+    ml_hits = sc._scan_file_multiline(f, sc._INTERNAL_DISCLOSURE_PATTERNS)
+    assert ml_hits, "expected a multiline hit"
+    # match starts on line 3 ("x = 'industry-")
+    assert ml_hits[0][2] == 3

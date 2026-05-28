@@ -175,6 +175,47 @@ def _scan_file(
     return hits
 
 
+# v3.32 P1: extensions whose multi-line string content (docstrings,
+# triple-quoted blocks, prose) we additionally scan as one blob, so an
+# internal-disclosure phrase that wraps across a line break inside a
+# docstring isn't hidden from the per-line scanner.
+_MULTILINE_EXTS = (".py", ".md", ".rst", ".txt")
+
+
+def _scan_file_multiline(
+    path: Path,
+    patterns: list[tuple[str, re.Pattern[str], str]],
+) -> list[tuple[str, str, int, str]]:
+    """v3.32: catch internal-disclosure narrative that spans more than one
+    line (typically inside a docstring), which ``_scan_file`` cannot see
+    because it matches per line.
+
+    The internal patterns already use ``\\s``/``[\\s-]*`` connectors, which
+    match newlines — but only when run against the whole-file text instead
+    of a single line. We therefore re-run the (internal) patterns over the
+    full blob and report ONLY matches whose span actually crosses a
+    newline, so single-line hits stay the responsibility of ``_scan_file``
+    (no duplicate reporting).
+
+    Returns list of (label, severity, line_no, snippet)."""
+    if path.suffix.lower() not in _MULTILINE_EXTS:
+        return []
+    hits: list[tuple[str, str, int, str]] = []
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except (OSError, UnicodeDecodeError):
+        return hits
+    for label, pat, severity in patterns:
+        for m in pat.finditer(text):
+            frag = m.group(0)
+            if "\n" not in frag:
+                continue  # single-line — _scan_file already covers it
+            lineno = text.count("\n", 0, m.start()) + 1
+            snippet = re.sub(r"\s+", " ", frag).strip()[:160]
+            hits.append((f"{label} (multiline)", severity, lineno, snippet))
+    return hits
+
+
 def _scan_commit_messages(
     custom: list[re.Pattern[str]],
     patterns: list[tuple[str, re.Pattern[str], str]],
@@ -226,9 +267,11 @@ def main() -> int:
 
     # Assemble the active pattern set.
     patterns = list(_BUILT_IN_PATTERNS)
+    internal_patterns: list[tuple[str, re.Pattern[str], str]] = []
     if args.internal:
         local_patterns = _load_internal_patterns_file()
-        patterns += _INTERNAL_DISCLOSURE_PATTERNS + local_patterns
+        internal_patterns = _INTERNAL_DISCLOSURE_PATTERNS + local_patterns
+        patterns += internal_patterns
         extra = len(_INTERNAL_DISCLOSURE_PATTERNS) + len(local_patterns)
         suffix = (f" ({len(local_patterns)} from {_INTERNAL_PATTERNS_FILE})"
                   if local_patterns else f" (no {_INTERNAL_PATTERNS_FILE})")
@@ -259,6 +302,8 @@ def main() -> int:
         if _should_skip(rel):
             continue
         hits = _scan_file(path, custom, patterns)
+        if args.internal:
+            hits += _scan_file_multiline(path, internal_patterns)
         for label, severity, lineno, line_text in hits:
             marker = "[HIGH]" if severity == "high" else "[warn]"
             print(f"  {marker} {rel}:{lineno}  {label}: {line_text}")
