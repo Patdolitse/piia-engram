@@ -299,10 +299,12 @@ _SECRET_VALUE_RE = re.compile(
     r"|rk_(?:live|test)_[A-Za-z0-9]{10,}"     # Stripe restricted key
     r"|gh[pousr]_[A-Za-z0-9]{20,}"            # GitHub PAT / OAuth
     r"|github_pat_[A-Za-z0-9_]{20,}"          # GitHub fine-grained PAT
+    r"|glpat-[A-Za-z0-9_\-]{20,}"             # GitLab PAT
     r"|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}"     # AWS access key id (+ temp)
     r"|AIza[0-9A-Za-z_\-]{35}"                # Google API key
     r"|ya29\.[0-9A-Za-z_\-]{20,}"             # Google OAuth access token
-    r"|xox[baprs]-[0-9A-Za-z\-]{10,}"         # Slack token
+    r"|xox[baprs]-[0-9A-Za-z\-]{10,}"         # Slack token (bot/user/app/refresh)
+    r"|xapp-[0-9A-Za-z\-]{10,}"               # Slack app-level token
     r"|eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"  # JWT
     r"|-----BEGIN[ A-Z]*PRIVATE KEY-----"     # PEM private key block
 )
@@ -311,6 +313,15 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _CN_PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")          # CN mobile (11)
 _CN_ID_RE = re.compile(r"(?<![0-9Xx])\d{17}[0-9Xx](?![0-9Xx])")  # CN ID (18)
 _CARD_RE = re.compile(r"(?<!\d)\d{13,19}(?!\d)")               # card candidate
+_CN_MOBILE_BARE = re.compile(r"1[3-9]\d{9}")                   # CN mobile, no anchors
+# Codex round-10 P1: phone/card are often written with spaces/hyphens/country
+# code (4111 1111 1111 1111 / 138-0013-8000 / +86 138 0013 8000). A digit-run
+# token interleaved with single spaces/hyphens (optionally a leading +). Used
+# ONLY on short values, and every candidate is still validated by Luhn /
+# ISO 7064 checksum / the exact 11-digit mobile pattern — so normalization
+# widens the accepted FORMAT without lowering the confidence bar (a random
+# formatted business number won't pass Luhn or the mobile shape).
+_FORMATTED_NUM_RE = re.compile(r"\+?\d[\d \-]{8,}\d")
 
 _CN_ID_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
 _CN_ID_CHECKSUM = "10X98765432"
@@ -344,12 +355,33 @@ def _scan_cn_id(s: str) -> bool:
     return False
 
 
+def _has_formatted_pii(s: str) -> bool:
+    """Catch phone/card PII written with separators (spaces/hyphens) or a
+    country code. Each separator-bearing digit run is normalized to bare
+    digits, then validated by the SAME high-confidence checks as the contiguous
+    path (Luhn for cards, ISO 7064 for CN IDs, the exact 1[3-9]\\d{9} shape for
+    CN mobiles, incl. an optional 86 / +86 country code)."""
+    for m in _FORMATTED_NUM_RE.finditer(s):
+        d = re.sub(r"[ \-]", "", m.group().lstrip("+"))
+        if not d.isdigit():
+            continue
+        if 13 <= len(d) <= 19 and _luhn_ok(d):          # payment card
+            return True
+        if len(d) == 18 and _scan_cn_id(d):             # CN resident ID
+            return True
+        mob = d[2:] if (len(d) == 13 and d.startswith("86")) else d
+        if _CN_MOBILE_BARE.fullmatch(mob):              # CN mobile (+ 86 prefix)
+            return True
+    return False
+
+
 def _has_pii_pattern(s: str) -> bool:
     return bool(
         _EMAIL_RE.search(s)
         or _CN_PHONE_RE.search(s)
         or _scan_cn_id(s)
         or any(_luhn_ok(m.group()) for m in _CARD_RE.finditer(s))
+        or _has_formatted_pii(s)
     )
 
 
@@ -437,6 +469,12 @@ def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
       shape -> secret, a PII shape -> private) regardless of how benign its
       field name is. This is the language-independent half that closes the
       benign-name / sensitive-value gap a name list can never cover.
+
+    Codex round-10 P1: a dict KEY is also visible text returned to the agent,
+    so a key that is *itself* a secret/PII string (e.g.
+    ``{"tokens": {"sk-proj-…": true}}``) must be value-scanned too — every
+    field name is run through BOTH ``_field_floor`` (as a name) and
+    ``classify_value`` (as visible text).
     """
     if not isinstance(item, dict):
         return DEFAULT_LEVEL
@@ -448,6 +486,12 @@ def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
         f = _field_floor(name, restricted_fields)
         if SENSITIVITY_ORDER[f] > SENSITIVITY_ORDER[floor]:
             floor = f
+        if floor == "secret":
+            break
+        # a key can ITSELF be a secret/PII value (it is returned to the agent)
+        kf = classify_value(name)
+        if SENSITIVITY_ORDER[kf] > SENSITIVITY_ORDER[floor]:
+            floor = kf
         if floor == "secret":
             break
     if floor != "secret":
