@@ -3118,8 +3118,80 @@ def _run_reindex() -> None:
     print(f"[ok] reindexed {result.get('indexed', 0)} entries — vector layer: {vec}")
 
 
+def _governance_root():
+    from piia_engram.core import Engram
+    return Engram().root
+
+
+def run_grants(root) -> int:
+    """List agent trust grants + revocations (engram grants)."""
+    from piia_engram.governance_store import GrantStore
+    data = GrantStore(root).list_grants()
+    print("Agent grants (explicit):")
+    if data["grants"]:
+        for a, lvl in sorted(data["grants"].items()):
+            print(f"  {a}: {lvl}")
+    else:
+        print("  (none — agents are auto-classified by default)")
+    print("Revoked:")
+    if data["revoked"]:
+        for a in sorted(data["revoked"]):
+            print(f"  {a}")
+    else:
+        print("  (none)")
+    return 0
+
+
+def run_trust(root, agent: str, level: str) -> int:
+    """Grant an agent a trust level (engram trust <agent> <level>)."""
+    from piia_engram.governance_store import GrantStore
+    try:
+        GrantStore(root).set_grant(agent, level)
+    except ValueError as exc:
+        print(f"[error] {exc}")
+        return 2
+    print(f"[ok] {agent} → {level}")
+    return 0
+
+
+def run_revoke(root, agent: str) -> int:
+    """Revoke an agent (engram revoke <agent>)."""
+    from piia_engram.governance_store import GrantStore
+    GrantStore(root).revoke(agent)
+    print(f"[ok] revoked {agent}.")
+    print("     Note: stops FUTURE disclosure only — cannot recall context "
+          "already sent to an AI tool.")
+    return 0
+
+
+def run_audit(root, limit: int = 20) -> int:
+    """Show recent disclosure receipts + ledger integrity (engram audit)."""
+    from piia_engram.governance import GovernanceLedger, default_ledger_path
+    led = GovernanceLedger(default_ledger_path(root))
+    recs = led.records()
+    if not recs:
+        print("(no disclosures recorded yet)")
+        return 0
+    for r in recs[-limit:]:
+        ev = r.get("event", {})
+        print(f"  #{r.get('seq')} {r.get('ts')}  {ev.get('agent_id', '?')} "
+              f"[{ev.get('trust_level', '?')}] returned={ev.get('returned_count', '?')} "
+              f"excluded_sensitivity={ev.get('excluded_by_sensitivity', '?')}")
+    ok, msg = led.verify()
+    print(f"ledger integrity: {'OK' if ok else 'BROKEN — ' + msg}")
+    return 0 if ok else 1
+
+
+def run_verify_ledger(root) -> int:
+    """Verify the governance ledger hash chain (engram verify-ledger)."""
+    from piia_engram.governance import GovernanceLedger, default_ledger_path
+    ok, msg = GovernanceLedger(default_ledger_path(root)).verify()
+    print(f"[{'ok' if ok else 'FAIL'}] governance ledger: {msg}")
+    return 0 if ok else 1
+
+
 def main() -> None:
-    """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy / engram feedback / engram reindex"""
+    """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy / engram feedback / engram reindex / engram grants|trust|revoke|audit|verify-ledger"""
     args = sys.argv[1:]
     if not args or args[0] == "setup":
         if "--advanced" in args:
@@ -3143,6 +3215,22 @@ def main() -> None:
         run_feedback(dry_run="--dry-run" in args)
     elif args[0] == "reindex":
         _run_reindex()
+    elif args[0] == "grants":
+        sys.exit(run_grants(_governance_root()))
+    elif args[0] == "trust":
+        if len(args) < 3:
+            print("usage: engram trust <agent_id> <trusted-local|read-only-external|private-self>")
+            sys.exit(2)
+        sys.exit(run_trust(_governance_root(), args[1], args[2]))
+    elif args[0] == "revoke":
+        if len(args) < 2:
+            print("usage: engram revoke <agent_id>")
+            sys.exit(2)
+        sys.exit(run_revoke(_governance_root(), args[1]))
+    elif args[0] == "audit":
+        sys.exit(run_audit(_governance_root()))
+    elif args[0] == "verify-ledger":
+        sys.exit(run_verify_ledger(_governance_root()))
     else:
         print(
             "Engram CLI\n\n"
@@ -3154,6 +3242,11 @@ def main() -> None:
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram reindex          Rebuild the hybrid search index from JSON\n"
+            "  engram grants           List agent trust grants + revocations\n"
+            "  engram trust <a> <lvl>  Grant an agent a trust level\n"
+            "  engram revoke <agent>   Revoke an agent (future disclosure only)\n"
+            "  engram audit            Show recent disclosure receipts + ledger check\n"
+            "  engram verify-ledger    Verify the governance ledger hash chain\n"
             "  engram stats            Show project growth metrics\n"
             "  engram stats --log      Append stats snapshot to local log\n"
             "  engram telemetry        Manage anonymous usage statistics\n"
