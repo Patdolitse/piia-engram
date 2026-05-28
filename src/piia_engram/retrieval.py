@@ -321,6 +321,41 @@ class RetrievalMixin:
         return {"indexed": n, "vector_enabled": idx.vector_enabled}
 
     # ------------------------------------------------------------------
+    # c0 — Decision threads (additive; does not change existing read paths)
+    # ------------------------------------------------------------------
+
+    def add_relation(self, src_id: str, rel: str, dst_id: str) -> dict:
+        """Record a typed, directed relation between two knowledge items.
+
+        ``rel`` ∈ {led_to, supersedes, implemented_by}. Idempotent; invalid
+        relations are rejected (returns added=False). This is the explicit
+        edge-building path (v1); semi-automatic supersedes suggestions land
+        later.
+        """
+        from .governance_store import RelationStore
+
+        added = RelationStore(self.root).add_relation(src_id, rel, dst_id)
+        self._audit.log("write", "knowledge/relations",
+                        detail=f"{src_id} {rel} {dst_id} added={added}")
+        return {"added": bool(added), "src": str(src_id), "rel": rel, "dst": str(dst_id)}
+
+    def get_decision_thread(self, seed_id: str) -> dict:
+        """Reconstruct the decision thread containing ``seed_id`` (how this
+        evolved: idea → … → decision → implementation, with superseded items
+        flagged and the current head(s) surfaced). Read-only."""
+        from .decision_thread import build_thread
+        from .governance_store import RelationStore
+
+        entries = {
+            str(e["id"]): e
+            for e in self._all_indexable_entries()
+            if e.get("id")
+        }
+        edges = RelationStore(self.root).all_edges()
+        self._audit.log("read", "knowledge/decision_thread", detail=str(seed_id))
+        return build_thread(seed_id, edges, entries=entries)
+
+    # ------------------------------------------------------------------
     # Search API
     # ------------------------------------------------------------------
 
