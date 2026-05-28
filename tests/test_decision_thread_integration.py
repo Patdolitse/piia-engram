@@ -36,6 +36,14 @@ def test_add_relation_rejects_bad_rel(tmp_path):
     assert eng.add_relation(a, "bogus", b)["added"] is False
 
 
+def test_add_relation_rejects_unknown_id(tmp_path):
+    # Codex round-3 P2: don't pollute threads with edges to non-existent ids
+    eng = Engram(root=tmp_path)
+    a, _ = _ids(eng)
+    res = eng.add_relation(a, "led_to", "no-such-id")
+    assert res["added"] is False and res.get("reason") == "unknown_id"
+
+
 def test_get_decision_thread_unknown_seed(tmp_path):
     eng = Engram(root=tmp_path)
     t = eng.get_decision_thread("does-not-exist")

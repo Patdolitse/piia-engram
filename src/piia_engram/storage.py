@@ -304,6 +304,50 @@ def _atomic_write_json(path: Path, data: Any) -> None:
         raise
 
 
+def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
+    """Atomic read-modify-write under ONE lock.
+
+    Plain ``_read_json`` + ``_atomic_write_json`` is NOT safe for concurrent
+    updaters: the read happens outside the write lock, so two processes can
+    read the same state and clobber each other (lost updates). This holds the
+    per-directory write lock across read → ``mutator(current)`` → atomic
+    replace, so updates serialize correctly. ``mutator`` returns the new data.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.parent / ".engram-write.lock"
+    _default = {} if default is None else default
+    try:
+        with portalocker.Lock(lock_path, "a", timeout=5):
+            # read current state INSIDE the lock
+            if path.is_file():
+                try:
+                    current = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    current = _default
+            else:
+                current = _default
+            new_data = mutator(current)
+            # atomic replace INSIDE the same lock
+            fd, tmp_name = tempfile.mkstemp(
+                dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+            )
+            tmp_path = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(new_data, f, ensure_ascii=False, indent=2)
+                    f.write("\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, path)
+            except Exception:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                raise
+            return new_data
+    except portalocker.LockException as exc:
+        raise RuntimeError(f"无法获取文件锁（超时 5s）：{path.name}") from exc
+
+
 def _write_json(path: Path, data: Any) -> None:
     _atomic_write_json(path, data)
 

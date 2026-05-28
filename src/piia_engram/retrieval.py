@@ -334,6 +334,13 @@ class RetrievalMixin:
         """
         from .governance_store import RelationStore
 
+        # Validate both endpoints exist, so threads aren't polluted with edges
+        # to unknown ids.
+        known = {str(e["id"]) for e in self._all_indexable_entries() if e.get("id")}
+        if str(src_id) not in known or str(dst_id) not in known:
+            return {"added": False, "reason": "unknown_id",
+                    "src": str(src_id), "rel": rel, "dst": str(dst_id)}
+
         added = RelationStore(self.root).add_relation(src_id, rel, dst_id)
         self._audit.log("write", "knowledge/relations",
                         detail=f"{src_id} {rel} {dst_id} added={added}")

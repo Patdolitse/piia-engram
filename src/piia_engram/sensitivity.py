@@ -19,9 +19,18 @@ and is not itself wired into the read path yet.
 
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
+from .governance import SENSITIVITY_ORDER
 from .storage import ENCRYPTED_PROFILE_FIELDS
+
+_SEP_RE = re.compile(r"[-.\s]+")
+
+
+def _norm(name: str) -> str:
+    """Normalize separators so api-key / api.key / 'api key' == api_key."""
+    return _SEP_RE.sub("_", (name or "").strip().lower())
 
 VALID_LEVELS = ("public", "work", "private", "secret")
 DEFAULT_LEVEL = "work"
@@ -47,12 +56,21 @@ def classify_field(name: str, restricted_fields: Iterable[str] = ()) -> str:
     n = (name or "").strip().lower()
     if not n:
         return DEFAULT_LEVEL
-    if any(p in n for p in _SECRET_NAME_PATTERNS):
+    norm = _norm(n)
+    if any(p in norm for p in _SECRET_NAME_PATTERNS):
         return "secret"
-    restricted = {str(f).strip().lower() for f in restricted_fields}
-    if n in _BUILTIN_PRIVATE_FIELDS or n in restricted:
+    restricted = {_norm(f) for f in restricted_fields}
+    if norm in _BUILTIN_PRIVATE_FIELDS or norm in restricted:
         return "private"
     return DEFAULT_LEVEL
+
+
+def _field_floor(name: str, restricted_fields: Iterable[str] = ()) -> str:
+    """Sensitivity FLOOR contributed by a field NAME: ``private``/``secret``
+    if the name is sensitive, else ``public`` (no constraint). Used so an
+    item carrying a sensitive-named field can't be marked below that level."""
+    lvl = classify_field(name, restricted_fields)
+    return lvl if lvl in ("private", "secret") else "public"
 
 
 def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
@@ -62,11 +80,19 @@ def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
     ``work`` (never ``public``). ``restricted_fields`` is accepted for a
     future content-aware pass; v1 does not down-rank below ``work``.
     """
-    if isinstance(item, dict):
-        s = str(item.get("sensitivity", "")).strip().lower()
-        if s in VALID_LEVELS:
-            return s
-    return DEFAULT_LEVEL
+    if not isinstance(item, dict):
+        return DEFAULT_LEVEL
+    explicit = str(item.get("sensitivity", "")).strip().lower()
+    base = explicit if explicit in VALID_LEVELS else DEFAULT_LEVEL
+    # Field-name floor: an item carrying e.g. an `api_key` field is at least
+    # `secret`, regardless of an explicit (or default) lower label. Explicit
+    # level can only RAISE, never lower, the built-in floor.
+    floor = "public"
+    for key in item.keys():
+        f = _field_floor(key, restricted_fields)
+        if SENSITIVITY_ORDER[f] > SENSITIVITY_ORDER[floor]:
+            floor = f
+    return base if SENSITIVITY_ORDER[base] >= SENSITIVITY_ORDER[floor] else floor
 
 
 def annotate_items(items: Iterable[dict], restricted_fields: Iterable[str] = ()) -> list[dict]:

@@ -16,7 +16,18 @@ from pathlib import Path
 
 from . import governance as gov
 from .decision_thread import RELATION_TYPES, validate_edges
-from .storage import _read_json, _write_json
+from .storage import _read_json, _update_json
+
+
+def _normalize_grants(data) -> dict:
+    if not isinstance(data, dict):
+        return {"grants": {}, "revoked": []}
+    grants = data.get("grants")
+    revoked = data.get("revoked")
+    return {
+        "grants": grants if isinstance(grants, dict) else {},
+        "revoked": revoked if isinstance(revoked, list) else [],
+    }
 
 
 class GrantStore:
@@ -26,36 +37,38 @@ class GrantStore:
         self.path = Path(root) / "governance" / "grants.json"
 
     def _load(self) -> dict:
-        data = _read_json(self.path)
-        if not isinstance(data, dict):
-            return {"grants": {}, "revoked": []}
-        data.setdefault("grants", {})
-        data.setdefault("revoked", [])
-        if not isinstance(data["grants"], dict):
-            data["grants"] = {}
-        if not isinstance(data["revoked"], list):
-            data["revoked"] = []
-        return data
+        return _normalize_grants(_read_json(self.path))
 
     def set_grant(self, agent_id: str, trust_level: str) -> None:
-        """Bind an agent to a trust level. Granting clears any revocation."""
+        """Bind an agent to a trust level. Granting clears any revocation.
+
+        Atomic (read-modify-write under one lock) so concurrent grants from
+        multiple tools don't lose each other."""
         if trust_level not in gov.TRUST_LEVELS:
             raise ValueError(
                 f"unknown trust level {trust_level!r}; valid: {list(gov.TRUST_LEVELS)}"
             )
         agent_id = str(agent_id)
-        data = self._load()
-        data["grants"][agent_id] = trust_level
-        data["revoked"] = [a for a in data["revoked"] if a != agent_id]
-        _write_json(self.path, data)
+
+        def _mut(cur):
+            data = _normalize_grants(cur)
+            data["grants"][agent_id] = trust_level
+            data["revoked"] = [a for a in data["revoked"] if a != agent_id]
+            return data
+
+        _update_json(self.path, _mut, default={"grants": {}, "revoked": []})
 
     def revoke(self, agent_id: str) -> None:
-        """Revoke an agent (forward-only: stops future disclosure)."""
+        """Revoke an agent (forward-only: stops future disclosure). Atomic."""
         agent_id = str(agent_id)
-        data = self._load()
-        if agent_id not in data["revoked"]:
-            data["revoked"].append(agent_id)
-        _write_json(self.path, data)
+
+        def _mut(cur):
+            data = _normalize_grants(cur)
+            if agent_id not in data["revoked"]:
+                data["revoked"].append(agent_id)
+            return data
+
+        _update_json(self.path, _mut, default={"grants": {}, "revoked": []})
 
     def is_revoked(self, agent_id: str) -> bool:
         return str(agent_id) in self._load()["revoked"]
@@ -85,27 +98,36 @@ class RelationStore:
         return data if isinstance(data, list) else []
 
     def add_relation(self, src: str, rel: str, dst: str) -> bool:
-        """Add one typed edge. Returns True if added, False if invalid or
-        already present (idempotent)."""
+        """Add one typed edge atomically. Returns True if added, False if
+        invalid or already present (idempotent)."""
         cleaned = validate_edges([{"src": src, "rel": rel, "dst": dst}])
         if not cleaned:
             return False
         edge = cleaned[0]
-        data = self._load()
-        if edge in data:
-            return False
-        data.append(edge)
-        _write_json(self.path, data)
-        return True
+        outcome = {"added": False}
+
+        def _mut(cur):
+            data = cur if isinstance(cur, list) else []
+            if edge in data:
+                return data
+            outcome["added"] = True
+            return data + [edge]
+
+        _update_json(self.path, _mut, default=[])
+        return outcome["added"]
 
     def remove_relation(self, src: str, rel: str, dst: str) -> bool:
         edge = {"src": str(src), "rel": str(rel), "dst": str(dst)}
-        data = self._load()
-        kept = [e for e in data if e != edge]
-        if len(kept) == len(data):
-            return False
-        _write_json(self.path, kept)
-        return True
+        outcome = {"removed": False}
+
+        def _mut(cur):
+            data = cur if isinstance(cur, list) else []
+            kept = [e for e in data if e != edge]
+            outcome["removed"] = len(kept) != len(data)
+            return kept
+
+        _update_json(self.path, _mut, default=[])
+        return outcome["removed"]
 
     def all_edges(self) -> list[dict]:
         return validate_edges(self._load())

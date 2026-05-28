@@ -100,6 +100,65 @@ def test_edges_for_node(tmp_path):
     assert all("b" in (e["src"], e["dst"]) for e in touching_b)
 
 
+def test_concurrent_add_relation_no_lost_updates(tmp_path):
+    # Codex round-3 P1: the invariant is NO LOST UPDATES — every write that
+    # SUCCEEDS must be persisted. (Under an artificial thundering herd a write
+    # may hit the lock timeout and raise; that's correct fail-closed behavior,
+    # not data loss — so we assert against successes, not against N.)
+    import threading
+    rs = RelationStore(tmp_path)
+    N = 20
+    successes, errors = [], []
+
+    def worker(i):
+        try:
+            if rs.add_relation(f"n{i}", "led_to", f"m{i}"):
+                successes.append(i)
+        except RuntimeError:
+            pass  # lock-timeout under contention is acceptable (no data loss)
+        except Exception as e:  # pragma: no cover
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    # no lost updates: persisted count == successful count
+    assert len(rs.all_edges()) == len(successes)
+    assert len(successes) >= 1
+
+
+def test_concurrent_set_grant_no_lost_updates(tmp_path):
+    import threading
+    gs = GrantStore(tmp_path)
+    N = 20
+    successes, errors = [], []
+
+    def worker(i):
+        try:
+            gs.set_grant(f"agent{i}", "trusted-local")
+            successes.append(i)
+        except RuntimeError:
+            pass  # lock-timeout under contention is acceptable
+        except Exception as e:  # pragma: no cover
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    # no lost updates: every successful grant is present
+    grants = gs.list_grants()["grants"]
+    assert len(grants) == len(successes)
+    for i in successes:
+        assert grants[f"agent{i}"] == "trusted-local"
+    assert len(successes) >= 1
+
+
 def test_relations_feed_build_thread(tmp_path):
     # end-to-end: stored relations reconstruct a thread
     from piia_engram.decision_thread import build_thread

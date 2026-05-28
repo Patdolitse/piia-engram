@@ -41,6 +41,34 @@ def test_restricted_fields_cannot_lower_the_builtin_floor():
 
 # ── knowledge items ──────────────────────────────────────────────────────
 
+def test_secret_field_cannot_be_marked_public_LEAK_REGRESSION():
+    # Codex round-3 P1: an item with a credential field + explicit public
+    # must NOT stay public (it would leak to read-only-external).
+    item = {"id": "3", "sensitivity": "public", "api_key": "sk-abc"}
+    assert sv.classify_item(item) == "secret"
+
+def test_pii_field_floors_item_to_private():
+    item = {"id": "x", "sensitivity": "public", "email": "a@b.c"}
+    assert sv.classify_item(item) == "private"
+
+def test_explicit_public_honored_when_no_sensitive_fields():
+    assert sv.classify_item({"id": "1", "summary": "x", "sensitivity": "public"}) == "public"
+
+def test_field_name_separator_normalization():
+    # Codex round-3 P2: api-key / private-key / api.key must be detected
+    for f in ["api-key", "api.key", "API Key", "private-key", "private.key"]:
+        assert sv.classify_field(f) == "secret", f
+
+
+def test_annotate_then_gate_blocks_secret_field_item():
+    # end-to-end leak regression through annotate -> gate
+    from piia_engram import governance as gov
+    items = [{"id": "ok", "summary": "fine", "sensitivity": "public"},
+             {"id": "leak", "sensitivity": "public", "access_token": "t"}]
+    allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
+    assert {i["id"] for i in allowed} == {"ok"}  # the token item must be blocked
+
+
 def test_item_defaults_to_work():
     assert sv.classify_item({"id": "1", "summary": "x"}) == "work"
 
