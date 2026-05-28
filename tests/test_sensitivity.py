@@ -271,6 +271,64 @@ def test_cjk_sensitive_fields_blocked_through_external_gate():
     assert allowed == []
 
 
+# ── Codex round-8: broader CJK PII synonyms + CJK restricted_fields ──────────
+
+
+def test_cjk_private_synonyms_are_private():
+    # Codex round-8 P1: common Chinese PII synonyms beyond the first draft set
+    # (电子邮件 = email, 手机 = phone, 证件号/银行卡号/护照号 = identity/financial
+    # document numbers) must also floor to private.
+    for f in ["电子邮件", "邮件地址", "联系邮箱",
+              "手机", "联系电话",
+              "证件号", "证件号码",
+              "银行卡号", "银行卡号码",
+              "护照号", "护照号码"]:
+        assert sv.classify_field(f) == "private", f
+
+
+def test_cjk_private_synonyms_blocked_through_external_gate():
+    from piia_engram import governance as gov
+    cases = [
+        {"sensitivity": "public", "电子邮件": "a@b.c"},
+        {"sensitivity": "public", "手机": "13800000000"},
+        {"sensitivity": "public", "证件号": "x"},
+        {"sensitivity": "public", "银行卡号": "x"},
+        {"sensitivity": "public", "护照号": "x"},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(cases), "read-only-external")
+    assert allowed == []
+
+
+def test_cjk_restricted_fields_raise_to_private():
+    # Codex round-8 P2: a user's explicit pure-CJK restricted_fields must be
+    # honored (they tokenized to nothing, so the old code ignored them).
+    for f in ["项目代号", "内部计划", "备注"]:
+        assert sv.classify_field(f, restricted_fields=[f]) == "private", f
+
+
+def test_cjk_restricted_fields_blocked_through_external_gate():
+    from piia_engram import governance as gov
+    restricted = ["项目代号", "内部计划", "备注"]
+    cases = [{"sensitivity": "public", f: "x"} for f in restricted]
+    allowed, _ = gov.gate(
+        sv.annotate_items(cases, restricted_fields=restricted),
+        "read-only-external",
+    )
+    assert allowed == []
+
+
+def test_cjk_restricted_fields_do_not_overflag_without_restriction():
+    # The CJK restricted layer is additive: without restriction these stay work.
+    for f in ["项目代号", "内部计划", "备注"]:
+        assert sv.classify_field(f) == "work", f
+
+
+def test_cjk_benign_fields_stay_work_after_synonym_expansion():
+    # The broadened CJK PII table must not over-flag ordinary Chinese names.
+    for f in ["用户名", "技术栈", "标题", "摘要", "领域", "角色"]:
+        assert sv.classify_field(f) == "work", f
+
+
 def test_annotate_then_gate_blocks_secret_field_item():
     # end-to-end leak regression through annotate -> gate
     from piia_engram import governance as gov

@@ -169,11 +169,29 @@ _SECRET_CJK_TERMS = (
     "密码", "密钥", "秘钥", "令牌", "口令", "凭证", "私钥",
     "访问令牌", "刷新令牌", "客户端密钥",
 )
+# Codex round-8 P1: the first CJK draft only covered a narrow word set, so
+# common real-world Chinese PII synonyms still leaked — 电子邮件 (another plain
+# rendering of "email"), 手机 (the common short form for a phone field), and
+# the identity/financial document names 证件号 / 银行卡号 / 护照号. These are
+# high-confidence PII for a personal-memory product, so the table is broadened
+# (still a curated high-confidence list, NOT open-ended substring scanning).
 _PRIVATE_CJK_TERMS = (
-    "邮箱", "邮箱地址", "电子邮箱", "手机号", "手机号码",
-    "电话号码", "电话", "住址", "地址", "身份证", "身份证号",
+    "邮箱", "邮箱地址", "电子邮箱", "电子邮件", "邮件地址", "联系邮箱",
+    "手机号", "手机号码", "手机", "电话号码", "电话", "联系电话",
+    "住址", "地址", "居住地址",
+    "身份证", "身份证号", "身份证号码",
+    "证件号", "证件号码",
+    "护照号", "护照号码",
+    "银行卡号", "银行卡号码",
     "真实姓名", "姓名",
 )
+
+_CJK_CHAR_RE = re.compile(r"[一-鿿]")
+
+
+def _contains_cjk(s: str) -> bool:
+    """True if ``s`` contains any CJK Unified ideograph."""
+    return bool(_CJK_CHAR_RE.search(s))
 
 
 def _contains_cjk_term(name: str, terms: tuple[str, ...]) -> bool:
@@ -184,6 +202,35 @@ def _contains_cjk_term(name: str, terms: tuple[str, ...]) -> bool:
     positives)."""
     s = _normalize_field_name(name)
     return any(term in s for term in terms)
+
+
+def _restricted_field_matches(name: str, restricted_fields: Iterable[str]) -> bool:
+    """True if ``name`` is covered by any user ``restricted_fields`` entry —
+    the additive, raise-only power-user layer. Three match modes:
+
+    1. token-group containment (ASCII, separator/case-agnostic) — the original
+       behaviour, so restricted ``api key`` still raises ``api-key``/``apiKey``;
+    2. normalized exact equality — covers names that tokenize to nothing;
+    3. a CJK-containing restricted field as a normalized substring — Codex
+       round-8 P2: pure-CJK names tokenize to nothing, so a user's explicit
+       ``restricted_fields=["项目代号"]`` was silently ignored. Substring is
+       gated to CJK-bearing restricted entries only (CJK never collides with
+       ASCII identifiers), so this can't reintroduce ASCII false positives.
+    """
+    tokenset = set(_field_tokens(name))
+    n = _normalize_field_name(name)
+    for f in restricted_fields:
+        group = frozenset(_field_tokens(f))
+        if group and group <= tokenset:
+            return True
+        r = _normalize_field_name(f)
+        if not r:
+            continue
+        if n == r:
+            return True
+        if _contains_cjk(r) and r in n:
+            return True
+    return False
 
 
 def classify_field(name: str, restricted_fields: Iterable[str] = ()) -> str:
@@ -209,11 +256,12 @@ def classify_field(name: str, restricted_fields: Iterable[str] = ()) -> str:
             or _groups_match(tokenset, _PRIVATE_GROUPS)
             or _contains_cjk_term(name, _PRIVATE_CJK_TERMS)):
         return "private"
+    # User restricted_fields (additive, raise-only to private). Checked BEFORE
+    # the empty-tokens early return so pure-CJK custom fields are honored.
+    if _restricted_field_matches(name, restricted_fields):
+        return "private"
     if not tokens:
         return DEFAULT_LEVEL
-    restricted_groups = [frozenset(_field_tokens(f)) for f in restricted_fields]
-    if _groups_match(tokenset, restricted_groups):
-        return "private"
     # Confusable fail-closed: a name mixing ASCII with Cyrillic/Greek letters
     # (eмail, аpi_key) can't be trusted to tokenize correctly — floor it to
     # private so an explicit `public` can't leak it to read-only-external.
