@@ -121,7 +121,7 @@ We believe in honest positioning. Here's where other tools beat us today:
 |---|---|---|
 | **Installation simplicity** | Single-binary projects (Go / Rust) | Single binary / `brew install` is one command. piia-engram requires `pip install` + MCP config (also one-time, but two steps). |
 | **Auto-capture via hooks** | Projects with native shell-hook integrations | Hooks bypass the "AI forgets to call the tool" problem. piia-engram now uses Claude Code Stop / PreCompact / SessionStart / PostCompact hooks for the same goal, plus instruction injection into config files for tools without hook APIs. |
-| **Semantic retrieval** | Vector-DB-based memory tools | Vector DB + embeddings tend to score higher on benchmark recall. piia-engram uses character n-gram + alias tokenization — deterministic, offline, CJK-friendly, and well-suited for the small-store regime (≤500 items). |
+| **Semantic retrieval** | Vector-DB-based memory tools | Vector DB + embeddings tend to score higher on benchmark recall. piia-engram uses character n-gram + alias tokenization — deterministic, offline, CJK-friendly, tuned for the personal-identity store size (see [Scale & retention](#scale--retention) below). |
 | **Benchmark narrative** | Projects publishing LongMemEval scores | piia-engram focuses on **governance metrics** (precision of user-approved knowledge, conflict rate, stale-decay accuracy) rather than recall benchmarks, because the use case is "right thing surfaced" not "everything indexed". |
 | **Visual experience** | Projects with dedicated dashboards | piia-engram has a CLI + a generated HTML review page. A dedicated GUI is not currently on the roadmap. |
 | **Ecosystem scale** | Mainstream memory frameworks | piia-engram is a smaller, focused project. Larger ecosystems have more integrations, plugins, and community tooling. |
@@ -130,7 +130,7 @@ We believe in honest positioning. Here's where other tools beat us today:
 
 ## What Engram explicitly does *not* do
 
-- **No vector embeddings.** We use character n-gram + alias tokenization for similarity. This is fast, deterministic, works offline, handles CJK well, and is appropriate for the small-store regime (200–500 items). It would be the wrong choice at 100,000 items — don't use Engram for that.
+- **No vector embeddings.** We use character n-gram + alias tokenization for similarity. This is fast, deterministic, works offline, and handles CJK well. It's tuned for a personal-identity store, not a large document corpus — see [Scale & retention](#scale--retention) for the sizing detail.
 - **No cloud storage in core.** There is no Engram Cloud, no managed instance. **Usage statistics are off by default** — users must explicitly opt in during `engram setup`. When enabled, only anonymous aggregated counts (tool names + call counts, knowledge totals, engram version) are written to a local log at `~/.engram/telemetry.log`. No network requests are made by the current implementation. No identity content, prompts, file paths, or IP addresses are ever recorded. The only other network call from the core library is `read_web_content` (optional, requires the local Engram Reader sidecar). MCP transport itself is stdio or self-hosted HTTP.
 - **No automatic "agent self-edits the memory."** The agent can call `add_lesson` / `add_decision` / `extract_session_insights`, but new items land in the `staging` tier. They only become `verified` when the user explicitly promotes them via the review page. This is a deliberate choice against the failure mode where an agent hallucinates a "remembered fact."
 - **No team / multi-user model.** Engram is one person × many tools. If you need many people × many tools, you want something else.
@@ -146,13 +146,21 @@ This is the architectural call that drives every other choice.
 | Store the agent's working state | Store the user's stable preferences |
 | Optimize for recall accuracy | Optimize for cold-start onboarding |
 | Per-agent / per-conversation scope | Per-user, cross-tool scope |
-| Grows linearly with usage | Bounded by user's actual identity (~hundreds of items) |
+| Grows linearly with usage | Bounded by user's actual identity |
 | Vector store is the natural shape | Curated structured store is the natural shape |
 | Agent owns it | User owns it; agents contribute proposals |
 
 Letta and Mem0 are the canonical examples of the memory-layer approach. They're excellent at it. Engram is the canonical example of the identity-layer approach — they're complementary, not competitive.
 
 You could absolutely run **Engram + Letta + Mem0** together: Engram for who you are, Letta for what the agent is doing right now, Mem0 for the team's shared document corpus.
+
+---
+
+## Scale & retention
+
+A personal-identity store stays small by design. Engram's default sizing target is a few hundred items per knowledge kind (lessons, decisions, playbooks) — the natural shape of *who you are and what you've learned*, not a record of every interaction. The character-n-gram retrieval, JSON storage, and review queue are all tuned for that shape.
+
+The default threshold is configurable, and stale-decay + archive-knowledge keep older entries from accumulating. If you find yourself wanting a five-figure document corpus, Engram is the wrong layer for that — pair it with a vector-store memory tool (Mem0, Letta, etc.) for the bulk side.
 
 ---
 

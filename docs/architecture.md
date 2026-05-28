@@ -254,4 +254,3 @@ Set `ENGRAM_TOOLS=all` to expose the full 43 tools (review, health, link/unlink,
 - README user-facing intro: [README.md](../README.md) · [中文版](../README.zh-CN.md)
 - Security model: [SECURITY.md](../SECURITY.md)
 - Contributing & test baseline: [CONTRIBUTING.md](../CONTRIBUTING.md)
-- Release process: [release-playbook.md](release-playbook.md)

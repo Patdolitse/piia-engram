@@ -25,7 +25,8 @@
 **Listed in:**
 [![awesome-mcp-servers](https://img.shields.io/badge/listed_in-awesome--mcp--servers-orange?logo=awesome-lists)](https://github.com/punkpeye/awesome-mcp-servers)
 [![awesome-agents](https://img.shields.io/badge/listed_in-awesome--agents-orange?logo=awesome-lists)](https://github.com/kyrolabs/awesome-agents)
-[![Glama Directory](https://img.shields.io/badge/Glama_Directory-3A_rated-blue)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
+
+[![piia-engram MCP server](https://glama.ai/mcp/servers/@Patdolitse/piia-engram/badge)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
 
 </div>
 
@@ -194,6 +195,8 @@ Add to `~/.codex/mcp.json`:
   }
 }
 ```
+
+> **Plugin manifest note (Codex CLI 0.130.0+)**: piia-engram ships a `.claude-plugin/plugin.json` whose schema is also recognized by Codex CLI. Native one-command plugin install via Codex's marketplace flow isn't supported yet (Codex expects a multi-plugin marketplace manifest at the repo root, which would conflict with the single-plugin manifest used by other tools). For now, configure Codex via the `~/.codex/mcp.json` snippet above — it's the supported path and works on every Codex version.
 
 </details>
 

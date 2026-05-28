@@ -25,7 +25,8 @@
 **被收录于：**
 [![awesome-mcp-servers](https://img.shields.io/badge/listed_in-awesome--mcp--servers-orange?logo=awesome-lists)](https://github.com/punkpeye/awesome-mcp-servers)
 [![awesome-agents](https://img.shields.io/badge/listed_in-awesome--agents-orange?logo=awesome-lists)](https://github.com/kyrolabs/awesome-agents)
-[![Glama 目录](https://img.shields.io/badge/Glama_目录-3A_评级-blue)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
+
+[![piia-engram MCP server](https://glama.ai/mcp/servers/@Patdolitse/piia-engram/badge)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
 
 </div>
 

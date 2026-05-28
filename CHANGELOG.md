@@ -4,6 +4,29 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.31.0] - UNRELEASED
+
+跨工具自动接续补全 + 知识 tier 管理 + 发布流程加固。
+
+### Added
+- **跨工具会话接续**：Cursor / Codex / Windsurf 的指令片段现在都会提示 AI 在会话开始调用 `get_resume_brief` 接续上一轮工作，与 Claude Code 的 SessionStart hook 行为一致。新增对 Windsurf 的支持。
+- **可选 pre-commit 脱敏闸**：`python scripts/install_git_hooks.py` 安装后，每次提交前自动扫描暂存区的敏感内容（可用 `--no-verify` 临时绕过）。
+
+### Changed
+- **`update_knowledge` 支持调整 tier**：可直接把一条知识在 `staging` / `verified` / `archived` 之间迁移，无需"归档旧条目 + 新增"两步；tier 变更会写入审计日志。
+- **PostCompact 钩子职责收敛**：command 钩子现在只把压缩摘要归档到 daily log，语义提炼（lesson/decision）统一交给 agent 钩子，消除重复写入。
+- **doctor 检测过期指令片段**：能识别缺少跨工具接续指令的旧版片段并在 `--fix` 时刷新。
+- **README 改用 Glama 官方质量徽章**（动态评级，替代手写徽章）。
+
+### Security / Hardening
+- 发布守卫的具体路径模式移到本地 `.guardignore`（不入库），公开 workflow 只保留通用类别。
+- 整合了对比文档中的存储规模说明，避免重复强调上限。
+- 收紧了发布内容控制：从黑名单升级为默认拒绝的发布白名单（`.publishallow` + CI 校验），并引入公开 / 内部双轨 CHANGELOG。
+- 脱敏扫描器新增内部信息泄漏模式检测（评审代号、模型代号等）。
+
+### Release Evidence
+- 全量回归测试通过。
+
 ## [3.30.1] - 2026-05-27
 
 修复 `engram doctor --fix` 对过期 hook 无法升级的问题。
@@ -58,7 +81,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [3.29.4] - 2026-05-27
 
-跨工具/跨会话审计驱动的优化版本。R1/R2/R3 三轮回归全部通过。
+跨工具/跨会话审计驱动的优化版本。多轮回归全部通过。
 
 ### Added
 - **`doctor` MCP 工具**：用户排障入口，覆盖 8 项检查（identity_completeness, health_score, stale_knowledge, near_duplicates, decision_conflicts, knowledge_volume, quick_context_freshness, identity_provenance）。默认包含在 core tier 中。
@@ -66,7 +89,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **`update_identity` MCP 增加 `source_tool` 参数**：传入即可在 profile 中留下来源记录。
 - **类型感知的过期衰减**：`STALE_DECAY_MULTIPLIERS` 按 domain 调整过期门槛（`user_preference=3.0`、`architecture=2.0`、`workflow=1.0`、`debug=0.5`），避免长期偏好被错误判过期。
 - **跨工具使用指南**：新增 `docs/cross-tool-guide.md`，覆盖配置、自动恢复、多工具共存、doctor 排障流程。
-- **R3 守门测试**：`tests/test_optimizations_v3294.py` 固化 6 项关键回归（description 重写、三工具共存、decision 无自指、lesson 无自指、doctor core）。
+- **回归守门测试**：`tests/test_optimizations_v3294.py` 固化 6 项关键回归（description 重写、三工具共存、decision 无自指、lesson 无自指、doctor core）。
 
 ### Changed
 - **Lesson/Decision 三级去重**（duplicate / related / pass）：
@@ -79,14 +102,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **`related_ids` 自指守卫**：lesson / decision 关联时跳过自身 ID，避免 `related_ids: [self]`。
 
 ### Fixed
-- R1: `doctor` 调用不存在的 `knowledge_overview` 方法 → 改用 `get_knowledge_overview()`。
-- R2: 重复写已有 description marker 时其他工具的 marker 被覆盖。
-- R2: 同问题不同 choice 的决策 `related_ids` 出现自指。
+- `doctor` 调用不存在的 `knowledge_overview` 方法 → 改用 `get_knowledge_overview()`。
+- 重复写已有 description marker 时其他工具的 marker 被覆盖。
+- 同问题不同 choice 的决策 `related_ids` 出现自指。
 
 ### Release Evidence
-- `experiments/memory_audit/results/optimization_verify_report.md` (R1: 16/18)
-- `experiments/memory_audit/results/optimization_verify_r2_report.md` (R2: 22/22)
-- `experiments/memory_audit/results/optimization_verify_r3_report.md` (R3: 6/6)
+- 多轮回归测试全部通过。
 
 ## [3.29.0] - 2026-05-24
 
@@ -321,7 +342,7 @@ Quality & reliability release: 657 tests at 96% coverage (all modules ≥90%), c
 
 ### Added
 - **Cold-start setup streamlining** — simplified first-run experience with guided setup flow
-- **Round 10 retrieval/injection quality benchmark** — 7-dimension, 43-case test suite; all 43 PASS with DeepSeek V4 Pro judge
+- **Round 10 retrieval/injection quality benchmark** — 7-dimension, 43-case test suite; all 43 PASS under an external LLM judge
 
 ### Fixed
 - **CI stability** — safe tilde expansion (no `os.path.expanduser` on `~` in path literals), test auth hardening, job matrix reduced 12→6 for faster feedback
@@ -358,7 +379,7 @@ Code quality release: split the last monolithic module, brought mcp_server cover
 - Total coverage: **78% → 83%** (+5pp)
 
 ### Evaluated
-- DeepSeek 3-pass milestone evaluation: architecture 8.0 (+0.5), security 8.0 (+0.5), overall 7.53
+- External 3-pass milestone evaluation: architecture 8.0 (+0.5), security 8.0 (+0.5), overall 7.53
 - 5/5 v3.14.3 suggestions verified as fixed
 - Key feedback: architecture.md and CONTRIBUTING.md were lagging (now fixed)
 
@@ -396,7 +417,7 @@ Privacy-focused feature release: opt-in anonymous usage statistics, reconcile au
   - [2] Anonymous usage statistics (default: **No**)
   - Numeric selection UI (no free-text input)
 - **ToolCallTracker wired into MCP server** — 10 Tier-1 tools instrumented with success/error tracking; auto-flush during `wrap_up_session`
-- **`docs/telemetry_roadmap.md`** — Phase 1 spec, Phase 2 decision gate criteria, cross-AI consultation record
+- Internal telemetry planning notes (phased rollout + decision-gate criteria)
 
 ### Changed
 - `README.md` / `README.zh-CN.md`: updated "0 network calls" claim to reflect opt-in statistics; FAQ rewritten
@@ -410,8 +431,7 @@ Privacy-focused feature release: opt-in anonymous usage statistics, reconcile au
 
 ## [3.14.4] - 2026-05-22
 
-Patch driven by the v3.14.3 DeepSeek milestone evaluation ([report](docs/milestone_review_v3.14.3.md)).
-Two HIGH-severity findings addressed; full regression context in the evaluation report.
+Patch driven by the v3.14.3 milestone evaluation. Two high-severity findings addressed; full regression context captured internally.
 
 ### Security
 - **`crypto.py`: `DecryptionError` + `strict=True` mode**. The default `decrypt()` still returns the original ciphertext on failure (backward-compatible warning + passthrough), but new callers can now opt into `decrypt(value, strict=True)` / `decrypt_fields(..., strict=True)` to raise `DecryptionError` instead. Uses `raise from None` to avoid leaking timing-oracle info about which stage failed (b64 / key derivation / AEAD tag).
@@ -422,8 +442,7 @@ Two HIGH-severity findings addressed; full regression context in the evaluation 
   - `README.md` and `README.zh-CN.md` quantitative sections + comparison tables
   - `docs/comparison.md`
   - `docs/architecture.md` (3 references)
-  - `docs/coverage_baseline_v3.14.2.md`
-  - `experiments/evaluations/v3.14.3/evidence_pack.md` (with explicit erratum note)
+  - internal coverage + evaluation notes (with explicit erratum note)
 
 ### Tests
 - **394 passed** (up from 386 in v3.14.2; v3.14.3 was docs-only)
@@ -431,7 +450,7 @@ Two HIGH-severity findings addressed; full regression context in the evaluation 
 - CONTRIBUTING baseline raised: 386+ → **394+ tests**
 
 ### Docs
-- New `docs/milestone_review_v3.14.3.md` — full v3.13.2 → v3.14.3 evaluation closure (4-pass DeepSeek)
+- Milestone evaluation closure for v3.13.2 → v3.14.3 (external multi-pass review)
   - Architecture score: 5.4 → 7.50 (+2.10, biggest movement)
   - Overall: 6.9 → 7.90 (+1.00)
   - Self-assessment calibration bias narrowed from +1.7 (security blind spot) to −0.5 (now slightly conservative)
@@ -461,7 +480,7 @@ Two HIGH-severity findings addressed; full regression context in the evaluation 
 - **Path validation**: new `_validate_path` helper in `mcp_server.py` rejects NUL bytes in user-supplied paths. Applied to `import_engram`, `export_engram`, `save_project_snapshot`. Engram remains local-first (not a sandbox), but null-byte handling now matches OWASP guidance for paths crossing trust boundaries.
 
 ### Docs
-- New `docs/coverage_baseline_v3.14.2.md` — first published coverage baseline: **78% total**, 8 modules ≥85%, gaps documented for `mcp_server.py` (54%, SSE + uncalled wrappers) and `setup_wizard.py` (58%, interactive flow)
+- Published the first test-coverage baseline and documented remaining gaps internally
 - New `.coveragerc` — pins source root and exclude rules so future runs are reproducible
 - CONTRIBUTING baseline raised: 329+ tests → 386+ tests, 78%+ coverage required
 
@@ -518,7 +537,7 @@ Two HIGH-severity findings addressed; full regression context in the evaluation 
 - New: `test_secret_without_crypto_raises` — verifies fail-fast on missing cryptography
 
 ### Docs
-- v3.13.2 milestone evaluation report (`docs/milestone_review_v3.13.2.md` + `.html`)
+- v3.13.2 milestone evaluation closure (captured internally)
 
 ## [3.13.2] - 2026-05-22
 
