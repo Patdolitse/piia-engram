@@ -138,6 +138,87 @@ def test_round5_attack_set_blocked_through_gate():
     assert allowed == []
 
 
+# ── Codex round-6: spelling bypasses (glued / abbrev / unicode / digit) ──────
+
+
+def test_round6_glued_and_abbrev_credential_names_are_secret():
+    # Glued vendor-prefix + credential-suffix forms and common abbreviations
+    # must classify secret (they're real engineering field names).
+    for f in ["openaiapikey", "githubtoken", "stripesecretkey", "stripeSecretKey",
+              "userpassword", "awscredentials", "ssh_passphrase",
+              "pwd", "passwd", "creds", "cred"]:
+        assert sv.classify_field(f) == "secret", f
+
+
+def test_round6_extra_likely_credential_spellings_blocked():
+    # Codex round-6 §11.1 verbatim: these must be excluded for read-only-external.
+    from piia_engram import governance as gov
+    cases = [
+        {"sensitivity": "public", "openaiapikey": "sk"},
+        {"sensitivity": "public", "githubtoken": "ghp_x"},
+        {"sensitivity": "public", "stripesecretkey": "sk_live"},
+        {"sensitivity": "public", "pwd": "secret"},
+        {"sensitivity": "public", "creds": "secret"},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(cases), "read-only-external")
+    assert allowed == []
+
+
+def test_zero_width_inside_sensitive_word_does_not_bypass():
+    # Codex round-6 §11.2: zero-width chars must not split a sensitive word.
+    from piia_engram import governance as gov
+    zw = "​"
+    assert sv.classify_field(f"a{zw}p{zw}i_key") == "secret"
+    cases = [{"sensitivity": "public", f"a{zw}p{zw}i_key": "sk"}]
+    allowed, _ = gov.gate(sv.annotate_items(cases), "read-only-external")
+    assert allowed == []
+
+
+def test_fullwidth_credential_name_is_normalized():
+    # NFKC folds fullwidth forms, so they can't be used to dodge the classifier.
+    assert sv.classify_field("ＡＰＩ＿ＫＥＹ") == "secret"
+
+
+def test_digit_seam_credential_spellings_blocked():
+    # Codex round-6 §11.3: a digit between letters must not break the word.
+    assert sv.classify_field("api2key") == "secret"
+    assert sv.classify_field("api2_key") == "secret"
+    assert sv.classify_field("apiV2Key") == "secret"
+
+
+def test_confusable_script_does_not_bypass():
+    # Codex round-6 §10.4: ASCII letters mixed with Cyrillic/Greek look-alikes
+    # can't be trusted to tokenize — fail closed to (at least) private so an
+    # explicit `public` can't leak them.
+    from piia_engram import governance as gov
+    cyr_m = "м"      # Cyrillic 'м' imitating ASCII 'm'
+    cyr_a = "а"      # Cyrillic 'а' imitating ASCII 'a'
+    assert sv.classify_field(f"e{cyr_m}ail") in ("private", "secret")
+    assert sv.classify_field(f"{cyr_a}pi_key") in ("private", "secret")
+    cases = [
+        {"sensitivity": "public", f"e{cyr_m}ail": "a@b.c"},
+        {"sensitivity": "public", f"{cyr_a}pi_key": "sk"},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(cases), "read-only-external")
+    assert allowed == []
+
+
+def test_round6_pure_cjk_field_names_not_over_flagged():
+    # The confusable defense must NOT fire on pure-CJK names (no ASCII to
+    # imitate), so legitimate Chinese field names stay at the work default.
+    for f in ["邮箱地址", "用户名", "技术栈", "备注"]:
+        assert sv.classify_field(f) == "work", f
+
+
+def test_round6_no_false_positives_after_hardening():
+    # Codex round-6 §11.4: benign fields must stay un-flagged after the
+    # suffix/abbrev/digit-seam hardening (no new over-protection creep).
+    for f in ["primary_key", "cache_key", "access_count", "valid_numbers",
+              "monkey", "tokens_used", "keynote", "public_key_algorithm",
+              "first_name", "user_id"]:
+        assert sv.classify_field(f) == "work", f
+
+
 def test_annotate_then_gate_blocks_secret_field_item():
     # end-to-end leak regression through annotate -> gate
     from piia_engram import governance as gov
