@@ -7,17 +7,26 @@ etc. — those attributes live on the Engram instance and remain authoritative i
 
 from __future__ import annotations
 
+import hashlib
 import math
+import os
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .search_index import (
+    SearchIndex,
+    _content_hash,
+    _entry_document,
+    reciprocal_rank_fusion,
+)
 from .storage import (
     CONFLICT_C_CEILING,
     CONFLICT_Q_THRESHOLD,
     DOMAIN_KEYWORDS,
     FIELD_WEIGHTS,
+    HYBRID_RELEVANCE_THRESHOLD,
     MAX_KNOWLEDGE_ENTRIES,
     SEARCH_RELEVANCE_THRESHOLD,
     SIMILARITY_THRESHOLD,
@@ -230,6 +239,68 @@ class RetrievalMixin:
         return score
 
     # ------------------------------------------------------------------
+    # v4.0 hybrid search index (rebuildable; JSON stays source of truth)
+    # ------------------------------------------------------------------
+
+    def _hybrid_enabled(self) -> bool:
+        """Hybrid search is opt-in via ENGRAM_SEARCH=hybrid (default keyword)."""
+        return os.environ.get("ENGRAM_SEARCH", "keyword").strip().lower() == "hybrid"
+
+    def _hybrid_index(self) -> SearchIndex:
+        idx = getattr(self, "_search_index_cache", None)
+        if idx is None:
+            idx = SearchIndex(self.root / "search_index.db")
+            self._search_index_cache = idx
+        return idx
+
+    def _all_indexable_entries(self) -> list[dict]:
+        """All active lessons + decisions + playbooks, for the index."""
+        entries: list[dict] = []
+        for name, typ in (("lessons.json", "lesson"), ("decisions.json", "decision")):
+            entries += [
+                e for e in self._read_entries(self._knowledge_dir / name, typ)
+                if e.get("status") == "active"
+            ]
+        for idx_entry in self._read_playbook_index():
+            if idx_entry.get("status") != "active":
+                continue
+            pb = self._read_playbook_by_id(idx_entry.get("id", ""))
+            if pb:
+                entries.append(pb)
+        return entries
+
+    @staticmethod
+    def _entries_fingerprint(entries: list[dict]) -> str:
+        """Content fingerprint: changes iff any indexed entry's text changes."""
+        parts = sorted(
+            f"{e.get('id')}:{_content_hash(_entry_document(e))}"
+            for e in entries if e.get("id")
+        )
+        return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+
+    def _ensure_index_fresh(self, entries: list[dict]) -> SearchIndex:
+        """Lazily (re)build the index when the source content changed.
+
+        Any failure here is swallowed — the index is an optimization, never
+        a hard dependency of search.
+        """
+        idx = self._hybrid_index()
+        try:
+            fp = self._entries_fingerprint(entries)
+            if idx.fingerprint() != fp:
+                idx.rebuild(entries, fingerprint=fp)
+        except Exception:
+            pass
+        return idx
+
+    def rebuild_index(self) -> dict:
+        """Explicitly rebuild the search index from current JSON (CLI: reindex)."""
+        entries = self._all_indexable_entries()
+        idx = self._hybrid_index()
+        n = idx.rebuild(entries, fingerprint=self._entries_fingerprint(entries))
+        return {"indexed": n, "vector_enabled": idx.vector_enabled}
+
+    # ------------------------------------------------------------------
     # Search API
     # ------------------------------------------------------------------
 
@@ -274,66 +345,85 @@ class RetrievalMixin:
                         return False
             return True
 
+        # Hybrid search (opt-in): build/refresh the index once for this call.
+        hybrid_idx = None
+        if self._hybrid_enabled():
+            hybrid_idx = self._ensure_index_fresh(self._all_indexable_entries())
+
         if scope in ("all", "lessons"):
-            path = self._knowledge_dir / "lessons.json"
-            lessons = self._read_entries(path, "lesson")
-            for lesson in lessons:
-                if lesson.get("status") != "active":
-                    continue
-                if not _matches_filters(lesson):
-                    continue
-                score = self._score_item(lesson, terms)
-                if score >= SEARCH_RELEVANCE_THRESHOLD:
-                    item = dict(lesson)
-                    item["_score"] = round(score, 3)
-                    results["lessons"].append(item)
-            results["lessons"] = sorted(
-                results["lessons"],
-                key=lambda item: item["_score"],
-                reverse=True,
-            )[:limit]
+            candidates = [
+                lesson for lesson in self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+                if lesson.get("status") == "active" and _matches_filters(lesson)
+            ]
+            results["lessons"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
 
         if scope in ("all", "decisions"):
-            path = self._knowledge_dir / "decisions.json"
-            decisions = self._read_entries(path, "decision")
-            for decision in decisions:
-                if decision.get("status") != "active":
-                    continue
-                if not _matches_filters(decision):
-                    continue
-                score = self._score_item(decision, terms)
-                if score >= SEARCH_RELEVANCE_THRESHOLD:
-                    item = dict(decision)
-                    item["_score"] = round(score, 3)
-                    results["decisions"].append(item)
-            results["decisions"] = sorted(
-                results["decisions"],
-                key=lambda item: item["_score"],
-                reverse=True,
-            )[:limit]
+            candidates = [
+                decision for decision in self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+                if decision.get("status") == "active" and _matches_filters(decision)
+            ]
+            results["decisions"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
 
         if scope in ("all", "playbooks"):
-            index = self._read_playbook_index()
-            for entry in index:
+            candidates = []
+            for entry in self._read_playbook_index():
                 if entry.get("status") != "active":
                     continue
                 pb = self._read_playbook_by_id(entry.get("id", ""))
-                if not pb:
-                    continue
-                if not _matches_filters(pb):
-                    continue
-                score = self._score_item(pb, terms)
-                if score >= SEARCH_RELEVANCE_THRESHOLD:
-                    item = dict(pb)
-                    item["_score"] = round(score, 3)
-                    results["playbooks"].append(item)
-            results["playbooks"] = sorted(
-                results["playbooks"],
-                key=lambda item: item["_score"],
-                reverse=True,
-            )[:limit]
+                if pb and _matches_filters(pb):
+                    candidates.append(pb)
+            results["playbooks"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
 
         return results
+
+    def _rank_scope(self, candidates: list[dict], terms: list[str], query: str,
+                    limit: int, hybrid_idx: "SearchIndex | None") -> list[dict]:
+        """Rank one scope's filtered candidates.
+
+        Keyword path (default): keep items scoring >= SEARCH_RELEVANCE_THRESHOLD,
+        sort by token score — identical to the pre-hybrid behavior.
+
+        Hybrid path (ENGRAM_SEARCH=hybrid): fuse the keyword ranking with FTS
+        and vector rankings (both restricted to this scope's candidates) via
+        RRF. Since any keyword-passing item has score > 0 it always enters the
+        keyword ranking, so the fused set is a superset of the keyword set —
+        hybrid recall >= keyword recall, with vector/FTS surfacing extra
+        semantically/lexically related items and reordering by agreement.
+        """
+        scored = [(item, self._score_item(item, terms)) for item in candidates]
+
+        if hybrid_idx is None:
+            out = []
+            for item, score in scored:
+                if score >= SEARCH_RELEVANCE_THRESHOLD:
+                    view = dict(item)
+                    view["_score"] = round(score, 3)
+                    out.append(view)
+            out.sort(key=lambda v: v["_score"], reverse=True)
+            return out[:limit]
+
+        by_id = {str(item["id"]): item for item, _ in scored if item.get("id")}
+        kw_score = {str(item["id"]): s for item, s in scored if item.get("id")}
+        cand_ids = set(by_id)
+        kw_rank = [
+            eid for eid, _ in sorted(kw_score.items(), key=lambda kv: kv[1], reverse=True)
+            if kw_score[eid] > 0
+        ]
+        fts_rank = [i for i in hybrid_idx.fts_search(query, limit=max(limit, 50)) if i in cand_ids]
+        vec_rank = [i for i in hybrid_idx.vector_search(query, limit=max(limit, 50)) if i in cand_ids]
+
+        out = []
+        for eid, rrf in reciprocal_rank_fusion([kw_rank, fts_rank, vec_rank]):
+            if rrf < HYBRID_RELEVANCE_THRESHOLD:
+                continue
+            item = by_id.get(eid)
+            if item is None:
+                continue
+            view = dict(item)
+            view["_score"] = round(rrf, 4)
+            view["_keyword_score"] = round(kw_score.get(eid, 0.0), 3)
+            out.append(view)
+        return out[:limit]
 
     def get_relevant_lessons(self, project_folder: str | None = None,
                              limit: int = 8,

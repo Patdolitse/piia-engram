@@ -33,7 +33,12 @@ _SUPPLEMENT_MARKERS = frozenset({
     "supplement", "update", "addendum", "edge case", "exception",
     "extension", "advanced", "follow-up", "correction", "counterexample",
 })
-SEARCH_RELEVANCE_THRESHOLD = 0.3   # minimum score for search results
+SEARCH_RELEVANCE_THRESHOLD = 0.3   # minimum score for keyword search results
+# v4.0 hybrid search: minimum RRF score for a fused result. 0.0 = keep any
+# item that matched at least one signal (keyword/fts/vector) within the
+# already active+filtered candidate pool, so hybrid recall >= keyword recall.
+# Calibrated against the Round-10 retrieval benchmark (Phase E).
+HYBRID_RELEVANCE_THRESHOLD = 0.0
 STALE_KNOWLEDGE_DAYS = 30          # days without access before knowledge is "stale"
 # Type-aware stale decay multipliers (applied to STALE_KNOWLEDGE_DAYS)
 STALE_DECAY_MULTIPLIERS: dict[str, float] = {

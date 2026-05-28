@@ -8,6 +8,10 @@ degrade-gracefully behavior when it's absent.
 
 from __future__ import annotations
 
+import sqlite3
+
+import pytest
+
 from piia_engram.search_index import (
     RRF_K,
     SearchIndex,
@@ -15,6 +19,10 @@ from piia_engram.search_index import (
     _fts_match_expr,
     reciprocal_rank_fusion,
     vector_backend_available,
+)
+
+vec_only = pytest.mark.skipif(
+    not vector_backend_available(), reason="[vector] extra not installed"
 )
 
 
@@ -150,3 +158,78 @@ def test_hybrid_search_fuses_keyword_and_fts(tmp_path):
     # 1 gets contributions from both signals -> should top the list
     assert ids[0] == "1"
     assert set(ids) == {"1", "2"}
+
+
+# ── vector layer (requires the [vector] extra) ──────────────────────────
+
+
+def _vidx(tmp_path):
+    return SearchIndex(tmp_path / "search_index.db", enable_vector=True)
+
+
+@vec_only
+def test_vector_search_ranks_semantic_over_unrelated(tmp_path):
+    """Semantic match wins even with no lexical overlap."""
+    idx = _vidx(tmp_path)
+    idx.rebuild([
+        {"id": "sec", "summary": "blocking leaked credentials and secret tokens before a commit"},
+        {"id": "weather", "summary": "a sunny day at the beach with warm sand"},
+    ])
+    res = idx.vector_search("preventing passwords and API keys from leaking", limit=2)
+    assert "sec" in res and "weather" in res
+    assert res.index("sec") < res.index("weather")
+
+
+@vec_only
+def test_vector_incremental_reembeds_changed_and_drops_removed(tmp_path):
+    db = tmp_path / "search_index.db"
+    idx = SearchIndex(db, enable_vector=True)
+    idx.rebuild([
+        {"id": "a", "summary": "alpha topic about databases"},
+        {"id": "b", "summary": "beta topic about cooking recipes"},
+    ])
+
+    def vec_eids():
+        con = sqlite3.connect(str(db))
+        try:
+            return {r[0] for r in con.execute("SELECT eid FROM vec_map")}
+        finally:
+            con.close()
+
+    assert vec_eids() == {"a", "b"}
+    # drop b, change a's content
+    idx.rebuild([{"id": "a", "summary": "alpha topic about distributed databases and sharding"}])
+    assert vec_eids() == {"a"}
+    # vec table and map stay consistent (no orphan rows). Querying the vec0
+    # virtual table requires the extension loaded on this connection.
+    import sqlite_vec
+
+    con = sqlite3.connect(str(db))
+    try:
+        con.enable_load_extension(True)
+        sqlite_vec.load(con)
+        con.enable_load_extension(False)
+        n_vec = con.execute("SELECT COUNT(*) FROM vec").fetchone()[0]
+        n_map = con.execute("SELECT COUNT(*) FROM vec_map").fetchone()[0]
+    finally:
+        con.close()
+    assert n_vec == n_map == 1
+
+
+@vec_only
+def test_hybrid_includes_vector_signal_with_no_lexical_overlap(tmp_path):
+    idx = _vidx(tmp_path)
+    idx.rebuild([
+        {"id": "1", "summary": "reciprocal rank fusion merges multiple ranked lists"},
+        {"id": "2", "summary": "grocery shopping list for the weekend barbecue"},
+    ])
+    # query is semantically about #1 but shares few/no exact tokens
+    fused = idx.hybrid_search("combining several ordered result sets into one", keyword_ranking=[], limit=5)
+    ids = [i for i, _ in fused]
+    assert ids and ids[0] == "1"
+
+
+@vec_only
+def test_vector_search_empty_before_build(tmp_path):
+    idx = _vidx(tmp_path)
+    assert idx.vector_search("anything") == []

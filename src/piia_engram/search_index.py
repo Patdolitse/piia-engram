@@ -34,6 +34,8 @@ gap; proper CJK segmentation for the FTS layer is a later refinement.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -96,6 +98,37 @@ def vector_backend_available() -> bool:
     return True
 
 
+_MODEL = None
+
+
+def _embedding_model():
+    """Lazily build the FastEmbed model (singleton).
+
+    Cold init is the expensive part (loads the ONNX model), so we build it
+    once per process. Honors a caller-set cache dir via ``FASTEMBED_CACHE_PATH``
+    so model files land where the host wants them (kept off the system drive
+    on this setup) rather than the default HF cache.
+    """
+    global _MODEL
+    if _MODEL is None:
+        from fastembed import TextEmbedding
+
+        cache_dir = os.environ.get("FASTEMBED_CACHE_PATH") or None
+        _MODEL = TextEmbedding(model_name=EMBED_MODEL, cache_dir=cache_dir)
+    return _MODEL
+
+
+def _embed(texts: list[str]) -> list[list[float]]:
+    """Embed a batch of texts into ``EMBED_DIM``-length float vectors."""
+    return [list(map(float, v)) for v in _embedding_model().embed(texts)]
+
+
+def _content_hash(text: str) -> str:
+    """Short stable fingerprint of an entry's document, for incremental
+    re-embedding (only re-embed when the text actually changed)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def _entry_document(entry: dict) -> str:
     """Build the full-text document string for one knowledge entry."""
     parts: list[str] = []
@@ -141,32 +174,124 @@ class SearchIndex:
 
     def _connect(self) -> sqlite3.Connection:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        return sqlite3.connect(str(self.db_path))
+        con = sqlite3.connect(str(self.db_path))
+        if self.vector_enabled:
+            try:
+                import sqlite_vec
 
-    def rebuild(self, entries: list[dict]) -> int:
-        """(Re)build the FTS index from ``entries``.
+                con.enable_load_extension(True)
+                sqlite_vec.load(con)
+                con.enable_load_extension(False)
+            except Exception:
+                # extension missing/unloadable at runtime — degrade to FTS.
+                self.vector_enabled = False
+        return con
+
+    def rebuild(self, entries: list[dict], fingerprint: str | None = None) -> int:
+        """(Re)build the index from ``entries``.
+
+        FTS is rebuilt wholesale (cheap). The vector table, when enabled, is
+        updated *incrementally*: only new or content-changed entries are
+        re-embedded, and removed entries are dropped — so a rebuild after a
+        single new lesson doesn't re-embed the whole store.
+
+        ``fingerprint`` (when given) is stored so the caller can later detect
+        whether the source JSON changed since this build (freshness check).
 
         Each entry must carry an ``id``; entries without one are skipped.
-        Returns the number of documents indexed. Idempotent: safe to call
-        repeatedly (drops and recreates the table each time).
+        Returns the number of documents indexed (FTS row count). Idempotent.
         """
         con = self._connect()
         try:
+            docs = [
+                (str(e["id"]), _entry_document(e))
+                for e in entries
+                if e.get("id")
+            ]
+            # --- FTS: full rebuild ---
             con.execute("DROP TABLE IF EXISTS fts")
             con.execute(
                 "CREATE VIRTUAL TABLE fts USING fts5("
                 "eid UNINDEXED, doc, tokenize='unicode61')"
             )
-            rows = [
-                (str(e["id"]), _entry_document(e))
-                for e in entries
-                if e.get("id")
-            ]
-            con.executemany("INSERT INTO fts(eid, doc) VALUES (?, ?)", rows)
+            con.executemany("INSERT INTO fts(eid, doc) VALUES (?, ?)", docs)
+
+            # --- vector: incremental ---
+            if self.vector_enabled:
+                self._rebuild_vectors(con, docs)
+
+            # --- freshness marker ---
+            con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+            if fingerprint is not None:
+                con.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES ('fingerprint', ?)",
+                    (fingerprint,),
+                )
             con.commit()
-            return len(rows)
+            return len(docs)
         finally:
             con.close()
+
+    def fingerprint(self) -> str | None:
+        """Return the stored freshness marker, or None if never built."""
+        con = self._connect()
+        try:
+            try:
+                row = con.execute(
+                    "SELECT value FROM meta WHERE key = 'fingerprint'"
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+            return row[0] if row else None
+        finally:
+            con.close()
+
+    def _rebuild_vectors(self, con: sqlite3.Connection, docs: list[tuple[str, str]]) -> None:
+        """Incrementally sync the vec0 table to ``docs`` (id, document)."""
+        import sqlite_vec
+
+        con.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0(embedding float[{EMBED_DIM}])")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS vec_map("
+            "rowid INTEGER PRIMARY KEY, eid TEXT UNIQUE, chash TEXT)"
+        )
+        existing = {
+            eid: (rowid, chash)
+            for rowid, eid, chash in con.execute("SELECT rowid, eid, chash FROM vec_map")
+        }
+        wanted = {eid: _content_hash(doc) for eid, doc in docs}
+        doc_by_eid = dict(docs)
+
+        # Deletions: in index but no longer present.
+        for eid in set(existing) - set(wanted):
+            rowid = existing[eid][0]
+            con.execute("DELETE FROM vec WHERE rowid = ?", (rowid,))
+            con.execute("DELETE FROM vec_map WHERE rowid = ?", (rowid,))
+
+        # New or changed entries → re-embed.
+        to_embed = [
+            eid for eid, chash in wanted.items()
+            if eid not in existing or existing[eid][1] != chash
+        ]
+        if not to_embed:
+            return
+        vectors = _embed([doc_by_eid[eid] for eid in to_embed])
+        next_rowid = (con.execute("SELECT COALESCE(MAX(rowid), 0) FROM vec_map").fetchone()[0]) + 1
+        for eid, vec in zip(to_embed, vectors):
+            if eid in existing:  # changed → reuse rowid, replace vector
+                rowid = existing[eid][0]
+                con.execute("DELETE FROM vec WHERE rowid = ?", (rowid,))
+            else:                # new → allocate rowid
+                rowid = next_rowid
+                next_rowid += 1
+            con.execute(
+                "INSERT INTO vec(rowid, embedding) VALUES (?, ?)",
+                (rowid, sqlite_vec.serialize_float32(vec)),
+            )
+            con.execute(
+                "INSERT OR REPLACE INTO vec_map(rowid, eid, chash) VALUES (?, ?, ?)",
+                (rowid, eid, wanted[eid]),
+            )
 
     def fts_search(self, query: str, limit: int = 50) -> list[str]:
         """Return entry ids ranked by FTS5 bm25 relevance (best first)."""
@@ -190,17 +315,48 @@ class SearchIndex:
     def vector_search(self, query: str, limit: int = 50) -> list[str]:
         """Return entry ids ranked by semantic similarity (best first).
 
-        Next-increment hook: when the ``[vector]`` extra is installed this
-        embeds the query with FastEmbed and runs a sqlite-vec KNN search.
-        Until that increment lands (and can be verified against the real
-        deps), this returns an empty ranking so the fusion simply runs on
-        keyword + FTS — never raising on a vector-less install.
+        Embeds the query with FastEmbed and runs a sqlite-vec KNN search
+        over the vec0 table. Returns [] when the vector backend is absent
+        (install-less setups) or the index has no vector table yet, so the
+        caller's fusion simply runs on keyword + FTS.
         """
         if not self.vector_enabled:
             return []
-        # TODO(v4.0 next increment): embed via FastEmbed(EMBED_MODEL),
-        # KNN over a sqlite-vec vec0(float[EMBED_DIM]) table keyed to eid.
-        return []
+        if not query.strip():
+            return []
+        try:
+            import sqlite_vec
+
+            qv = sqlite_vec.serialize_float32(_embed([query])[0])
+        except Exception:
+            return []
+        con = self._connect()
+        try:
+            try:
+                # KNN must run on the vec0 table alone — a JOIN hides the
+                # LIMIT from sqlite-vec's knn planner ("a LIMIT or k=? is
+                # required"). So fetch rowids first, then map to eids.
+                rowids = [
+                    r[0] for r in con.execute(
+                        "SELECT rowid FROM vec WHERE embedding MATCH ? "
+                        "ORDER BY distance LIMIT ?",
+                        (qv, max(1, int(limit))),
+                    ).fetchall()
+                ]
+            except sqlite3.OperationalError:
+                return []  # no vec table built yet
+            if not rowids:
+                return []
+            placeholders = ",".join("?" * len(rowids))
+            eid_by_rowid = dict(
+                con.execute(
+                    f"SELECT rowid, eid FROM vec_map WHERE rowid IN ({placeholders})",
+                    rowids,
+                ).fetchall()
+            )
+            return [eid_by_rowid[r] for r in rowids if r in eid_by_rowid]
+        finally:
+            con.close()
 
     def hybrid_search(
         self,

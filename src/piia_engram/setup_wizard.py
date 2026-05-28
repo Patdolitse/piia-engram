@@ -3108,8 +3108,18 @@ def run_feedback(*, dry_run: bool = False) -> None:
     print("  This report contains no knowledge content, file paths, or personal info.\n")
 
 
+def _run_reindex() -> None:
+    """Rebuild the v4.0 hybrid search index from the JSON knowledge store."""
+    from piia_engram.core import Engram
+
+    eng = Engram()
+    result = eng.rebuild_index()
+    vec = "on" if result.get("vector_enabled") else "off (install piia-engram[vector] for semantic search)"
+    print(f"[ok] reindexed {result.get('indexed', 0)} entries — vector layer: {vec}")
+
+
 def main() -> None:
-    """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy / engram feedback"""
+    """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy / engram feedback / engram reindex"""
     args = sys.argv[1:]
     if not args or args[0] == "setup":
         if "--advanced" in args:
@@ -3131,6 +3141,8 @@ def main() -> None:
         _run_privacy_report()
     elif args[0] == "feedback":
         run_feedback(dry_run="--dry-run" in args)
+    elif args[0] == "reindex":
+        _run_reindex()
     else:
         print(
             "Engram CLI\n\n"
@@ -3141,6 +3153,7 @@ def main() -> None:
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
+            "  engram reindex          Rebuild the hybrid search index from JSON\n"
             "  engram stats            Show project growth metrics\n"
             "  engram stats --log      Append stats snapshot to local log\n"
             "  engram telemetry        Manage anonymous usage statistics\n"
