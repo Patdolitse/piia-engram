@@ -526,3 +526,52 @@ def test_value_scanner_does_not_overflag_a_normal_lesson():
             "body": "When a class hierarchy grows fragile, switch to composition. "
                     "See the strategy pattern for an example, version v4.2.1."}
     assert sv.classify_item(item) == "public"
+
+
+# ── round-10 behavior LOCKS (per round-9 reviewer §9.3) ──────────────────────
+# These pin down deliberate conservative-promotion behavior so that a future
+# "let's reduce false positives" change trips a test and is recognized as a
+# GOVERNANCE POLICY CHANGE rather than a silent refactor.
+
+def test_cjk_root_overpromotion_locked_round10():
+    # Round-10 broadened whole-word CJK terms to high-coverage ROOTS, which
+    # intentionally over-promotes some non-private-context fields. This is
+    # accepted fail-closed behavior for a governance floor, NOT a bug. Note
+    # 护照有效期 is private under round-10 (护照 root) — a DELIBERATE change from
+    # round-9 (dd6c90f), where 护照 was only a whole word and it was work.
+    assert sv.classify_field("密码学") == "secret"        # 密码 root
+    assert sv.classify_field("密钥长度") == "secret"      # 密钥 root
+    assert sv.classify_field("手机型号") == "private"     # 手机 root
+    assert sv.classify_field("电话会议") == "private"     # 电话 root
+    assert sv.classify_field("护照有效期") == "private"   # 护照 root (round-10 change)
+    assert sv.classify_field("身份证照片") == "private"   # 身份证 root
+
+def test_cjk_pii_derived_fields_are_private_round10():
+    for f in ["电子邮件地址", "身份证照片", "银行卡号码", "护照号码"]:
+        assert sv.classify_field(f) == "private", f
+
+def test_cjk_benign_boundary_fields_stay_work_round10():
+    # roots are deliberately NOT over-broad: these must NOT be flagged.
+    for f in ["银行名称", "邮件内容", "用户名", "技术栈"]:
+        assert sv.classify_field(f) == "work", f
+
+def test_value_scanner_benign_shapes_stay_public_round10():
+    # high-entropy / numeric shapes that must NOT trip the value scanner.
+    for v in [
+        "v4.2.1", "4.2.1-rc.1", "2026-05-29",
+        "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",          # 32-hex (commit/md5-like)
+        "550e8400-e29b-41d4-a716-446655440000",       # UUID
+        "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n",               # base64 text
+        "model=gpt-4-0613-preview",
+        "1234567890123456",                            # 16 digits, Luhn-invalid
+        "12345678901",                                 # 11 digits, not 1[3-9]…
+        "370101199001011234",                          # 18 digits, bad CN-ID checksum
+    ]:
+        assert sv.classify_value(v) == "public", v
+
+def test_value_scanner_conservative_promotions_locked_round10():
+    # documented conservative promotions (fail-closed, accepted over-protection):
+    # any value shaped like an OpenAI key (sk- + 16-char body) -> secret, and a
+    # short "field-like" value that embeds a real phone/card -> private.
+    assert sv.classify_value("sk-skip-this-not-a-real-key") == "secret"
+    assert sv.classify_value("order-2024-0001-13800138000") == "private"
