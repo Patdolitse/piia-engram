@@ -1,9 +1,15 @@
 name: Guard strategic files
 
-# CI checkpoint that blocks paths matching the BLOCKED array from being
+# CI checkpoint that blocks paths matching guard patterns from being
 # tracked by git. Pairs with the project's release sanitization process
-# (see docs/release-playbook.md). When triggered, prints a remediation
-# message so contributors know what to do next.
+# (maintainer runbook: docs/internal/release-playbook.md, not published).
+#
+# Patterns are loaded from two sources, in this order:
+#   1. The categorical patterns embedded below (public, kept minimal).
+#   2. An optional `.guardignore` file (gitignored — see .gitignore).
+#      When present, this file extends the pattern list with project-
+#      specific paths. CI runners that don't have it just enforce the
+#      categorical baseline.
 
 on:
   push:
@@ -16,7 +22,7 @@ permissions:
 
 jobs:
   guard:
-    name: Block strategic / weakness-exposing files
+    name: Block weakness-exposing files
     runs-on: ubuntu-latest
 
     steps:
@@ -30,48 +36,48 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Path patterns that should not appear in the tracked tree.
-          BLOCKED=(
-            "experiments/competitive_landscape*.md"
-            "experiments/beta_recruitment*.md"
-            "docs/messaging.md"
-            "docs/vision.md"
-            "docs/telemetry_roadmap.md"
-            "docs/playbook-auto-extraction-design.md"
-            "docs/design/"
-            "docs/milestone_review_*.md"
-            "docs/milestone_review_*.html"
-            "docs/coverage_baseline_*.md"
-            "experiments/evaluations/v*/cross_ai/"
-            "experiments/evaluations/v*/REPORT.md"
-            "experiments/evaluations/v*/README.md"
-            "experiments/evaluations/v*/evidence_pack.md"
-            "experiments/evaluations/v*/run_evaluation.py"
-            "experiments/dynamic_loading/HOW_TO_TEST.md"
-            "docs/_drafts/"
-            "engram-private-strategy/"
+          # Categorical patterns kept in-workflow (low information value
+          # to outside readers — these are generic OSS hygiene buckets).
+          patterns=(
+            "experiments/*-private-*"
+            "docs/internal/"
+            "*-strategy.md"
+            "*-strategy.html"
           )
 
+          # Extension list — project-specific patterns live here, in a
+          # gitignored file, so the workflow yaml stops broadcasting the
+          # exact path shapes the project considers sensitive.
+          if [ -f .guardignore ]; then
+            while IFS= read -r line; do
+              # skip blank lines and comments
+              [ -z "$line" ] && continue
+              case "$line" in \#*) continue ;; esac
+              patterns+=("$line")
+            done < .guardignore
+            echo "[info] loaded $(grep -cve '^\s*$\|^\s*#' .guardignore) additional patterns from .guardignore"
+          else
+            echo "[info] no .guardignore present; running with categorical patterns only"
+          fi
+
           hits=()
-          for pat in "${BLOCKED[@]}"; do
-            # Use git ls-files to check tracked files only.
-            # -z + xargs handles spaces in paths defensively.
+          for pat in "${patterns[@]}"; do
             while IFS= read -r f; do
               [ -n "$f" ] && hits+=("$f")
             done < <(git ls-files -- "$pat" 2>/dev/null || true)
           done
 
           if [ "${#hits[@]}" -eq 0 ]; then
-            echo "[ok] no strategic files committed."
+            echo "[ok] no blocked files in tracked tree."
             exit 0
           fi
 
-          echo "::error::Found ${#hits[@]} path(s) matching the blocked list:"
+          echo "::error::Found ${#hits[@]} blocked path(s):"
           for f in "${hits[@]}"; do
             echo "  - $f"
           done
           echo ""
-          echo "See docs/release-playbook.md for the project's release process."
+          echo "See CONTRIBUTING.md for the project's contribution guidelines."
           echo ""
           echo "Fix:"
           echo "  1. Move the file outside the repo (or to a gitignored path)"
@@ -79,3 +85,17 @@ jobs:
           echo "  3. Confirm .gitignore covers the pattern"
           echo "  4. Re-push"
           exit 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Enforce publish allowlist (default-deny)
+        shell: bash
+        run: |
+          # WHITELIST gate: every tracked file must be covered by an
+          # entry in .publishallow, otherwise the build fails. This is
+          # the inverse of the blacklist scan above — see
+          # docs/internal/release-playbook.md §2.7 (maintainer runbook).
+          python scripts/check_publish_allowlist.py

@@ -23,7 +23,7 @@ Exit code:
 
 This is a *sanity net*, not a guarantee. Real secrets get past regex
 scanners all the time. Always pair this with the four-layer manual
-checklist in ``docs/release-playbook.md``.
+checklist in ``docs/internal/release-playbook.md``.
 """
 
 from __future__ import annotations
@@ -54,11 +54,53 @@ _BUILT_IN_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
                                   re.IGNORECASE),                         "warn"),
 ]
 
+# v3.31 P1-2: internal-disclosure patterns. These don't leak secrets but
+# leak strategy / process signal that an outside reader can use.
+#
+# Only GENERIC OPSEC patterns live here (any project would scan for
+# these). Project-specific patterns that would themselves reveal "what
+# WE hide" (internal review-process names, eval model codenames, gate
+# codes) are NOT inlined — they're loaded from a gitignored
+# ``.sanitizeignore`` file (see _load_internal_patterns_file). This keeps
+# the public script from broadcasting our specific sensitivities, the
+# same way the guard workflow externalizes paths to ``.guardignore``.
+_INTERNAL_DISCLOSURE_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
+    ("review code count", re.compile(r"\b\d+\s*HIGH[\s/-]+\d+\s*MEDIUM", re.IGNORECASE), "warn"),
+    ("industry-first claim", re.compile(r"industry[\s-]*first", re.IGNORECASE), "warn"),
+    ("prior-art line ref", re.compile(r"prior[\s-]*art\b.*\.py:\d+", re.IGNORECASE), "warn"),
+    ("internal issue id", re.compile(r"\bissue[\s_-]*id\s*[:=]\s*\d+", re.IGNORECASE), "warn"),
+]
+
+# Gitignored file holding project-specific internal-disclosure regexes,
+# one per line (``#`` comments allowed). Absent on fresh clones / CI, so
+# those runs enforce only the generic patterns above; the maintainer's
+# local checkout + pre-commit hook carry the full set.
+_INTERNAL_PATTERNS_FILE = ".sanitizeignore"
+
+
+def _load_internal_patterns_file() -> list[tuple[str, re.Pattern[str], str]]:
+    """Load project-specific internal-disclosure regexes from
+    ``.sanitizeignore`` if present. Returns warn-severity patterns."""
+    path = Path(_INTERNAL_PATTERNS_FILE)
+    if not path.is_file():
+        return []
+    out: list[tuple[str, re.Pattern[str], str]] = []
+    for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            out.append((f"local#{i}", re.compile(line), "warn"))
+        except re.error:
+            print(f"[warn] {_INTERNAL_PATTERNS_FILE}:{i} invalid regex, skipped",
+                  file=sys.stderr)
+    return out
+
 # Files to skip even if git-tracked.
 _SKIP_GLOBS = (
     ".git/",
     "scripts/release_sanitize_check.py",  # self
-    "docs/release-playbook.md",           # documents the patterns
+    "docs/internal/release-playbook.md",           # documents the patterns
     "docs/playbook-auto-extraction-design.md",  # discusses redaction examples
     "CHANGELOG.md",                       # historical, version paths OK
     "tests/",                             # test fixtures often need keys
@@ -73,6 +115,23 @@ def _git_tracked_files() -> list[Path]:
         )
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         print(f"[error] git ls-files failed: {exc}", file=sys.stderr)
+        sys.exit(2)
+    return [Path(line) for line in out.splitlines() if line]
+
+
+def _git_staged_files() -> list[Path]:
+    """v3.31 P1-1: files staged for the next commit (pre-commit hook use).
+
+    Uses ``--diff-filter=ACM`` to skip deletions/renames where the path
+    no longer has content to scan.
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+            text=True, encoding="utf-8",
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        print(f"[error] git diff --cached failed: {exc}", file=sys.stderr)
         sys.exit(2)
     return [Path(line) for line in out.splitlines() if line]
 
@@ -95,7 +154,11 @@ def _load_custom_terms() -> list[re.Pattern[str]]:
     return terms
 
 
-def _scan_file(path: Path, custom: list[re.Pattern[str]]) -> list[tuple[str, str, int, str]]:
+def _scan_file(
+    path: Path,
+    custom: list[re.Pattern[str]],
+    patterns: list[tuple[str, re.Pattern[str], str]],
+) -> list[tuple[str, str, int, str]]:
     """Return list of (label, severity, line_no, line_text)."""
     hits: list[tuple[str, str, int, str]] = []
     try:
@@ -103,7 +166,7 @@ def _scan_file(path: Path, custom: list[re.Pattern[str]]) -> list[tuple[str, str
     except (OSError, UnicodeDecodeError):
         return hits
     for lineno, line in enumerate(text.splitlines(), 1):
-        for label, pat, severity in _BUILT_IN_PATTERNS:
+        for label, pat, severity in patterns:
             if pat.search(line):
                 hits.append((label, severity, lineno, line.strip()[:160]))
         for i, pat in enumerate(custom):
@@ -112,7 +175,10 @@ def _scan_file(path: Path, custom: list[re.Pattern[str]]) -> list[tuple[str, str
     return hits
 
 
-def _scan_commit_messages(custom: list[re.Pattern[str]]) -> list[tuple[str, str, str, str]]:
+def _scan_commit_messages(
+    custom: list[re.Pattern[str]],
+    patterns: list[tuple[str, re.Pattern[str], str]],
+) -> list[tuple[str, str, str, str]]:
     """Return list of (sha, label, severity, snippet)."""
     try:
         out = subprocess.check_output(
@@ -127,7 +193,7 @@ def _scan_commit_messages(custom: list[re.Pattern[str]]) -> list[tuple[str, str,
     for line in out.splitlines():
         if line == "---END---":
             text = "\n".join(current_body)
-            for label, pat, severity in _BUILT_IN_PATTERNS:
+            for label, pat, severity in patterns:
                 m = pat.search(text)
                 if m:
                     hits.append((current_sha[:10], label, severity, m.group(0)[:80]))
@@ -150,7 +216,23 @@ def main() -> int:
                     help="Also scan git commit messages (slower)")
     ap.add_argument("--strict", action="store_true",
                     help="Exit code 1 if any hit is found (including warn-level)")
+    ap.add_argument("--staged", action="store_true",
+                    help="Scan only files staged for commit (pre-commit hook use)")
+    ap.add_argument("--internal", action="store_true",
+                    help="Also scan for internal-disclosure patterns "
+                         "(review codes, multi-way review, industry-first, "
+                         "model codenames — see release-playbook.md §1.4)")
     args = ap.parse_args()
+
+    # Assemble the active pattern set.
+    patterns = list(_BUILT_IN_PATTERNS)
+    if args.internal:
+        local_patterns = _load_internal_patterns_file()
+        patterns += _INTERNAL_DISCLOSURE_PATTERNS + local_patterns
+        extra = len(_INTERNAL_DISCLOSURE_PATTERNS) + len(local_patterns)
+        suffix = (f" ({len(local_patterns)} from {_INTERNAL_PATTERNS_FILE})"
+                  if local_patterns else f" (no {_INTERNAL_PATTERNS_FILE})")
+        print(f"[info] internal-disclosure scanning ON ({extra} patterns{suffix})")
 
     custom = _load_custom_terms()
     if custom:
@@ -161,12 +243,22 @@ def main() -> int:
     total_high = 0
     total_warn = 0
 
-    print("\n== Scanning working tree ==")
-    for path in _git_tracked_files():
+    if args.staged:
+        scan_label = "staged files"
+        files = _git_staged_files()
+        if not files:
+            print("\n[OK] no staged files to scan.")
+            return 0
+    else:
+        scan_label = "working tree"
+        files = _git_tracked_files()
+
+    print(f"\n== Scanning {scan_label} ==")
+    for path in files:
         rel = str(path).replace("\\", "/")
         if _should_skip(rel):
             continue
-        hits = _scan_file(path, custom)
+        hits = _scan_file(path, custom, patterns)
         for label, severity, lineno, line_text in hits:
             marker = "[HIGH]" if severity == "high" else "[warn]"
             print(f"  {marker} {rel}:{lineno}  {label}: {line_text}")
@@ -177,7 +269,7 @@ def main() -> int:
 
     if args.commit_messages:
         print("\n== Scanning commit messages ==")
-        for sha, label, severity, snippet in _scan_commit_messages(custom):
+        for sha, label, severity, snippet in _scan_commit_messages(custom, patterns):
             marker = "[HIGH]" if severity == "high" else "[warn]"
             print(f"  {marker} {sha} {label}: {snippet}")
             if severity == "high":

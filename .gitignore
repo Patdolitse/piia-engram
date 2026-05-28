@@ -24,6 +24,22 @@ reader_cache/
 credentials*
 secrets*
 
+# v3.31 A: project-specific guard patterns extension (loaded by
+# .github/workflows/guard-strategic-files.yml when present). Keeping
+# the specifics here instead of inlined in the workflow yaml stops
+# the path patterns from being broadcast in the public CI config.
+.guardignore
+
+# v3.31: project-specific internal-disclosure regexes loaded by
+# scripts/release_sanitize_check.py --internal. Kept out of the public
+# script so it doesn't broadcast which specifics we scrub.
+.sanitizeignore
+
+# v3.31 P1-3: internal docs (CHANGELOG-internal.md and any other
+# maintainer-only notes that hold review codes / debugging detail /
+# strategy). The public CHANGELOG.md ships; this dir never does.
+docs/internal/
+
 # IDE
 .vscode/
 .idea/
@@ -68,6 +84,14 @@ experiments/competitive_landscape*.md
 experiments/beta_recruitment*.md
 docs/messaging.md
 docs/vision.md
+
+# Internal R&D / evaluation methodology — the ENTIRE experiments/ tree
+# is maintainer-only (eval judge model selection, scoring rubrics,
+# per-round reports, audit harnesses, router/coordinator prototypes).
+# Strategic signal, not user-facing reproducibility. Kept local; never
+# published. (The specific sub-patterns below are now subsumed by this
+# blanket rule but kept for documentation of intent.)
+experiments/
 
 # Internal / strategic documents
 docs/design/

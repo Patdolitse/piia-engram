@@ -1,0 +1,74 @@
+# piia-engram publish allowlist (WHITELIST, not blacklist)
+#
+# This file defines EXACTLY what is allowed to exist in the public,
+# pushed repository. The CI check (scripts/check_publish_allowlist.py,
+# run by .github/workflows/guard-strategic-files.yml) FAILS if any
+# git-tracked file is NOT matched by an entry here.
+#
+# Philosophy: default-deny. Anything not explicitly allowed is assumed
+# private until a maintainer consciously adds it. This is the inverse of
+# .gitignore/.guardignore (which list what to keep OUT).
+#
+# Syntax:
+#   - one path or glob per line, relative to repo root
+#   - a trailing "/**" allows a whole subtree
+#   - "#" starts a comment; blank lines ignored
+#   - matching uses fnmatch + path-prefix semantics
+#
+# DEV-DOC REVIEW GATE: docs/ entries are enumerated individually on
+# purpose. A new docs/*.md file will FAIL CI until a maintainer adds it
+# here — that addition is the review checkpoint where you confirm the
+# doc carries no reverse-disclosure (release-playbook.md §1.3/§1.4).
+
+# ── Package source + test suite ─────────────────────────────────────
+src/**
+tests/**
+
+# ── Public helper scripts (sanitize check, hook installer, etc.) ─────
+scripts/**
+
+# ── CI / automation ─────────────────────────────────────────────────
+.github/**
+
+# ── MCP / plugin manifests ──────────────────────────────────────────
+.mcp/**
+.mcp.json
+.claude-plugin/**
+
+# ── Root config & build metadata ────────────────────────────────────
+pyproject.toml
+.gitignore
+.coveragerc
+Dockerfile
+glama.json
+glama.yaml
+smithery.yaml
+install.sh
+install.ps1
+.publishallow
+
+# ── Legal / governance ──────────────────────────────────────────────
+LICENSE
+NOTICE
+SECURITY.md
+PRIVACY.md
+CONTRIBUTING.md
+CONTRIBUTING.zh-CN.md
+CHANGELOG.md
+
+# ── Top-level README (bilingual) ────────────────────────────────────
+README.md
+README.zh-CN.md
+
+# ── User-facing docs (ENUMERATED — see dev-doc review gate above) ────
+# NOTE: release-playbook.md is intentionally NOT here — it's an internal
+# ops runbook (reverse-disclosure risk) kept at docs/internal/ (gitignored).
+docs/architecture.md
+docs/comparison.md
+docs/cross-tool-guide.md
+
+# ── Assets, examples, demos, remote-worker deployment ───────────────
+assets/**
+examples/**
+demos/**
+worker/**
