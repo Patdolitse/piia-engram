@@ -329,8 +329,13 @@ def _tool_configs() -> dict:
 # MCP server instructions (which not all clients read reliably).
 # ---------------------------------------------------------------------------
 
-_INSTRUCTION_MARKER = "<!-- piia-engram:auto-injected -->"
+_INSTRUCTION_MARKER = "<!-- piia-engram:auto-injected v=2 -->"
 _INSTRUCTION_MARKER_END = "<!-- /piia-engram -->"
+
+# v3.31 P0: every cross-tool snippet MUST instruct AI to call
+# `get_resume_brief` at session start. This is the marker doctor uses
+# to detect stale (v=1) snippets that lack the auto-resume directive.
+_SNIPPET_FRESHNESS_TOKEN = "get_resume_brief"
 
 # Map: tool_id → (instruction_file_path_fn, snippet)
 # instruction_file_path_fn takes Path.home() and returns the file path
@@ -342,7 +347,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "\n{marker}\n"
             "## Engram 记忆层\n\n"
             "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
-            "- **对话开头**：调用 `get_user_context` 了解用户身份和偏好\n"
+            "- **会话开始**：调用 `get_resume_brief` 接续上一轮工作（跨会话/跨工具连续性）\n"
+            "- **对话开头（首次/新项目）**：调用 `get_user_context` 了解用户身份和偏好\n"
             "- **学到经验/踩坑**：调用 `add_lesson` 存入\n"
             "- **做出决策**：调用 `add_decision` 记录选择和理由\n"
             "- **对话结束**：调用 `wrap_up_session` 保存上下文\n"
@@ -353,7 +359,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "\n{marker}\n"
             "## Engram Memory Layer\n\n"
             "PIIA Engram (MCP memory layer) is installed on this machine.\n\n"
-            "- **Start of conversation**: call `get_user_context` to learn user identity and preferences\n"
+            "- **Session start**: call `get_resume_brief` to resume from the last session (cross-session / cross-tool continuity)\n"
+            "- **Conversation start (first time / new project)**: call `get_user_context` to learn user identity and preferences\n"
             "- **Lessons learned**: call `add_lesson` to save\n"
             "- **Decisions made**: call `add_decision` to record choice and reasoning\n"
             "- **End of conversation**: call `wrap_up_session` to save context\n"
@@ -370,7 +377,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "alwaysApply: true\n"
             "---\n\n"
             "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
-            "- 对话开头调用 `get_user_context` 了解用户\n"
+            "- 会话开始调用 `get_resume_brief` 接续上一轮工作（跨工具连续性的关键）\n"
+            "- 首次对话或新项目调用 `get_user_context` 了解用户\n"
             "- 学到经验时调用 `add_lesson`\n"
             "- 做决策时调用 `add_decision`\n"
             "- 对话结束调用 `wrap_up_session`\n"
@@ -383,7 +391,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "alwaysApply: true\n"
             "---\n\n"
             "PIIA Engram (MCP memory layer) is installed.\n\n"
-            "- Start of conversation: call `get_user_context` to learn user\n"
+            "- Session start: call `get_resume_brief` to resume the previous session (key to cross-tool continuity)\n"
+            "- First conversation or new project: call `get_user_context` to learn user\n"
             "- Lessons learned: call `add_lesson`\n"
             "- Decisions made: call `add_decision`\n"
             "- End of conversation: call `wrap_up_session`\n"
@@ -396,7 +405,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "\n{marker}\n"
             "## Engram 记忆层\n\n"
             "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
-            "- 任务开始：调用 `get_user_context` 了解用户身份和偏好\n"
+            "- 会话开始：调用 `get_resume_brief` 接续上一轮工作（跨工具连续性）\n"
+            "- 首次/新项目：调用 `get_user_context` 了解用户身份和偏好\n"
             "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
             "- 做出决策：调用 `add_decision` 记录\n"
             "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
@@ -406,10 +416,42 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "\n{marker}\n"
             "## Engram Memory Layer\n\n"
             "PIIA Engram (MCP memory layer) is installed.\n\n"
-            "- Task start: call `get_user_context` to learn user identity and preferences\n"
+            "- Session start: call `get_resume_brief` to resume the previous session (cross-tool continuity)\n"
+            "- First time / new project: call `get_user_context` to learn user identity and preferences\n"
             "- Lessons learned: call `add_lesson`\n"
             "- Decisions made: call `add_decision`\n"
             "- Task end: call `wrap_up_session` to save context\n"
+            "{marker_end}\n"
+        ),
+    },
+    "windsurf": {
+        # Windsurf reads ~/.codeium/windsurf/memories/global_rules.md as
+        # the global rules file (mirrors Cursor's ~/.cursor/rules/*.mdc).
+        # Markdown format with the same marker block we use for CLAUDE.md /
+        # AGENTS.md so doctor can detect & replace stale snippets.
+        "path_fn": lambda home: home / ".codeium" / "windsurf" / "memories" / "engram.md",
+        "snippet_zh": (
+            "\n{marker}\n"
+            "## Engram 记忆层\n\n"
+            "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
+            "- 会话开始：调用 `get_resume_brief` 接续上一轮工作（跨工具连续性）\n"
+            "- 首次/新项目：调用 `get_user_context` 了解用户身份和偏好\n"
+            "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
+            "- 做出决策：调用 `add_decision` 记录\n"
+            "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
+            "- 搜索历史知识：调用 `search_knowledge`\n"
+            "{marker_end}\n"
+        ),
+        "snippet_en": (
+            "\n{marker}\n"
+            "## Engram Memory Layer\n\n"
+            "PIIA Engram (MCP memory layer) is installed on this machine.\n\n"
+            "- Session start: call `get_resume_brief` to resume the previous session (cross-tool continuity)\n"
+            "- First time / new project: call `get_user_context` to learn user identity and preferences\n"
+            "- Lessons learned: call `add_lesson`\n"
+            "- Decisions made: call `add_decision`\n"
+            "- Task end: call `wrap_up_session` to save context\n"
+            "- Search past knowledge: call `search_knowledge`\n"
             "{marker_end}\n"
         ),
     },
@@ -2361,37 +2403,55 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         problems += 1
 
     # 6. AI instruction snippet injection status
+    # v3.31 P0: doctor now checks BOTH presence AND freshness. A snippet
+    # that lacks _SNIPPET_FRESHNESS_TOKEN ("get_resume_brief") was injected
+    # by v3.30 or earlier and is missing the cross-tool resume directive;
+    # doctor --fix overwrites it with the current snippet.
     print()
     _safe_print("  -- AI Instruction Snippets --\n")
     home = Path.home()
     snippet_found = False
-    missing_snippets: list[str] = []
+    missing_snippets: list[str] = []  # path missing OR file lacks snippet
+    stale_snippets: list[str] = []    # snippet present but missing freshness token
     for tool_id, info in _INSTRUCTION_SNIPPETS.items():
         target_path = info["path_fn"](home)
-        if tool_id == "cursor":
-            if target_path.is_file():
-                _safe_print(f"    [ok] {tool_id}: {target_path}")
-                snippet_found = True
-            else:
-                _safe_print(f"    [--] {tool_id}: no instruction file")
-                missing_snippets.append(tool_id)
-        else:
-            if target_path.is_file():
-                try:
-                    content = target_path.read_text(encoding="utf-8")
-                    if _INSTRUCTION_MARKER in content:
-                        _safe_print(f"    [ok] {tool_id}: snippet injected in {target_path}")
-                        snippet_found = True
-                    else:
-                        _safe_print(f"    [--] {tool_id}: file exists but no Engram snippet")
-                        missing_snippets.append(tool_id)
-                except Exception:
-                    _safe_print(f"    [--] {tool_id}: file exists but unreadable")
-            else:
-                _safe_print(f"    [--] {tool_id}: no instruction file")
-                missing_snippets.append(tool_id)
+        if not target_path.is_file():
+            _safe_print(f"    [--] {tool_id}: no instruction file")
+            missing_snippets.append(tool_id)
+            continue
+        try:
+            content = target_path.read_text(encoding="utf-8")
+        except Exception:
+            _safe_print(f"    [--] {tool_id}: file exists but unreadable")
+            continue
 
-    if missing_snippets and fix:
+        # Cursor mdc is entirely ours; everything else uses the marker.
+        if tool_id == "cursor":
+            present = bool(content.strip())
+        else:
+            present = _INSTRUCTION_MARKER in content or (
+                # back-compat: also match v=1 marker before bump
+                "<!-- piia-engram:auto-injected -->" in content
+            )
+
+        if not present:
+            _safe_print(f"    [--] {tool_id}: file exists but no Engram snippet")
+            missing_snippets.append(tool_id)
+            continue
+
+        if _SNIPPET_FRESHNESS_TOKEN not in content:
+            _safe_print(
+                f"    [stale] {tool_id}: snippet missing "
+                f"'{_SNIPPET_FRESHNESS_TOKEN}' directive (pre-v3.31)"
+            )
+            stale_snippets.append(tool_id)
+        else:
+            _safe_print(f"    [ok] {tool_id}: snippet up to date in {target_path}")
+            snippet_found = True
+
+    refresh_targets = missing_snippets + stale_snippets
+
+    if refresh_targets and fix:
         # Detect language from existing identity
         lang = "zh"
         try:
@@ -2402,19 +2462,26 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         except Exception:
             pass
         fixed_snippets = []
-        for tool_id in missing_snippets:
+        for tool_id in refresh_targets:
             result = _inject_instruction_snippet(tool_id, lang=lang)
             if result:
-                fixed_snippets.append(f"{tool_id}: {result}")
+                action = "refreshed" if tool_id in stale_snippets else "fixed"
+                fixed_snippets.append(f"[{action}] {tool_id}: {result}")
         if fixed_snippets:
             print()
             for s in fixed_snippets:
-                _safe_print(f"    [fixed] {s}")
-    elif missing_snippets and not fix:
+                _safe_print(f"    {s}")
+    elif refresh_targets and not fix:
         print()
-        print("    [info] Missing AI instruction snippets.")
-        print("           Run 'engram doctor --fix' to inject them.")
-        print("           Without snippets, AI may not proactively call Engram.")
+        if stale_snippets:
+            print(
+                "    [info] Stale snippets detected — missing the "
+                "cross-tool resume directive."
+            )
+        else:
+            print("    [info] Missing AI instruction snippets.")
+        print("           Run 'engram doctor --fix' to update them.")
+        print("           Without the latest snippet, AI may not auto-resume across tools.")
     elif not snippet_found:
         print()
         print("    [info] No AI instruction snippets found.")

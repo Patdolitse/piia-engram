@@ -714,17 +714,46 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         return result
 
     def update_lesson(self, lesson_id: str, updates: dict) -> dict:
-        """Update fields on a lesson entry."""
+        """Update fields on a lesson entry.
+
+        v3.31 P0-1: ``tier`` is now updatable so users can promote a staging
+        lesson to ``verified`` or demote a stale ``verified`` lesson to
+        ``archived`` in a single call, instead of the previous two-step
+        ``archive_knowledge`` + ``add_lesson`` workaround. Tier change is
+        recorded in the audit log so the transition is traceable.
+        """
         path = self._knowledge_dir / "lessons.json"
         lessons = self._read_entries(path, "lesson")
-        allowed_fields = {"summary", "detail", "domain", "status"}
+        allowed_fields = {"summary", "detail", "domain", "status", "tier"}
+        valid_tiers = {"staging", "verified", "archived"}
         for lesson in lessons:
             if lesson.get("id") == lesson_id:
+                old_tier = lesson.get("tier")
+                tier_changed = False
+                new_tier = None
                 for key, value in updates.items():
-                    if key in allowed_fields:
-                        lesson[key] = value
+                    if key not in allowed_fields:
+                        continue
+                    if key == "tier":
+                        if value not in valid_tiers:
+                            return {
+                                "error": (
+                                    f"Invalid tier {value!r}; "
+                                    f"must be one of {sorted(valid_tiers)}"
+                                )
+                            }
+                        if value != old_tier:
+                            tier_changed = True
+                            new_tier = value
+                    lesson[key] = value
                 lesson["last_updated"] = _now_iso()
                 _write_json(path, lessons)
+                if tier_changed:
+                    self._audit.log(
+                        "write",
+                        "knowledge/tier_change",
+                        detail=f"lesson {lesson_id}: {old_tier} -> {new_tier}",
+                    )
                 return lesson
         return {"error": f"Lesson not found: {lesson_id}"}
 
@@ -874,7 +903,11 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         return result
 
     def update_decision(self, decision_id: str, updates: dict) -> dict:
-        """Update fields on a decision entry."""
+        """Update fields on a decision entry.
+
+        v3.31 P0-1: ``tier`` is updatable; same validation + audit semantics
+        as :meth:`update_lesson`.
+        """
         path = self._knowledge_dir / "decisions.json"
         decisions = self._read_entries(path, "decision")
         allowed_fields = {
@@ -886,14 +919,37 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "status",
             "project",
             "source_tool",
+            "tier",
         }
+        valid_tiers = {"staging", "verified", "archived"}
         for decision in decisions:
             if decision.get("id") == decision_id:
+                old_tier = decision.get("tier")
+                tier_changed = False
+                new_tier = None
                 for key, value in updates.items():
-                    if key in allowed_fields:
-                        decision[key] = value
+                    if key not in allowed_fields:
+                        continue
+                    if key == "tier":
+                        if value not in valid_tiers:
+                            return {
+                                "error": (
+                                    f"Invalid tier {value!r}; "
+                                    f"must be one of {sorted(valid_tiers)}"
+                                )
+                            }
+                        if value != old_tier:
+                            tier_changed = True
+                            new_tier = value
+                    decision[key] = value
                 decision["last_updated"] = _now_iso()
                 _write_json(path, decisions)
+                if tier_changed:
+                    self._audit.log(
+                        "write",
+                        "knowledge/tier_change",
+                        detail=f"decision {decision_id}: {old_tier} -> {new_tier}",
+                    )
                 return decision
         return {"error": f"Decision not found: {decision_id}"}
 

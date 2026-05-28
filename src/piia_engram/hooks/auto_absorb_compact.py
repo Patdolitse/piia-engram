@@ -5,8 +5,14 @@ The compacted transcript's opening entry is an AI-generated summary of
 everything that was thrown away; this hook captures that summary and
 appends it to the per-project daily log so it survives across sessions.
 
-Optionally feeds the summary into ``extract_session_insights`` to
-auto-extract staging-tier lessons/decisions from the discarded context.
+v3.31 P0-2: this hook is intentionally narrow now — daily log archival
+only. The companion ``agent`` hook (configured via ``setup_wizard``'s
+PostCompact registration) owns semantic extraction (lessons/decisions
+via LLM reasoning). Previously this script ALSO called
+``extract_session_insights`` which duplicated the agent hook's work and
+double-wrote the staging tier. Now: agent → semantic lessons/decisions;
+this script → raw daily log preservation. They no longer step on each
+other.
 
 Invoked as ``python -m piia_engram.hooks.auto_absorb_compact``.
 
@@ -138,16 +144,11 @@ def main() -> None:
             source_tool="claude_code",
         )
 
-        # 2. Feed into extract_session_insights for auto-extraction
-        #    of staging-tier lessons/decisions. This is best-effort;
-        #    failures are swallowed silently.
-        try:
-            engram.extract_session_insights(
-                summary,
-                source_tool="claude_code",
-            )
-        except Exception:
-            pass
+        # v3.31 P0-2: semantic extraction (lessons/decisions) is now the
+        # exclusive responsibility of the PostCompact ``agent`` hook
+        # registered alongside this command hook. Calling
+        # extract_session_insights here would double-write the staging
+        # tier — see hooks audit decision for v3.31.
 
     except Exception:
         # Hooks must never block Claude Code.

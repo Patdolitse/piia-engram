@@ -1599,6 +1599,96 @@ class TestInstructionInjection:
 
 
 # ---------------------------------------------------------------------------
+# v3.31 P0: cross-tool injection partial → real
+# ---------------------------------------------------------------------------
+
+
+class TestCrossToolInjectionV331:
+    """v3.31 P0: every snippet must instruct AI to call get_resume_brief
+    at session start so Cursor / Codex / Windsurf get the same auto-resume
+    behavior Claude Code gets from the SessionStart hook."""
+
+    def test_all_snippets_contain_resume_brief_directive(self):
+        """Every snippet (zh+en) must mention get_resume_brief — this is
+        the partial→real fidelity guarantee for v3.31 P0."""
+        from piia_engram.setup_wizard import (
+            _INSTRUCTION_SNIPPETS,
+            _SNIPPET_FRESHNESS_TOKEN,
+        )
+        assert _SNIPPET_FRESHNESS_TOKEN == "get_resume_brief"
+        for tool_id, info in _INSTRUCTION_SNIPPETS.items():
+            for lang_key in ("snippet_zh", "snippet_en"):
+                assert _SNIPPET_FRESHNESS_TOKEN in info[lang_key], (
+                    f"{tool_id}/{lang_key} missing {_SNIPPET_FRESHNESS_TOKEN!r}"
+                )
+
+    def test_windsurf_snippet_registered(self):
+        """v3.31 P0 added Windsurf to the cross-tool dict."""
+        from piia_engram.setup_wizard import _INSTRUCTION_SNIPPETS
+        assert "windsurf" in _INSTRUCTION_SNIPPETS
+        info = _INSTRUCTION_SNIPPETS["windsurf"]
+        assert "snippet_zh" in info
+        assert "snippet_en" in info
+        assert callable(info["path_fn"])
+
+    def test_inject_windsurf_creates_file(self, tmp_path, monkeypatch):
+        """Windsurf inject should write an .md file with marker."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_SNIPPETS,
+        )
+        target = tmp_path / "memories" / "engram.md"
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["windsurf"],
+            "path_fn",
+            lambda _home: target,
+        )
+        result = _inject_instruction_snippet("windsurf", lang="en")
+        assert result is not None
+        content = target.read_text(encoding="utf-8")
+        assert _INSTRUCTION_MARKER in content
+        assert "get_resume_brief" in content
+        assert "Memory Layer" in content
+
+    def test_inject_windsurf_replaces_existing_block(self, tmp_path, monkeypatch):
+        """Re-injecting Windsurf must NOT duplicate the marker block."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_SNIPPETS,
+        )
+        target = tmp_path / "engram.md"
+        target.write_text("# pre-existing windsurf rule\n", encoding="utf-8")
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["windsurf"],
+            "path_fn",
+            lambda _home: target,
+        )
+        _inject_instruction_snippet("windsurf", lang="zh")
+        _inject_instruction_snippet("windsurf", lang="en")
+        content = target.read_text(encoding="utf-8")
+        assert content.count(_INSTRUCTION_MARKER) == 1
+        assert "pre-existing windsurf rule" in content
+
+    def test_marker_bumped_to_v2(self):
+        """Marker version must include v=2 so doctor can detect v=1
+        files that lack the get_resume_brief directive."""
+        from piia_engram.setup_wizard import _INSTRUCTION_MARKER
+        assert "v=2" in _INSTRUCTION_MARKER
+
+    def test_claude_code_snippet_has_resume_brief(self):
+        """Claude Code snippet should ALSO mention get_resume_brief even
+        though SessionStart hook injects it automatically — this keeps
+        the directive visible in CLAUDE.md so AI knows to call it on
+        Cursor/Codex/Windsurf when toggling tools."""
+        from piia_engram.setup_wizard import _INSTRUCTION_SNIPPETS
+        cc = _INSTRUCTION_SNIPPETS["claude_code"]
+        assert "get_resume_brief" in cc["snippet_zh"]
+        assert "get_resume_brief" in cc["snippet_en"]
+
+
+# ---------------------------------------------------------------------------
 # _save_setup_report
 # ---------------------------------------------------------------------------
 

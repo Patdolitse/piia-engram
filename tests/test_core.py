@@ -997,6 +997,126 @@ def test_update_knowledge_not_found(tmp_path: Path):
     assert "error" in result
 
 
+# v3.31 P0-1: update_knowledge tier promotion/demotion
+
+
+def test_update_lesson_tier_promote_staging_to_verified(tmp_path: Path):
+    """v3.31 P0-1: lessons should be promotable from staging to verified
+    in a single update_knowledge call (no longer need archive + add new).
+    """
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("promotable lesson", domain="test")
+    # Force staging tier so we have something to promote.
+    engram.update_lesson(lesson["id"], {"tier": "staging"})
+
+    result = engram.update_knowledge(lesson["id"], {"tier": "verified"})
+    assert result.get("tier") == "verified"
+    assert result.get("id") == lesson["id"]
+
+
+def test_update_decision_tier_demote_verified_to_archived(tmp_path: Path):
+    """v3.31 P0-1: decisions should be demotable from verified to archived
+    via update_knowledge — the original use case that motivated the fix
+    (retracting a verified judgement that was later found wrong)."""
+    engram = make_engram(tmp_path)
+    decision = engram.add_decision(
+        "Should we ship?", choice="yes", reasoning="tests pass"
+    )
+    # Default new decisions land in verified per legacy default.
+    assert decision.get("tier") in {"verified", "staging"}
+
+    result = engram.update_knowledge(decision["id"], {"tier": "archived"})
+    assert result.get("tier") == "archived"
+
+
+def test_update_lesson_invalid_tier_rejected(tmp_path: Path):
+    """An invalid tier value must NOT silently succeed."""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("guarded lesson", domain="test")
+    result = engram.update_knowledge(lesson["id"], {"tier": "bogus"})
+    assert "error" in result
+    assert "Invalid tier" in result["error"]
+    # And the stored entry must still have its original tier.
+    fetched = engram.update_lesson(lesson["id"], {})
+    assert fetched.get("tier") in {"verified", "staging", "archived"}
+
+
+def test_update_decision_invalid_tier_rejected(tmp_path: Path):
+    """Decision tier validation mirrors lesson validation."""
+    engram = make_engram(tmp_path)
+    decision = engram.add_decision("test?", choice="A")
+    result = engram.update_knowledge(decision["id"], {"tier": "weird"})
+    assert "error" in result
+    assert "Invalid tier" in result["error"]
+
+
+def _read_audit_log_jsonl(engram) -> list[dict]:
+    """Read audit.log JSONL file for tier_change tests.
+
+    Audit log is opt-in via ENGRAM_AUDIT=1; tests below enable it
+    explicitly on the Engram instance so we don't depend on env state.
+    """
+    log_path = engram.root / "audit.log"
+    if not log_path.is_file():
+        return []
+    entries: list[dict] = []
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries
+
+
+def test_update_lesson_tier_change_writes_audit_log(tmp_path: Path):
+    """v3.31 P0-1: tier transition must be traceable via the audit log."""
+    engram = make_engram(tmp_path)
+    # Enable audit explicitly — make_engram defaults to env-controlled.
+    engram._audit.enabled = True
+    engram._audit.log_path = engram.root / "audit.log"
+
+    lesson = engram.add_lesson("auditable lesson", domain="test")
+    engram.update_lesson(lesson["id"], {"tier": "staging"})
+
+    engram.update_knowledge(lesson["id"], {"tier": "verified"})
+
+    entries = _read_audit_log_jsonl(engram)
+    tier_change_entries = [
+        e for e in entries
+        if e.get("action") == "write"
+        and "knowledge/tier_change" in (e.get("resource") or "")
+    ]
+    assert tier_change_entries, "tier change should appear in audit log"
+    detail = tier_change_entries[0].get("detail", "")
+    assert "staging" in detail
+    assert "verified" in detail
+    assert lesson["id"] in detail
+
+
+def test_update_lesson_tier_unchanged_skips_audit(tmp_path: Path):
+    """Setting tier to the same value should not log a fake transition."""
+    engram = make_engram(tmp_path)
+    engram._audit.enabled = True
+    engram._audit.log_path = engram.root / "audit.log"
+
+    lesson = engram.add_lesson("no-op tier", domain="test")
+    current_tier = lesson.get("tier")
+
+    engram.update_knowledge(lesson["id"], {"tier": current_tier})
+
+    entries = _read_audit_log_jsonl(engram)
+    tier_change_count = sum(
+        1 for e in entries
+        if "knowledge/tier_change" in (e.get("resource") or "")
+    )
+    assert tier_change_count == 0, (
+        f"unchanged tier should not log; saw {tier_change_count} entries"
+    )
+
+
 def test_bulk_add_knowledge_lessons(tmp_path: Path):
     """bulk_add_knowledge 应能批量添加 lessons。"""
     engram = make_engram(tmp_path)

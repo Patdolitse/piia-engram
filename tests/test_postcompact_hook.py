@@ -182,8 +182,14 @@ class TestPostCompactMainFlow:
 
         auto_absorb_compact.main()
 
-    def test_calls_append_daily_log_and_extract_insights(self, tmp_path, monkeypatch):
-        """Full happy path: valid transcript → daily log + insights."""
+    def test_calls_append_daily_log_only(self, tmp_path, monkeypatch):
+        """v3.31 P0-2: full happy path now writes daily log ONLY.
+
+        Semantic extraction (lessons/decisions) is the exclusive
+        responsibility of the PostCompact ``agent`` hook registered
+        alongside this command hook. extract_session_insights must NOT
+        be called here — that was the v3.30 double-write bug.
+        """
         from piia_engram.hooks import auto_absorb_compact
 
         # Create a fake compacted transcript
@@ -212,7 +218,6 @@ class TestPostCompactMainFlow:
             "event_type": "compact",
             "created": True,
         }
-        mock_engram.extract_session_insights.return_value = {"lessons": [], "decisions": []}
 
         with patch("piia_engram.core.Engram", return_value=mock_engram):
             auto_absorb_compact.main()
@@ -227,8 +232,9 @@ class TestPostCompactMainFlow:
             len(call_kwargs.args) >= 4 and call_kwargs.args[3] == "claude_code"
         )
 
-        # Verify extract_session_insights was called
-        mock_engram.extract_session_insights.assert_called_once()
+        # v3.31 P0-2: extract_session_insights MUST NOT be called by the
+        # command hook — agent hook owns that.
+        mock_engram.extract_session_insights.assert_not_called()
 
     def test_truncates_very_long_summaries(self, tmp_path, monkeypatch):
         """Summaries exceeding 3000 chars should be truncated."""
