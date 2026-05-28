@@ -137,6 +137,48 @@ def test_ledger_detects_tampering(tmp_path):
     assert "hash mismatch" in msg or "tampered" in msg
 
 
+def test_ledger_detects_timestamp_tampering(tmp_path):
+    # P1a fix: the hash must cover ts, so back-dating a record is detected.
+    p = tmp_path / "gl.jsonl"
+    led = gov.GovernanceLedger(p)
+    led.append({"receipt_id": "a"})
+    led.append({"receipt_id": "b"})
+    lines = p.read_text(encoding="utf-8").splitlines()
+    rec0 = json.loads(lines[0])
+    rec0["ts"] = "1999-01-01T00:00:00"      # back-date, keep old hash
+    lines[0] = json.dumps(rec0, ensure_ascii=False)
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    ok, msg = led.verify()
+    assert ok is False and "tampered" in msg
+
+
+def test_ledger_corrupt_tail_fails_closed(tmp_path):
+    # P2a fix: a broken tail line must raise LedgerCorruptionError on append,
+    # not a bare JSONDecodeError, and not silently extend a broken chain.
+    p = tmp_path / "gl.jsonl"
+    led = gov.GovernanceLedger(p)
+    led.append({"receipt_id": "a"})
+    with open(p, "a", encoding="utf-8") as f:
+        f.write("{ this is a half-written corrupt line\n")
+    import pytest
+    with pytest.raises(gov.LedgerCorruptionError):
+        led.append({"receipt_id": "b"})
+
+
+def test_ledger_concurrent_instances_append_consistently(tmp_path):
+    # the lock keeps read-last+write atomic; sequential appends from two
+    # instances on the same file stay a valid chain.
+    p = tmp_path / "gl.jsonl"
+    a = gov.GovernanceLedger(p)
+    b = gov.GovernanceLedger(p)
+    a.append({"i": 1})
+    b.append({"i": 2})
+    a.append({"i": 3})
+    ok, msg = b.verify()
+    assert ok, msg
+    assert [r["seq"] for r in b.records()] == [0, 1, 2]
+
+
 def test_ledger_detects_reorder_or_seq_gap(tmp_path):
     p = tmp_path / "gl.jsonl"
     led = gov.GovernanceLedger(p)

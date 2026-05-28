@@ -23,6 +23,13 @@ def test_validate_drops_unknown_rel_and_selfloops_and_incomplete():
     assert out == [{"src": "a", "rel": "led_to", "dst": "b"}]
 
 
+def test_validate_handles_none_and_non_dict_edges():
+    # regression: must not raise AttributeError on None / str / int edges
+    edges = [None, "x", 42, {"src": "a", "rel": "led_to", "dst": "b"}]
+    out = dt.validate_edges(edges)
+    assert out == [{"src": "a", "rel": "led_to", "dst": "b"}]
+
+
 # ── ordering ─────────────────────────────────────────────────────────────
 
 
@@ -43,13 +50,31 @@ def test_implemented_by_orders_decision_before_implementation():
 # ── supersedes ───────────────────────────────────────────────────────────
 
 
-def test_supersedes_marks_old_and_current_is_new():
+def test_supersedes_marks_old_and_head_is_new():
     edges = [_edge("v2", "supersedes", "v1"), _edge("v1", "led_to", "v2")]
     t = dt.build_thread("v1", edges)
     status = {r["id"]: r["status"] for r in t["order"]}
     assert status["v1"] == "superseded"
     assert status["v2"] == "active"
-    assert t["current"] == ["v2"]
+    assert t["active_ids"] == ["v2"]
+    assert t["heads"] == ["v2"]
+
+
+def test_supersedes_only_orders_old_before_new():
+    # P3 fix: a lone "new supersedes old" must order [old, new], not lexicographic
+    edges = [_edge("new", "supersedes", "old")]
+    t = dt.build_thread("old", edges)
+    assert [r["id"] for r in t["order"]] == ["old", "new"]
+    assert t["heads"] == ["new"]
+    assert {r["id"]: r["status"] for r in t["order"]}["old"] == "superseded"
+
+
+def test_heads_is_tip_not_all_active():
+    # linear chain: active_ids = all three, but head = only the tip
+    edges = [_edge("idea", "led_to", "plan"), _edge("plan", "led_to", "decision")]
+    t = dt.build_thread("plan", edges)
+    assert t["active_ids"] == ["idea", "plan", "decision"]
+    assert t["heads"] == ["decision"]
 
 
 # ── connected component scoping ──────────────────────────────────────────
@@ -69,7 +94,7 @@ def test_thread_only_includes_topic_nodes_not_unrelated():
 def test_unknown_seed_returns_not_found():
     t = dt.build_thread("nope", [_edge("a", "led_to", "b")])
     assert t["found"] is False
-    assert t["order"] == [] and t["current"] == []
+    assert t["order"] == [] and t["active_ids"] == [] and t["heads"] == []
 
 
 # ── cycle safety (must not hang) ─────────────────────────────────────────

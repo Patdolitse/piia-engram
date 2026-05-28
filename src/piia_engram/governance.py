@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+import portalocker
+
 # ---------------------------------------------------------------------------
 # Sensitivity model
 # ---------------------------------------------------------------------------
@@ -149,6 +151,19 @@ def _canonical(payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
+class LedgerCorruptionError(RuntimeError):
+    """The ledger tail is unreadable — append refuses (fail-closed) rather
+    than silently extending a broken chain."""
+
+
+def _record_digest(seq: int, ts: str, prev_hash: str, event: dict) -> str:
+    """Hash over the FULL record body (seq + ts + prev_hash + event),
+    excluding only the ``hash`` field itself — so tampering with ANY of
+    them (incl. the timestamp) is detected."""
+    body = {"seq": seq, "ts": ts, "prev_hash": prev_hash, "event": event}
+    return hashlib.sha256(_canonical(body).encode("utf-8")).hexdigest()
+
+
 class GovernanceLedger:
     """Append-only, tamper-evident disclosure ledger (JSONL + hash chain).
 
@@ -168,7 +183,10 @@ class GovernanceLedger:
         self.path = Path(path)
 
     def _last(self) -> tuple[int, str]:
-        """Return (last_seq, last_hash) or (-1, GENESIS) if empty/missing."""
+        """Return (last_seq, last_hash) or (-1, GENESIS) if empty/missing.
+
+        Raises LedgerCorruptionError if the tail line is unreadable — the
+        caller must NOT append onto a broken chain (fail-closed)."""
         if not self.path.is_file():
             return -1, self.GENESIS
         last_line = ""
@@ -178,22 +196,41 @@ class GovernanceLedger:
                     last_line = line
         if not last_line:
             return -1, self.GENESIS
-        rec = json.loads(last_line)
-        return int(rec["seq"]), str(rec["hash"])
+        try:
+            rec = json.loads(last_line)
+            return int(rec["seq"]), str(rec["hash"])
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+            raise LedgerCorruptionError(
+                f"governance ledger tail unreadable ({self.path.name}); "
+                f"refusing to append onto a broken chain: {exc}"
+            ) from exc
 
     def append(self, event: dict) -> dict:
-        """Append one event; returns the written record (with seq/hash)."""
-        last_seq, prev_hash = self._last()
-        seq = last_seq + 1
-        ts = datetime.now().replace(microsecond=0).isoformat()
-        digest = hashlib.sha256(
-            (prev_hash + str(seq) + _canonical(event)).encode("utf-8")
-        ).hexdigest()
-        rec = {"seq": seq, "ts": ts, "prev_hash": prev_hash, "hash": digest, "event": event}
+        """Append one event under an exclusive lock; returns the record.
+
+        The lock makes ``read-last → compute → write`` atomic across
+        processes (multiple AI tools may write concurrently), preventing
+        duplicate seq / broken chains. Raises LedgerCorruptionError if the
+        existing tail is unreadable (fail-closed)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        return rec
+        lock_path = self.path.parent / ".engram-governance-ledger.lock"
+        try:
+            with portalocker.Lock(lock_path, "a", timeout=5):
+                last_seq, prev_hash = self._last()
+                seq = last_seq + 1
+                ts = datetime.now().replace(microsecond=0).isoformat()
+                digest = _record_digest(seq, ts, prev_hash, event)
+                rec = {"seq": seq, "ts": ts, "prev_hash": prev_hash,
+                       "hash": digest, "event": event}
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                return rec
+        except portalocker.LockException as exc:
+            raise RuntimeError(
+                f"governance ledger lock timeout (5s): {self.path.name}"
+            ) from exc
 
     def verify(self) -> tuple[bool, str]:
         """Re-walk the chain. Returns (ok, message)."""
@@ -213,11 +250,11 @@ class GovernanceLedger:
                     return False, f"line {lineno}: seq gap (got {rec.get('seq')}, want {expected_seq})"
                 if rec.get("prev_hash") != prev_hash:
                     return False, f"line {lineno}: prev_hash mismatch (chain broken)"
-                recomputed = hashlib.sha256(
-                    (prev_hash + str(rec["seq"]) + _canonical(rec["event"])).encode("utf-8")
-                ).hexdigest()
+                recomputed = _record_digest(
+                    rec.get("seq"), rec.get("ts"), rec.get("prev_hash"), rec.get("event")
+                )
                 if recomputed != rec.get("hash"):
-                    return False, f"line {lineno}: hash mismatch (event tampered)"
+                    return False, f"line {lineno}: hash mismatch (record tampered, incl. ts)"
                 prev_hash = rec["hash"]
                 expected_seq += 1
         return True, f"ok ({expected_seq} events)"

@@ -36,12 +36,33 @@ def validate_edges(edges: Iterable[dict]) -> list[dict]:
     safe: a malformed edge is ignored, never crashes a thread build)."""
     out: list[dict] = []
     for e in edges:
+        if not isinstance(e, dict):
+            continue  # malformed (None / str / etc.) — ignore, never crash
         rel = str(e.get("rel", "")).strip()
         src = e.get("src")
         dst = e.get("dst")
         if rel in RELATION_TYPES and src and dst and src != dst:
             out.append({"src": str(src), "rel": rel, "dst": str(dst)})
     return out
+
+
+def _forward_pairs(node_ids: set[str], edges: list[dict]) -> set[tuple[str, str]]:
+    """Directed (earlier → later) pairs within ``node_ids`` for ordering.
+
+    ``led_to`` / ``implemented_by`` go src→dst (src is earlier). ``supersedes``
+    means src replaces dst, so the OLD (dst) is earlier than the NEW (src):
+    we add dst→src. This makes a lone ``new supersedes old`` order as
+    [old, new] instead of degenerating to lexicographic order."""
+    nodes = set(node_ids)
+    pairs: set[tuple[str, str]] = set()
+    for e in edges:
+        if e["src"] not in nodes or e["dst"] not in nodes:
+            continue
+        if e["rel"] in _FORWARD:
+            pairs.add((e["src"], e["dst"]))
+        elif e["rel"] == "supersedes":
+            pairs.add((e["dst"], e["src"]))
+    return pairs
 
 
 def _undirected_adj(edges: list[dict]) -> dict[str, set[str]]:
@@ -89,11 +110,10 @@ def order_thread(node_ids: set[str], edges: list[dict]) -> tuple[list[str], bool
     nodes = set(map(str, node_ids))
     fwd: dict[str, set[str]] = defaultdict(set)
     indeg: dict[str, int] = {n: 0 for n in nodes}
-    for e in edges:
-        if e["rel"] in _FORWARD and e["src"] in nodes and e["dst"] in nodes:
-            if e["dst"] not in fwd[e["src"]]:
-                fwd[e["src"]].add(e["dst"])
-                indeg[e["dst"]] += 1
+    for s, d in _forward_pairs(nodes, edges):
+        if d not in fwd[s]:
+            fwd[s].add(d)
+            indeg[d] += 1
 
     ready = deque(sorted(n for n in nodes if indeg[n] == 0))
     ordered: list[str] = []
@@ -133,7 +153,9 @@ def build_thread(
           "found": bool,                # False if seed has no relations
           "has_cycle": bool,
           "order": [ {id, status, summary?}, ... ],   # evolution order
-          "current": [id, ...],         # active (non-superseded) head(s)
+          "active_ids": [id, ...],      # all non-superseded nodes
+          "heads": [id, ...],           # the current tip(s): non-superseded
+                                        # AND no outgoing forward edge
         }
     """
     seed_id = str(seed_id)
@@ -141,21 +163,24 @@ def build_thread(
     comp = connected_component(seed_id, edges)
     if not comp:
         return {"seed": seed_id, "found": False, "has_cycle": False,
-                "order": [], "current": []}
+                "order": [], "active_ids": [], "heads": []}
 
     ordered, has_cycle = order_thread(comp, edges)
     sup = superseded_ids(edges, comp)
+    has_outgoing = {s for s, _ in _forward_pairs(comp, edges)}
     order = []
     for n in ordered:
         row = {"id": n, "status": "superseded" if n in sup else "active"}
         if entries:
             row["summary"] = _summary(entries, n)
         order.append(row)
-    current = [n for n in ordered if n not in sup]
+    active_ids = [n for n in ordered if n not in sup]
+    heads = [n for n in active_ids if n not in has_outgoing]
     return {
         "seed": seed_id,
         "found": True,
         "has_cycle": has_cycle,
         "order": order,
-        "current": current,
+        "active_ids": active_ids,
+        "heads": heads,
     }
