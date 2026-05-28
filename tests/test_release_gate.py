@@ -108,6 +108,18 @@ def test_inline_comments_after_values_are_ignored(rg, tmp_path):
     assert ok is True, problems
 
 
+def test_parse_markers_accepts_varied_list_prefixes(rg, tmp_path):
+    """v3.33.2: +, numbered lists and checkboxes must parse (was over-rejecting)."""
+    _write_evidence(tmp_path, "9.9.9",
+                    "# Release evidence — v9.9.9\n\n"
+                    "+ self-review: passed\n"
+                    "1. codex-review: passed\n"
+                    "- [x] tests: pass\n"
+                    "2) eval-gate: n/a\n")
+    ok, problems = rg.check_release_gate("9.9.9", tmp_path)
+    assert ok is True, problems
+
+
 def test_version_specific_evidence(rg, tmp_path):
     """Evidence for a different version must not satisfy the current one."""
     _write_evidence(tmp_path, "1.0.0",

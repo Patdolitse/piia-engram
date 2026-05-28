@@ -53,6 +53,44 @@ def test_index_fingerprint_stable_until_content_changes(tmp_path):
     assert fp2 != fp1
 
 
+def test_fingerprint_changes_with_vector_backend_availability(tmp_path, monkeypatch):
+    """v3.33.2: installing the [vector] extra after a FTS-only build flips
+    backend availability False->True; the fingerprint must change so the
+    index rebuilds and the vector signal actually gets built."""
+    import piia_engram.search_index as si
+
+    eng = _engram(tmp_path)
+    entries = eng._all_indexable_entries()
+    monkeypatch.setattr(si, "vector_backend_available", lambda: False)
+    fp_off = eng._entries_fingerprint(entries)
+    monkeypatch.setattr(si, "vector_backend_available", lambda: True)
+    fp_on = eng._entries_fingerprint(entries)
+    assert fp_off != fp_on
+
+
+def test_hybrid_keeps_keyword_hits_at_small_limit(tmp_path, monkeypatch):
+    """v3.33.2 recall guarantee: RRF reordering must not let truncation at
+    `limit` evict a keyword hit — keyword result ⊆ hybrid result."""
+    monkeypatch.delenv("ENGRAM_SEARCH", raising=False)
+    eng = Engram(root=tmp_path)
+    eng.add_lesson({"summary": "alpha pytest fixture scope guidance"})
+    eng.add_lesson({"summary": "beta pytest parametrize data driven tests"})
+    eng.add_lesson({"summary": "gamma pytest conftest shared fixtures"})
+    q = "pytest fixture"
+    kw_ids = {r["id"] for r in eng.search_knowledge(q, scope="lessons", limit=2)["lessons"]}
+    monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+    hy = eng.search_knowledge(q, scope="lessons", limit=2)["lessons"]
+    hy_ids = {r["id"] for r in hy}
+    assert kw_ids, "keyword path should return at least one hit"
+    assert kw_ids <= hy_ids, "hybrid dropped a keyword hit at the limit"
+    assert len(hy) <= 2
+
+
+def test_has_vector_table_method_exists():
+    from piia_engram.search_index import SearchIndex
+    assert hasattr(SearchIndex, "has_vector_table")
+
+
 def test_fingerprint_changes_when_embed_model_changes(tmp_path, monkeypatch):
     """Swapping the embedding model (content unchanged) MUST change the
     fingerprint so the index rebuilds — otherwise a stale vector table at

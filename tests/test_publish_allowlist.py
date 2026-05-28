@@ -29,6 +29,30 @@ def cl():
     return _load_module()
 
 
+def _init_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True)
+
+
+# ── v3.33.2: --staged reads the index blob, not the working tree ─────
+
+
+def test_staged_allowlist_uses_index_not_worktree(cl, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    allow = tmp_path / ".publishallow"
+    allow.write_text("src/**\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".publishallow"], cwd=tmp_path, check=True)
+    # unstaged working-tree edit that must be IGNORED by --staged
+    allow.write_text("WORKTREE-ONLY/**\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    patterns = cl._load_allowlist(from_index=True)
+    assert "src/**" in patterns
+    assert "WORKTREE-ONLY/**" not in patterns
+    # default (working tree) still sees the unstaged edit
+    assert "WORKTREE-ONLY/**" in cl._load_allowlist(from_index=False)
+
+
 # ── matching semantics ──────────────────────────────────────────────
 
 

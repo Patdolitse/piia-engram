@@ -3,7 +3,12 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
-  workflow_dispatch:
+# NOTE: workflow_dispatch intentionally removed. Manual dispatch can run
+# from an arbitrary ref, which (without environment branch protection) would
+# let an unreviewed branch/tag carry a no-op release gate or forged
+# evidence and still publish. Publishing is allowed ONLY via a published
+# GitHub Release whose commit is verified to be on main (see step below).
+# Pair this with a GitHub Environment ("pypi") deployment-branch rule.
 
 permissions:
   contents: read
@@ -21,6 +26,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # full history so the on-main ancestry check works
+
+      - name: Verify release commit is on main
+        run: |
+          git fetch origin main --quiet
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::release commit $GITHUB_SHA is NOT an ancestor of origin/main; refusing to publish."
+            exit 1
+          fi
+          echo "[ok] release commit is on main."
 
       - name: Set up Python
         uses: actions/setup-python@v6

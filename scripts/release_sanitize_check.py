@@ -154,17 +154,42 @@ def _load_custom_terms() -> list[re.Pattern[str]]:
     return terms
 
 
+def _read_staged_blob(rel_path: str) -> str | None:
+    """Read a path's CONTENT from the git index (staged blob), not the work
+    tree.
+
+    Critical for the pre-commit hook: ``--staged`` must scan exactly what is
+    about to be committed. Reading the working tree instead would miss a
+    secret that was ``git add``-ed and then deleted from the work tree
+    without re-staging. Returns None if the blob can't be read.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "show", f":{rel_path}"],
+            capture_output=True, check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    return out.stdout.decode("utf-8", errors="ignore")
+
+
 def _scan_file(
     path: Path,
     custom: list[re.Pattern[str]],
     patterns: list[tuple[str, re.Pattern[str], str]],
+    text: str | None = None,
 ) -> list[tuple[str, str, int, str]]:
-    """Return list of (label, severity, line_no, line_text)."""
+    """Return list of (label, severity, line_no, line_text).
+
+    If ``text`` is given it is scanned directly (used for staged blobs);
+    otherwise the working-tree file at ``path`` is read.
+    """
     hits: list[tuple[str, str, int, str]] = []
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except (OSError, UnicodeDecodeError):
-        return hits
+    if text is None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except (OSError, UnicodeDecodeError):
+            return hits
     for lineno, line in enumerate(text.splitlines(), 1):
         for label, pat, severity in patterns:
             if pat.search(line):
@@ -185,6 +210,7 @@ _MULTILINE_EXTS = (".py", ".md", ".rst", ".txt")
 def _scan_file_multiline(
     path: Path,
     patterns: list[tuple[str, re.Pattern[str], str]],
+    text: str | None = None,
 ) -> list[tuple[str, str, int, str]]:
     """v3.32: catch internal-disclosure narrative that spans more than one
     line (typically inside a docstring), which ``_scan_file`` cannot see
@@ -201,10 +227,11 @@ def _scan_file_multiline(
     if path.suffix.lower() not in _MULTILINE_EXTS:
         return []
     hits: list[tuple[str, str, int, str]] = []
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except (OSError, UnicodeDecodeError):
-        return hits
+    if text is None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except (OSError, UnicodeDecodeError):
+            return hits
     for label, pat, severity in patterns:
         for m in pat.finditer(text):
             frag = m.group(0)
@@ -301,9 +328,14 @@ def main() -> int:
         rel = str(path).replace("\\", "/")
         if _should_skip(rel):
             continue
-        hits = _scan_file(path, custom, patterns)
+        # In --staged mode, scan the staged blob (what will actually be
+        # committed), not the working-tree file.
+        staged_text = _read_staged_blob(rel) if args.staged else None
+        if args.staged and staged_text is None:
+            continue  # deleted/unreadable in index — nothing to scan
+        hits = _scan_file(path, custom, patterns, text=staged_text)
         if args.internal:
-            hits += _scan_file_multiline(path, internal_patterns)
+            hits += _scan_file_multiline(path, internal_patterns, text=staged_text)
         for label, severity, lineno, line_text in hits:
             marker = "[HIGH]" if severity == "high" else "[warn]"
             print(f"  {marker} {rel}:{lineno}  {label}: {line_text}")

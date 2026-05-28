@@ -299,6 +299,23 @@ class SearchIndex:
         finally:
             con.close()
 
+    def has_vector_table(self) -> bool:
+        """True if the vec0 vector table exists in the index.
+
+        Lets the caller detect a stale FTS-only index that predates the
+        vector backend being installed, and force a rebuild to populate it.
+        """
+        con = self._connect()
+        try:
+            row = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='vec'"
+            ).fetchone()
+            return row is not None
+        except sqlite3.OperationalError:
+            return False
+        finally:
+            con.close()
+
     def _rebuild_vectors(self, con: sqlite3.Connection, docs: list[tuple[str, str]]) -> None:
         """Incrementally sync the vec0 table to ``docs`` (id, document)."""
         import sqlite_vec

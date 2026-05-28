@@ -47,8 +47,8 @@ def test_hook_body_aggregates_exit_codes(ih):
     assert 'exit 1' in body
 
 
-def test_current_marker_is_v2(ih):
-    assert ih.HOOK_MARKER == "# piia-engram-sanitize-hook v2"
+def test_current_marker_is_v3(ih):
+    assert ih.HOOK_MARKER == "# piia-engram-sanitize-hook v3"
     assert ih.HOOK_MARKER in ih.HOOK_BODY
 
 
@@ -73,8 +73,8 @@ def test_install_upgrades_existing_v1_hook(ih, tmp_path, monkeypatch):
     monkeypatch.setattr(ih, "_git_dir", lambda: git_dir)
     assert ih.install() == 0
     new_body = hook.read_text(encoding="utf-8")
-    assert "# piia-engram-sanitize-hook v2" in new_body
-    assert "check_publish_allowlist.py" in new_body
+    assert "# piia-engram-sanitize-hook v3" in new_body
+    assert "check_publish_allowlist.py --staged" in new_body
 
 
 def test_install_refuses_foreign_hook(ih, tmp_path, monkeypatch):

@@ -65,8 +65,10 @@ def _pyproject_version(root: Path) -> str:
 def _parse_markers(text: str) -> dict[str, str]:
     """Collect ``marker: value`` lines (marker lowercased)."""
     found: dict[str, str] = {}
+    # Optional list prefix: -, *, + (with optional checkbox), or 1. / 1)
+    prefix = r"(?:[-*+]\s*(?:\[[ xX]\]\s*)?|\d+[.)]\s*)?"
     for line in text.splitlines():
-        m = re.match(r"\s*[-*]?\s*([A-Za-z][\w-]*)\s*[:=]\s*(.+?)\s*$", line)
+        m = re.match(rf"\s*{prefix}([A-Za-z][\w-]*)\s*[:=]\s*(.+?)\s*$", line)
         if m:
             value = m.group(2).strip()
             # Drop an inline "# comment" so e.g. "passed   # note" reads as "passed".

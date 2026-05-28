@@ -280,12 +280,17 @@ class RetrievalMixin:
         the old dimension and silently disabling the vector signal until the
         next content edit / manual reindex.
         """
-        from . import search_index as _si  # read EMBED_MODEL at call time
+        from . import search_index as _si  # read model/backend at call time
         parts = sorted(
             f"{e.get('id')}:{_content_hash(_entry_document(e))}"
             for e in entries if e.get("id")
         )
-        blob = _si.EMBED_MODEL + "\n" + "\n".join(parts)
+        # Fold in BOTH the embedding model AND whether the vector backend is
+        # available: installing the [vector] extra after a FTS-only build
+        # flips this False->True, which must trigger a rebuild so the vector
+        # signal actually gets built (otherwise it stays silently absent).
+        header = f"{_si.EMBED_MODEL}|vec={_si.vector_backend_available()}"
+        blob = header + "\n" + "\n".join(parts)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
     def _ensure_index_fresh(self, entries: list[dict]) -> SearchIndex:
@@ -297,7 +302,12 @@ class RetrievalMixin:
         idx = self._hybrid_index()
         try:
             fp = self._entries_fingerprint(entries)
-            if idx.fingerprint() != fp:
+            need_rebuild = idx.fingerprint() != fp
+            # Defensive: vector is enabled but the vec table is missing (e.g.
+            # an older FTS-only index file on disk) — rebuild to populate it.
+            if not need_rebuild and idx.vector_enabled and not idx.has_vector_table():
+                need_rebuild = True
+            if need_rebuild:
                 idx.rebuild(entries, fingerprint=fp)
         except Exception:
             pass
@@ -422,18 +432,30 @@ class RetrievalMixin:
         fts_rank = [i for i in hybrid_idx.fts_search(query, limit=max(limit, 50)) if i in cand_ids]
         vec_rank = [i for i in hybrid_idx.vector_search(query, limit=max(limit, 50)) if i in cand_ids]
 
+        fused = [
+            (eid, rrf)
+            for eid, rrf in reciprocal_rank_fusion([kw_rank, fts_rank, vec_rank])
+            if rrf >= HYBRID_RELEVANCE_THRESHOLD and eid in by_id
+        ]
+        rrf_by_id = dict(fused)
+        fused_order = [eid for eid, _ in fused]
+
+        # Recall guarantee: the keyword path returns items scoring
+        # >= SEARCH_RELEVANCE_THRESHOLD (top `limit`). Those MUST survive into
+        # the hybrid result — RRF reordering must not let truncation at
+        # `limit` evict a keyword hit (hybrid recall >= keyword recall). So
+        # pin the keyword keepers first, then fill remaining slots by RRF.
+        kw_keep = [eid for eid in kw_rank if kw_score[eid] >= SEARCH_RELEVANCE_THRESHOLD][:limit]
+        selected = list(dict.fromkeys(kw_keep + fused_order))[:limit]
+        selected.sort(key=lambda eid: rrf_by_id.get(eid, 0.0), reverse=True)
+
         out = []
-        for eid, rrf in reciprocal_rank_fusion([kw_rank, fts_rank, vec_rank]):
-            if rrf < HYBRID_RELEVANCE_THRESHOLD:
-                continue
-            item = by_id.get(eid)
-            if item is None:
-                continue
-            view = dict(item)
-            view["_score"] = round(rrf, 4)
+        for eid in selected:
+            view = dict(by_id[eid])
+            view["_score"] = round(rrf_by_id.get(eid, 0.0), 4)
             view["_keyword_score"] = round(kw_score.get(eid, 0.0), 3)
             out.append(view)
-        return out[:limit]
+        return out
 
     def get_relevant_lessons(self, project_folder: str | None = None,
                              limit: int = 8,

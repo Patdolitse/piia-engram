@@ -30,13 +30,32 @@ ALLOWLIST_FILE = ".publishallow"
 _GLOB_CHARS = set("*?[")
 
 
-def _load_allowlist() -> list[str]:
-    path = Path(ALLOWLIST_FILE)
-    if not path.is_file():
-        print(f"[error] {ALLOWLIST_FILE} not found in repo root", file=sys.stderr)
-        sys.exit(2)
+def _load_allowlist(from_index: bool = False) -> list[str]:
+    """Load allowlist patterns.
+
+    ``from_index=True`` reads the STAGED ``.publishallow`` (git index blob)
+    rather than the working tree — so the pre-commit hook checks against the
+    allowlist that is actually being committed, not an unstaged local edit.
+    """
+    if from_index:
+        try:
+            out = subprocess.run(
+                ["git", "show", f":{ALLOWLIST_FILE}"],
+                capture_output=True, check=True,
+            )
+            content = out.stdout.decode("utf-8", errors="ignore")
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            print(f"[error] {ALLOWLIST_FILE} not in git index (stage it first)",
+                  file=sys.stderr)
+            sys.exit(2)
+    else:
+        path = Path(ALLOWLIST_FILE)
+        if not path.is_file():
+            print(f"[error] {ALLOWLIST_FILE} not found in repo root", file=sys.stderr)
+            sys.exit(2)
+        content = path.read_text(encoding="utf-8")
     patterns: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -87,9 +106,12 @@ def main() -> int:
     )
     ap.add_argument("--list", action="store_true",
                     help="Print uncovered files only (still exits 1 if any).")
+    ap.add_argument("--staged", action="store_true",
+                    help="Read .publishallow from the git index (staged blob) "
+                         "instead of the working tree (pre-commit hook use).")
     args = ap.parse_args()
 
-    patterns = _load_allowlist()
+    patterns = _load_allowlist(from_index=args.staged)
     tracked = _git_tracked_files()
     uncovered = find_uncovered(patterns, tracked)
 

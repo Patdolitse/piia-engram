@@ -143,6 +143,43 @@ def test_staged_files_helper_exists(sc):
     assert callable(sc._git_staged_files)
 
 
+# ── v3.33.2: --staged scans the index blob, not the working tree ─────
+
+
+def test_staged_scan_reads_index_blob_not_worktree(sc, tmp_path, monkeypatch):
+    """A secret git-add-ed then removed from the work tree (without
+    re-staging) must STILL be caught — the staged blob is what commits."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    leak = tmp_path / "leak.txt"
+    leak.write_text('token = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "leak.txt"], cwd=tmp_path, check=True)
+    # work tree cleaned but NOT re-added → index still holds the secret
+    leak.write_text("clean now\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    blob = sc._read_staged_blob("leak.txt")
+    assert blob is not None and "ghp_" in blob
+    staged_hits = sc._scan_file(Path("leak.txt"), [], sc._BUILT_IN_PATTERNS, text=blob)
+    assert any(sev == "high" for _, sev, _, _ in staged_hits), "staged secret missed"
+
+    # proves the bug class: scanning the working tree would MISS it
+    wt_hits = sc._scan_file(tmp_path / "leak.txt", [], sc._BUILT_IN_PATTERNS)
+    assert not any(sev == "high" for _, sev, _, _ in wt_hits)
+
+
+def test_scan_file_accepts_text_override(sc, tmp_path):
+    """_scan_file scans provided text even if the file on disk differs."""
+    f = tmp_path / "x.txt"
+    f.write_text("totally clean\n", encoding="utf-8")
+    hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS,
+                         text='ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB5678')
+    assert any(label == "GitHub token" for label, *_ in hits)
+
+
 # ── v3.32 P1: multi-line docstring scanning ─────────────────────────────
 
 

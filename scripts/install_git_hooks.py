@@ -34,13 +34,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_MARKER = "# piia-engram-sanitize-hook v2"
+HOOK_MARKER = "# piia-engram-sanitize-hook v3"
 
 # Older markers we still recognize as "ours" so install --upgrade can
 # safely overwrite a hook a previous version installed.
 _KNOWN_MARKERS = (
     "# piia-engram-sanitize-hook v1",
     "# piia-engram-sanitize-hook v2",
+    "# piia-engram-sanitize-hook v3",
 )
 
 # Set to "" to make warn-level hits non-blocking (HIGH always blocks).
@@ -72,7 +73,9 @@ if [ "$?" -ne 0 ]; then rc=1; fi
 
 # Default-deny publish allowlist: git ls-files already sees staged adds,
 # so a newly tracked file missing from .publishallow blocks the commit.
-"$PY" scripts/check_publish_allowlist.py
+# --staged reads .publishallow from the index (what's actually committed),
+# not an unstaged working-tree edit.
+"$PY" scripts/check_publish_allowlist.py --staged
 if [ "$?" -ne 0 ]; then rc=1; fi
 
 if [ "$rc" -ne 0 ]; then
