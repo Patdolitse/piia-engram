@@ -1,5 +1,7 @@
 # Changelog
 
+[English](CHANGELOG.md) | [中文](CHANGELOG.zh-CN.md)
+
 All notable changes to Engram are documented in this file. For detailed release notes with upgrade instructions, see [GitHub Releases](https://github.com/Patdolitse/piia-engram/releases).
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
@@ -44,6 +46,8 @@ Hybrid search is now generally available, opt-in, with no change to default beha
 
 ### Release Evidence
 - Full regression suite of 1005 tests passing.
+
+## [3.32.0] - 2026-05-28
 
 A follow-up to publish-workflow hardening: moving the pre-release security check one step earlier.
 
