@@ -4,7 +4,7 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [3.31.0] - UNRELEASED
+## [3.31.0] - 2026-05-28
 
 跨工具自动接续补全 + 知识 tier 管理 + 发布流程加固。
 
