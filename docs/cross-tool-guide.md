@@ -1,57 +1,57 @@
-# Engram 跨工具 & 跨会话使用指南
+# Engram Cross-Tool & Cross-Session Usage Guide
 
-> 版本: 3.29.4+ | 更新日期: 2026-05-27
+> Version: 3.29.4+ | Updated: 2026-05-27
 
-本指南面向同时使用多个 AI 工具（Claude Code、Codex、Cursor 等）的用户，说明如何让 Engram 在不同工具和对话之间保持记忆连贯。
-
----
-
-## 目录
-
-1. [核心概念](#1-核心概念)
-2. [配置](#2-配置)
-3. [跨会话记忆恢复](#3-跨会话记忆恢复)
-4. [多工具共存](#4-多工具共存)
-5. [Doctor 自诊断](#5-doctor-自诊断)
-6. [常见问题](#6-常见问题)
+This guide is for users who work with multiple AI tools at the same time (Claude Code, Codex, Cursor, etc.). It explains how to keep Engram's memory coherent across different tools and conversations.
 
 ---
 
-## 1. 核心概念
+## Table of Contents
 
-### 记忆是本地资产
+1. [Core Concepts](#1-core-concepts)
+2. [Configuration](#2-configuration)
+3. [Cross-Session Memory Recovery](#3-cross-session-memory-recovery)
+4. [Multi-Tool Coexistence](#4-multi-tool-coexistence)
+5. [Doctor Self-Diagnostics](#5-doctor-self-diagnostics)
+6. [FAQ](#6-faq)
 
-Engram 将所有数据存储在本机 `~/.engram/` 目录下。任何连接了 Engram MCP 的 AI 工具都能读写同一份数据。这意味着：
+---
 
-- Claude Code 写入的经验教训，Codex 可以立即读到
-- Cursor 做的决策记录，Claude Code 在下一次会话中能看到
-- 不依赖任何云端同步——你的记忆完全属于你
+## 1. Core Concepts
 
-### 数据分层
+### Memory is a Local Asset
 
-| 层 | 说明 | 跨工具可见 | 跨会话持久 |
+Engram stores all data in the local `~/.engram/` directory. Any AI tool connected to the Engram MCP can read and write the same data. This means:
+
+- Lessons written by Claude Code can be read immediately by Codex
+- Decisions recorded by Cursor are visible to Claude Code in its next session
+- It does not depend on any cloud sync — your memory belongs entirely to you
+
+### Data Layers
+
+| Layer | Description | Cross-Tool Visible | Cross-Session Persistent |
 |----|------|-----------|-----------|
-| **Identity** | 你的角色、偏好、技术栈 | 是 | 是 |
-| **Knowledge** | 经验教训、决策、操作手册 | 是 | 是 |
-| **Context** | 会话上下文、近期操作 | 是 | 是 |
-| **Tool Registry** | 本地安装的工具信息 | 是 | 是 |
+| **Identity** | Your role, preferences, tech stack | Yes | Yes |
+| **Knowledge** | Lessons, decisions, playbooks | Yes | Yes |
+| **Context** | Session context, recent operations | Yes | Yes |
+| **Tool Registry** | Information about locally installed tools | Yes | Yes |
 
-### source_tool 溯源
+### source_tool Provenance
 
-每条知识记录都有 `source_tool` 字段，标记是哪个工具写入的。用于：
-- 追溯知识来源（"这条教训是 Codex 还是 Claude Code 写的？"）
-- 过滤查看（"只看 Claude Code 的经验"）
-- 冲突时判断权威来源
+Every knowledge record has a `source_tool` field marking which tool wrote it. It is used for:
+- Tracing knowledge provenance ("Was this lesson written by Codex or Claude Code?")
+- Filtered viewing ("Show only Claude Code's lessons")
+- Determining the authoritative source in case of conflict
 
 ---
 
-## 2. 配置
+## 2. Configuration
 
-### 2.1 基础安装
+### 2.1 Basic Installation
 
-每个 AI 工具都需要配置 Engram 作为 MCP Server：
+Each AI tool needs to be configured with Engram as an MCP Server:
 
-**Claude Code** — 在 `~/.claude/` 或项目的 `.mcp.json` 中：
+**Claude Code** — in `~/.claude/` or the project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
@@ -63,82 +63,82 @@ Engram 将所有数据存储在本机 `~/.engram/` 目录下。任何连接了 E
 }
 ```
 
-**Codex** — 在 codex 配置中添加 MCP server 指向同一命令。
+**Codex** — add an MCP server in the codex configuration pointing to the same command.
 
-**Cursor** — 在 Cursor MCP 设置中添加相同配置。
+**Cursor** — add the same configuration in Cursor's MCP settings.
 
-### 2.2 共享指令文件
+### 2.2 Shared Instructions File
 
-所有工具共享的行为规则放在：
+Behavior rules shared by all tools go in:
 ```
 ~/.engram/shared_instructions.md
 ```
 
-各工具的私有指令放在各自的配置中（如 `~/.claude/CLAUDE.md`）。共享指令确保所有工具对 Engram 的使用方式一致。
+Each tool's private instructions go in its own configuration (e.g. `~/.claude/CLAUDE.md`). Shared instructions ensure all tools use Engram consistently.
 
-### 2.3 Quick Context 快照
+### 2.3 Quick Context Snapshot
 
-Engram 自动维护一份 `~/.engram/quick_context.md` 文件——你的身份卡片快照。AI 工具启动时可以直接读取此文件，无需调用 MCP，实现毫秒级冷启动。
+Engram automatically maintains a `~/.engram/quick_context.md` file — a snapshot of your identity card. AI tools can read this file directly on startup, without calling the MCP, achieving millisecond-level cold start.
 
 ---
 
-## 3. 跨会话记忆恢复
+## 3. Cross-Session Memory Recovery
 
-### 3.1 自动恢复机制
+### 3.1 Automatic Recovery Mechanism
 
-当你在新对话中开始工作，Engram 提供三个层级的上下文恢复：
+When you start working in a new conversation, Engram provides three levels of context recovery:
 
-| 层级 | 方式 | 内容 | 速度 |
+| Level | Method | Content | Speed |
 |------|------|------|------|
-| **Quick** | 读取 `quick_context.md` | 身份 + 偏好 + 近期经验 | 毫秒级 |
-| **Standard** | `get_user_context(level="standard")` | Quick + 决策 + 项目上下文 | <1秒 |
-| **Full** | `get_user_context(level="full")` | Standard + 冲突检测 + 同步状态 | 1-2秒 |
+| **Quick** | Read `quick_context.md` | Identity + preferences + recent lessons | Milliseconds |
+| **Standard** | `get_user_context(level="standard")` | Quick + decisions + project context | <1s |
+| **Full** | `get_user_context(level="full")` | Standard + conflict detection + sync status | 1-2s |
 
-**推荐做法**：
-- 大多数对话：直接读 `quick_context.md`（通路 1）
-- 需要深度上下文：调用 `get_user_context(level="standard")`（通路 2）
-- 全量回顾：仅在明确需要时用 `full` 级别
+**Recommended practice**:
+- Most conversations: read `quick_context.md` directly (path 1)
+- When deep context is needed: call `get_user_context(level="standard")` (path 2)
+- Full review: use the `full` level only when explicitly needed
 
-### 3.2 会话保存
+### 3.2 Session Saving
 
-每次重要对话结束时，AI 工具应调用：
+At the end of each important conversation, the AI tool should call:
 ```
-save_agent_context(tool="claude_code", content="会话摘要...", project_folder="...")
+save_agent_context(tool="claude_code", content="session summary...", project_folder="...")
 ```
 
-这会将当前会话的关键上下文保存为持久记录，下次恢复时可用。
+This saves the conversation's key context as a persistent record, available for recovery next time.
 
-### 3.3 Wrap-up 自动提取
+### 3.3 Wrap-up Automatic Extraction
 
-调用 `wrap_up_session` 时，Engram 会自动：
-1. 从会话内容中提取经验教训（标记为 `tier: "staging"`）
-2. 提取关键决策
-3. 保存会话上下文
-4. 更新 `quick_context.md`
+When `wrap_up_session` is called, Engram automatically:
+1. Extracts lessons from the conversation content (marked as `tier: "staging"`)
+2. Extracts key decisions
+3. Saves the session context
+4. Updates `quick_context.md`
 
-Staging 层的知识在被访问 3 次后自动晋升为 `verified`。
+Knowledge in the staging tier is automatically promoted to `verified` after being accessed 3 times.
 
 ---
 
-## 4. 多工具共存
+## 4. Multi-Tool Coexistence
 
-### 4.1 Description 字段保护（v3.29.4+）
+### 4.1 Description Field Protection (v3.29.4+)
 
-当多个工具写入 profile 的 description 字段时，Engram 使用 **追加合并** 语义：
+When multiple tools write to the profile's description field, Engram uses **append-merge** semantics:
 
-- Tool A 写入 `"标记A"` → description = `"标记A"`
-- Tool B 写入 `"标记B"` → description = `"标记A 标记B"`（追加，不覆盖）
-- Tool A 再写 `"标记A"` → description 不变（已存在，跳过）
+- Tool A writes `"markA"` → description = `"markA"`
+- Tool B writes `"markB"` → description = `"markA markB"` (appended, not overwritten)
+- Tool A writes `"markA"` again → description unchanged (already exists, skipped)
 
-这确保多个工具的标记/信息共存，不会互相覆盖。
+This ensures that marks/information from multiple tools coexist without overwriting each other.
 
-### 4.2 字段级溯源（v3.29.4+）
+### 4.2 Field-Level Provenance (v3.29.4+)
 
-Profile 现在记录每个字段的最后修改来源：
+The profile now records the last modification source of each field:
 
 ```json
 {
-  "role": "开发者",
+  "role": "developer",
   "_provenance": {
     "role": {"by": "claude_code", "at": "2026-05-27T01:00:00"},
     "language": {"by": "codex", "at": "2026-05-27T02:00:00"}
@@ -147,130 +147,130 @@ Profile 现在记录每个字段的最后修改来源：
 }
 ```
 
-调用 `update_identity` 时传入 `source_tool` 参数即可启用：
+Pass the `source_tool` parameter when calling `update_identity` to enable it:
 ```
-update_identity(field="profile", updates_json='{"role":"开发者"}', source_tool="claude_code")
+update_identity(field="profile", updates_json='{"role":"developer"}', source_tool="claude_code")
 ```
 
-### 4.3 知识去重（v3.29.4+）
+### 4.3 Knowledge Deduplication (v3.29.4+)
 
-当不同工具写入相似知识时，Engram 使用三级去重：
+When different tools write similar knowledge, Engram uses three-tier deduplication:
 
-| 相似度 | 处理 | 说明 |
+| Similarity | Handling | Description |
 |--------|------|------|
-| ≥ 85% | **拒绝** | 精确重复，不添加 |
-| 55%-84% | **关联** | 添加但自动链接 `related_ids` |
-| < 55% | **通过** | 正常添加 |
+| ≥ 85% | **Reject** | Exact duplicate, not added |
+| 55%-84% | **Link** | Added but automatically linked via `related_ids` |
+| < 55% | **Pass** | Added normally |
 
-这意味着：
-- Claude Code 和 Codex 写入完全相同的教训 → 只保留一条
-- 写入相似但有差异的教训 → 两条都保留，并自动标记关联
-- 写入不相关的教训 → 各自独立存储
+This means:
+- Claude Code and Codex write the exact same lesson → only one is kept
+- Writing similar but differing lessons → both are kept and automatically marked as related
+- Writing unrelated lessons → each is stored independently
 
-### 4.4 source_tool 过滤
+### 4.4 source_tool Filtering
 
-查看特定工具的知识：
+View knowledge from a specific tool:
 ```
 get_lessons(source_tool="claude_code")
 get_decisions(source_tool="codex")
 ```
 
-搜索时也支持按来源过滤：
+Searching also supports filtering by source:
 ```
-search_knowledge(query="部署", scope="lessons")
+search_knowledge(query="deployment", scope="lessons")
 ```
 
-### 4.5 冲突决策管理
+### 4.5 Conflicting Decision Management
 
-当不同工具或不同时间做出矛盾决策时（如 "部署用 Docker" vs "部署用裸机"），Engram 会检测到冲突并在 `get_user_context(level="full")` 中报告。
+When different tools or different points in time produce contradictory decisions (e.g. "deploy with Docker" vs "deploy on bare metal"), Engram detects the conflict and reports it in `get_user_context(level="full")`.
 
-你可以用 `search_knowledge` 查找冲突对，然后决定保留哪个、归档哪个。
+You can use `search_knowledge` to find the conflicting pair, then decide which to keep and which to archive.
 
 ---
 
-## 5. Doctor 自诊断
+## 5. Doctor Self-Diagnostics
 
-v3.29.4+ 新增 `doctor` MCP 工具，可随时检查记忆系统健康状态。
+v3.29.4+ adds the `doctor` MCP tool, which lets you check the health of the memory system at any time.
 
-### 调用方式
+### How to Invoke
 
-在任何连接了 Engram 的 AI 工具中说：
-> "帮我跑一下 Engram 的 doctor 检查"
+In any AI tool connected to Engram, say:
+> "Run Engram's doctor check for me"
 
-AI 工具会调用 `doctor()` 并返回类似下面的报告：
+The AI tool will call `doctor()` and return a report like the following:
 
-| 检查项 | 状态 | 详情 |
+| Check | Status | Details |
 |--------|------|------|
-| identity_completeness | PASS | profile 完整 |
-| identity_provenance | PASS | 字段级溯源已启用 |
+| identity_completeness | PASS | profile complete |
+| identity_provenance | PASS | field-level provenance enabled |
 | knowledge_volume | PASS | lessons=42, decisions=15 |
-| stale_knowledge | WARN | 需复审: 12, 可归档: 3 |
-| near_duplicates | PASS | 近似重复对数: 2 |
-| decision_conflicts | PASS | 无冲突 |
+| stale_knowledge | WARN | needs review: 12, archivable: 3 |
+| near_duplicates | PASS | near-duplicate pairs: 2 |
+| decision_conflicts | PASS | no conflicts |
 | health_score | PASS | 87/100 |
-| quick_context_freshness | PASS | 最后更新: 2.3 小时前 |
+| quick_context_freshness | PASS | last updated: 2.3 hours ago |
 
-### 支持 JSON 输出
+### JSON Output Supported
 
 ```
 doctor(output_format="json")
 ```
 
-返回结构化 JSON，便于自动化处理。
+Returns structured JSON for easy automated processing.
 
 ---
 
-## 6. 常见问题
+## 6. FAQ
 
-### Q: 两个工具同时写入会冲突吗？
+### Q: Will two tools writing at the same time conflict?
 
-Engram 使用文件级锁（portalocker）防止并发写入损坏。同一时刻只有一个进程能写入同一个文件。但两个工具的写入是串行的，不会丢数据。
+Engram uses file-level locking (portalocker) to prevent concurrent writes from corrupting data. Only one process can write to the same file at any given moment. The writes from two tools are serialized, so no data is lost.
 
-### Q: 我切换了 AI 工具，之前的记忆还在吗？
+### Q: I switched AI tools — is my previous memory still there?
 
-是的。所有数据存储在 `~/.engram/` 下，任何连接了 Engram MCP 的工具都能访问。即使你从 Claude Code 切到 Codex，再切到 Cursor，记忆完全相同。
+Yes. All data is stored under `~/.engram/`, and any tool connected to the Engram MCP can access it. Even if you switch from Claude Code to Codex and then to Cursor, the memory is exactly the same.
 
-### Q: 怎么知道某条知识是哪个工具写的？
+### Q: How do I know which tool wrote a particular piece of knowledge?
 
-每条知识都有 `source_tool` 字段。可以用 `get_lessons(source_tool="claude_code")` 过滤查看。Identity Card（`get_identity_card()`）中也会标注来源。
+Every knowledge record has a `source_tool` field. You can filter the view with `get_lessons(source_tool="claude_code")`. The Identity Card (`get_identity_card()`) also annotates the source.
 
-### Q: Quick Context 会自动更新吗？
+### Q: Does Quick Context update automatically?
 
-会。每次调用 `wrap_up_session` 或 `get_user_context` 时，`quick_context.md` 都会自动刷新。
+Yes. `quick_context.md` is automatically refreshed every time `wrap_up_session` or `get_user_context` is called.
 
-### Q: 如何清理过期知识？
+### Q: How do I clean up stale knowledge?
 
-1. 调用 `doctor()` 查看哪些知识过期
-2. 调用 `knowledge_overview()` 获取详细生命周期报告
-3. 对过期条目调用 `archive_lesson(id)` 归档
-4. 或者使用 Review UI：`request_outline_review()` 生成可视化审阅界面
+1. Call `doctor()` to see which knowledge is stale
+2. Call `knowledge_overview()` to get a detailed lifecycle report
+3. Call `archive_lesson(id)` to archive stale entries
+4. Or use the Review UI: `request_outline_review()` generates a visual review interface
 
-### Q: 跨会话的上下文会无限增长吗？
+### Q: Will cross-session context grow without limit?
 
-不会。Engram 有以下机制控制增长：
-- 每类知识最多 200 条（`MAX_KNOWLEDGE_ENTRIES`）
-- 超限时自动淘汰 staging 层 → 再淘汰最旧 verified 层
-- 过期知识按类型差异化衰减（用户偏好 90 天，调试技巧 15 天）
-- `wrap_up_session` 提取的知识默认为 staging，只有被多次访问才晋升
+No. Engram has the following mechanisms to control growth:
+- A maximum of 200 entries per knowledge type (`MAX_KNOWLEDGE_ENTRIES`)
+- When the limit is exceeded, the staging tier is evicted first → then the oldest verified tier
+- Stale knowledge decays differentially by type (user preferences 90 days, debug tips 15 days)
+- Knowledge extracted by `wrap_up_session` defaults to staging, and is only promoted after being accessed multiple times
 
-### Q: 多工具同时操作 identity 会覆盖吗？
+### Q: If multiple tools modify identity at the same time, will it overwrite?
 
-v3.29.4+ 中，description 字段使用追加语义，不会覆盖。其他字段（role, language 等）仍然是后写覆盖，但有 `_provenance` 溯源记录，可以追查是谁改的。
+In v3.29.4+, the description field uses append semantics and will not be overwritten. Other fields (role, language, etc.) are still last-write-wins, but with `_provenance` tracking so you can trace who changed them.
 
 ---
 
-## 附录: 类型感知过期策略
+## Appendix: Type-Aware Expiration Policy
 
-不同类型的知识有不同的过期周期（v3.29.4+）：
+Different types of knowledge have different expiration cycles (v3.29.4+):
 
-| 知识领域 | 复审周期 | 归档周期 | 说明 |
+| Knowledge Domain | Review Cycle | Archive Cycle | Description |
 |----------|----------|----------|------|
-| user_preference | 90 天 | 180 天 | 用户偏好变化慢 |
-| architecture | 60 天 | 120 天 | 架构决策较稳定 |
-| strategy | 60 天 | 120 天 | 战略方向 |
-| product | 45 天 | 90 天 | 产品决策 |
-| workflow | 30 天 | 60 天 | 工作流程（默认） |
-| debug | 15 天 | 30 天 | 调试技巧衰减快 |
-| config | 15 天 | 30 天 | 配置问题衰减快 |
+| user_preference | 90 days | 180 days | User preferences change slowly |
+| architecture | 60 days | 120 days | Architecture decisions are relatively stable |
+| strategy | 60 days | 120 days | Strategic direction |
+| product | 45 days | 90 days | Product decisions |
+| workflow | 30 days | 60 days | Workflow (default) |
+| debug | 15 days | 30 days | Debug tips decay quickly |
+| config | 15 days | 30 days | Configuration issues decay quickly |
 
-领域通过 `domain` 字段匹配。未匹配的默认使用 30/60 天周期。
+Domains are matched via the `domain` field. Unmatched entries default to the 30/60 day cycle.

@@ -677,7 +677,7 @@ engram privacy          # Show what data piia-engram stores and where
 
 Contributions, issues, and feedback are welcome.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Chinese readers can also use [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

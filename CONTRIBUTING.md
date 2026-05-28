@@ -2,7 +2,11 @@
 
 Thanks for considering a contribution to piia-engram — the AI identity layer that stores who you are, not just what you did.
 
-[English](CONTRIBUTING.md) | [中文](CONTRIBUTING.zh-CN.md)
+## Documentation language
+
+**English is the canonical language for all repository docs** (README, CHANGELOG, CONTRIBUTING, SECURITY, `docs/`). Write and update docs in English; do not mix languages within a file. The only translated doc is the README (`README.zh-CN.md`) as a courtesy front door for Chinese readers — keep it in sync when you change the English README. Everything else stays English-only to avoid translation drift (the same approach as uv, vue, and most MCP-ecosystem projects). If broad Chinese documentation is needed later, it will live in a docs site with per-locale folders + a translation platform, not hand-maintained file pairs.
+
+Note: this is about *repository documentation*. Product/app user-facing strings (CLI output, setup wizard) remain bilingual — see "Code Guidelines".
 
 ## Architecture Overview
 

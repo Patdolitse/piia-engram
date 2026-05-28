@@ -6,160 +6,160 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [3.33.2] - 2026-05-28
 
-独立代码审查（Codex）发现并修复的一批正确性 / 安全问题——发布流程首次完整跑通"自审 + Codex 独立审查 + 评测闸"三关。
+A batch of correctness / security issues found and fixed by independent code review (Codex)—the first release to fully clear all three gates: "self-review + independent Codex review + evaluation gate."
 
 ### Fixed
-- **混合搜索召回保证**：开启 hybrid 时，RRF 重排 + 截断可能把关键词命中项挤出 top-N。现已固定保留关键词结果（score≥阈值的 top-`limit`）再用 RRF 填充，确保 hybrid 召回 ≥ 关键词召回。
-- **装 `[vector]` 后索引不重建**：先在无向量后端时建了 FTS-only 索引，之后安装 `[vector]` 依赖，此前不会触发重建、语义信号一直缺席。现把"向量后端可用性"纳入索引新鲜度指纹，并在向量启用但向量表缺失时强制重建。
-- **pre-commit 脱敏扫描 `--staged` 漏报**：此前读工作区文件内容，若 `git add` 了含密钥的文件后又清理工作区但未重新 add，会漏掉实际将提交的密钥。现 `--staged` 改为扫描暂存区 blob（`git show :path`）。
-- **pre-commit 白名单 `--staged`**：从暂存区读取 `.publishallow`，未暂存的本地改动不再影响提交判定（hook marker v2→v3）。
+- **Hybrid search recall guarantee**: when hybrid is enabled, RRF re-ranking + truncation could push keyword-matched items out of the top-N. Keyword results (top-`limit` with score ≥ threshold) are now always retained and then backfilled via RRF, ensuring hybrid recall ≥ keyword recall.
+- **Index not rebuilt after installing `[vector]`**: an FTS-only index was first built without a vector backend; after installing the `[vector]` dependency, a rebuild was previously not triggered and the semantic signal stayed absent. "Vector backend availability" is now part of the index freshness fingerprint, and a rebuild is forced when vector is enabled but the vector table is missing.
+- **pre-commit secret scan `--staged` false negative**: it previously read working-tree file contents, so if a file containing a secret was `git add`ed and then the working tree was cleaned without re-adding, the secret actually being committed would be missed. `--staged` now scans the staged-area blob (`git show :path`).
+- **pre-commit allowlist `--staged`**: `.publishallow` is now read from the staged area, so unstaged local changes no longer affect the commit decision (hook marker v2→v3).
 
 ### Security / Hardening
-- **发布工作流加固**：`publish.yml` 移除 `workflow_dispatch`（可从未受保护分支手动触发的绕过面），并在发布前校验 release commit 必须是 `origin/main` 的祖先。建议在 GitHub 仓库 Environment 设置中再补部署分支限制。
+- **Publish workflow hardening**: `publish.yml` removes `workflow_dispatch` (a bypass surface that could be triggered manually from unprotected branches) and verifies before publishing that the release commit is an ancestor of `origin/main`. Adding a deployment-branch restriction in the GitHub repository Environment settings is also recommended.
 
 ### Release Evidence
-- 三关通过：自审 + Codex 独立复审（round-2, commit dcd8621，6 条全部验证修复）+ round11 评测闸 PASS；全量 1022 tests 通过。
+- All three gates passed: self-review + independent Codex re-review (round-2, commit dcd8621, all 6 items verified fixed) + round11 evaluation gate PASS; full suite of 1022 tests passing.
 
 ## [3.33.1] - 2026-05-28
 
-混合搜索补丁：代码审查发现的索引新鲜度修复。
+Hybrid search patch: an index-freshness fix found in code review.
 
 ### Fixed
-- **换嵌入模型后索引未重建**：`ENGRAM_EMBED_MODEL` 变更（或默认模型升级）但知识内容不变时，索引新鲜度指纹此前只算内容、不含模型，导致不会触发重建——旧维度的向量表残留，向量信号被静默禁用（KNN 维度不符 → 被吞 → 返回空）直到内容变动或手动 `engram reindex`。现已把嵌入模型纳入指纹，换模型即触发重建。
-- 非向量索引不再写入 `embed_model` 标记，避免误标维度漂移。
+- **Index not rebuilt after changing the embedding model**: when `ENGRAM_EMBED_MODEL` changed (or the default model was upgraded) but knowledge content stayed the same, the index freshness fingerprint previously counted only content, not the model, so a rebuild was not triggered—the vector table from the old dimensionality lingered and the vector signal was silently disabled (KNN dimension mismatch → swallowed → empty results) until content changed or `engram reindex` was run manually. The embedding model is now part of the fingerprint, so changing the model triggers a rebuild.
+- Non-vector indexes no longer write an `embed_model` marker, avoiding a false dimension-drift flag.
 
 ## [3.33.0] - 2026-05-28
 
-混合搜索（hybrid search）正式可用，opt-in，默认行为不变。
+Hybrid search is now generally available, opt-in, with no change to default behavior.
 
 ### Added
-- **混合搜索（opt-in）**：在现有关键词检索之上融合 FTS5 全文检索与可选语义向量层，用 Reciprocal Rank Fusion（k=60）合并排名。通过 `ENGRAM_SEARCH=hybrid` 开启；**默认仍是 keyword，行为完全不变**。
-  - 语义层装 `pip install piia-engram[vector]`（sqlite-vec + FastEmbed），默认模型 **BAAI/bge-small-zh-v1.5**（中文优先，可用 `ENGRAM_EMBED_MODEL` 覆盖；换模型会自动重建向量，不会因维度变化报错）。
-  - 索引是可重建的 SQLite 文件，**JSON 仍是唯一事实源**（删掉索引可从 JSON 完整重建），支持惰性重建（内容指纹变化才重建）+ 向量增量嵌入。
-  - FTS5 现做 CJK 二元分词，中文不再被当成单一 token。
-  - 新增 `engram reindex` 命令手动重建索引。
+- **Hybrid search (opt-in)**: on top of the existing keyword retrieval, it fuses FTS5 full-text search with an optional semantic vector layer, merging rankings via Reciprocal Rank Fusion (k=60). Enable it with `ENGRAM_SEARCH=hybrid`; **the default remains keyword, with behavior completely unchanged**.
+  - The semantic layer is installed via `pip install piia-engram[vector]` (sqlite-vec + FastEmbed), with default model **BAAI/bge-small-zh-v1.5** (Chinese-first, overridable via `ENGRAM_EMBED_MODEL`; changing the model automatically rebuilds vectors and does not error on dimension changes).
+  - The index is a rebuildable SQLite file, and **JSON remains the single source of truth** (deleting the index allows a full rebuild from JSON), with support for lazy rebuilds (rebuild only when the content fingerprint changes) + incremental vector embedding.
+  - FTS5 now performs CJK bigram tokenization, so Chinese is no longer treated as a single token.
+  - Added the `engram reindex` command to rebuild the index manually.
 
 ### Validated
-- A/B 评测闸（keyword vs hybrid）通过：中文集召回零回归（recall@5 1.00→1.00，MRR 在容差内），**跨语言（英文 query → 中文知识）召回从 0.50 提升到 0.875**——这是关键词检索结构上做不到的。
+- A/B evaluation gate (keyword vs hybrid) passed: zero recall regression on the Chinese set (recall@5 1.00→1.00, MRR within tolerance), and **cross-language recall (English query → Chinese knowledge) improved from 0.50 to 0.875**—something keyword retrieval cannot achieve structurally.
 
 ### Release Evidence
-- 全量回归测试 1005 通过。
+- Full regression suite of 1005 tests passing.
 
-发布流程加固续作：把发布前的安全检查再往前推一步。
+A follow-up to publish-workflow hardening: moving the pre-release security check one step earlier.
 
 ### Changed
-- **pre-commit 钩子现在同时跑发布白名单检查**：`python scripts/install_git_hooks.py` 安装的提交前钩子，除了脱敏扫描，还会校验暂存内容是否都在 `.publishallow` 白名单内 —— 新增一个未登记的跟踪文件会在提交时就被拦下，而不必等到 CI。（可用 `git commit --no-verify` 临时绕过。）
+- **The pre-commit hook now also runs the publish allowlist check**: the pre-commit hook installed by `python scripts/install_git_hooks.py`, in addition to the secret scan, verifies that all staged content is within the `.publishallow` allowlist—adding a new, unregistered tracked file is now blocked at commit time rather than waiting for CI. (Can be bypassed temporarily with `git commit --no-verify`.)
 
 ### Security / Hardening
-- **脱敏扫描器新增多行扫描**：此前只逐行匹配，跨行折行（例如 docstring 里被换行拆开）的内部叙述会漏检；现在对 `.py` / `.md` 等文本文件额外做一次整篇扫描，只报告确实跨行的命中，不与逐行结果重复。
+- **The secret scanner adds multi-line scanning**: it previously matched line by line only, so internal narration wrapped across lines (e.g. split by a line break inside a docstring) was missed; it now performs an additional whole-file scan over text files such as `.py` / `.md`, reporting only matches that genuinely span lines, without duplicating the line-by-line results.
 
 ### Release Evidence
-- 全量回归测试通过。
+- Full regression suite passing.
 
 ## [3.31.0] - 2026-05-28
 
-跨工具自动接续补全 + 知识 tier 管理 + 发布流程加固。
+Cross-tool auto-resume completion + knowledge tier management + publish-workflow hardening.
 
 ### Added
-- **跨工具会话接续**：Cursor / Codex / Windsurf 的指令片段现在都会提示 AI 在会话开始调用 `get_resume_brief` 接续上一轮工作，与 Claude Code 的 SessionStart hook 行为一致。新增对 Windsurf 的支持。
-- **可选 pre-commit 脱敏闸**：`python scripts/install_git_hooks.py` 安装后，每次提交前自动扫描暂存区的敏感内容（可用 `--no-verify` 临时绕过）。
+- **Cross-tool session resume**: the instruction snippets for Cursor / Codex / Windsurf now all prompt the AI to call `get_resume_brief` at session start to continue from the previous round of work, consistent with the behavior of Claude Code's SessionStart hook. Added support for Windsurf.
+- **Optional pre-commit secret gate**: once installed via `python scripts/install_git_hooks.py`, the staged area is automatically scanned for sensitive content before every commit (can be bypassed temporarily with `--no-verify`).
 
 ### Changed
-- **`update_knowledge` 支持调整 tier**：可直接把一条知识在 `staging` / `verified` / `archived` 之间迁移，无需"归档旧条目 + 新增"两步；tier 变更会写入审计日志。
-- **PostCompact 钩子职责收敛**：command 钩子现在只把压缩摘要归档到 daily log，语义提炼（lesson/decision）统一交给 agent 钩子，消除重复写入。
-- **doctor 检测过期指令片段**：能识别缺少跨工具接续指令的旧版片段并在 `--fix` 时刷新。
-- **README 改用 Glama 官方质量徽章**（动态评级，替代手写徽章）。
+- **`update_knowledge` supports adjusting tier**: a knowledge item can be moved directly between `staging` / `verified` / `archived` without the two-step "archive the old entry + add a new one"; tier changes are written to the audit log.
+- **PostCompact hook responsibility narrowed**: the command hook now only archives the compaction summary to the daily log, while semantic extraction (lesson/decision) is handled uniformly by the agent hook, eliminating duplicate writes.
+- **doctor detects stale instruction snippets**: it can identify older snippets missing the cross-tool resume instruction and refresh them on `--fix`.
+- **README switched to the official Glama quality badge** (dynamic rating, replacing the hand-written badge).
 
 ### Security / Hardening
-- 发布守卫的具体路径模式移到本地 `.guardignore`（不入库），公开 workflow 只保留通用类别。
-- 整合了对比文档中的存储规模说明，避免重复强调上限。
-- 收紧了发布内容控制：从黑名单升级为默认拒绝的发布白名单（`.publishallow` + CI 校验），并引入公开 / 内部双轨 CHANGELOG。
-- 脱敏扫描器新增内部信息泄漏模式检测（评审代号、模型代号等）。
+- The specific path patterns of the publish guard moved to a local `.guardignore` (not checked in), with the public workflow keeping only the generic categories.
+- Consolidated the storage-scale notes in the comparison docs to avoid repeatedly emphasizing the limits.
+- Tightened publish content control: upgraded from a blocklist to a deny-by-default publish allowlist (`.publishallow` + CI verification), and introduced dual-track public / internal CHANGELOGs.
+- The secret scanner adds internal-information-leak pattern detection (review codenames, model codenames, etc.).
 
 ### Release Evidence
-- 全量回归测试通过。
+- Full regression suite passing.
 
 ## [3.30.1] - 2026-05-27
 
-修复 `engram doctor --fix` 对过期 hook 无法升级的问题。
+Fixes an issue where `engram doctor --fix` could not upgrade stale hooks.
 
 ### Fixed
 
-- `engram doctor --fix` 现在能正确升级旧版 Claude Code hook 配置（例如指向 `scripts/*.py` 脚本路径的旧风格升级到 `python -m piia_engram.hooks.*` 的当前形式）。之前 doctor 的严格匹配检查报"缺失"，但 `--fix` 的幂等跳过逻辑却认为"已注册"而 skip — 导致用户卡在"doctor 说缺、--fix 修不了"的循环。
-- Hook 注册器新增 `force_rewrite` 参数：默认 `False` 保持向后兼容的幂等行为；`doctor --fix` 显式传 `True` 以覆盖匹配但内容过期的 hook。同事件下不相关的用户自定义 hook 不受影响。
+- `engram doctor --fix` now correctly upgrades legacy Claude Code hook configurations (e.g. upgrading the old style pointing at a `scripts/*.py` script path to the current `python -m piia_engram.hooks.*` form). Previously doctor's strict-match check reported "missing," but the idempotent skip logic of `--fix` considered it "already registered" and skipped it—leaving users stuck in a "doctor says missing, --fix can't fix it" loop.
+- The hook registrar adds a `force_rewrite` parameter: the default `False` preserves the backward-compatible idempotent behavior; `doctor --fix` explicitly passes `True` to overwrite a hook that matches but has stale content. Unrelated user-custom hooks under the same event are unaffected.
 
 ### Changed
 
-- `doctor --fix` 输出从 "Could not register" 改为更准确的 "already up to date"（当 hook 完全符合当前 spec 时）。
+- `doctor --fix` output changed from "Could not register" to the more accurate "already up to date" (when the hook fully matches the current spec).
 
 ### Release Evidence
 
-- 全量 pytest：933/933 通过（新增 3 个 force_rewrite 测试覆盖：stale 升级、no-op 不写盘、共存 hook 不被误删）。
-- dogfooding 自验证：本机过期 PreCompact hook（旧 `.py` 脚本路径）被 `doctor --fix` 自动升级为 `-m` 形式。
+- Full pytest: 933/933 passing (added 3 force_rewrite tests covering: stale upgrade, no-op not written to disk, coexisting hooks not deleted by mistake).
+- Dogfooding self-verification: a stale PreCompact hook on this machine (old `.py` script path) was automatically upgraded to the `-m` form by `doctor --fix`.
 
 ## [3.30.0] - 2026-05-27
 
-跨会话 / 跨工具续接 + 崩溃恢复机制全套上线。
+Cross-session / cross-tool continuation + a full crash-recovery mechanism go live.
 
 ### Added
-- **时间心跳快照**：默认每 5 分钟保存一次会话状态（环境变量 `ENGRAM_HEARTBEAT_INTERVAL` 可调），减小长会话崩溃损失。
-- **`get_resume_brief` MCP 工具**（Tier-1 核心）：返回身份卡 + 项目快照 + daily log + 最近 lessons/decisions 的合并简报，默认 1500 token 预算。
-- **`get_daily_log` MCP 工具**（Tier-1 核心）：读取项目按天的人类可读时间线。
-- **Daily log 层**：`~/.engram/projects/<hash>/daily/YYYY-MM-DD.md`，event_type 区分 session/lesson/decision/compact/checkpoint。
-- **PreCompact hook**：Claude Code 压缩对话前触发，触发阈值低于 Stop hook（5 vs 10 turns），防止长会话压缩时丢失状态。
-- **PostCompact hook (`auto_absorb_compact.py`)**：Claude Code 压缩对话后触发，从压缩后 transcript 提取摘要存入 daily log（event_type=`compact`），best-effort 调用 `extract_session_insights` 自动提取 staging 知识。摘要超 3000 字符自动截断。
-- **SessionStart hook**：新会话开始时通过 `hookSpecificOutput.additionalContext` 协议把简报塞进首轮系统 prompt，用户零操作即获接续上下文。
-- **Audit log 默认开启**：启动时检测异常退出。
-- **Doctor 4 hook 检查**：Stop / PreCompact / SessionStart / PostCompact 全覆盖，`engram doctor --fix` 可自动注册缺失项。
-- **Doctor 云同步目录检测**：识别 ENGRAM_DIR 是否位于 iCloud / Dropbox / OneDrive / Google Drive / NFS / SMB 挂载，给出 WARN（这些目录的并发写可能导致锁文件或 JSONL 不一致）。
-- **MCP 工具总数**：v3.29.4 的 61 增加到 65（Tier-1 16 个 / Tier-2 49 个）。
+- **Timed heartbeat snapshots**: session state is saved every 5 minutes by default (tunable via the `ENGRAM_HEARTBEAT_INTERVAL` environment variable), reducing data loss when a long session crashes.
+- **`get_resume_brief` MCP tool** (Tier-1 core): returns a merged brief of identity card + project snapshot + daily log + recent lessons/decisions, with a default 1500-token budget.
+- **`get_daily_log` MCP tool** (Tier-1 core): reads a project's human-readable day-by-day timeline.
+- **Daily log layer**: `~/.engram/projects/<hash>/daily/YYYY-MM-DD.md`, with event_type distinguishing session/lesson/decision/compact/checkpoint.
+- **PreCompact hook**: triggered before Claude Code compacts a conversation, with a lower trigger threshold than the Stop hook (5 vs 10 turns), preventing state loss when a long session is compacted.
+- **PostCompact hook (`auto_absorb_compact.py`)**: triggered after Claude Code compacts a conversation, it extracts a summary from the post-compaction transcript into the daily log (event_type=`compact`) and makes a best-effort call to `extract_session_insights` to automatically extract staging knowledge. Summaries over 3000 characters are automatically truncated.
+- **SessionStart hook**: at the start of a new session, the brief is injected into the first-round system prompt via the `hookSpecificOutput.additionalContext` protocol, giving the user resume context with zero action.
+- **Audit log on by default**: detects abnormal exits at startup.
+- **Doctor 4-hook check**: full coverage of Stop / PreCompact / SessionStart / PostCompact, with `engram doctor --fix` able to auto-register missing items.
+- **Doctor cloud-sync directory detection**: identifies whether ENGRAM_DIR is located on an iCloud / Dropbox / OneDrive / Google Drive / NFS / SMB mount and issues a WARN (concurrent writes in these directories can cause lock-file or JSONL inconsistencies).
+- **Total MCP tool count**: increased from 61 in v3.29.4 to 65 (Tier-1: 16 / Tier-2: 49).
 
 ### Changed
-- 通用 hook 注册器抽出为内部基础设施，被四个 Claude Code hook 复用。
-- Doctor hook 检查引入严格匹配模式，区分"任一标志命中即可"和"全部标志必须命中"。
-- README / README.zh-CN 同步工具计数与 Tier-1 表格，新增 Remote Deployment 章节。
-- 发布前脱敏检查正式作为发布流程文档化步骤。
+- The generic hook registrar was extracted into internal infrastructure, reused by all four Claude Code hooks.
+- The doctor hook check introduces a strict-match mode, distinguishing "any marker hit suffices" from "all markers must hit."
+- README / README.zh-CN sync the tool count and Tier-1 table, and add a Remote Deployment section.
+- The pre-release secret check is now formally a documented step in the release workflow.
 
 ### Fixed
-- `save_agent_context` 跨进程合并的 nonce 比较优化，避免磁盘空 nonce 导致的错误合并。
-- `_quote_for_shell` 跨 shell 兼容性优化：无 shell 敏感字符不引号，带空格路径正确加引号，兼容 cmd.exe 和 PowerShell。
-- 空 `project_folder` 的 daily log 路径计算与 project_id 哈希一致。
-- 自动保存最终路径加锁，避免与心跳线程的边缘竞态。
-- 心跳函数文档与返回值语义一致。
-- 多个文案 / 措辞优化（resume brief 表述更中性，比较类文档更可证伪）。
+- Optimized the nonce comparison in `save_agent_context` cross-process merge, avoiding an erroneous merge caused by an empty on-disk nonce.
+- Optimized `_quote_for_shell` cross-shell compatibility: no quoting when there are no shell-sensitive characters, correct quoting of paths with spaces, compatible with cmd.exe and PowerShell.
+- The daily log path calculation for an empty `project_folder` is now consistent with the project_id hash.
+- Added a lock around the final auto-save path, avoiding an edge race with the heartbeat thread.
+- The heartbeat function's documentation is now consistent with its return-value semantics.
+- Multiple copy / wording improvements (the resume brief wording is more neutral, comparison-type docs are more falsifiable).
 
 ### Release Evidence
-- 全量 pytest：930/930 通过。
+- Full pytest: 930/930 passing.
 
 ## [3.29.4] - 2026-05-27
 
-跨工具/跨会话审计驱动的优化版本。多轮回归全部通过。
+A cross-tool / cross-session audit-driven optimization release. All multi-round regressions passed.
 
 ### Added
-- **`doctor` MCP 工具**：用户排障入口，覆盖 8 项检查（identity_completeness, health_score, stale_knowledge, near_duplicates, decision_conflicts, knowledge_volume, quick_context_freshness, identity_provenance）。默认包含在 core tier 中。
-- **字段级溯源**：profile 现在记录每个字段的 `_provenance: {by, at}` 以及 `_last_updated_by`，便于跨工具排查"谁动了我的偏好"。
-- **`update_identity` MCP 增加 `source_tool` 参数**：传入即可在 profile 中留下来源记录。
-- **类型感知的过期衰减**：`STALE_DECAY_MULTIPLIERS` 按 domain 调整过期门槛（`user_preference=3.0`、`architecture=2.0`、`workflow=1.0`、`debug=0.5`），避免长期偏好被错误判过期。
-- **跨工具使用指南**：新增 `docs/cross-tool-guide.md`，覆盖配置、自动恢复、多工具共存、doctor 排障流程。
-- **回归守门测试**：`tests/test_optimizations_v3294.py` 固化 6 项关键回归（description 重写、三工具共存、decision 无自指、lesson 无自指、doctor core）。
+- **`doctor` MCP tool**: a user troubleshooting entry point covering 8 checks (identity_completeness, health_score, stale_knowledge, near_duplicates, decision_conflicts, knowledge_volume, quick_context_freshness, identity_provenance). Included in the core tier by default.
+- **Field-level provenance**: the profile now records `_provenance: {by, at}` for each field, along with `_last_updated_by`, making it easier to track "who changed my preference" across tools.
+- **`update_identity` MCP adds a `source_tool` parameter**: passing it records a source entry in the profile.
+- **Type-aware staleness decay**: `STALE_DECAY_MULTIPLIERS` adjusts the staleness threshold by domain (`user_preference=3.0`, `architecture=2.0`, `workflow=1.0`, `debug=0.5`), avoiding long-term preferences being wrongly judged stale.
+- **Cross-tool usage guide**: added `docs/cross-tool-guide.md`, covering configuration, auto-recovery, multi-tool coexistence, and the doctor troubleshooting workflow.
+- **Regression guard tests**: `tests/test_optimizations_v3294.py` locks in 6 key regressions (description rewrite, three-tool coexistence, decision no self-reference, lesson no self-reference, doctor core).
 
 ### Changed
-- **Lesson/Decision 三级去重**（duplicate / related / pass）：
-  - `SIMILARITY_DUPLICATE_THRESHOLD` 从 0.85 提高到 0.95，避免"补充案例"被误判为 duplicate。
-  - 引入 `_SUPPLEMENT_MARKERS`（含 `补充/案例/反例/边界/edge case` 等），即使相似度高也允许走 related。
-  - 0.55 ≤ sim < 0.95 的条目会双向写入 `related_ids`，并附 `_dedup_note`。
-- **Decision ID 生成**：ID seed 现在包含 `choice`，避免"同问题不同选项"产生相同 ID。
-- **Description 字段级合并**：多工具写入的 marker 共存；重写已存在的 marker 时不会丢失其他工具的写入。
-- **`get_lessons` / `get_decisions` 默认不更新 access_count**：identity card 等读路径不再产生副作用。
-- **`related_ids` 自指守卫**：lesson / decision 关联时跳过自身 ID，避免 `related_ids: [self]`。
+- **Three-level Lesson/Decision deduplication** (duplicate / related / pass):
+  - `SIMILARITY_DUPLICATE_THRESHOLD` raised from 0.85 to 0.95, avoiding a "supplementary case" being misjudged as a duplicate.
+  - Introduced `_SUPPLEMENT_MARKERS` (including `补充/案例/反例/边界/edge case`, etc.), allowing the related path even when similarity is high.
+  - Items with 0.55 ≤ sim < 0.95 are written bidirectionally into `related_ids`, with a `_dedup_note` attached.
+- **Decision ID generation**: the ID seed now includes `choice`, avoiding "same question, different option" producing the same ID.
+- **Field-level description merge**: markers written by multiple tools coexist; rewriting an existing marker does not lose the writes from other tools.
+- **`get_lessons` / `get_decisions` no longer update access_count by default**: read paths such as the identity card no longer cause side effects.
+- **`related_ids` self-reference guard**: lesson / decision linking skips its own ID, avoiding `related_ids: [self]`.
 
 ### Fixed
-- `doctor` 调用不存在的 `knowledge_overview` 方法 → 改用 `get_knowledge_overview()`。
-- 重复写已有 description marker 时其他工具的 marker 被覆盖。
-- 同问题不同 choice 的决策 `related_ids` 出现自指。
+- `doctor` called a nonexistent `knowledge_overview` method → switched to `get_knowledge_overview()`.
+- Re-writing an existing description marker overwrote markers from other tools.
+- A decision's `related_ids` showed a self-reference for the same question with a different choice.
 
 ### Release Evidence
-- 多轮回归测试全部通过。
+- All multi-round regression tests passed.
 
 ## [3.29.0] - 2026-05-24
 
@@ -490,7 +490,7 @@ Patch driven by the v3.14.3 milestone evaluation. Two high-severity findings add
 - The default behavior preserves backward compatibility for any caller that may already depend on it, but the docstring now explicitly warns: "callers that don't validate the prefix after this call may treat ciphertext as plaintext — prefer strict=True in new code."
 
 ### Fixed
-- **README MCP tool count inconsistency**. README's "By the numbers" / 量化数据 section claimed 45 tools while elsewhere said 43; actual count is **43** (`grep -c '^@mcp.tool' src/piia_engram/mcp_server.py`). All documents now consistent at 43:
+- **README MCP tool count inconsistency**. README's "By the numbers" section claimed 45 tools while elsewhere said 43; actual count is **43** (`grep -c '^@mcp.tool' src/piia_engram/mcp_server.py`). All documents now consistent at 43:
   - `README.md` and `README.zh-CN.md` quantitative sections + comparison tables
   - `docs/comparison.md`
   - `docs/architecture.md` (3 references)
