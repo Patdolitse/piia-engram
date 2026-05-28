@@ -83,6 +83,41 @@ def test_required_fields():
     assert data["keywords"]
 
 
+def test_version_consistency():
+    """版本号四处必须一致：pyproject / __init__ / server.json(顶层 + packages[0])。
+
+    v3.30.1 发版时 __init__.py 漏同步（停在 3.30.0.dev0），靠人工易漏。
+    这个测试让 CI 自动拦截"版本号四处不同步"，发版只需改全四处即可绿。
+    """
+    pyproject_version = _load()["project"]["version"]
+
+    # __init__.py __version__
+    init_text = (ROOT / "src" / "piia_engram" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    import re
+    m = re.search(r'__version__\s*=\s*"([^"]+)"', init_text)
+    assert m, "__version__ not found in __init__.py"
+    init_version = m.group(1)
+
+    # .mcp/server.json — top-level + packages[0]
+    server = json.loads(
+        (ROOT / ".mcp" / "server.json").read_text(encoding="utf-8")
+    )
+    server_top = server.get("version")
+    server_pkg = server.get("packages", [{}])[0].get("version")
+
+    assert init_version == pyproject_version, (
+        f"__init__.py ({init_version}) != pyproject ({pyproject_version})"
+    )
+    assert server_top == pyproject_version, (
+        f"server.json top ({server_top}) != pyproject ({pyproject_version})"
+    )
+    assert server_pkg == pyproject_version, (
+        f"server.json packages[0] ({server_pkg}) != pyproject ({pyproject_version})"
+    )
+
+
 def test_has_scripts_entry():
     """应有 engram CLI 入口。"""
     data = _load()
