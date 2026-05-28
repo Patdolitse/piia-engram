@@ -45,9 +45,18 @@ remote = [
 secure = [
     "cryptography>=41.0",
 ]
+# v4.0 hybrid search (optional): semantic vector layer on top of the
+# zero-dep FTS5 index. ~230-280MB once the embedding model is fetched.
+# Absent install => search_index falls back to FTS5 + keyword only.
+vector = [
+    "sqlite-vec>=0.1.0",
+    "fastembed>=0.3.0",
+]
 all = [
     "uvicorn>=0.20",
     "cryptography>=41.0",
+    "sqlite-vec>=0.1.0",
+    "fastembed>=0.3.0",
 ]
 
 [build-system]
