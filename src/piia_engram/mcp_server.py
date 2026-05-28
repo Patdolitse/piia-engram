@@ -2035,6 +2035,49 @@ async def unlink_knowledge(id_a: str, id_b: str) -> str:
 
 
 @mcp.tool()
+async def add_relation(src_id: str, rel: str, dst_id: str) -> str:
+    """在两条知识之间建立【有类型、有方向】的关系，用于重建决策链。 / Create a TYPED, DIRECTED relation between two knowledge items, for reconstructing decision threads.
+
+    用途：记录"想法 → 决策 → 实现"的演进。Purpose: record how a decision evolved.
+    rel 取值 / values:
+      - led_to：src 引出 / 导致 dst（src led to dst）
+      - supersedes：src 取代 / 推翻 dst（src replaces dst; dst becomes obsolete）
+      - implemented_by：决策 src 由 dst 实现（decision src realized by dst）
+
+    与 link_knowledge 的区别：link_knowledge 是无类型、双向的"see also"；
+    本工具是有类型、有方向的演进边，专门喂给 get_decision_thread。
+    Difference from link_knowledge: that is an untyped bidirectional "see also";
+    this is a typed, directed evolution edge consumed by get_decision_thread.
+
+    Args:
+        src_id: 源条目 ID。 / Source item ID.
+        rel: led_to / supersedes / implemented_by。
+        dst_id: 目标条目 ID。 / Target item ID.
+    """
+    return _json(_engram.add_relation(src_id, rel, dst_id))
+
+
+@mcp.tool()
+async def get_decision_thread(seed_id: str) -> str:
+    """还原包含某条知识的【决策链】：这件事如何一步步演进到现在。 / Reconstruct the DECISION THREAD containing an item: how it evolved step by step.
+
+    用途：换工具 / 跨会话时，快速看清"这个决策是怎么定下来的"。返回：按演进顺序
+    排列的条目（order）、被取代项标记为 superseded、当前活跃节点（active_ids）与
+    当前 head（heads）。只读，不修改任何知识。
+    Purpose: quickly see how a decision was reached across tools/sessions. Returns
+    items in evolution order, superseded ones flagged, plus active_ids and the
+    current head(s). Read-only.
+
+    关系由 add_relation 建立（led_to / supersedes / implemented_by）。
+    Relations are built via add_relation.
+
+    Args:
+        seed_id: 决策链中任意一条的 ID。 / ID of any item in the thread.
+    """
+    return _json(_engram.get_decision_thread(seed_id))
+
+
+@mcp.tool()
 async def update_identity(field: str, updates_json: str, source_tool: str = "") -> str:
     """更新一个身份字段。 / Update one identity field.
 
