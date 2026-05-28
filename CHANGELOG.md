@@ -4,6 +4,22 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.33.2] - 2026-05-28
+
+独立代码审查（Codex）发现并修复的一批正确性 / 安全问题——发布流程首次完整跑通"自审 + Codex 独立审查 + 评测闸"三关。
+
+### Fixed
+- **混合搜索召回保证**：开启 hybrid 时，RRF 重排 + 截断可能把关键词命中项挤出 top-N。现已固定保留关键词结果（score≥阈值的 top-`limit`）再用 RRF 填充，确保 hybrid 召回 ≥ 关键词召回。
+- **装 `[vector]` 后索引不重建**：先在无向量后端时建了 FTS-only 索引，之后安装 `[vector]` 依赖，此前不会触发重建、语义信号一直缺席。现把"向量后端可用性"纳入索引新鲜度指纹，并在向量启用但向量表缺失时强制重建。
+- **pre-commit 脱敏扫描 `--staged` 漏报**：此前读工作区文件内容，若 `git add` 了含密钥的文件后又清理工作区但未重新 add，会漏掉实际将提交的密钥。现 `--staged` 改为扫描暂存区 blob（`git show :path`）。
+- **pre-commit 白名单 `--staged`**：从暂存区读取 `.publishallow`，未暂存的本地改动不再影响提交判定（hook marker v2→v3）。
+
+### Security / Hardening
+- **发布工作流加固**：`publish.yml` 移除 `workflow_dispatch`（可从未受保护分支手动触发的绕过面），并在发布前校验 release commit 必须是 `origin/main` 的祖先。建议在 GitHub 仓库 Environment 设置中再补部署分支限制。
+
+### Release Evidence
+- 三关通过：自审 + Codex 独立复审（round-2, commit dcd8621，6 条全部验证修复）+ round11 评测闸 PASS；全量 1022 tests 通过。
+
 ## [3.33.1] - 2026-05-28
 
 混合搜索补丁：代码审查发现的索引新鲜度修复。
