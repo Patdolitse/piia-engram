@@ -25,42 +25,97 @@ from typing import Iterable
 from .governance import SENSITIVITY_ORDER
 from .storage import ENCRYPTED_PROFILE_FIELDS
 
-_SEP_RE = re.compile(r"[-.\s]+")
-
-
-def _norm(name: str) -> str:
-    """Normalize separators so api-key / api.key / 'api key' == api_key."""
-    return _SEP_RE.sub("_", (name or "").strip().lower())
-
 VALID_LEVELS = ("public", "work", "private", "secret")
 DEFAULT_LEVEL = "work"
 
-# Built-in "private by default" field names (PII). Reuses the same set that is
-# already encrypted at rest, so the floor matches what the product already
-# treats as sensitive.
-_BUILTIN_PRIVATE_FIELDS = frozenset(f.lower() for f in ENCRYPTED_PROFILE_FIELDS)
+# ── Token-based field-name classifier ────────────────────────────────────
+# Codex round-5 P1: the old separator-normalization approach (api-key →
+# api_key, then substring match) was bypassable with other separators —
+# api/key, api:key, api[key], email-address, contact.email all slipped past
+# and leaked. The fix is to TOKENIZE the field name instead of enumerating
+# separators: split camelCase, then split on any run of non-alphanumeric
+# characters. Every separator is a token boundary by construction, so no new
+# separator can bypass it. Classification is then by whole-token membership
+# and token-group containment — no substring matching, so no false positives
+# like "valid_numbers" matching "idnumber".
 
-# Credential-shaped substrings → "secret" by default, wherever they appear.
-# Fail-closed bias: better to over-protect a field than leak a key.
-_SECRET_NAME_PATTERNS = (
-    "password", "passwd", "secret", "token", "api_key", "apikey",
-    "credential", "private_key", "privatekey", "access_key", "accesskey",
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_NONALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _field_tokens(name: str) -> list[str]:
+    """Split a field name into lowercase alphanumeric tokens.
+
+    ``apiKey`` → [api, key]; ``api/key`` / ``api[key]`` / ``API Key`` →
+    [api, key]; ``email-address`` → [email, address]. Separator-agnostic:
+    any non-alphanumeric run is a token boundary, so new separators (``/``,
+    ``:``, ``[]``, ``.``, space, …) can't be used to bypass classification.
+    """
+    s = (name or "").strip()
+    if not s:
+        return []
+    s = _CAMEL_RE.sub(" ", s).lower()
+    return [t for t in _NONALNUM_RE.split(s) if t]
+
+
+# Single tokens that, on their own, mark a field as a credential → "secret".
+# Glued separator-less forms (apikey, privatekey, …) tokenize to one token, so
+# they live here too rather than needing a substring scan.
+_SECRET_TOKENS = frozenset({
+    "password", "passwd", "secret", "token", "credential",
+    "apikey", "privatekey", "secretkey", "accesskey", "clientsecret",
+    "bearertoken", "refreshtoken", "accesstoken",
+})
+# Token GROUPS (ALL members must be present) that mark a field "secret".
+# "key"/"access" alone are too generic (primary_key, access_count) to flag, so
+# they only count in combination.
+_SECRET_GROUPS = (
+    frozenset({"api", "key"}),
+    frozenset({"private", "key"}),
+    frozenset({"access", "key"}),
+    frozenset({"secret", "key"}),
+    frozenset({"client", "secret"}),
+    frozenset({"bearer", "token"}),
+    frozenset({"refresh", "token"}),
 )
+
+# PII → "private", derived from the fields already encrypted at rest so the
+# floor matches what the product treats as sensitive. Single-word fields are
+# single tokens; multi-word ones (real_name, id_number) contribute BOTH a
+# group (real+name) and a glued single token (realname) for the separator-less
+# spelling.
+_PRIVATE_TOKENS = frozenset(
+    {f.lower() for f in ENCRYPTED_PROFILE_FIELDS if "_" not in f}
+    | {"".join(_field_tokens(f)) for f in ENCRYPTED_PROFILE_FIELDS if "_" in f}
+)
+_PRIVATE_GROUPS = tuple(
+    frozenset(_field_tokens(f)) for f in ENCRYPTED_PROFILE_FIELDS if "_" in f
+)
+
+
+def _groups_match(tokens: set[str], groups: Iterable[frozenset]) -> bool:
+    """True if any non-empty group is fully contained in ``tokens``."""
+    return any(g and g <= tokens for g in groups)
 
 
 def classify_field(name: str, restricted_fields: Iterable[str] = ()) -> str:
     """Sensitivity of a single (identity/profile) field by its NAME.
 
-    Built-in floor applies with zero config; ``restricted_fields`` only adds.
+    Token-based and separator-agnostic. The built-in floor applies with zero
+    config; ``restricted_fields`` is an additive layer — it can only RAISE a
+    field to ``private`` (the secret check runs first and is never lowered).
     """
-    n = (name or "").strip().lower()
-    if not n:
+    tokens = _field_tokens(name)
+    if not tokens:
         return DEFAULT_LEVEL
-    norm = _norm(n)
-    if any(p in norm for p in _SECRET_NAME_PATTERNS):
+    tokenset = set(tokens)
+
+    if tokenset & _SECRET_TOKENS or _groups_match(tokenset, _SECRET_GROUPS):
         return "secret"
-    restricted = {_norm(f) for f in restricted_fields}
-    if norm in _BUILTIN_PRIVATE_FIELDS or norm in restricted:
+    if tokenset & _PRIVATE_TOKENS or _groups_match(tokenset, _PRIVATE_GROUPS):
+        return "private"
+    restricted_groups = [frozenset(_field_tokens(f)) for f in restricted_fields]
+    if _groups_match(tokenset, restricted_groups):
         return "private"
     return DEFAULT_LEVEL
 

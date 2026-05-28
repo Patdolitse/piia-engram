@@ -91,6 +91,53 @@ def test_field_name_separator_normalization():
         assert sv.classify_field(f) == "secret", f
 
 
+def test_separator_bypass_vectors_round5_LEAK_REGRESSION():
+    # Codex round-5 P1: the old separator-normalization only handled -, ., space.
+    # Other separators (/, :, [], camelCase) bypassed it and leaked. The token
+    # classifier must catch ALL of these credential spellings as secret.
+    for f in ["api/key", "api:key", "api[key]", "private/key", "client-secret",
+              "client/secret", "access/key", "bearer token", "refresh:token",
+              "apiKey", "APIKey", "openai.api.key", "x-api-key"]:
+        assert sv.classify_field(f) == "secret", f
+
+
+def test_pii_bypass_vectors_round5_LEAK_REGRESSION():
+    # PII spellings that the separator approach missed must classify private.
+    for f in ["contact.email", "email-address", "email/address", "contactEmail",
+              "user.phone", "real-name", "realName", "id/number", "idNumber"]:
+        assert sv.classify_field(f) == "private", f
+
+
+def test_token_classifier_no_false_positives():
+    # The token classifier must NOT over-flag benign fields. "key"/"access"/
+    # "name"/"id" alone are too generic; substring collisions (valid_numbers
+    # ⊃ "idnumber") must not trigger.
+    for f in ["primary_key", "cache_key", "access_count", "first_name",
+              "user_id", "valid_numbers", "monkey", "tokens_used", "company_size"]:
+        assert sv.classify_field(f) != "secret", f
+    # these stay at the work default (no PII/credential token)
+    for f in ["primary_key", "cache_key", "access_count", "valid_numbers"]:
+        assert sv.classify_field(f) == "work", f
+
+
+def test_round5_attack_set_blocked_through_gate():
+    # Codex round-5 verbatim acceptance: every separator-bypass item must be
+    # excluded for a read-only-external agent after annotate -> gate.
+    from piia_engram import governance as gov
+    cases = [
+        {"sensitivity": "public", "api/key": "sk"},
+        {"sensitivity": "public", "api:key": "sk"},
+        {"sensitivity": "public", "api[key]": "sk"},
+        {"sensitivity": "public", "private/key": "pem"},
+        {"sensitivity": "public", "client-secret": "x"},
+        {"sensitivity": "public", "contact.email": "a@b.c"},
+        {"sensitivity": "public", "email-address": "a@b.c"},
+        {"sensitivity": "public", "profile": {"contact/email": "a@b.c"}},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(cases), "read-only-external")
+    assert allowed == []
+
+
 def test_annotate_then_gate_blocks_secret_field_item():
     # end-to-end leak regression through annotate -> gate
     from piia_engram import governance as gov

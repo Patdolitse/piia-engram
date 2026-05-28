@@ -3168,6 +3168,13 @@ def run_audit(root, limit: int = 20) -> int:
     """Show recent disclosure receipts + ledger integrity (engram audit)."""
     from piia_engram.governance import GovernanceLedger, default_ledger_path
     led = GovernanceLedger(default_ledger_path(root))
+    # Codex round-5 P2: verify() FIRST. records() does an unguarded json.loads
+    # per line, so on a corrupt ledger it would raise and traceback. verify()
+    # reports the break gracefully, so we bail before ever touching records().
+    ok, msg = led.verify()
+    if not ok:
+        print(f"ledger integrity: BROKEN — {msg}")
+        return 1
     recs = led.records()
     if not recs:
         print("(no disclosures recorded yet)")
@@ -3177,9 +3184,8 @@ def run_audit(root, limit: int = 20) -> int:
         print(f"  #{r.get('seq')} {r.get('ts')}  {ev.get('agent_id', '?')} "
               f"[{ev.get('trust_level', '?')}] returned={ev.get('returned_count', '?')} "
               f"excluded_sensitivity={ev.get('excluded_by_sensitivity', '?')}")
-    ok, msg = led.verify()
-    print(f"ledger integrity: {'OK' if ok else 'BROKEN — ' + msg}")
-    return 0 if ok else 1
+    print("ledger integrity: OK")
+    return 0
 
 
 def run_verify_ledger(root) -> int:

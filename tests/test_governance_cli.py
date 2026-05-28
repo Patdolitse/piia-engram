@@ -55,6 +55,21 @@ def test_audit_shows_records_and_integrity(tmp_path, capsys):
     assert "codex" in out and "OK" in out
 
 
+def test_audit_fails_gracefully_on_corrupt_ledger(tmp_path, capsys):
+    # Codex round-5 P2: a corrupt ledger must NOT traceback. run_audit calls
+    # verify() first and bails with a clean BROKEN message + nonzero exit,
+    # before records() (which does an unguarded json.loads) is ever reached.
+    led = GovernanceLedger(default_ledger_path(tmp_path))
+    led.append({"agent_id": "codex", "trust_level": "trusted-local"})
+    p = default_ledger_path(tmp_path)
+    p.write_text(p.read_text(encoding="utf-8") + "{ this is not valid json\n",
+                 encoding="utf-8")
+    rc = sw.run_audit(tmp_path)  # must not raise
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "broken" in out.lower()
+
+
 def test_verify_ledger_ok_and_detects_tamper(tmp_path, capsys):
     led = GovernanceLedger(default_ledger_path(tmp_path))
     led.append({"a": 1})
