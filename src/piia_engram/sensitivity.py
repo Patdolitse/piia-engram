@@ -155,22 +155,62 @@ def _groups_match(tokens: set[str], groups: Iterable[frozenset]) -> bool:
     return any(g and g <= tokens for g in groups)
 
 
+# ── Codex round-7 P1: CJK (Chinese) semantic field names ─────────────────────
+# The ASCII tokenizer treats every CJK ideograph as a separator, so a Chinese
+# field name like 邮箱地址/密码/api密钥 tokenizes to nothing (or just the ASCII
+# fragment) and fell through to the ``work`` default — then leaked to
+# read-only-external when explicitly marked ``public``. Engram is a
+# Chinese-first product, so CJK PII/credential field names MUST get the same
+# floor as their English counterparts. CJK has no word separators, so these
+# high-confidence whole terms are matched by substring. That is safe and does
+# NOT reintroduce English false positives: these multi-byte ideographs never
+# occur inside ASCII engineering identifiers, so all-ASCII names never match.
+_SECRET_CJK_TERMS = (
+    "密码", "密钥", "秘钥", "令牌", "口令", "凭证", "私钥",
+    "访问令牌", "刷新令牌", "客户端密钥",
+)
+_PRIVATE_CJK_TERMS = (
+    "邮箱", "邮箱地址", "电子邮箱", "手机号", "手机号码",
+    "电话号码", "电话", "住址", "地址", "身份证", "身份证号",
+    "真实姓名", "姓名",
+)
+
+
+def _contains_cjk_term(name: str, terms: tuple[str, ...]) -> bool:
+    """True if a normalized field name contains any high-confidence CJK
+    sensitive term. Substring matching is both necessary (CJK has no word
+    separators to tokenize on) and safe (these ideographs never appear inside
+    ASCII engineering identifiers, so this cannot reintroduce English false
+    positives)."""
+    s = _normalize_field_name(name)
+    return any(term in s for term in terms)
+
+
 def classify_field(name: str, restricted_fields: Iterable[str] = ()) -> str:
     """Sensitivity of a single (identity/profile) field by its NAME.
 
-    Token-based and separator-agnostic. The built-in floor applies with zero
-    config; ``restricted_fields`` is an additive layer — it can only RAISE a
-    field to ``private`` (the secret check runs first and is never lowered).
+    Token-based and separator-agnostic for ASCII; high-confidence CJK terms are
+    matched directly (CJK has no separators and tokenizes to nothing). The
+    built-in floor applies with zero config; ``restricted_fields`` is an
+    additive layer — it can only RAISE a field to ``private`` (the secret check
+    runs first and is never lowered).
     """
     tokens = _field_tokens(name)
-    if not tokens:
-        return DEFAULT_LEVEL
     tokenset = set(tokens)
 
-    if any(_token_is_secret(t) for t in tokens) or _groups_match(tokenset, _SECRET_GROUPS):
+    # Secret floor: ASCII credential tokens/groups, or a high-confidence CJK
+    # credential term. The CJK check is NOT gated behind ``tokens`` because a
+    # pure-CJK name like 密码/密钥 tokenizes to nothing.
+    if (any(_token_is_secret(t) for t in tokens)
+            or _groups_match(tokenset, _SECRET_GROUPS)
+            or _contains_cjk_term(name, _SECRET_CJK_TERMS)):
         return "secret"
-    if tokenset & _PRIVATE_TOKENS or _groups_match(tokenset, _PRIVATE_GROUPS):
+    if (bool(tokenset & _PRIVATE_TOKENS)
+            or _groups_match(tokenset, _PRIVATE_GROUPS)
+            or _contains_cjk_term(name, _PRIVATE_CJK_TERMS)):
         return "private"
+    if not tokens:
+        return DEFAULT_LEVEL
     restricted_groups = [frozenset(_field_tokens(f)) for f in restricted_fields]
     if _groups_match(tokenset, restricted_groups):
         return "private"

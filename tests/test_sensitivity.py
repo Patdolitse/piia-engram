@@ -206,7 +206,9 @@ def test_confusable_script_does_not_bypass():
 def test_round6_pure_cjk_field_names_not_over_flagged():
     # The confusable defense must NOT fire on pure-CJK names (no ASCII to
     # imitate), so legitimate Chinese field names stay at the work default.
-    for f in ["邮箱地址", "用户名", "技术栈", "备注"]:
+    # NOTE: 邮箱地址 moved to the CJK PII set in round 7 (now `private` — see
+    # test_cjk_pii_fields_are_private); the benign names below stay `work`.
+    for f in ["用户名", "技术栈", "备注"]:
         assert sv.classify_field(f) == "work", f
 
 
@@ -217,6 +219,56 @@ def test_round6_no_false_positives_after_hardening():
               "monkey", "tokens_used", "keynote", "public_key_algorithm",
               "first_name", "user_id"]:
         assert sv.classify_field(f) == "work", f
+
+
+# ── Codex round-7: CJK (Chinese) semantic PII / credential field names ───────
+
+
+def test_cjk_pii_fields_are_private():
+    # Engram is a Chinese-first product; CJK PII field names must get the same
+    # private floor as their English counterparts. They tokenize to nothing, so
+    # the ASCII token classifier missed them and they leaked as `work`.
+    for f in ["邮箱", "邮箱地址", "电子邮箱", "手机号", "手机号码",
+              "电话号码", "身份证号", "真实姓名", "住址"]:
+        assert sv.classify_field(f) == "private", f
+
+
+def test_cjk_credential_fields_are_secret():
+    for f in ["密码", "密钥", "秘钥", "令牌", "口令", "凭证", "私钥",
+              "访问令牌", "刷新令牌", "客户端密钥"]:
+        assert sv.classify_field(f) == "secret", f
+
+
+def test_cjk_mixed_credential_fields_are_secret():
+    # A CJK credential term glued to an ASCII vendor/verb prefix must still be
+    # secret — the CJK term wins even when the ASCII fragment alone wouldn't.
+    for f in ["api密钥", "access令牌", "openai密钥", "用户密码"]:
+        assert sv.classify_field(f) == "secret", f
+
+
+def test_cjk_benign_fields_stay_work():
+    # CJK term matching must not over-flag ordinary Chinese field names.
+    for f in ["用户名", "技术栈", "备注", "标题", "摘要", "领域", "角色"]:
+        assert sv.classify_field(f) == "work", f
+
+
+def test_cjk_sensitive_fields_blocked_through_external_gate():
+    # Codex round-7 verbatim acceptance: every CJK PII/credential item marked
+    # explicitly public must be excluded for a read-only-external agent.
+    from piia_engram import governance as gov
+    cases = [
+        {"sensitivity": "public", "邮箱地址": "a@b.c"},
+        {"sensitivity": "public", "手机号": "13800000000"},
+        {"sensitivity": "public", "密码": "x"},
+        {"sensitivity": "public", "密钥": "x"},
+        {"sensitivity": "public", "令牌": "x"},
+        {"sensitivity": "public", "api密钥": "sk"},
+        {"sensitivity": "public", "access令牌": "t"},
+        {"sensitivity": "public", "openai密钥": "sk"},
+        {"sensitivity": "public", "profile": {"邮箱地址": "a@b.c"}},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(cases), "read-only-external")
+    assert allowed == []
 
 
 def test_annotate_then_gate_blocks_secret_field_item():
