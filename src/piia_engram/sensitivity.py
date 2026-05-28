@@ -281,6 +281,106 @@ def classify_field(name: str, restricted_fields: Iterable[str] = ()) -> str:
     return DEFAULT_LEVEL
 
 
+# ── Layer 2: language-independent VALUE scanner ──────────────────────────────
+# A field-NAME classifier — in any language — fundamentally cannot catch a
+# benign-named field that holds a sensitive VALUE (e.g. {"备注": "sk-proj-…"} or
+# {"note": "alice@example.com"}). This layer inspects VALUES for high-confidence
+# credential shapes (-> secret) and PII shapes (-> private). It is language-
+# agnostic, so it's the part of the defense that actually converges instead of
+# chasing synonyms. Credentials are matched anywhere (a leaked key is
+# catastrophic and the shapes have ~zero false positives); PII is floored only
+# for "field-like" (short/atomic) values so a long lesson body that merely
+# mentions a contact address is treated as content, not hidden.
+
+# High-confidence credential shapes (well-known token formats).
+_SECRET_VALUE_RE = re.compile(
+    r"sk-[A-Za-z0-9_\-]{16,}"                 # OpenAI (incl. sk-proj-)
+    r"|sk_(?:live|test)_[A-Za-z0-9]{10,}"     # Stripe secret key
+    r"|rk_(?:live|test)_[A-Za-z0-9]{10,}"     # Stripe restricted key
+    r"|gh[pousr]_[A-Za-z0-9]{20,}"            # GitHub PAT / OAuth
+    r"|github_pat_[A-Za-z0-9_]{20,}"          # GitHub fine-grained PAT
+    r"|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}"     # AWS access key id (+ temp)
+    r"|AIza[0-9A-Za-z_\-]{35}"                # Google API key
+    r"|ya29\.[0-9A-Za-z_\-]{20,}"             # Google OAuth access token
+    r"|xox[baprs]-[0-9A-Za-z\-]{10,}"         # Slack token
+    r"|eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"  # JWT
+    r"|-----BEGIN[ A-Z]*PRIVATE KEY-----"     # PEM private key block
+)
+
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_CN_PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")          # CN mobile (11)
+_CN_ID_RE = re.compile(r"(?<![0-9Xx])\d{17}[0-9Xx](?![0-9Xx])")  # CN ID (18)
+_CARD_RE = re.compile(r"(?<!\d)\d{13,19}(?!\d)")               # card candidate
+
+_CN_ID_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+_CN_ID_CHECKSUM = "10X98765432"
+_PII_SHORT_MAXLEN = 64  # PII floors only "field-like" short values, not prose
+
+
+def _luhn_ok(num: str) -> bool:
+    """Luhn (mod-10) check — filters ~90% of random digit runs so a 13–19 digit
+    value must actually look like a payment card before it floors to private."""
+    total, alt = 0, False
+    for ch in reversed(num):
+        d = ord(ch) - 48
+        if alt:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+        alt = not alt
+    return total % 10 == 0
+
+
+def _scan_cn_id(s: str) -> bool:
+    """True if ``s`` contains a mainland-China resident ID with a valid ISO
+    7064 MOD-11-2 checksum (the checksum makes this high-confidence, not just
+    'any 18 digits')."""
+    for m in _CN_ID_RE.finditer(s):
+        d = m.group()
+        total = sum((ord(c) - 48) * w for c, w in zip(d[:17], _CN_ID_WEIGHTS))
+        if _CN_ID_CHECKSUM[total % 11] == d[17].upper():
+            return True
+    return False
+
+
+def _has_pii_pattern(s: str) -> bool:
+    return bool(
+        _EMAIL_RE.search(s)
+        or _CN_PHONE_RE.search(s)
+        or _scan_cn_id(s)
+        or any(_luhn_ok(m.group()) for m in _CARD_RE.finditer(s))
+    )
+
+
+def classify_value(value) -> str:
+    """Sensitivity FLOOR implied by a field VALUE, independent of its name and
+    of human language: high-confidence credential shapes -> ``secret``, PII
+    shapes -> ``private``, otherwise ``public`` (no constraint).
+
+    Only ``str``/``int`` scalars are inspected (ints are stringified, so a phone
+    stored as a number is still caught); ``bool`` and other types are ``public``.
+    """
+    if isinstance(value, bool):
+        return "public"
+    if isinstance(value, int):
+        s = str(value)
+    elif isinstance(value, str):
+        s = value.strip()
+    else:
+        return "public"
+    if not s:
+        return "public"
+    # Credentials: matched ANYWHERE, any length (catastrophic, near-zero FP).
+    if _SECRET_VALUE_RE.search(s):
+        return "secret"
+    # PII: a whole-value email of any length, or any PII pattern inside a short
+    # ("field-like") value. Long free text is treated as content, not floored.
+    if _EMAIL_RE.fullmatch(s) or (len(s) <= _PII_SHORT_MAXLEN and _has_pii_pattern(s)):
+        return "private"
+    return "public"
+
+
 def _field_floor(name: str, restricted_fields: Iterable[str] = ()) -> str:
     """Sensitivity FLOOR contributed by a field NAME: ``private``/``secret``
     if the name is sensitive, else ``public`` (no constraint). Used so an
@@ -289,48 +389,74 @@ def _field_floor(name: str, restricted_fields: Iterable[str] = ()) -> str:
     return lvl if lvl in ("private", "secret") else "public"
 
 
-def _all_field_names(obj, *, max_nodes: int = 10000) -> tuple[set[str], bool]:
-    """Collect dict keys nested ANYWHERE in ``obj`` (dicts/lists), iteratively
-    (no recursion-limit risk). Returns (names, truncated). ``truncated`` is
-    True if the node budget was hit — caller should fail closed, since an
-    unscanned region might hide a sensitive field (e.g. metadata.api_key)."""
+def _walk_item(obj, *, max_nodes: int = 10000) -> tuple[set[str], list, bool]:
+    """Walk ``obj`` (dicts/lists/tuples) iteratively (no recursion-limit risk),
+    collecting BOTH dict keys (field names) AND scalar leaf VALUES. Returns
+    ``(names, values, truncated)``. ``values`` holds ``str``/``int`` leaves
+    (the only types ``classify_value`` inspects), excluding ``bool``.
+    ``truncated`` is True if the node budget was hit — the caller should fail
+    closed, since an unscanned region might hide a sensitive field or value
+    (e.g. metadata.api_key, or a key buried deep in a payload)."""
     names: set[str] = set()
+    values: list = []
     stack = [obj]
     count = 0
     while stack:
         cur = stack.pop()
         count += 1
         if count > max_nodes:
-            return names, True
+            return names, values, True
         if isinstance(cur, dict):
             for k, v in cur.items():
                 names.add(str(k))
                 stack.append(v)
         elif isinstance(cur, (list, tuple)):
             stack.extend(cur)
-    return names, False
+        elif isinstance(cur, str) or (isinstance(cur, int) and not isinstance(cur, bool)):
+            values.append(cur)
+    return names, values, False
+
+
+def _all_field_names(obj, *, max_nodes: int = 10000) -> tuple[set[str], bool]:
+    """Back-compat thin wrapper over :func:`_walk_item` returning just the
+    field names and the truncation flag (drops the collected values)."""
+    names, _values, truncated = _walk_item(obj, max_nodes=max_nodes)
+    return names, truncated
 
 
 def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
     """Sensitivity of a knowledge item (lesson/decision/playbook).
 
     Honors an explicit, valid ``item['sensitivity']``; otherwise defaults to
-    ``work`` (never ``public``). ``restricted_fields`` is accepted for a
-    future content-aware pass; v1 does not down-rank below ``work``.
+    ``work`` (never ``public``). The result can only be RAISED above the
+    explicit/default base by two floors, never lowered:
+
+    * **name floor** — a sensitive field NAME at ANY nesting depth
+      (metadata.api_key, steps[].private_key, 密码, …);
+    * **value floor** — a sensitive field VALUE at any depth (a credential
+      shape -> secret, a PII shape -> private) regardless of how benign its
+      field name is. This is the language-independent half that closes the
+      benign-name / sensitive-value gap a name list can never cover.
     """
     if not isinstance(item, dict):
         return DEFAULT_LEVEL
     explicit = str(item.get("sensitivity", "")).strip().lower()
     base = explicit if explicit in VALID_LEVELS else DEFAULT_LEVEL
-    # Field-name floor: an item carrying e.g. an `api_key` field — at ANY
-    # nesting depth (metadata.api_key, steps[].private_key, …) — is at least
-    # `secret`. Explicit level can only RAISE, never lower, this floor.
-    names, truncated = _all_field_names(item)
+    names, values, truncated = _walk_item(item)
     floor = "secret" if truncated else "public"  # fail closed if not fully scanned
     for name in names:
         f = _field_floor(name, restricted_fields)
         if SENSITIVITY_ORDER[f] > SENSITIVITY_ORDER[floor]:
             floor = f
+        if floor == "secret":
+            break
+    if floor != "secret":
+        for v in values:
+            vf = classify_value(v)
+            if SENSITIVITY_ORDER[vf] > SENSITIVITY_ORDER[floor]:
+                floor = vf
+            if floor == "secret":
+                break
     return base if SENSITIVITY_ORDER[base] >= SENSITIVITY_ORDER[floor] else floor
 
 

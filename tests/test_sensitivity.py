@@ -413,3 +413,116 @@ def test_annotate_then_gate_blocks_pii_for_external(monkeypatch):
     items = [{"id": "pub", "sensitivity": "public"}, {"id": "sec", "sensitivity": "private"}]
     allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
     assert {i["id"] for i in allowed} == {"pub"}
+
+
+# ── Layer 2: language-independent VALUE scanner (round-10 two-layer defense) ──
+# A field-NAME classifier (in ANY language) cannot catch a benign-named field
+# that holds a sensitive VALUE. classify_value inspects the value itself for
+# high-confidence credential shapes (-> secret) and PII shapes (-> private),
+# and classify_item floors the item on values found at ANY depth.
+
+def test_value_scanner_detects_credentials_as_secret():
+    # well-known credential token shapes, regardless of field name / language
+    creds = [
+        "sk-proj-abcdefghijklmnop1234",          # OpenAI project key
+        "sk-abcdefghijklmnop1234567890",          # OpenAI key
+        "sk_live_abcdefghij1234567890",           # Stripe secret key
+        "rk_test_abcdefghij1234567890",           # Stripe restricted key
+        "ghp_0123456789abcdefghij0123456789",     # GitHub PAT
+        "gho_0123456789abcdefghij0123456789",     # GitHub OAuth
+        "github_pat_0123456789abcdefghij0123",    # GitHub fine-grained PAT
+        "AKIAIOSFODNN7EXAMPLE",                    # AWS access key id
+        "ASIAIOSFODNN7EXAMPLE",                    # AWS temp access key id
+        "AIzaSyA1234567890abcdefghijklmnopqrstuvw",  # Google API key (39 chars)
+        "ya29.a0AbCdEfGhIjKlMnOpQrStUvWxYz",       # Google OAuth token
+        "xoxb-1234567890-abcdefghijkl",            # Slack bot token
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmN",  # JWT
+        "-----BEGIN RSA PRIVATE KEY-----",         # PEM block
+    ]
+    for c in creds:
+        assert sv.classify_value(c) == "secret", c
+
+def test_value_scanner_detects_pii_as_private():
+    pii = [
+        "alice@example.com",          # email
+        "13800138000",                # CN mobile
+        "11010519491231002X",         # CN resident ID (valid ISO 7064 checksum)
+        "110101199003078515",         # CN resident ID (valid checksum)
+        "4111111111111111",           # Visa test card (Luhn-valid)
+        "4242424242424242",           # Visa test card (Luhn-valid)
+    ]
+    for p in pii:
+        assert sv.classify_value(p) == "private", p
+
+def test_value_scanner_ignores_benign_values():
+    benign = [
+        "hello world", "just a normal note", "v4.2.1", "2026-05-29",
+        "ENGRAM_GOVERNANCE", "technical_level=expert",
+        "1234567890123",              # 13 digits but Luhn-invalid -> not a card
+        "abc",                        # too short for anything
+        "", "   ",                    # empty / whitespace
+        42, True, False, 3.14, None, ["a", "b"], {"k": "v"},
+    ]
+    for b in benign:
+        assert sv.classify_value(b) == "public", repr(b)
+
+def test_value_scanner_does_not_floor_long_freetext_on_incidental_pii():
+    # a long lesson body that merely MENTIONS a contact must stay content
+    # (not floored), so only short "field-like" values trip the PII floor.
+    long_body = (
+        "In our retro we agreed the team should email the vendor at "
+        "sales-team@bigcorp.example to confirm delivery for next quarter, "
+        "and to follow up on the outstanding invoices from last month too."
+    )
+    assert len(long_body) > sv._PII_SHORT_MAXLEN
+    assert sv.classify_value(long_body) == "public"
+    # but a whole-value email of ANY length is still PII
+    assert sv.classify_value("a-very-long-but-still-just-an-address@example.com") == "private"
+
+def test_benign_named_field_with_secret_value_is_caught_LEAK_REGRESSION():
+    # THE gap a name-only classifier can never close: innocuous field name,
+    # explicit public, but the VALUE is a live credential -> must be secret.
+    cases = [
+        {"sensitivity": "public", "备注": "sk-proj-abcdefghijklmnop1234"},
+        {"sensitivity": "public", "note": "ghp_0123456789abcdefghij0123456789"},
+        {"sensitivity": "public", "comment": "-----BEGIN OPENSSH PRIVATE KEY-----"},
+    ]
+    for item in cases:
+        assert sv.classify_item(item) == "secret", item
+
+def test_benign_named_field_with_pii_value_floors_to_private():
+    cases = [
+        {"sensitivity": "public", "note": "alice@example.com"},
+        {"sensitivity": "public", "备注": "13800138000"},
+        {"sensitivity": "public", "contact": "11010519491231002X"},
+        {"sensitivity": "public", "phone": 13800138000},  # int value
+    ]
+    for item in cases:
+        assert sv.classify_item(item) == "private", item
+
+def test_value_scanner_floors_item_at_any_depth():
+    # a secret value buried deep in lists/dicts still floors the whole item
+    item = {"sensitivity": "public",
+            "data": {"steps": [{"ok": "fine"},
+                               {"payload": ["x", {"deep": "ghp_0123456789abcdefghij0123456789"}]}]}}
+    assert sv.classify_item(item) == "secret"
+
+def test_value_scanner_blocked_through_external_gate():
+    # end-to-end: a benign-named item whose VALUE is a credential/PII must not
+    # reach a read-only-external agent after annotate→gate.
+    from piia_engram import governance as gov
+    items = [
+        {"id": "ok", "summary": "nothing sensitive here", "sensitivity": "public"},
+        {"id": "key", "sensitivity": "public", "note": "sk-proj-abcdefghijklmnop1234"},
+        {"id": "mail", "sensitivity": "public", "note": "alice@example.com"},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
+    assert {i["id"] for i in allowed} == {"ok"}
+
+def test_value_scanner_does_not_overflag_a_normal_lesson():
+    # a realistic benign lesson item stays at its explicit/default level
+    item = {"id": "L1", "kind": "lesson", "sensitivity": "public",
+            "title": "Prefer composition over inheritance",
+            "body": "When a class hierarchy grows fragile, switch to composition. "
+                    "See the strategy pattern for an example, version v4.2.1."}
+    assert sv.classify_item(item) == "public"
