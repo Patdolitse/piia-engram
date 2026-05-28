@@ -47,6 +47,37 @@ def test_secret_field_cannot_be_marked_public_LEAK_REGRESSION():
     item = {"id": "3", "sensitivity": "public", "api_key": "sk-abc"}
     assert sv.classify_item(item) == "secret"
 
+def test_nested_secret_field_floors_item_LEAK_REGRESSION():
+    # Codex round-4 P1: sensitive field nested under metadata/steps/parameters
+    # must still floor the item to secret (top-level-only scan leaked these).
+    cases = [
+        {"sensitivity": "public", "metadata": {"api_key": "sk-abc"}},
+        {"sensitivity": "public", "steps": [{"note": "ok"}, {"private-key": "x"}]},
+        {"sensitivity": "public", "parameters": {"openai_api_key": "x"}},
+        {"sensitivity": "public", "a": {"b": {"c": {"access_token": "x"}}}},
+    ]
+    for item in cases:
+        assert sv.classify_item(item) == "secret", item
+
+
+def test_nested_secret_blocked_through_annotate_gate():
+    from piia_engram import governance as gov
+    items = [{"id": "ok", "summary": "fine", "sensitivity": "public"},
+             {"id": "leak", "sensitivity": "public", "metadata": {"api_key": "sk"}}]
+    allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
+    assert {i["id"] for i in allowed} == {"ok"}
+
+
+def test_deeply_nested_truncation_fails_closed():
+    # pathological depth → can't fully scan → fail closed (secret)
+    obj = cur = {}
+    for _ in range(20000):
+        cur["x"] = {}
+        cur = cur["x"]
+    item = {"sensitivity": "public", "deep": obj}
+    assert sv.classify_item(item) == "secret"
+
+
 def test_pii_field_floors_item_to_private():
     item = {"id": "x", "sensitivity": "public", "email": "a@b.c"}
     assert sv.classify_item(item) == "private"

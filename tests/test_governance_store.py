@@ -48,6 +48,31 @@ def test_grants_persist_across_instances(tmp_path):
     assert GrantStore(tmp_path).trust_level_for("cursor") == "trusted-local"
 
 
+def test_set_grant_fails_closed_on_corrupt_file(tmp_path):
+    # Codex round-4 P1: a corrupt grants.json must NOT be silently overwritten
+    # with default (which would wipe real revoked/grants state). Fail closed.
+    from piia_engram.storage import DataCorruptionError
+    gs = GrantStore(tmp_path)
+    gs.set_grant("a", "trusted-local")
+    gs.revoke("codex")
+    gs.path.write_text("{ this is not valid json", encoding="utf-8")
+    with pytest.raises(DataCorruptionError):
+        gs.set_grant("c", "trusted-local")
+    # original file NOT clobbered with a default {grants:{c:...}} — corrupt
+    # content remains (a backup was made for recovery), revoked not wiped.
+    assert "not valid json" in gs.path.read_text(encoding="utf-8")
+
+
+def test_add_relation_fails_closed_on_corrupt_file(tmp_path):
+    from piia_engram.storage import DataCorruptionError
+    rs = RelationStore(tmp_path)
+    rs.add_relation("a", "led_to", "b")
+    rs.path.write_text("not json at all", encoding="utf-8")
+    with pytest.raises(DataCorruptionError):
+        rs.add_relation("c", "led_to", "d")
+    assert "not json at all" in rs.path.read_text(encoding="utf-8")
+
+
 def test_list_grants_shape(tmp_path):
     gs = GrantStore(tmp_path)
     gs.set_grant("a", "trusted-local")

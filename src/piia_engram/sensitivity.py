@@ -73,6 +73,28 @@ def _field_floor(name: str, restricted_fields: Iterable[str] = ()) -> str:
     return lvl if lvl in ("private", "secret") else "public"
 
 
+def _all_field_names(obj, *, max_nodes: int = 10000) -> tuple[set[str], bool]:
+    """Collect dict keys nested ANYWHERE in ``obj`` (dicts/lists), iteratively
+    (no recursion-limit risk). Returns (names, truncated). ``truncated`` is
+    True if the node budget was hit — caller should fail closed, since an
+    unscanned region might hide a sensitive field (e.g. metadata.api_key)."""
+    names: set[str] = set()
+    stack = [obj]
+    count = 0
+    while stack:
+        cur = stack.pop()
+        count += 1
+        if count > max_nodes:
+            return names, True
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                names.add(str(k))
+                stack.append(v)
+        elif isinstance(cur, (list, tuple)):
+            stack.extend(cur)
+    return names, False
+
+
 def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
     """Sensitivity of a knowledge item (lesson/decision/playbook).
 
@@ -84,12 +106,13 @@ def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
         return DEFAULT_LEVEL
     explicit = str(item.get("sensitivity", "")).strip().lower()
     base = explicit if explicit in VALID_LEVELS else DEFAULT_LEVEL
-    # Field-name floor: an item carrying e.g. an `api_key` field is at least
-    # `secret`, regardless of an explicit (or default) lower label. Explicit
-    # level can only RAISE, never lower, the built-in floor.
-    floor = "public"
-    for key in item.keys():
-        f = _field_floor(key, restricted_fields)
+    # Field-name floor: an item carrying e.g. an `api_key` field — at ANY
+    # nesting depth (metadata.api_key, steps[].private_key, …) — is at least
+    # `secret`. Explicit level can only RAISE, never lower, this floor.
+    names, truncated = _all_field_names(item)
+    floor = "secret" if truncated else "public"  # fail closed if not fully scanned
+    for name in names:
+        f = _field_floor(name, restricted_fields)
         if SENSITIVITY_ORDER[f] > SENSITIVITY_ORDER[floor]:
             floor = f
     return base if SENSITIVITY_ORDER[base] >= SENSITIVITY_ORDER[floor] else floor

@@ -318,14 +318,11 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
     _default = {} if default is None else default
     try:
         with portalocker.Lock(lock_path, "a", timeout=5):
-            # read current state INSIDE the lock
-            if path.is_file():
-                try:
-                    current = json.loads(path.read_text(encoding="utf-8"))
-                except Exception:
-                    current = _default
-            else:
-                current = _default
+            # Read current state INSIDE the lock. Fail CLOSED on corruption:
+            # _read_json backs up the bad file and raises DataCorruptionError.
+            # We must NOT silently fall back to the default and then overwrite
+            # — that would wipe real governance state (grants/revoked/edges).
+            current = _read_json(path) if path.is_file() else _default
             new_data = mutator(current)
             # atomic replace INSIDE the same lock
             fd, tmp_name = tempfile.mkstemp(
