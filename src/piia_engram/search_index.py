@@ -46,9 +46,19 @@ from typing import Iterable
 # paper and what every reference implementation defaults to.
 RRF_K = 60
 
-# FastEmbed model id for the embedding layer (next increment).
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-EMBED_DIM = 384
+# FastEmbed model id for the semantic layer. Default is a Chinese-first
+# small model (this store is CJK-heavy); override with ENGRAM_EMBED_MODEL.
+# Dim must match the model — kept in a small map so we don't import
+# fastembed just to read it at module load.
+_MODEL_DIMS = {
+    "BAAI/bge-small-zh-v1.5": 512,
+    "BAAI/bge-small-en-v1.5": 384,
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": 384,
+    "intfloat/multilingual-e5-large": 1024,
+}
+EMBED_MODEL = os.environ.get("ENGRAM_EMBED_MODEL", "BAAI/bge-small-zh-v1.5")
+EMBED_DIM = _MODEL_DIMS.get(EMBED_MODEL, 512)
 
 # Fields concatenated into the FTS document for each entry, in priority
 # order. Mirrors the primary-text logic in retrieval.py so both signals
@@ -56,6 +66,37 @@ EMBED_DIM = 384
 _TEXT_FIELDS = ("summary", "title", "question", "choice", "content", "reasoning", "domain")
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[一-鿿]")
+
+# Runs of ASCII word chars OR runs of CJK ideographs.
+_SEG_RE = re.compile(r"[A-Za-z0-9_]+|[一-鿿]+")
+
+
+def _cjk_segment(text: str) -> list[str]:
+    """Tokenize text the way the keyword scorer does, so the FTS layer
+    stops being CJK-blind.
+
+    FTS5 ``unicode61`` treats a whole run of Chinese as ONE token, so
+    ``"消息队列"`` only matches the identical 4-gram. We instead emit
+    overlapping CJK *bigrams* (plus the single char for length-1 runs) and
+    lowercased ASCII words — matching retrieval.py's n-gram approach. Used
+    for BOTH the indexed document and the query, so they share a
+    vocabulary.
+    """
+    out: list[str] = []
+    for m in _SEG_RE.finditer(text):
+        tok = m.group(0)
+        if tok[0].isascii():
+            out.append(tok.lower())
+        elif len(tok) == 1:
+            out.append(tok)
+        else:
+            out.extend(tok[i:i + 2] for i in range(len(tok) - 1))
+    return out
+
+
+def _fts_document(text: str) -> str:
+    """Space-joined segmented form of a document, for FTS5 indexing."""
+    return " ".join(_cjk_segment(text))
 
 
 def reciprocal_rank_fusion(
@@ -150,7 +191,7 @@ def _fts_match_expr(query: str) -> str:
     punctuation in the raw query can't produce an FTS5 syntax error.
     Returns "" when the query has no usable tokens.
     """
-    tokens = _WORD_RE.findall(query.lower())
+    tokens = _cjk_segment(query)
     if not tokens:
         return ""
     return " OR ".join(f'"{t}"' for t in tokens)
@@ -208,20 +249,29 @@ class SearchIndex:
                 for e in entries
                 if e.get("id")
             ]
+            con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
             # --- FTS: full rebuild ---
             con.execute("DROP TABLE IF EXISTS fts")
             con.execute(
                 "CREATE VIRTUAL TABLE fts USING fts5("
                 "eid UNINDEXED, doc, tokenize='unicode61')"
             )
-            con.executemany("INSERT INTO fts(eid, doc) VALUES (?, ?)", docs)
+            # Index the CJK-segmented form so Chinese is matchable; the raw
+            # `docs` text is kept for embeddings + content hashing.
+            con.executemany(
+                "INSERT INTO fts(eid, doc) VALUES (?, ?)",
+                [(eid, _fts_document(doc)) for eid, doc in docs],
+            )
 
             # --- vector: incremental ---
             if self.vector_enabled:
                 self._rebuild_vectors(con, docs)
 
-            # --- freshness marker ---
-            con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+            # --- markers: embed model (for dim-change detection) + freshness ---
+            con.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('embed_model', ?)",
+                (EMBED_MODEL,),
+            )
             if fingerprint is not None:
                 con.execute(
                     "INSERT OR REPLACE INTO meta(key, value) VALUES ('fingerprint', ?)",
@@ -249,6 +299,19 @@ class SearchIndex:
     def _rebuild_vectors(self, con: sqlite3.Connection, docs: list[tuple[str, str]]) -> None:
         """Incrementally sync the vec0 table to ``docs`` (id, document)."""
         import sqlite_vec
+
+        # If the embedding model changed since the last build, the stored
+        # vectors have a different dim/semantics — drop them so they're
+        # rebuilt at the current EMBED_DIM (prevents a dim-mismatch crash).
+        try:
+            row = con.execute(
+                "SELECT value FROM meta WHERE key = 'embed_model'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = None
+        if row and row[0] != EMBED_MODEL:
+            con.execute("DROP TABLE IF EXISTS vec")
+            con.execute("DROP TABLE IF EXISTS vec_map")
 
         con.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0(embedding float[{EMBED_DIM}])")
         con.execute(

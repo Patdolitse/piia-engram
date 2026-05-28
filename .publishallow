@@ -66,6 +66,7 @@ README.zh-CN.md
 docs/architecture.md
 docs/comparison.md
 docs/cross-tool-guide.md
+docs/hybrid-search.md
 
 # ── Assets, examples, demos, remote-worker deployment ───────────────
 assets/**

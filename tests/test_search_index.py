@@ -217,6 +217,52 @@ def test_vector_incremental_reembeds_changed_and_drops_removed(tmp_path):
 
 
 @vec_only
+def test_rebuild_after_model_change_drops_old_vectors(tmp_path, monkeypatch):
+    """Swapping the embedding model changes the vector dim; a rebuild must
+    drop the stale vec table instead of crashing on a dim mismatch."""
+    import piia_engram.search_index as si
+
+    db = tmp_path / "search_index.db"
+
+    # First build: pretend model "A" with dim 8.
+    monkeypatch.setattr(si, "EMBED_MODEL", "model-A")
+    monkeypatch.setattr(si, "EMBED_DIM", 8)
+    monkeypatch.setattr(si, "_embed", lambda texts: [[0.1] * 8 for _ in texts])
+    idx = SearchIndex(db, enable_vector=True)
+    idx.rebuild([{"id": "1", "summary": "alpha"}, {"id": "2", "summary": "beta"}])
+
+    # Swap to model "B" with a different dim 16 — must not raise.
+    monkeypatch.setattr(si, "EMBED_MODEL", "model-B")
+    monkeypatch.setattr(si, "EMBED_DIM", 16)
+    monkeypatch.setattr(si, "_embed", lambda texts: [[0.2] * 16 for _ in texts])
+    idx.rebuild([{"id": "1", "summary": "alpha"}, {"id": "2", "summary": "beta"}])
+
+    import sqlite_vec
+    con = sqlite3.connect(str(db))
+    try:
+        con.enable_load_extension(True)
+        sqlite_vec.load(con)
+        con.enable_load_extension(False)
+        # vec recreated at new dim; map consistent; model marker updated.
+        assert con.execute("SELECT COUNT(*) FROM vec").fetchone()[0] == 2
+        assert con.execute("SELECT COUNT(*) FROM vec_map").fetchone()[0] == 2
+        model = con.execute("SELECT value FROM meta WHERE key='embed_model'").fetchone()[0]
+        assert model == "model-B"
+    finally:
+        con.close()
+
+
+def test_cjk_segment_bigrams_and_ascii():
+    """FTS segmentation: CJK runs -> overlapping bigrams; ASCII -> words."""
+    from piia_engram.search_index import _cjk_segment
+
+    assert _cjk_segment("消息队列") == ["消息", "息队", "队列"]
+    assert _cjk_segment("Vite 构建") == ["vite", "构建"]
+    assert _cjk_segment("a") == ["a"]
+    assert _cjk_segment("好") == ["好"]
+
+
+@vec_only
 def test_hybrid_includes_vector_signal_with_no_lexical_overlap(tmp_path):
     idx = _vidx(tmp_path)
     idx.rebuild([

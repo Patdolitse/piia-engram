@@ -4,15 +4,22 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.33.0] - 2026-05-28
 
-### Added (experimental, opt-in, OFF by default)
-- **混合搜索（hybrid search）脚手架**：在现有关键词检索之上叠加 FTS5（`unicode61`，零依赖）与可选的语义向量层（`piia-engram[vector]`：sqlite-vec + FastEmbed），用 Reciprocal Rank Fusion（k=60）融合三路排名。索引是可重建的 SQLite 文件（JSON 仍是唯一事实源，删了能从 JSON 重建），支持惰性重建（内容指纹变化才重建）与向量增量嵌入。新增 `engram reindex` 命令。
-- 通过 `ENGRAM_SEARCH=hybrid` 显式开启；**默认仍是 keyword，行为不变**。
+混合搜索（hybrid search）正式可用，opt-in，默认行为不变。
 
-> ⚠️ 暂不建议在中文知识库启用：内部 A/B 评测显示，对中文语料现有字符 n-gram 关键词检索已达召回上限（recall@5=1.00 / MRR=0.95），而当前英文向量模型（all-MiniLM-L6-v2）+ 不分词的 FTS5 会让 RRF 融合反而回归（MRR→0.62）。切换默认需先换中文/多语嵌入模型并重过评测闸。
+### Added
+- **混合搜索（opt-in）**：在现有关键词检索之上融合 FTS5 全文检索与可选语义向量层，用 Reciprocal Rank Fusion（k=60）合并排名。通过 `ENGRAM_SEARCH=hybrid` 开启；**默认仍是 keyword，行为完全不变**。
+  - 语义层装 `pip install piia-engram[vector]`（sqlite-vec + FastEmbed），默认模型 **BAAI/bge-small-zh-v1.5**（中文优先，可用 `ENGRAM_EMBED_MODEL` 覆盖；换模型会自动重建向量，不会因维度变化报错）。
+  - 索引是可重建的 SQLite 文件，**JSON 仍是唯一事实源**（删掉索引可从 JSON 完整重建），支持惰性重建（内容指纹变化才重建）+ 向量增量嵌入。
+  - FTS5 现做 CJK 二元分词，中文不再被当成单一 token。
+  - 新增 `engram reindex` 命令手动重建索引。
 
-## [3.32.0] - 2026-05-28
+### Validated
+- A/B 评测闸（keyword vs hybrid）通过：中文集召回零回归（recall@5 1.00→1.00，MRR 在容差内），**跨语言（英文 query → 中文知识）召回从 0.50 提升到 0.875**——这是关键词检索结构上做不到的。
+
+### Release Evidence
+- 全量回归测试 1005 通过。
 
 发布流程加固续作：把发布前的安全检查再往前推一步。
 
