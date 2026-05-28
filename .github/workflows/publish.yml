@@ -27,6 +27,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Release gate (no publish without review evidence)
+        run: python scripts/check_release_gate.py
+
       - name: Pre-release sanitization scan (HIGH-severity blocks publish)
         run: python scripts/release_sanitize_check.py
 

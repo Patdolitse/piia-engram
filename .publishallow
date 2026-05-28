@@ -27,6 +27,9 @@ tests/**
 # ── Public helper scripts (sanitize check, hook installer, etc.) ─────
 scripts/**
 
+# ── Release-gate evidence (tracked so CI can enforce it) ─────────────
+release-evidence/**
+
 # ── CI / automation ─────────────────────────────────────────────────
 .github/**
 
