@@ -165,24 +165,35 @@ def _groups_match(tokens: set[str], groups: Iterable[frozenset]) -> bool:
 # high-confidence whole terms are matched by substring. That is safe and does
 # NOT reintroduce English false positives: these multi-byte ideographs never
 # occur inside ASCII engineering identifiers, so all-ASCII names never match.
+# ── CJK terms as high-coverage ROOTS (proactive round-9 hardening) ───────────
+# Rounds 7–8 enumerated whole words and kept leaking real synonyms (a self-run
+# adversarial sweep found ~30 more: 微信号/验证码/助记词/凭据/银行账号/社保号/…).
+# Manually listing every Chinese synonym never converges. Instead we list the
+# high-signal ROOT of each family and rely on substring matching: 令牌 covers
+# 访问令牌/刷新令牌/会话令牌; 密钥 covers api密钥/访问密钥/客户端密钥; 卡号 covers
+# 银行卡号/信用卡号/储蓄卡号; 手机 covers 手机号/手机号码; 身份证 covers 身份证号/号码.
+# This is the name-based half of the two-layer defense; the language-independent
+# VALUE scanner (classify_value) is the converging safety net for everything a
+# curated name list can still miss (incl. benign-named fields with secret values).
+# Deliberate non-inclusions (over-broad → benign collisions): bare 账号/账户
+# (用户账号 = a username, low sensitivity), bare 邮件 (邮件标题/内容 = subject/body),
+# bare 钥 (公钥 = a *public* key, not a secret). Mirrors the bare-key/bare-auth
+# boundary on the ASCII side.
 _SECRET_CJK_TERMS = (
-    "密码", "密钥", "秘钥", "令牌", "口令", "凭证", "私钥",
-    "访问令牌", "刷新令牌", "客户端密钥",
+    "密码", "密钥", "秘钥", "私钥", "令牌", "口令",
+    "凭证", "凭据", "助记词", "种子短语", "暗号", "验证码", "授权码",
 )
-# Codex round-8 P1: the first CJK draft only covered a narrow word set, so
-# common real-world Chinese PII synonyms still leaked — 电子邮件 (another plain
-# rendering of "email"), 手机 (the common short form for a phone field), and
-# the identity/financial document names 证件号 / 银行卡号 / 护照号. These are
-# high-confidence PII for a personal-memory product, so the table is broadened
-# (still a curated high-confidence list, NOT open-ended substring scanning).
 _PRIVATE_CJK_TERMS = (
-    "邮箱", "邮箱地址", "电子邮箱", "电子邮件", "邮件地址", "联系邮箱",
-    "手机号", "手机号码", "手机", "电话号码", "电话", "联系电话",
-    "住址", "地址", "居住地址",
-    "身份证", "身份证号", "身份证号码",
-    "证件号", "证件号码",
-    "护照号", "护照号码",
-    "银行卡号", "银行卡号码",
+    # contact
+    "邮箱", "电子邮件", "邮件地址", "电话", "手机", "微信", "联系方式",
+    # identity documents
+    "身份证", "证件", "护照", "签证", "驾驶证", "驾照",
+    "社保", "医保", "学号", "工号", "车牌",
+    # financial
+    "银行卡", "信用卡", "储蓄卡", "卡号", "银行账号", "支付宝", "公积金",
+    "工资", "薪资", "薪水", "年薪", "收入", "余额",
+    # address & demographics
+    "住址", "地址", "籍贯", "民族", "国籍", "生日", "出生",
     "真实姓名", "姓名",
 )
 

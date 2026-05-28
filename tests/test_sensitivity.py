@@ -329,6 +329,48 @@ def test_cjk_benign_fields_stay_work_after_synonym_expansion():
         assert sv.classify_field(f) == "work", f
 
 
+# ── Round-9 proactive hardening: CJK ROOTS (self-found adversarial sweep) ─────
+
+
+def test_cjk_credential_roots_cover_more_secrets():
+    # A self-run sweep found these credential synonyms still leaked; the root
+    # list (凭据/助记词/验证码/授权码/暗号 + 令牌/密码/私钥 roots) now covers them.
+    for f in ["凭据", "助记词", "私钥助记词", "种子短语", "暗号",
+              "验证码", "短信验证码", "授权码",
+              "会话令牌", "钱包私钥", "登录密码", "支付密码"]:
+        assert sv.classify_field(f) == "secret", f
+
+
+def test_cjk_pii_roots_cover_more_pii():
+    for f in ["微信", "微信号", "联系方式",
+              "社保号", "医保卡号", "学号", "工号", "车牌号",
+              "银行账号", "信用卡号", "储蓄卡号", "卡号", "支付宝账号",
+              "工资", "薪资", "收入", "余额", "公积金",
+              "籍贯", "民族", "国籍", "生日", "出生日期"]:
+        assert sv.classify_field(f) == "private", f
+
+
+def test_cjk_public_key_is_not_secret():
+    # a *public* key is not a secret — the root list deliberately omits bare 钥.
+    assert sv.classify_field("公钥") == "work"
+
+
+def test_cjk_generic_account_word_not_overflagged():
+    # bare 账号/账户 are too generic (用户账号 = a username) — left at work on
+    # purpose; the specific 银行账号 is the one that floors to private.
+    for f in ["账号", "账户", "用户账号"]:
+        assert sv.classify_field(f) == "work", f
+    assert sv.classify_field("银行账号") == "private"
+
+
+def test_cjk_roots_blocked_through_external_gate():
+    from piia_engram import governance as gov
+    cases = [{"sensitivity": "public", k: "x"} for k in
+             ["微信号", "验证码", "助记词", "银行账号", "社保号", "工资", "生日", "国籍"]]
+    allowed, _ = gov.gate(sv.annotate_items(cases), "read-only-external")
+    assert allowed == []
+
+
 def test_annotate_then_gate_blocks_secret_field_item():
     # end-to-end leak regression through annotate -> gate
     from piia_engram import governance as gov
