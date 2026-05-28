@@ -321,7 +321,11 @@ _CN_MOBILE_BARE = re.compile(r"1[3-9]\d{9}")                   # CN mobile, no a
 # ISO 7064 checksum / the exact 11-digit mobile pattern — so normalization
 # widens the accepted FORMAT without lowering the confidence bar (a random
 # formatted business number won't pass Luhn or the mobile shape).
-_FORMATTED_NUM_RE = re.compile(r"\+?\d[\d \-]{8,}\d")
+# Codex round-11 P1: a CN resident ID's ISO 7064 check digit can be ``X``, so
+# the candidate may legitimately end in X/x (110105 19491231 002X). Allow X/x
+# in the run and as the final char; non-CN-ID candidates still must be pure
+# digits to reach the card/phone checks (compact.isdigit() guard below).
+_FORMATTED_NUM_RE = re.compile(r"\+?[0-9][0-9 Xx\-]{8,}[0-9Xx]")
 
 _CN_ID_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
 _CN_ID_CHECKSUM = "10X98765432"
@@ -363,11 +367,13 @@ def _has_formatted_pii(s: str) -> bool:
     CN mobiles, incl. an optional 86 / +86 country code)."""
     for m in _FORMATTED_NUM_RE.finditer(s):
         d = re.sub(r"[ \-]", "", m.group().lstrip("+"))
+        # CN resident ID first — it alone may end in X/x; _scan_cn_id enforces
+        # the \d{17}[0-9Xx] shape + ISO 7064 checksum, so a bad 18-char run fails.
+        if len(d) == 18 and _scan_cn_id(d):             # CN resident ID (digits + X check)
+            return True
         if not d.isdigit():
             continue
         if 13 <= len(d) <= 19 and _luhn_ok(d):          # payment card
-            return True
-        if len(d) == 18 and _scan_cn_id(d):             # CN resident ID
             return True
         mob = d[2:] if (len(d) == 13 and d.startswith("86")) else d
         if _CN_MOBILE_BARE.fullmatch(mob):              # CN mobile (+ 86 prefix)
@@ -385,6 +391,18 @@ def _has_pii_pattern(s: str) -> bool:
     )
 
 
+def _normalize_visible_text(s: str) -> str:
+    """Value-side twin of :func:`_normalize_field_name` (Codex round-11 P1):
+    NFKC-fold and strip Unicode format (``Cf``) chars so the value scanner sees
+    the same canonical text an agent reads. Fullwidth digits/letters fold to
+    ASCII (４１１１→4111, ｓｋ→sk — common in a CJK-first product) and zero-width /
+    bidi insertions are removed (sk-proj-…​…→sk-proj-……). NO casefold: the
+    credential regexes are case-sensitive (AKIA / AIza / ya29.)."""
+    s = unicodedata.normalize("NFKC", str(s or ""))
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Cf")
+    return s.strip()
+
+
 def classify_value(value) -> str:
     """Sensitivity FLOOR implied by a field VALUE, independent of its name and
     of human language: high-confidence credential shapes -> ``secret``, PII
@@ -392,15 +410,21 @@ def classify_value(value) -> str:
 
     Only ``str``/``int`` scalars are inspected (ints are stringified, so a phone
     stored as a number is still caught); ``bool`` and other types are ``public``.
+
+    The value is Unicode-hygiened first (``_normalize_visible_text``) so neither
+    fullwidth input nor an adversarial zero-width insertion can slip a shape
+    past the regexes; the ``<=64`` short-value gate is measured on the
+    normalized text so fullwidth padding can't dodge it either.
     """
     if isinstance(value, bool):
         return "public"
     if isinstance(value, int):
         s = str(value)
     elif isinstance(value, str):
-        s = value.strip()
+        s = value
     else:
         return "public"
+    s = _normalize_visible_text(s)
     if not s:
         return "public"
     # Credentials: matched ANYWHERE, any length (catastrophic, near-zero FP).

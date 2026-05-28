@@ -634,3 +634,45 @@ def test_formatted_number_false_positive_protection_round10():
 def test_value_scanner_detects_gitlab_and_slack_app_tokens_round10():
     assert sv.classify_value("glpat-1234567890abcdefghij") == "secret"
     assert sv.classify_value("xapp-1-A1234567890-abcdefghij") == "secret"
+
+
+# ── Codex round-11 FAIL regressions: value-side Unicode hygiene + CN-ID X ──
+
+def test_value_scanner_normalizes_unicode_values_round11_regression():
+    # Fullwidth digits (common in a CJK-first product) and zero-width
+    # insertions must NOT slip a credential/PII shape past the value scanner.
+    assert sv.classify_value("１３８００１３８０００") == "private"  # １３８００１３８０００
+    assert sv.classify_value("４１１１ １１１１ １１１１ １１１１") == "private"  # ４１１１ … (Luhn-valid card)
+    assert sv.classify_value("sk-proj-abcdefghij​klmnop1234") == "secret"  # zero-width inside token
+
+def test_unicode_value_bypasses_blocked_through_external_gate_round11_regression():
+    from piia_engram import governance as gov
+    items = [
+        {"id": "phone", "sensitivity": "public", "note": "１３８００１３８０００"},
+        {"id": "card", "sensitivity": "public", "note": "４１１１ １１１１ １１１１ １１１１"},
+        {"id": "key", "sensitivity": "public", "note": "sk-proj-abcdefghij​klmnop1234"},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
+    assert allowed == []
+
+def test_value_scanner_detects_formatted_cn_id_with_x_round11_regression():
+    # CN resident-ID ISO 7064 check digit can be X — formatted form must still
+    # floor to private (contiguous form already did).
+    assert sv.classify_value("110105 19491231 002X") == "private"
+    assert sv.classify_value("110105-19491231-002X") == "private"
+    assert sv.classify_value("11010519491231002X") == "private"  # contiguous baseline
+
+def test_sensitive_unicode_dict_keys_blocked_round11_regression():
+    # A dict KEY is visible text too; fullwidth / zero-width keys must be caught.
+    assert sv.classify_item({"sensitivity": "public", "tokens": {"sk-proj-abcdefghij​klmnop1234": True}}) == "secret"
+    assert sv.classify_item({"sensitivity": "public", "phones": {"１３８００１３８０００": "owner"}}) == "private"
+
+def test_unicode_normalization_false_positive_guards_round11():
+    # Normalization must not over-promote: fullwidth dates / versions /
+    # Luhn-invalid cards still public after NFKC folding.
+    for v in [
+        "２０２６－０５－２９",  # ２０２６－０５－２９
+        "ｖ４．２．１",                          # ｖ４．２．１
+        "１２３４ ５６７８ ９０１２ ３４５６",  # １２３４ … Luhn-invalid
+    ]:
+        assert sv.classify_value(v) == "public", v
