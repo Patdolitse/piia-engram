@@ -114,10 +114,14 @@ def gate(
 
     allowed: list[dict] = []
     excluded_by_sensitivity = 0
+    excluded_malformed = 0
     by_type_allowed: dict[str, int] = {}
 
     if not revoked and level.get("read"):
         for it in items:
+            if not isinstance(it, dict):
+                excluded_malformed += 1  # fail-safe: never crash on bad input
+                continue
             sens = it.get("sensitivity", DEFAULT_SENSITIVITY)
             if _sens_rank(sens) > ceiling:
                 excluded_by_sensitivity += 1
@@ -137,6 +141,7 @@ def gate(
         "returned_count": len(allowed),
         "returned_by_type": by_type_allowed,
         "excluded_by_sensitivity": excluded_by_sensitivity,
+        "excluded_malformed": excluded_malformed,
         "revoked": bool(revoked),
     }
     return allowed, receipt
@@ -168,7 +173,9 @@ class GovernanceLedger:
     """Append-only, tamper-evident disclosure ledger (JSONL + hash chain).
 
     Each line: ``{seq, ts, prev_hash, hash, event}`` where
-    ``hash = sha256(prev_hash + seq + canonical(event))``. ``verify()`` re-walks
+    ``hash = sha256(canonical({seq, ts, prev_hash, event}))`` (the full record
+    body except ``hash`` itself — so tampering with any field, incl. ts, is
+    detected; see ``_record_digest``). ``verify()`` re-walks
     the chain and reports the first break — enough to detect ordinary
     corruption / overwrite / reordering (not a defense against a malicious
     root user, which is out of scope for a local-first tool).

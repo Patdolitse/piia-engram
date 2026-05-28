@@ -82,6 +82,16 @@ def test_unknown_trust_level_falls_back_to_most_restrictive():
     assert receipt["trust_level"] == "read-only-external"
 
 
+def test_gate_handles_non_dict_items_without_crashing():
+    # fail-safe: a None / str mixed into items must not crash the gate
+    allowed, receipt = gov.gate(
+        [None, "junk", {"id": "pub", "sensitivity": "public", "type": "lesson"}],
+        "read-only-external",
+    )
+    assert {i["id"] for i in allowed} == {"pub"}
+    assert receipt["excluded_malformed"] == 2
+
+
 def test_revoked_agent_gets_nothing():
     allowed, receipt = gov.gate(_items(), "trusted-local", agent_id="codex", revoked=True)
     assert allowed == []
