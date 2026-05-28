@@ -1,0 +1,111 @@
+"""Tests for governance persistence (src/piia_engram/governance_store.py)."""
+
+from __future__ import annotations
+
+import pytest
+
+from piia_engram.governance_store import GrantStore, RelationStore
+
+
+# ── GrantStore ───────────────────────────────────────────────────────────
+
+
+def test_default_classification_when_no_explicit_grant(tmp_path):
+    gs = GrantStore(tmp_path)
+    assert gs.trust_level_for("codex", client_type="codex") == "trusted-local"
+    assert gs.trust_level_for("x", client_type="unknown-tool") == "read-only-external"
+    assert gs.trust_level_for("self", client_type="self") == "private-self"
+
+
+def test_explicit_grant_overrides_classification(tmp_path):
+    gs = GrantStore(tmp_path)
+    gs.set_grant("some-agent", "private-self")
+    assert gs.trust_level_for("some-agent", client_type="unknown") == "private-self"
+
+
+def test_set_grant_rejects_unknown_level(tmp_path):
+    gs = GrantStore(tmp_path)
+    with pytest.raises(ValueError):
+        gs.set_grant("a", "super-admin")
+
+
+def test_revoke_and_is_revoked(tmp_path):
+    gs = GrantStore(tmp_path)
+    assert gs.is_revoked("codex") is False
+    gs.revoke("codex")
+    assert gs.is_revoked("codex") is True
+
+
+def test_granting_clears_revocation(tmp_path):
+    gs = GrantStore(tmp_path)
+    gs.revoke("codex")
+    gs.set_grant("codex", "trusted-local")
+    assert gs.is_revoked("codex") is False
+
+
+def test_grants_persist_across_instances(tmp_path):
+    GrantStore(tmp_path).set_grant("cursor", "trusted-local")
+    assert GrantStore(tmp_path).trust_level_for("cursor") == "trusted-local"
+
+
+def test_list_grants_shape(tmp_path):
+    gs = GrantStore(tmp_path)
+    gs.set_grant("a", "trusted-local")
+    gs.revoke("b")
+    out = gs.list_grants()
+    assert out["grants"] == {"a": "trusted-local"} and out["revoked"] == ["b"]
+
+
+# ── RelationStore ────────────────────────────────────────────────────────
+
+
+def test_add_and_read_relations(tmp_path):
+    rs = RelationStore(tmp_path)
+    assert rs.add_relation("idea", "led_to", "plan") is True
+    assert rs.add_relation("plan", "implemented_by", "pr1") is True
+    edges = rs.all_edges()
+    assert {"src": "idea", "rel": "led_to", "dst": "plan"} in edges
+    assert len(edges) == 2
+
+
+def test_add_relation_rejects_invalid(tmp_path):
+    rs = RelationStore(tmp_path)
+    assert rs.add_relation("a", "bogus", "b") is False     # bad rel
+    assert rs.add_relation("a", "led_to", "a") is False     # self loop
+    assert rs.all_edges() == []
+
+
+def test_add_relation_is_idempotent(tmp_path):
+    rs = RelationStore(tmp_path)
+    assert rs.add_relation("a", "led_to", "b") is True
+    assert rs.add_relation("a", "led_to", "b") is False     # duplicate
+    assert len(rs.all_edges()) == 1
+
+
+def test_remove_relation(tmp_path):
+    rs = RelationStore(tmp_path)
+    rs.add_relation("a", "led_to", "b")
+    assert rs.remove_relation("a", "led_to", "b") is True
+    assert rs.remove_relation("a", "led_to", "b") is False  # already gone
+    assert rs.all_edges() == []
+
+
+def test_edges_for_node(tmp_path):
+    rs = RelationStore(tmp_path)
+    rs.add_relation("a", "led_to", "b")
+    rs.add_relation("b", "led_to", "c")
+    rs.add_relation("x", "led_to", "y")
+    touching_b = rs.edges_for("b")
+    assert len(touching_b) == 2
+    assert all("b" in (e["src"], e["dst"]) for e in touching_b)
+
+
+def test_relations_feed_build_thread(tmp_path):
+    # end-to-end: stored relations reconstruct a thread
+    from piia_engram.decision_thread import build_thread
+    rs = RelationStore(tmp_path)
+    rs.add_relation("idea", "led_to", "decision")
+    rs.add_relation("decision", "implemented_by", "pr1")
+    t = build_thread("idea", rs.all_edges())
+    assert [r["id"] for r in t["order"]] == ["idea", "decision", "pr1"]
+    assert t["heads"] == ["pr1"]
