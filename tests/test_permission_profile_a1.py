@@ -306,3 +306,104 @@ class TestPermissionsEdgeCases:
         )
         assert result["agent_id"] == "my-custom-agent"
         assert result["trust_level"] == "trusted-local"
+
+
+# ---------------------------------------------------------------------------
+# a2: get_resume_brief includes permissions section
+# ---------------------------------------------------------------------------
+
+
+class TestResumeBriefIncludesPermissions:
+    """a2: verify the permissions section is embedded in get_resume_brief."""
+
+    def test_resume_brief_has_permissions_governance_off(self, tmp_path, monkeypatch):
+        """Default (governance off): resume brief markdown includes permissions."""
+        monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+        engram = _setup_identity(tmp_path)
+        r = _make_retrieval(engram)
+        brief = r.get_resume_brief(project_folder="", token_budget=4000)
+        assert isinstance(brief, dict)
+        assert "markdown" in brief
+
+        from piia_engram import governance_runtime as grt
+        from piia_engram.mcp_server import _format_permissions_section
+        perms = grt.describe_caller_permissions(engram)
+        perm_section = _format_permissions_section(perms)
+
+        # Simulate what mcp_server does: inject before </engram-resume>
+        md = brief["markdown"]
+        close_tag = "</engram-resume>"
+        assert close_tag in md, "Resume brief should have closing XML tag"
+        injected = md.replace(close_tag, perm_section + "\n" + close_tag, 1)
+
+        assert "## Caller Permissions" in injected
+        assert "disabled" in injected
+        # Permissions section should be INSIDE the engram-resume tags
+        perm_pos = injected.index("Caller Permissions")
+        close_pos = injected.index(close_tag)
+        assert perm_pos < close_pos
+
+    def test_resume_brief_owner_sees_permissions(self, tmp_path, monkeypatch):
+        """Governance on + owner: resume brief passes gate with permissions."""
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "cli")
+        engram = _setup_identity(tmp_path)
+        r = _make_retrieval(engram)
+        brief = r.get_resume_brief(project_folder="", token_budget=4000)
+
+        from piia_engram import governance_runtime as grt
+        from piia_engram.mcp_server import _format_permissions_section
+        perms = grt.describe_caller_permissions(engram)
+        perm_section = _format_permissions_section(perms)
+        md = brief["markdown"]
+        close_tag = "</engram-resume>"
+        brief["markdown"] = md.replace(close_tag, perm_section + "\n" + close_tag, 1)
+
+        # Owner should pass the gate
+        governed = grt.maybe_govern_owner_only(engram, brief, tool="get_resume_brief")
+        assert isinstance(governed, dict)
+        assert "Caller Permissions" in governed["markdown"]
+        assert "private-self" in governed["markdown"]
+
+    def test_resume_brief_non_owner_no_leak(self, tmp_path, monkeypatch):
+        """Governance on + non-owner: permissions don't leak through gate."""
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "random_web_bot")
+        engram = _setup_identity(tmp_path)
+        r = _make_retrieval(engram)
+        brief = r.get_resume_brief(project_folder="", token_budget=4000)
+
+        from piia_engram import governance_runtime as grt
+        from piia_engram.mcp_server import _format_permissions_section
+        perms = grt.describe_caller_permissions(engram)
+        perm_section = _format_permissions_section(perms)
+        md = brief["markdown"]
+        close_tag = "</engram-resume>"
+        brief["markdown"] = md.replace(close_tag, perm_section + "\n" + close_tag, 1)
+
+        governed = grt.maybe_govern_owner_only(engram, brief, tool="get_resume_brief")
+        # Non-owner gets withheld stub
+        assert isinstance(governed, dict)
+        assert "Caller Permissions" not in str(governed)
+        assert governed.get("governance_withheld") is True
+
+    def test_permissions_inside_engram_resume_tags(self, tmp_path, monkeypatch):
+        """Permissions section must be inside the <engram-resume> wrapper."""
+        monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+        engram = _setup_identity(tmp_path)
+        r = _make_retrieval(engram)
+        brief = r.get_resume_brief(project_folder="", token_budget=4000)
+
+        from piia_engram import governance_runtime as grt
+        from piia_engram.mcp_server import _format_permissions_section
+        perms = grt.describe_caller_permissions(engram)
+        perm_section = _format_permissions_section(perms)
+        md = brief["markdown"]
+        close_tag = "</engram-resume>"
+        injected = md.replace(close_tag, perm_section + "\n" + close_tag, 1)
+
+        # Verify ordering: <engram-resume> ... Caller Permissions ... </engram-resume>
+        open_pos = injected.index("<engram-resume")
+        perm_pos = injected.index("Caller Permissions")
+        close_pos = injected.index("</engram-resume>")
+        assert open_pos < perm_pos < close_pos

@@ -3413,6 +3413,19 @@ async def get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
     )
+    # a2: embed caller permissions into the brief's markdown body
+    # (same pattern as a1 in get_user_context, but targeting the dict)
+    perms = _gov_rt.describe_caller_permissions(_engram.root)
+    perm_section = _format_permissions_section(perms)
+    if isinstance(brief, dict) and "markdown" in brief:
+        md = brief["markdown"]
+        close_tag = "</engram-resume>"
+        if close_tag in md:
+            brief["markdown"] = md.replace(
+                close_tag, perm_section + "\n" + close_tag, 1
+            )
+        else:
+            brief["markdown"] = md + perm_section
     # Resume brief bundles top lessons/decisions + recent context; owner-only.
     brief = _gov_rt.maybe_govern_owner_only(
         _engram.root, brief, tool="get_resume_brief"
