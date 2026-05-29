@@ -97,6 +97,16 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             if salt_path.is_file():
                 salt = salt_path.read_bytes()
             else:
+                # Fail-closed: if corpus files already contain enc:v2c: data
+                # but the salt is missing, refuse to create a new salt — that
+                # would make existing data permanently unreadable.
+                if self._has_existing_ciphertext():
+                    raise RuntimeError(
+                        f".corpus_salt is missing from {self.root} but encrypted "
+                        "corpus data (enc:v2c:) exists. Restore the original "
+                        ".corpus_salt file to recover your data. Creating a new "
+                        "salt would make existing data permanently unreadable."
+                    )
                 salt = os.urandom(16)
                 self.root.mkdir(parents=True, exist_ok=True)
                 salt_path.write_bytes(salt)
@@ -277,6 +287,27 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             _write_json(self._session_state_path, data)
         except Exception:
             pass
+
+    def _has_existing_ciphertext(self) -> bool:
+        """Quick check: do any corpus files contain enc:v2c: data?
+
+        Scans the first 4KB of knowledge/*.json and playbooks/*.json for the
+        corpus encryption prefix. Used during init to fail-closed when
+        .corpus_salt is missing but encrypted data exists.
+        """
+        from .crypto import ENC_PREFIX_V2C
+        marker = ENC_PREFIX_V2C.encode("ascii")
+        for pattern in ("knowledge/*.json", "playbooks/*.json"):
+            for path in self.root.glob(pattern):
+                if path.name == "_index.json":
+                    continue
+                try:
+                    head = path.read_bytes()[:4096]
+                    if marker in head:
+                        return True
+                except OSError:
+                    continue
+        return False
 
     def _ensure_structure(self) -> None:
         """Create directory structure if it doesn't exist."""
@@ -1030,13 +1061,25 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
     # ------------------------------------------------------------------
 
     def _read_playbook_index(self) -> list[dict]:
-        """Read the lightweight playbook index."""
+        """Read the lightweight playbook index (with corpus decryption of title)."""
         data = _read_json(self._playbooks_dir / "_index.json")
-        if isinstance(data, list):
-            return data
-        return []
+        if not isinstance(data, list):
+            return []
+        if self._corpus_key:
+            for entry in data:
+                if "title" in entry and isinstance(entry["title"], str):
+                    entry["title"] = self._crypto.corpus_decrypt(
+                        entry["title"], self._corpus_key)
+        return data
 
     def _write_playbook_index(self, entries: list[dict]) -> None:
+        """Write the playbook index (with corpus encryption of title)."""
+        if self._corpus_key:
+            entries = [dict(e) for e in entries]
+            for e in entries:
+                if "title" in e and isinstance(e["title"], str):
+                    e["title"] = self._crypto.corpus_encrypt(
+                        e["title"], self._corpus_key)
         _write_json(self._playbooks_dir / "_index.json", entries)
 
     def _read_playbook_by_id(self, playbook_id: str) -> dict | None:
@@ -1380,6 +1423,58 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
     def _execution_path(self, playbook_id: str) -> Path:
         return self._executions_dir() / f"{playbook_id}.json"
 
+    def _encrypt_execution_plan(self, plan: dict) -> dict:
+        """Encrypt sensitive fields in an execution plan for at-rest storage."""
+        if not self._corpus_key:
+            return plan
+        result = dict(plan)
+        # Encrypt title (derived from playbook)
+        if "title" in result and isinstance(result["title"], str):
+            result["title"] = self._crypto.corpus_encrypt(result["title"], self._corpus_key)
+        # Encrypt step action/detail and list fields
+        for list_field in ("execution_plan", "pitfalls", "preconditions"):
+            if list_field not in result or not isinstance(result[list_field], list):
+                continue
+            encrypted_items = []
+            for item in result[list_field]:
+                if isinstance(item, dict):
+                    d = dict(item)
+                    for k in ("action", "detail"):
+                        if k in d and isinstance(d[k], str):
+                            d[k] = self._crypto.corpus_encrypt(d[k], self._corpus_key)
+                    encrypted_items.append(d)
+                elif isinstance(item, str):
+                    encrypted_items.append(self._crypto.corpus_encrypt(item, self._corpus_key))
+                else:
+                    encrypted_items.append(item)
+            result[list_field] = encrypted_items
+        return result
+
+    def _decrypt_execution_plan(self, plan: dict) -> dict:
+        """Decrypt sensitive fields in an execution plan for in-memory use."""
+        if not self._corpus_key or not isinstance(plan, dict):
+            return plan
+        result = dict(plan)
+        if "title" in result and isinstance(result["title"], str):
+            result["title"] = self._crypto.corpus_decrypt(result["title"], self._corpus_key)
+        for list_field in ("execution_plan", "pitfalls", "preconditions"):
+            if list_field not in result or not isinstance(result[list_field], list):
+                continue
+            decrypted_items = []
+            for item in result[list_field]:
+                if isinstance(item, dict):
+                    d = dict(item)
+                    for k in ("action", "detail"):
+                        if k in d and isinstance(d[k], str):
+                            d[k] = self._crypto.corpus_decrypt(d[k], self._corpus_key)
+                    decrypted_items.append(d)
+                elif isinstance(item, str):
+                    decrypted_items.append(self._crypto.corpus_decrypt(item, self._corpus_key))
+                else:
+                    decrypted_items.append(item)
+            result[list_field] = decrypted_items
+        return result
+
     def save_execution_plan(self, plan: dict) -> dict:
         """Persist an execution plan returned by prepare_playbook_execution."""
         pid = plan.get("playbook_id", "")
@@ -1387,7 +1482,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             return {"error": "missing playbook_id"}
         plan["started_at"] = _now_iso()
         plan["updated_at"] = _now_iso()
-        _write_json(self._execution_path(pid), plan)
+        _write_json(self._execution_path(pid), self._encrypt_execution_plan(plan))
         return {"status": "saved", "playbook_id": pid}
 
     def update_execution_step(
@@ -1453,6 +1548,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         plan = _read_json(self._execution_path(playbook_id))
         if not plan:
             return {"error": f"no execution plan found for {playbook_id}"}
+        plan = self._decrypt_execution_plan(plan)
         steps = plan.get("execution_plan", [])
         return {
             "playbook_id": playbook_id,
@@ -1979,8 +2075,13 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 "trust_boundaries": self.get_trust_boundaries(),
             },
             "knowledge": {
-                "lessons": _read_json(self._knowledge_dir / "lessons.json") or [],
-                "decisions": _read_json(self._knowledge_dir / "decisions.json") or [],
+                # Export decrypted plaintext so backups are portable across
+                # different .corpus_salt / ENGRAM_SECRET combinations.
+                # The backup file itself should be protected by the user.
+                "lessons": self._read_entries(
+                    self._knowledge_dir / "lessons.json", "lesson"),
+                "decisions": self._read_entries(
+                    self._knowledge_dir / "decisions.json", "decision"),
                 "domains": self.get_domains(),
                 "playbooks": self._export_playbooks(),
             },

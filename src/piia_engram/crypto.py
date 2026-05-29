@@ -251,22 +251,27 @@ class EncryptionEngine:
     def encrypt_entry(self, entry: dict, key: bytes, entry_type: str) -> dict:
         """Encrypt content fields of a knowledge entry for at-rest storage.
 
-        Only STRING content fields are encrypted (summary, detail, question,
-        choice, reasoning, title, description, outcome). Metadata (id,
-        sensitivity, domain, timestamps, etc.) stays plaintext for search/filter.
-        Compound fields (steps, pitfalls, preconditions) are NOT encrypted in v1.
+        String content fields (summary, detail, question, choice, reasoning,
+        title, description, outcome) are encrypted directly. Compound fields
+        (steps, pitfalls, preconditions) have their string sub-values encrypted
+        recursively. Metadata (id, sensitivity, domain, timestamps, etc.)
+        stays plaintext for search/filter.
 
         Idempotent: already-encrypted fields are returned as-is.
         """
         if not self.enabled or not key or not isinstance(entry, dict):
             return entry
         fields = CORPUS_CONTENT_FIELDS.get(entry_type, frozenset())
-        if not fields:
+        compound = CORPUS_COMPOUND_FIELDS.get(entry_type, {})
+        if not fields and not compound:
             return entry
         result = dict(entry)
         for field in fields:
             if field in result and isinstance(result[field], str):
                 result[field] = self.corpus_encrypt(result[field], key)
+        for field, sub_keys in compound.items():
+            if field in result and isinstance(result[field], list):
+                result[field] = self._encrypt_compound(result[field], key, sub_keys)
         return result
 
     def decrypt_entry(self, entry: dict, key: bytes, entry_type: str,
@@ -279,25 +284,89 @@ class EncryptionEngine:
         if not self.enabled or not key or not isinstance(entry, dict):
             return entry
         fields = CORPUS_CONTENT_FIELDS.get(entry_type, frozenset())
-        if not fields:
+        compound = CORPUS_COMPOUND_FIELDS.get(entry_type, {})
+        if not fields and not compound:
             return entry
         result = dict(entry)
         for field in fields:
             if field in result and isinstance(result[field], str):
                 result[field] = self.corpus_decrypt(result[field], key, strict=strict)
+        for field, sub_keys in compound.items():
+            if field in result and isinstance(result[field], list):
+                result[field] = self._decrypt_compound(result[field], key, sub_keys, strict=strict)
+        return result
+
+    def _encrypt_compound(self, items: list, key: bytes,
+                          sub_keys: frozenset[str] | None) -> list:
+        """Encrypt string values in a list of compound items.
+
+        If *sub_keys* is ``None``, each item is a bare string to encrypt.
+        Otherwise each item is a dict, and only the named *sub_keys* are
+        encrypted (other keys pass through as metadata).
+        """
+        result = []
+        for item in items:
+            if sub_keys is None:
+                # List of strings (pitfalls, preconditions)
+                if isinstance(item, str):
+                    result.append(self.corpus_encrypt(item, key))
+                else:
+                    result.append(item)
+            elif isinstance(item, dict):
+                d = dict(item)
+                for k in sub_keys:
+                    if k in d and isinstance(d[k], str):
+                        d[k] = self.corpus_encrypt(d[k], key)
+                result.append(d)
+            elif isinstance(item, str):
+                # Legacy string steps
+                result.append(self.corpus_encrypt(item, key))
+            else:
+                result.append(item)
+        return result
+
+    def _decrypt_compound(self, items: list, key: bytes,
+                          sub_keys: frozenset[str] | None,
+                          *, strict: bool = False) -> list:
+        """Decrypt string values in a list of compound items."""
+        result = []
+        for item in items:
+            if sub_keys is None:
+                if isinstance(item, str):
+                    result.append(self.corpus_decrypt(item, key, strict=strict))
+                else:
+                    result.append(item)
+            elif isinstance(item, dict):
+                d = dict(item)
+                for k in sub_keys:
+                    if k in d and isinstance(d[k], str):
+                        d[k] = self.corpus_decrypt(d[k], key, strict=strict)
+                result.append(d)
+            elif isinstance(item, str):
+                result.append(self.corpus_decrypt(item, key, strict=strict))
+            else:
+                result.append(item)
         return result
 
 
 # ---------------------------------------------------------------------------
 # Corpus content field definitions (per entry type)
 # ---------------------------------------------------------------------------
-# Only STRING fields are encrypted. Compound fields (lists: steps, pitfalls,
-# preconditions, alternatives) are NOT encrypted in v1 — they carry less
-# sensitive data (action verbs, keyword lists) vs. the narrative content in
-# summaries/choices/reasoning.
+# String fields are encrypted directly via corpus_encrypt.
+# Compound fields (lists) are encrypted recursively:
+#   - frozenset value → encrypt only those sub-keys in each dict item
+#   - None value → each list item is a bare string to encrypt
 
 CORPUS_CONTENT_FIELDS: dict[str, frozenset[str]] = {
     "lesson": frozenset({"summary", "detail"}),
     "decision": frozenset({"question", "choice", "reasoning"}),
     "playbook": frozenset({"title", "description", "outcome"}),
+}
+
+CORPUS_COMPOUND_FIELDS: dict[str, dict[str, frozenset[str] | None]] = {
+    "playbook": {
+        "steps": frozenset({"action", "detail"}),   # encrypt action/detail in each step dict
+        "pitfalls": None,       # each item is a bare string
+        "preconditions": None,  # each item is a bare string
+    },
 }

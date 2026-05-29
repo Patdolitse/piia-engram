@@ -607,3 +607,258 @@ class TestNoPlaintextLeakOnWriteBack:
         assert target["summary"].startswith("enc:v2c:"), \
             "update_lesson leaked plaintext to disk!"
         assert target["domain"] == "devops"
+
+
+# ---------------------------------------------------------------------------
+# Codex audit regression tests — derived-data plaintext leak prevention
+# ---------------------------------------------------------------------------
+
+# Unique marker that we search for in raw file bytes to detect plaintext leaks
+_MARKER = "CODEX_A5_PLAINTEXT_PROBE_"
+
+
+def _scan_root_for_marker(root: Path, marker: str) -> list[str]:
+    """Scan ALL files under root for the marker string (case-insensitive).
+
+    Returns list of relative paths where the marker was found.
+    """
+    marker_bytes = marker.lower().encode("utf-8")
+    hits = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            data = path.read_bytes().lower()
+            if marker_bytes in data:
+                hits.append(str(path.relative_to(root)))
+        except OSError:
+            continue
+    return hits
+
+
+class TestCodexAuditRegressions:
+    """Regression tests for all Codex a5 audit FAIL findings.
+
+    Each test writes data with unique markers, then scans ALL files under
+    the engram root to verify no plaintext marker appears on disk.
+    """
+
+    def test_playbook_index_no_plaintext_title(self, tmp_path, monkeypatch):
+        """#1: _index.json must not contain plaintext playbook title."""
+        monkeypatch.setenv("ENGRAM_SECRET", "index-title-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        title = f"{_MARKER}INDEX_TITLE"
+        e.add_playbook({
+            "title": title,
+            "steps": [{"order": 1, "action": "test"}],
+            "triggers": ["test"],
+        })
+
+        # _index.json must NOT contain the plaintext title
+        index_raw = (engram / "playbooks" / "_index.json").read_bytes()
+        assert title.encode() not in index_raw, \
+            "_index.json contains plaintext title!"
+        # But in-memory read must return plaintext
+        index = e._read_playbook_index()
+        titles = [entry.get("title", "") for entry in index]
+        assert title in titles
+
+    def test_hybrid_search_index_no_plaintext_corpus(self, tmp_path, monkeypatch):
+        """#2: search_index.db must not materialise decrypted content."""
+        monkeypatch.setenv("ENGRAM_SECRET", "hybrid-index-key")
+        monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        marker = f"{_MARKER}HYBRID_LESSON"
+        e.add_lesson({"summary": marker})
+
+        # Trigger search to potentially build hybrid index
+        e.search_knowledge("test")
+
+        # search_index.db must not exist or must not contain our marker
+        db_path = engram / "search_index.db"
+        if db_path.exists():
+            data = db_path.read_bytes().lower()
+            assert marker.lower().encode() not in data, \
+                "search_index.db contains plaintext corpus content!"
+
+    def test_execution_plan_no_plaintext(self, tmp_path, monkeypatch):
+        """#3: execution plan must not contain plaintext title or step content."""
+        monkeypatch.setenv("ENGRAM_SECRET", "exec-plan-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        title = f"{_MARKER}EXEC_TITLE"
+        action = f"{_MARKER}EXEC_STEP_ACTION"
+        result = e.add_playbook({
+            "title": title,
+            "steps": [{"order": 1, "action": action, "detail": "detail"}],
+            "triggers": ["exec"],
+        })
+        pb_id = result["id"]
+
+        # Prepare execution → writes execution plan to disk
+        e.prepare_playbook_execution(pb_id)
+
+        exec_path = engram / "playbooks" / "executions" / f"{pb_id}.json"
+        assert exec_path.exists()
+        raw = exec_path.read_bytes()
+        assert title.encode() not in raw, \
+            "Execution plan contains plaintext title!"
+        assert action.encode() not in raw, \
+            "Execution plan contains plaintext step action!"
+
+        # get_execution_status must return decrypted values
+        status = e.get_execution_status(pb_id)
+        assert status.get("title") == title
+
+    def test_playbook_steps_encrypted_on_disk(self, tmp_path, monkeypatch):
+        """#4: Playbook steps action/detail must be encrypted on disk."""
+        monkeypatch.setenv("ENGRAM_SECRET", "steps-enc-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        action_marker = f"{_MARKER}STEP_ACTION"
+        detail_marker = f"{_MARKER}STEP_DETAIL"
+        pitfall_marker = f"{_MARKER}PITFALL"
+        result = e.add_playbook({
+            "title": "test playbook",
+            "steps": [
+                {"order": 1, "action": action_marker, "detail": detail_marker},
+            ],
+            "pitfalls": [pitfall_marker],
+            "triggers": ["test"],
+        })
+        pb_id = result["id"]
+
+        # On disk: steps and pitfalls must be encrypted
+        pb_raw = (engram / "playbooks" / f"{pb_id}.json").read_bytes()
+        assert action_marker.encode() not in pb_raw, \
+            "Playbook file contains plaintext step action!"
+        assert detail_marker.encode() not in pb_raw, \
+            "Playbook file contains plaintext step detail!"
+        assert pitfall_marker.encode() not in pb_raw, \
+            "Playbook file contains plaintext pitfall!"
+
+        # In-memory: get_playbook must return decrypted steps
+        pb = e.get_playbook(pb_id)
+        assert pb["steps"][0]["action"] == action_marker
+        assert pb["steps"][0]["detail"] == detail_marker
+        assert pb["pitfalls"][0] == pitfall_marker
+
+    def test_export_import_roundtrip_across_roots(self, tmp_path, monkeypatch):
+        """#5: Export+import to a different root with same passphrase must
+        produce readable (not ciphertext) data in the destination."""
+        passphrase = "cross-root-key"
+
+        # Root A: create data
+        root_a = tmp_path / "root_a"
+        engram_a = _setup_engram(root_a)
+        monkeypatch.setenv("ENGRAM_SECRET", passphrase)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram_a))
+        ea = _make_engram(engram_a)
+
+        lesson_text = f"{_MARKER}EXPORT_LESSON"
+        ea.add_lesson({"summary": lesson_text})
+
+        # Export from root A
+        export_path = tmp_path / "backup.json"
+        ea.export_all(str(export_path))
+
+        # Verify export contains plaintext (not ciphertext)
+        export_data = json.loads(export_path.read_text(encoding="utf-8"))
+        exported_summaries = [
+            l.get("summary", "") for l in export_data["knowledge"]["lessons"]
+        ]
+        assert lesson_text in exported_summaries, \
+            "Export file contains ciphertext instead of plaintext!"
+
+        # Root B: import
+        root_b = tmp_path / "root_b"
+        engram_b = _setup_engram(root_b)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram_b))
+        eb = _make_engram(engram_b)
+
+        eb.import_all(str(export_path))
+
+        # Root B must have readable data
+        lessons = eb.get_lessons()
+        summaries = [l["summary"] for l in lessons]
+        assert lesson_text in summaries, \
+            "Imported lesson is not readable in the new root!"
+        # And it should be encrypted on disk in root B
+        raw = json.loads(
+            (engram_b / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+        )
+        enc_count = sum(1 for r in raw if r.get("summary", "").startswith("enc:v2c:"))
+        assert enc_count > 0, "Imported data not encrypted on disk in root B!"
+
+    def test_missing_salt_with_ciphertext_fails_closed(self, tmp_path, monkeypatch):
+        """#6: Deleting .corpus_salt when encrypted data exists must raise,
+        not silently create a new salt."""
+        monkeypatch.setenv("ENGRAM_SECRET", "fail-closed-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        # Write encrypted data
+        e.add_lesson({"summary": "encrypted lesson for salt test"})
+
+        # Verify data is encrypted on disk
+        raw = json.loads(
+            (engram / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+        )
+        assert raw[0]["summary"].startswith("enc:v2c:")
+
+        # Delete the salt
+        salt_path = engram / ".corpus_salt"
+        assert salt_path.exists()
+        salt_path.unlink()
+
+        # Attempting to create a new Engram must fail, not silently create new salt
+        import sys
+        sys.path.insert(0, str(_ROOT / "src"))
+        from piia_engram.core import Engram
+        with pytest.raises(RuntimeError, match="corpus_salt.*missing"):
+            Engram(engram)
+
+    def test_full_root_scan_no_plaintext_markers(self, tmp_path, monkeypatch):
+        """Comprehensive: after writing lessons/decisions/playbooks and
+        triggering all derived-write paths, scan EVERY file under root
+        for any plaintext marker. This is the master no-leak invariant."""
+        monkeypatch.setenv("ENGRAM_SECRET", "full-scan-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        # Write data with unique markers
+        lesson_marker = f"{_MARKER}FULL_LESSON"
+        decision_marker = f"{_MARKER}FULL_DECISION"
+        pb_title_marker = f"{_MARKER}FULL_PB_TITLE"
+        step_marker = f"{_MARKER}FULL_STEP"
+
+        e.add_lesson({"summary": lesson_marker})
+        e.add_decision({"question": decision_marker, "choice": "c"})
+        pb = e.add_playbook({
+            "title": pb_title_marker,
+            "steps": [{"order": 1, "action": step_marker}],
+            "triggers": ["test"],
+        })
+
+        # Trigger derived writes
+        if pb.get("id"):
+            e.prepare_playbook_execution(pb["id"])
+
+        # Scan everything
+        for marker in (lesson_marker, decision_marker,
+                       pb_title_marker, step_marker):
+            hits = _scan_root_for_marker(engram, marker)
+            assert not hits, \
+                f"Plaintext marker '{marker}' found in: {hits}"

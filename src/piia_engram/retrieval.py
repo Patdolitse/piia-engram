@@ -612,7 +612,11 @@ class RetrievalMixin:
         # in the index file (Codex round-19). Falling back to the keyword path
         # (hybrid_idx stays None) writes nothing.
         hybrid_idx = None
-        if allow_hybrid_index and self._hybrid_enabled():
+        # Corpus encryption enabled → suppress persistent hybrid index to
+        # prevent decrypted content from being materialised into search_index.db
+        # (Codex a5 audit finding #2). Fall back to keyword-only path.
+        corpus_encrypted = bool(getattr(self, "_corpus_key", b""))
+        if allow_hybrid_index and self._hybrid_enabled() and not corpus_encrypted:
             hybrid_idx = self._ensure_index_fresh(self._all_indexable_entries())
 
         if scope in ("all", "lessons"):
