@@ -90,6 +90,17 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         from piia_engram.crypto import EncryptionEngine
         secret = os.environ.get("ENGRAM_SECRET", "").strip()
         self._crypto = EncryptionEngine(secret if secret else None)
+        # Corpus encryption key (derived once, reused for all entry I/O)
+        self._corpus_key: bytes = b""
+        if self._crypto.enabled:
+            salt_path = self.root / ".corpus_salt"
+            if salt_path.is_file():
+                salt = salt_path.read_bytes()
+            else:
+                salt = os.urandom(16)
+                self.root.mkdir(parents=True, exist_ok=True)
+                salt_path.write_bytes(salt)
+            self._corpus_key = self._crypto.derive_corpus_key(salt)
 
         # Audit logger (disabled unless ENGRAM_AUDIT=1/true/yes)
         from piia_engram.audit import AuditLogger
@@ -558,6 +569,32 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
 
         return entry
 
+    # ------------------------------------------------------------------
+    # Corpus encryption helpers (transparent when ENGRAM_SECRET not set)
+    # ------------------------------------------------------------------
+
+    def _write_entries(self, path: Path, entries: list[dict], entry_type: str):
+        """Write knowledge entries with corpus encryption if enabled."""
+        if self._corpus_key:
+            entries = [self._crypto.encrypt_entry(e, self._corpus_key, entry_type)
+                       for e in entries]
+        _write_json(path, entries)
+
+    def _write_playbook_file(self, path: Path, pb: dict):
+        """Write a single playbook file with corpus encryption if enabled."""
+        if self._corpus_key:
+            pb = self._crypto.encrypt_entry(pb, self._corpus_key, "playbook")
+        _write_json(path, pb)
+
+    def _read_playbook_file(self, path: Path) -> dict:
+        """Read a single playbook file with corpus decryption."""
+        data = _read_json(path)
+        if not isinstance(data, dict):
+            return {}
+        if self._corpus_key:
+            return self._crypto.decrypt_entry(data, self._corpus_key, "playbook")
+        return data
+
     def _read_entries(self, path: Path, entry_type: str) -> list[dict]:
         entries = _read_json(path)
         if not isinstance(entries, list):
@@ -573,7 +610,12 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             ensured.append(item)
 
         if changed:
-            _write_json(path, ensured)
+            _write_json(path, ensured)  # preserves encrypted fields as-is
+
+        # Decrypt content fields for in-memory use
+        if self._corpus_key:
+            return [self._crypto.decrypt_entry(e, self._corpus_key, entry_type)
+                    for e in ensured]
         return ensured
 
     def add_lesson(
@@ -672,7 +714,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 staging = []
                 verified = verified[remaining:]  # drop oldest verified as last resort
             lessons = verified + staging
-        _write_json(path, lessons)
+        self._write_entries(path, lessons, "lesson")
 
         summary = new_lesson.get("summary", "")
         self._audit.log("write", "knowledge/lessons", detail=summary[:100])
@@ -709,7 +751,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             for lesson in result:
                 lesson["last_reviewed"] = now
                 lesson["access_count"] = lesson.get("access_count", 0) + 1
-            _write_json(path, lessons)
+            self._write_entries(path, lessons, "lesson")
         self._audit.log("read", "knowledge/lessons", detail=f"returned {len(result)} items")
         return result
 
@@ -747,7 +789,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                             new_tier = value
                     lesson[key] = value
                 lesson["last_updated"] = _now_iso()
-                _write_json(path, lessons)
+                self._write_entries(path, lessons, "lesson")
                 if tier_changed:
                     self._audit.log(
                         "write",
@@ -874,7 +916,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 staging = []
                 verified = verified[remaining:]
             decisions = verified + staging
-        _write_json(path, decisions)
+        self._write_entries(path, decisions, "decision")
         title = new_decision.get("question", "") or new_decision.get("title", "")
         self._audit.log("write", "knowledge/decisions", detail=title[:100])
 
@@ -924,7 +966,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             for decision in result:
                 decision["last_reviewed"] = now
                 decision["access_count"] = decision.get("access_count", 0) + 1
-            _write_json(path, decisions)
+            self._write_entries(path, decisions, "decision")
         self._audit.log("read", "knowledge/decisions", detail=f"returned {len(result)} items")
         return result
 
@@ -969,7 +1011,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                             new_tier = value
                     decision[key] = value
                 decision["last_updated"] = _now_iso()
-                _write_json(path, decisions)
+                self._write_entries(path, decisions, "decision")
                 if tier_changed:
                     self._audit.log(
                         "write",
@@ -998,12 +1040,11 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         _write_json(self._playbooks_dir / "_index.json", entries)
 
     def _read_playbook_by_id(self, playbook_id: str) -> dict | None:
-        """Read a single playbook file by ID."""
+        """Read a single playbook file by ID (with corpus decryption)."""
         path = self._playbooks_dir / f"{playbook_id}.json"
         if not path.exists():
             return None
-        data = _read_json(path)
-        return data if isinstance(data, dict) else None
+        return self._read_playbook_file(path) or None
 
     @staticmethod
     def _extract_parameters(playbook: dict) -> list[str]:
@@ -1114,7 +1155,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
 
         # Write individual playbook file
         pb_path = self._playbooks_dir / f"{new_pb['id']}.json"
-        _write_json(pb_path, new_pb)
+        self._write_playbook_file(pb_path, new_pb)
 
         # Update index
         index.append(self._playbook_index_entry(new_pb))
@@ -1155,7 +1196,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             for pb in result:
                 pb["last_reviewed"] = now
                 pb["access_count"] = pb.get("access_count", 0) + 1
-                _write_json(self._playbooks_dir / f"{pb['id']}.json", pb)
+                self._write_playbook_file(self._playbooks_dir / f"{pb['id']}.json", pb)
 
         self._audit.log("read", "playbooks", detail=f"returned {len(result)} items")
         return result
@@ -1169,7 +1210,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if _update_access:
             pb["last_reviewed"] = _now_iso()
             pb["access_count"] = pb.get("access_count", 0) + 1
-            _write_json(self._playbooks_dir / f"{playbook_id}.json", pb)
+            self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
 
         # Always include dynamic parameters extraction
         pb["parameters"] = self._extract_parameters(pb)
@@ -1196,7 +1237,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 pb[key] = value
         pb["last_updated"] = _now_iso()
         pb["version"] = pb.get("version", 1) + 1
-        _write_json(self._playbooks_dir / f"{playbook_id}.json", pb)
+        self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
 
         # Update index entry
         index = self._read_playbook_index()
@@ -1683,13 +1724,13 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
     ) -> None:
         # Each write is individually atomic, but the writes together are not.
         # A crash between them could leave a one-sided link. Acceptable for local single-user use.
-        _write_json(self._knowledge_dir / "lessons.json", lessons)
-        _write_json(self._knowledge_dir / "decisions.json", decisions)
+        self._write_entries(self._knowledge_dir / "lessons.json", lessons, "lesson")
+        self._write_entries(self._knowledge_dir / "decisions.json", decisions, "decision")
         if playbooks is not None:
             for pb in playbooks:
                 pb_id = pb.get("id")
                 if pb_id:
-                    _write_json(self._playbooks_dir / f"{pb_id}.json", pb)
+                    self._write_playbook_file(self._playbooks_dir / f"{pb_id}.json", pb)
 
     def _find_item_in_collections(
         self,
@@ -2038,10 +2079,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                         existing_summaries.add(lesson.get("summary", ""))
                         new_count += 1
                 # Keep last MAX_KNOWLEDGE_ENTRIES
-                _write_json(self._knowledge_dir / "lessons.json", existing[-MAX_KNOWLEDGE_ENTRIES:])
+                self._write_entries(self._knowledge_dir / "lessons.json", existing[-MAX_KNOWLEDGE_ENTRIES:], "lesson")
                 imported.append(f"lessons(+{new_count})")
             else:
-                _write_json(self._knowledge_dir / "lessons.json", knowledge["lessons"][-MAX_KNOWLEDGE_ENTRIES:])
+                self._write_entries(self._knowledge_dir / "lessons.json", knowledge["lessons"][-MAX_KNOWLEDGE_ENTRIES:], "lesson")
                 imported.append(f"lessons({len(knowledge['lessons'])})")
 
         if knowledge.get("decisions"):
@@ -2054,10 +2095,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                         existing.append(decision)
                         existing_questions.add(decision.get("question", ""))
                         new_count += 1
-                _write_json(self._knowledge_dir / "decisions.json", existing[-MAX_KNOWLEDGE_ENTRIES:])
+                self._write_entries(self._knowledge_dir / "decisions.json", existing[-MAX_KNOWLEDGE_ENTRIES:], "decision")
                 imported.append(f"decisions(+{new_count})")
             else:
-                _write_json(self._knowledge_dir / "decisions.json", knowledge["decisions"][-MAX_KNOWLEDGE_ENTRIES:])
+                self._write_entries(self._knowledge_dir / "decisions.json", knowledge["decisions"][-MAX_KNOWLEDGE_ENTRIES:], "decision")
                 imported.append(f"decisions({len(knowledge['decisions'])})")
 
         if knowledge.get("domains"):
@@ -2084,7 +2125,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             for pb in knowledge["playbooks"]:
                 if pb.get("title") not in existing_titles:
                     pb = self._ensure_playbook_fields(pb)
-                    _write_json(self._playbooks_dir / f"{pb['id']}.json", pb)
+                    self._write_playbook_file(self._playbooks_dir / f"{pb['id']}.json", pb)
                     existing_index.append(self._playbook_index_entry(pb))
                     existing_titles.add(pb.get("title", ""))
                     new_count += 1

@@ -3,12 +3,16 @@
 Uses AES-GCM 256 symmetric encryption.
 Key is derived from user passphrase (ENGRAM_SECRET) via PBKDF2-SHA256 + random salt.
 
-Two encryption versions are supported on disk:
+Three encryption versions are supported on disk:
+
 - ``enc:v1:`` — legacy 100,000 PBKDF2 iterations (still decrypted, never re-emitted).
 - ``enc:v2:`` — current 600,000 PBKDF2 iterations (matches OWASP 2023+ guidance).
+  Used for identity/profile fields (infrequent encrypt/decrypt).
+- ``enc:v2c:`` — corpus encryption. Pre-derived key (PBKDF2-SHA256 600K, fixed
+  per-engram salt) + per-field random nonce. Fast enough for bulk re-encryption
+  of 200+ knowledge entries on every write. Used for lessons/decisions/playbooks.
 
-New writes always use ``enc:v2:``.  When a v1 ciphertext is decrypted and later
-re-encrypted (e.g. when the user updates the field), it is upgraded to v2.
+New profile writes use ``enc:v2:``.  New corpus writes use ``enc:v2c:``.
 
 Requires the `cryptography` package (optional dependency):
     pip install piia-engram[secure]
@@ -36,8 +40,9 @@ class DecryptionError(Exception):
 # Encryption prefix markers — version-aware on disk for forward upgrades
 ENC_PREFIX_V1 = "enc:v1:"
 ENC_PREFIX_V2 = "enc:v2:"
-ENC_PREFIX = ENC_PREFIX_V2  # default for new writes
-ENC_PREFIXES = (ENC_PREFIX_V2, ENC_PREFIX_V1)
+ENC_PREFIX_V2C = "enc:v2c:"  # corpus encryption (pre-derived key)
+ENC_PREFIX = ENC_PREFIX_V2  # default for new profile writes
+ENC_PREFIXES = (ENC_PREFIX_V2C, ENC_PREFIX_V2, ENC_PREFIX_V1)
 
 # PBKDF2 iteration counts per version
 PBKDF2_ITERATIONS_V1 = 100_000   # legacy, decrypt-only
@@ -67,6 +72,9 @@ class EncryptionEngine:
         """Initialize. If secret is None, encryption is disabled (passthrough)."""
         self._secret = secret or ""
         self.enabled = bool(secret) and HAS_CRYPTO
+        # Corpus key cache (derived once, reused for all entry encrypt/decrypt)
+        self._corpus_cache_salt: bytes = b""
+        self._corpus_cache_key: bytes = b""
         if secret and not HAS_CRYPTO:
             raise RuntimeError(
                 "ENGRAM_SECRET is set but 'cryptography' package is not installed. "
@@ -164,3 +172,132 @@ class EncryptionEngine:
             if field in result and isinstance(result[field], str):
                 result[field] = self.decrypt(result[field], strict=strict)
         return result
+
+    # ------------------------------------------------------------------
+    # Corpus encryption — fast bulk encrypt/decrypt for knowledge entries
+    # ------------------------------------------------------------------
+
+    def derive_corpus_key(self, salt: bytes) -> bytes:
+        """Derive and cache the corpus encryption key from ENGRAM_SECRET + salt.
+
+        The key is derived ONCE (PBKDF2-SHA256, 600K iterations) and cached
+        for the lifetime of this engine instance. Subsequent calls with the
+        same salt return the cached key instantly; a different salt forces
+        re-derivation (should not happen in normal use).
+
+        Returns empty bytes when encryption is disabled.
+        """
+        if not self.enabled:
+            return b""
+        if self._corpus_cache_salt == salt and self._corpus_cache_key:
+            return self._corpus_cache_key
+        key = _derive_key(self._secret, salt, PBKDF2_ITERATIONS_V2)
+        self._corpus_cache_salt = salt
+        self._corpus_cache_key = key
+        return key
+
+    def corpus_encrypt(self, value: str, key: bytes) -> str:
+        """Encrypt a string using the pre-derived corpus key.
+
+        Fast: AES-GCM with random nonce, no per-field PBKDF2. Already-encrypted
+        values are returned as-is (idempotent). Empty/falsy values pass through.
+        """
+        if not self.enabled or not key or not value:
+            return value
+        if _starts_with_enc_prefix(value):
+            return value  # already encrypted
+        nonce = os.urandom(12)
+        aesgcm = AESGCM(key)
+        ciphertext = aesgcm.encrypt(nonce, value.encode("utf-8"), None)
+        payload = base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
+        return f"{ENC_PREFIX_V2C}{payload}"
+
+    def corpus_decrypt(self, value: str, key: bytes, *, strict: bool = False) -> str:
+        """Decrypt a corpus-encrypted string using the pre-derived key.
+
+        Non-encrypted values pass through. ``enc:v2c:`` uses the corpus key
+        directly; ``enc:v1:``/``enc:v2:`` fall back to the per-field PBKDF2
+        path (in case a field was encrypted with the profile method).
+
+        Args:
+            strict: When True, raise DecryptionError on failure instead of
+                returning ciphertext.
+        """
+        if not self.enabled or not isinstance(value, str):
+            return value
+        if not _starts_with_enc_prefix(value):
+            return value  # plaintext — pass through
+        if value.startswith(ENC_PREFIX_V2C):
+            if not key:
+                if strict:
+                    raise DecryptionError("no corpus key available")
+                return value
+            try:
+                payload = base64.urlsafe_b64decode(value[len(ENC_PREFIX_V2C):])
+                nonce = payload[:12]
+                ciphertext = payload[12:]
+                aesgcm = AESGCM(key)
+                return aesgcm.decrypt(nonce, ciphertext, None).decode("utf-8")
+            except Exception:
+                if strict:
+                    raise DecryptionError(
+                        "corpus decryption failed (wrong key or corrupted)"
+                    ) from None
+                logger.warning("corpus decryption failed for enc:v2c: payload")
+                return value
+        # Fall back to per-field PBKDF2 (enc:v1: or enc:v2:)
+        return self.decrypt(value, strict=strict)
+
+    def encrypt_entry(self, entry: dict, key: bytes, entry_type: str) -> dict:
+        """Encrypt content fields of a knowledge entry for at-rest storage.
+
+        Only STRING content fields are encrypted (summary, detail, question,
+        choice, reasoning, title, description, outcome). Metadata (id,
+        sensitivity, domain, timestamps, etc.) stays plaintext for search/filter.
+        Compound fields (steps, pitfalls, preconditions) are NOT encrypted in v1.
+
+        Idempotent: already-encrypted fields are returned as-is.
+        """
+        if not self.enabled or not key or not isinstance(entry, dict):
+            return entry
+        fields = CORPUS_CONTENT_FIELDS.get(entry_type, frozenset())
+        if not fields:
+            return entry
+        result = dict(entry)
+        for field in fields:
+            if field in result and isinstance(result[field], str):
+                result[field] = self.corpus_encrypt(result[field], key)
+        return result
+
+    def decrypt_entry(self, entry: dict, key: bytes, entry_type: str,
+                      *, strict: bool = False) -> dict:
+        """Decrypt content fields of a knowledge entry for in-memory use.
+
+        Non-encrypted fields pass through, so mixed corpora (some entries
+        encrypted, some plaintext) are handled transparently.
+        """
+        if not self.enabled or not key or not isinstance(entry, dict):
+            return entry
+        fields = CORPUS_CONTENT_FIELDS.get(entry_type, frozenset())
+        if not fields:
+            return entry
+        result = dict(entry)
+        for field in fields:
+            if field in result and isinstance(result[field], str):
+                result[field] = self.corpus_decrypt(result[field], key, strict=strict)
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Corpus content field definitions (per entry type)
+# ---------------------------------------------------------------------------
+# Only STRING fields are encrypted. Compound fields (lists: steps, pitfalls,
+# preconditions, alternatives) are NOT encrypted in v1 — they carry less
+# sensitive data (action verbs, keyword lists) vs. the narrative content in
+# summaries/choices/reasoning.
+
+CORPUS_CONTENT_FIELDS: dict[str, frozenset[str]] = {
+    "lesson": frozenset({"summary", "detail"}),
+    "decision": frozenset({"question", "choice", "reasoning"}),
+    "playbook": frozenset({"title", "description", "outcome"}),
+}
