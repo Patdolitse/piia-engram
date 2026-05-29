@@ -6,6 +6,25 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.36.0] - 2026-05-30
+
+治理读路径副作用闭合——在 `ENGRAM_GOVERNANCE` 开启时，任何读类工具对非 owner 调用方都不会在磁盘上留下痕迹。本版本闭合了同一个 bug class（"先执行副作用，再治理返回值"）——这个问题在连续五轮独立对抗式审计中一次次换着马甲出现。
+
+### 安全
+- **读路径对非 owner 零磁盘副作用。** 治理开启时，`read-only-external` / 低信任调用方不再能通过任何读类工具触发文件写入。此前一次"被拒绝"的读，仍可能在拒绝*之前*已经落盘。已闭合的面：知识读取时的 access-count / `last_reviewed` 写回、遥测（`_track` flush 与 `_beta` 事件文件）、`audit.log` 记录、以及 `contexts/mcp_auto/*` 会话检查点（后者仅在调用次数越过阈值后才触发，单次调用的测试因此漏过了它）。
+- **权限管理工具加 owner-only 前置门控。** 授权/导入类工具（`set_caller_trust`、`revoke_caller`、import）现在在任何副作用之前就拒绝，低信任调用方无法靠"先写 grants 再被治理"自我提权。
+- **`get_identity_card` 重分类为 export-owner-only**——它的磁盘导出现在按写入面门控，不再当作普通读。
+- **所有治理门控 fail-closed。** 若 owner 解析抛异常（grants 损坏、导入失败），副作用被抑制而非放行——门控的失败模式是"拒绝"，不是"放行"。
+
+### 新增
+- **`TOOL_GOVERNANCE_CLASS`**——对每个 `@mcp.tool` 的 deny-by-default 分类。反射测试会对任何既未分类也未显式豁免的工具亮红灯，未来漏挂门控的工具无法静默发布。
+- **`maybe_refuse_owner_write`** 治理辅助函数，用于 owner-only 写/导出前置门控。
+
+### 测试
+- **治理写门控矩阵：166 个测试**——writer-spy 全 root 快照比对、对"读工具 × 客户端类型"的反射式 sweep（每个调用重复到越过遥测/检查点阈值）、root 外路径监控（伪造 `HOME`/`TEMP`）、以及 fail-closed 错误路径证明（owner 解析抛异常时仍须零写入），并配 owner 对照测试防止过度修正。
+- 每个门控都有 revert-to-RED 证明钉住：每个修复被确认在移除后会让对应回归测试变红。
+- 全量套件：**1718 passing**。
+
 ## [3.35.0] - 2026-05-29
 
 决策链完善、决策修订历史、权限档案——首个让用户能追踪决策演变过程并控制谁可以访问 Engram 数据的版本。

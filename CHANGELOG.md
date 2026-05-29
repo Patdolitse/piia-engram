@@ -6,6 +6,25 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.36.0] - 2026-05-30
+
+Governance read-path side-effect closure — under `ENGRAM_GOVERNANCE`, no read-classed tool leaves a disk trace for a non-owner caller. This release closes a single bug class ("execute the side effect first, govern the return value second") that five consecutive rounds of independent adversarial audit kept surfacing in new disguises.
+
+### Security
+- **Read paths are disk-side-effect-free for non-owners.** When governance is enabled, a `read-only-external` / low-trust caller can no longer cause any file write through a read-classed tool. Previously a "refused" read could still have written to disk *before* the refusal. Closed surfaces: access-count / `last_reviewed` write-back on knowledge reads, telemetry (`_track` flush and `_beta` event files), `audit.log` entries, and `contexts/mcp_auto/*` session checkpoints (which only triggered after a call-count threshold, so single-call tests had missed them).
+- **Owner-only pre-gate on permission-management tools.** Authorization/import tools (`set_caller_trust`, `revoke_caller`, import) now refuse before any side effect, so a low-trust caller cannot self-escalate by writing grants first and being governed second.
+- **`get_identity_card` reclassified as export-owner-only** — its on-disk export is now gated as a write surface, not treated as a plain read.
+- **All governance gates fail closed.** If owner resolution raises (corrupt grants, import failure), the side effect is suppressed rather than allowed through — the gate's failure mode is "deny", not "permit".
+
+### Added
+- **`TOOL_GOVERNANCE_CLASS`** — a deny-by-default classification of every `@mcp.tool`. A reflection test red-lights any tool that is neither classified nor explicitly exempted, so a future un-gated tool cannot ship silently.
+- **`maybe_refuse_owner_write`** governance helper for owner-only write/export pre-gating.
+
+### Tests
+- **Governance write-gate matrix: 166 tests** — writer-spy full-root snapshot diffing, a reflection sweep over read tools × client types that repeats each call past the telemetry/checkpoint thresholds, root-external path monitoring (fake `HOME`/`TEMP`), and fail-closed error-path proofs (owner resolution raising must still write nothing), with an owner-control test guarding against over-correction.
+- Every gate is pinned by a revert-to-RED proof: each fix was confirmed to make its regression test fail when removed.
+- Full suite: **1718 passing**.
+
 ## [3.35.0] - 2026-05-29
 
 Decision threads, decision history, and permission profile — the first release where users can trace how decisions evolved and control who accesses their Engram data.
