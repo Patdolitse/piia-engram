@@ -281,6 +281,17 @@ class RetrievalMixin:
                     removed = True
             except OSError:
                 continue
+        # Fail-closed: under corpus encryption a surviving search_index.db keeps
+        # decrypted bodies readable on disk. If it could not be removed (locked
+        # by another process, permission error), refuse to pretend the purge
+        # succeeded — raise so the caller stops instead of silently leaving a
+        # plaintext index in place (Codex a5 round-3 O2).
+        if self._corpus_encrypted() and (self.root / "search_index.db").exists():
+            raise RuntimeError(
+                f"search_index.db in {self.root} could not be removed while "
+                "corpus encryption is enabled; it may expose decrypted content "
+                "on disk. Close any process holding it open and retry."
+            )
         return removed
 
     def _all_indexable_entries(self) -> list[dict]:
@@ -329,6 +340,15 @@ class RetrievalMixin:
         Any failure here is swallowed — the index is an optimization, never
         a hard dependency of search.
         """
+        # Defense-in-depth: never materialise a persistent index while corpus
+        # encryption is active. The fingerprint()/rebuild() calls below open a
+        # connection and write decrypted bodies into search_index.db. The public
+        # callers (search_knowledge / rebuild_index) already guard against this,
+        # but keeping the sink-adjacent helper fail-safe means a future internal
+        # caller can't silently reopen the leak (Codex a5 round-3 O4).
+        if self._corpus_encrypted():
+            self.purge_search_index()
+            return self._hybrid_index()
         idx = self._hybrid_index()
         try:
             fp = self._entries_fingerprint(entries)

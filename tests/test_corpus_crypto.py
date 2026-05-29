@@ -1025,3 +1025,115 @@ class TestCodexRound2Regressions:
             hits = _scan_root_for_marker(engram, marker)
             assert not hits, \
                 f"Plaintext marker '{marker}' found in: {hits}"
+
+
+class TestCodexRound3Hardening:
+    """Regression tests for the 4 non-blocking hardening items (O1-O4) from
+    Codex's a5 round-3 re-audit. Each test is a negative control: it must FAIL
+    on the pre-fix code (commit f9b489e) and pass after the round-3 hardening.
+
+    O1: _has_existing_ciphertext() skipped playbooks/_index.json, so a root
+        whose only surviving ciphertext was the index minted a fresh salt.
+    O2: purge_search_index() swallowed unlink failures, so an un-removable
+        plaintext index under encryption was silently left readable.
+    O3: CLI reindex printed "[ok] reindexed 0 entries" under encryption instead
+        of saying the index was skipped/purged.
+    O4: _ensure_index_fresh() had no _corpus_encrypted() guard of its own, so a
+        direct internal call would materialise a plaintext search_index.db.
+    """
+
+    def test_missing_salt_detects_ciphertext_in_playbook_index(
+        self, tmp_path, monkeypatch
+    ):
+        """O1: ciphertext present ONLY in playbooks/_index.json must still
+        trigger the fail-closed salt-missing guard."""
+        monkeypatch.setenv("ENGRAM_SECRET", "index-only-cipher-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+
+        # Knowledge files are plaintext/empty; the ONLY corpus ciphertext lives
+        # in the playbook index. Old code skipped _index.json → missed it.
+        pb_dir = engram / "playbooks"
+        pb_dir.mkdir(parents=True, exist_ok=True)
+        (pb_dir / "_index.json").write_text(
+            json.dumps([{
+                "id": "pb1", "status": "active",
+                "title": "enc:v2c:QUtFRF9JTkRFWF9USVRMRV9UT0tFTg==",
+            }]),
+            encoding="utf-8",
+        )
+        # Sanity: no other corpus file carries the marker.
+        assert b"enc:v2c:" not in (engram / "knowledge" / "lessons.json").read_bytes()
+        assert not (engram / ".corpus_salt").exists()
+
+        import sys
+        sys.path.insert(0, str(_ROOT / "src"))
+        from piia_engram.core import Engram
+        with pytest.raises(RuntimeError, match="corpus_salt.*missing"):
+            Engram(engram)
+
+    def test_purge_search_index_fails_closed_if_db_survives(
+        self, tmp_path, monkeypatch
+    ):
+        """O2: if a stale plaintext search_index.db can't be removed under
+        encryption, init must fail-closed instead of leaving it readable."""
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        # A stale plaintext index file is present and (simulated) un-removable.
+        (engram / "search_index.db").write_bytes(b"PLAINTEXT_INDEX_BODY")
+
+        real_unlink = Path.unlink
+
+        def _no_unlink_index(self, *args, **kwargs):
+            if self.name == "search_index.db":
+                raise PermissionError("simulated lock")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _no_unlink_index)
+        monkeypatch.setenv("ENGRAM_SECRET", "purge-failclosed-key")
+
+        import sys
+        sys.path.insert(0, str(_ROOT / "src"))
+        from piia_engram.core import Engram
+        with pytest.raises(RuntimeError, match="search_index.db"):
+            Engram(engram)
+
+    def test_cli_reindex_reports_corpus_encrypted_skip(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """O3: CLI reindex under encryption must report skip/purge, not the
+        misleading '[ok] reindexed 0 entries'."""
+        monkeypatch.setenv("ENGRAM_SECRET", "cli-reindex-key")
+        monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+
+        import sys
+        sys.path.insert(0, str(_ROOT / "src"))
+        from piia_engram import setup_wizard
+        setup_wizard._run_reindex()
+
+        out = capsys.readouterr().out.lower()
+        assert "encryption" in out, out
+        assert "reindexed 0 entries" not in out, out
+
+    def test_ensure_index_fresh_noops_when_corpus_encrypted(
+        self, tmp_path, monkeypatch
+    ):
+        """O4: a direct call to the sink-adjacent helper must not materialise a
+        persistent search_index.db while corpus encryption is active."""
+        monkeypatch.setenv("ENGRAM_SECRET", "ensure-fresh-key")
+        monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        e.add_lesson({"summary": f"{_MARKER}O4_LESSON"})
+        db_path = engram / "search_index.db"
+        if db_path.exists():
+            db_path.unlink()
+
+        # Defense-in-depth: calling the helper directly under encryption.
+        e._ensure_index_fresh(e._all_indexable_entries())
+        assert not db_path.exists(), \
+            "_ensure_index_fresh materialised search_index.db under corpus encryption!"

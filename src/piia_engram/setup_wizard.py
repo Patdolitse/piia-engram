@@ -3114,6 +3114,13 @@ def _run_reindex() -> None:
 
     eng = Engram()
     result = eng.rebuild_index()
+    # Corpus encryption refuses to persist a plaintext index. Say so explicitly
+    # instead of the misleading "[ok] reindexed 0 entries" (Codex a5 round-3 O3).
+    if result.get("skipped") == "corpus_encrypted":
+        tail = " (existing plaintext index purged)" if result.get("purged") else ""
+        print("[ok] corpus encryption enabled; persistent search index "
+              f"skipped{tail}.")
+        return
     vec = "on" if result.get("vector_enabled") else "off (install piia-engram[vector] for semantic search)"
     print(f"[ok] reindexed {result.get('indexed', 0)} entries — vector layer: {vec}")
 

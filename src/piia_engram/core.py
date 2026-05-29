@@ -116,10 +116,18 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             # all new writes are encrypted. Purge it on init so enabling
             # encryption can't be silently undermined by a stale index
             # (Codex a5 round-2 P1-2). purge_search_index is provided by the
-            # RetrievalMixin; guard defensively in case of MRO surprises.
+            # RetrievalMixin.
             try:
                 self.purge_search_index()
+            except RuntimeError:
+                # Fail-closed: a plaintext index survived purge under encryption
+                # (Codex a5 round-3 O2). Refuse to construct the engram rather
+                # than leave decrypted bodies readable on disk.
+                raise
             except Exception:
+                # Tolerate MRO/availability surprises — the purge is a
+                # best-effort defensive step for everything except the
+                # fail-closed condition above.
                 pass
 
         # Audit logger (disabled unless ENGRAM_AUDIT=1/true/yes)
@@ -302,14 +310,20 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         """Quick check: do any corpus files contain enc:v2c: data?
 
         Scans the FULL contents of knowledge/*.json and playbooks/*.json (plus
-        execution plans) for the corpus encryption prefix. Used during init to
-        fail-closed when .corpus_salt is missing but encrypted data exists.
+        the playbook ``_index.json`` and execution plans) for the corpus
+        encryption prefix. Used during init to fail-closed when .corpus_salt is
+        missing but encrypted data exists.
 
         A truncated (first-4KB) scan would miss ciphertext that appears after
         the prefix window — a large lessons.json whose first entry is plaintext
         metadata but whose encrypted ``content`` lands past 4KB would be wrongly
         treated as "no ciphertext", silently minting a fresh salt and making the
         real data permanently unreadable (Codex a5 round-2 P1-3).
+
+        ``playbooks/_index.json`` is included rather than skipped: it carries
+        encrypted playbook titles, so a root whose ONLY surviving ciphertext is
+        the index (e.g. partial restore) must still fail-closed instead of
+        minting a fresh salt (Codex a5 round-3 O1).
         """
         from .crypto import ENC_PREFIX_V2C
         marker = ENC_PREFIX_V2C.encode("ascii")
@@ -319,8 +333,6 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "playbooks/executions/*.json",
         ):
             for path in self.root.glob(pattern):
-                if path.name == "_index.json":
-                    continue
                 try:
                     if marker in path.read_bytes():
                         return True
