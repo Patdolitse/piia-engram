@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events (
   daily_id   TEXT    NOT NULL,               -- HMAC-derived, rotates daily
   version    TEXT    NOT NULL DEFAULT '',     -- engram version e.g. "3.23.0"
   tool_calls TEXT    NOT NULL DEFAULT '{}',   -- JSON {tool: {success:N, error:N}}
-  knowledge  TEXT    NOT NULL DEFAULT '{}',   -- JSON {lessons:N, decisions:N, playbooks:N}
+  knowledge  TEXT    NOT NULL DEFAULT '{}',   -- JSON {lessons:N, decisions:N, domains:N}
   os         TEXT    NOT NULL DEFAULT '',     -- win32 / darwin / linux
   py         TEXT    NOT NULL DEFAULT '',     -- "3.12" (major.minor only)
   tier       TEXT    NOT NULL DEFAULT 'core', -- core / all
