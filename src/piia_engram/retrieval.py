@@ -461,6 +461,98 @@ class RetrievalMixin:
         }
 
     # ------------------------------------------------------------------
+    # Permission Profile (a0)
+    # ------------------------------------------------------------------
+
+    def get_permission_profile(self) -> dict:
+        """Return a readable overview of the caller permission landscape.
+
+        Shows all explicitly granted callers, auto-classification rules,
+        what each trust level can access, and revoked callers. This is
+        the user-facing view of the governance layer's GrantStore.
+
+        Returns::
+
+            {
+              "governance_enabled": bool,
+              "grants": {agent_id: trust_level, ...},
+              "revoked": [agent_id, ...],
+              "auto_rules": {client_type: trust_level, ...},
+              "trust_levels": {level: {max_sensitivity, read, write}, ...},
+            }
+        """
+        from . import governance as gov
+        from .governance_runtime import governance_enabled
+        from .governance_store import GrantStore
+
+        store = GrantStore(self.root)
+        data = store.list_grants()
+
+        # Build auto-classification map for known client types.
+        auto_rules: dict[str, str] = {}
+        for ct in sorted(gov._SELF_CLIENTS):
+            auto_rules[ct] = gov.classify_agent(ct)
+        for ct in sorted(gov._KNOWN_LOCAL_CLIENTS):
+            auto_rules[ct] = gov.classify_agent(ct)
+        auto_rules["(unknown)"] = gov.DEFAULT_TRUST_LEVEL
+
+        self._audit.log("read", "governance/permission_profile")
+        return {
+            "governance_enabled": governance_enabled(),
+            "grants": data["grants"],
+            "revoked": data["revoked"],
+            "auto_rules": auto_rules,
+            "trust_levels": {
+                name: {
+                    "max_sensitivity": level["max_sensitivity"],
+                    "read": level["read"],
+                    "write": level["write"],
+                }
+                for name, level in gov.TRUST_LEVELS.items()
+            },
+        }
+
+    def set_caller_trust(self, agent_id: str, trust_level: str) -> dict:
+        """Set or update a caller's trust level in the GrantStore.
+
+        Returns ``{success, agent_id, trust_level}`` or ``{success: False,
+        error}`` if the trust level is invalid.
+        """
+        from . import governance as gov
+        from .governance_store import GrantStore
+
+        agent_id = str(agent_id).strip()
+        trust_level = str(trust_level).strip()
+
+        if not agent_id:
+            return {"success": False, "error": "agent_id cannot be empty"}
+        if trust_level not in gov.TRUST_LEVELS:
+            return {
+                "success": False,
+                "error": f"unknown trust level {trust_level!r}",
+                "valid_levels": list(gov.TRUST_LEVELS.keys()),
+            }
+
+        GrantStore(self.root).set_grant(agent_id, trust_level)
+        self._audit.log("write", "governance/grants",
+                        detail=f"set {agent_id} → {trust_level}")
+        return {"success": True, "agent_id": agent_id, "trust_level": trust_level}
+
+    def revoke_caller(self, agent_id: str) -> dict:
+        """Revoke a caller's future access (forward-only — cannot recall
+        context already returned). Returns ``{success, agent_id}``."""
+        from .governance_store import GrantStore
+
+        agent_id = str(agent_id).strip()
+        if not agent_id:
+            return {"success": False, "error": "agent_id cannot be empty"}
+
+        GrantStore(self.root).revoke(agent_id)
+        self._audit.log("write", "governance/grants",
+                        detail=f"revoked {agent_id}")
+        return {"success": True, "agent_id": agent_id, "revoked": True}
+
+    # ------------------------------------------------------------------
     # Search API
     # ------------------------------------------------------------------
 

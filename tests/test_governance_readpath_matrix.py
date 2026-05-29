@@ -219,6 +219,8 @@ _SAFE_ALLOWLIST = {
     "register_tool", "update_identity",
     # relation/maintenance ops returning caller IDs / counts only.
     "add_relation", "remove_relation", "apply_review",
+    # permission profile: governance metadata, no knowledge bodies.
+    "get_permission_profile", "set_caller_trust", "revoke_caller",
     # imports / external fetch.
     "import_engram", "import_engram_from_openclaw", "read_web_content",
 }

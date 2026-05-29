@@ -2333,6 +2333,71 @@ async def get_decision_history(question: str, threshold: float = 0.6) -> str:
 
 
 @mcp.tool()
+async def get_permission_profile() -> str:
+    """查看当前所有调用者的权限全景：谁有什么信任级别、能看到什么。 / View the permission landscape: who has what trust level and what they can access.
+
+    用途：想了解"哪些 AI 工具可以读我的 Engram"、"Cursor 能看到私密数据吗"时调用。
+    显示显式授权、自动分类规则、信任级别定义、已撤销的调用者。
+    Purpose: call when you want to know which AI tools can read your Engram data,
+    what each one can access, and which ones have been revoked. Shows explicit
+    grants, auto-classification rules, trust level definitions, and revoked callers.
+
+    治理层开启时（ENGRAM_GOVERNANCE=1），仅 private-self 可调用。
+    When governance is enabled, only the owner (private-self) can call this.
+    """
+    result = _engram.get_permission_profile()
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="get_permission_profile"
+    )
+    return _json(result)
+
+
+@mcp.tool()
+async def set_caller_trust(agent_id: str, trust_level: str) -> str:
+    """设置或修改某个调用者（AI 工具）的信任级别。 / Set or change a caller's (AI tool's) trust level.
+
+    用途：当你想提升或降低某个 AI 工具的访问权限时调用。例如：
+    - 让 Cursor 能访问工作级数据：set_caller_trust("cursor", "trusted-local")
+    - 将某个未知工具限制为只读公开：set_caller_trust("unknown-agent", "read-only-external")
+    Purpose: call when you want to upgrade or downgrade an AI tool's access level.
+
+    可用信任级别 / Available trust levels:
+    - private-self: 全部可见（自用/CLI/doctor） / Full access (self/CLI/doctor)
+    - trusted-local: 公开+工作级可见（Claude Code/Codex/Cursor 等） / Public + work level (primary AI tools)
+    - read-only-external: 仅公开可见（未知/外部工具） / Public only (unknown/external)
+
+    Args:
+        agent_id: 调用者标识（如 'cursor', 'codex', 'web-client'）。 / Caller identifier.
+        trust_level: 要设置的信任级别。 / Trust level to assign.
+    """
+    result = _engram.set_caller_trust(agent_id, trust_level)
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="set_caller_trust"
+    )
+    return _json(result)
+
+
+@mcp.tool()
+async def revoke_caller(agent_id: str) -> str:
+    """撤销某个调用者的未来访问权（前向撤销——已返回的上下文无法召回）。 / Revoke a caller's future access (forward-only — cannot recall context already returned).
+
+    用途：当你不再信任某个 AI 工具，或想阻止它继续读取你的 Engram 数据时调用。
+    撤销后该调用者的所有后续读取请求都会被拒绝。重新授权需调用 set_caller_trust。
+    Purpose: call when you no longer trust an AI tool and want to stop it from
+    reading your Engram data. All future reads by that caller will be denied.
+    To re-authorize, call set_caller_trust.
+
+    Args:
+        agent_id: 要撤销的调用者标识。 / Caller identifier to revoke.
+    """
+    result = _engram.revoke_caller(agent_id)
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="revoke_caller"
+    )
+    return _json(result)
+
+
+@mcp.tool()
 async def update_identity(field: str, updates_json: str, source_tool: str = "") -> str:
     """更新一个身份字段。 / Update one identity field.
 
