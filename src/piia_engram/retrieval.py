@@ -372,6 +372,94 @@ class RetrievalMixin:
         self._audit.log("read", "knowledge/decision_thread", detail=str(seed_id))
         return build_thread(seed_id, edges, entries=entries)
 
+    def get_decision_history(self, question: str, threshold: float = 0.6) -> dict:
+        """Retrieve the full revision history of a decision question.
+
+        Finds all decisions whose question text matches ``question`` (bigram
+        similarity ≥ ``threshold``), enriches each with supersedes relations,
+        and returns them in chronological order (oldest first). The ``current``
+        field points to the active, non-superseded decision — the one that
+        "won" the latest round.
+
+        Unlike ``get_decision_thread`` (which starts from an ID and follows
+        ALL edge types), this method starts from **question text** and focuses
+        specifically on the revision history of a single topic.
+
+        Returns::
+
+            {
+              "found": bool,
+              "query": str,
+              "revisions": [ {id, question, choice, reasoning, timestamp,
+                              status, superseded_by?}, ... ],
+              "current": {id, question, choice, ...} | None,
+              "revision_count": int,
+            }
+        """
+        from .governance_store import RelationStore
+
+        path = self._knowledge_dir / "decisions.json"
+        decisions = self._read_entries(path, "decision")
+
+        # Find all decisions matching the question text.
+        matches: list[dict] = []
+        for d in decisions:
+            d = self._ensure_fields(d, "decision")
+            q_text = self._entry_identity_text(d, "decision")
+            sim = self._bigram_similarity(question, q_text)
+            if sim >= threshold:
+                matches.append(d)
+
+        if not matches:
+            self._audit.log("read", "knowledge/decision_history",
+                            detail=f"query={question[:60]} found=0")
+            return {"found": False, "query": question, "revisions": [],
+                    "current": None, "revision_count": 0}
+
+        # Load supersedes edges to determine which decisions are obsolete.
+        edges = RelationStore(self.root).all_edges()
+        match_ids = {str(d["id"]) for d in matches if d.get("id")}
+
+        # Build superseded_by map: dst → src (the old decision → its replacement).
+        superseded_by: dict[str, str] = {}
+        superseded_set: set[str] = set()
+        for e in edges:
+            if e["rel"] == "supersedes" and e["dst"] in match_ids:
+                superseded_by[e["dst"]] = e["src"]
+                superseded_set.add(e["dst"])
+
+        # Sort chronologically (oldest first).
+        matches.sort(key=lambda d: d.get("timestamp", ""))
+
+        revisions: list[dict] = []
+        for d in matches:
+            did = str(d.get("id", ""))
+            row: dict = {
+                "id": did,
+                "question": d.get("question") or d.get("title") or "",
+                "choice": d.get("choice", ""),
+                "reasoning": d.get("reasoning", ""),
+                "timestamp": d.get("timestamp", ""),
+                "status": "superseded" if did in superseded_set else "active",
+            }
+            if did in superseded_by:
+                row["superseded_by"] = superseded_by[did]
+            revisions.append(row)
+
+        # Current = the most recent non-superseded decision.
+        active = [r for r in revisions if r["status"] == "active"]
+        current = active[-1] if active else None
+
+        self._audit.log("read", "knowledge/decision_history",
+                        detail=f"query={question[:60]} found={len(revisions)}")
+        return {
+            "found": True,
+            "query": question,
+            "revisions": revisions,
+            "current": current,
+            "revision_count": len(revisions),
+        }
+
     # ------------------------------------------------------------------
     # Search API
     # ------------------------------------------------------------------

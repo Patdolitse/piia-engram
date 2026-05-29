@@ -2306,6 +2306,33 @@ async def get_decision_thread(seed_id: str) -> str:
 
 
 @mcp.tool()
+async def get_decision_history(question: str, threshold: float = 0.6) -> str:
+    """查询某个决策问题的完整修订历史：按时间顺序展示答案如何演变。 / Retrieve the full revision history of a decision question: show how the answer evolved in chronological order.
+
+    用途：当你想知道"关于 X 我们之前怎么决定的""这个决策改过几次"时调用。与
+    get_decision_thread 不同的是，本工具从【问题文本】出发而非 ID，自动模糊匹配
+    所有相关决策，适合"我只记得大概问了什么"的场景。
+    Purpose: call when you want to know "what did we decide about X" or "how many
+    times did this decision change". Unlike get_decision_thread (which starts from
+    an ID), this tool starts from **question text** and fuzzy-matches all related
+    decisions — useful when you only remember the topic, not the ID.
+
+    返回：按时间排列的 revisions 列表（每条含 id/question/choice/reasoning/timestamp/
+    status/superseded_by）+ current 指向当前生效的决策。
+    Returns: chronologically ordered revisions list + current points to the active one.
+
+    Args:
+        question: 决策问题的关键词或完整问题文本。 / Keywords or full question text to search for.
+        threshold: 相似度阈值（0-1），默认 0.6。 / Similarity threshold (0-1), default 0.6.
+    """
+    result = _engram.get_decision_history(question, threshold=threshold)
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="get_decision_history"
+    )
+    return _json(result)
+
+
+@mcp.tool()
 async def update_identity(field: str, updates_json: str, source_tool: str = "") -> str:
     """更新一个身份字段。 / Update one identity field.
 
