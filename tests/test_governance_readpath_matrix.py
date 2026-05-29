@@ -700,3 +700,112 @@ def test_harness_detects_hybrid_index_leak(gov_engram, monkeypatch):
         "search_index.db leak when allow_hybrid_index=True was forced. "
         "The file-diff logic is a false negative — the harness is useless."
     )
+
+
+# ── 7. playbook usage_policy header ──────────────────────────────────────────
+#
+# Every playbook/execution-plan returned by an MCP tool must carry a
+# ``usage_policy`` field instructing any consuming AI to treat it as a
+# passive reference ("confirm with user before each step"). This embeds
+# the user's "decision ∈ user / execution ∈ AI" operating model into the
+# data format so it travels with the playbook across tools.
+#
+# The field is injected in the MCP layer; the stored data stays clean.
+# Governance-withheld stubs must NOT carry the field (no playbook to act on).
+
+from piia_engram.mcp_server import _PLAYBOOK_USAGE_POLICY, _EXECUTION_USAGE_POLICY
+
+# Tools that should carry the playbook usage policy
+_PLAYBOOK_POLICY_TOOLS = [
+    ("get_playbook", {"playbook_id": "PB_ID"}, _PLAYBOOK_USAGE_POLICY),
+    ("get_playbooks", {}, _PLAYBOOK_USAGE_POLICY),
+    ("get_recent_playbooks", {}, _PLAYBOOK_USAGE_POLICY),
+]
+
+# Tools that should carry the execution usage policy
+_EXECUTION_POLICY_TOOLS = [
+    ("prepare_playbook_execution", {"playbook_id": "PB_ID", "params_json": "{}"}, _EXECUTION_USAGE_POLICY),
+    ("get_execution_status", {"playbook_id": "PB_ID"}, _EXECUTION_USAGE_POLICY),
+]
+
+
+def _make_playbook(gov_engram):
+    """Create a public playbook in the real store and return its ID."""
+    pb = gov_engram.add_playbook({
+        "title": "test playbook for policy",
+        "steps": [{"order": 1, "action": "do step 1", "detail": "details"}],
+        "sensitivity": "public",
+    })
+    return pb.get("id", "")
+
+
+@pytest.mark.parametrize(
+    "tool,kwargs,expected_policy", _PLAYBOOK_POLICY_TOOLS,
+    ids=[r[0] for r in _PLAYBOOK_POLICY_TOOLS],
+)
+def test_playbook_tools_carry_usage_policy(
+    gov_engram, monkeypatch, tool, kwargs, expected_policy,
+):
+    """Playbook read tools return usage_policy in every item."""
+    pb_id = _make_playbook(gov_engram)
+    final_kwargs = {k: (pb_id if v == "PB_ID" else v) for k, v in kwargs.items()}
+
+    out = _call(tool, final_kwargs)
+
+    assert "usage_policy" in out, f"{tool} missing usage_policy field"
+    assert expected_policy[:40] in out, (
+        f"{tool} has wrong usage_policy text: {out[:300]!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "tool,kwargs,expected_policy", _EXECUTION_POLICY_TOOLS,
+    ids=[r[0] for r in _EXECUTION_POLICY_TOOLS],
+)
+def test_execution_tools_carry_usage_policy(
+    gov_engram, monkeypatch, tool, kwargs, expected_policy,
+):
+    """Execution plan tools return the execution variant of usage_policy."""
+    pb_id = _make_playbook(gov_engram)
+    final_kwargs = {k: (pb_id if v == "PB_ID" else v) for k, v in kwargs.items()}
+
+    # prepare_playbook_execution is export-gated; run as owner for the
+    # positive test (non-owner refusal is tested in section 4).
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "self")
+
+    out = _call(tool, final_kwargs)
+
+    # get_execution_status may return an error if no plan exists yet;
+    # for prepare_, the plan is created. For get_, accept either policy
+    # or an error message.
+    if "error" not in out.lower() and "失败" not in out:
+        assert "usage_policy" in out, f"{tool} missing usage_policy field"
+        assert expected_policy[:40] in out, (
+            f"{tool} has wrong usage_policy text: {out[:300]!r}"
+        )
+
+
+def test_usage_policy_absent_on_governance_withheld(gov_engram, monkeypatch):
+    """When governance withholds a playbook, usage_policy must NOT appear."""
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+
+    pb_id = _make_playbook(gov_engram)
+
+    # get_playbook on a public item should still show policy for web caller
+    # (public item passes the ceiling). Create a secret playbook for withhold.
+    sec_pb = gov_engram.add_playbook({
+        "title": "secret pb",
+        "steps": [{"order": 1, "action": "classified"}],
+        "sensitivity": "secret",
+    })
+    sec_id = sec_pb.get("id", "")
+
+    out = _call("get_playbook", {"playbook_id": sec_id})
+
+    # The withheld stub should have governance_withheld but NO usage_policy
+    assert "governance_withheld" in out, "Expected a governance withhold stub"
+    assert "usage_policy" not in out, (
+        "usage_policy should NOT appear on a governance-withheld stub"
+    )

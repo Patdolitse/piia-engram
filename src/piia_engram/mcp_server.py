@@ -1554,6 +1554,45 @@ async def add_playbook(
     return f"Playbook 已记录: {title} (triggers: {triggers})"
 
 
+# ---------------------------------------------------------------------------
+# Playbook usage-policy header (task #16: passive-reference semantic)
+#
+# Every playbook returned by an MCP tool carries a ``usage_policy`` field
+# instructing any consuming AI to treat it as a passive reference, NOT an
+# execution command.  This embeds the user's "decision ∈ user / execution ∈
+# AI" operating model into the data format so it travels with the playbook
+# across tools.  The field is injected in the MCP layer (not the core) so
+# the stored data stays clean.
+# ---------------------------------------------------------------------------
+
+_PLAYBOOK_USAGE_POLICY = (
+    "本 playbook 是被动参考资料——取用后须先与用户确认方案再逐步执行，"
+    "不得自动驱动决策或一键跑完全部步骤。\n"
+    "This playbook is a passive reference — after retrieval, confirm the "
+    "plan with the user before proceeding step by step. Do not auto-drive "
+    "decisions or execute all steps at once."
+)
+
+_EXECUTION_USAGE_POLICY = (
+    "本执行计划需要逐步确认——每完成一步，须与用户核实结果再执行下一步，"
+    "不得跳步或一键全部执行。\n"
+    "This execution plan requires step-by-step confirmation. After each "
+    "step, verify the result with the user before proceeding. Do not skip "
+    "steps or execute all at once."
+)
+
+
+def _inject_usage_policy(item, policy=_PLAYBOOK_USAGE_POLICY):
+    """Add ``usage_policy`` to a playbook / execution-plan dict.
+
+    Skips governance-withheld stubs (``governance_withheld: True``) and
+    non-dict values so callers can apply it unconditionally.
+    """
+    if isinstance(item, dict) and not item.get("governance_withheld"):
+        item["usage_policy"] = policy
+    return item
+
+
 @mcp.tool()
 async def get_playbooks(domain: str = "", limit: int = 20) -> str:
     """列出已保存的操作手册（Playbooks）。 / List saved operational playbooks.
@@ -1574,6 +1613,8 @@ async def get_playbooks(domain: str = "", limit: int = 20) -> str:
         return f"获取 Playbooks 失败: {_safe_err(exc)}"
     if not result:
         return "尚无已保存的 Playbook。"
+    for item in result:
+        _inject_usage_policy(item)
     return _json(result)
 
 
@@ -1596,6 +1637,7 @@ async def get_playbook(playbook_id: str) -> str:
         return f"获取 Playbook 失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
+    _inject_usage_policy(result)
     return _json(result)
 
 
@@ -1620,6 +1662,8 @@ async def get_recent_playbooks(limit: int = 5) -> str:
         return f"获取近期 Playbook 失败: {_safe_err(exc)}"
     if not result:
         return "尚无最近使用的 Playbook。 / No recently used Playbooks."
+    for item in result:
+        _inject_usage_policy(item)
     return _json(result)
 
 
@@ -1734,6 +1778,7 @@ async def prepare_playbook_execution(
     except Exception as exc:
         _track("prepare_playbook_execution", success=False)
         return f"准备执行计划失败: {_safe_err(exc)}"
+    _inject_usage_policy(result, _EXECUTION_USAGE_POLICY)
     return _json(result)
 
 
@@ -1788,6 +1833,7 @@ async def get_execution_status(playbook_id: str) -> str:
     result = _gov_rt.maybe_govern_owner_only(
         _engram.root, result, tool="get_execution_status"
     )
+    _inject_usage_policy(result, _EXECUTION_USAGE_POLICY)
     return _json(result)
 
 
