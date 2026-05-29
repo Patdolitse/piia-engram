@@ -6,6 +6,35 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.34.0] - 2026-05-29
+
+治理层（a0）、决策链脚手架（c0）、playbook 被动参考 header——首个带运行时信任执法和产品级"AI 不自动执行"安全属性的版本。
+
+### 新增
+- **治理层（a0，需手动开启）**：设置 `ENGRAM_GOVERNANCE=1` 启用运行时信任执法。非 owner 调用者（不受信任的 `web` 层级）无法读取、导出或派生超出其信任上限的存储知识。全部 65 个 MCP 工具按 deny-by-default 分类：受治理（返回过滤）、仅 owner 导出（写前拒绝）、或安全白名单（已注释）。默认关闭——不开 flag 零行为变化。
+- **Playbook `usage_policy` header**：MCP 工具返回的每个 playbook 和执行计划现在都带有 `usage_policy` 字段，指示消费方 AI 将其视为被动参考——逐步与用户确认后再执行，不得自动驱动决策或一键跑完。应用于 `get_playbook`、`get_playbooks`、`get_recent_playbooks`、`prepare_playbook_execution`、`get_execution_status`。
+- **决策链脚手架（c0）**：`add_relation` 和 `get_decision_thread` MCP 工具——知识条目间的类型化/有向关系与链路重建。为未来决策链可追溯性奠基。
+- **敏感度自动分类**：零配置安全分类器，基于内容启发式分配 `public` / `work` / `secret`。供治理门使用，治理关闭时可安全忽略。
+
+### 安全 / 加固
+- **治理层 a0 读路径切换——经 Codex 独立复审 6 轮（R15→R20）**：
+  - R15：未知信任层级 fail-closed + 接入所有知识体读取
+  - R16：全工具 deny-by-default 覆盖（不再依赖名称前缀启发式）
+  - R17：`refresh_quick_context`、`get_identity_card`、`export_knowledge_report` 文件副作用门
+  - R18：`prepare_playbook_execution` 写前门（执行计划文件泄漏）
+  - R20：非 owner 抑制 hybrid 搜索索引（`search_index.db` FTS 表泄漏）
+- **通用文件副作用 harness**：参数化回归测试覆盖全部 41 个受治理/导出工具，大小写无关内容比对，覆盖断言（新工具不在 harness 中自动失败），反验证明（证明 harness 确实能抓到真实泄漏）。
+- **哈希链治理审计账本**：仅追加的 `governance_ledger.jsonl`，SHA-256 链用于防篡改检测。
+
+### 变更
+- 仓库文档采用英文规范策略（国际化通过独立文件）。
+- 新增 LobeHub 市场徽章和 Awesome-MCP-ZH 收录。
+
+### 发布证据
+- Codex 独立复审：R20 PASS（a0 读路径全切换，含写回显 + 导出门 + 去重回显 + 审计日志 + 文件副作用门 + 混合索引门）。
+- 完整套件：1385 个测试通过。治理专项：215 个测试。
+- eval-gate：n/a（无检索算法变更）。
+
 ## [3.33.2] - 2026-05-28
 
 一批由独立代码审查（Codex）发现并修复的正确性 / 安全问题——这是首个完整通过全部三道关卡的版本：「自审 + 独立 Codex 审查 + 评估关卡」。

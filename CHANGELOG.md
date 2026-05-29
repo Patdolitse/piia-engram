@@ -6,6 +6,35 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.34.0] - 2026-05-29
+
+Governance layer (a0), decision-thread scaffold (c0), and the playbook passive-reference header — the first release with runtime trust enforcement and a product-level "AI does not auto-execute" safety property.
+
+### Added
+- **Governance layer (a0, opt-in)**: set `ENGRAM_GOVERNANCE=1` to enable runtime trust enforcement. Non-owner callers (untrusted `web` tier) cannot read, export, or derive stored knowledge above their trust ceiling. All 65 MCP tools are classified deny-by-default: governed (return filtered), export-owner-only (pre-write refusal), or safe-allowlisted (documented). Off by default — zero behavior change without the flag.
+- **Playbook `usage_policy` header**: every playbook and execution plan returned by MCP tools now carries a `usage_policy` field instructing consuming AI tools to treat it as a passive reference — confirm with the user before each step, do not auto-drive decisions or execute all steps at once. Applied to `get_playbook`, `get_playbooks`, `get_recent_playbooks`, `prepare_playbook_execution`, `get_execution_status`.
+- **Decision-thread scaffold (c0)**: `add_relation` and `get_decision_thread` MCP tools — typed/directed relations between knowledge items with thread reconstruction. Foundation for future decision-chain traceability.
+- **Sensitivity auto-classification**: zero-config-safe classifier that assigns `public` / `work` / `secret` based on content heuristics. Used by the governance gate but safe to ignore when governance is off.
+
+### Security / Hardening
+- **Governance a0 read-path cutover — 6 rounds of independent Codex review (R15→R20)**:
+  - R15: fail-closed for unknown trust tiers + wire all knowledge-body reads
+  - R16: deny-by-default coverage for ALL tools (no more prefix-based heuristics)
+  - R17: file-side-effect gates for `refresh_quick_context`, `get_identity_card`, `export_knowledge_report`
+  - R18: pre-write gate for `prepare_playbook_execution` (execution-plan file leak)
+  - R20: hybrid search-index suppression for non-owners (`search_index.db` FTS table leak)
+- **Universal file-side-effect harness**: parametrized regression test covering all 41 governed/export tools with case-insensitive content diff, coverage assertion (new tools auto-fail if not in harness), and negative verification (proves the harness catches real leaks).
+- **Hash-chained governance audit ledger**: append-only `governance_ledger.jsonl` with SHA-256 chain for tamper detection.
+
+### Changed
+- Repository docs adopted English-canonical policy (i18n via separate files).
+- Added LobeHub marketplace badge and Awesome-MCP-ZH listing.
+
+### Release Evidence
+- Independent Codex review: R20 PASS (a0 read-path full cutover incl. write-echo + export gate + dedup-echo + audit-log + file-side-effect gate + hybrid-index gate).
+- Full suite: 1385 tests passing. Governance-specific: 215 tests.
+- eval-gate: n/a (no retrieval algorithm change).
+
 ## [3.33.2] - 2026-05-28
 
 A batch of correctness / security issues found and fixed by independent code review (Codex)—the first release to fully clear all three gates: "self-review + independent Codex review + evaluation gate."
