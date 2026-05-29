@@ -447,24 +447,27 @@ def test_export_tools_actually_gate():
     )
 
 
-# ── 6. round-17/18 regression: NO file written by a non-owner call may carry a
-#       secret — path-agnostic content diff (the structural discovery fix) ──────
+# ── 6. round-17/18/19 regression: NO file written by a non-owner call may carry
+#       a secret — path-agnostic, CASE-INSENSITIVE content diff ────────────────
 #
 # The matrix above drives RETURN values, so it is structurally blind to file
-# side effects: round-17 leaked via exports/*, round-18 leaked via
-# playbooks/executions/* — each time the return was governed but a derived file
-# already held the secret. Enumerating output PATHS (the round-18 attempt) just
-# moved the blind spot: prepare_playbook_execution wrote to a path the path-list
-# never checked.
+# side effects: round-17 leaked via exports/*, round-18 via
+# playbooks/executions/*, round-19 via the hybrid search_index.db FTS table —
+# each time the return was governed but a derived file already held the secret.
+# Enumerating output PATHS (the round-18 attempt) just moved the blind spot;
+# matching only the RAW-CASE marker (the round-19 attempt) was a second blind
+# spot — the FTS tokenizer lowercases every ASCII token, so the secret landed in
+# search_index.db as `zzsecret...` and slipped past a `SECRET.encode() in data`
+# check.
 #
-# This test removes the path assumption entirely. It seeds the store with secret
-# lessons/decisions/playbooks, snapshots the bytes of EVERY file under the root,
-# runs each file-writing tool as an untrusted ``web`` caller, then re-snapshots.
-# ANY file created or modified BY THE CALL (i.e. not by the seeding) that
-# contains the secret marker is a leak — no matter where it lands. The only
-# expected write is the append-only audit ledger, which records the refusal
-# (tool name + trust level), never knowledge bodies, and is itself governed by
-# get_audit_log; it is excluded by name.
+# This test removes BOTH assumptions. It seeds secret lessons/decisions/
+# playbooks, snapshots the bytes of EVERY file under the root, runs each
+# disclosure-surface tool as an untrusted ``web`` caller WITH hybrid search ON,
+# then re-snapshots. ANY file created or modified BY THE CALL (not by the
+# seeding) that contains the secret marker — in any case — is a leak, no matter
+# where it lands. The only expected write is the append-only audit ledger
+# (refusal receipts: tool name + trust level, never knowledge bodies; itself
+# governed by get_audit_log), excluded by name.
 
 
 def _snapshot_tree(root):
@@ -482,7 +485,8 @@ def _snapshot_tree(root):
 def _seed_secret_store(e):
     """Put the secret marker into stored lesson summary, decision text, and a
     playbook STEP action so every derived view (quick-context / identity card /
-    knowledge report / execution plan) would surface it if it leaked."""
+    knowledge report / execution plan / search index) would surface it if it
+    leaked."""
     e.add_lesson({"summary": "secret lesson " + SECRET, "detail": SECRET,
                   "sensitivity": "secret", "tier": "verified"})
     e.add_decision({"question": "q", "choice": "secret choice " + SECRET,
@@ -496,36 +500,49 @@ def _seed_secret_store(e):
 def test_no_filewrite_tool_persists_secret_for_non_owner(gov_engram, monkeypatch):
     monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    # round-19: hybrid ON is what makes search_knowledge persist the full corpus
+    # into search_index.db; the leak is invisible with the default keyword path.
+    monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
     e = gov_engram
     pb_id = _seed_secret_store(e)
 
     before = _snapshot_tree(e.root)
 
-    # every tool whose writer materialises stored bodies into a file under root
-    calls = [
+    # tools whose disclosure surface is a FILE; they must refuse the non-owner.
+    refusal_calls = [
         ("refresh_quick_context", {"level": "standard"}),
         ("get_identity_card", {}),
         ("export_knowledge_report", {}),
         ("prepare_playbook_execution", {"playbook_id": pb_id, "params_json": "{}"}),
     ]
-    for tool, kwargs in calls:
+    for tool, kwargs in refusal_calls:
         out = _call(tool, kwargs)
         assert "治理" in out or "Governance" in out, (
             f"{tool} did not refuse the non-owner (got: {out[:120]!r})"
         )
 
+    # search_knowledge does NOT refuse — it returns a governed (filtered) result;
+    # the round-19 leak was the index FILE it wrote as a side effect. Assert the
+    # return is clean here; the file-leak assertion below covers the side effect.
+    sk = _call("search_knowledge", {"query": "secret lesson choice", "scope": "all", "limit": 5})
+    assert SECRET.lower() not in sk.lower(), (
+        f"search_knowledge returned the secret to a non-owner: {sk[:160]!r}"
+    )
+
     after = _snapshot_tree(e.root)
 
+    marker = SECRET.lower().encode()  # FTS lowercases ASCII tokens
     leaked = []
     for path, data in after.items():
         if path.name == "audit.log":  # append-only ledger; governed separately
             continue
         if before.get(path) == data:  # untouched by the calls (seeded store)
             continue
-        if SECRET.encode() in data:
+        if marker in data.lower():
             leaked.append(str(path.relative_to(e.root)))
     assert not leaked, (
         "A non-owner call persisted the secret to disk (file side-effect leak): "
         f"{leaked}. The return may be governed, but the FILE is the disclosure "
-        "surface — gate before the writer runs (maybe_refuse_export)."
+        "surface — suppress the writer for non-owners (maybe_refuse_export / "
+        "allow_hybrid_index=False)."
     )

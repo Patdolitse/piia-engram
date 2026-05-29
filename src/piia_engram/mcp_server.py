@@ -1156,7 +1156,17 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
         if "tier" in filters and filters["tier"] not in ("staging", "verified"):
             return "filters['tier'] 仅支持 'staging' 或 'verified'"
     try:
-        result = _engram.search_knowledge(query, scope=scope, limit=limit, filters=filters)
+        # The hybrid (ENGRAM_SEARCH=hybrid) path rebuilds the FULL active corpus
+        # into <root>/search_index.db BEFORE we govern the return — a non-owner
+        # would get an empty/filtered response yet leave the secret bodies
+        # readable in the FTS index file (Codex round-19 file-side-effect leak).
+        # Suppress that persisted index for non-owners; caller_is_owner is True
+        # when governance is OFF, so the disabled/owner path is unchanged.
+        allow_index = _gov_rt.caller_is_owner(_engram.root)
+        result = _engram.search_knowledge(
+            query, scope=scope, limit=limit, filters=filters,
+            allow_hybrid_index=allow_index,
+        )
         # governance gate (opt-in; OFF => byte-identical to the line above).
         result = _gov_rt.maybe_govern_buckets(_engram.root, result, tool="search_knowledge")
         _track("search_knowledge", success=True)

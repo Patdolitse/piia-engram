@@ -367,7 +367,8 @@ class RetrievalMixin:
     # ------------------------------------------------------------------
 
     def search_knowledge(self, query: str, scope: str = "all", limit: int = 10,
-                         filters: dict | None = None) -> dict:
+                         filters: dict | None = None,
+                         allow_hybrid_index: bool = True) -> dict:
         """Search lessons, decisions, and playbooks by weighted multi-term relevance.
 
         Args:
@@ -378,6 +379,13 @@ class RetrievalMixin:
                 - domain: str — only items whose domain contains this value
                 - tier: str — only items matching this tier ('staging' or 'verified')
                 - date_after: str — ISO date, only items with timestamp >= this
+            allow_hybrid_index: when False, NEVER touch the persisted hybrid FTS/
+                vector index — fall back to the in-memory keyword path. The MCP
+                layer passes False for a non-owner under ENGRAM_GOVERNANCE so a
+                low-trust search cannot materialise the full (unfiltered) corpus
+                into ``<root>/search_index.db`` before the return is governed
+                (Codex round-19 P1 file-side-effect leak). Default True keeps the
+                governance-OFF / owner path byte-identical.
         """
         terms = [term for term in (query or "").lower().split() if term]
         results: dict = {"lessons": [], "decisions": [], "playbooks": []}
@@ -408,8 +416,15 @@ class RetrievalMixin:
             return True
 
         # Hybrid search (opt-in): build/refresh the index once for this call.
+        # ``allow_hybrid_index=False`` (set by the MCP governance layer for a
+        # non-owner) suppresses this entirely: _ensure_index_fresh rebuilds the
+        # FTS/vector tables from the FULL active corpus (unfiltered by trust
+        # tier) and persists them to <root>/search_index.db, so running it
+        # before the return is governed would leave the secret bodies readable
+        # in the index file (Codex round-19). Falling back to the keyword path
+        # (hybrid_idx stays None) writes nothing.
         hybrid_idx = None
-        if self._hybrid_enabled():
+        if allow_hybrid_index and self._hybrid_enabled():
             hybrid_idx = self._ensure_index_fresh(self._all_indexable_entries())
 
         if scope in ("all", "lessons"):
