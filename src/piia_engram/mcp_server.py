@@ -683,6 +683,36 @@ def _safe_err(exc: Exception) -> str:
     return msg
 
 
+def _format_permissions_section(perms: dict) -> str:
+    """Render a caller-permissions dict as a Markdown section for cold-start.
+
+    Appended to ``get_user_context`` output (a1) so the consuming AI tool
+    knows its governance status and trust boundary from the first message.
+    """
+    lines = ["\n\n## Caller Permissions / 调用方权限"]
+    if not perms.get("governance_enabled"):
+        lines.append(
+            "- Governance: **disabled** — all tools and data are accessible. "
+            "治理层未启用，所有工具和数据均可访问。"
+        )
+        return "\n".join(lines)
+
+    lines.append("- Governance: **enabled** / 治理层已启用")
+    aid = perms.get("agent_id", "unknown")
+    trust = perms.get("trust_level", "unknown")
+    lines.append(f"- Identity / 身份: `{aid}` → trust level `{trust}`")
+    lines.append(f"- Access ceiling / 访问天花板: `{perms.get('max_sensitivity', '?')}`")
+    lines.append(f"- Write policy / 写入策略: `{perms.get('write_policy', '?')}`")
+    if perms.get("revoked"):
+        lines.append("- ⚠ Your access has been **revoked** by the user. / 你的访问权限已被用户撤销。")
+    if perms.get("grant_error"):
+        lines.append(f"- Grant resolution error: {perms['grant_error']}")
+    note = perms.get("note", "")
+    if note:
+        lines.append(f"\n{note}")
+    return "\n".join(lines)
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for transport configuration."""
     parser = argparse.ArgumentParser(description="Engram MCP Server")
@@ -800,6 +830,14 @@ async def get_user_context(
                 else:
                     suffix = ""
         context += suffix
+
+    # a1: embed caller permissions so the AI tool knows its trust boundary
+    # from the first message. The section is appended BEFORE the governance
+    # gate so owner callers see it in the full context; non-owner callers
+    # get the gate's refusal string (they can use get_permission_profile).
+    perms = _gov_rt.describe_caller_permissions(_engram.root)
+    context += _format_permissions_section(perms)
+
     # Cold-start context is a rendered string bundling identity + top
     # lessons/decisions + snapshot — unfilterable by field. Gate owner-only.
     return _gov_rt.maybe_govern_owner_only(

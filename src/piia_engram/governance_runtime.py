@@ -548,6 +548,54 @@ def caller_is_owner(root, *, agent_id: str = "", client_type: str | None = None)
     return (not revoked) and trust == _PRIVATE_SELF
 
 
+def describe_caller_permissions(
+    root, *, agent_id: str = "", client_type: str | None = None
+) -> dict:
+    """Return a structured description of the caller's resolved permissions.
+
+    Safe to call regardless of governance state.  Used by ``get_user_context``
+    (a1) to embed a *Caller Permissions* section into the cold-start context so
+    the consuming AI tool knows its trust boundary from the first message.
+
+    When governance is OFF the response says "unrestricted".  When ON it
+    resolves the caller through :func:`resolve_caller` and surfaces the
+    trust level, sensitivity ceiling, write policy, and revocation status.
+    """
+    enabled = governance_enabled()
+    if not enabled:
+        return {
+            "governance_enabled": False,
+            "trust_level": "unrestricted",
+            "max_sensitivity": "all",
+            "write_policy": "verified",
+            "revoked": False,
+            "note": (
+                "Governance is off — all tools and data are accessible "
+                "without filtering. Enable with ENGRAM_GOVERNANCE=1."
+            ),
+        }
+
+    aid, trust, revoked, grant_error = resolve_caller(
+        root, agent_id=agent_id, client_type=client_type
+    )
+    level_info = TRUST_LEVELS.get(trust, TRUST_LEVELS[DEFAULT_TRUST_LEVEL])
+    result: dict = {
+        "governance_enabled": True,
+        "agent_id": aid,
+        "trust_level": trust,
+        "max_sensitivity": level_info["max_sensitivity"],
+        "write_policy": level_info["write"],
+        "revoked": revoked,
+        "note": (
+            f"Items above '{level_info['max_sensitivity']}' sensitivity "
+            "are filtered from responses."
+        ),
+    }
+    if grant_error:
+        result["grant_error"] = grant_error
+    return result
+
+
 def maybe_refuse_export(root, *, tool: str, agent_id: str = "",
                         client_type: str | None = None, declared_task: str = ""):
     """Pre-execution owner gate for tools whose disclosure surface is a FILE
