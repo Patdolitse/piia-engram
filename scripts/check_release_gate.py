@@ -17,11 +17,29 @@ fresh checkout sees it) and must record that each required gate passed:
     - codex-review: passed        # independent external (Codex) review
     - tests: pass                 # full pytest suite green
     - eval-gate: pass             # or: n/a (no retrieval/quality change)
+    - negative-control: passed    # R1; or n/a (no security-sensitive change)
+    - field-assertion-audit: passed  # R5; or n/a (no security-sensitive module touched)
 
 Required markers: ``self-review``, ``codex-review``, ``tests``. Each must be
 on its own line as ``<marker>: <value>`` with a passing value
-(passed/pass/ok/green/yes). ``eval-gate`` is required to be present but may
-be ``n/a``.
+(passed/pass/ok/green/yes). ``eval-gate``, ``negative-control`` and
+``field-assertion-audit`` are required to be present but may be ``n/a``.
+
+The last two encode the self-test admission ruleset (R1/R5) derived from the
+a5 corpus-encryption Codex audits, where "the tests I wrote all pass" hid four
+plaintext-leak bugs:
+
+- ``negative-control`` (R1): for any security-sensitive change, the new
+  regression tests must have been shown to FAIL on the pre-fix code (a green
+  test that also passes on the buggy code proves nothing). Record ``passed``
+  once you have run the new tests against the old commit and seen them red;
+  use ``n/a`` only when the release touches no security-sensitive behaviour.
+- ``field-assertion-audit`` (R5): for any change to a security-sensitive
+  module (encryption, redaction, permission gating), every free-text field
+  that could carry secret content must have an on-disk assertion proving it
+  is not written in the clear — "it looks safe when I read the code" is not
+  evidence. Record ``passed`` once the field-vs-assertion checklist is
+  complete; use ``n/a`` when no such module was touched.
 
 Run from repo root:
 
@@ -42,7 +60,10 @@ import sys
 from pathlib import Path
 
 REQUIRED_MARKERS = ("self-review", "codex-review", "tests")
-PRESENCE_ONLY = ("eval-gate",)  # must appear; "n/a" is acceptable
+# Must appear; "n/a" is acceptable. eval-gate guards retrieval/quality
+# regressions; negative-control (R1) and field-assertion-audit (R5) encode the
+# self-test admission ruleset — see module docstring.
+PRESENCE_ONLY = ("eval-gate", "negative-control", "field-assertion-audit")
 _PASS_VALUES = {"passed", "pass", "ok", "green", "yes", "done"}
 _NA_VALUES = {"n/a", "na", "none", "skip", "skipped"}
 
@@ -129,8 +150,10 @@ def main() -> int:
         print(f"  - {p}")
     print("")
     print("Publishing is blocked until the evidence file records that the")
-    print("mandatory gates passed (self-review + codex-review + tests, and an")
-    print("eval-gate line). This gate is enforced by CI so it cannot be skipped.")
+    print("mandatory gates passed (self-review + codex-review + tests) and the")
+    print("presence-only gates are declared (eval-gate, negative-control,")
+    print("field-assertion-audit — each 'passed' or 'n/a'). This gate is enforced")
+    print("by CI so it cannot be skipped.")
     return 1
 
 

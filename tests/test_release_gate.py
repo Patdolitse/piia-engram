@@ -47,7 +47,9 @@ def test_complete_evidence_passes(rg, tmp_path):
                     "- self-review: passed\n"
                     "- codex-review: passed\n"
                     "- tests: pass\n"
-                    "- eval-gate: pass\n")
+                    "- eval-gate: pass\n"
+                    "- negative-control: passed\n"
+                    "- field-assertion-audit: passed\n")
     ok, problems = rg.check_release_gate("9.9.9", tmp_path)
     assert ok is True, problems
     assert problems == []
@@ -58,9 +60,64 @@ def test_eval_gate_na_is_accepted(rg, tmp_path):
                     "- self-review: passed\n"
                     "- codex-review: passed\n"
                     "- tests: pass\n"
-                    "- eval-gate: n/a\n")
+                    "- eval-gate: n/a\n"
+                    "- negative-control: n/a\n"
+                    "- field-assertion-audit: n/a\n")
     ok, _ = rg.check_release_gate("9.9.9", tmp_path)
     assert ok is True
+
+
+def test_missing_negative_control_marker_blocks(rg, tmp_path):
+    """R1 enforcement: the negative-control gate must be declared."""
+    _write_evidence(tmp_path, "9.9.9",
+                    "- self-review: passed\n"
+                    "- codex-review: passed\n"
+                    "- tests: pass\n"
+                    "- eval-gate: n/a\n"
+                    "- field-assertion-audit: n/a\n")
+    ok, problems = rg.check_release_gate("9.9.9", tmp_path)
+    assert ok is False
+    assert any("negative-control" in p for p in problems)
+
+
+def test_missing_field_assertion_audit_marker_blocks(rg, tmp_path):
+    """R5 enforcement: the field-assertion-audit gate must be declared."""
+    _write_evidence(tmp_path, "9.9.9",
+                    "- self-review: passed\n"
+                    "- codex-review: passed\n"
+                    "- tests: pass\n"
+                    "- eval-gate: n/a\n"
+                    "- negative-control: n/a\n")
+    ok, problems = rg.check_release_gate("9.9.9", tmp_path)
+    assert ok is False
+    assert any("field-assertion-audit" in p for p in problems)
+
+
+def test_negative_control_passed_is_accepted(rg, tmp_path):
+    """A security-sensitive release declares negative-control: passed."""
+    _write_evidence(tmp_path, "9.9.9",
+                    "- self-review: passed\n"
+                    "- codex-review: passed\n"
+                    "- tests: pass\n"
+                    "- eval-gate: n/a\n"
+                    "- negative-control: passed\n"
+                    "- field-assertion-audit: passed\n")
+    ok, problems = rg.check_release_gate("9.9.9", tmp_path)
+    assert ok is True, problems
+
+
+def test_negative_control_non_passing_value_blocks(rg, tmp_path):
+    """An unrecognised value (not passing, not n/a) must block."""
+    _write_evidence(tmp_path, "9.9.9",
+                    "- self-review: passed\n"
+                    "- codex-review: passed\n"
+                    "- tests: pass\n"
+                    "- eval-gate: n/a\n"
+                    "- negative-control: pending\n"
+                    "- field-assertion-audit: n/a\n")
+    ok, problems = rg.check_release_gate("9.9.9", tmp_path)
+    assert ok is False
+    assert any("negative-control" in p and "pending" in p for p in problems)
 
 
 def test_missing_codex_review_blocks(rg, tmp_path):
@@ -103,7 +160,9 @@ def test_inline_comments_after_values_are_ignored(rg, tmp_path):
                     "- self-review: passed     # diff reviewed\n"
                     "- codex-review: passed    # independent external review\n"
                     "- tests: pass             # 1006 green\n"
-                    "- eval-gate: n/a          # no retrieval change\n")
+                    "- eval-gate: n/a          # no retrieval change\n"
+                    "- negative-control: n/a   # no security-sensitive change\n"
+                    "- field-assertion-audit: n/a  # no security module touched\n")
     ok, problems = rg.check_release_gate("9.9.9", tmp_path)
     assert ok is True, problems
 
@@ -115,7 +174,9 @@ def test_parse_markers_accepts_varied_list_prefixes(rg, tmp_path):
                     "+ self-review: passed\n"
                     "1. codex-review: passed\n"
                     "- [x] tests: pass\n"
-                    "2) eval-gate: n/a\n")
+                    "2) eval-gate: n/a\n"
+                    "* negative-control: n/a\n"
+                    "- [x] field-assertion-audit: n/a\n")
     ok, problems = rg.check_release_gate("9.9.9", tmp_path)
     assert ok is True, problems
 
