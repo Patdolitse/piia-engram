@@ -800,7 +800,11 @@ async def get_user_context(
                 else:
                     suffix = ""
         context += suffix
-    return context
+    # Cold-start context is a rendered string bundling identity + top
+    # lessons/decisions + snapshot — unfilterable by field. Gate owner-only.
+    return _gov_rt.maybe_govern_owner_only(
+        _engram.root, context, tool="get_user_context"
+    )
 
 
 @mcp.tool()
@@ -940,6 +944,7 @@ async def get_lessons(
         limit: 最多返回多少条（默认 50）。 / Maximum number of items to return (default 50).
     """
     lessons = _engram.get_lessons(domain=domain, source_tool=source_tool, limit=limit)
+    lessons = _gov_rt.maybe_govern_list(_engram.root, lessons, tool="get_lessons")
     if not lessons:
         return "尚无经验教训记录。"
     return _json(lessons)
@@ -972,6 +977,7 @@ async def get_decisions(
         project=project,
         domain=domain,
     )
+    decisions = _gov_rt.maybe_govern_list(_engram.root, decisions, tool="get_decisions")
     if not decisions:
         return "尚无决策记录。"
     return _json(decisions)
@@ -1009,6 +1015,9 @@ async def get_project_context(project_folder: str) -> str:
     _session.detect_project(project_folder)
     try:
         snapshot = _engram.get_project_snapshot(project_folder)
+        snapshot = _gov_rt.maybe_govern_one(
+            _engram.root, snapshot, tool="get_project_context"
+        )
         _track("get_project_context", success=True)
     except Exception as exc:
         _track("get_project_context", success=False)
@@ -1055,9 +1064,10 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
         lessons = _engram.get_relevant_lessons(
             project_folder=project_folder, limit=limit
         )
-        # a0: governance gate (opt-in; OFF => byte-identical to the line above).
-        if _gov_rt.governance_enabled():
-            lessons, _ = _gov_rt.govern_list(_engram.root, lessons, tool="get_relevant_knowledge")
+        # governance gate (opt-in; OFF => byte-identical to the line above).
+        lessons = _gov_rt.maybe_govern_list(
+            _engram.root, lessons, tool="get_relevant_knowledge"
+        )
         _track("get_relevant_knowledge", success=True)
     except Exception as exc:
         _track("get_relevant_knowledge", success=False)
@@ -1082,7 +1092,11 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
         limit: 最多返回多少条（默认 10，上限 20）。 / Maximum number of items to return in total (default 10, max 20).
     """
     limit = min(int(limit), 20)
-    return _json(_engram.get_knowledge_inheritance(description, limit=limit))
+    pack = _engram.get_knowledge_inheritance(description, limit=limit)
+    pack = _gov_rt.maybe_govern_result(
+        _engram.root, pack, tool="get_knowledge_inheritance", list_fields=("items",)
+    )
+    return _json(pack)
 
 
 @mcp.tool()
@@ -1127,9 +1141,8 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             return "filters['tier'] 仅支持 'staging' 或 'verified'"
     try:
         result = _engram.search_knowledge(query, scope=scope, limit=limit, filters=filters)
-        # a0: governance gate (opt-in; OFF => byte-identical to the line above).
-        if _gov_rt.governance_enabled():
-            result, _ = _gov_rt.govern_buckets(_engram.root, result, tool="search_knowledge")
+        # governance gate (opt-in; OFF => byte-identical to the line above).
+        result = _gov_rt.maybe_govern_buckets(_engram.root, result, tool="search_knowledge")
         _track("search_knowledge", success=True)
     except Exception as exc:
         _track("search_knowledge", success=False)
@@ -1151,7 +1164,15 @@ async def get_knowledge_overview(section: str = "all", stale_days: int = 30) -> 
         section: 概览部分：'all'、'digest'、'health' 或 'stale'。 / Overview section: 'all', 'digest', 'health', or 'stale'.
         stale_days: 超过多少天算过期知识。 / Number of days after which knowledge is considered stale.
     """
-    return _json(_engram.get_knowledge_overview(section, stale_days=stale_days))
+    overview = _engram.get_knowledge_overview(section, stale_days=stale_days)
+    # digest embeds FULL top_lessons/top_decisions plus label-stripped preview
+    # rows nested several levels down (recent_items, stale.{lessons,decisions});
+    # field-by-field gating across those derived rows is error-prone and loses
+    # the original sensitivity label. Gate the aggregate view owner-only.
+    overview = _gov_rt.maybe_govern_owner_only(
+        _engram.root, overview, tool="get_knowledge_overview"
+    )
+    return _json(overview)
 
 
 @mcp.tool()
@@ -1168,7 +1189,13 @@ async def suggest_merges(threshold: float = 0.45, limit: int = 10) -> str:
         threshold: 相似度阈值（0.2–1.0，默认 0.45）。 / Similarity threshold (0.2–1.0, default 0.45).
         limit: 最多返回多少组建议（默认 10，上限 30）。 / Maximum number of suggestions to return (default 10, max 30).
     """
-    return _json(_engram.suggest_merges(threshold=threshold, limit=limit))
+    merges = _engram.suggest_merges(threshold=threshold, limit=limit)
+    # Each suggestion embeds item summaries from a full-library scan; gate the
+    # aggregate maintenance view owner-only.
+    merges = _gov_rt.maybe_govern_owner_only(
+        _engram.root, merges, tool="suggest_merges"
+    )
+    return _json(merges)
 
 
 @mcp.tool()
@@ -1184,7 +1211,12 @@ async def get_related_knowledge(item_id: str) -> str:
     Args:
         item_id: lesson 或 decision 的 ID。 / ID of a lesson or decision.
     """
-    return _json(_engram.get_related_knowledge(item_id))
+    related = _engram.get_related_knowledge(item_id)
+    related = _gov_rt.maybe_govern_result(
+        _engram.root, related, tool="get_related_knowledge",
+        list_fields=("related",), item_fields=("source",),
+    )
+    return _json(related)
 
 
 @mcp.tool()
@@ -1201,7 +1233,12 @@ async def find_similar_knowledge(item_id: str, limit: int = 5) -> str:
         item_id: 已有 lesson 或 decision 的 ID。 / ID of the existing lesson or decision.
         limit: 最多返回多少条相似项（默认 5）。 / Maximum number of similar items to return (default 5).
     """
-    return _json(_engram.find_similar_knowledge(item_id, limit=limit))
+    similar = _engram.find_similar_knowledge(item_id, limit=limit)
+    similar = _gov_rt.maybe_govern_result(
+        _engram.root, similar, tool="find_similar_knowledge",
+        list_fields=("similar",), item_fields=("source",),
+    )
+    return _json(similar)
 
 
 @mcp.tool()
@@ -1214,7 +1251,12 @@ async def export_knowledge_report() -> str:
     注意：报告会保存到 ~/.engram/exports/，同时返回正文内容。
     Note: The report is saved under ~/.engram/exports/ and the content is returned as well.
     """
-    return _engram.export_knowledge_report()
+    report = _engram.export_knowledge_report()
+    # An opaque whole-knowledge dump cannot be filtered field-by-field; gate it
+    # all-or-nothing (private-self only) so it can't become a bypass.
+    return _gov_rt.maybe_govern_dump(
+        _engram.root, report, tool="export_knowledge_report"
+    )
 
 
 # ===========================================================================
@@ -1485,6 +1527,7 @@ async def get_playbooks(domain: str = "", limit: int = 20) -> str:
     """
     try:
         result = _engram.get_playbooks(domain=domain or None, limit=limit)
+        result = _gov_rt.maybe_govern_list(_engram.root, result, tool="get_playbooks")
         _track("get_playbooks", success=True)
     except Exception as exc:
         _track("get_playbooks", success=False)
@@ -1506,6 +1549,7 @@ async def get_playbook(playbook_id: str) -> str:
     """
     try:
         result = _engram.get_playbook(playbook_id)
+        result = _gov_rt.maybe_govern_one(_engram.root, result, tool="get_playbook")
         _track("get_playbook", success=True)
     except Exception as exc:
         _track("get_playbook", success=False)
@@ -1527,6 +1571,9 @@ async def get_recent_playbooks(limit: int = 5) -> str:
     """
     try:
         result = _engram.get_recent_playbooks(limit=limit)
+        result = _gov_rt.maybe_govern_list(
+            _engram.root, result, tool="get_recent_playbooks"
+        )
         _track("get_recent_playbooks", success=True)
     except Exception as exc:
         _track("get_recent_playbooks", success=False)
@@ -1634,8 +1681,15 @@ async def prepare_playbook_execution(
     except Exception as exc:
         _track("prepare_playbook_execution", success=False)
         return f"准备执行计划失败: {_safe_err(exc)}"
-    if result.get("error"):
+    if isinstance(result, dict) and result.get("error"):
         return _json(result)
+    # The prepared plan embeds the playbook's (parameter-substituted) step bodies
+    # — the same knowledge that get_playbook gates. Leaving this sibling read
+    # ungoverned would re-open the bypass get_playbook closes (Codex round-15
+    # P1). Gate the plan owner-only; lower tiers get a withheld stub.
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="prepare_playbook_execution"
+    )
     return _json(result)
 
 
@@ -1939,7 +1993,11 @@ async def get_stale_knowledge(days: int = 30, limit: int = 20) -> str:
         days: 超过多少天算过期（默认 30）。 / Number of days after which an item is stale (default 30).
         limit: 最多返回多少条（默认 20）。 / Maximum number of items to return (default 20).
     """
-    return _json(_engram.get_stale_knowledge(days=days, limit=limit))
+    stale = _engram.get_stale_knowledge(days=days, limit=limit)
+    # dict of {days, limit, lessons:[...], decisions:[...]} — buckets filters the
+    # two item lists (titles can themselves carry sensitive text), scalars pass.
+    stale = _gov_rt.maybe_govern_buckets(_engram.root, stale, tool="get_stale_knowledge")
+    return _json(stale)
 
 
 @mcp.tool()
@@ -2084,7 +2142,14 @@ async def get_decision_thread(seed_id: str) -> str:
     Args:
         seed_id: 决策链中任意一条的 ID。 / ID of any item in the thread.
     """
-    return _json(_engram.get_decision_thread(seed_id))
+    thread = _engram.get_decision_thread(seed_id)
+    # 'order' rows are derived previews ({id, status, summary}) that do not
+    # carry the source item's sensitivity label, so content-only gating would
+    # be partial. Gate the derived thread view owner-only.
+    thread = _gov_rt.maybe_govern_owner_only(
+        _engram.root, thread, tool="get_decision_thread"
+    )
+    return _json(thread)
 
 
 @mcp.tool()
@@ -2977,6 +3042,9 @@ async def get_recent_context(
         limit: 最多返回几个会话（默认 1 = 最近一次）。 / Max sessions to return (default 1 = most recent).
     """
     sessions = _engram.get_recent_context(tool=tool, limit=limit)
+    sessions = _gov_rt.maybe_govern_list(
+        _engram.root, sessions, tool="get_recent_context"
+    )
     _track("get_recent_context", success=True)
     if not sessions:
         return _json({"message": "没有找到保存的上下文记录。", "sessions": []})
@@ -3037,6 +3105,10 @@ async def get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
     )
+    # Resume brief bundles top lessons/decisions + recent context; owner-only.
+    brief = _gov_rt.maybe_govern_owner_only(
+        _engram.root, brief, tool="get_resume_brief"
+    )
     _track("get_resume_brief", success=True)
     return _json(brief)
 
@@ -3064,6 +3136,10 @@ async def get_daily_log(
     log = _engram.get_daily_log(
         project_folder=project_folder,
         date=date or None,
+    )
+    # Daily log embeds per-session summaries (first ~600 chars); owner-only.
+    log = _gov_rt.maybe_govern_owner_only(
+        _engram.root, log, tool="get_daily_log"
     )
     _track("get_daily_log", success=True)
     return _json(log)

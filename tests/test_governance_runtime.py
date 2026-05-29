@@ -249,3 +249,159 @@ def test_receipt_is_json_serializable(tmp_path):
         tmp_path, _buckets(), tool="search_knowledge", client_type="claude_code"
     )
     json.dumps(receipt)  # must not raise
+
+
+# ── R15 P2: identity resolution fails closed ─────────────────────────────────
+
+
+def test_corrupt_grants_file_fails_closed_to_read_only_external(tmp_path):
+    # A damaged grants.json must NOT raise (that would DoS every governed read);
+    # it must drop to the most restrictive tier and surface the failure.
+    store_path = GrantStore(tmp_path).path
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    store_path.write_text("{ not valid json", encoding="utf-8")
+
+    # Even a client that WOULD be trusted (self) falls back to public-only.
+    out, receipt = gr.govern_buckets(
+        tmp_path, _buckets(), tool="search_knowledge", client_type="self"
+    )
+    assert _ids(out["lessons"]) == ["L1"]      # public only
+    assert out["decisions"] == []
+    assert receipt["trust_level"] == "read-only-external"
+    assert receipt["grant_error"]               # failure surfaced, not swallowed
+
+
+def test_corrupt_grants_file_does_not_raise_for_any_identity(tmp_path):
+    store_path = GrantStore(tmp_path).path
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    store_path.write_text("}{ corrupt", encoding="utf-8")
+    for kw in ({"client_type": "self"}, {"agent_id": "agent-007"}, {"client_type": ""}):
+        out, receipt = gr.govern_buckets(
+            tmp_path, _buckets(), tool="search_knowledge", **kw
+        )
+        assert _ids(out["lessons"]) == ["L1"]   # public only, never throws
+        assert receipt["trust_level"] == "read-only-external"
+
+
+# ── R15 P3: invalid sensitivity label fails closed (not silently → work) ─────
+
+
+def test_invalid_sensitivity_label_withheld_from_trusted_local(tmp_path):
+    # A present-but-bogus label must NOT be normalized to the 'work' default
+    # (which trusted-local can read). It is treated as the most sensitive tier.
+    items = {"lessons": [
+        {"id": "OK", "sensitivity": "work", "content": "normal"},
+        {"id": "BOGUS", "sensitivity": "definitely-not-a-level", "content": "x"},
+    ]}
+    out, _ = gr.govern_buckets(
+        tmp_path, items, tool="search_knowledge", client_type="claude_code"
+    )
+    assert _ids(out["lessons"]) == ["OK"]       # bogus-label item withheld
+
+
+def test_invalid_label_still_visible_to_private_self(tmp_path):
+    items = {"lessons": [{"id": "BOGUS", "sensitivity": "weird", "content": "x"}]}
+    out, _ = gr.govern_buckets(
+        tmp_path, items, tool="search_knowledge", client_type="self"
+    )
+    assert _ids(out["lessons"]) == ["BOGUS"]    # owner still sees it
+
+
+def test_unlabeled_still_treated_as_work_not_secret(tmp_path):
+    # The fail-close applies only to PRESENT-but-invalid labels; a truly
+    # unlabeled item keeps the 'work' default and reaches trusted-local.
+    out, _ = gr.govern_buckets(
+        tmp_path, {"lessons": [{"id": "U", "content": "x"}]},
+        tool="search_knowledge", client_type="claude_code",
+    )
+    assert _ids(out["lessons"]) == ["U"]
+
+
+# ── owner-only gate (aggregate/dump views) ───────────────────────────────────
+
+
+def test_owner_only_returns_string_dump_to_private_self(tmp_path):
+    out, receipt = gr.govern_owner_only(
+        tmp_path, "FULL REPORT BODY", tool="export_knowledge_report", client_type="self"
+    )
+    assert out == "FULL REPORT BODY"
+    assert receipt["returned_by_type"] == {"_owner_only": 1}
+
+
+def test_owner_only_refuses_string_dump_for_external(tmp_path):
+    out, receipt = gr.govern_owner_only(
+        tmp_path, "FULL REPORT BODY", tool="export_knowledge_report", client_type="web"
+    )
+    assert "FULL REPORT BODY" not in out
+    assert isinstance(out, str)                 # refusal string, not the body
+    assert receipt["returned_by_type"] == {"_owner_only": 0}
+
+
+def test_owner_only_refuses_dict_with_withheld_stub_for_external(tmp_path):
+    out, _ = gr.govern_owner_only(
+        tmp_path, {"digest": {"secret": "s"}}, tool="get_knowledge_overview",
+        client_type="web",
+    )
+    assert out["governance_withheld"] is True
+    assert "secret" not in json.dumps(out)
+
+
+def test_owner_only_withholds_from_trusted_local_too(tmp_path):
+    # Aggregate views are private-self ONLY — even trusted-local is refused,
+    # because the granular per-item tools remain available and filtered.
+    out, _ = gr.govern_owner_only(
+        tmp_path, "BODY", tool="get_resume_brief", client_type="claude_code"
+    )
+    assert out != "BODY"
+
+
+# ── govern_result: mixed dicts (named list + item fields) ────────────────────
+
+
+def test_govern_result_filters_list_field_passes_scalars(tmp_path):
+    payload = {
+        "description": "d", "total": 2, "recommended_domains": ["python"],
+        "items": [
+            {"id": "A", "sensitivity": "public"},
+            {"id": "B", "sensitivity": "secret"},
+        ],
+    }
+    out, _ = gr.govern_result(
+        tmp_path, payload, tool="get_knowledge_inheritance",
+        list_fields=("items",), client_type="web",
+    )
+    assert _ids(out["items"]) == ["A"]          # secret filtered
+    assert out["recommended_domains"] == ["python"]  # scalar list untouched
+    assert out["description"] == "d"
+
+
+def test_govern_result_item_field_replaced_by_stub_when_over_ceiling(tmp_path):
+    payload = {"source": {"id": "S", "sensitivity": "secret"}, "related": []}
+    out, _ = gr.govern_result(
+        tmp_path, payload, tool="get_related_knowledge",
+        list_fields=("related",), item_fields=("source",), client_type="web",
+    )
+    assert out["source"]["governance_withheld"] is True
+
+
+def test_govern_result_item_field_preserved_for_owner(tmp_path):
+    src = {"id": "S", "sensitivity": "secret"}
+    payload = {"source": src, "related": []}
+    out, _ = gr.govern_result(
+        tmp_path, payload, tool="get_related_knowledge",
+        item_fields=("source",), client_type="self",
+    )
+    assert out["source"] is src                 # original object, not a stub
+
+
+def test_maybe_helpers_are_noop_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+    items = [{"id": "B", "sensitivity": "secret"}]
+    assert gr.maybe_govern_list(tmp_path, items, tool="t") is items
+    buckets = {"lessons": items}
+    assert gr.maybe_govern_buckets(tmp_path, buckets, tool="t") is buckets
+    payload = {"items": items}
+    assert gr.maybe_govern_result(tmp_path, payload, tool="t", list_fields=("items",)) is payload
+    assert gr.maybe_govern_owner_only(tmp_path, "BODY", tool="t") == "BODY"
+    one = {"id": "B", "sensitivity": "secret"}
+    assert gr.maybe_govern_one(tmp_path, one, tool="t") is one
