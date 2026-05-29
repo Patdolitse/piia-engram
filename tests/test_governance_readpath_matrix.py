@@ -138,9 +138,10 @@ _MATRIX = [
      {"status": "duplicate", "existing_id": "sec-1", "existing_summary": SECRET, "similarity": 0.99},
      {"kind": "lesson", "content_json": '{"summary": "near dup"}'}, "withhold"),
     # ---- owner-only aggregates / dumps / derived views (maybe_govern_owner_only) ----
-    ("prepare_playbook_execution", "prepare_playbook_execution",
-     {"playbook_id": "sec-1", "steps": [{"order": 1, "text": SECRET}]},
-     {"playbook_id": "sec-1"}, "withhold"),
+    # NOTE: prepare_playbook_execution was MOVED to _EXPORT_OWNER_ONLY (round-18
+    # P1): core.save_execution_plan PERSISTS the step bodies to
+    # playbooks/executions/<id>.json, so governing only the return left the file
+    # on disk for a non-owner. It is now pre-write gated like the export tools.
     ("get_knowledge_overview", "get_knowledge_overview",
      {"digest": {"top_lessons": [_sec()]}, "health": {}, "stale": {}},
      {}, "withhold"),
@@ -182,6 +183,9 @@ _GOVERNED = {row[0] for row in _MATRIX}
 _EXPORT_OWNER_ONLY = {
     "export_engram", "export_engram_to_openclaw", "request_outline_review",
     "refresh_quick_context", "get_identity_card", "export_knowledge_report",
+    # round-18: core.save_execution_plan persists step bodies to
+    # playbooks/executions/<id>.json — the file is the leak, gate before writing.
+    "prepare_playbook_execution",
 }
 
 # Every other async @mcp.tool: the response carries NO stored knowledge
@@ -347,6 +351,10 @@ _EXPORT_SPECS = [
     ("refresh_quick_context", ("engram", "refresh_quick_context"), {"level": "standard"}),
     ("get_identity_card", ("engram", "export_identity_card"), {}),
     ("export_knowledge_report", ("engram", "export_knowledge_report"), {}),
+    # round-18: same class — the writer persists step bodies to
+    # playbooks/executions/<id>.json; spy proves it never runs for a non-owner.
+    ("prepare_playbook_execution", ("engram", "prepare_playbook_execution"),
+     {"playbook_id": "sec-1", "params_json": "{}"}),
 ]
 
 
@@ -439,43 +447,85 @@ def test_export_tools_actually_gate():
     )
 
 
-# ── 6. round-17 regression: file-writing tools leave NO file for a non-owner ──
+# ── 6. round-17/18 regression: NO file written by a non-owner call may carry a
+#       secret — path-agnostic content diff (the structural discovery fix) ──────
 #
-# The matrix above drives RETURN values. The round-17 FAIL was that
-# refresh_quick_context / get_identity_card / export_knowledge_report each write
-# a secret-bearing file to a predictable path BEFORE (or instead of) the return
-# being governed — a two-step exfil (call tool, then read the file). This test
-# hits the REAL filesystem (no writer mock) and asserts the non-owner call
-# produces a refusal and creates/updates no file at all.
-
-_FILEWRITE_TOOLS = [
-    ("refresh_quick_context", {"level": "standard"}),
-    ("get_identity_card", {}),
-    ("export_knowledge_report", {}),
-]
-
-
-def _list_written_files(root):
-    files = []
-    qc = root / "quick_context.md"
-    if qc.exists():
-        files.append(qc)
-    exports = root / "exports"
-    if exports.exists():
-        files.extend(p for p in exports.iterdir() if p.is_file())
-    return files
+# The matrix above drives RETURN values, so it is structurally blind to file
+# side effects: round-17 leaked via exports/*, round-18 leaked via
+# playbooks/executions/* — each time the return was governed but a derived file
+# already held the secret. Enumerating output PATHS (the round-18 attempt) just
+# moved the blind spot: prepare_playbook_execution wrote to a path the path-list
+# never checked.
+#
+# This test removes the path assumption entirely. It seeds the store with secret
+# lessons/decisions/playbooks, snapshots the bytes of EVERY file under the root,
+# runs each file-writing tool as an untrusted ``web`` caller, then re-snapshots.
+# ANY file created or modified BY THE CALL (i.e. not by the seeding) that
+# contains the secret marker is a leak — no matter where it lands. The only
+# expected write is the append-only audit ledger, which records the refusal
+# (tool name + trust level), never knowledge bodies, and is itself governed by
+# get_audit_log; it is excluded by name.
 
 
-@pytest.mark.parametrize(
-    "tool,kwargs", _FILEWRITE_TOOLS, ids=[t[0] for t in _FILEWRITE_TOOLS]
-)
-def test_filewrite_tools_write_no_file_for_non_owner(gov_engram, monkeypatch, tool, kwargs):
+def _snapshot_tree(root):
+    """path -> bytes for every file under root (store files included)."""
+    snap = {}
+    for p in root.rglob("*"):
+        if p.is_file():
+            try:
+                snap[p] = p.read_bytes()
+            except OSError:
+                pass
+    return snap
+
+
+def _seed_secret_store(e):
+    """Put the secret marker into stored lesson summary, decision text, and a
+    playbook STEP action so every derived view (quick-context / identity card /
+    knowledge report / execution plan) would surface it if it leaked."""
+    e.add_lesson({"summary": "secret lesson " + SECRET, "detail": SECRET,
+                  "sensitivity": "secret", "tier": "verified"})
+    e.add_decision({"question": "q", "choice": "secret choice " + SECRET,
+                    "rationale": SECRET, "sensitivity": "secret", "tier": "verified"})
+    pb = e.add_playbook({"title": "pb safe title",
+                         "steps": [{"order": 1, "action": SECRET, "detail": SECRET}],
+                         "sensitivity": "secret", "tier": "verified"})
+    return pb.get("id", "")
+
+
+def test_no_filewrite_tool_persists_secret_for_non_owner(gov_engram, monkeypatch):
     monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
-    before = set(_list_written_files(gov_engram.root))
+    e = gov_engram
+    pb_id = _seed_secret_store(e)
 
-    out = _call(tool, kwargs)
+    before = _snapshot_tree(e.root)
 
-    after = set(_list_written_files(gov_engram.root))
-    assert after == before, f"{tool} wrote a file for a non-owner: {after - before}"
-    assert "治理" in out or "Governance" in out, f"{tool} did not refuse the non-owner"
+    # every tool whose writer materialises stored bodies into a file under root
+    calls = [
+        ("refresh_quick_context", {"level": "standard"}),
+        ("get_identity_card", {}),
+        ("export_knowledge_report", {}),
+        ("prepare_playbook_execution", {"playbook_id": pb_id, "params_json": "{}"}),
+    ]
+    for tool, kwargs in calls:
+        out = _call(tool, kwargs)
+        assert "治理" in out or "Governance" in out, (
+            f"{tool} did not refuse the non-owner (got: {out[:120]!r})"
+        )
+
+    after = _snapshot_tree(e.root)
+
+    leaked = []
+    for path, data in after.items():
+        if path.name == "audit.log":  # append-only ledger; governed separately
+            continue
+        if before.get(path) == data:  # untouched by the calls (seeded store)
+            continue
+        if SECRET.encode() in data:
+            leaked.append(str(path.relative_to(e.root)))
+    assert not leaked, (
+        "A non-owner call persisted the secret to disk (file side-effect leak): "
+        f"{leaked}. The return may be governed, but the FILE is the disclosure "
+        "surface — gate before the writer runs (maybe_refuse_export)."
+    )

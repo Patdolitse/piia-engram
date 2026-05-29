@@ -1708,21 +1708,22 @@ async def prepare_playbook_execution(
                 params = parsed
         except json.JSONDecodeError:
             return "params_json 格式错误，需要有效的 JSON 对象"
+    # prepare_playbook_execution is NOT a pure read: core.save_execution_plan
+    # PERSISTS the (parameter-substituted) step bodies to
+    # <root>/playbooks/executions/<id>.json BEFORE we could govern the return
+    # (Codex round-18 P1). Governing only the return left a secret-bearing file
+    # on disk for a non-owner — same two-step exfil as the export tools. Gate
+    # BEFORE the writer runs: a non-owner gets a refusal and no execution-plan
+    # file is created. Owner proceeds and gets the full plan.
+    refusal = _gov_rt.maybe_refuse_export(_engram.root, tool="prepare_playbook_execution")
+    if refusal is not None:
+        return refusal
     try:
         result = _engram.prepare_playbook_execution(playbook_id, params=params)
         _track("prepare_playbook_execution", success=True)
     except Exception as exc:
         _track("prepare_playbook_execution", success=False)
         return f"准备执行计划失败: {_safe_err(exc)}"
-    if isinstance(result, dict) and result.get("error"):
-        return _json(result)
-    # The prepared plan embeds the playbook's (parameter-substituted) step bodies
-    # — the same knowledge that get_playbook gates. Leaving this sibling read
-    # ungoverned would re-open the bypass get_playbook closes (Codex round-15
-    # P1). Gate the plan owner-only; lower tiers get a withheld stub.
-    result = _gov_rt.maybe_govern_owner_only(
-        _engram.root, result, tool="prepare_playbook_execution"
-    )
     return _json(result)
 
 
