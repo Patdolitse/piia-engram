@@ -316,7 +316,7 @@ _CARD_RE = re.compile(r"(?<!\d)\d{13,19}(?!\d)")               # card candidate
 _CN_MOBILE_BARE = re.compile(r"1[3-9]\d{9}")                   # CN mobile, no anchors
 # Codex round-10 P1: phone/card are often written with spaces/hyphens/country
 # code (4111 1111 1111 1111 / 138-0013-8000 / +86 138 0013 8000). A digit-run
-# token interleaved with single spaces/hyphens (optionally a leading +). Used
+# token interleaved with presentation separators (optionally a leading +). Used
 # ONLY on short values, and every candidate is still validated by Luhn /
 # ISO 7064 checksum / the exact 11-digit mobile pattern — so normalization
 # widens the accepted FORMAT without lowering the confidence bar (a random
@@ -325,7 +325,27 @@ _CN_MOBILE_BARE = re.compile(r"1[3-9]\d{9}")                   # CN mobile, no a
 # the candidate may legitimately end in X/x (110105 19491231 002X). Allow X/x
 # in the run and as the final char; non-CN-ID candidates still must be pure
 # digits to reach the card/phone checks (compact.isdigit() guard below).
-_FORMATTED_NUM_RE = re.compile(r"\+?[0-9][0-9 Xx\-]{8,}[0-9Xx]")
+# Codex round-13 P1: the SAME card/phone/ID must not flip private -> public just
+# by swapping the visible separator. Spaces and hyphens alone are not how PII is
+# written in the wild (555.123.4567, 06.12.34.56.78, 4111/1111/...). So the
+# separator class is a small, explicit *presentation-separator allowlist*:
+#   \s  whitespace (space/tab/newline; NFKC already folded U+3000/NBSP/figure/
+#       narrow-NBSP to ASCII space in _normalize_visible_text)
+#   -   hyphen
+#   .   dot          /   slash   (NFKC folds fullwidth U+FF0E/U+FF0F to these)
+#   middle-dot family: U+00B7 · , U+2027 ‧ , U+30FB ・ (NFKC folds halfwidth
+#       U+FF65 to U+30FB; none of these fold to ASCII, so they stay in the class)
+# Deliberately EXCLUDED (higher false-positive surface, evaluate separately):
+#   , (thousands separators)  : (time/port/log)  ; _  — these can also carry PII
+#   but collide with far more benign numeric formats; the high-confidence
+#   validators would catch real PII, but the candidate-discovery cost isn't worth
+#   it yet. Tracked as a known limitation, NOT a silent gap.
+# The separator allowlist controls candidate DISCOVERY only; the Luhn / ISO 7064
+# / 1[3-9]\d{9} validators remain the real gate, so widening separators widens
+# FORMAT, never confidence. Residual risk is therefore a *false negative* on an
+# exotic separator (documented), never a false positive.
+_FORMATTED_NUM_SEP = r"[\s\-./·‧・]+"
+_FORMATTED_NUM_RE = re.compile(r"\+?[0-9][0-9Xx\s\-./·‧・]{8,}[0-9Xx]")
 
 _CN_ID_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
 _CN_ID_CHECKSUM = "10X98765432"
@@ -393,16 +413,22 @@ def _scan_formatted_groups(groups: list[str]) -> bool:
 
 
 def _has_formatted_pii(s: str) -> bool:
-    """Catch phone/card PII written with separators (spaces/hyphens) or a
-    country code. Each separator-bearing candidate is split into its
-    separator-delimited digit groups, and every consecutive-group window is
-    validated by the SAME high-confidence checks as the contiguous path (Luhn
-    for cards, ISO 7064 for CN IDs, the exact 1[3-9]\\d{9} shape for CN mobiles,
-    incl. an optional 86 / +86 country code). Window scanning — rather than
-    validating one greedy compacted run — is what keeps multiple formatted PII
-    packed into one field from hiding behind an over-long no-match (round-12)."""
+    """Catch phone/card PII written with presentation separators (whitespace,
+    hyphen, dot, slash, middle-dot family — see ``_FORMATTED_NUM_SEP``) or a
+    country code. Each candidate is split into its separator-delimited digit
+    groups, and every consecutive-group window is validated by the SAME
+    high-confidence checks as the contiguous path (Luhn for cards, ISO 7064 for
+    CN IDs, the exact 1[3-9]\\d{9} shape for CN mobiles, incl. an optional
+    86 / +86 country code).
+
+    Two properties matter for the governance gate:
+    * Window scanning (not one greedy compacted run) keeps multiple formatted
+      PII packed into one field from hiding behind an over-long no-match (r12).
+    * The separator allowlist for DISCOVERY and SPLIT is the same set, so the
+      same card/phone/ID can't drop from private to public just by swapping a
+      visible separator (r13). The validators stay the confidence gate."""
     for m in _FORMATTED_NUM_RE.finditer(s):
-        groups = [g for g in re.split(r"[ \-]+", m.group().replace("+", "")) if g]
+        groups = [g for g in re.split(_FORMATTED_NUM_SEP, m.group().replace("+", "")) if g]
         if _scan_formatted_groups(groups):
             return True
     return False

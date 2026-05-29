@@ -722,3 +722,92 @@ def test_multiple_formatted_pii_false_positive_guards_round12():
         "order-2024-0001 order-2024-0002",
     ]:
         assert sv.classify_value(v) == "public", v
+
+
+# ── Codex round-13 FAIL regressions: presentation-separator allowlist ──
+# The SAME card/phone/CN-ID must not flip private->public just by swapping the
+# visible separator. Discovery + split share one allowlist: whitespace (incl.
+# tab/newline and NFKC-folded fullwidth/NBSP/figure/narrow spaces), hyphen, dot,
+# slash, and the middle-dot family (U+00B7 / U+2027 / U+30FB; NFKC folds
+# fullwidth dot U+FF0E / slash U+FF0F to ASCII and halfwidth middot U+FF65 to
+# U+30FB). The Luhn / ISO 7064 / 1[3-9]\d{9} validators stay the confidence gate.
+
+def test_value_scanner_detects_dot_slash_middot_formatted_cards_round13_regression():
+    for v in [
+        "4111.1111.1111.1111",
+        "4111/1111/1111/1111",
+        "4111·1111·1111·1111",   # MIDDLE DOT
+        "4111‧1111‧1111‧1111",   # HYPHENATION POINT
+        "4111・1111・1111・1111",   # KATAKANA MIDDLE DOT
+        "4111．1111．1111．1111",   # fullwidth dot -> NFKC '.'
+        "4111／1111／1111／1111",   # fullwidth slash -> NFKC '/'
+        "4111\t1111\t1111\t1111",               # tab
+        "4111\n1111\n1111\n1111",               # newline
+        "4111 1111/1111 1111",                  # mixed space + slash
+    ]:
+        assert sv.classify_value(v) == "private", repr(v)
+
+def test_value_scanner_detects_dot_slash_middot_formatted_cn_phones_round13_regression():
+    for v in [
+        "138.0013.8000",
+        "138/0013/8000",
+        "138·0013·8000",
+        "138.0013-8000",                        # mixed dot + hyphen
+        "138．0013．8000",              # fullwidth dot
+    ]:
+        assert sv.classify_value(v) == "private", repr(v)
+
+def test_value_scanner_detects_dot_slash_middot_formatted_cn_ids_round13_regression():
+    for v in [
+        "110105.19491231.002X",
+        "110105/19491231/002X",
+        "110105·19491231·002X",
+        "110105.19491231-002X",                 # mixed
+    ]:
+        assert sv.classify_value(v) == "private", repr(v)
+
+def test_formatted_pii_separator_variants_blocked_through_external_gate_round13_regression():
+    from piia_engram import governance as gov
+    items = [
+        {"id": "card_dot", "sensitivity": "public", "note": "4111.1111.1111.1111"},
+        {"id": "card_slash", "sensitivity": "public", "note": "4111/1111/1111/1111"},
+        {"id": "phone_dot", "sensitivity": "public", "note": "138.0013.8000"},
+        {"id": "phone_middot", "sensitivity": "public", "note": "138·0013·8000"},
+        {"id": "id_slash", "sensitivity": "public", "note": "110105/19491231/002X"},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
+    assert allowed == []
+
+def test_formatted_pii_separator_variants_dict_keys_blocked_round13_regression():
+    # A dict KEY written with dot/slash separators is visible text too.
+    assert sv.classify_item({"sensitivity": "public", "x": {"4111.1111.1111.1111": 1}}) == "private"
+    assert sv.classify_item({"sensitivity": "public", "x": {"138/0013/8000": 1}}) == "private"
+
+def test_formatted_pii_separator_false_positive_guards_round13():
+    # The separator allowlist must not over-promote benign dotted/slashed numbers.
+    for v in [
+        "SKU.1234.5678.9012",
+        "SKU/1234/5678/9012",
+        "ISBN 978-0-306-40615-7",
+        "2026/05/29 13:00:00",
+        "2026.05.29 13:00:00",
+        "2026.05.29",
+        "192.168.1.100",
+        "255.255.255.0",
+        "10.20.30.40:8080",
+        "31.2304 121.4737",          # geo coordinates
+        "v4.2.1",
+        "1234.5678.9012.3456",       # Luhn-invalid 16
+        # deliberately EXCLUDED separators stay public (tracked known limitation)
+        "4111,1111,1111,1111",
+        "4111;1111;1111;1111",
+        "4111_1111_1111_1111",
+        "4111:1111:1111:1111",
+    ]:
+        assert sv.classify_value(v) == "public", repr(v)
+
+def test_contiguous_no_separator_blob_is_known_limitation_round13():
+    # Documented known limitation (NOT a silent gap): a long no-separator digit
+    # blob is NOT sliced into card-sized windows (would balloon Luhn false
+    # positives over order numbers / hashes / serials). Left public on purpose.
+    assert sv.classify_value("41111111111111114242424242424242") == "public"
