@@ -67,6 +67,27 @@ _DUMP_REFUSAL = (
     " (private-self only)."
 )
 
+# Pre-execution refusal for tools whose disclosure surface is a FILE written to
+# disk (full-store export, review HTML) rather than the MCP return value. The
+# export is skipped entirely for non-owners, so no file is written.
+_EXPORT_REFUSAL = (
+    "【治理层】当前信任档无权触发整库导出 / 知识审查页生成（仅 private-self 可用，未写出任何文件）。"
+    " / Governance: full-store export / review-page generation is withheld at the"
+    " current trust level (private-self only); nothing was written to disk."
+)
+
+# Returned in place of a write/mutate acknowledgement string that would
+# otherwise echo a STORED item title/body the caller did not supply. The
+# mutation still happened; only the echoed stored text is withheld.
+_ACK_WITHHELD = (
+    "【治理层】操作已执行；条目标题/正文在当前信任档下不予回显。"
+    " / Governance: operation applied; the stored item title/body is withheld at"
+    " the current trust level."
+)
+
+# Sentinel telling a MISSING ``sensitivity`` key apart from an explicit ``None``.
+_MISSING = object()
+
 
 def governance_enabled() -> bool:
     """True iff ``ENGRAM_GOVERNANCE`` is set truthy. OFF (default) means the
@@ -133,11 +154,17 @@ def _filter_keep_originals(items, trust_level, *, revoked, restricted_fields):
     for orig, ann in zip(items, annotated):
         if not isinstance(orig, dict) or not isinstance(ann, dict):
             continue
-        raw = orig.get("sensitivity")
-        if raw is None:
+        raw = orig.get("sensitivity", _MISSING)
+        # Key absent or explicit ``None`` → genuinely unlabeled; keep the
+        # classifier's ``work`` default. Key PRESENT but empty / whitespace /
+        # non-string / unknown value → malformed label, fail closed to
+        # ``secret``: once a ``sensitivity`` field exists it must be a valid
+        # level, otherwise it is treated as the most sensitive tier (an empty
+        # or junk label must NOT silently downgrade to the ``work`` default).
+        if raw is _MISSING or raw is None:
             continue
-        norm = str(raw).strip().lower()
-        if norm and norm not in VALID_LEVELS:
+        norm = raw.strip().lower() if isinstance(raw, str) else ""
+        if norm not in VALID_LEVELS:
             ann["sensitivity"] = "secret"
     allowed_copies, receipt = gate(annotated, trust_level, revoked=revoked)
     allowed_ids = {id(c) for c in allowed_copies}
@@ -374,6 +401,62 @@ def govern_owner_only(
     return out, receipt
 
 
+def govern_write_ack(
+    root,
+    payload,
+    *,
+    tool: str,
+    agent_id: str = "",
+    client_type: str | None = None,
+    declared_task: str = "",
+) -> tuple[object, dict]:
+    """Gate a write/mutate acknowledgement that would echo a STORED item title
+    or body the caller did NOT supply.
+
+    Some mutation tools are keyed only by item ID yet return stored content in
+    their confirmation — e.g. ``merge_knowledge`` → ``{primary_title,
+    secondary_title}``; ``link_knowledge`` → ``"Linked: <title> ↔ <title>"``;
+    ``update_playbook`` → ``"Playbook 已更新: <title>"``. A low-trust agent that
+    guesses an ID could read the title back through the "write" tool. a0 does
+    not yet gate the *write permission* (that is the later write-policy phase),
+    but the *response* must never disclose stored text above the ceiling.
+
+    ``private-self`` owners get the full ack. Lower tiers get a title/body-free
+    confirmation. Error payloads carry only caller-supplied IDs/shapes and pass
+    through unchanged so callers still learn the operation failed.
+    """
+    aid, trust, revoked, grant_error = resolve_caller(
+        root, agent_id=agent_id, client_type=client_type
+    )
+    owner = (not revoked) and trust == _PRIVATE_SELF
+    withheld = 0
+    if owner:
+        out = payload
+    elif isinstance(payload, dict) and payload.get("error"):
+        out = payload  # error strings only echo the caller's own IDs
+    elif isinstance(payload, dict):
+        out = {
+            "success": payload.get("success", True),
+            "governance_withheld": True,
+            "tool": tool,
+            "trust_level": trust,
+            "reason": "stored item title/body withheld at current trust level",
+        }
+        withheld = 1
+    elif isinstance(payload, str):
+        out = _ACK_WITHHELD
+        withheld = 1
+    else:
+        out = payload
+    ct = current_client_type() if client_type is None else (client_type or "")
+    receipt = _finalize_receipt(
+        root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
+        revoked=revoked, returned_by_type={"_write_ack": 0 if withheld else 1},
+        excluded_sens=withheld, excluded_malformed=0, grant_error=grant_error,
+    )
+    return out, receipt
+
+
 # ── flag-checked entry points (the single guard MCP read tools call) ─────────
 #
 # Each ``maybe_*`` is a true no-op when governance is OFF (returns the payload
@@ -440,3 +523,52 @@ def maybe_govern_owner_only(root, payload, *, tool: str, **kw):
 def maybe_govern_dump(root, text, *, tool: str, **kw):
     """Owner-only gate for an opaque whole-knowledge dump string."""
     return maybe_govern_owner_only(root, text, tool=tool, **kw)
+
+
+def maybe_govern_write_ack(root, payload, *, tool: str, **kw):
+    """Govern a write/mutate ack that echoes stored title/body iff the flag is
+    on; else return the ack unchanged (byte-identical disabled path)."""
+    if not governance_enabled():
+        return payload
+    out, _ = govern_write_ack(root, payload, tool=tool, **kw)
+    return out
+
+
+def caller_is_owner(root, *, agent_id: str = "", client_type: str | None = None) -> bool:
+    """True iff the resolved caller is the un-revoked ``private-self`` owner.
+
+    Always True when governance is OFF (no restriction applies), so callers can
+    use it as a single guard without a separate flag check.
+    """
+    if not governance_enabled():
+        return True
+    _aid, trust, revoked, _err = resolve_caller(
+        root, agent_id=agent_id, client_type=client_type
+    )
+    return (not revoked) and trust == _PRIVATE_SELF
+
+
+def maybe_refuse_export(root, *, tool: str, agent_id: str = "",
+                        client_type: str | None = None, declared_task: str = ""):
+    """Pre-execution owner gate for tools whose disclosure surface is a FILE
+    written to disk (full-store export, review HTML), not the MCP return value.
+
+    Call this BEFORE performing the export. For a non-owner it records a receipt
+    and returns the refusal string — the caller MUST return it and skip the
+    export, so no file is written (closing the two-step "export then read the
+    file" exfil path in agents that also hold filesystem access). Returns
+    ``None`` (proceed) when governance is OFF or the caller is the owner.
+    """
+    if not governance_enabled():
+        return None
+    aid, trust, revoked, grant_error = resolve_caller(
+        root, agent_id=agent_id, client_type=client_type
+    )
+    allowed = (not revoked) and trust == _PRIVATE_SELF
+    ct = current_client_type() if client_type is None else (client_type or "")
+    _finalize_receipt(
+        root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
+        revoked=revoked, returned_by_type={"_owner_only": 1 if allowed else 0},
+        excluded_sens=0 if allowed else 1, excluded_malformed=0, grant_error=grant_error,
+    )
+    return None if allowed else _EXPORT_REFUSAL

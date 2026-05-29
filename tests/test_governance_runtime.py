@@ -405,3 +405,163 @@ def test_maybe_helpers_are_noop_when_flag_off(tmp_path, monkeypatch):
     assert gr.maybe_govern_owner_only(tmp_path, "BODY", tool="t") == "BODY"
     one = {"id": "B", "sensitivity": "secret"}
     assert gr.maybe_govern_one(tmp_path, one, tool="t") is one
+    ack = {"success": True, "primary_title": "SECRET TITLE"}
+    assert gr.maybe_govern_write_ack(tmp_path, ack, tool="t") is ack
+    assert gr.maybe_govern_write_ack(tmp_path, "Linked: SECRET", tool="t") == "Linked: SECRET"
+    assert gr.maybe_refuse_export(tmp_path, tool="export_engram") is None
+    assert gr.caller_is_owner(tmp_path) is True   # no restriction when OFF
+
+
+# ── R16 P1: write-echo acks must not disclose stored title/body ──────────────
+
+
+def test_write_ack_dict_owner_gets_full_payload(tmp_path):
+    payload = {"success": True, "primary_title": "SECRET TITLE", "secondary_title": "other"}
+    out, receipt = gr.govern_write_ack(
+        tmp_path, payload, tool="merge_knowledge", client_type="self"
+    )
+    assert out is payload                          # owner sees the stored titles
+    assert receipt["returned_by_type"] == {"_write_ack": 1}
+
+
+def test_write_ack_dict_withholds_stored_title_from_external(tmp_path):
+    payload = {"success": True, "primary_title": "SECRET TITLE", "secondary_title": "other"}
+    out, receipt = gr.govern_write_ack(
+        tmp_path, payload, tool="merge_knowledge", client_type="web"
+    )
+    blob = json.dumps(out)
+    assert "SECRET TITLE" not in blob and "other" not in blob
+    assert out["governance_withheld"] is True
+    assert out["success"] is True                  # caller still learns it worked
+    assert receipt["returned_by_type"] == {"_write_ack": 0}
+
+
+def test_write_ack_dict_withholds_from_trusted_local_too(tmp_path):
+    # Title is stored content the caller never supplied — only the owner sees it.
+    payload = {"success": True, "primary_title": "SECRET TITLE"}
+    out, _ = gr.govern_write_ack(
+        tmp_path, payload, tool="merge_knowledge", client_type="claude_code"
+    )
+    assert "SECRET TITLE" not in json.dumps(out)
+    assert out["governance_withheld"] is True
+
+
+def test_write_ack_string_withheld_from_external(tmp_path):
+    out, _ = gr.govern_write_ack(
+        tmp_path, "Playbook 已更新: SECRET TITLE", tool="update_playbook", client_type="web"
+    )
+    assert "SECRET TITLE" not in out
+    assert isinstance(out, str)
+
+
+def test_write_ack_error_payload_passes_through(tmp_path):
+    # Error dicts echo only the caller's own IDs/shape, so they pass unchanged
+    # even for external callers — the caller must learn the op failed.
+    err = {"error": "Playbook not found: pb-123"}
+    out, _ = gr.govern_write_ack(
+        tmp_path, err, tool="update_playbook", client_type="web"
+    )
+    assert out is err
+
+
+# ── R16: pre-write export owner gate (refuse before writing the file) ────────
+
+
+def test_refuse_export_returns_refusal_for_external(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    refusal = gr.maybe_refuse_export(
+        tmp_path, tool="export_engram", client_type="web"
+    )
+    assert isinstance(refusal, str) and refusal       # caller returns this, skips write
+    # Bilingual governance refusal, no store content.
+    assert "治理" in refusal or "Governance" in refusal
+
+
+def test_refuse_export_returns_none_for_owner(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    assert gr.maybe_refuse_export(
+        tmp_path, tool="export_engram", client_type="self"
+    ) is None
+
+
+def test_refuse_export_noop_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+    assert gr.maybe_refuse_export(
+        tmp_path, tool="export_engram", client_type="web"
+    ) is None                                         # OFF → never refuses
+
+
+def test_refuse_export_withholds_from_trusted_local(tmp_path, monkeypatch):
+    # Full-store export is private-self only; even trusted-local is refused.
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    refusal = gr.maybe_refuse_export(
+        tmp_path, tool="export_engram", client_type="claude_code"
+    )
+    assert isinstance(refusal, str) and refusal
+
+
+def test_refuse_export_logs_receipt(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    gr.maybe_refuse_export(tmp_path, tool="export_engram", client_type="web")
+    ledger = GovernanceLedger(default_ledger_path(tmp_path))
+    recs = ledger.records()
+    assert recs and recs[-1]["event"]["tool"] == "export_engram"
+
+
+# ── caller_is_owner ──────────────────────────────────────────────────────────
+
+
+def test_caller_is_owner_true_only_for_private_self(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    assert gr.caller_is_owner(tmp_path, client_type="self") is True
+    assert gr.caller_is_owner(tmp_path, client_type="claude_code") is False
+    assert gr.caller_is_owner(tmp_path, client_type="web") is False
+    assert gr.caller_is_owner(tmp_path, client_type="") is False
+
+
+def test_caller_is_owner_false_when_revoked(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    GrantStore(tmp_path).set_grant("agent-x", "private-self")
+    GrantStore(tmp_path).revoke("agent-x")
+    assert gr.caller_is_owner(tmp_path, agent_id="agent-x") is False
+
+
+# ── R16 P3: empty / whitespace / non-string sensitivity → secret (fail-closed) ─
+
+
+def test_empty_string_sensitivity_treated_as_secret(tmp_path):
+    # A present-but-empty label is NOT a true "unlabeled" item; it must not be
+    # normalized to the readable 'work' default.
+    items = {"lessons": [
+        {"id": "OK", "content": "x"},                       # truly unlabeled → work
+        {"id": "EMPTY", "sensitivity": "", "content": "x"},
+        {"id": "BLANK", "sensitivity": "   ", "content": "x"},
+    ]}
+    out, _ = gr.govern_buckets(
+        tmp_path, items, tool="search_knowledge", client_type="claude_code"
+    )
+    assert _ids(out["lessons"]) == ["OK"]   # empty/blank labels withheld
+
+
+def test_non_string_sensitivity_treated_as_secret(tmp_path):
+    items = {"lessons": [
+        {"id": "NUM", "sensitivity": 123, "content": "x"},
+        {"id": "LIST", "sensitivity": ["work"], "content": "x"},
+    ]}
+    out, _ = gr.govern_buckets(
+        tmp_path, items, tool="search_knowledge", client_type="claude_code"
+    )
+    assert out["lessons"] == []   # both withheld as secret
+
+
+def test_valid_label_case_insensitive_still_readable(tmp_path):
+    # Whitespace/case-variant of a VALID level normalizes and stays readable.
+    items = {"lessons": [
+        {"id": "PAD", "sensitivity": "  work  ", "content": "x"},
+        {"id": "CAPS", "sensitivity": "WORK", "content": "x"},
+    ]}
+    out, _ = gr.govern_buckets(
+        tmp_path, items, tool="search_knowledge", client_type="claude_code"
+    )
+    assert _ids(out["lessons"]) == ["PAD", "CAPS"]

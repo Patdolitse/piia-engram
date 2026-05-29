@@ -1,29 +1,39 @@
-"""Round-15 P1 regression: the read-path enforcement matrix.
+"""Round-15/16 P1 regression: the full MCP tool enforcement matrix.
 
 Codex round-15 FAILed the a0 cutover because governance was wired into only a
-*subset* of the agent-facing knowledge read tools. Enforcement flags are not
-like functional flags — they cannot be partially deployed. MCP tool selection
-is model-side, so a single ungoverned sibling read tool (e.g. ``get_decisions``
-while only ``search_knowledge`` is gated) is a *complete* bypass: a low-trust
-agent just calls the ungoverned tool. The whole layer's guarantee collapses to
-its weakest tool.
+*subset* of the agent-facing knowledge read tools. Round-16 FAILed again: the
+fix wired the named read tools but the coverage backstop classified tools by
+*name prefix*, so it never noticed that ``start_project`` (inherits knowledge),
+``get_identity_card`` (embeds lessons/decisions), ``get_execution_status``
+(playbook step bodies), and a cluster of ID-keyed *write* tools
+(``update_knowledge``, ``review_knowledge``, ``merge_knowledge``,
+``link_knowledge`` …) all return stored knowledge bodies/titles too. The model
+picking an MCP tool does not respect the developer's read/write mental model —
+it just calls whatever returns the data. The real enforcement boundary is:
 
-This module turns "missed a tool" into a test failure two ways:
+    ANY MCP tool whose response body OR immediately-readable side effect
+    contains a stored knowledge body/title must pass the trust ceiling.
 
-1. **Leak matrix** — every governed read tool is driven with a faked Engram
-   that returns a public item AND a secret item; with ``ENGRAM_GOVERNANCE=1``
-   and ``ENGRAM_CLIENT_TYPE=web`` (an untrusted external agent) the secret
-   marker must NEVER appear in the tool's output. Filtering tools must still
-   return the public marker (proving they *filter*, not blanket-refuse).
+This module enforces that two ways:
 
-2. **Coverage backstop** — every read-shaped ``@mcp.tool`` in the module must be
-   classified as either GOVERNED (and present in the leak matrix) or explicitly
-   ALLOWLISTED as non-knowledge (identity field, registry, audit, diagnostics,
-   path-only export, external fetch). A newly-added read tool that is neither
-   fails the coverage test, forcing a conscious wire-or-allowlist decision.
+1. **Leak matrix** — every governed tool is driven with a faked Engram that
+   returns a public AND a secret item; with ``ENGRAM_GOVERNANCE=1`` and an
+   untrusted ``web`` client the secret marker must NEVER appear in the output.
+   Filter-mode tools must still return the public marker. The same rows are
+   re-run flag-OFF (secret flows through — proving the matrix is not vacuous)
+   and as ``self`` owner (secret returned — enforcement restricts lower tiers
+   without crippling the owner).
 
-A third test pins the OFF-by-default contract: with the flag unset the secret
-marker passes through every tool unchanged (byte-identical read path).
+2. **Deny-by-default coverage** — *every* async ``@mcp.tool`` in the module
+   (no name-prefix heuristic) must be classified as GOVERNED (and in the leak
+   matrix), EXPORT_OWNER_ONLY (file-writing export, refusal-tested), or
+   SAFE_ALLOWLIST (no stored knowledge body/title in the response, documented).
+   A new tool that is none of these fails the test, forcing a conscious
+   wire-or-classify decision. This is the structural fix for the round-16 miss:
+   it can no longer hide behind an unrecognized name prefix.
+
+Export tools get their own refusal test: under governance a non-owner must be
+refused BEFORE the file is written (path-only ≠ no-disclosure — Codex r16 P2-1).
 """
 
 from __future__ import annotations
@@ -51,14 +61,14 @@ def _sec() -> dict:
     return {"id": "sec-1", "sensitivity": "secret", "summary": SECRET, "content": SECRET}
 
 
-# ── the matrix: (tool, engram_method, fake_return, kwargs, mode) ─────────────
+# ── the leak matrix: (tool, engram_method, fake_return, kwargs, mode) ─────────
 #
-# mode="filter"  → secret omitted, public still returned (item-level gate)
-# mode="withhold" → whole payload withheld for non-owners (owner-only gate, or a
-#                   single secret item replaced by a stub)
+# mode="filter"   → secret omitted, public still returned (item-level gate)
+# mode="withhold" → whole payload / item / ack withheld for non-owners (owner-
+#                   only dump, single-item stub, or write-ack title scrub)
 
 _MATRIX = [
-    # ---- list[dict] tools (maybe_govern_list) ----
+    # ---- list[dict] read tools (maybe_govern_list) ----
     ("get_lessons", "get_lessons", [_pub(), _sec()], {}, "filter"),
     ("get_decisions", "get_decisions", [_pub(), _sec()], {}, "filter"),
     ("get_relevant_knowledge", "get_relevant_lessons", [_pub(), _sec()],
@@ -66,7 +76,7 @@ _MATRIX = [
     ("get_playbooks", "get_playbooks", [_pub(), _sec()], {}, "filter"),
     ("get_recent_playbooks", "get_recent_playbooks", [_pub(), _sec()], {}, "filter"),
     ("get_recent_context", "get_recent_context", [_pub(), _sec()], {}, "filter"),
-    # ---- dict-of-lists tools (maybe_govern_buckets) ----
+    # ---- dict-of-lists read tools (maybe_govern_buckets) ----
     ("search_knowledge", "search_knowledge",
      {"lessons": [_pub(), _sec()], "decisions": [], "playbooks": []},
      {"query": "x"}, "filter"),
@@ -84,11 +94,33 @@ _MATRIX = [
     ("find_similar_knowledge", "find_similar_knowledge",
      {"source": _pub(), "similar": [_pub(), _sec()], "total": 2},
      {"item_id": "pub-1"}, "filter"),
+    # start_project embeds the get_knowledge_inheritance bundle (round-16 P1-1).
+    ("start_project", "get_knowledge_inheritance",
+     {"query": "new project", "items": [_pub(), _sec()]},
+     {"description": "new", "project_folder": "/x"}, "filter"),
     # ---- single knowledge-item dicts (maybe_govern_one) → withheld stub ----
     ("get_project_context", "get_project_snapshot", _sec(),
      {"project_folder": "/x"}, "withhold"),
     ("get_playbook", "get_playbook", _sec(), {"playbook_id": "sec-1"}, "withhold"),
-    # ---- owner-only aggregates / dumps (maybe_govern_owner_only / _dump) ----
+    # ---- write tools returning a FULL stored item (maybe_govern_one) ----
+    ("update_knowledge", "update_knowledge", _sec(),
+     {"item_id": "sec-1", "updates_json": "{}"}, "withhold"),
+    ("archive_knowledge", "archive_knowledge", _sec(), {"item_id": "sec-1"}, "withhold"),
+    ("review_knowledge", "review_knowledge", _sec(), {"knowledge_id": "sec-1"}, "withhold"),
+    # ---- write tools whose ACK echoes a stored TITLE (maybe_govern_write_ack) ----
+    ("merge_knowledge", "merge_knowledge",
+     {"success": True, "primary_title": SECRET, "secondary_title": "other"},
+     {"primary_id": "sec-1", "secondary_id": "x"}, "withhold"),
+    ("link_knowledge", "link_knowledge",
+     {"success": True, "message": "Linked: " + SECRET + " ↔ other"},
+     {"id_a": "sec-1", "id_b": "x"}, "withhold"),
+    ("unlink_knowledge", "unlink_knowledge",
+     {"success": True, "message": "Unlinked: " + SECRET + " ↔ other"},
+     {"id_a": "sec-1", "id_b": "x"}, "withhold"),
+    ("update_playbook", "update_playbook",
+     {"title": SECRET, "version": 2}, {"playbook_id": "sec-1", "status": "active"}, "withhold"),
+    ("archive_playbook", "archive_playbook", {"title": SECRET}, {"playbook_id": "sec-1"}, "withhold"),
+    # ---- owner-only aggregates / dumps / derived views (maybe_govern_owner_only) ----
     ("prepare_playbook_execution", "prepare_playbook_execution",
      {"playbook_id": "sec-1", "steps": [{"order": 1, "text": SECRET}]},
      {"playbook_id": "sec-1"}, "withhold"),
@@ -99,6 +131,10 @@ _MATRIX = [
     ("get_decision_thread", "get_decision_thread",
      {"order": [{"id": "sec-1", "summary": SECRET}], "active_ids": []},
      {"seed_id": "sec-1"}, "withhold"),
+    ("get_execution_status", "get_execution_status",
+     {"title": SECRET, "steps": [{"action": SECRET, "status": "pending"}]},
+     {"playbook_id": "sec-1"}, "withhold"),
+    ("get_identity_card", "export_identity_card", "# identity card\n- " + SECRET, {}, "withhold"),
     ("get_user_context", "generate_context", "identity card\n" + SECRET, {}, "withhold"),
     ("get_resume_brief", "get_resume_brief", "resume brief\n" + SECRET, {}, "withhold"),
     ("get_daily_log", "get_daily_log", "daily log\n" + SECRET,
@@ -110,41 +146,54 @@ _MATRIX = [
 # The set the leak matrix actually exercises — used by the coverage backstop.
 _GOVERNED = {row[0] for row in _MATRIX}
 
-# Read-shaped @mcp.tool functions that are intentionally NOT governed by a0,
-# each for a concrete reason. a0 governs *knowledge bodies* (lessons, decisions,
-# playbooks, project/aggregate views). These are out of that scope:
-_ALLOWLIST_NON_KNOWLEDGE = {
-    # identity / preference fields — covered by their own safe= projection and
-    # deferred to the later permission-profile phase, not knowledge bodies.
-    "get_identity_card", "get_profile", "get_work_style", "get_preferences",
+# Export tools: the disclosure surface is a FILE written to disk (full-store
+# backup / review HTML), not the MCP return value. Governed by a PRE-write owner
+# gate (maybe_refuse_export) and verified by test_export_tools_refuse_non_owner.
+_EXPORT_OWNER_ONLY = {
+    "export_engram", "export_engram_to_openclaw", "request_outline_review",
+}
+
+# Every other async @mcp.tool: the response carries NO stored knowledge
+# body/title beyond what the caller supplied. Each is here for a concrete reason
+# (audited round-16). a0 governs knowledge bodies; these are out of that scope.
+_SAFE_ALLOWLIST = {
+    # identity / preference fields — own safe= projection, deferred to the later
+    # permission-profile phase; not knowledge bodies.
+    "get_profile", "get_work_style", "get_preferences",
     "get_trust_boundaries", "get_quality_standards",
     # metadata / registry / diagnostics — no knowledge bodies in the response.
     "get_domains", "list_projects", "list_agent_sessions",
-    "get_execution_status", "find_tool", "list_tools", "get_audit_log",
-    "export_feedback_report", "doctor",
-    # writes-with-a-read-shaped-name / external fetch.
-    "extract_session_insights", "read_web_content",
-    # whole-store exports that return a FILE PATH (not the body) over MCP — the
-    # disclosure risk is filesystem access, not an MCP read-path leak.
-    "export_engram", "export_engram_to_openclaw",
+    "find_tool", "list_tools", "get_audit_log", "export_feedback_report", "doctor",
+    "update_execution_step",  # counts/status only, no body
+    # caller-supplied-content writes — echo only what the caller just passed in,
+    # so there is nothing to read *back* above the ceiling.
+    "memory_store", "add_lesson", "add_decision", "add_playbook",
+    "bulk_add_knowledge", "ingest_notes", "extract_session_insights",
+    "save_project_snapshot", "save_agent_context", "wrap_up_session",
+    "register_tool", "update_identity", "refresh_quick_context",
+    # relation/maintenance ops returning caller IDs / counts only.
+    "add_relation", "apply_review",
+    # imports / external fetch.
+    "import_engram", "import_engram_from_openclaw", "read_web_content",
 }
 
-_READ_PREFIXES = (
-    "get_", "search_", "find_", "list_", "export_", "suggest_",
-    "prepare_", "extract_", "read_",
-)
+_CLASSIFIED = _GOVERNED | _EXPORT_OWNER_ONLY | _SAFE_ALLOWLIST
 
 
-def _discover_read_tools() -> set[str]:
-    """All read-shaped async ``@mcp.tool`` functions defined in mcp_server."""
+def _discover_all_tools() -> set[str]:
+    """EVERY async ``@mcp.tool`` defined in mcp_server — no name-prefix filter.
+
+    The round-16 miss was a prefix-based discovery (``start_project`` /
+    ``update_knowledge`` slipped through). Enumerate by shape only: a module-
+    level coroutine function defined in this module is a registered tool.
+    """
     out: set[str] = set()
     for name, obj in vars(mcp_server).items():
         if not inspect.iscoroutinefunction(obj):
             continue
         if getattr(obj, "__module__", "") != mcp_server.__name__:
             continue
-        if name == "doctor" or name.startswith(_READ_PREFIXES):
-            out.add(name)
+        out.add(name)
     return out
 
 
@@ -169,7 +218,20 @@ def _call(tool_name, kwargs):
     return asyncio.run(getattr(mcp_server, tool_name)(**kwargs))
 
 
-# ── 1. leak matrix ───────────────────────────────────────────────────────────
+def _patch_tool_method(gov_engram, monkeypatch, tool, method, fake):
+    """Monkeypatch the engram method a tool reads from, plus any side-effect
+    method that would otherwise touch the real filesystem in the matrix."""
+    monkeypatch.setattr(gov_engram, method, lambda *a, **k: fake, raising=False)
+    if tool == "start_project":
+        # start_project also persists a snapshot; no-op it so the matrix only
+        # exercises the inheritance gate, not the filesystem.
+        monkeypatch.setattr(
+            gov_engram, "save_project_snapshot", lambda *a, **k: {"created": True},
+            raising=False,
+        )
+
+
+# ── 1. leak matrix: flag ON + untrusted web client → secret must not appear ───
 
 
 @pytest.mark.parametrize(
@@ -178,10 +240,9 @@ def _call(tool_name, kwargs):
 def test_no_secret_leaks_to_external_agent(
     gov_engram, monkeypatch, tool, method, fake, kwargs, mode
 ):
-    """Flag ON + untrusted 'web' client → the secret marker must never appear."""
     monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
-    monkeypatch.setattr(gov_engram, method, lambda *a, **k: fake)
+    _patch_tool_method(gov_engram, monkeypatch, tool, method, fake)
 
     out = _call(tool, kwargs)
 
@@ -190,7 +251,7 @@ def test_no_secret_leaks_to_external_agent(
         assert PUBLIC in out, f"{tool} dropped the public item (should filter, not refuse)"
 
 
-# ── 2. OFF-by-default passthrough ────────────────────────────────────────────
+# ── 2. OFF-by-default passthrough (proves the matrix carries the secret) ──────
 
 
 @pytest.mark.parametrize(
@@ -199,14 +260,9 @@ def test_no_secret_leaks_to_external_agent(
 def test_flag_off_is_byte_identical_passthrough(
     gov_engram, monkeypatch, tool, method, fake, kwargs, mode
 ):
-    """Flag unset → governance is a no-op; the raw payload (incl. secret) flows.
-
-    This proves the matrix genuinely carries the secret through each tool, so
-    the flag-ON absence above is meaningful and not a vacuous pass.
-    """
     monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
-    monkeypatch.setattr(gov_engram, method, lambda *a, **k: fake)
+    _patch_tool_method(gov_engram, monkeypatch, tool, method, fake)
 
     out = _call(tool, kwargs)
 
@@ -222,40 +278,92 @@ def test_flag_off_is_byte_identical_passthrough(
 def test_owner_sees_everything_when_flag_on(
     gov_engram, monkeypatch, tool, method, fake, kwargs, mode
 ):
-    """Flag ON + 'self' client → private-self ceiling returns the secret too.
-
-    Enforcement must restrict *lower* tiers without crippling the owner's own
-    read path.
-    """
     monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "self")
-    monkeypatch.setattr(gov_engram, method, lambda *a, **k: fake)
+    _patch_tool_method(gov_engram, monkeypatch, tool, method, fake)
 
     out = _call(tool, kwargs)
 
     assert SECRET in out, f"{tool} withheld content from the private-self owner"
 
 
-# ── 4. coverage backstop: no un-wired read tool may slip in ──────────────────
+# ── 4. export tools: refuse a non-owner BEFORE writing the file ──────────────
+
+_EXPORT_SPECS = [
+    # tool, (target_obj, attr), kwargs
+    ("export_engram", ("engram", "export_all"), {}),
+    ("export_engram_to_openclaw", ("module", "export_to_openclaw"), {}),
+    ("request_outline_review", ("engram", "export_review_page"), {"lang": "zh"}),
+]
 
 
-def test_every_read_tool_is_governed_or_allowlisted():
-    discovered = _discover_read_tools()
-    classified = _GOVERNED | _ALLOWLIST_NON_KNOWLEDGE
-    unclassified = discovered - classified
+@pytest.mark.parametrize(
+    "tool,target,kwargs", _EXPORT_SPECS, ids=[r[0] for r in _EXPORT_SPECS]
+)
+def test_export_tools_refuse_non_owner(gov_engram, monkeypatch, tool, target, kwargs):
+    """Flag ON + web → the writer is NEVER invoked and the caller is refused."""
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    called = {"hit": False}
+
+    def _spy(*a, **k):
+        called["hit"] = True
+        return "SHOULD_NOT_BE_REACHED_" + SECRET
+
+    scope, attr = target
+    obj = gov_engram if scope == "engram" else mcp_server
+    monkeypatch.setattr(obj, attr, _spy, raising=False)
+
+    out = _call(tool, kwargs)
+
+    assert not called["hit"], f"{tool} wrote the export file for a non-owner"
+    assert SECRET not in out and "SHOULD_NOT_BE_REACHED" not in out
+    assert "治理" in out or "Governance" in out, f"{tool} did not return a refusal"
+
+
+@pytest.mark.parametrize(
+    "tool,target,kwargs", _EXPORT_SPECS, ids=[r[0] for r in _EXPORT_SPECS]
+)
+def test_export_tools_proceed_for_owner(gov_engram, monkeypatch, tool, target, kwargs):
+    """Flag ON + self → export proceeds (writer invoked, no refusal)."""
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "self")
+    called = {"hit": False}
+
+    def _ok(*a, **k):
+        called["hit"] = True
+        return {"status": "success", "files": ["/tmp/x"]}
+
+    scope, attr = target
+    obj = gov_engram if scope == "engram" else mcp_server
+    monkeypatch.setattr(obj, attr, _ok, raising=False)
+
+    out = _call(tool, kwargs)
+
+    assert called["hit"], f"{tool} did not perform the export for the owner"
+    assert "【治理层】" not in out, f"{tool} refused the private-self owner"
+
+
+# ── 5. deny-by-default coverage: every tool classified, nothing un-wired ─────
+
+
+def test_every_tool_is_governed_export_or_allowlisted():
+    discovered = _discover_all_tools()
+    unclassified = discovered - _CLASSIFIED
     assert not unclassified, (
-        "New read-shaped MCP tool(s) are neither governed nor allowlisted: "
-        f"{sorted(unclassified)}. Wire each through _gov_rt.maybe_govern_* and "
-        "add it to the leak matrix, or allowlist it as non-knowledge with a "
-        "documented reason."
+        "Un-classified MCP tool(s): "
+        f"{sorted(unclassified)}. Each async @mcp.tool must be EITHER governed "
+        "(wired through _gov_rt and added to _MATRIX), an export "
+        "(_EXPORT_OWNER_ONLY, refusal-tested), or _SAFE_ALLOWLIST with a "
+        "documented reason. The round-16 miss was exactly an un-classified tool "
+        "hiding behind an unrecognized name prefix — do not re-open that gap."
     )
-    # Also catch stale classification entries (renamed/removed tools).
-    stale = classified - discovered
+    stale = _CLASSIFIED - discovered
     assert not stale, f"Classified tools no longer exist in mcp_server: {sorted(stale)}"
 
 
 def test_governed_tools_actually_call_governance():
-    """Each governed tool's source must route output through _gov_rt.maybe_govern."""
+    """Each governed tool's source must route output through _gov_rt."""
     missing = []
     for name in sorted(_GOVERNED):
         src = inspect.getsource(getattr(mcp_server, name))
@@ -263,4 +371,16 @@ def test_governed_tools_actually_call_governance():
             missing.append(name)
     assert not missing, (
         f"Governed tools missing a maybe_govern call (silent bypass): {missing}"
+    )
+
+
+def test_export_tools_actually_gate():
+    """Each export tool must call the pre-write owner gate."""
+    missing = []
+    for name in sorted(_EXPORT_OWNER_ONLY):
+        src = inspect.getsource(getattr(mcp_server, name))
+        if "_gov_rt.maybe_refuse_export" not in src:
+            missing.append(name)
+    assert not missing, (
+        f"Export tools missing the pre-write owner gate: {missing}"
     )

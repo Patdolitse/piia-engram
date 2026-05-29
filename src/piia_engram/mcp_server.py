@@ -853,6 +853,12 @@ async def get_identity_card() -> str:
         return f"身份卡生成失败: {_safe_err(exc)}"
     if not card:
         return "身份卡为空——尚未积累足够的知识。"
+    # The card is NOT identity-fields-only: export_identity_card embeds lesson
+    # summaries and decision question/choice text verbatim (Codex round-16 P1-2
+    # disproved the earlier allowlist exemption). It is the same knowledge bundle
+    # get_user_context gates — so gate it owner-only too; lower tiers get a
+    # refusal, not raw secret lessons.
+    card = _gov_rt.maybe_govern_owner_only(_engram.root, card, tool="get_identity_card")
     return card
 
 
@@ -1650,7 +1656,10 @@ async def update_playbook(
         return f"更新 Playbook 失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
-    return f"Playbook 已更新: {result.get('title', playbook_id)} (v{result.get('version', '?')})"
+    # The ack echoes the stored title when the caller omitted the title arg —
+    # gate so a low-trust caller can't read a secret title back (round-16).
+    ack = f"Playbook 已更新: {result.get('title', playbook_id)} (v{result.get('version', '?')})"
+    return _gov_rt.maybe_govern_write_ack(_engram.root, ack, tool="update_playbook")
 
 
 @mcp.tool()
@@ -1738,6 +1747,12 @@ async def get_execution_status(playbook_id: str) -> str:
     except Exception as exc:
         _track("get_execution_status", success=False)
         return f"查询执行状态失败: {_safe_err(exc)}"
+    # Read sibling of prepare_playbook_execution: returns the stored playbook
+    # title + (substituted) step bodies. Gate owner-only to match, or it
+    # re-opens the same bypass (Codex round-16).
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="get_execution_status"
+    )
     return _json(result)
 
 
@@ -1759,7 +1774,9 @@ async def archive_playbook(playbook_id: str) -> str:
         return f"归档 Playbook 失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
-    return f"Playbook 已归档: {result.get('title', playbook_id)}"
+    # Ack echoes the stored playbook title — gate it (round-16 write-echo class).
+    ack = f"Playbook 已归档: {result.get('title', playbook_id)}"
+    return _gov_rt.maybe_govern_write_ack(_engram.root, ack, tool="archive_playbook")
 
 
 @mcp.tool()
@@ -1940,7 +1957,12 @@ async def update_knowledge(item_id: str, updates_json: str) -> str:
         updates = json.loads(updates_json)
     except json.JSONDecodeError:
         return _json({"error": "updates_json must be valid JSON"})
-    return _json(_engram.update_knowledge(item_id, updates))
+    # Returns the FULL stored item; an attacker who guesses an id can no-op
+    # update and read a secret item back through this "write" tool (Codex
+    # round-16 P1-3). Gate the returned item — over-ceiling → withheld stub.
+    result = _engram.update_knowledge(item_id, updates)
+    result = _gov_rt.maybe_govern_one(_engram.root, result, tool="update_knowledge")
+    return _json(result)
 
 
 @mcp.tool()
@@ -1958,6 +1980,9 @@ async def archive_knowledge(item_id: str) -> str:
     """
     result = _engram.archive_knowledge(item_id)
     _beta("knowledge_rejected", action="archive")
+    # Returns the full stored item (delegates to update_*) — same read-back
+    # bypass as update_knowledge; gate the returned item (Codex round-16 P1-3).
+    result = _gov_rt.maybe_govern_one(_engram.root, result, tool="archive_knowledge")
     return _json(result)
 
 
@@ -1976,6 +2001,9 @@ async def review_knowledge(knowledge_id: str) -> str:
     """
     result = _engram.review_knowledge(knowledge_id)
     _beta("knowledge_reviewed")
+    # Pure read-disguised-as-write: only bumps last_reviewed yet returns the full
+    # stored item. Gate the returned item (Codex round-16 P1-3).
+    result = _gov_rt.maybe_govern_one(_engram.root, result, tool="review_knowledge")
     return _json(result)
 
 
@@ -2013,6 +2041,12 @@ async def request_outline_review(lang: str = "zh") -> str:
     Args:
         lang: 页面语言，"zh"（中文）或 "en"（英文），默认中文。 / Page language: "zh" (Chinese) or "en" (English), default "zh".
     """
+    # The review HTML embeds profile + all lessons + key decisions; path-only
+    # return still writes the full bodies to disk (Codex round-16 P2-1). Gate
+    # before generating — a non-owner gets a refusal and no page is written.
+    refusal = _gov_rt.maybe_refuse_export(_engram.root, tool="request_outline_review")
+    if refusal is not None:
+        return refusal
     path = _engram.export_review_page(lang=lang)
     return _json({
         "status": "review_page_generated",
@@ -2065,7 +2099,12 @@ async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
         primary_id: 要保留的主条目 ID。 / ID of the primary item to keep.
         secondary_id: 要合并并归档的次要条目 ID。 / ID of the secondary item to merge and archive.
     """
-    return _json(_engram.merge_knowledge(primary_id, secondary_id))
+    # Returns {primary_title, secondary_title} — stored titles the caller only
+    # referenced by id. Gate the ack so lower tiers don't read titles back
+    # (Codex round-16 write-echo class).
+    result = _engram.merge_knowledge(primary_id, secondary_id)
+    result = _gov_rt.maybe_govern_write_ack(_engram.root, result, tool="merge_knowledge")
+    return _json(result)
 
 
 @mcp.tool()
@@ -2082,7 +2121,11 @@ async def link_knowledge(id_a: str, id_b: str) -> str:
         id_a: 第一个 lesson 或 decision 的 ID。 / ID of the first lesson or decision.
         id_b: 第二个 lesson 或 decision 的 ID。 / ID of the second lesson or decision.
     """
-    return _json(_engram.link_knowledge(id_a, id_b))
+    # Ack message embeds both item titles ("Linked: <title> ↔ <title>") — gate
+    # so a low-trust caller can't read a secret title back (round-16 write-echo).
+    result = _engram.link_knowledge(id_a, id_b)
+    result = _gov_rt.maybe_govern_write_ack(_engram.root, result, tool="link_knowledge")
+    return _json(result)
 
 
 @mcp.tool()
@@ -2099,7 +2142,10 @@ async def unlink_knowledge(id_a: str, id_b: str) -> str:
         id_a: 第一个 lesson 或 decision 的 ID。 / ID of the first lesson or decision.
         id_b: 第二个 lesson 或 decision 的 ID。 / ID of the second lesson or decision.
     """
-    return _json(_engram.unlink_knowledge(id_a, id_b))
+    # Ack message embeds both item titles — same write-echo gate as link_knowledge.
+    result = _engram.unlink_knowledge(id_a, id_b)
+    result = _gov_rt.maybe_govern_write_ack(_engram.root, result, tool="unlink_knowledge")
+    return _json(result)
 
 
 @mcp.tool()
@@ -2290,6 +2336,13 @@ async def export_engram(output_path: Optional[str] = None) -> str:
     Args:
         output_path: 导出路径（可选，默认存到 ~/.engram/exports/engram_backup_<日期>.json）。 / Export path (optional; defaults to ~/.engram/exports/engram_backup_<date>.json).
     """
+    # The export writes the ENTIRE store (identity + all knowledge) to a file.
+    # path-only ≠ no-disclosure: an agent with filesystem read then opens it
+    # (Codex round-16 P2-1, two-step exfil). Gate BEFORE writing — a non-owner
+    # gets a refusal and no file is produced.
+    refusal = _gov_rt.maybe_refuse_export(_engram.root, tool="export_engram")
+    if refusal is not None:
+        return refusal
     err = _validate_path(output_path, allow_empty=True)
     if err:
         return f"错误: {err}"
@@ -2334,6 +2387,11 @@ async def export_engram_to_openclaw(output_dir: str = "") -> str:
     Args:
         output_dir: 输出目录（可选）。 / Output directory (optional).
     """
+    # Writes SOUL/MEMORY/USER files containing the full knowledge dump — same
+    # two-step exfil surface as export_engram. Gate before writing (round-16).
+    refusal = _gov_rt.maybe_refuse_export(_engram.root, tool="export_engram_to_openclaw")
+    if refusal is not None:
+        return refusal
     try:
         target_dir = output_dir or str(_engram.root / "compat" / "openclaw")
         result = export_to_openclaw(_engram, target_dir)
@@ -2911,6 +2969,13 @@ async def start_project(
     # Step 1: Knowledge inheritance
     limit = min(int(limit), 20)
     inheritance = _engram.get_knowledge_inheritance(description, limit=limit)
+    # start_project embeds the SAME inheritance bundle get_knowledge_inheritance
+    # returns; gate its items identically or this becomes an ungoverned sibling
+    # read tool (Codex round-16 P1-1). The ``start_`` prefix kept it out of the
+    # earlier prefix-based coverage check — now caught by all-tool classification.
+    inheritance = _gov_rt.maybe_govern_result(
+        _engram.root, inheritance, tool="start_project", list_fields=("items",)
+    )
     results["inherited_knowledge"] = inheritance
 
     # Step 2: Initialize project snapshot
