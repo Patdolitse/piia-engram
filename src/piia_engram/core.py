@@ -111,6 +111,16 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 self.root.mkdir(parents=True, exist_ok=True)
                 salt_path.write_bytes(salt)
             self._corpus_key = self._crypto.derive_corpus_key(salt)
+            # A plaintext hybrid search index left over from a pre-encryption
+            # run would keep the decrypted bodies readable on disk even though
+            # all new writes are encrypted. Purge it on init so enabling
+            # encryption can't be silently undermined by a stale index
+            # (Codex a5 round-2 P1-2). purge_search_index is provided by the
+            # RetrievalMixin; guard defensively in case of MRO surprises.
+            try:
+                self.purge_search_index()
+            except Exception:
+                pass
 
         # Audit logger (disabled unless ENGRAM_AUDIT=1/true/yes)
         from piia_engram.audit import AuditLogger
@@ -291,19 +301,28 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
     def _has_existing_ciphertext(self) -> bool:
         """Quick check: do any corpus files contain enc:v2c: data?
 
-        Scans the first 4KB of knowledge/*.json and playbooks/*.json for the
-        corpus encryption prefix. Used during init to fail-closed when
-        .corpus_salt is missing but encrypted data exists.
+        Scans the FULL contents of knowledge/*.json and playbooks/*.json (plus
+        execution plans) for the corpus encryption prefix. Used during init to
+        fail-closed when .corpus_salt is missing but encrypted data exists.
+
+        A truncated (first-4KB) scan would miss ciphertext that appears after
+        the prefix window — a large lessons.json whose first entry is plaintext
+        metadata but whose encrypted ``content`` lands past 4KB would be wrongly
+        treated as "no ciphertext", silently minting a fresh salt and making the
+        real data permanently unreadable (Codex a5 round-2 P1-3).
         """
         from .crypto import ENC_PREFIX_V2C
         marker = ENC_PREFIX_V2C.encode("ascii")
-        for pattern in ("knowledge/*.json", "playbooks/*.json"):
+        for pattern in (
+            "knowledge/*.json",
+            "playbooks/*.json",
+            "playbooks/executions/*.json",
+        ):
             for path in self.root.glob(pattern):
                 if path.name == "_index.json":
                     continue
                 try:
-                    head = path.read_bytes()[:4096]
-                    if marker in head:
+                    if marker in path.read_bytes():
                         return True
                 except OSError:
                     continue
@@ -1439,8 +1458,8 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             for item in result[list_field]:
                 if isinstance(item, dict):
                     d = dict(item)
-                    for k in ("action", "detail"):
-                        if k in d and isinstance(d[k], str):
+                    for k in ("action", "detail", "notes"):
+                        if k in d and isinstance(d[k], str) and d[k]:
                             d[k] = self._crypto.corpus_encrypt(d[k], self._corpus_key)
                     encrypted_items.append(d)
                 elif isinstance(item, str):
@@ -1464,8 +1483,8 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             for item in result[list_field]:
                 if isinstance(item, dict):
                     d = dict(item)
-                    for k in ("action", "detail"):
-                        if k in d and isinstance(d[k], str):
+                    for k in ("action", "detail", "notes"):
+                        if k in d and isinstance(d[k], str) and d[k]:
                             d[k] = self._crypto.corpus_decrypt(d[k], self._corpus_key)
                     decrypted_items.append(d)
                 elif isinstance(item, str):
@@ -1511,6 +1530,12 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         plan = _read_json(path)
         if not plan:
             return {"error": f"no execution plan found for {playbook_id}"}
+        # Decrypt the at-rest plan before mutating it, then re-encrypt on
+        # write-back. Operating on the raw (encrypted) plan and assigning
+        # plaintext ``notes`` directly would leak the note in cleartext, since
+        # the surrounding ciphertext fields are never re-encrypted on this path
+        # (Codex a5 round-2 P1-4).
+        plan = self._decrypt_execution_plan(plan)
 
         updated = False
         for step in plan.get("execution_plan", []):
@@ -1533,7 +1558,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if completed == total:
             plan["completed_at"] = _now_iso()
 
-        _write_json(path, plan)
+        _write_json(path, self._encrypt_execution_plan(plan))
         return {
             "status": "updated",
             "step_order": step_order,

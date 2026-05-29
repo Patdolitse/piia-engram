@@ -862,3 +862,166 @@ class TestCodexAuditRegressions:
             hits = _scan_root_for_marker(engram, marker)
             assert not hits, \
                 f"Plaintext marker '{marker}' found in: {hits}"
+
+
+class TestCodexRound2Regressions:
+    """Regression tests for the 4 P1 findings from Codex's a5 round-2 re-audit.
+
+    P1-1: rebuild_index()/CLI reindex still wrote decrypted bodies to
+          search_index.db even with corpus encryption on.
+    P1-2: a plaintext search_index.db left from a pre-encryption run was never
+          purged when encryption was later enabled.
+    P1-3: .corpus_salt-missing fail-closed detection only scanned the first 4KB,
+          so ciphertext past that window was missed and a fresh salt minted.
+    P1-4: update_execution_step(notes=...) wrote the note in cleartext into the
+          execution plan.
+    """
+
+    def test_rebuild_index_refuses_or_purges_when_corpus_encrypted(
+        self, tmp_path, monkeypatch
+    ):
+        """P1-1: explicit reindex must not materialise plaintext into the db."""
+        monkeypatch.setenv("ENGRAM_SECRET", "reindex-refuse-key")
+        monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        marker = f"{_MARKER}REINDEX_LESSON"
+        e.add_lesson({"summary": marker})
+
+        result = e.rebuild_index()
+        # Must report it skipped the build because of corpus encryption.
+        assert result.get("skipped") == "corpus_encrypted", result
+        assert result.get("indexed") == 0, result
+
+        db_path = engram / "search_index.db"
+        if db_path.exists():
+            data = db_path.read_bytes().lower()
+            assert marker.lower().encode() not in data, \
+                "reindex materialised plaintext corpus into search_index.db!"
+
+    def test_enabling_encryption_purges_existing_plaintext_search_index(
+        self, tmp_path, monkeypatch
+    ):
+        """P1-2: a plaintext index from a pre-encryption run must be purged
+        when the engram is next opened with encryption enabled."""
+        monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+
+        # Phase 1: NO secret — build a plaintext hybrid index on disk.
+        monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+        e_plain = _make_engram(engram)
+        marker = f"{_MARKER}STALE_INDEX_LESSON"
+        e_plain.add_lesson({"summary": marker})
+        built = e_plain.rebuild_index()
+        db_path = engram / "search_index.db"
+        # Sanity: the plaintext index exists and contains the marker.
+        if not (db_path.exists() and built.get("indexed", 0) > 0):
+            pytest.skip("hybrid backend unavailable; cannot build plaintext index")
+        assert marker.lower().encode() in db_path.read_bytes().lower(), \
+            "precondition failed: plaintext index did not contain marker"
+
+        # Phase 2: re-open WITH a secret — init must purge the stale index.
+        monkeypatch.setenv("ENGRAM_SECRET", "now-encrypted-key")
+        _make_engram(engram)
+        assert not db_path.exists(), \
+            "stale plaintext search_index.db survived enabling encryption!"
+
+    def test_missing_salt_detects_ciphertext_after_4kb(self, tmp_path, monkeypatch):
+        """P1-3: ciphertext located past the first 4KB of a corpus file must
+        still trigger the fail-closed salt-missing guard."""
+        monkeypatch.setenv("ENGRAM_SECRET", "late-ciphertext-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+
+        # Craft a lessons.json whose first >4KB are plaintext padding, with a
+        # real corpus-ciphertext token only AFTER the 4KB scan window.
+        padding = [
+            {"id": f"pad{i}", "type": "lesson", "status": "active",
+             "summary": "X" * 200}
+            for i in range(40)  # ~ >8KB of leading plaintext
+        ]
+        late_entry = {
+            "id": "late", "type": "lesson", "status": "active",
+            "summary": "enc:v2c:QUtFRF9DSVBIRVJURVhUX1RPS0VO",
+        }
+        lessons = padding + [late_entry]
+        lessons_path = engram / "knowledge" / "lessons.json"
+        lessons_path.write_text(json.dumps(lessons), encoding="utf-8")
+        # The ciphertext marker must indeed sit past the old 4KB window.
+        assert lessons_path.read_bytes().find(b"enc:v2c:") > 4096
+
+        # No salt present → opening must fail-closed (not mint a new salt).
+        assert not (engram / ".corpus_salt").exists()
+        import sys
+        sys.path.insert(0, str(_ROOT / "src"))
+        from piia_engram.core import Engram
+        with pytest.raises(RuntimeError, match="corpus_salt.*missing"):
+            Engram(engram)
+
+    def test_update_execution_step_encrypts_notes(self, tmp_path, monkeypatch):
+        """P1-4: notes passed to update_execution_step must be encrypted on
+        disk and round-trip back through get_execution_status."""
+        monkeypatch.setenv("ENGRAM_SECRET", "exec-notes-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        result = e.add_playbook({
+            "title": "notes playbook",
+            "steps": [{"order": 1, "action": "do it", "detail": "carefully"}],
+            "triggers": ["notes"],
+        })
+        pb_id = result["id"]
+        e.prepare_playbook_execution(pb_id)
+
+        notes_marker = f"{_MARKER}STEP_NOTES"
+        upd = e.update_execution_step(pb_id, 1, "failed", notes=notes_marker)
+        assert upd.get("status") == "updated", upd
+
+        exec_path = engram / "playbooks" / "executions" / f"{pb_id}.json"
+        raw = exec_path.read_bytes()
+        assert notes_marker.encode() not in raw, \
+            "update_execution_step wrote notes in cleartext!"
+
+        # get_execution_status must return the decrypted note.
+        status = e.get_execution_status(pb_id)
+        step = next(s for s in status["steps"] if s.get("order") == 1)
+        assert step.get("notes") == notes_marker
+        assert step.get("status") == "failed"
+
+    def test_full_root_scan_after_reindex_and_step_update(
+        self, tmp_path, monkeypatch
+    ):
+        """Master no-leak invariant covering the round-2 derived-write paths:
+        explicit reindex + execution step updates (incl. notes)."""
+        monkeypatch.setenv("ENGRAM_SECRET", "r2-full-scan-key")
+        monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        lesson_marker = f"{_MARKER}R2_LESSON"
+        pb_title_marker = f"{_MARKER}R2_PB_TITLE"
+        step_marker = f"{_MARKER}R2_STEP"
+        notes_marker = f"{_MARKER}R2_NOTES"
+
+        e.add_lesson({"summary": lesson_marker})
+        pb = e.add_playbook({
+            "title": pb_title_marker,
+            "steps": [{"order": 1, "action": step_marker}],
+            "triggers": ["r2"],
+        })
+        pb_id = pb["id"]
+        e.prepare_playbook_execution(pb_id)
+        e.update_execution_step(pb_id, 1, "completed", notes=notes_marker)
+
+        # Explicit reindex (must refuse/purge under encryption).
+        e.rebuild_index()
+
+        for marker in (lesson_marker, pb_title_marker, step_marker, notes_marker):
+            hits = _scan_root_for_marker(engram, marker)
+            assert not hits, \
+                f"Plaintext marker '{marker}' found in: {hits}"

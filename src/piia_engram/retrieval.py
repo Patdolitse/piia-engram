@@ -251,6 +251,38 @@ class RetrievalMixin:
             self._search_index_cache = idx
         return idx
 
+    def _corpus_encrypted(self) -> bool:
+        """True when corpus encryption is active for this engram."""
+        return bool(getattr(self, "_corpus_key", b""))
+
+    def purge_search_index(self) -> bool:
+        """Delete any persisted hybrid search index from disk.
+
+        When corpus encryption is enabled the FTS/vector tables would
+        materialise decrypted bodies into ``<root>/search_index.db`` in
+        cleartext, defeating the encryption. This removes the db file and its
+        SQLite sidecars (-wal/-shm) and drops the in-process cache so a stale
+        plaintext index left over from a pre-encryption run can't survive
+        (Codex a5 round-2 P1-1/P1-2).
+
+        Returns True if anything was removed.
+        """
+        # Drop the cached handle first. SearchIndex opens/closes a fresh
+        # connection per operation, so no file handle lingers between calls,
+        # but clearing the cache forces a clean rebuild path afterwards.
+        self._search_index_cache = None
+        removed = False
+        for path in (self.root / "search_index.db",
+                     self.root / "search_index.db-wal",
+                     self.root / "search_index.db-shm"):
+            try:
+                if path.exists():
+                    path.unlink()
+                    removed = True
+            except OSError:
+                continue
+        return removed
+
     def _all_indexable_entries(self) -> list[dict]:
         """All active lessons + decisions + playbooks, for the index."""
         entries: list[dict] = []
@@ -313,6 +345,18 @@ class RetrievalMixin:
 
     def rebuild_index(self) -> dict:
         """Explicitly rebuild the search index from current JSON (CLI: reindex)."""
+        # Corpus encryption on → the FTS/vector tables would materialise
+        # decrypted bodies into search_index.db in cleartext. Refuse to build
+        # and purge any stale plaintext index instead of leaking it through the
+        # explicit reindex path (Codex a5 round-2 P1-1).
+        if self._corpus_encrypted():
+            purged = self.purge_search_index()
+            return {
+                "indexed": 0,
+                "vector_enabled": False,
+                "skipped": "corpus_encrypted",
+                "purged": purged,
+            }
         entries = self._all_indexable_entries()
         idx = self._hybrid_index()
         n = idx.rebuild(entries, fingerprint=self._entries_fingerprint(entries))
@@ -615,7 +659,7 @@ class RetrievalMixin:
         # Corpus encryption enabled → suppress persistent hybrid index to
         # prevent decrypted content from being materialised into search_index.db
         # (Codex a5 audit finding #2). Fall back to keyword-only path.
-        corpus_encrypted = bool(getattr(self, "_corpus_key", b""))
+        corpus_encrypted = self._corpus_encrypted()
         if allow_hybrid_index and self._hybrid_enabled() and not corpus_encrypted:
             hybrid_idx = self._ensure_index_fresh(self._all_indexable_entries())
 
