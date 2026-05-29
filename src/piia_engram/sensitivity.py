@@ -359,24 +359,51 @@ def _scan_cn_id(s: str) -> bool:
     return False
 
 
+def _scan_formatted_groups(groups: list[str]) -> bool:
+    """A formatted PII is *some run* of consecutive separator-delimited digit
+    groups (e.g. a 16-digit card written as four 4-digit groups). Slide every
+    consecutive-group window, compact it, and validate with the SAME
+    high-confidence checks as the contiguous path. This is what stops a greedy
+    candidate that swallows *several* formatted PII (Codex round-12 P1) from
+    failing whole-candidate validation and leaking the inner valid PII —
+    each true PII still surfaces as its own window.
+
+    Bounded O(n^2) on a tiny ``n`` (the caller only reaches here for short
+    values, ``len(s) <= _PII_SHORT_MAXLEN``), and the inner loop breaks as soon
+    as the compacted run exceeds the longest valid shape (a 19-digit card)."""
+    n = len(groups)
+    for i in range(n):
+        compact = ""
+        for j in range(i, n):
+            compact += groups[j]
+            if len(compact) > 19:        # nothing valid is longer than a 19-digit card
+                break
+            # CN resident ID first — it alone may end in X/x; _scan_cn_id enforces
+            # the \d{17}[0-9Xx] shape + ISO 7064 checksum, so a bad 18-char run fails.
+            if len(compact) == 18 and _scan_cn_id(compact):       # CN resident ID
+                return True
+            if not compact.isdigit():
+                continue
+            if 13 <= len(compact) <= 19 and _luhn_ok(compact):    # payment card
+                return True
+            mob = compact[2:] if (len(compact) == 13 and compact.startswith("86")) else compact
+            if _CN_MOBILE_BARE.fullmatch(mob):                    # CN mobile (+ 86 prefix)
+                return True
+    return False
+
+
 def _has_formatted_pii(s: str) -> bool:
     """Catch phone/card PII written with separators (spaces/hyphens) or a
-    country code. Each separator-bearing digit run is normalized to bare
-    digits, then validated by the SAME high-confidence checks as the contiguous
-    path (Luhn for cards, ISO 7064 for CN IDs, the exact 1[3-9]\\d{9} shape for
-    CN mobiles, incl. an optional 86 / +86 country code)."""
+    country code. Each separator-bearing candidate is split into its
+    separator-delimited digit groups, and every consecutive-group window is
+    validated by the SAME high-confidence checks as the contiguous path (Luhn
+    for cards, ISO 7064 for CN IDs, the exact 1[3-9]\\d{9} shape for CN mobiles,
+    incl. an optional 86 / +86 country code). Window scanning — rather than
+    validating one greedy compacted run — is what keeps multiple formatted PII
+    packed into one field from hiding behind an over-long no-match (round-12)."""
     for m in _FORMATTED_NUM_RE.finditer(s):
-        d = re.sub(r"[ \-]", "", m.group().lstrip("+"))
-        # CN resident ID first — it alone may end in X/x; _scan_cn_id enforces
-        # the \d{17}[0-9Xx] shape + ISO 7064 checksum, so a bad 18-char run fails.
-        if len(d) == 18 and _scan_cn_id(d):             # CN resident ID (digits + X check)
-            return True
-        if not d.isdigit():
-            continue
-        if 13 <= len(d) <= 19 and _luhn_ok(d):          # payment card
-            return True
-        mob = d[2:] if (len(d) == 13 and d.startswith("86")) else d
-        if _CN_MOBILE_BARE.fullmatch(mob):              # CN mobile (+ 86 prefix)
+        groups = [g for g in re.split(r"[ \-]+", m.group().replace("+", "")) if g]
+        if _scan_formatted_groups(groups):
             return True
     return False
 

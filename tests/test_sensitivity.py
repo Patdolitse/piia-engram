@@ -676,3 +676,49 @@ def test_unicode_normalization_false_positive_guards_round11():
         "１２３４ ５６７８ ９０１２ ３４５６",  # １２３４ … Luhn-invalid
     ]:
         assert sv.classify_value(v) == "public", v
+
+
+# ── Codex round-12 FAIL regressions: greedy-run multi-PII windowing ──
+# A greedy FORMATTED candidate that swallows SEVERAL formatted PII used to
+# compact into one over-long run, fail whole-candidate validation, and leak the
+# inner valid PII as public. The fix slides consecutive separator-delimited
+# group windows so each true PII still surfaces.
+
+def test_value_scanner_detects_multiple_formatted_cards_round12_regression():
+    # Two Luhn-valid cards packed into one field (4111… + 4242…).
+    assert sv.classify_value("4111 1111 1111 1111 4242 4242 4242 4242") == "private"
+    assert sv.classify_value("4111-1111-1111-1111-4242-4242-4242-4242") == "private"
+
+def test_value_scanner_detects_multiple_formatted_cn_phones_round12_regression():
+    # Two valid CN mobiles back to back.
+    assert sv.classify_value("138 0013 8000 139 0013 8000") == "private"
+    assert sv.classify_value("138-0013-8000 139-0013-8000") == "private"
+
+def test_value_scanner_detects_multiple_formatted_cn_ids_round12_regression():
+    # Two valid CN resident IDs (first ends in X) back to back.
+    assert sv.classify_value("110105 19491231 002X 110101 19900307 8515") == "private"
+
+def test_multiple_formatted_pii_values_blocked_through_external_gate_round12_regression():
+    from piia_engram import governance as gov
+    items = [
+        {"id": "cards", "sensitivity": "public", "note": "4111 1111 1111 1111 4242 4242 4242 4242"},
+        {"id": "phones", "sensitivity": "public", "note": "138 0013 8000 139 0013 8000"},
+        {"id": "ids", "sensitivity": "public", "note": "110105 19491231 002X 110101 19900307 8515"},
+    ]
+    allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
+    assert allowed == []
+
+def test_multiple_formatted_pii_dict_keys_blocked_round12_regression():
+    # A dict KEY carrying multiple formatted PII is visible text too.
+    assert sv.classify_item({"sensitivity": "public", "x": {"4111 1111 1111 1111 4242 4242 4242 4242": 1}}) == "private"
+
+def test_multiple_formatted_pii_false_positive_guards_round12():
+    # Window scanning must not invent PII out of benign grouped digits.
+    for v in [
+        "SKU-1234-5678-9012",          # 12 digits across groups, no valid window
+        "SKU-1234-5678-X",             # trailing X, no valid window
+        "ISBN 978-0-306-40615-7",      # Luhn-invalid 13-digit run
+        "2026-05-29 13:00:00",         # date + time
+        "order-2024-0001 order-2024-0002",
+    ]:
+        assert sv.classify_value(v) == "public", v
