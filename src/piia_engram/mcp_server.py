@@ -1126,9 +1126,11 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
     except Exception as exc:
         _track("get_relevant_knowledge", success=False)
         raise
+    perms = _gov_rt.describe_caller_permissions(_engram.root)
     if not lessons:
-        return "尚无相关经验教训。"
-    return _json(lessons)
+        return _json({"items": [], "_caller_permissions": perms,
+                       "note": "尚无相关经验教训。"})
+    return _json({"items": lessons, "_caller_permissions": perms})
 
 
 @mcp.tool()
@@ -1211,6 +1213,8 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
     except Exception as exc:
         _track("search_knowledge", success=False)
         return f"搜索失败: {_safe_err(exc)}"
+    perms = _gov_rt.describe_caller_permissions(_engram.root)
+    result["_caller_permissions"] = perms
     return _json(result)
 
 

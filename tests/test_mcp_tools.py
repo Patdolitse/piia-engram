@@ -250,7 +250,11 @@ class TestSearchTools:
     ):
         isolated_engram.add_lesson({"summary": "some lesson"})
         result = json.loads(_run(mcp_server.search_knowledge("")))
-        assert result == {"lessons": [], "decisions": [], "playbooks": []}
+        assert result["lessons"] == []
+        assert result["decisions"] == []
+        assert result["playbooks"] == []
+        # a3: permissions metadata is always present
+        assert "_caller_permissions" in result
 
 
 # ---------------------------------------------------------------------------
