@@ -38,6 +38,15 @@ class AuditLogger:
         """
         if not self.enabled or not self.log_path:
             return
+        if action == "read":
+            try:
+                from . import governance_runtime as _gov_rt
+
+                root = self.log_path.parent
+                if _gov_rt.governance_enabled() and not _gov_rt.caller_is_owner(root):
+                    return
+            except Exception:
+                return
         entry = {
             "timestamp": datetime.now().replace(microsecond=0).isoformat(),
             "action": action,

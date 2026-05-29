@@ -556,6 +556,21 @@ def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None
     """
     global _track_count
     _detect_mcp_client_once()
+    # Governance read paths must be disk-side-effect free for non-owners.
+    # _tracker.flush() and _session checkpoints both persist files, so suppress
+    # tracking for read-classed tools unless the caller is the owner. Governance
+    # OFF still behaves exactly as before because caller_is_owner() returns True.
+    tool_class = globals().get("TOOL_GOVERNANCE_CLASS", {}).get(tool_name)
+    if tool_class == "read":
+        try:
+            if not _gov_rt.caller_is_owner(_engram.root):
+                return
+        except Exception:
+            try:
+                if _gov_rt.governance_enabled():
+                    return
+            except Exception:
+                return
     if _tracker is not None:
         _tracker.record(tool_name, success=success)
         _track_count += 1
@@ -599,6 +614,119 @@ TIER1_TOOLS = frozenset({
     # Diagnostics
     "doctor",                    # memory system self-diagnosis
 })
+
+# ---------------------------------------------------------------------------
+# Write-gate governance matrix — DENY BY DEFAULT (Codex round-5 a4 hardening)
+# ---------------------------------------------------------------------------
+# Every ``@mcp.tool()`` MUST be classified here. ``test_write_gate_matrix.py``
+# reflects over all registered tools and FAILS if any tool is missing — so a
+# newly added tool cannot ship un-triaged. The behavioural counterpart
+# (``test_write_gate_matrix.py`` writer-spy) asserts that, under
+# ``ENGRAM_GOVERNANCE=1`` + a low-trust client, every WRITE-class tool refuses
+# and produces zero file delta. Together they make "forgot to gate a new write
+# tool" a red build rather than a silent low-trust write hole.
+#
+# Categories:
+#   "read"              — no store mutation; read-path governance (if any) is
+#                         handled by the a0/a1-a3 read gates, not here.
+#   "governed_write"    — mutates the knowledge store; gated by
+#                         ``maybe_refuse_write`` (verified + proposed_only may
+#                         write; read-only-external is refused).
+#   "owner_only_write"  — mutates the GRANT STORE itself or imports/overwrites
+#                         the whole store; gated by ``maybe_refuse_owner_write``
+#                         (private-self only) BEFORE any side effect.
+#   "export_owner_only" — writes a full-knowledge dump / report FILE to disk;
+#                         gated by ``maybe_refuse_export`` (private-self only).
+#   "safe_allowlist"    — explicitly reviewed as needing no write gate despite
+#                         not being a pure reader (currently unused).
+WRITE_GATE_CLASSES = frozenset(
+    {"read", "governed_write", "owner_only_write", "export_owner_only", "safe_allowlist"}
+)
+WRITE_GATE_CLASSES_MUTATING = frozenset(
+    {"governed_write", "owner_only_write", "export_owner_only"}
+)
+TOOL_GOVERNANCE_CLASS: dict[str, str] = {
+    # --- owner_only_write: grant store / whole-store import ---
+    "set_caller_trust": "owner_only_write",
+    "revoke_caller": "owner_only_write",
+    "import_engram": "owner_only_write",
+    "import_engram_from_openclaw": "owner_only_write",
+    # --- export_owner_only: full dump / report file to disk ---
+    "export_engram": "export_owner_only",
+    "export_engram_to_openclaw": "export_owner_only",
+    "export_knowledge_report": "export_owner_only",
+    "request_outline_review": "export_owner_only",
+    "refresh_quick_context": "export_owner_only",
+    "prepare_playbook_execution": "export_owner_only",
+    # --- governed_write: ordinary knowledge-store mutations ---
+    "memory_store": "governed_write",
+    "add_lesson": "governed_write",
+    "add_decision": "governed_write",
+    "add_playbook": "governed_write",
+    "bulk_add_knowledge": "governed_write",
+    "ingest_notes": "governed_write",
+    "extract_session_insights": "governed_write",
+    "update_knowledge": "governed_write",
+    "archive_knowledge": "governed_write",
+    "review_knowledge": "governed_write",
+    "merge_knowledge": "governed_write",
+    "link_knowledge": "governed_write",
+    "unlink_knowledge": "governed_write",
+    "add_relation": "governed_write",
+    "remove_relation": "governed_write",
+    "apply_review": "governed_write",
+    "update_identity": "governed_write",
+    "save_project_snapshot": "governed_write",
+    "start_project": "governed_write",
+    "save_agent_context": "governed_write",
+    "register_tool": "governed_write",
+    "update_playbook": "governed_write",
+    "update_execution_step": "governed_write",
+    "archive_playbook": "governed_write",
+    "wrap_up_session": "governed_write",
+    # --- read: no store mutation ---
+    "doctor": "read",
+    "export_feedback_report": "read",  # counts/distributions only, no bodies
+    "find_similar_knowledge": "read",
+    "find_tool": "read",
+    "get_audit_log": "read",
+    "get_daily_log": "read",
+    "get_decision_history": "read",
+    "get_decision_thread": "read",
+    "get_decisions": "read",
+    "get_domains": "read",
+    "get_execution_status": "read",
+    # export/file-writer: embeds lesson summaries + decision text verbatim AND
+    # writes exports/identity_card.md to disk; gated by maybe_refuse_export.
+    # Classed export_owner_only so the writer-spy matrix verifies that gate
+    # (Codex round-6: was mislabeled "read", leaving its export gate untested).
+    "get_identity_card": "export_owner_only",
+    "get_knowledge_inheritance": "read",
+    "get_knowledge_overview": "read",
+    "get_lessons": "read",
+    "get_permission_profile": "read",
+    "get_playbook": "read",
+    "get_playbooks": "read",
+    "get_preferences": "read",
+    "get_profile": "read",
+    "get_project_context": "read",
+    "get_quality_standards": "read",
+    "get_recent_context": "read",
+    "get_recent_playbooks": "read",
+    "get_related_knowledge": "read",
+    "get_relevant_knowledge": "read",
+    "get_resume_brief": "read",
+    "get_stale_knowledge": "read",
+    "get_trust_boundaries": "read",
+    "get_user_context": "read",
+    "get_work_style": "read",
+    "list_agent_sessions": "read",
+    "list_projects": "read",
+    "list_tools": "read",
+    "read_web_content": "read",
+    "search_knowledge": "read",
+    "suggest_merges": "read",
+}
 
 mcp = FastMCP(
     "engram",
@@ -795,6 +923,18 @@ async def get_user_context(
     """
     if project_folder:
         _session.detect_project(project_folder)
+    # Owner-only gate evaluated BEFORE any side effect. Cold-start context is a
+    # rendered string bundling identity + top lessons/decisions + snapshot —
+    # unfilterable by field, hence owner-only. A non-owner (low-trust) caller
+    # must receive the refusal WITHOUT us generating the context, recording
+    # telemetry, or emitting a cold_start beta event: otherwise a low-trust
+    # read would still land a write on disk (beta_events.jsonl), the recurring
+    # "side-effect-before-govern" bug class. Owner-OFF governance → True here,
+    # so the normal path is unchanged when governance is disabled.
+    if not _gov_rt.caller_is_owner(_engram.root):
+        return _gov_rt.maybe_govern_owner_only(
+            _engram.root, "", tool="get_user_context"
+        )
     try:
         context = _engram.generate_context(
             project_folder, level=level, max_tokens=token_budget,
@@ -997,7 +1137,15 @@ async def get_lessons(
         source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。 / Filter by source tool, such as 'claude_code' or 'codex'.
         limit: 最多返回多少条（默认 50）。 / Maximum number of items to return (default 50).
     """
-    lessons = _engram.get_lessons(domain=domain, source_tool=source_tool, limit=limit)
+    # Read-path side-effect gate (Codex round-6): only the owner's reads record
+    # access bookkeeping. A non-owner read must NOT bump access_count /
+    # last_reviewed — that is a low-trust write to data files, and (since the
+    # bump happens before governance filtering) it would also touch entries
+    # above the caller's sensitivity ceiling.
+    lessons = _engram.get_lessons(
+        domain=domain, source_tool=source_tool, limit=limit,
+        _update_access=_gov_rt.caller_is_owner(_engram.root),
+    )
     lessons = _gov_rt.maybe_govern_list(_engram.root, lessons, tool="get_lessons")
     if not lessons:
         return "尚无经验教训记录。"
@@ -1025,11 +1173,13 @@ async def get_decisions(
         domain: 按领域过滤（如 'architecture'），支持多标签决策的包含匹配。 / Filter by domain, such as 'architecture'; supports contains matching for multi-label decisions.
         limit: 最多返回多少条（默认 30）。 / Maximum number of items to return (default 30).
     """
+    # Read-path side-effect gate (Codex round-6): owner-only access bookkeeping.
     decisions = _engram.get_decisions(
         limit=limit,
         source_tool=source_tool,
         project=project,
         domain=domain,
+        _update_access=_gov_rt.caller_is_owner(_engram.root),
     )
     decisions = _gov_rt.maybe_govern_list(_engram.root, decisions, tool="get_decisions")
     if not decisions:
@@ -1116,7 +1266,8 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
     """
     try:
         lessons = _engram.get_relevant_lessons(
-            project_folder=project_folder, limit=limit
+            project_folder=project_folder, limit=limit,
+            _update_access=_gov_rt.caller_is_owner(_engram.root),
         )
         # governance gate (opt-in; OFF => byte-identical to the line above).
         lessons = _gov_rt.maybe_govern_list(
@@ -1680,7 +1831,10 @@ async def get_playbooks(domain: str = "", limit: int = 20) -> str:
         limit: 返回条数上限（默认 20）。 / Maximum items to return (default 20).
     """
     try:
-        result = _engram.get_playbooks(domain=domain or None, limit=limit)
+        result = _engram.get_playbooks(
+            domain=domain or None, limit=limit,
+            _update_access=_gov_rt.caller_is_owner(_engram.root),
+        )
         result = _gov_rt.maybe_govern_list(_engram.root, result, tool="get_playbooks")
         _track("get_playbooks", success=True)
     except Exception as exc:
@@ -1704,7 +1858,9 @@ async def get_playbook(playbook_id: str) -> str:
         playbook_id: Playbook ID。 / The Playbook ID.
     """
     try:
-        result = _engram.get_playbook(playbook_id)
+        result = _engram.get_playbook(
+            playbook_id, _update_access=_gov_rt.caller_is_owner(_engram.root)
+        )
         result = _gov_rt.maybe_govern_one(_engram.root, result, tool="get_playbook")
         _track("get_playbook", success=True)
     except Exception as exc:
@@ -2070,6 +2226,10 @@ async def bulk_add_knowledge(items_json: str, item_type: str = "lesson", source_
         item_type: 条目类型：'lesson' 或 'decision'。 / Item type: 'lesson' or 'decision'.
         source_tool: 记录来源工具。 / Recording source tool.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="bulk_add_knowledge")
+    if refusal:
+        return refusal
     try:
         items = json.loads(items_json)
     except json.JSONDecodeError:
@@ -2094,6 +2254,10 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
         domain: 默认领域（可填多个，逗号分隔），未命中关键词推断时使用。 / Default domain, optionally comma-separated; used when keyword inference does not find a domain.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="ingest_notes")
+    if refusal:
+        return refusal
     return _json(_engram.ingest_notes(text, source_tool=source_tool, domain=domain))
 
 
@@ -2114,6 +2278,10 @@ async def extract_session_insights(summary: str, source_tool: str = "") -> str:
         summary: 自由文本会话摘要，段落或要点列表均可。 / Free-text session summary; paragraphs or bullet lists both work.
         source_tool: 调用来源工具，如 'claude_code', 'codex'。 / Calling source tool, such as 'claude_code' or 'codex'.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="extract_session_insights")
+    if refusal:
+        return refusal
     return _json(_engram.extract_session_insights(summary, source_tool=source_tool))
 
 
@@ -2262,6 +2430,11 @@ async def apply_review(review_text: str) -> str:
     Args:
         review_text: 审查结果文本或 JSON 字符串。 / Review results text or JSON string from the review page.
     """
+    # a4: write-path governance gate — apply_review archives stored items.
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="apply_review")
+    if refusal:
+        return refusal
+
     import json as _json_mod
 
     # Try to parse as JSON first
@@ -2376,6 +2549,10 @@ async def add_relation(src_id: str, rel: str, dst_id: str) -> str:
         rel: led_to / supersedes / implemented_by。
         dst_id: 目标条目 ID。 / Target item ID.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_relation")
+    if refusal:
+        return refusal
     return _json(_engram.add_relation(src_id, rel, dst_id))
 
 
@@ -2393,6 +2570,10 @@ async def remove_relation(src_id: str, rel: str, dst_id: str) -> str:
         rel: led_to / supersedes / implemented_by。
         dst_id: 目标条目 ID。 / Target item ID.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="remove_relation")
+    if refusal:
+        return refusal
     return _json(_engram.remove_relation(src_id, rel, dst_id))
 
 
@@ -2488,6 +2669,9 @@ async def set_caller_trust(agent_id: str, trust_level: str) -> str:
         agent_id: 调用者标识（如 'cursor', 'codex', 'web-client'）。 / Caller identifier.
         trust_level: 要设置的信任级别。 / Trust level to assign.
     """
+    refusal = _gov_rt.maybe_refuse_owner_write(_engram.root, tool="set_caller_trust")
+    if refusal is not None:
+        return refusal
     result = _engram.set_caller_trust(agent_id, trust_level)
     result = _gov_rt.maybe_govern_owner_only(
         _engram.root, result, tool="set_caller_trust"
@@ -2508,6 +2692,9 @@ async def revoke_caller(agent_id: str) -> str:
     Args:
         agent_id: 要撤销的调用者标识。 / Caller identifier to revoke.
     """
+    refusal = _gov_rt.maybe_refuse_owner_write(_engram.root, tool="revoke_caller")
+    if refusal is not None:
+        return refusal
     result = _engram.revoke_caller(agent_id)
     result = _gov_rt.maybe_govern_owner_only(
         _engram.root, result, tool="revoke_caller"
@@ -2694,6 +2881,10 @@ async def import_engram(input_path: str, merge: bool = True) -> str:
         input_path: 备份文件路径（export_engram 生成的 JSON 文件）。 / Backup file path, usually a JSON file generated by export_engram.
         merge: True 表示合并模式（保留已有数据并追加新数据），False 表示覆盖模式。 / True means merge mode (keep existing data and append new data); False means overwrite mode.
     """
+    # Whole-store import/overwrite — owner-only, gated before any side effect.
+    refusal = _gov_rt.maybe_refuse_owner_write(_engram.root, tool="import_engram")
+    if refusal is not None:
+        return refusal
     err = _validate_path(input_path)
     if err:
         return _json({"error": err})
@@ -2749,6 +2940,12 @@ async def import_engram_from_openclaw(
         memory_path: MEMORY.md 文件路径（可选）。 / Path to MEMORY.md (optional).
         user_path: USER.md 文件路径（可选）。 / Path to USER.md (optional).
     """
+    # Whole-store import — owner-only, gated before any side effect.
+    refusal = _gov_rt.maybe_refuse_owner_write(
+        _engram.root, tool="import_engram_from_openclaw"
+    )
+    if refusal is not None:
+        return refusal
     try:
         result = import_from_openclaw(_engram, soul_path, memory_path, user_path)
         return _json(result)
@@ -2848,6 +3045,13 @@ async def wrap_up_session(
         tech_stack: 技术栈（可选，逗号分隔）。 / Tech stack (optional, comma-separated).
         known_issues: 已知问题（可选，逗号分隔）。 / Known issues (optional, comma-separated).
     """
+    # a4: write-path governance gate — wrap_up_session fans out into many writes
+    # (extract insights/playbook, save snapshot, daily log, evaluate_tiers), so
+    # gate the whole entry. read-only-external is refused before any side effect.
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="wrap_up_session")
+    if refusal:
+        return refusal
+
     _session.detect_tool(source_tool)
     if project_folder:
         _session.detect_project(project_folder)

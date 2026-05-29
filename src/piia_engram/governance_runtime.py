@@ -76,6 +76,18 @@ _EXPORT_REFUSAL = (
     " current trust level (private-self only); nothing was written to disk."
 )
 
+# Pre-execution refusal for OWNER-ONLY writes: mutating the governance grant
+# store itself, or whole-store import/overwrite. Permitted for private-self only
+# (NOT trusted-local), and refused BEFORE the side effect so no grant/import is
+# written. Closes the low-trust self-escalation-to-owner path.
+_OWNER_WRITE_REFUSAL = (
+    "【治理层】此操作仅限 knowledge-base 所有者（private-self）执行，"
+    "且必须在本机直接进行；当前信任档无权修改授权/导入数据，未写出任何变更。"
+    " / Governance: this operation is owner-only (private-self) and must be"
+    " performed locally by the owner. The current trust level may not modify"
+    " grants or import data; nothing was written."
+)
+
 # Returned in place of a write/mutate acknowledgement string that would
 # otherwise echo a STORED item title/body the caller did not supply. The
 # mutation still happened; only the echoed stored text is withheld.
@@ -689,3 +701,35 @@ def maybe_refuse_export(root, *, tool: str, agent_id: str = "",
         excluded_sens=0 if allowed else 1, excluded_malformed=0, grant_error=grant_error,
     )
     return None if allowed else _EXPORT_REFUSAL
+
+
+def maybe_refuse_owner_write(root, *, tool: str, agent_id: str = "",
+                            client_type: str | None = None, declared_task: str = ""):
+    """Pre-execution OWNER-ONLY write gate for high-blast-radius mutations that
+    even a ``trusted-local`` caller must not perform: changing the governance
+    grant store itself (``set_caller_trust`` / ``revoke_caller``) and whole-store
+    imports/overwrites (``import_engram`` / ``import_engram_from_openclaw``).
+
+    Unlike :func:`maybe_refuse_write` (which permits ``verified`` and
+    ``proposed_only``), this gate permits ONLY the un-revoked ``private-self``
+    owner. It MUST be called BEFORE the side effect so a non-owner never mutates
+    the grant store — closing the self-escalation path where a low-trust caller
+    sets its own ``agent_id`` to ``private-self`` and then reads secret content.
+
+    Returns ``None`` (proceed) when governance is OFF or the caller is the owner;
+    otherwise records a receipt and returns the refusal string, which the MCP
+    handler MUST return instead of executing the write.
+    """
+    if not governance_enabled():
+        return None
+    aid, trust, revoked, grant_error = resolve_caller(
+        root, agent_id=agent_id, client_type=client_type
+    )
+    allowed = (not revoked) and trust == _PRIVATE_SELF
+    ct = current_client_type() if client_type is None else (client_type or "")
+    _finalize_receipt(
+        root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
+        revoked=revoked, returned_by_type={"_owner_write_refused": 0 if allowed else 1},
+        excluded_sens=0 if allowed else 1, excluded_malformed=0, grant_error=grant_error,
+    )
+    return None if allowed else _OWNER_WRITE_REFUSAL
