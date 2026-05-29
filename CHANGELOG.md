@@ -6,6 +6,27 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.35.0] - 2026-05-29
+
+Decision threads, decision history, and permission profile — the first release where users can trace how decisions evolved and control who accesses their Engram data.
+
+### Added
+- **Decision thread auto-supersedes (c1)**: `add_decision` now automatically creates a `supersedes` edge when the same question gets a different answer. Supports explicit `supersedes` parameter for cross-question superseding. Dedup comparator fixed (`>` → `>=`) so the most recent entry wins on similarity ties.
+- **`remove_relation` MCP tool**: undo for `add_relation` — remove a typed relation between knowledge items. Idempotent.
+- **`get_decision_history` MCP tool (c2)**: query the full revision history of a decision by question text (not ID). Returns chronological revisions with supersedes chain and current active decision. Uses bigram similarity matching with configurable threshold.
+- **Permission profile (a0)**: three new MCP tools for user-facing governance control:
+  - `get_permission_profile`: view all callers' trust levels, auto-classification rules, and revoked callers
+  - `set_caller_trust`: assign or change a caller's trust level (private-self / trusted-local / read-only-external)
+  - `revoke_caller`: forward-revoke a caller's future access
+
+### Changed
+- MCP tool count: 65 → **72** (16 Tier-1 Core + 56 Tier-2 Advanced).
+- README "By the numbers" refreshed to v3.35.0 data (1439 tests, 72 tools, 16 Core).
+
+### Tests
+- 50 new tests: decision-thread c1 (14) + c2 (15) + permission profile (21).
+- Full suite: **1439 tests** passing.
+
 ## [3.34.0] - 2026-05-29
 
 Governance layer (a0), decision-thread scaffold (c0), and the playbook passive-reference header — the first release with runtime trust enforcement and a product-level "AI does not auto-execute" safety property.

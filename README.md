@@ -345,7 +345,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 65 MCP tools. By default, only the 16 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 65 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 72 MCP tools. By default, only the 16 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 72 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -377,7 +377,7 @@ piia-engram ships 65 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 | `save_project_snapshot` | Persist project state for future sessions |
 | `get_recent_context` | Recover lost session context after restart |
 
-### Tier-2 Advanced (48 tools — knowledge management, review, import/export)
+### Tier-2 Advanced (56 tools — knowledge management, review, governance, import/export)
 
 <details>
 <summary>Click to expand full tool list</summary>
@@ -432,6 +432,14 @@ piia-engram ships 65 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 | `read_web_content` | Read webpage via local Reader service |
 | `get_audit_log` | Get recent audit log entries |
 | `start_project` | Start a project with inherited knowledge |
+| `add_relation` | Create a typed, directed relation between knowledge items (decision threads) |
+| `remove_relation` | Remove a typed relation (undo of add_relation) |
+| `get_decision_thread` | Reconstruct how a decision evolved step by step |
+| `get_decision_history` | Query the full revision history of a decision by question text |
+| `get_permission_profile` | View all callers' trust levels and access boundaries |
+| `set_caller_trust` | Set or change a caller's trust level |
+| `revoke_caller` | Revoke a caller's future access (forward-only) |
+| `export_feedback_report` | Generate an anonymous beta feedback report |
 
 </details>
 
@@ -530,7 +538,7 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 | Feature | piia-engram | Claude Memory | Manual `CLAUDE.md` | Mem0 | Letta (MemGPT) |
 |---|---|---|---|---|---|
 | Primary purpose | User identity across tools | Per-conversation memory | Per-project notes | Agent vector memory | Agent self-editing memory |
-| Cross-tool by design | ✅ MCP-native (13 core tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
+| Cross-tool by design | ✅ MCP-native (16 core tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
 | Storage | Local JSON in `~/.engram/` | Cloud | Local | Vector DB + Mem0 Cloud | Postgres or Letta Cloud |
 | Local-first by default | ✅ | ❌ | ✅ | ⚠ Cloud is the default | ⚠ Cloud is the default |
 | Encryption at rest | ✅ AES-256-GCM, PBKDF2 600k (opt-in) | depends on Cloud | ❌ plain Markdown | depends on store config | depends on Postgres config |
@@ -545,14 +553,14 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.29.1 (2026-05-26) |
+| | v3.35.0 (2026-05-29) |
 |---|---|
 | Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools | **13 Core** (loaded by default) + **48 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools | **16 Core** (loaded by default) + **56 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **800+** (unit + integration) |
+| Tests passing | **1439** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
-| Lines in `core.py` | **1097** (down from 4277 pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
+| Lines in `core.py` | **2134** (facade + mixins total ~6000; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | AES-256-GCM, per-value random salt + nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
@@ -577,7 +585,7 @@ piia-engram. Install with `pip install piia-engram && engram setup`, and both to
 piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Every MCP-compatible AI tool (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) reads the same context, so new chats, tool updates, and tool switches never erase who you are.
 
 **How is piia-engram different from the official MCP memory server?**
-The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 65 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want every AI tool to know your coding preferences and past mistakes, use piia-engram.
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 72 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want every AI tool to know your coding preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.
@@ -608,12 +616,12 @@ Run `engram doctor --fix` in a terminal, then restart your AI tool. This command
 No. All core tools make zero network requests. Optional anonymous usage statistics (tool call counts, never content) can be enabled during setup but are **off by default**. You can inspect the payload with `engram telemetry preview` and disable anytime with `engram telemetry off`. See **[PRIVACY.md](PRIVACY.md)** for the full data flow diagram, what is and isn't collected, and your data rights.
 
 **How many MCP tools does piia-engram provide?**
-Two tiers, designed so most users only see 13 tools:
+Two tiers, designed so most users only see 16 tools:
 
 | Tier | Tools | What they do | Loaded by |
 |------|-------|-------------|-----------|
-| **Core** | 13 | Identity, knowledge read/write, project context, session recovery | Default |
-| **Advanced** | 48 | Knowledge review, merge, health scoring, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
+| **Core** | 16 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
+| **Advanced** | 56 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
 
 Most users never need to enable Advanced tools — Core covers everyday use.
 
