@@ -341,12 +341,12 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.29.1 (2026-05-26) |
+| | v3.35.0 (2026-05-29) |
 |---|---|
 | 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
-| MCP 工具 | **16 个核心**（默认加载）+ **49 个高级**（`ENGRAM_TOOLS=all` 开启）|
+| MCP 工具 | **16 个核心**（默认加载）+ **56 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **800+** 个（单元 + 集成）|
+| 测试通过 | **1439** 个（单元 + 集成）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **1097** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -394,9 +394,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_resume_brief` | v3.30: 跨会话/跨工具恢复摘要 |
 | `doctor` | 记忆系统自诊断 |
 
-默认只加载以上 16 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 49 个高级工具。
+默认只加载以上 16 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 56 个高级工具。
 
-### Tier-2 高级工具（49 个 — 知识管理、审查、导入导出）
+### Tier-2 高级工具（56 个 — 知识管理、审查、导入导出）
 
 <details>
 <summary>点击展开完整工具列表</summary>
@@ -450,6 +450,14 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `import_engram_from_openclaw` | 导入 OpenClaw 格式 |
 | `read_web_content` | 读取网页内容（需 Reader 服务） |
 | `get_audit_log` | 查询审计日志 |
+| `add_relation` | 建立知识条目间的类型化有向关系（led_to / supersedes / implemented_by） |
+| `remove_relation` | 移除已建立的有向关系（`add_relation` 的撤销操作） |
+| `get_decision_thread` | 从一条决策出发，递归构建完整的决策链（拓扑排序） |
+| `get_decision_history` | 按问题文本查询决策修订历史（模糊匹配 + 时间线） |
+| `get_permission_profile` | 查看所有调用方的信任等级、自动分类规则和已撤销列表 |
+| `set_caller_trust` | 设置或修改某个调用方的信任等级 |
+| `revoke_caller` | 前向撤销某个调用方的未来访问权限 |
+| `export_feedback_report` | 导出用户反馈报告（Markdown 格式） |
 | `start_project` | 新项目启动（继承知识 + 建档） |
 
 </details>
