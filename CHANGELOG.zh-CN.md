@@ -8,21 +8,29 @@
 
 ## [3.36.0] - 2026-05-30
 
-治理读路径副作用闭合——在 `ENGRAM_GOVERNANCE` 开启时，任何读类工具对非 owner 调用方都不会在磁盘上留下痕迹。本版本闭合了同一个 bug class（"先执行副作用，再治理返回值"）——这个问题在连续五轮独立对抗式审计中一次次换着马甲出现。
-
-### 安全
-- **读路径对非 owner 零磁盘副作用。** 治理开启时，`read-only-external` / 低信任调用方不再能通过任何读类工具触发文件写入。此前一次"被拒绝"的读，仍可能在拒绝*之前*已经落盘。已闭合的面：知识读取时的 access-count / `last_reviewed` 写回、遥测（`_track` flush 与 `_beta` 事件文件）、`audit.log` 记录、以及 `contexts/mcp_auto/*` 会话检查点（后者仅在调用次数越过阈值后才触发，单次调用的测试因此漏过了它）。
-- **权限管理工具加 owner-only 前置门控。** 授权/导入类工具（`set_caller_trust`、`revoke_caller`、import）现在在任何副作用之前就拒绝，低信任调用方无法靠"先写 grants 再被治理"自我提权。
-- **`get_identity_card` 重分类为 export-owner-only**——它的磁盘导出现在按写入面门控，不再当作普通读。
-- **所有治理门控 fail-closed。** 若 owner 解析抛异常（grants 损坏、导入失败），副作用被抑制而非放行——门控的失败模式是"拒绝"，不是"放行"。
+身份层安全版本：知识正文静态加密、每个 AI 工具内联看到自己的权限边界、治理层对"写绕过"和"读路径副作用"双向封死。治理与加密两条线各自经过多轮独立（Codex）对抗式审计，单是读路径闭合就走了五轮。
 
 ### 新增
+- **语料静态加密（a5）**——知识正文字段（`summary`、`detail`、`question`、`choice`、`reasoning`、`title`、`description`、`outcome`）用预派生密钥（PBKDF2-SHA256 600K + 每个 engram 独立的 `.corpus_salt`）加每字段随机 AES-GCM nonce 加密，采用新前缀 `enc:v2c:`。元数据保持明文，搜索和过滤照常工作。向后兼容：明文条目透明放行，下次写入时惰性重加密。playbook 复合字段（steps / pitfalls / preconditions）、playbook 索引标题、执行计划派生文件（含 step notes）全部覆盖。
+- **调用方权限内联呈现（a1–a3）**——AI 工具从第一条消息起就能知道自己的治理状态、信任级别、敏感度上限和写策略，无需额外 MCP 调用：`get_user_context` 和 `get_resume_brief` 追加"Caller Permissions"段，`search_knowledge` / `get_relevant_knowledge` 结果带 `_caller_permissions` 键。
 - **`TOOL_GOVERNANCE_CLASS`**——对每个 `@mcp.tool` 的 deny-by-default 分类。反射测试会对任何既未分类也未显式豁免的工具亮红灯，未来漏挂门控的工具无法静默发布。
 - **`maybe_refuse_owner_write`** 治理辅助函数，用于 owner-only 写/导出前置门控。
 
+### 安全
+- **写路径治理门（a4）**——18 个写工具（`add_lesson`、`add_decision`、`add_playbook`、`memory_store`、`update_knowledge`、`archive_knowledge`、`review_knowledge`、`merge_knowledge`、`link_knowledge`、`unlink_knowledge`、`update_playbook`、`archive_playbook`、`update_identity`、`register_tool`、`save_project_snapshot`、`start_project`、`save_agent_context`、`update_execution_step`）在调用方写策略为"no"（read-only-external）时执行前就拒绝。owner 与 trusted-local 调用方放行。
+- **读路径对非 owner 零磁盘副作用（R5–R9）**——治理开启时，`read-only-external` / 低信任调用方不再能通过任何读类工具触发文件写入。此前一次"被拒绝"的读，仍可能在拒绝*之前*已经落盘。已闭合的面：知识读取时的 access-count / `last_reviewed` 写回、遥测（`_track` flush 与 `_beta` 事件文件）、`audit.log` 记录、以及 `contexts/mcp_auto/*` 会话检查点（后者仅在调用次数越过阈值后才触发，单次调用的测试因此漏过了它）。
+- **权限管理工具加 owner-only 前置门控**——`set_caller_trust`、`revoke_caller`、import 现在在任何副作用之前就拒绝，低信任调用方无法靠"先写 grants 再被治理"自我提权。
+- **`get_identity_card` 重分类为 export-owner-only**——它的磁盘导出现在按写入面门控，不再当作普通读。
+- **所有治理门控 fail-closed**——若 owner 解析抛异常（grants 损坏、导入失败），副作用被抑制而非放行。门控的失败模式是"拒绝"，不是"放行"。
+- **加密 fail-closed 加固**——存在任何既有密文（按完整文件内容扫描，含派生索引/执行文件，不止前 4KB）时若缺 `.corpus_salt`，则让 engram 打开失败而非新铸一个 salt；语料密钥激活时清除残留的明文 `search_index.db`，使"开启加密"不会被遗留索引架空；语料加密下整个混合搜索索引被抑制，防止明文落进 FTS 表。
+
+### 变更
+- **发布闸强制 R1/R5 自测准入规则**——`release-evidence/v<版本>.md` 现在除 `eval-gate` 外还要求两个 presence-only 标记：`negative-control`（R1：安全敏感改动的新回归测试必须被证明在修复前的代码上变红）和 `field-assertion-audit`（R5：被触碰的安全敏感模块里每个自由文本字段都要有落盘断言证明它不是明文写入）。两者须为 `passed` 或 `n/a`。这把 a5 审计中学到的纪律固化下来——当时"我写的测试全过"掩盖了四个明文泄漏 P1。
+- CLI `engram reindex` 现在报告"corpus encryption enabled; persistent search index skipped/purged"，而非误导性的"reindexed 0"。
+
 ### 测试
-- **治理写门控矩阵：166 个测试**——writer-spy 全 root 快照比对、对"读工具 × 客户端类型"的反射式 sweep（每个调用重复到越过遥测/检查点阈值）、root 外路径监控（伪造 `HOME`/`TEMP`）、以及 fail-closed 错误路径证明（owner 解析抛异常时仍须零写入），并配 owner 对照测试防止过度修正。
-- 每个门控都有 revert-to-RED 证明钉住：每个修复被确认在移除后会让对应回归测试变红。
+- **治理写门控矩阵：166 个测试**——writer-spy 全 root 快照比对、对"读工具 × 客户端类型"的反射式 sweep（每个调用重复到越过遥测/检查点阈值）、root 外路径监控（伪造 `HOME`/`TEMP`）、以及 fail-closed 错误路径证明（owner 解析抛异常时仍须零写入），并配 owner 对照测试防止过度修正。每个门控都有 revert-to-RED 证明钉住：每个修复被确认在移除后会让对应回归测试变红。
+- 语料加密和调用方权限工作在 a1–a5 及 Codex 审计各轮中累计新增约 115 个测试，每个都在修复前的 commit 上做了 R1 negative-control 证明。
 - 全量套件：**1718 passing**。
 
 ## [3.35.0] - 2026-05-29
