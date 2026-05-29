@@ -120,6 +120,23 @@ _MATRIX = [
     ("update_playbook", "update_playbook",
      {"title": SECRET, "version": 2}, {"playbook_id": "sec-1", "status": "active"}, "withhold"),
     ("archive_playbook", "archive_playbook", {"title": SECRET}, {"playbook_id": "sec-1"}, "withhold"),
+    # ---- add_* / memory_store dedup-REJECT echoes the matched stored item's
+    #      existing_summary / existing_title (content the caller never supplied);
+    #      a near-duplicate submission could read a work/secret item back out.
+    #      Gated like any write-echo (maybe_govern_write_ack).
+    ("add_lesson", "add_lesson",
+     {"status": "duplicate", "existing_id": "sec-1", "existing_summary": SECRET,
+      "similarity": 0.99, "message": "与现有教训相似度 99%"},
+     {"summary": "near dup"}, "withhold"),
+    ("add_decision", "add_decision",
+     {"status": "duplicate", "existing_id": "sec-1", "existing_title": SECRET, "similarity": 0.99},
+     {"question": "q", "choice": "c"}, "withhold"),
+    ("add_playbook", "add_playbook",
+     {"status": "duplicate", "existing_id": "sec-1", "existing_title": SECRET},
+     {"title": "t", "triggers": "a,b"}, "withhold"),
+    ("memory_store", "add_lesson",
+     {"status": "duplicate", "existing_id": "sec-1", "existing_summary": SECRET, "similarity": 0.99},
+     {"kind": "lesson", "content_json": '{"summary": "near dup"}'}, "withhold"),
     # ---- owner-only aggregates / dumps / derived views (maybe_govern_owner_only) ----
     ("prepare_playbook_execution", "prepare_playbook_execution",
      {"playbook_id": "sec-1", "steps": [{"order": 1, "text": SECRET}]},
@@ -141,6 +158,13 @@ _MATRIX = [
      {"project_folder": "/x"}, "withhold"),
     ("export_knowledge_report", "export_knowledge_report", "# report\n" + SECRET,
      {}, "withhold"),
+    # audit.log entries carry the first 100 chars of a written lesson summary /
+    # decision/playbook title in their ``detail`` field (core.py audit writes),
+    # i.e. stored knowledge body at ANY sensitivity. The raw ledger is an
+    # aggregate diagnostic surface → private-self only (maybe_govern_owner_only).
+    # The fake is unused: get_audit_log reads root/audit.log, which the harness
+    # writes in _patch_tool_method.
+    ("get_audit_log", "_unused_audit_method", {"_": SECRET}, {}, "withhold"),
 ]
 
 # The set the leak matrix actually exercises — used by the coverage backstop.
@@ -162,12 +186,16 @@ _SAFE_ALLOWLIST = {
     "get_profile", "get_work_style", "get_preferences",
     "get_trust_boundaries", "get_quality_standards",
     # metadata / registry / diagnostics — no knowledge bodies in the response.
+    # NOTE: get_audit_log was moved OUT of this set (its entries echo stored
+    # summary/title via the audit detail field) — now governed owner-only.
     "get_domains", "list_projects", "list_agent_sessions",
-    "find_tool", "list_tools", "get_audit_log", "export_feedback_report", "doctor",
+    "find_tool", "list_tools", "export_feedback_report", "doctor",
     "update_execution_step",  # counts/status only, no body
     # caller-supplied-content writes — echo only what the caller just passed in,
     # so there is nothing to read *back* above the ceiling.
-    "memory_store", "add_lesson", "add_decision", "add_playbook",
+    # NOTE: add_lesson / add_decision / add_playbook / memory_store were moved
+    # OUT (their dedup-REJECT branch echoes the matched stored item) — now
+    # governed via maybe_govern_write_ack.
     "bulk_add_knowledge", "ingest_notes", "extract_session_insights",
     "save_project_snapshot", "save_agent_context", "wrap_up_session",
     "register_tool", "update_identity", "refresh_quick_context",
@@ -222,6 +250,16 @@ def _patch_tool_method(gov_engram, monkeypatch, tool, method, fake):
     """Monkeypatch the engram method a tool reads from, plus any side-effect
     method that would otherwise touch the real filesystem in the matrix."""
     monkeypatch.setattr(gov_engram, method, lambda *a, **k: fake, raising=False)
+    if tool == "get_audit_log":
+        # get_audit_log reads root/audit.log directly (no engram method). Write a
+        # ledger line whose ``detail`` carries the stored-knowledge marker, the
+        # way core.py audit writes embed lesson summary / decision-playbook title.
+        import json as _json_mod
+        (gov_engram.root / "audit.log").write_text(
+            _json_mod.dumps({"ts": "t", "action": "write",
+                             "target": "knowledge/lessons", "detail": SECRET}) + "\n",
+            encoding="utf-8",
+        )
     if tool == "start_project":
         # start_project also persists a snapshot; no-op it so the matrix only
         # exercises the inheritance gate, not the filesystem.

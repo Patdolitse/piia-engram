@@ -1333,14 +1333,16 @@ async def memory_store(
             label = content.get("summary", "")[:60]
             _track("memory_store", success=True)
             if result.get("status") == "duplicate":
-                return _json(result)
+                # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
+                return _json(_gov_rt.maybe_govern_write_ack(_engram.root, result, tool="memory_store"))
             return f"教训已记录: {label}"
         elif kind == "decision":
             result = _engram.add_decision(content)
             label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
             _track("memory_store", success=True)
             if result.get("status") == "duplicate":
-                return _json(result)
+                # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
+                return _json(_gov_rt.maybe_govern_write_ack(_engram.root, result, tool="memory_store"))
             return f"决策已记录: {label}"
         else:  # playbook
             result = _engram.add_playbook(content)
@@ -1398,7 +1400,12 @@ async def add_lesson(
         _track("add_lesson", success=False)
         return f"添加教训失败: {_safe_err(exc)}"
     if result.get("status") == "duplicate":
-        return _json(result)
+        # The dedup-reject payload echoes the MATCHED stored item's
+        # ``existing_summary`` (content the caller never supplied) — a low-trust
+        # agent could submit a near-duplicate to read back a work/secret lesson.
+        # Gate it like any write-echo: owner sees it, lower tiers get a
+        # title/body-free confirmation.
+        return _json(_gov_rt.maybe_govern_write_ack(_engram.root, result, tool="add_lesson"))
     return f"教训已记录: {summary}"
 
 
@@ -1450,7 +1457,9 @@ async def add_decision(
         _track("add_decision", success=False)
         return f"添加决策失败: {_safe_err(exc)}"
     if result.get("status") == "duplicate":
-        return _json(result)
+        # Dedup-reject echoes the matched stored decision's ``existing_title`` —
+        # gate it like any write-echo (see add_lesson).
+        return _json(_gov_rt.maybe_govern_write_ack(_engram.root, result, tool="add_decision"))
     return f"决策已记录: {question} → {choice}"
 
 
@@ -1514,7 +1523,9 @@ async def add_playbook(
         _track("add_playbook", success=False)
         return f"添加 Playbook 失败: {_safe_err(exc)}"
     if result.get("status") == "duplicate":
-        return _json(result)
+        # Dedup-reject echoes the matched stored playbook's ``existing_title`` —
+        # gate it like any write-echo (see add_lesson).
+        return _json(_gov_rt.maybe_govern_write_ack(_engram.root, result, tool="add_playbook"))
     if result.get("error"):
         return _json(result)
     return f"Playbook 已记录: {title} (triggers: {triggers})"
@@ -2476,7 +2487,13 @@ async def get_audit_log(limit: int = 50) -> str:
             break
 
     _engram._audit.log("read", "audit_log", detail=f"returned {len(entries)}")
-    return _json({"entries": entries, "total": len(entries)})
+    # The raw ledger entries carry a ``detail`` field that stores the first 100
+    # chars of a written lesson summary / decision/playbook title (core.py audit
+    # writes), i.e. stored knowledge body at ANY sensitivity level. The audit log
+    # is an aggregate diagnostic surface that cannot be cleanly per-item filtered,
+    # so it is private-self only — a low-trust agent must not read it back.
+    return _json(_gov_rt.maybe_govern_owner_only(
+        _engram.root, {"entries": entries, "total": len(entries)}, tool="get_audit_log"))
 
 
 # ===========================================================================
