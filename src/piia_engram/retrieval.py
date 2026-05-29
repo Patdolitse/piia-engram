@@ -346,6 +346,16 @@ class RetrievalMixin:
                         detail=f"{src_id} {rel} {dst_id} added={added}")
         return {"added": bool(added), "src": str(src_id), "rel": rel, "dst": str(dst_id)}
 
+    def remove_relation(self, src_id: str, rel: str, dst_id: str) -> dict:
+        """Remove a typed, directed relation. Idempotent (returns removed=False
+        if the edge did not exist). This is the undo for ``add_relation``."""
+        from .governance_store import RelationStore
+
+        removed = RelationStore(self.root).remove_relation(src_id, rel, dst_id)
+        self._audit.log("write", "knowledge/relations",
+                        detail=f"{src_id} {rel} {dst_id} removed={removed}")
+        return {"removed": bool(removed), "src": str(src_id), "rel": rel, "dst": str(dst_id)}
+
     def get_decision_thread(self, seed_id: str) -> dict:
         """Reconstruct the decision thread containing ``seed_id`` (how this
         evolved: idea → … → decision → implementation, with superseded items

@@ -804,7 +804,12 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         new_decision = self._ensure_fields(new_decision, "decision")
 
         new_title = self._entry_identity_text(new_decision, "decision")
-        # Three-tier dedup for decisions
+        # Three-tier dedup for decisions.
+        # >= (not strict >) so that when multiple entries share the same
+        # similarity (e.g. same question text, sim=1.0), the LAST entry
+        # (most recent by list position) wins. This is correct for both
+        # dedup (compare against the latest) and auto-supersedes (chain
+        # should target the most recent predecessor, not an older one).
         best_sim = 0.0
         best_match = None
         for existing in decisions:
@@ -815,9 +820,13 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 new_title,
                 self._entry_identity_text(existing, "decision"),
             )
-            if sim > best_sim:
+            if sim >= best_sim:
                 best_sim = sim
                 best_match = existing
+
+        # Track whether the new decision should auto-supersede the best match.
+        # Set when same question + different choice (a decision revision).
+        _auto_supersedes_target: str | None = None
 
         if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
             # For decisions: different choice on same question = conflict, not duplicate
@@ -838,7 +847,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                     "existing_title": self._entry_identity_text(best_match, "decision"),
                     "message": f"与现有决策相似度 {best_sim:.0%}，未重复添加",
                 }
-            # Different choice or supplement — fall through to related tier
+            # Different choice or supplement — fall through to related tier.
+            # Same question + different choice → the new decision supersedes the old.
+            if choices_differ:
+                _auto_supersedes_target = best_match.get("id")
 
         if best_sim >= SIMILARITY_THRESHOLD and best_match:
             new_id = new_decision.get("id", "")
@@ -865,6 +877,20 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         _write_json(path, decisions)
         title = new_decision.get("question", "") or new_decision.get("title", "")
         self._audit.log("write", "knowledge/decisions", detail=title[:100])
+
+        # Auto-supersedes: build a directed edge in the decision thread.
+        # Priority: (1) explicit ``supersedes`` field in the input,
+        #           (2) auto-detected same-question conflict (different choice).
+        # Best-effort: a failed edge write must NEVER block the decision write.
+        supersedes_id = new_decision.get("supersedes") or _auto_supersedes_target
+        if supersedes_id:
+            try:
+                self.add_relation(
+                    str(new_decision["id"]), "supersedes", str(supersedes_id)
+                )
+            except Exception:
+                pass  # edge is advisory; the decision itself is the hard write
+
         return new_decision
 
     def get_decisions(

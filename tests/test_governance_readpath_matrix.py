@@ -214,7 +214,7 @@ _SAFE_ALLOWLIST = {
     "save_project_snapshot", "save_agent_context", "wrap_up_session",
     "register_tool", "update_identity",
     # relation/maintenance ops returning caller IDs / counts only.
-    "add_relation", "apply_review",
+    "add_relation", "remove_relation", "apply_review",
     # imports / external fetch.
     "import_engram", "import_engram_from_openclaw", "read_web_content",
 }

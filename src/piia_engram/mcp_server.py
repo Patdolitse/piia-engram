@@ -1440,6 +1440,7 @@ async def add_decision(
     source_tool: str = "",
     project: str = "",
     domain: str = "",
+    supersedes: str = "",
 ) -> str:
     """记录单条关键决策（用户明确选了某个方案）。 / Record one key decision when the user explicitly chose an option.
 
@@ -1452,6 +1453,11 @@ async def add_decision(
     注意：如果用户给了一段会话摘要让你自动提取，请用 extract_session_insights 而不是本工具。
     Note: If the user gives a session summary for automatic extraction, use extract_session_insights instead.
 
+    决策链（Decision Thread）：同一问题改选方案时，会自动在决策链中标记旧决策为 superseded。
+    也可显式传 supersedes 参数指定被取代的旧决策 ID。
+    Decision thread: when the same question gets a different choice, the old decision is
+    automatically marked superseded. You may also explicitly pass supersedes with the old ID.
+
     Args:
         question: 决策的问题，如"数据库选型"。 / Decision question, such as 'database choice'.
         choice: 做出的选择，如"PostgreSQL"。 / Chosen option, such as 'PostgreSQL'.
@@ -1459,6 +1465,7 @@ async def add_decision(
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
         project: 关联项目（可选）。 / Related project (optional).
         domain: 技术领域（可选），可填多个，逗号分隔，如 'architecture,database'。 / Technical domain (optional); may contain multiple comma-separated labels such as 'architecture,database'.
+        supersedes: 被本决策取代的旧决策 ID（可选）。填写后自动在决策链中建立 supersedes 关系。 / ID of the old decision this one replaces (optional). Creates a supersedes edge in the decision thread.
     """
     decision = {"question": question, "choice": choice}
     if reasoning:
@@ -1469,6 +1476,8 @@ async def add_decision(
         decision["project"] = project
     if domain:
         decision["domain"] = domain
+    if supersedes:
+        decision["supersedes"] = supersedes
     try:
         result = _engram.add_decision(decision)
         _track("add_decision", success=True)
@@ -2250,6 +2259,23 @@ async def add_relation(src_id: str, rel: str, dst_id: str) -> str:
         dst_id: 目标条目 ID。 / Target item ID.
     """
     return _json(_engram.add_relation(src_id, rel, dst_id))
+
+
+@mcp.tool()
+async def remove_relation(src_id: str, rel: str, dst_id: str) -> str:
+    """移除两条知识之间的有类型关系（add_relation 的撤销）。 / Remove a typed, directed relation between two knowledge items (undo of add_relation).
+
+    用途：关系建错了或不再成立时调用。幂等——关系不存在也不报错。
+    Purpose: Call when a relation was created by mistake or is no longer valid. Idempotent.
+
+    rel 取值 / values: led_to / supersedes / implemented_by（同 add_relation）。
+
+    Args:
+        src_id: 源条目 ID。 / Source item ID.
+        rel: led_to / supersedes / implemented_by。
+        dst_id: 目标条目 ID。 / Target item ID.
+    """
+    return _json(_engram.remove_relation(src_id, rel, dst_id))
 
 
 @mcp.tool()
