@@ -1361,6 +1361,12 @@ async def memory_store(
             Content JSON string. Schema varies by kind (see above).
         source_tool: 调用来源工具（可选），如 'claude_code', 'cursor'。 / Source tool (optional).
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="memory_store")
+    if refusal:
+        _track("memory_store", success=False)
+        return refusal
+
     try:
         content = json.loads(content_json)
     except (json.JSONDecodeError, TypeError):
@@ -1445,6 +1451,12 @@ async def add_lesson(
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
         source_url: 如果教训来自外部内容，填写来源 URL（可选）。 / Source URL when the lesson comes from external content (optional).
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_lesson")
+    if refusal:
+        _track("add_lesson", success=False)
+        return refusal
+
     lesson = {"summary": summary}
     if detail:
         lesson["detail"] = detail
@@ -1509,6 +1521,12 @@ async def add_decision(
         domain: 技术领域（可选），可填多个，逗号分隔，如 'architecture,database'。 / Technical domain (optional); may contain multiple comma-separated labels such as 'architecture,database'.
         supersedes: 被本决策取代的旧决策 ID（可选）。填写后自动在决策链中建立 supersedes 关系。 / ID of the old decision this one replaces (optional). Creates a supersedes edge in the decision thread.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_decision")
+    if refusal:
+        _track("add_decision", success=False)
+        return refusal
+
     decision = {"question": question, "choice": choice}
     if reasoning:
         decision["reasoning"] = reasoning
@@ -1570,6 +1588,12 @@ async def add_playbook(
         outcome: 预期结果（可选）。 / Expected outcome (optional).
         source_tool: 来源工具（可选）。 / Source tool (optional).
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_playbook")
+    if refusal:
+        _track("add_playbook", success=False)
+        return refusal
+
     playbook: dict = {"title": title}
     playbook["triggers"] = [t.strip() for t in triggers.split(",") if t.strip()]
     try:
@@ -1751,6 +1775,11 @@ async def update_playbook(
         outcome: 新预期结果（可选）。 / New expected outcome (optional).
         status: 新状态，如 active/outdated/staging（可选）。 / New status, e.g., active/outdated/staging (optional).
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="update_playbook")
+    if refusal:
+        return refusal
+
     updates: dict = {}
     if title:
         updates["title"] = title
@@ -1851,6 +1880,12 @@ async def update_execution_step(
         status: "completed" | "skipped" | "failed"
         notes: 可选备注（如失败原因）。 / Optional note (e.g. failure reason).
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="update_execution_step")
+    if refusal:
+        _track("update_execution_step", success=False)
+        return refusal
+
     try:
         result = _engram.update_execution_step(playbook_id, step_order, status, notes)
         _track("update_execution_step", success=True)
@@ -1898,6 +1933,12 @@ async def archive_playbook(playbook_id: str) -> str:
     Args:
         playbook_id: 要归档的 Playbook ID。 / ID of the Playbook to archive.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="archive_playbook")
+    if refusal:
+        _track("archive_playbook", success=False)
+        return refusal
+
     try:
         result = _engram.archive_playbook(playbook_id)
         _track("archive_playbook", success=True)
@@ -1943,6 +1984,11 @@ async def register_tool(
         notes: 备注（注意事项、陷阱、替代方案等）。 / Notes, caveats, alternatives.
         source_tool: 哪个 AI 工具登记的（如 'claude_code', 'codex'）。 / Which AI tool registered this.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="register_tool")
+    if refusal:
+        return refusal
+
     tool_entry: dict = {"name": name}
     if path:
         tool_entry["path"] = path
@@ -2085,6 +2131,11 @@ async def update_knowledge(item_id: str, updates_json: str) -> str:
         item_id: lesson 或 decision 的 ID。 / ID of the lesson or decision.
         updates_json: 要更新字段的 JSON 字符串。 / JSON string containing fields to update.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="update_knowledge")
+    if refusal:
+        return refusal
+
     try:
         updates = json.loads(updates_json)
     except json.JSONDecodeError:
@@ -2110,6 +2161,11 @@ async def archive_knowledge(item_id: str) -> str:
     Args:
         item_id: 要归档的 lesson 或 decision ID。 / ID of the lesson or decision to archive.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="archive_knowledge")
+    if refusal:
+        return refusal
+
     result = _engram.archive_knowledge(item_id)
     _beta("knowledge_rejected", action="archive")
     # Returns the full stored item (delegates to update_*) — same read-back
@@ -2131,6 +2187,11 @@ async def review_knowledge(knowledge_id: str) -> str:
     Args:
         knowledge_id: 要复习的知识条目 ID。 / ID of the knowledge item to review.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="review_knowledge")
+    if refusal:
+        return refusal
+
     result = _engram.review_knowledge(knowledge_id)
     _beta("knowledge_reviewed")
     # Pure read-disguised-as-write: only bumps last_reviewed yet returns the full
@@ -2231,6 +2292,11 @@ async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
         primary_id: 要保留的主条目 ID。 / ID of the primary item to keep.
         secondary_id: 要合并并归档的次要条目 ID。 / ID of the secondary item to merge and archive.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="merge_knowledge")
+    if refusal:
+        return refusal
+
     # Returns {primary_title, secondary_title} — stored titles the caller only
     # referenced by id. Gate the ack so lower tiers don't read titles back
     # (Codex round-16 write-echo class).
@@ -2253,6 +2319,11 @@ async def link_knowledge(id_a: str, id_b: str) -> str:
         id_a: 第一个 lesson 或 decision 的 ID。 / ID of the first lesson or decision.
         id_b: 第二个 lesson 或 decision 的 ID。 / ID of the second lesson or decision.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="link_knowledge")
+    if refusal:
+        return refusal
+
     # Ack message embeds both item titles ("Linked: <title> ↔ <title>") — gate
     # so a low-trust caller can't read a secret title back (round-16 write-echo).
     result = _engram.link_knowledge(id_a, id_b)
@@ -2274,6 +2345,11 @@ async def unlink_knowledge(id_a: str, id_b: str) -> str:
         id_a: 第一个 lesson 或 decision 的 ID。 / ID of the first lesson or decision.
         id_b: 第二个 lesson 或 decision 的 ID。 / ID of the second lesson or decision.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="unlink_knowledge")
+    if refusal:
+        return refusal
+
     # Ack message embeds both item titles — same write-echo gate as link_knowledge.
     result = _engram.unlink_knowledge(id_a, id_b)
     result = _gov_rt.maybe_govern_write_ack(_engram.root, result, tool="unlink_knowledge")
@@ -2461,6 +2537,11 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
         work_style: preferences (dict), communication (str) / preferences（字典）、communication（字符串）。
         quality_standards: acceptance_threshold (1-5), rules (list) / acceptance_threshold（1-5）、rules（列表）。
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="update_identity")
+    if refusal:
+        return refusal
+
     if field not in IDENTITY_FIELDS:
         return _json({"error": f"Unknown field: {field}. Valid: {sorted(IDENTITY_FIELDS)}"})
     try:
@@ -2502,6 +2583,11 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
         project_folder: 项目文件夹路径。 / Project folder path.
         data_json: JSON 字符串，支持字段 title、tech_stack、known_issues、notes。 / JSON string supporting fields: title, tech_stack, known_issues, and notes.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="save_project_snapshot")
+    if refusal:
+        return refusal
+
     err = _validate_path(project_folder)
     if err:
         return f"错误: {err}"
@@ -3211,6 +3297,11 @@ async def start_project(
         tech_stack: 技术栈（可选，逗号分隔）。 / Tech stack (optional, comma-separated).
         limit: 最多继承多少条经验（默认 10，上限 20）。 / Maximum number of knowledge items to inherit (default 10, max 20).
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="start_project")
+    if refusal:
+        return refusal
+
     results = {}
 
     # Step 1: Knowledge inheritance
@@ -3314,6 +3405,11 @@ async def save_agent_context(
         project_folder: 项目路径（可选，写入文件头）。 / Project folder path (optional, written to file header).
         actions_json: 结构化动作日志（可选），JSON 数组，每个元素含 tool_called, arguments_summary, result_summary。用于 Playbook 自动提取。 / Structured action log (optional), JSON array of {tool_called, arguments_summary, result_summary}. Used for higher-fidelity Playbook extraction.
     """
+    # a4: write-path governance gate
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="save_agent_context")
+    if refusal:
+        return refusal
+
     _session.detect_tool(tool)
     if project_folder:
         _session.detect_project(project_folder)

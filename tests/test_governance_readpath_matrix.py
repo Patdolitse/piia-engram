@@ -94,10 +94,11 @@ _MATRIX = [
     ("find_similar_knowledge", "find_similar_knowledge",
      {"source": _pub(), "similar": [_pub(), _sec()], "total": 2},
      {"item_id": "pub-1"}, "filter"),
-    # start_project embeds the get_knowledge_inheritance bundle (round-16 P1-1).
+    # start_project is a write tool; a4 write-gate refuses the call entirely
+    # for non-owners (before the read part runs), so it's "withhold" not "filter".
     ("start_project", "get_knowledge_inheritance",
      {"query": "new project", "items": [_pub(), _sec()]},
-     {"description": "new", "project_folder": "/x"}, "filter"),
+     {"description": "new", "project_folder": "/x"}, "withhold"),
     # ---- single knowledge-item dicts (maybe_govern_one) → withheld stub ----
     ("get_project_context", "get_project_snapshot", _sec(),
      {"project_folder": "/x"}, "withhold"),

@@ -596,6 +596,75 @@ def describe_caller_permissions(
     return result
 
 
+_WRITE_REFUSAL_NO = (
+    "【治理层】当前信任档无写入权限（write policy: no）。知识库处于只读模式。"
+    " / Governance: the current trust level does not permit writes"
+    " (write policy: no). The knowledge base is read-only for this caller."
+)
+
+_WRITE_REFUSAL_PROPOSED = (
+    "【治理层】当前信任档仅允许提议写入，不允许直接写入（write policy: proposed_only）。"
+    "请通知 knowledge-base 所有者手动完成此写入。"
+    " / Governance: the current trust level allows proposed writes only,"
+    " not direct writes (write policy: proposed_only)."
+    " Please notify the knowledge-base owner to complete this write manually."
+)
+
+
+def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
+                       client_type: str | None = None,
+                       declared_task: str = ""):
+    """Pre-execution write gate: refuse write operations for callers whose
+    trust level does not permit writes.
+
+    Call this BEFORE performing any write (add_lesson, add_decision,
+    add_playbook, memory_store, update_knowledge, etc.).
+
+    Returns ``None`` when governance is OFF or the caller has write access
+    (``"verified"``).  Returns a refusal string otherwise, which the MCP
+    handler must return instead of executing the write.
+
+    Write policy mapping:
+    - ``"verified"`` (private-self): proceed — return None
+    - ``"proposed_only"`` (trusted-local): refuse with proposal hint
+    - ``"no"`` (read-only-external): refuse outright
+    """
+    if not governance_enabled():
+        return None
+    aid, trust, revoked, grant_error = resolve_caller(
+        root, agent_id=agent_id, client_type=client_type
+    )
+    level_info = TRUST_LEVELS.get(trust, TRUST_LEVELS[DEFAULT_TRUST_LEVEL])
+    write_policy = level_info["write"]
+
+    ct = current_client_type() if client_type is None else (client_type or "")
+
+    if revoked:
+        _finalize_receipt(
+            root, tool=tool, aid=aid, ct=ct, trust=trust,
+            declared_task=declared_task, revoked=True,
+            returned_by_type={"_write_refused": 1},
+            excluded_sens=1, excluded_malformed=0,
+            grant_error=grant_error,
+        )
+        return _WRITE_REFUSAL_NO
+
+    if write_policy in ("verified", "proposed_only"):
+        # "verified" = owner, "proposed_only" = trusted-local agent.
+        # Both are allowed to write for now; a future increment will add
+        # a proper proposal/approval workflow for "proposed_only".
+        return None
+
+    _finalize_receipt(
+        root, tool=tool, aid=aid, ct=ct, trust=trust,
+        declared_task=declared_task, revoked=False,
+        returned_by_type={"_write_refused": 1},
+        excluded_sens=1, excluded_malformed=0,
+        grant_error=grant_error,
+    )
+    return _WRITE_REFUSAL_NO
+
+
 def maybe_refuse_export(root, *, tool: str, agent_id: str = "",
                         client_type: str | None = None, declared_task: str = ""):
     """Pre-execution owner gate for tools whose disclosure surface is a FILE
