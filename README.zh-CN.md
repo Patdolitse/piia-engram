@@ -20,11 +20,12 @@
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
 [![Downloads](https://img.shields.io/pypi/dm/piia-engram)](https://pypi.org/project/piia-engram/)
-[![Official MCP Registry](https://img.shields.io/badge/MCP_Registry-official-green.svg)](https://registry.modelcontextprotocol.io)
 
 **被收录于：**
+[![Official MCP Registry](https://img.shields.io/badge/listed_in-MCP_Registry-green?logo=modelcontextprotocol)](https://registry.modelcontextprotocol.io)
 [![awesome-mcp-servers](https://img.shields.io/badge/listed_in-awesome--mcp--servers-orange?logo=awesome-lists)](https://github.com/punkpeye/awesome-mcp-servers)
 [![awesome-agents](https://img.shields.io/badge/listed_in-awesome--agents-orange?logo=awesome-lists)](https://github.com/kyrolabs/awesome-agents)
+[![Awesome-MCP-ZH](https://img.shields.io/badge/listed_in-Awesome--MCP--ZH-orange?logo=awesome-lists)](https://github.com/yzfly/Awesome-MCP-ZH)
 
 [![piia-engram MCP server](https://glama.ai/mcp/servers/@Patdolitse/piia-engram/badge)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
 
