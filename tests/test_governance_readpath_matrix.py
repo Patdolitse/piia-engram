@@ -447,27 +447,43 @@ def test_export_tools_actually_gate():
     )
 
 
-# ── 6. round-17/18/19 regression: NO file written by a non-owner call may carry
-#       a secret — path-agnostic, CASE-INSENSITIVE content diff ────────────────
+# ── 6. UNIVERSAL file-side-effect harness ─────────────────────────────────────
 #
-# The matrix above drives RETURN values, so it is structurally blind to file
-# side effects: round-17 leaked via exports/*, round-18 via
-# playbooks/executions/*, round-19 via the hybrid search_index.db FTS table —
-# each time the return was governed but a derived file already held the secret.
-# Enumerating output PATHS (the round-18 attempt) just moved the blind spot;
-# matching only the RAW-CASE marker (the round-19 attempt) was a second blind
-# spot — the FTS tokenizer lowercases every ASCII token, so the secret landed in
-# search_index.db as `zzsecret...` and slipped past a `SECRET.encode() in data`
-# check.
+# History: the original section-6 test (R17→R19) hand-selected 4 file-writer
+# tools + search_knowledge. That approach had a structural weakness: the tool
+# list itself was an attack surface — any governed/export tool NOT listed could
+# leak secretly through a file side effect and the test would never notice.
+# That is exactly how R17/R18/R19 FAILs happened (each time a new tool was
+# found persisting secret content to a derived file).
 #
-# This test removes BOTH assumptions. It seeds secret lessons/decisions/
-# playbooks, snapshots the bytes of EVERY file under the root, runs each
-# disclosure-surface tool as an untrusted ``web`` caller WITH hybrid search ON,
-# then re-snapshots. ANY file created or modified BY THE CALL (not by the
-# seeding) that contains the secret marker — in any case — is a leak, no matter
-# where it lands. The only expected write is the append-only audit ledger
-# (refusal receipts: tool name + trust level, never knowledge bodies; itself
-# governed by get_audit_log), excluded by name.
+# This harness replaces the hand-selected list with a PARAMETRIZED test over
+# ALL tools in _GOVERNED | _EXPORT_OWNER_ONLY (currently 41 tools). Each
+# instance:
+#   1. Seeds a fresh Engram with secret lesson/decision/playbook content.
+#   2. Snapshots every file under root.
+#   3. Calls ONE tool as an untrusted ``web`` caller, governance ON, hybrid
+#      search enabled (ENGRAM_SEARCH=hybrid — the R19 leak was invisible
+#      without hybrid).
+#   4. Asserts (a) the return does not contain the secret (case-insensitive),
+#      and (b) no file under root is NEWLY created or NEWLY injected with
+#      the secret marker (case-insensitive).
+#
+# File-diff logic (no name-based exclusions needed):
+#   - New file not in the before-snapshot → check for secret marker.
+#   - Modified file where marker was already present in the before-snapshot
+#     → skip (source-store access-count rewrite: same body, different
+#     metadata).
+#   - Modified file where marker is NEWLY injected → LEAK.
+#   - Unchanged file → skip.
+#
+# Coverage assertion: ``test_side_effect_harness_covers_all`` guarantees
+# the harness list equals ``_GOVERNED | _EXPORT_OWNER_ONLY`` exactly, so
+# a new tool classified into either set but missing from the harness fails
+# at once — no more "forgot to add tool X".
+#
+# Negative verification: ``test_harness_detects_hybrid_index_leak`` forces
+# ``allow_hybrid_index=True`` on the core (simulating the pre-R20-fix state)
+# and confirms the harness goes RED — proving the diff logic is not vacuous.
 
 
 def _snapshot_tree(root):
@@ -483,66 +499,204 @@ def _snapshot_tree(root):
 
 
 def _seed_secret_store(e):
-    """Put the secret marker into stored lesson summary, decision text, and a
-    playbook STEP action so every derived view (quick-context / identity card /
-    knowledge report / execution plan / search index) would surface it if it
-    leaked."""
-    e.add_lesson({"summary": "secret lesson " + SECRET, "detail": SECRET,
-                  "sensitivity": "secret", "tier": "verified"})
-    e.add_decision({"question": "q", "choice": "secret choice " + SECRET,
-                    "rationale": SECRET, "sensitivity": "secret", "tier": "verified"})
+    """Seed lesson/decision/playbook with secret content; return all IDs.
+
+    The secret marker lands in stored summaries, decision text, and playbook
+    step actions so every derived view (quick-context / identity card /
+    knowledge report / execution plan / search index) would surface it if
+    it leaked.  Also persists a project snapshot under root so
+    ``get_project_context`` has data to exercise.
+    """
+    les = e.add_lesson({"summary": "secret lesson " + SECRET, "detail": SECRET,
+                        "sensitivity": "secret", "tier": "verified"})
+    dec = e.add_decision({"question": "q", "choice": "secret choice " + SECRET,
+                          "rationale": SECRET, "sensitivity": "secret",
+                          "tier": "verified"})
     pb = e.add_playbook({"title": "pb safe title",
-                         "steps": [{"order": 1, "action": SECRET, "detail": SECRET}],
+                         "steps": [{"order": 1, "action": SECRET,
+                                    "detail": SECRET}],
                          "sensitivity": "secret", "tier": "verified"})
-    return pb.get("id", "")
+    # Project snapshot with secret so get_project_context has data.
+    e.save_project_snapshot(str(e.root), {"summary": SECRET})
+    return {
+        "lesson_id": les.get("id", ""),
+        "decision_id": dec.get("id", ""),
+        "playbook_id": pb.get("id", ""),
+    }
 
 
-def test_no_filewrite_tool_persists_secret_for_non_owner(gov_engram, monkeypatch):
+# (tool_name, kwargs_factory)
+# kwargs_factory receives an ``ids`` dict with keys:
+#   lesson_id, decision_id, playbook_id — from _seed_secret_store
+#   _root — the tmp_path (Path) for the test's Engram
+_SIDE_EFFECT_HARNESS = [
+    # ── list/dict read tools ──
+    ("get_lessons", lambda ids: {}),
+    ("get_decisions", lambda ids: {}),
+    ("get_relevant_knowledge", lambda ids: {"project_folder": str(ids["_root"])}),
+    ("get_playbooks", lambda ids: {}),
+    ("get_recent_playbooks", lambda ids: {}),
+    ("get_recent_context", lambda ids: {}),
+    ("search_knowledge", lambda ids: {"query": "secret lesson choice",
+                                       "scope": "all", "limit": 5}),
+    ("get_stale_knowledge", lambda ids: {}),
+    ("get_knowledge_inheritance", lambda ids: {"description": "test project"}),
+    ("get_related_knowledge", lambda ids: {"item_id": ids["lesson_id"]}),
+    ("find_similar_knowledge", lambda ids: {"item_id": ids["lesson_id"]}),
+    ("start_project", lambda ids: {"description": "new project",
+                                    "project_folder": str(ids["_root"] / "proj")}),
+    # ── single-item reads ──
+    ("get_project_context", lambda ids: {"project_folder": str(ids["_root"])}),
+    ("get_playbook", lambda ids: {"playbook_id": ids["playbook_id"]}),
+    # ── owner-only aggregates ──
+    ("get_knowledge_overview", lambda ids: {}),
+    ("suggest_merges", lambda ids: {}),
+    ("get_decision_thread", lambda ids: {"seed_id": ids["decision_id"]}),
+    ("get_execution_status", lambda ids: {"playbook_id": ids["playbook_id"]}),
+    ("get_user_context", lambda ids: {}),
+    ("get_resume_brief", lambda ids: {}),
+    ("get_daily_log", lambda ids: {"project_folder": str(ids["_root"])}),
+    ("get_audit_log", lambda ids: {}),
+    # ── export / file-writer tools ──
+    ("refresh_quick_context", lambda ids: {"level": "standard"}),
+    ("get_identity_card", lambda ids: {}),
+    ("export_knowledge_report", lambda ids: {}),
+    ("prepare_playbook_execution", lambda ids: {"playbook_id": ids["playbook_id"],
+                                                 "params_json": "{}"}),
+    ("export_engram", lambda ids: {}),
+    ("export_engram_to_openclaw", lambda ids: {}),
+    ("request_outline_review", lambda ids: {"lang": "zh"}),
+    # ── write tools returning stored items ──
+    ("update_knowledge", lambda ids: {"item_id": ids["lesson_id"],
+                                       "updates_json": "{}"}),
+    ("archive_knowledge", lambda ids: {"item_id": ids["lesson_id"]}),
+    ("review_knowledge", lambda ids: {"knowledge_id": ids["lesson_id"]}),
+    ("merge_knowledge", lambda ids: {"primary_id": ids["lesson_id"],
+                                      "secondary_id": ids["decision_id"]}),
+    ("link_knowledge", lambda ids: {"id_a": ids["lesson_id"],
+                                     "id_b": ids["decision_id"]}),
+    ("unlink_knowledge", lambda ids: {"id_a": ids["lesson_id"],
+                                       "id_b": ids["decision_id"]}),
+    ("update_playbook", lambda ids: {"playbook_id": ids["playbook_id"],
+                                      "status": "active"}),
+    ("archive_playbook", lambda ids: {"playbook_id": ids["playbook_id"]}),
+    # ── write tools whose dedup-reject echoes stored items ──
+    ("add_lesson", lambda ids: {"summary": "near duplicate test lesson"}),
+    ("add_decision", lambda ids: {"question": "test q", "choice": "test c"}),
+    ("add_playbook", lambda ids: {"title": "dup test pb", "triggers": "a,b"}),
+    ("memory_store", lambda ids: {"kind": "lesson",
+                                   "content_json": '{"summary": "near duplicate"}'}),
+]
+
+_SIDE_EFFECT_TOOL_NAMES = {row[0] for row in _SIDE_EFFECT_HARNESS}
+
+
+def _check_leaked_files(root, before, after):
+    """Return root-relative paths where the secret marker was NEWLY introduced.
+
+    - New file (not in before): check for marker (case-insensitive).
+    - Modified file where marker was already present: skip (source-store
+      access-count rewrite — same body, different metadata).
+    - Modified file where marker is newly injected: LEAK.
+    - Unchanged file: skip.
+    """
+    marker = SECRET.lower().encode()
+    leaked = []
+    for path, data_after in after.items():
+        data_before = before.get(path)
+        if data_before == data_after:
+            continue  # untouched by the call
+        # Source-store rewrite: marker was already present before the call
+        if data_before is not None and marker in data_before.lower():
+            continue
+        if marker in data_after.lower():
+            leaked.append(str(path.relative_to(root)))
+    return leaked
+
+
+@pytest.mark.parametrize(
+    "tool,kwargs_fn", _SIDE_EFFECT_HARNESS,
+    ids=[r[0] for r in _SIDE_EFFECT_HARNESS],
+)
+def test_no_file_side_effect_leaks_secret(
+    gov_engram, monkeypatch, tool, kwargs_fn,
+):
+    """Universal: every governed/export tool run as non-owner must not
+    persist the secret to any new or modified file under root."""
     monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
-    # round-19: hybrid ON is what makes search_knowledge persist the full corpus
-    # into search_index.db; the leak is invisible with the default keyword path.
     monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
     e = gov_engram
-    pb_id = _seed_secret_store(e)
+    ids = _seed_secret_store(e)
+    ids["_root"] = e.root
+    kwargs = kwargs_fn(ids)
 
     before = _snapshot_tree(e.root)
 
-    # tools whose disclosure surface is a FILE; they must refuse the non-owner.
-    refusal_calls = [
-        ("refresh_quick_context", {"level": "standard"}),
-        ("get_identity_card", {}),
-        ("export_knowledge_report", {}),
-        ("prepare_playbook_execution", {"playbook_id": pb_id, "params_json": "{}"}),
-    ]
-    for tool, kwargs in refusal_calls:
+    try:
         out = _call(tool, kwargs)
-        assert "治理" in out or "Governance" in out, (
-            f"{tool} did not refuse the non-owner (got: {out[:120]!r})"
-        )
+    except Exception:
+        out = ""  # tool errored — no leak possible via return
 
-    # search_knowledge does NOT refuse — it returns a governed (filtered) result;
-    # the round-19 leak was the index FILE it wrote as a side effect. Assert the
-    # return is clean here; the file-leak assertion below covers the side effect.
-    sk = _call("search_knowledge", {"query": "secret lesson choice", "scope": "all", "limit": 5})
-    assert SECRET.lower() not in sk.lower(), (
-        f"search_knowledge returned the secret to a non-owner: {sk[:160]!r}"
-    )
+    # (a) return value must not contain the secret (case-insensitive)
+    if out:
+        assert SECRET.lower() not in out.lower(), (
+            f"{tool} returned the secret to a non-owner: {out[:200]!r}"
+        )
 
     after = _snapshot_tree(e.root)
 
-    marker = SECRET.lower().encode()  # FTS lowercases ASCII tokens
-    leaked = []
-    for path, data in after.items():
-        if path.name == "audit.log":  # append-only ledger; governed separately
-            continue
-        if before.get(path) == data:  # untouched by the calls (seeded store)
-            continue
-        if marker in data.lower():
-            leaked.append(str(path.relative_to(e.root)))
+    # (b) no file newly injected with the secret
+    leaked = _check_leaked_files(e.root, before, after)
     assert not leaked, (
-        "A non-owner call persisted the secret to disk (file side-effect leak): "
-        f"{leaked}. The return may be governed, but the FILE is the disclosure "
-        "surface — suppress the writer for non-owners (maybe_refuse_export / "
-        "allow_hybrid_index=False)."
+        f"{tool} persisted the secret to disk (file side-effect leak): "
+        f"{leaked}. The return may be governed, but the FILE is the "
+        f"disclosure surface."
+    )
+
+
+def test_side_effect_harness_covers_all():
+    """Coverage: every tool in _GOVERNED | _EXPORT_OWNER_ONLY must be in the
+    harness, and vice versa. A missing tool means a governance-relevant tool
+    is NOT tested for file-based leaks; an extra tool is a classification error."""
+    required = _GOVERNED | _EXPORT_OWNER_ONLY
+    missing = required - _SIDE_EFFECT_TOOL_NAMES
+    assert not missing, (
+        f"Governed/export tools missing from the file-side-effect harness: "
+        f"{sorted(missing)}. Add them to _SIDE_EFFECT_HARNESS with legal "
+        f"kwargs so the universal harness covers them."
+    )
+    extra = _SIDE_EFFECT_TOOL_NAMES - required
+    assert not extra, (
+        f"Tools in _SIDE_EFFECT_HARNESS but not in _GOVERNED | "
+        f"_EXPORT_OWNER_ONLY: {sorted(extra)}. Remove them or classify "
+        f"them correctly."
+    )
+
+
+def test_harness_detects_hybrid_index_leak(gov_engram, monkeypatch):
+    """Negative verification: force the pre-R20-fix code path (hybrid index
+    built from the FULL corpus without governance) and confirm the harness
+    CATCHES the resulting search_index.db leak.
+
+    Without this test the harness could be vacuously passing — we need to
+    prove it goes RED when a real leak exists.
+    """
+    monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+    e = gov_engram
+    _seed_secret_store(e)
+
+    before = _snapshot_tree(e.root)
+
+    # Bypass the MCP governance gate: call core directly with
+    # allow_hybrid_index=True → writes unfiltered corpus to search_index.db.
+    e.search_knowledge("secret", allow_hybrid_index=True)
+
+    after = _snapshot_tree(e.root)
+
+    leaked = _check_leaked_files(e.root, before, after)
+    assert leaked, (
+        "Negative verification FAILED: the harness did NOT detect the "
+        "search_index.db leak when allow_hybrid_index=True was forced. "
+        "The file-diff logic is a false negative — the harness is useless."
     )
