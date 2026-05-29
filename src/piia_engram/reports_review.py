@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from .storage import _now_iso, _write_json
+from .storage import _now_iso
 
 
 class ReviewMixin:
@@ -454,7 +454,7 @@ function copyResult() {{
                     entry["tier"] = "verified"
                     entry["promoted_at"] = _now_iso()
                     entry["promotion_reason"] = "user_confirmed"
-                    _write_json(path, entries)
+                    self._write_entries(path, entries, entry_type)
                     return {"status": "promoted", "id": item_id}
         return {"status": "not_found", "id": item_id}
 

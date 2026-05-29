@@ -493,3 +493,117 @@ class TestCorpusBackwardCompat:
             1 for r in raw if r.get("summary", "").startswith("enc:v2c:")
         )
         assert encrypted_count == 2  # both entries encrypted after write
+
+
+# ---------------------------------------------------------------------------
+# Regression: write-back paths must not leak plaintext to disk
+# ---------------------------------------------------------------------------
+
+
+class TestNoPlaintextLeakOnWriteBack:
+    """Audit-driven tests: any code path that reads decrypted entries and
+    writes them back MUST re-encrypt. These tests verify specific write-back
+    sites that were identified during code audit.
+    """
+
+    def test_promote_knowledge_preserves_encryption(self, tmp_path, monkeypatch):
+        """reports_review.promote_knowledge must re-encrypt after promoting."""
+        monkeypatch.setenv("ENGRAM_SECRET", "promote-test-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        # Add a staging lesson
+        result = e.add_lesson({
+            "summary": "secret staging lesson",
+            "tier": "staging",
+        })
+        lesson_id = result["id"]
+
+        # Verify it's encrypted on disk
+        raw = json.loads(
+            (engram / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+        )
+        assert raw[0]["summary"].startswith("enc:v2c:")
+
+        # Promote it
+        promote_result = e.promote_knowledge(lesson_id)
+        assert promote_result.get("status") == "promoted"
+
+        # After promotion, content MUST still be encrypted on disk
+        raw_after = json.loads(
+            (engram / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+        )
+        assert raw_after[0]["summary"].startswith("enc:v2c:"), \
+            "promote_knowledge leaked plaintext to disk!"
+        assert raw_after[0]["tier"] == "verified"
+
+    def test_evaluate_tiers_preserves_encryption(self, tmp_path, monkeypatch):
+        """retrieval.evaluate_tiers must re-encrypt after auto-promoting."""
+        monkeypatch.setenv("ENGRAM_SECRET", "tier-eval-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        # Add a staging lesson with enough access_count to trigger promotion
+        e.add_lesson({
+            "summary": "auto-promote candidate",
+            "tier": "staging",
+            "access_count": 5,  # above threshold of 3
+        })
+
+        # Verify encrypted on disk
+        raw = json.loads(
+            (engram / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+        )
+        assert raw[0]["summary"].startswith("enc:v2c:")
+
+        # Run tier evaluation
+        result = e.evaluate_tiers()
+        assert result["promoted"] == 1
+
+        # After evaluation, content MUST still be encrypted
+        raw_after = json.loads(
+            (engram / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+        )
+        assert raw_after[0]["summary"].startswith("enc:v2c:"), \
+            "evaluate_tiers leaked plaintext to disk!"
+        assert raw_after[0]["tier"] == "verified"
+
+    def test_review_knowledge_preserves_encryption(self, tmp_path, monkeypatch):
+        """core.review_knowledge must re-encrypt after marking as reviewed."""
+        monkeypatch.setenv("ENGRAM_SECRET", "review-test-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        result = e.add_lesson({"summary": "reviewable lesson"})
+        lesson_id = result["id"]
+
+        e.review_knowledge(lesson_id)
+
+        raw = json.loads(
+            (engram / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+        )
+        assert raw[0]["summary"].startswith("enc:v2c:"), \
+            "review_knowledge leaked plaintext to disk!"
+
+    def test_update_knowledge_preserves_encryption(self, tmp_path, monkeypatch):
+        """core.update_lesson must re-encrypt when updating metadata."""
+        monkeypatch.setenv("ENGRAM_SECRET", "update-test-key")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        result = e.add_lesson({"summary": "updatable lesson", "domain": "python"})
+        lesson_id = result["id"]
+
+        e.update_lesson(lesson_id, {"domain": "devops"})
+
+        raw = json.loads(
+            (engram / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+        )
+        target = [r for r in raw if r["id"] == lesson_id][0]
+        assert target["summary"].startswith("enc:v2c:"), \
+            "update_lesson leaked plaintext to disk!"
+        assert target["domain"] == "devops"

@@ -35,8 +35,6 @@ from .storage import (
     _NEGATION_MARKERS,
     _TERM_ALIASES,
     _now_iso,
-    _read_json,
-    _write_json,
 )
 
 
@@ -61,8 +59,8 @@ class RetrievalMixin:
         promoted = 0
         for entry_type, path_name in [("lesson", "lessons.json"), ("decision", "decisions.json")]:
             path = self._knowledge_dir / path_name
-            entries = _read_json(path)
-            if not isinstance(entries, list):
+            entries = self._read_entries(path, entry_type)
+            if not entries:
                 continue
             changed = False
             for entry in entries:
@@ -76,7 +74,7 @@ class RetrievalMixin:
                         promoted += 1
                         changed = True
             if changed:
-                _write_json(path, entries)
+                self._write_entries(path, entries, entry_type)
 
         # Playbooks are deliberately excluded from access-count auto-promotion.
         # Playbook errors can cause operational harm, so promotion requires
