@@ -824,6 +824,14 @@ async def refresh_quick_context(level: str = "standard") -> str:
     Args:
         level: 快照详细度 "quick" | "standard"(默认) | "full"。 / Snapshot tier — defaults to "standard".
     """
+    # quick_context.md embeds lesson summaries + decision text from
+    # generate_context (Codex round-17 P1-1). The path-only return is governed,
+    # but the FILE lands on disk for any caller — same two-step exfil as
+    # export_engram. Gate BEFORE writing: a non-owner gets a refusal and no
+    # snapshot file is produced.
+    refusal = _gov_rt.maybe_refuse_export(_engram.root, tool="refresh_quick_context")
+    if refusal is not None:
+        return refusal
     try:
         path = _engram.refresh_quick_context(level=level)
         _track("refresh_quick_context", success=True)
@@ -844,6 +852,14 @@ async def get_identity_card() -> str:
     注意：如果本会话只需要运行时上下文，用 get_user_context 更合适。
     Note: If the current session only needs runtime context, get_user_context is usually the better choice.
     """
+    # export_identity_card embeds lesson summaries + decision text verbatim AND
+    # writes exports/identity_card.md to disk (Codex round-16 P1-2 disproved the
+    # allowlist exemption; round-17 P1-2 showed gating only the RETURN still
+    # leaks the file). Gate BEFORE the writer runs: a non-owner gets a refusal
+    # and no identity_card.md is produced. Owner gets the full card.
+    refusal = _gov_rt.maybe_refuse_export(_engram.root, tool="get_identity_card")
+    if refusal is not None:
+        return refusal
     try:
         card = _engram.export_identity_card()
         _track("get_identity_card", success=True)
@@ -853,12 +869,6 @@ async def get_identity_card() -> str:
         return f"身份卡生成失败: {_safe_err(exc)}"
     if not card:
         return "身份卡为空——尚未积累足够的知识。"
-    # The card is NOT identity-fields-only: export_identity_card embeds lesson
-    # summaries and decision question/choice text verbatim (Codex round-16 P1-2
-    # disproved the earlier allowlist exemption). It is the same knowledge bundle
-    # get_user_context gates — so gate it owner-only too; lower tiers get a
-    # refusal, not raw secret lessons.
-    card = _gov_rt.maybe_govern_owner_only(_engram.root, card, tool="get_identity_card")
     return card
 
 
@@ -1257,12 +1267,15 @@ async def export_knowledge_report() -> str:
     注意：报告会保存到 ~/.engram/exports/，同时返回正文内容。
     Note: The report is saved under ~/.engram/exports/ and the content is returned as well.
     """
-    report = _engram.export_knowledge_report()
-    # An opaque whole-knowledge dump cannot be filtered field-by-field; gate it
-    # all-or-nothing (private-self only) so it can't become a bypass.
-    return _gov_rt.maybe_govern_dump(
-        _engram.root, report, tool="export_knowledge_report"
-    )
+    # export_knowledge_report writes exports/knowledge_report_*.md to disk AND
+    # returns the body. Gating only the RETURN (the old maybe_govern_dump) still
+    # left the full Markdown report — with secret summaries/details — on disk for
+    # a non-owner (Codex round-17 P1-3). Gate BEFORE the writer: a non-owner gets
+    # a refusal and no report file is produced. Owner gets the full report.
+    refusal = _gov_rt.maybe_refuse_export(_engram.root, tool="export_knowledge_report")
+    if refusal is not None:
+        return refusal
+    return _engram.export_knowledge_report()
 
 
 # ===========================================================================

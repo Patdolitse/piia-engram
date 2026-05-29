@@ -151,13 +151,14 @@ _MATRIX = [
     ("get_execution_status", "get_execution_status",
      {"title": SECRET, "steps": [{"action": SECRET, "status": "pending"}]},
      {"playbook_id": "sec-1"}, "withhold"),
-    ("get_identity_card", "export_identity_card", "# identity card\n- " + SECRET, {}, "withhold"),
+    # NOTE: get_identity_card and export_knowledge_report were MOVED to
+    # _EXPORT_OWNER_ONLY (round-17 P1-2/P1-3): governing only their RETURN left
+    # the secret-bearing file (exports/identity_card.md, knowledge_report_*.md)
+    # on disk for a non-owner. They are now pre-write gated like export_engram.
     ("get_user_context", "generate_context", "identity card\n" + SECRET, {}, "withhold"),
     ("get_resume_brief", "get_resume_brief", "resume brief\n" + SECRET, {}, "withhold"),
     ("get_daily_log", "get_daily_log", "daily log\n" + SECRET,
      {"project_folder": "/x"}, "withhold"),
-    ("export_knowledge_report", "export_knowledge_report", "# report\n" + SECRET,
-     {}, "withhold"),
     # audit.log entries carry the first 100 chars of a written lesson summary /
     # decision/playbook title in their ``detail`` field (core.py audit writes),
     # i.e. stored knowledge body at ANY sensitivity. The raw ledger is an
@@ -171,10 +172,16 @@ _MATRIX = [
 _GOVERNED = {row[0] for row in _MATRIX}
 
 # Export tools: the disclosure surface is a FILE written to disk (full-store
-# backup / review HTML), not the MCP return value. Governed by a PRE-write owner
-# gate (maybe_refuse_export) and verified by test_export_tools_refuse_non_owner.
+# backup / review HTML / identity card / knowledge report / quick-context
+# snapshot), not the MCP return value. Governed by a PRE-write owner gate
+# (maybe_refuse_export) and verified by test_export_tools_refuse_non_owner.
+# refresh_quick_context, get_identity_card, export_knowledge_report were added
+# round-17 (P1-1/P1-2/P1-3): each embeds stored lesson/decision bodies into a
+# file at a predictable path, so the file itself is the leak — governing the
+# return value alone is not enough.
 _EXPORT_OWNER_ONLY = {
     "export_engram", "export_engram_to_openclaw", "request_outline_review",
+    "refresh_quick_context", "get_identity_card", "export_knowledge_report",
 }
 
 # Every other async @mcp.tool: the response carries NO stored knowledge
@@ -196,9 +203,12 @@ _SAFE_ALLOWLIST = {
     # NOTE: add_lesson / add_decision / add_playbook / memory_store were moved
     # OUT (their dedup-REJECT branch echoes the matched stored item) — now
     # governed via maybe_govern_write_ack.
+    # NOTE: refresh_quick_context was moved OUT (round-17 P1-1) — it writes
+    # quick_context.md embedding lesson/decision bodies; now pre-write gated in
+    # _EXPORT_OWNER_ONLY.
     "bulk_add_knowledge", "ingest_notes", "extract_session_insights",
     "save_project_snapshot", "save_agent_context", "wrap_up_session",
-    "register_tool", "update_identity", "refresh_quick_context",
+    "register_tool", "update_identity",
     # relation/maintenance ops returning caller IDs / counts only.
     "add_relation", "apply_review",
     # imports / external fetch.
@@ -332,6 +342,11 @@ _EXPORT_SPECS = [
     ("export_engram", ("engram", "export_all"), {}),
     ("export_engram_to_openclaw", ("module", "export_to_openclaw"), {}),
     ("request_outline_review", ("engram", "export_review_page"), {"lang": "zh"}),
+    # round-17 file-side-effect leaks: the writer method must NEVER run for a
+    # non-owner (proves no file is created/updated).
+    ("refresh_quick_context", ("engram", "refresh_quick_context"), {"level": "standard"}),
+    ("get_identity_card", ("engram", "export_identity_card"), {}),
+    ("export_knowledge_report", ("engram", "export_knowledge_report"), {}),
 ]
 
 
@@ -422,3 +437,45 @@ def test_export_tools_actually_gate():
     assert not missing, (
         f"Export tools missing the pre-write owner gate: {missing}"
     )
+
+
+# ── 6. round-17 regression: file-writing tools leave NO file for a non-owner ──
+#
+# The matrix above drives RETURN values. The round-17 FAIL was that
+# refresh_quick_context / get_identity_card / export_knowledge_report each write
+# a secret-bearing file to a predictable path BEFORE (or instead of) the return
+# being governed — a two-step exfil (call tool, then read the file). This test
+# hits the REAL filesystem (no writer mock) and asserts the non-owner call
+# produces a refusal and creates/updates no file at all.
+
+_FILEWRITE_TOOLS = [
+    ("refresh_quick_context", {"level": "standard"}),
+    ("get_identity_card", {}),
+    ("export_knowledge_report", {}),
+]
+
+
+def _list_written_files(root):
+    files = []
+    qc = root / "quick_context.md"
+    if qc.exists():
+        files.append(qc)
+    exports = root / "exports"
+    if exports.exists():
+        files.extend(p for p in exports.iterdir() if p.is_file())
+    return files
+
+
+@pytest.mark.parametrize(
+    "tool,kwargs", _FILEWRITE_TOOLS, ids=[t[0] for t in _FILEWRITE_TOOLS]
+)
+def test_filewrite_tools_write_no_file_for_non_owner(gov_engram, monkeypatch, tool, kwargs):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    before = set(_list_written_files(gov_engram.root))
+
+    out = _call(tool, kwargs)
+
+    after = set(_list_written_files(gov_engram.root))
+    assert after == before, f"{tool} wrote a file for a non-owner: {after - before}"
+    assert "治理" in out or "Governance" in out, f"{tool} did not refuse the non-owner"
