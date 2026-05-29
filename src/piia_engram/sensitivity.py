@@ -342,8 +342,14 @@ _CN_MOBILE_BARE = re.compile(r"1[3-9]\d{9}")                   # CN mobile, no a
 #   it yet. Tracked as a known limitation, NOT a silent gap.
 # The separator allowlist controls candidate DISCOVERY only; the Luhn / ISO 7064
 # / 1[3-9]\d{9} validators remain the real gate, so widening separators widens
-# FORMAT, never confidence. Residual risk is therefore a *false negative* on an
-# exotic separator (documented), never a false positive.
+# FORMAT, not confidence. Residual risk is two-sided: a *false negative* on an
+# exotic separator (documented), AND a small *false positive* rate — a random
+# short grouped-digit run can coincidentally pass Luhn (~1/10) or match the
+# CN-mobile shape (e.g. "release 1.38.0013.8000"), so the validators NARROW but
+# do not structurally ELIMINATE over-classification. That is safety-first
+# over-protection (a utility cost), NOT a leak. Tightening it would mean
+# constraining group shapes (card 4-4-4-4, phone 3-4-4, +86 prefix); deferred
+# until real-usage feedback (Codex r14 non-blocking note).
 _FORMATTED_NUM_SEP = r"[\s\-./·‧・]+"
 _FORMATTED_NUM_RE = re.compile(r"\+?[0-9][0-9Xx\s\-./·‧・]{8,}[0-9Xx]")
 
