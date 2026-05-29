@@ -50,6 +50,10 @@ try:
     from .core import Engram, export_to_openclaw, import_from_openclaw  # noqa: E402
 except ImportError:
     from core import Engram, export_to_openclaw, import_from_openclaw  # noqa: E402
+try:
+    from . import governance_runtime as _gov_rt  # noqa: E402
+except ImportError:
+    import governance_runtime as _gov_rt  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -1051,6 +1055,9 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
         lessons = _engram.get_relevant_lessons(
             project_folder=project_folder, limit=limit
         )
+        # a0: governance gate (opt-in; OFF => byte-identical to the line above).
+        if _gov_rt.governance_enabled():
+            lessons, _ = _gov_rt.govern_list(_engram.root, lessons, tool="get_relevant_knowledge")
         _track("get_relevant_knowledge", success=True)
     except Exception as exc:
         _track("get_relevant_knowledge", success=False)
@@ -1120,6 +1127,9 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             return "filters['tier'] 仅支持 'staging' 或 'verified'"
     try:
         result = _engram.search_knowledge(query, scope=scope, limit=limit, filters=filters)
+        # a0: governance gate (opt-in; OFF => byte-identical to the line above).
+        if _gov_rt.governance_enabled():
+            result, _ = _gov_rt.govern_buckets(_engram.root, result, tool="search_knowledge")
         _track("search_knowledge", success=True)
     except Exception as exc:
         _track("search_knowledge", success=False)
