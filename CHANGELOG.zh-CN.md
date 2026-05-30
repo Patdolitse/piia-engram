@@ -6,6 +6,20 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [未发布]
+
+### 新增
+- **编码修复防线**——新增 `engram repair-encoding` CLI，默认 dry-run 扫描当前 Engram root 中 JSON / JSONL / Markdown / text 文件里的高置信 mojibake。`--apply` 会先建时间戳备份，再修复可逆内容；已经丢字节的可疑内容只报告给人工复核，不盲猜。
+- **doctor 编码健康检查**——`engram doctor` 现在包含 "Encoding health" 段，`engram doctor --fix` 可在常规自诊断流程中一并修复可逆乱码。
+
+### 修复
+- **Windows stdio UTF-8 加固**——MCP server 启动时会把 stdout/stderr 切到 UTF-8，避免 Windows GBK/CP936 默认控制台编码污染 MCP JSON 帧或中文输出。
+- **写入入口文本归一化**——lesson、decision、playbook、profile、project snapshot、saved context 等写入路径会在持久化前修复高置信 mojibake，同时保守跳过正常中文。
+
+### 测试
+- 新增可逆 GBK mojibake 修复、正常中文不误修、不可逆可疑内容报告、Markdown context 修复、`doctor` 集成、MCP stdio UTF-8 启动等回归测试。
+- 全量套件：**1742 passed**，4 个预期内 `engram_core` 改名兼容 warning。
+
 ## [3.37.0] - 2026-05-30
 
 GUI 入口采用版本：piia-engram 现在提供更容易粘贴到各类 GUI AI 工具里的通用 MCP server 命令，setup wizard 也覆盖了两个新的 home 级 MCP 客户端。

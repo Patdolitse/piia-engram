@@ -26,6 +26,20 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _configure_utf8_stdio() -> None:
+    """Force UTF-8 stdio for MCP JSON frames on Windows-style consoles."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not reconfigure:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (TypeError, ValueError, OSError):
+            pass
+
+
 from piia_engram.beta_tracker import track_event as _beta
 
 # Starlette imports are deferred to SSE mode — not needed for stdio.
@@ -3786,6 +3800,7 @@ def main() -> None:
     (zero pre-install) or a plain ``piia-engram-mcp`` in the client config.
     Equivalent to ``python -m piia_engram.mcp_server``; both paths call here.
     """
+    _configure_utf8_stdio()
     args = _parse_args()
 
     # ── Startup self-check: detect stale invocation paths ──

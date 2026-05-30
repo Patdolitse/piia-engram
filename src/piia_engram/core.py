@@ -61,6 +61,7 @@ from .context import EXTRACTION_PROMPT, extract_knowledge, ingest_extraction  # 
 from .reconcile import ReconcileMixin
 from .reports import ReportsMixin
 from .contexts import ContextStoreMixin
+from .encoding_repair import normalize_entry_text
 # Compat helpers re-exported for backward compatibility (tests import these
 # from piia_engram.core directly).
 from .compat import (  # noqa: F401
@@ -473,6 +474,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                             detail=f"rejected unknown fields: {rejected}")
         if not updates:
             return
+        updates = self._repair_incoming_text(dict(updates))
         profile = self.get_profile()
 
         # Description: append-merge to preserve multi-tool markers
@@ -512,6 +514,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         return _read_json(self._identity_dir / "work_style.json")
 
     def update_work_style(self, updates: dict) -> None:
+        updates = self._repair_incoming_text(dict(updates))
         style = self.get_work_style()
         style.update(updates)
         style["updated_at"] = _now_iso()
@@ -541,6 +544,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                             detail=f"rejected unknown fields: {rejected}")
         if not updates:
             return
+        updates = self._repair_incoming_text(dict(updates))
         prefs = self.get_preferences()
         prefs.update(updates)
         prefs["updated_at"] = _now_iso()
@@ -573,6 +577,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                             detail=f"rejected unknown fields: {rejected}")
         if not updates:
             return
+        updates = self._repair_incoming_text(dict(updates))
         standards = self.get_quality_standards()
         standards.update(updates)
         standards["updated_at"] = _now_iso()
@@ -601,6 +606,11 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if entry_type == "playbook":
             return str(entry.get("title") or "")
         return str(entry.get("summary") or "")
+
+    @staticmethod
+    def _repair_incoming_text(payload: dict) -> dict:
+        normalized, _ = normalize_entry_text(payload)
+        return normalized if isinstance(normalized, dict) else payload
 
     def _ensure_fields(self, entry: dict, entry_type: str) -> dict:
         """Backfill v2.1 fields on old lesson/decision entries."""
@@ -714,6 +724,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             if value is not None:
                 new_lesson[key] = value
 
+        new_lesson = self._repair_incoming_text(new_lesson)
         new_lesson["timestamp"] = new_lesson.get("timestamp") or _now_iso()
         new_lesson = self._ensure_fields(new_lesson, "lesson")
 
@@ -828,6 +839,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         """
         path = self._knowledge_dir / "lessons.json"
         lessons = self._read_entries(path, "lesson")
+        updates = self._repair_incoming_text(dict(updates))
         allowed_fields = {"summary", "detail", "domain", "status", "tier"}
         valid_tiers = {"staging", "verified", "archived"}
         for lesson in lessons:
@@ -900,6 +912,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             if value is not None:
                 new_decision[key] = value
 
+        new_decision = self._repair_incoming_text(new_decision)
         # Sanitize project field regardless of input path (dict or kwargs)
         if new_decision.get("project"):
             new_decision["project"] = self._sanitize_project(new_decision["project"])
@@ -1040,6 +1053,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         """
         path = self._knowledge_dir / "decisions.json"
         decisions = self._read_entries(path, "decision")
+        updates = self._repair_incoming_text(dict(updates))
         allowed_fields = {
             "title",
             "question",
@@ -1205,6 +1219,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             if value is not None:
                 new_pb[key] = value
 
+        new_pb = self._repair_incoming_text(new_pb)
         if not new_pb.get("title"):
             return {"error": "Playbook must have a title"}
 
@@ -1306,6 +1321,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
 
+        updates = self._repair_incoming_text(dict(updates))
         for key, value in updates.items():
             if key in _ALLOWED_PLAYBOOK_UPDATE_FIELDS:
                 pb[key] = value
@@ -2059,6 +2075,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         pid = _project_id(project_folder)
         path = self._projects_dir / f"{pid}.json"
         existing = _read_json(path)
+        data = self._repair_incoming_text(dict(data))
         existing.update(data)
         existing["project_folder"] = project_folder
         existing["updated_at"] = _now_iso()

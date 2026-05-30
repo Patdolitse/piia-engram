@@ -6,6 +6,20 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Encoding repair guardrails** — new `engram repair-encoding` CLI dry-runs the active Engram root for high-confidence mojibake in JSON / JSONL / Markdown / text files. `--apply` repairs reversible cases with a timestamped backup; lossy suspicious cases are reported for manual review instead of being guessed.
+- **Doctor encoding health check** — `engram doctor` now includes an "Encoding health" section, and `engram doctor --fix` can repair reversible mojibake as part of the normal self-diagnosis flow.
+
+### Fixed
+- **Windows stdio UTF-8 hardening** — the MCP server now reconfigures stdout/stderr to UTF-8 on startup so Windows GBK/CP936 console defaults cannot corrupt MCP JSON frames or Chinese text output.
+- **Incoming text normalization** — lesson, decision, playbook, profile, project snapshot, and saved-context write paths now repair only high-confidence mojibake before persisting, while leaving valid Chinese untouched.
+
+### Tests
+- Added regression coverage for reversible GBK mojibake repair, non-repair of valid Chinese, lossy/suspect reporting, Markdown context repair, `doctor` integration, and MCP stdio UTF-8 startup.
+- Full suite: **1742 passing**, 4 expected `engram_core` deprecation warnings.
+
 ## [3.37.0] - 2026-05-30
 
 The GUI-entry adoption release: piia-engram now exposes a universal MCP server command that is easier to paste into GUI AI tools, and the setup wizard covers two more home-level MCP clients.

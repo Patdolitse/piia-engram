@@ -132,6 +132,8 @@ engram setup
 ```bash
 engram doctor        # 诊断所有工具
 engram doctor --fix  # 自动修复 + 注入缺失的 AI 指令
+engram repair-encoding        # dry-run 扫描乱码 / mojibake
+engram repair-encoding --apply  # 备份后修复可逆乱码
 ```
 
 ### 效果预览
@@ -708,6 +710,8 @@ export ENGRAM_AUDIT=1
 engram setup            # 交互式安装向导
 piia-engram doctor           # 检查配置健康状态（所有 AI 工具）
 piia-engram doctor --fix     # 自动修复所有问题
+piia-engram repair-encoding  # dry-run 扫描乱码 / mojibake
+piia-engram repair-encoding --apply  # 备份后修复可逆乱码
 piia-engram stats            # 查看项目增长数据（GitHub + PyPI）
 piia-engram stats --log      # 追加统计快照到本地日志
 engram telemetry        # 管理匿名使用统计

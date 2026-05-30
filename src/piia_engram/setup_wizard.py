@@ -2744,6 +2744,48 @@ def _run_functional_checks(*, fix: bool = False) -> int:
             )
 
     print()
+    _safe_print("  -- Encoding health --\n")
+    try:
+        from piia_engram.encoding_repair import repair_engram_root, scan_engram_root
+
+        if fix:
+            repair_report = repair_engram_root(eng.root, apply=True)
+            if repair_report.repairable_count:
+                _safe_print(
+                    "    [fixed] Encoding health: repaired "
+                    f"{repair_report.repairable_count} text field(s) in "
+                    f"{len(repair_report.changed_files)} file(s)"
+                )
+                if repair_report.backup_dir is not None:
+                    _safe_print(f"           Backup: {repair_report.backup_dir}")
+            if repair_report.suspect_count:
+                _safe_print(
+                    "    [!!] Encoding health: "
+                    f"{repair_report.suspect_count} suspect mojibake field(s) "
+                    "need manual review"
+                )
+                problems += 1
+            elif not repair_report.repairable_count:
+                print("    [ok] Encoding health: no mojibake detected")
+        else:
+            scan_report = scan_engram_root(eng.root)
+            if scan_report.repairable_count or scan_report.suspect_count:
+                _safe_print(
+                    "    [!!] Encoding health: found "
+                    f"{scan_report.repairable_count} repairable mojibake field(s) "
+                    f"and {scan_report.suspect_count} suspect mojibake field(s)"
+                )
+                for finding in scan_report.findings[:3]:
+                    _safe_print(f"         - {finding.relative_path}:{finding.json_path}")
+                print("           Run 'engram doctor --fix' or 'engram repair-encoding --apply'.")
+                problems += 1
+            else:
+                print("    [ok] Encoding health: no mojibake detected")
+    except Exception as exc:
+        print(f"    [!!] Encoding health check failed: {exc}")
+        problems += 1
+
+    print()
     return problems
 
 
@@ -3283,6 +3325,48 @@ def _run_reindex() -> None:
     print(f"[ok] reindexed {result.get('indexed', 0)} entries — vector layer: {vec}")
 
 
+def _run_repair_encoding(args: list[str]) -> int:
+    """Scan or repair high-confidence mojibake in the active Engram root."""
+    from piia_engram.core import Engram
+    from piia_engram.encoding_repair import repair_engram_root, scan_engram_root
+
+    apply = "--apply" in args or "--fix" in args
+    no_backup = "--no-backup" in args
+    eng = Engram()
+
+    if apply:
+        report = repair_engram_root(eng.root, apply=True, backup=not no_backup)
+        if not report.findings:
+            print("[ok] Encoding repair: no mojibake detected.")
+            return 0
+        if report.repairable_count:
+            print(
+                "[fixed] Encoding repair: repaired "
+                f"{report.repairable_count} field(s) in {len(report.changed_files)} file(s)."
+            )
+            if report.backup_dir is not None:
+                print(f"        Backup: {report.backup_dir}")
+        if report.suspect_count:
+            print(f"[!!] {report.suspect_count} suspect field(s) need manual review.")
+            return 1
+        return 0
+
+    report = scan_engram_root(eng.root)
+    if not report.findings:
+        print("[ok] Encoding repair dry-run: no mojibake detected.")
+        return 0
+
+    print(
+        "[!!] Encoding repair dry-run: found "
+        f"{report.repairable_count} repairable mojibake field(s) "
+        f"and {report.suspect_count} suspect field(s)."
+    )
+    for finding in report.findings[:20]:
+        print(f"  - {finding.relative_path}:{finding.json_path} ({finding.reason})")
+    print("Run 'engram repair-encoding --apply' to repair with a backup.")
+    return 1
+
+
 def _governance_root():
     from piia_engram.core import Engram
     return Engram().root
@@ -3362,7 +3446,8 @@ def run_verify_ledger(root) -> int:
 
 
 def main() -> None:
-    """CLI 入口：engram setup / engram doctor [--fix] / engram telemetry <sub> / engram privacy / engram feedback / engram reindex / engram grants|trust|revoke|audit|verify-ledger"""
+    """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
+    _configure_utf8_stdio()
     args = sys.argv[1:]
     if not args or args[0] == "setup":
         if "--advanced" in args:
@@ -3386,6 +3471,8 @@ def main() -> None:
         run_feedback(dry_run="--dry-run" in args)
     elif args[0] == "reindex":
         _run_reindex()
+    elif args[0] == "repair-encoding":
+        sys.exit(_run_repair_encoding(args[1:]))
     elif args[0] == "grants":
         sys.exit(run_grants(_governance_root()))
     elif args[0] == "trust":
@@ -3413,6 +3500,7 @@ def main() -> None:
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram reindex          Rebuild the hybrid search index from JSON\n"
+            "  engram repair-encoding  Dry-run mojibake scan (use --apply to fix)\n"
             "  engram grants           List agent trust grants + revocations\n"
             "  engram trust <a> <lvl>  Grant an agent a trust level\n"
             "  engram revoke <agent>   Revoke an agent (future disclosure only)\n"

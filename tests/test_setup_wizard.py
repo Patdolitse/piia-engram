@@ -341,6 +341,73 @@ def test_doctor_healthy_config(tmp_path: Path, monkeypatch):
     assert result == 0
 
 
+def test_doctor_reports_encoding_mojibake(tmp_path: Path, monkeypatch, capsys):
+    """doctor should surface repairable mojibake in the active Engram root."""
+    from piia_engram.setup_wizard import _run_functional_checks
+
+    damaged = "发布流程测试".encode("utf-8").decode("gbk")
+    kdir = tmp_path / "knowledge"
+    kdir.mkdir(parents=True)
+    (kdir / "lessons.json").write_text(
+        json.dumps([{"id": "l1", "summary": damaged}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+
+    result = _run_functional_checks(fix=False)
+
+    assert result >= 1
+    out = capsys.readouterr().out
+    assert "Encoding health" in out
+    assert "repairable mojibake" in out
+
+
+def test_doctor_fix_repairs_encoding_mojibake(tmp_path: Path, monkeypatch, capsys):
+    """doctor --fix should repair high-confidence mojibake and create backup."""
+    from piia_engram.setup_wizard import _run_functional_checks
+
+    damaged = "发布流程测试".encode("utf-8").decode("gbk")
+    kdir = tmp_path / "knowledge"
+    kdir.mkdir(parents=True)
+    lessons_path = kdir / "lessons.json"
+    lessons_path.write_text(
+        json.dumps([{"id": "l1", "summary": damaged}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+
+    result = _run_functional_checks(fix=True)
+
+    assert result == 0
+    fixed = json.loads(lessons_path.read_text(encoding="utf-8"))
+    assert fixed[0]["summary"] == "发布流程测试"
+    assert list((tmp_path / "backups").glob("encoding_repair_*"))
+    out = capsys.readouterr().out
+    assert "[fixed] Encoding health" in out
+
+
+def test_doctor_reports_unrepairable_encoding_suspect(tmp_path: Path, monkeypatch, capsys):
+    """doctor should not silently pass mojibake that cannot be safely repaired."""
+    from piia_engram.setup_wizard import _run_functional_checks
+
+    kdir = tmp_path / "knowledge"
+    kdir.mkdir(parents=True)
+    (kdir / "lessons.json").write_text(
+        json.dumps([{"id": "l1", "summary": "\u5bee\u20ac\u9359?"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+
+    result = _run_functional_checks(fix=False)
+
+    assert result >= 1
+    out = capsys.readouterr().out
+    assert "suspect mojibake" in out
+
+
 def test_doctor_detects_legacy_server_name(tmp_path: Path, monkeypatch):
     """doctor 应检测到旧版 server 名称。"""
     from piia_engram.setup_wizard import run_doctor
@@ -935,6 +1002,29 @@ class TestMainCLI:
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 0  # healthy = 0
+
+    def test_main_repair_encoding_dry_run_dispatches(self, tmp_path, monkeypatch, capsys):
+        """repair-encoding should dry-run by default and report findings."""
+        from piia_engram.setup_wizard import main
+
+        damaged = "发布流程测试".encode("utf-8").decode("gbk")
+        kdir = tmp_path / "knowledge"
+        kdir.mkdir(parents=True)
+        (kdir / "lessons.json").write_text(
+            json.dumps([{"id": "l1", "summary": damaged}], ensure_ascii=False),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        monkeypatch.setattr("sys.argv", ["engram", "repair-encoding"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "dry-run" in out
+        assert "knowledge\\lessons.json" in out or "knowledge/lessons.json" in out
 
     def test_main_telemetry_dispatches(self, tmp_path, monkeypatch, capsys):
         """main() with 'telemetry' should call _run_telemetry_cli."""

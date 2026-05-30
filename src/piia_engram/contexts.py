@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .encoding_repair import repair_text
 from .storage import _project_id
 
 logger = logging.getLogger(__name__)
@@ -133,13 +134,13 @@ class ContextStoreMixin:
         appended = file_path.exists()
 
         # Build checkpoint body
-        body = content
+        body = repair_text(content).text
         if actions:
             body += "\n\n#### Actions\n"
             for i, act in enumerate(actions, 1):
-                tool_called = act.get("tool_called", "")
-                args_summary = act.get("arguments_summary", "")
-                result_summary = act.get("result_summary", "")
+                tool_called = repair_text(act.get("tool_called", "")).text
+                args_summary = repair_text(act.get("arguments_summary", "")).text
+                result_summary = repair_text(act.get("result_summary", "")).text
                 body += f"{i}. `{tool_called}`"
                 if args_summary:
                     body += f" — {args_summary}"

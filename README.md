@@ -160,6 +160,8 @@ Check health anytime:
 ```bash
 engram doctor        # diagnose all tools
 engram doctor --fix  # auto-repair issues + inject missing instructions
+engram repair-encoding        # dry-run scan for garbled / mojibake text
+engram repair-encoding --apply  # repair reversible cases with a backup
 ```
 
 ### Configure for Your AI Tool
@@ -710,6 +712,8 @@ Logs are written to `~/.engram/audit.log` in JSON-lines format. Query with `get_
 engram setup            # Interactive install wizard
 piia-engram doctor           # Check config health (all AI tools)
 piia-engram doctor --fix     # Auto-repair any issues found
+piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
+piia-engram repair-encoding --apply  # Repair reversible cases with a backup
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)
 piia-engram stats --log      # Append stats snapshot to local log
 engram telemetry        # Manage anonymous usage statistics

@@ -209,6 +209,9 @@ The AI tool will call `doctor()` and return a report like the following:
 | decision_conflicts | PASS | no conflicts |
 | health_score | PASS | 87/100 |
 | quick_context_freshness | PASS | last updated: 2.3 hours ago |
+| encoding_health | PASS | no mojibake detected |
+
+For terminal-side checks, `engram doctor` reports the same encoding health signal. If a Windows console or client previously wrote garbled Chinese into the store, run `engram repair-encoding` first to preview the affected fields, then `engram repair-encoding --apply` to repair reversible cases with a backup.
 
 ### JSON Output Supported
 
