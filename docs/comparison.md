@@ -2,7 +2,7 @@
 
 This page is a **factual** comparison of where Engram sits in the AI-memory space. It is **not** a marketing pitch — we link to each project's own docs and call out where they're stronger than us.
 
-> Last reviewed: 2026-05-27. We re-check this each minor release. If you spot an inaccuracy, please open an issue.
+> Last reviewed: 2026-05-31. We re-check this each minor release. If you spot an inaccuracy, please open an issue.
 
 ---
 
@@ -61,6 +61,7 @@ Tools that store the **user's** identity, preferences, and accumulated knowledge
 | Project | Stars | Storage | Governance | Unique angle |
 |---|---|---|---|---|
 | **piia-engram** | (this project) | Local JSON | **staging → verified** (user approves) | Identity layer: lessons, decisions, playbooks |
+| [OpenMemory](https://mem0.ai/openmemory) | Mem0 ecosystem | Local-first MCP memory | Memory controls in app | Cross-client memory layer for coding agents |
 | [Gentleman Engram](https://github.com/Gentleman-Programming/engram) | 3.7k | SQLite + FTS5 | None | Go single binary, 8+ tools |
 | [mcp-memory-service](https://github.com/doobidoo/mcp-memory-service) | 1.8k | SQLite / vector / KG | Weak | 14+ client support |
 | [ByteRover](https://github.com/campfirein/byterover-cli) | 4.7k | Portable memory layer | Weak | "Portable memory layer" narrative |
@@ -69,7 +70,25 @@ Tools that store the **user's** identity, preferences, and accumulated knowledge
 
 *\* monorepo star count; individual memory server is one of many packages*
 
-**This is where piia-engram lives.** Among the projects we've surveyed, piia-engram is the one using **staging → verified** as the default governance model — knowledge proposed by the AI lands in a review tier and only becomes permanent after the user approves it. The closest approach among surveyed projects is Remnic, which adds provenance and correction primitives on top of an otherwise auto-capture model.
+**This is where piia-engram lives.** Among the projects we've surveyed, piia-engram makes **staging → verified** the central data model across tools — knowledge proposed by the AI lands in a review tier and only becomes permanent after the user approves it. OpenMemory is the closest direct product comparison for a local-first MCP memory layer; piia-engram's narrower angle is the user-owned identity layer: preferences, standards, lessons, decisions, and playbooks that remain portable across tools.
+
+---
+
+## vs. native coding-tool memory
+
+Claude Code, OpenAI Codex, Cursor, and Windsurf are all improving their own memory, rules, and context systems. We see that as validation of the problem, not as something Engram should replace.
+
+Native memory is best when you live inside one tool. Engram is for the moment you switch tools and want the same approved identity, preferences, lessons, and decisions to follow you.
+
+| Tool | Native memory / rules | Scope | Where it is stronger | Where Engram complements it |
+|---|---|---|---|---|
+| [Claude Code memory](https://code.claude.com/docs/en/memory) | `CLAUDE.md`, rules, auto memory | Claude Code projects and user config | Deep native integration with Claude Code | Shares stable user identity with Codex, Cursor, Windsurf, and MCP tools |
+| [OpenAI Codex memories](https://developers.openai.com/codex/memories) | Codex-local memories | Codex sessions | Native Codex recall and workflow fit | Keeps user identity portable outside Codex |
+| [AGENTS.md](https://developers.openai.com/codex/guides/agents-md) | Repo instructions | Repository scope | Version-controlled project rules | Engram stores personal cross-repo preferences and lessons |
+| [Cursor memories](https://docs.cursor.com/en/context/memories) | Memories and rules | Cursor projects | Low-friction IDE-native continuity | Gives Cursor the same approved user identity other tools see |
+| [Windsurf memories](https://docs.windsurf.com/windsurf/cascade/memories) | Cascade memories and rules | Windsurf workspace | Local IDE memory for Cascade workflows | Keeps durable personal context independent of one workspace |
+
+**How to think about it:** use native memory for tool-specific workflow state. Use AGENTS.md / CLAUDE.md / rules for repo instructions. Use piia-engram for the person behind those repos and tools.
 
 ---
 
@@ -167,4 +186,6 @@ The default threshold is configurable, and stale-decay + archive-knowledge keep 
 ## See also
 
 - [README](../README.md) — what Engram is and how to install
+- [Trust model](trust.md) — local-first boundaries, approval workflow, and report-sharing guidance
+- [Cross-tool continuity demo](cross-tool-continuity-demo.md) — safe synthetic proof of the handoff workflow
 - [architecture.md](architecture.md) — internal structure of Engram itself

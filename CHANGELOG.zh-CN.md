@@ -6,6 +6,28 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.41.0] - 2026-05-31
+
+市场定位与信任说明版本：Engram 现在更精确地表达为面向 MCP 兼容 AI 编程工具的本地优先个人 AI 身份层，并补齐信任边界与公开跨工具连续性 demo。
+
+### 新增
+- **信任模型文档**：`docs/trust.md` 说明哪些内容留在本地、默认不会发生什么、治理边界、用户控制项和已知局限。
+- **跨工具连续性 demo**：`docs/cross-tool-continuity-demo.md` 与 `demos/cross_tool_continuity_demo.py` 使用隔离临时 Engram root 展示 Claude Code -> Codex -> Cursor/Windsurf 的模拟交接。
+- **渠道文案包**：`docs/listing-copy.md` 提供 MCP Registry、Claude plugin、PyPI、GitHub 和网站表述的保守公开文案。
+- **公开定位回归测试**：`tests/test_public_positioning.py` 防止旧过度承诺、MCP Registry 描述超长、demo 泄露本机路径、公开文档漏加发布白名单。
+
+### 变更
+- README、中文 README、PyPI 元数据、MCP Registry 元数据、Claude 插件元数据、架构说明和竞品对比统一为“面向 MCP 兼容 AI 编程工具的本地优先个人 AI 身份层”定位。
+- `docs/comparison.md` 现在把 Engram 与 OpenMemory、原生编码工具记忆区分开，而不是把它表述成通用 agent memory 数据库。
+- 中文 README 安全说明补充可选 agent 治理环境变量，并明确它不是加密身份认证边界。
+
+### 测试
+- 全量套件：**1788 passed**，4 个预期内 `engram_core` 改名兼容 warning。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，MCP Registry manifest valid，Codex subagent 审计 PASS，Claude Code 只读验收 PASS。
+
+### Release Evidence
+- 见 `release-evidence/v3.41.0.md`。
+
 ## [3.40.0] - 2026-05-31
 
 首次运行信心版本：Engram 现在在安装后提供更清晰的本地状态界面，包括 MCP 客户端配置健康、可分享的脱敏 HTML 状态页，以及后续常用命令。

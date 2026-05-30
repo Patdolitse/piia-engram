@@ -1,7 +1,7 @@
 {
   "name": "piia-engram",
-  "version": "3.40.0",
-  "description": "Cross-tool personal identity layer. Stores your profile, preferences, lessons, and decisions as local JSON — every AI tool (Claude Code, Cursor, Codex, Windsurf, any MCP client) reads the same memory. AI proposes knowledge; you approve what becomes permanent. Local-first, no cloud, no account.",
+  "version": "3.41.0",
+  "description": "Local-first personal AI identity layer for MCP-compatible coding tools. Stores user-approved lessons, decisions, playbooks, and project context as local JSON. AI can suggest knowledge; you decide what becomes permanent. Local-first, no cloud, no account.",
   "author": {
     "name": "Engram Contributors",
     "url": "https://github.com/Patdolitse/piia-engram"

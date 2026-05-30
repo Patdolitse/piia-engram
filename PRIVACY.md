@@ -23,7 +23,7 @@ piia-engram is a **local-first** tool. Your identity, preferences, lessons, and 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Current implementation: local log only — no network requests are made for telemetry. If a future version offers remote aggregation, it will require separate re-consent.
+Default implementation: local files only. Telemetry is off by default; when enabled, it writes a local log first. Remote telemetry and weekly feedback reports are separate opt-ins (`engram telemetry remote on`, `engram telemetry feedback on`) and send count-only payloads.
 
 ## What piia-engram stores locally
 
@@ -40,9 +40,9 @@ All files are plain JSON. You can open, edit, back up, or delete them at any tim
 
 ## Network requests
 
-### Core tools: zero network requests
+### Default identity and knowledge tools: zero network requests
 
-All 72 MCP tools (identity, knowledge, search, review, etc.) operate entirely on local files. They make **no network requests** — no API calls, no analytics, no phone-home.
+With default settings, identity, knowledge, search, review, and governance tools operate on local files. They make **no network requests** — no API calls, no analytics, no phone-home.
 
 The only exception is the optional `read_web_content` tool, which fetches a URL you explicitly provide.
 
@@ -54,13 +54,19 @@ piia-engram offers **opt-in** anonymous usage statistics to help the project und
 - **Transparent** — preview the exact payload with `engram telemetry preview`
 - **Reversible** — disable anytime with `engram telemetry off`
 
+Local telemetry and remote sending are separate:
+
+- `engram telemetry on` enables local count logging.
+- `engram telemetry remote on` enables remote sending of the same count-only telemetry.
+- `engram telemetry feedback on` enables weekly anonymous feedback reports.
+
 #### What is collected (when opted in)
 
 | Field | Example | Contains content? |
 |-------|---------|-------------------|
 | Tool call counts | `{"add_lesson": {"success": 5, "error": 1}}` | No — tool names + counts only |
 | Knowledge totals | `{"lessons": 47, "decisions": 12}` | No — counts only |
-| Engram version | `"3.40.0"` | No |
+| Engram version | `"3.41.0"` | No |
 | Daily anonymous ID | `"a3f8b2c1e9d04f67"` | HMAC-derived, rotates daily, cannot be linked across days |
 | OS platform | `"win32"` | No detailed version |
 | Python version | `"3.12"` | Major.minor only |
@@ -77,16 +83,16 @@ piia-engram offers **opt-in** anonymous usage statistics to help the project und
 
 - Payload validator rejects any string > 200 characters
 - Natural language patterns are detected and rejected
-- All payloads are human-readable in `~/.engram/telemetry.log`
-- `engram telemetry preview` shows the exact next payload before sending
+- Local telemetry payloads are human-readable in `~/.engram/telemetry.log`
+- `engram telemetry preview` shows the exact next payload before logging or remote sending
 
 ### Current status
 
-Telemetry is local-log-only: data is written to `~/.engram/telemetry.log` and never leaves your machine. Any future change that would transmit data remotely will require separate explicit re-consent.
+Telemetry is off by default. If only local telemetry is enabled, data is written to `~/.engram/telemetry.log` and does not leave your machine. Remote telemetry and feedback reports require separate explicit consent and can be disabled with `engram telemetry remote off` and `engram telemetry feedback off`.
 
 ### Optional feedback reports
 
-A separate opt-in (`engram feedback`) sends a weekly aggregated report to help the project understand usage patterns. This uses the same anonymous ID and contains only counts — never content. Rate-limited to once per 7 days.
+A separate opt-in (`engram telemetry feedback on`, or a manual `engram feedback` after previewing with `engram feedback --dry-run`) sends a weekly aggregated report to help the project understand usage patterns. This uses the same anonymous ID and contains only counts — never content. Rate-limited to once per 7 days.
 
 ## Encryption
 

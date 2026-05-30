@@ -1,7 +1,7 @@
 [project]
 name = "piia-engram"
-version = "3.40.0"
-description = "One memory, every AI tool, yours to keep — your preferences, standards, and lessons follow you across Claude Code, Cursor, Codex, and any MCP tool. Local-first, no cloud, no account."
+version = "3.41.0"
+description = "Local-first personal AI identity and memory for MCP-compatible coding tools, with user-approved lessons, decisions, playbooks, and project context."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"

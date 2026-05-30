@@ -68,13 +68,16 @@ README.zh-CN.md
 # ops runbook (reverse-disclosure risk) kept at docs/internal/ (gitignored).
 docs/architecture.md
 docs/comparison.md
+docs/cross-tool-continuity-demo.md
 docs/cross-tool-guide.md
 docs/governance.md
 docs/hybrid-search.md
+docs/listing-copy.md
 docs/superpowers/plans/2026-05-30-gui-entry-doctor-probe.md
 docs/superpowers/plans/2026-05-30-v340-first-run-confidence.md
 docs/superpowers/specs/2026-05-30-gui-entry-doctor-probe-design.md
 docs/superpowers/specs/2026-05-30-v340-first-run-confidence-design.md
+docs/trust.md
 
 # ── Assets, examples, demos, remote-worker deployment ───────────────
 assets/**

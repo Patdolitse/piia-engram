@@ -5,11 +5,11 @@
 
 # piia-engram
 
-### One memory. Every AI tool. Yours to keep.
+### Local identity and memory for MCP-compatible coding tools.
 
-### AI can suggest memories. You decide what becomes true.
+### AI suggests lessons and decisions. You approve what becomes durable.
 
-**Tell AI once — your preferences, standards, and lessons follow you across Claude Code, Cursor, Codex, and any MCP-compatible tool. AI proposes knowledge; you approve what sticks. Local-first, no cloud, no account.**
+**Tell AI once how you work. piia-engram stores your identity, standards, lessons, decisions, and project context as local files you own. Claude Code, Codex, Cursor, Windsurf, and MCP-compatible tools can start from the same approved context. No cloud account, no vendor lock-in, no hidden memory you cannot inspect.**
 
 `cross-tool memory` | `local-first` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `MCP`
 
@@ -34,7 +34,18 @@
 
 ---
 
-> **TL;DR:** piia-engram stores your identity, preferences, lessons learned, and key decisions as local JSON files — and shares them with every AI tool through MCP. Set up once, every AI tool remembers you. No cloud, no lock-in, Apache 2.0.
+> **TL;DR:** piia-engram is a local-first personal AI identity layer. It helps multiple coding agents start from the same understanding of you: your preferences, quality bar, lessons learned, decisions, and project context. It is not an agent memory database; it is the user-owned layer above your tools.
+
+**Why not just use native memory?** Claude Code, Codex, Cursor, and Windsurf are adding their own memories and rules. Those are useful, but they are scoped to one tool or workspace. piia-engram gives you one portable identity layer above them: local files you own, AI-proposed knowledge you review, and context that can follow you across tools.
+
+**Trust model in four lines:**
+
+- **No cloud account:** install with `pip`, keep the core store on your machine.
+- **Local files:** identity and knowledge live under `~/.engram/` as JSON/Markdown.
+- **User approval:** AI suggestions land in review before becoming verified memory.
+- **Documented boundaries:** see [Trust model](docs/trust.md), [Privacy](PRIVACY.md), and [Security](SECURITY.md).
+
+Want a safe public walkthrough? See the [cross-tool continuity demo](docs/cross-tool-continuity-demo.md).
 
 ---
 
@@ -48,7 +59,7 @@ The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Des
 
 ---
 
-**Your AI forgets you every time you switch tools or start a new chat.** piia-engram fixes that.
+**Your AI forgets you every time you switch tools or start a new chat.** piia-engram fixes the handoff.
 
 Every time you open a new chat window, switch from Claude Code to Codex, update your AI tool, or move into a different project, you're back to zero:
 
@@ -59,7 +70,7 @@ Every time you open a new chat window, switch from Claude Code to Codex, update 
 
 This happens because AI memory today is locked inside each platform. It belongs to the tool, not to you. The tool updates, resets, or gets replaced — and your context disappears with it.
 
-**piia-engram gives you persistent memory that lives on your machine, independent of any AI tool.** You tell it once who you are, how you work, and what you've learned. Every MCP-compatible tool reads the same context. New chat, new tool, new version — your identity persists.
+**piia-engram gives you a personal identity layer that lives on your machine, independent of any AI tool.** You tell it once who you are, how you work, and what you've learned. MCP-compatible tools can read the same approved context. New chat, new tool, new version — your identity stays portable.
 
 > **piia-engram is not an agent memory database.** Tools like Mem0, Zep, and Letta store task context and session history for AI agents. piia-engram stores *who you are as a person* — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: not what happened in a task, but who is behind every task.
 
@@ -79,7 +90,7 @@ piia-engram is built for developers who use multiple AI coding tools and are tir
 
 **If you switch between Claude Code, Codex, and Cursor** — your code standards, architecture decisions, and hard-won lessons reset every time. piia-engram makes every tool start from the same understanding of who you are.
 
-**If you open 10+ AI chat windows a week** — each one starts from zero. piia-engram gives every conversation your full context from the first message.
+**If you open 10+ AI chat windows a week** — each one starts from zero. piia-engram lets each conversation start from the same approved identity and knowledge context.
 
 **If you've lost preferences after a tool update** — your identity lives on your machine, not inside any platform. Updates, resets, and migrations don't touch your memory.
 
@@ -613,18 +624,18 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.40.0 (2026-05-31) |
+| | v3.41.0 (2026-05-31) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **16 Core** (loaded by default) + **56 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **1781** (unit + integration) |
+| Tests passing | **1788** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **2313** (facade + mixins total ~6000; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | AES-256-GCM, per-engram salt + per-value random nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics (local + optional remote — see [privacy details](PRIVACY.md)) |
+| Network calls by default | **0** for identity and knowledge tools — except optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
 
 ## Built With
 
@@ -642,16 +653,16 @@ piia-engram is a human-directed, AI-assisted open-source project.
 piia-engram. Install with `pip install piia-engram && engram setup`, and both tools read the same identity, preferences, and lessons from `~/.engram/`. No cloud, no sync service — they both read local JSON files through MCP.
 
 **What is piia-engram?**
-piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Every MCP-compatible AI tool (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) reads the same context, so new chats, tool updates, and tool switches never erase who you are.
+piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured MCP-compatible coding tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same approved context, so new chats and tool switches can start from the same user-owned memory.
 
 **How is piia-engram different from the official MCP memory server?**
-The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 72 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want every AI tool to know your coding preferences and past mistakes, use piia-engram.
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 72 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.
 
 **Why not just use AGENTS.md / CLAUDE.md / .cursorrules?**
-Those config files are great for **repo-specific** rules (build steps, coding conventions). piia-engram is for **you** — your preferences, lessons, and decisions that follow you across every repo and every AI tool. They complement each other: use AGENTS.md for the project, piia-engram for the person. See the full comparison in [docs/comparison.md](docs/comparison.md).
+Those config files are great for **repo-specific** rules (build steps, coding conventions). piia-engram is for **you** — your preferences, lessons, and decisions that can follow you across repos and configured MCP-compatible tools. They complement each other: use AGENTS.md for the project, piia-engram for the person. See the full comparison in [docs/comparison.md](docs/comparison.md).
 
 **Can I use piia-engram with multiple AI tools at once?**
 Yes. That's the primary use case. piia-engram uses local file storage (`~/.engram/`) with atomic writes and file locking. Claude Code, Cursor, Codex, and any other MCP client can connect simultaneously. A lesson recorded in Claude Code is immediately available in Cursor.
@@ -673,7 +684,7 @@ The setup wizard detects your AI tools and configures MCP automatically. Restart
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files, removes outdated server entries, and repairs broken paths in one step.
 
 **Does piia-engram send data to the cloud?**
-No. All core tools make zero network requests. Optional anonymous usage statistics (tool call counts, never content) can be enabled during setup but are **off by default**. You can inspect the payload with `engram telemetry preview` and disable anytime with `engram telemetry off`. See **[PRIVACY.md](PRIVACY.md)** for the full data flow diagram, what is and isn't collected, and your data rights.
+Not by default. Identity and knowledge tools use local files, and telemetry is **off by default**. Optional anonymous usage statistics can be enabled as a local log; remote telemetry and weekly feedback reports require separate explicit opt-in and send counts only, never knowledge content. You can inspect the next payload with `engram telemetry preview`, disable anytime with `engram telemetry off`, and turn remote sending off with `engram telemetry remote off`. See **[PRIVACY.md](PRIVACY.md)** for the full data flow diagram, what is and isn't collected, and your data rights.
 
 **How many MCP tools does piia-engram provide?**
 Two tiers, designed so most users only see 16 tools:

@@ -5,11 +5,11 @@
 
 # piia-engram
 
-### 一份记忆，所有 AI 工具，完全属于你
+### 给 MCP 兼容 AI 编程工具的一份本地身份与记忆层
 
-### AI 可以建议记忆，但只有你确认后才算数
+### AI 可以建议经验和决策，只有你确认后才成为长期事实
 
-**告诉 AI 一次——你的偏好、标准和经验会跟随你到 Claude Code、Cursor、Codex 等所有 MCP 工具。AI 提议知识，你决定什么留下。本地存储，无云端，无账号。**
+**只告诉 AI 一次你是谁、怎么工作、什么算好。piia-engram 把你的身份、标准、经验教训、关键决策和项目上下文保存为你本机上的文件。Claude Code、Codex、Cursor、Windsurf 以及 MCP 工具可以从同一份已确认上下文开始工作。无云账号，无厂商锁定，没有你看不见的黑箱记忆。**
 
 `跨工具记忆` · `本地优先` · `Claude Code` · `Codex` · `Cursor` · `Windsurf` · `MCP`
 
@@ -34,7 +34,18 @@
 
 ---
 
-> **TL;DR：** piia-engram 把你的身份、偏好、经验教训和关键决策以本地 JSON 文件存储，通过 MCP 让每个 AI 工具读取同一个你。设置一次，所有 AI 都记住你。零云端，Apache 2.0。
+> **TL;DR：** piia-engram 是本地优先的个人 AI 身份层。它让多个 AI 编程工具从同一份"你"开始工作：你的偏好、质量标准、经验、决策和项目上下文。它不是 agent memory 数据库，而是用户拥有、可审查、可迁移的上层身份资产。
+
+**为什么不用工具自带记忆就够了？** Claude Code、Codex、Cursor、Windsurf 都在加入自己的记忆和规则。这些能力有用，但通常只属于某一个工具或工作区。piia-engram 位于它们之上：一份你拥有的本地身份层，AI 建议的知识先进入审核，再由你确认是否成为长期事实，并可以跨工具延续。
+
+**信任模型四句话：**
+
+- **无云账号：** `pip` 安装，核心数据留在你的机器上。
+- **本地文件：** 身份与知识保存在 `~/.engram/` 下的 JSON/Markdown 文件中。
+- **用户确认：** AI 建议先进入审核区，确认后才成为已验证记忆。
+- **边界公开：** 见 [信任模型](docs/trust.md)、[隐私说明](PRIVACY.md) 和 [安全说明](SECURITY.md)。
+
+想看安全的公开演示？见 [跨工具接续 Demo](docs/cross-tool-continuity-demo.md)。
 
 ---
 
@@ -48,13 +59,13 @@ pip install piia-engram && engram setup
 
 ---
 
-**每次换工具或开新对话，AI 就忘了你是谁。** piia-engram 解决这个问题。
+**每次换工具或开新对话，AI 就忘了你是谁。** piia-engram 解决的是跨工具接续问题。
 
 每次开一个新对话框，你就被忘了。换个工具，又要从头自我介绍。工具一更新，之前设好的偏好可能直接没了。
 
 这是因为现在所有 AI 的记忆都绑在各自的平台上。记忆属于平台，不属于你。平台改了、升了、换了，你的上下文就没了。
 
-**piia-engram 给你跨工具的持久记忆，存在你自己的电脑上。** 你告诉它一次你是谁、你怎么工作、你学到了什么。之后不管你开多少个新对话、用哪个工具、工具怎么更新，AI 开口就认识你。
+**piia-engram 给你一层跨工具的个人身份，存在你自己的电脑上。** 你告诉它一次你是谁、你怎么工作、你学到了什么。之后不管你开多少个新对话、用哪个 MCP 工具、工具怎么更新，它们都可以读取同一份已确认上下文。
 
 > **piia-engram 不是 Agent 记忆数据库。** Mem0、Zep、Letta 等工具存的是任务上下文和会话历史。piia-engram 存的是**你这个人**——你的身份、偏好、经验教训和关键决策。这是不同的一层：不是"这次任务做了什么"，而是"所有任务背后的人是谁"。
 
@@ -64,7 +75,7 @@ piia-engram 为同时使用多个 AI 编程工具、厌倦重复自我介绍的�
 
 **如果你在 Claude Code、Codex、Cursor 之间切换** — 代码标准、架构决策、踩过的坑，每次都要重讲。piia-engram 让每个工具从同一个起点认识你。
 
-**如果你每周开 10+ 个 AI 对话框** — 每一个都从零开始。piia-engram 让每次对话从第一条消息就有你的完整上下文。
+**如果你每周开 10+ 个 AI 对话框** — 每一个都从零开始。piia-engram 让每次对话从同一份已确认身份和知识上下文开始。
 
 **如果你因为工具更新丢过偏好** — 你的身份存在自己电脑里，不在任何平台内部。更新、重置、迁移都不影响你的记忆。
 
@@ -396,18 +407,18 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.40.0 (2026-05-31) |
+| | v3.41.0 (2026-05-31) |
 |---|---|
 | 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具 | **16 个核心**（默认加载）+ **56 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **1781** 个（单元 + 集成）|
+| 测试通过 | **1788** 个（单元 + 集成）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **2313** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | AES-256-GCM，每个 engram 独立 salt + 每条数据随机 nonce |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
-| 核心功能网络调用 | 默认 **0** —— 除可选的 `read_web_content` 外，匿名使用统计可选开启（详见 [隐私说明](PRIVACY.md)）|
+| 默认网络调用 | 身份与知识工具默认 **0** —— 除可选的 `read_web_content` 外；远程 telemetry 与反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
 
 ## 核心功能
 
@@ -637,16 +648,16 @@ piia-engram 由人驱动，AI 工具辅助开发：
 piia-engram。运行 `pip install piia-engram && engram setup`，两个工具就会从 `~/.engram/` 读取同一份身份、偏好和经验教训。无需云端，无需同步服务——它们读的是同一组本地 JSON 文件。
 
 **piia-engram 是什么？**
-piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。每个 MCP 兼容的 AI 工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）读取同一个上下文，新对话、工具更新、换工具都不会丢失你的信息。
+piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。已配置的 MCP 兼容编程工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）可以读取同一份已批准上下文，让新对话和换工具从同一份用户自有记忆开始。
 
 **piia-engram 和官方 MCP memory server 有什么区别？**
-官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 72 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望每个 AI 工具都了解你的编码偏好和过往经验，用 piia-engram。
+官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 72 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望已配置的 MCP 兼容编程工具从同一份已批准的编码偏好和过往经验开始，用 piia-engram。
 
 **piia-engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
 那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。piia-engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
 
 **为什么不直接用 AGENTS.md / CLAUDE.md / .cursorrules？**
-这些配置文件适合**项目级**规则（构建步骤、编码规范）。piia-engram 存的是**你这个人**——你的偏好、经验和决策，跨所有仓库、所有 AI 工具持续生效。两者互补：AGENTS.md 管项目，piia-engram 管人。详细对比见 [docs/comparison.md](docs/comparison.md)。
+这些配置文件适合**项目级**规则（构建步骤、编码规范）。piia-engram 存的是**你这个人**——你的偏好、经验和决策，跨多个仓库和 MCP 兼容工具持续生效。两者互补：AGENTS.md 管项目，piia-engram 管人。详细对比见 [docs/comparison.md](docs/comparison.md)。
 
 **可以同时在多个 AI 工具中使用 piia-engram 吗？**
 可以。这正是 piia-engram 的主要使用场景。它使用本地文件存储（`~/.engram/`），通过原子写入和文件锁保证一致性。Claude Code、Cursor、Codex 和其他 MCP 客户端可以同时连接。在 Claude Code 中记录的经验教训，Cursor 中立即可用。
@@ -668,7 +679,7 @@ engram setup
 在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令扫描所有已知 MCP 配置，移除旧版 server 条目并修复失效路径，一步完成。
 
 **piia-engram 会把数据发到云端吗？**
-不会。所有核心工具均不发起网络请求。可选的匿名使用统计（工具调用计数，绝不包含内容）可在 setup 中开启，**默认关闭**。随时用 `engram telemetry preview` 查看、`engram telemetry off` 关闭。详见 **[PRIVACY.md](PRIVACY.md)**。
+默认不会。身份与知识工具使用本地文件，telemetry **默认关闭**。可选的匿名使用统计可作为本地日志开启；远程 telemetry 和每周反馈报告必须单独显式开启，只发送计数，绝不发送知识正文。随时用 `engram telemetry preview` 查看下一次 payload，用 `engram telemetry off` 关闭统计，用 `engram telemetry remote off` 关闭远程发送。详见 **[PRIVACY.md](PRIVACY.md)**。
 
 **piia-engram 有多少个 MCP 工具？**
 两层设计，大多数用户只会看到 16 个工具：
@@ -726,11 +737,24 @@ export ENGRAM_AUDIT=1
 
 日志以 JSON-lines 格式写入 `~/.engram/audit.log`。可通过 `get_audit_log` 工具或 `grep` 查询。
 
+### Agent 治理（高级，可选）
+
+如果你把 piia-engram 暴露给多个 MCP 客户端，尤其是远程或自动化客户端，可以开启读写治理：
+
+```bash
+export ENGRAM_GOVERNANCE=1
+export ENGRAM_CLIENT_TYPE=claude_code
+```
+
+治理默认关闭；开启后，已知本地编码工具只会读取 `public` / `work` 范围内的内容，未知调用方默认 fail-closed 为 public-only。导出、导入、授权变更等 owner-only 操作需要 `private-self` 信任档。
+
+注意：当前客户端身份来自 MCP 启动环境变量，是治理分层与防误用机制，不是加密身份认证边界。详细矩阵见 [docs/governance.md](docs/governance.md)。
+
 ## CLI 命令
 
 ```bash
 engram setup            # 交互式安装向导
-piia-engram doctor           # 检查配置健康状态（所有 AI 工具）
+piia-engram doctor           # 检查配置健康状态（已配置的 AI 工具）
 piia-engram status           # 脱敏安装与记忆健康摘要
 piia-engram status --html    # 写出本地脱敏状态页
 piia-engram doctor --fix     # 自动修复所有问题

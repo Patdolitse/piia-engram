@@ -6,6 +6,28 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.41.0] - 2026-05-31
+
+The market-positioning and trust package release: Engram now presents itself more precisely as a local-first personal AI identity layer for MCP-compatible coding tools, with clearer trust boundaries and a public cross-tool continuity demo.
+
+### Added
+- **Trust model documentation** - `docs/trust.md` explains what stays local, what is never sent by default, governance boundaries, user controls, and known limitations.
+- **Cross-tool continuity demo** - `docs/cross-tool-continuity-demo.md` and `demos/cross_tool_continuity_demo.py` show a simulated Claude Code -> Codex -> Cursor/Windsurf handoff using an isolated temporary Engram root.
+- **Listing copy pack** - `docs/listing-copy.md` provides conservative marketplace copy for MCP Registry, Claude plugin, PyPI, GitHub, and website surfaces.
+- **Public positioning regression tests** - `tests/test_public_positioning.py` guards against old overclaims, MCP Registry description length drift, demo path disclosure, and missing publish allowlist entries.
+
+### Changed
+- README, Chinese README, PyPI metadata, MCP Registry metadata, Claude plugin metadata, architecture notes, and comparison docs now use the narrower "local-first personal AI identity for MCP-compatible coding tools" positioning.
+- `docs/comparison.md` now distinguishes Engram from OpenMemory and native coding-tool memory instead of positioning it as a generic agent-memory database.
+- Chinese README security docs now include the optional agent-governance environment variables and their non-cryptographic identity boundary.
+
+### Tests
+- Full suite: **1788 passed**, 4 expected `engram_core` deprecation warnings.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, MCP Registry manifest valid, Codex subagent review PASS, Claude Code read-only acceptance PASS.
+
+### Release Evidence
+- See `release-evidence/v3.41.0.md`.
+
 ## [3.40.0] - 2026-05-31
 
 The first-run confidence release: Engram now gives users a clearer local status surface after setup, including MCP client configuration health, shareable redacted HTML status, and follow-up commands.
