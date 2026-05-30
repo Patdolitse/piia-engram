@@ -38,6 +38,16 @@
 
 ---
 
+## Install
+
+```bash
+pip install piia-engram && engram setup
+```
+
+The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — configures them, and previews your identity card. Restart your tool; the first conversation already knows you. ([full walkthrough ↓](#quick-start-30-seconds))
+
+---
+
 **Your AI forgets you every time you switch tools or start a new chat.** piia-engram fixes that.
 
 Every time you open a new chat window, switch from Claude Code to Codex, update your AI tool, or move into a different project, you're back to zero:

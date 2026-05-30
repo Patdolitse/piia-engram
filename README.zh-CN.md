@@ -38,6 +38,16 @@
 
 ---
 
+## 安装
+
+```bash
+pip install piia-engram && engram setup
+```
+
+向导会自动检测你的 AI 工具——Claude Code、Cursor、Codex、Claude Desktop——完成配置并预览你的身份卡。重启工具，第一次对话它就认识你。（完整步骤见下方"快速开始（30 秒）"）
+
+---
+
 **每次换工具或开新对话，AI 就忘了你是谁。** piia-engram 解决这个问题。
 
 每次开一个新对话框，你就被忘了。换个工具，又要从头自我介绍。工具一更新，之前设好的偏好可能直接没了。
