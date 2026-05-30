@@ -32,9 +32,9 @@ Current implementation: local log only — no network requests are made for tele
 | Your profile (name, role, preferences) | `~/.engram/identity.json` | AI tools know who you are |
 | Lessons learned | `~/.engram/lessons.json` | AI tools remember your experience |
 | Key decisions | `~/.engram/decisions.json` | AI tools understand your reasoning |
-| Playbooks | `~/.engram/playbooks.json` | Reusable multi-step procedures |
+| Playbooks | `~/.engram/playbooks/{id}.json` + `~/.engram/playbooks/_index.json` | Reusable multi-step procedures |
 | Project snapshots | `~/.engram/projects/` | Per-project context |
-| Session history | `~/.engram/sessions/` | Cross-session continuity |
+| Session history | `~/.engram/contexts/{tool}/` | Cross-session continuity |
 
 All files are plain JSON. You can open, edit, back up, or delete them at any time.
 
@@ -60,7 +60,7 @@ piia-engram offers **opt-in** anonymous usage statistics to help the project und
 |-------|---------|-------------------|
 | Tool call counts | `{"add_lesson": {"success": 5, "error": 1}}` | No — tool names + counts only |
 | Knowledge totals | `{"lessons": 47, "decisions": 12}` | No — counts only |
-| Engram version | `"3.29.1"` | No |
+| Engram version | `"3.38.0"` | No |
 | Daily anonymous ID | `"a3f8b2c1e9d04f67"` | HMAC-derived, rotates daily, cannot be linked across days |
 | OS platform | `"win32"` | No detailed version |
 | Python version | `"3.12"` | Major.minor only |
