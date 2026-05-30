@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import locale
 import logging
 import os
 import platform
@@ -38,6 +39,75 @@ def _safe_print(text: str) -> None:
         enc = sys.stdout.encoding or "ascii"
         safe = text.encode(enc, errors="ignore").decode(enc)
         print(safe)
+
+
+def _is_utf8_encoding(encoding: str | None) -> bool:
+    name = (encoding or "").strip().lower().replace("_", "-")
+    return name in {"utf-8", "utf8", "utf-8-sig", "cp65001"} or name.startswith("utf-8")
+
+
+def _run_terminal_encoding_check(
+    *,
+    stdout_encoding: str | None = None,
+    stderr_encoding: str | None = None,
+    preferred_encoding: str | None = None,
+    filesystem_encoding: str | None = None,
+    pythonioencoding: str | None = None,
+) -> int:
+    """Report terminal/display encoding without treating it as data corruption."""
+    stdout_encoding = stdout_encoding if stdout_encoding is not None else sys.stdout.encoding
+    stderr_encoding = stderr_encoding if stderr_encoding is not None else sys.stderr.encoding
+    preferred_encoding = (
+        preferred_encoding
+        if preferred_encoding is not None
+        else locale.getpreferredencoding(False)
+    )
+    filesystem_encoding = (
+        filesystem_encoding
+        if filesystem_encoding is not None
+        else sys.getfilesystemencoding()
+    )
+    pythonioencoding = (
+        pythonioencoding
+        if pythonioencoding is not None
+        else os.environ.get("PYTHONIOENCODING")
+    )
+
+    print()
+    _safe_print("  -- Terminal encoding --\n")
+    stdout_label = stdout_encoding or "unknown"
+    stderr_label = stderr_encoding or "unknown"
+    stdio_is_utf8 = _is_utf8_encoding(stdout_encoding) and _is_utf8_encoding(stderr_encoding)
+    if stdio_is_utf8:
+        print(f"    [ok] stdout/stderr: {stdout_label} / {stderr_label}")
+    else:
+        print(f"    [--] stdout/stderr: {stdout_label} / {stderr_label}")
+        print("         Terminal may display UTF-8 text as mojibake.")
+        print("         This does not mean Engram files are corrupted.")
+
+    if pythonioencoding and _is_utf8_encoding(pythonioencoding):
+        print(f"    [ok] PYTHONIOENCODING={pythonioencoding}")
+    elif pythonioencoding:
+        print(f"    [--] PYTHONIOENCODING={pythonioencoding}")
+        print("         Set PYTHONIOENCODING=utf-8 for subprocess-heavy workflows.")
+    elif stdio_is_utf8:
+        print("    [ok] PYTHONIOENCODING not set (stdout/stderr already UTF-8)")
+    else:
+        print("    [--] PYTHONIOENCODING not set")
+        print("         Set PYTHONIOENCODING=utf-8 for subprocess-heavy workflows.")
+
+    runtime_status = (
+        "[ok]"
+        if _is_utf8_encoding(preferred_encoding)
+        and _is_utf8_encoding(filesystem_encoding)
+        else "[--]"
+    )
+    print(
+        f"    {runtime_status} Runtime encodings: "
+        f"preferred={preferred_encoding or 'unknown'}, "
+        f"filesystem={filesystem_encoding or 'unknown'}"
+    )
+    return 0
 
 # ---------------------------------------------------------------------------
 # 智能扫描 + 分流导入
@@ -2559,6 +2629,8 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     except Exception as exc:
         print(f"    [!!] MCP server import failed: {exc}")
         problems += 1
+
+    problems += _run_terminal_encoding_check()
 
     problems += _run_continuity_checks(eng)
 

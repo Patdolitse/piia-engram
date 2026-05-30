@@ -527,6 +527,101 @@ def test_doctor_reports_encoding_mojibake(tmp_path: Path, monkeypatch, capsys):
     assert "repairable mojibake" in out
 
 
+def test_terminal_encoding_check_reports_utf8_ok(capsys):
+    """Terminal encoding diagnostics should be informational when UTF-8 is active."""
+    from piia_engram.setup_wizard import _run_terminal_encoding_check
+
+    result = _run_terminal_encoding_check(
+        stdout_encoding="utf-8",
+        stderr_encoding="utf-8",
+        preferred_encoding="UTF-8",
+        filesystem_encoding="utf-8",
+        pythonioencoding="utf-8",
+    )
+
+    assert result == 0
+    out = capsys.readouterr().out
+    assert "Terminal encoding" in out
+    assert "[ok] stdout/stderr: utf-8 / utf-8" in out
+    assert "[ok] PYTHONIOENCODING=utf-8" in out
+
+
+def test_terminal_encoding_check_accepts_unset_pythonioencoding_when_stdio_utf8(capsys):
+    """Unset PYTHONIOENCODING is fine when the current terminal streams are UTF-8."""
+    from piia_engram.setup_wizard import _run_terminal_encoding_check
+
+    result = _run_terminal_encoding_check(
+        stdout_encoding="utf-8",
+        stderr_encoding="utf-8",
+        preferred_encoding="UTF-8",
+        filesystem_encoding="utf-8",
+        pythonioencoding="",
+    )
+
+    assert result == 0
+    out = capsys.readouterr().out
+    assert "[ok] PYTHONIOENCODING not set (stdout/stderr already UTF-8)" in out
+    assert "Set PYTHONIOENCODING=utf-8" not in out
+
+
+def test_terminal_encoding_check_treats_cp65001_as_utf8(capsys):
+    """Windows code page 65001 is UTF-8 and should not be flagged as legacy."""
+    from piia_engram.setup_wizard import _run_terminal_encoding_check
+
+    result = _run_terminal_encoding_check(
+        stdout_encoding="cp65001",
+        stderr_encoding="cp65001",
+        preferred_encoding="cp65001",
+        filesystem_encoding="utf-8",
+        pythonioencoding="cp65001",
+    )
+
+    assert result == 0
+    out = capsys.readouterr().out
+    assert "[ok] stdout/stderr: cp65001 / cp65001" in out
+    assert "[ok] PYTHONIOENCODING=cp65001" in out
+    assert "[ok] Runtime encodings: preferred=cp65001, filesystem=utf-8" in out
+
+
+def test_terminal_encoding_check_warns_non_utf8_without_failing(capsys):
+    """A legacy console code page is a display warning, not a data corruption failure."""
+    from piia_engram.setup_wizard import _run_terminal_encoding_check
+
+    result = _run_terminal_encoding_check(
+        stdout_encoding="cp936",
+        stderr_encoding="cp936",
+        preferred_encoding="cp936",
+        filesystem_encoding="utf-8",
+        pythonioencoding="",
+    )
+
+    assert result == 0
+    out = capsys.readouterr().out
+    assert "[--] stdout/stderr: cp936 / cp936" in out
+    assert "Terminal may display UTF-8 text as mojibake" in out
+    assert "This does not mean Engram files are corrupted" in out
+    assert "[--] PYTHONIOENCODING not set" in out
+    assert "[--] Runtime encodings: preferred=cp936, filesystem=utf-8" in out
+
+
+def test_terminal_encoding_check_flags_non_utf8_pythonioencoding(capsys):
+    """PYTHONIOENCODING only helps display safety when it is UTF-8 compatible."""
+    from piia_engram.setup_wizard import _run_terminal_encoding_check
+
+    result = _run_terminal_encoding_check(
+        stdout_encoding="cp936",
+        stderr_encoding="cp936",
+        preferred_encoding="cp936",
+        filesystem_encoding="utf-8",
+        pythonioencoding="cp936",
+    )
+
+    assert result == 0
+    out = capsys.readouterr().out
+    assert "[--] PYTHONIOENCODING=cp936" in out
+    assert "Set PYTHONIOENCODING=utf-8" in out
+
+
 def test_doctor_fix_repairs_encoding_mojibake(tmp_path: Path, monkeypatch, capsys):
     """doctor --fix should repair high-confidence mojibake and create backup."""
     from piia_engram.setup_wizard import _run_functional_checks

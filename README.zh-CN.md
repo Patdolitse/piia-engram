@@ -168,6 +168,12 @@ $ engram doctor
     [ok] quick_context.md ready (4096 bytes)
     [ok] MCP server: 16 tools registered
 
+  -- Terminal encoding --
+
+    [ok] stdout/stderr: utf-8 / utf-8
+    [ok] PYTHONIOENCODING not set (stdout/stderr already UTF-8)
+    [ok] Runtime encodings: preferred=UTF-8, filesystem=utf-8
+
   -- Continuity --
 
     [--] No saved agent sessions yet
