@@ -6,6 +6,21 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.37.0] - 2026-05-30
+
+The GUI-entry adoption release: piia-engram now exposes a universal MCP server command that is easier to paste into GUI AI tools, and the setup wizard covers two more home-level MCP clients.
+
+### Added
+- **`piia-engram-mcp` console entry point** — MCP clients can now launch the server with a single command, instead of spelling out `python -m piia_engram.mcp_server`. The old module path still works and calls the same `main()` function.
+- **Zero-install MCP config path** — README examples now document `uvx piia-engram-mcp` for clients where users want to paste a command without pre-installing the package.
+- **Trae and Tencent CodeBuddy setup support** — `engram setup` can write their standard home-level MCP config files (`~/.trae/mcp.json` and `~/.codebuddy/mcp.json`).
+- **Domestic AI IDE setup docs** — README / README.zh-CN now distinguish auto-configurable tools from UI-managed or project-scoped tools such as Tongyi Lingma, Baidu Comate, and Qoder.
+
+### Tests
+- Packaging tests now pin the new `piia-engram-mcp` entry point and verify that it resolves to an importable callable.
+- Setup-wizard tests now pin the Trae and CodeBuddy config paths so future refactors cannot silently drop those GUI entry points.
+- Full suite: **1720 passing**.
+
 ## [3.36.0] - 2026-05-30
 
 The identity-layer security release: knowledge content is encrypted at rest, every AI tool sees its own permission boundary inline, and the governance layer is sealed against both write bypass and read-path side effects. The governance and encryption work each went through multiple rounds of independent (Codex) adversarial audit; the read-path closure alone took five rounds.

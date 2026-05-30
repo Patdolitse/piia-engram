@@ -29,6 +29,7 @@ from piia_engram.setup_wizard import (
     _run_telemetry_cli,
     _save_setup_report,
     _scan_rule_files,
+    _tool_configs,
     _write_mcp_config,
     main,
 )
@@ -47,6 +48,21 @@ def test_find_mcp_server():
     assert result is not None
     assert Path(result).is_file()
     assert result.endswith("mcp_server.py")
+
+
+def test_tool_configs_include_trae_and_codebuddy(tmp_path: Path, monkeypatch):
+    """GUI AI IDEs with home-level MCP files should be auto-configurable."""
+    monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+
+    configs = _tool_configs()
+
+    assert configs["trae"]["name"] == "Trae"
+    assert configs["trae"]["config_paths"] == [tmp_path / ".trae" / "mcp.json"]
+    assert configs["trae"]["verified"] is False
+
+    assert configs["codebuddy"]["name"] == "CodeBuddy"
+    assert configs["codebuddy"]["config_paths"] == [tmp_path / ".codebuddy" / "mcp.json"]
+    assert configs["codebuddy"]["verified"] is False
 
 
 def test_write_mcp_config_creates_file(tmp_path: Path):

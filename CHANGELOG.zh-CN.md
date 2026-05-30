@@ -6,6 +6,21 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.37.0] - 2026-05-30
+
+GUI 入口采用版本：piia-engram 现在提供更容易粘贴到各类 GUI AI 工具里的通用 MCP server 命令，setup wizard 也覆盖了两个新的 home 级 MCP 客户端。
+
+### 新增
+- **`piia-engram-mcp` console 入口**——MCP 客户端现在可以用一个命令启动服务器，不必写完整的 `python -m piia_engram.mcp_server`。旧的模块路径仍然可用，并调用同一个 `main()` 函数。
+- **零安装 MCP 配置写法**——README 示例现在说明 `uvx piia-engram-mcp`，适合用户不想预先 `pip install`、只想在客户端里粘贴命令的场景。
+- **Trae 与腾讯 CodeBuddy setup 支持**——`engram setup` 可以写入它们的标准 home 级 MCP 配置文件（`~/.trae/mcp.json` 与 `~/.codebuddy/mcp.json`）。
+- **国产 AI IDE 接入文档**——README / README.zh-CN 现在区分可自动配置的工具，以及通义灵码、文心快码、Qoder 这类 UI 管理或项目级配置工具。
+
+### 测试
+- packaging 测试现在钉住新的 `piia-engram-mcp` entry point，并验证它能解析到可导入的 callable。
+- setup-wizard 测试现在钉住 Trae 与 CodeBuddy 配置路径，防止未来重构时静默丢掉这些 GUI 入口。
+- 全量测试：**1720 passed**。
+
 ## [3.36.0] - 2026-05-30
 
 身份层安全版本：知识正文静态加密、每个 AI 工具内联看到自己的权限边界、治理层对"写绕过"和"读路径副作用"双向封死。治理与加密两条线各自经过多轮独立（Codex）对抗式审计，单是读路径闭合就走了五轮。

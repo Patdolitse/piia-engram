@@ -372,16 +372,16 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.35.0 (2026-05-29) |
+| | v3.37.0 (2026-05-30) |
 |---|---|
 | 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具 | **16 个核心**（默认加载）+ **56 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **1439** 个（单元 + 集成）|
+| 测试通过 | **1720** 个（单元 + 集成）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
-| `core.py` 行数 | **1097** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
+| `core.py` 行数 | **2313** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
-| 加密 | AES-256-GCM，每条数据随机 salt + nonce |
+| 加密 | AES-256-GCM，每个 engram 独立 salt + 每条数据随机 nonce |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
 | 核心功能网络调用 | 默认 **0** —— 除可选的 `read_web_content` 外，匿名使用统计可选开启（详见 [隐私说明](PRIVACY.md)）|
 

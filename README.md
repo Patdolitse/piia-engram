@@ -586,16 +586,16 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.35.0 (2026-05-29) |
+| | v3.37.0 (2026-05-30) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **16 Core** (loaded by default) + **56 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **1439** (unit + integration) |
+| Tests passing | **1720** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
-| Lines in `core.py` | **2134** (facade + mixins total ~6000; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
+| Lines in `core.py` | **2313** (facade + mixins total ~6000; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
-| Encryption | AES-256-GCM, per-value random salt + nonce |
+| Encryption | AES-256-GCM, per-engram salt + per-value random nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
 | Network calls from core | **0** by default — except optional `read_web_content` and opt-in anonymous usage statistics (local + optional remote — see [privacy details](PRIVACY.md)) |
 

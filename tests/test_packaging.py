@@ -122,6 +122,14 @@ def test_has_scripts_entry():
     """应有 engram CLI 入口。"""
     data = _load()
     assert data["project"].get("scripts", {}).get("engram") == "piia_engram.setup_wizard:main"
+    assert data["project"].get("scripts", {}).get("piia-engram-mcp") == "piia_engram.mcp_server:main"
+
+
+def test_mcp_console_entry_target_is_callable():
+    """The packaged MCP console script must point at an importable callable."""
+    import piia_engram.mcp_server as mcp_server
+
+    assert callable(mcp_server.main)
 
 
 def test_has_project_urls():
