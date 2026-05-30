@@ -1,4 +1,11 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
+
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 class _FakeStream:
@@ -42,3 +49,46 @@ def test_mcp_server_main_configures_stdio_before_run(monkeypatch):
     mcp_server.main()
 
     assert events[:2] == ["utf8", "run:stdio"]
+
+
+def test_help_detection_only_applies_to_mcp_entrypoint():
+    from piia_engram import mcp_server
+
+    assert mcp_server._argv_requests_help(["--help"], "mcp_server.py") is True
+    assert mcp_server._argv_requests_help(["--help"], "piia-engram-mcp.exe") is True
+    assert mcp_server._argv_requests_help(["--help"], "pytest.exe") is False
+
+
+def test_mcp_server_help_does_not_initialize_engram(tmp_path):
+    home = tmp_path / "home"
+    orphan = home / ".engram" / "knowledge"
+    orphan.mkdir(parents=True)
+    (orphan / "lessons.json").write_text("[]", encoding="utf-8")
+
+    active_root = tmp_path / "active-root"
+    env = os.environ.copy()
+    env.update({
+        "ENGRAM_DIR": str(active_root),
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONPATH": str(ROOT / "src"),
+    })
+    env.pop("ENGRAM_TEST", None)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "piia_engram.mcp_server", "--help"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "usage:" in result.stdout
+    assert "DATA FRAGMENTATION" not in output
+    assert not active_root.exists()

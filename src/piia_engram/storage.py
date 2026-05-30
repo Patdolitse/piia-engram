@@ -251,7 +251,7 @@ def _read_json(path: Path, *, allow_corrupt: bool = False) -> Any:
     if not path.is_file():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception as exc:
         logger.warning("failed to read %s: %s", path.name, exc)
         # Back up the corrupted file so it can be recovered manually

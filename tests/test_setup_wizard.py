@@ -2098,6 +2098,28 @@ class TestMcpEntryLaunchProbe:
         assert calls[0][0] == ["piia-engram-mcp", "--help"]
         assert calls[0][1]["timeout"] == 5
 
+    def test_probe_success_forces_utf8_decoding(self, monkeypatch):
+        from piia_engram.setup_wizard import _probe_mcp_entry
+
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = "Engram MCP Server \u2014 ok"
+            stderr = ""
+
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return Result()
+
+        monkeypatch.setattr("piia_engram.setup_wizard.subprocess.run", fake_run)
+
+        result = _probe_mcp_entry({"command": "piia-engram-mcp", "args": []})
+
+        assert result is None
+        assert calls[0][1]["encoding"] == "utf-8"
+        assert calls[0][1]["errors"] == "replace"
+
     def test_probe_nonzero_reports_issue(self, monkeypatch):
         from piia_engram.setup_wizard import _probe_mcp_entry
 

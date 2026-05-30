@@ -62,6 +62,14 @@ def test_read_json_valid(tmp_path):
     assert _read_json(path) == {"a": 1}
 
 
+def test_read_json_accepts_utf8_bom(tmp_path):
+    path = tmp_path / "bom.json"
+    path.write_bytes(b"\xef\xbb\xbf[]\r\n")
+
+    assert _read_json(path) == []
+    assert not list(tmp_path.glob("bom.corrupt.*.json"))
+
+
 def test_read_json_corrupt(tmp_path):
     """损坏的 JSON 应抛 DataCorruptionError 并备份文件。"""
     path = tmp_path / "bad.json"

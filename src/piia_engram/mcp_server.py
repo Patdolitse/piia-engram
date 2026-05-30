@@ -72,7 +72,21 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Global state
 # ---------------------------------------------------------------------------
-_engram = Engram()
+def _argv_requests_help(
+    argv: list[str] | None = None,
+    program: str | None = None,
+) -> bool:
+    args = sys.argv[1:] if argv is None else argv
+    if not any(arg in {"-h", "--help"} for arg in args):
+        return False
+    executable = Path(sys.argv[0] if program is None else program).name.lower()
+    return executable in {"mcp_server.py", "piia-engram-mcp", "piia-engram-mcp.exe"}
+
+
+# argparse help should be a read-only, side-effect-free path. Initializing
+# Engram here can emit data-fragmentation warnings or touch session files
+# before argparse exits, so defer it only for the MCP help entrypoint.
+_engram = None if _argv_requests_help() else Engram()
 
 # Anonymous usage statistics tracker (Phase 1: local log only)
 try:
