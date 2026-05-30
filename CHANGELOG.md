@@ -6,7 +6,7 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.38.0] - 2026-05-30
 
 ### Added
 - **Encoding repair guardrails** — new `engram repair-encoding` CLI dry-runs the active Engram root for high-confidence mojibake in JSON / JSONL / Markdown / text files. `--apply` repairs reversible cases with a timestamped backup; lossy suspicious cases are reported for manual review instead of being guessed.

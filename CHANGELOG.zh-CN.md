@@ -6,7 +6,7 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
-## [未发布]
+## [3.38.0] - 2026-05-30
 
 ### 新增
 - **编码修复防线**——新增 `engram repair-encoding` CLI，默认 dry-run 扫描当前 Engram root 中 JSON / JSONL / Markdown / text 文件里的高置信 mojibake。`--apply` 会先建时间戳备份，再修复可逆内容；已经丢字节的可疑内容只报告给人工复核，不盲猜。
