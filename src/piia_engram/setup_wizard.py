@@ -2954,6 +2954,171 @@ def run_sessions(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _print_review_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram review [--limit N]\n"
+        "  engram review show <id>\n"
+        "  engram review approve <id> --yes\n"
+        "  engram review archive <id> --yes\n"
+    )
+
+
+def _review_title(item_type: str, item: dict) -> str:
+    if item_type == "decision":
+        title = item.get("question") or item.get("title") or ""
+        choice = item.get("choice") or ""
+        return f"{title} -> {choice}" if choice else str(title)
+    return str(item.get("summary") or item.get("title") or "")
+
+
+def _review_items(eng, *, limit: int = 20) -> list[dict]:
+    """Return staging lessons/decisions for the terminal review queue.
+
+    The explicit ``_update_access=False`` is part of the contract: listing the
+    queue must not mutate access counters or timestamps.
+    """
+    rows: list[dict] = []
+    for item in eng.get_lessons(limit=None, _update_access=False):
+        if item.get("tier") == "staging":
+            rows.append({"type": "lesson", "item": item})
+    for item in eng.get_decisions(limit=None, _update_access=False):
+        if item.get("tier") == "staging":
+            rows.append({"type": "decision", "item": item})
+
+    def sort_key(row: dict) -> str:
+        item = row.get("item") or {}
+        return str(item.get("timestamp") or item.get("created_at") or item.get("id") or "")
+
+    rows.sort(key=sort_key, reverse=True)
+    return rows[:limit]
+
+
+def _print_review_list(rows: list[dict]) -> None:
+    if not rows:
+        print("No staging knowledge needs review.")
+        return
+    print(f"Staging knowledge review queue ({len(rows)})")
+    print("type       id                         domain        title")
+    print("---------  -------------------------  ------------  ------------------------------")
+    for row in rows:
+        item_type = row["type"]
+        item = row["item"]
+        title = _review_title(item_type, item)
+        if len(title) > 70:
+            title = title[:67] + "..."
+        _safe_print(
+            f"{item_type:<9}  "
+            f"{str(item.get('id', '?')):<25}  "
+            f"{str(item.get('domain', ''))[:12]:<12}  "
+            f"{title}"
+        )
+    print("\nUse 'engram review show <id>' to inspect one item.")
+    print("Use 'engram review approve <id> --yes' or 'engram review archive <id> --yes'.")
+
+
+def _print_review_item(item_type: str, item: dict) -> None:
+    print(f"type: {item_type}")
+    print(f"id: {item.get('id', '')}")
+    print(f"tier: {item.get('tier', '')}")
+    print(f"status: {item.get('status', '')}")
+    if item.get("domain"):
+        print(f"domain: {item.get('domain')}")
+    if item_type == "decision":
+        _safe_print(f"question: {item.get('question') or item.get('title') or ''}")
+        _safe_print(f"choice: {item.get('choice', '')}")
+        if item.get("reasoning"):
+            _safe_print(f"reasoning: {item.get('reasoning')}")
+    else:
+        _safe_print(f"summary: {item.get('summary') or item.get('title') or ''}")
+        if item.get("detail"):
+            _safe_print(f"detail: {item.get('detail')}")
+
+
+def _require_yes(args: list[str], action: str) -> bool:
+    if "--yes" in args:
+        return True
+    print(f"Refusing to {action} without explicit --yes.")
+    return False
+
+
+def run_review(argv: list[str] | None = None) -> int:
+    """Terminal review queue for staging lessons and decisions."""
+    _configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_review_usage()
+        return 0
+
+    from piia_engram.core import Engram
+
+    eng = Engram()
+
+    if args and args[0] == "show":
+        if len(args) < 2:
+            _print_review_usage()
+            return 2
+        item_type, item = eng._find_item_by_id(args[1])
+        if item is None or item_type not in {"lesson", "decision"}:
+            print(f"Review item not found: {args[1]}")
+            return 1
+        _print_review_item(item_type, item)
+        return 0
+
+    if args and args[0] == "approve":
+        if len(args) < 2:
+            _print_review_usage()
+            return 2
+        item_id = args[1]
+        if not _require_yes(args[2:], "approve review item"):
+            return 2
+        item_type, item = eng._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision"}:
+            print(f"Review item not found: {item_id}")
+            return 1
+        if item.get("tier") != "staging":
+            print(f"Review item is not staging: {item_id}")
+            return 1
+        result = eng.promote_knowledge(item_id)
+        if result.get("status") != "promoted":
+            print(f"Review item could not be promoted: {item_id}")
+            return 1
+        print(f"Promoted review item: {item_id}")
+        return 0
+
+    if args and args[0] == "archive":
+        if len(args) < 2:
+            _print_review_usage()
+            return 2
+        item_id = args[1]
+        if not _require_yes(args[2:], "archive review item"):
+            return 2
+        item_type, item = eng._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision"}:
+            print(f"Review item not found: {item_id}")
+            return 1
+        result = eng.archive_knowledge(item_id)
+        if result.get("error"):
+            print(result["error"])
+            return 1
+        print(f"Archived review item: {item_id}")
+        return 0
+
+    limit = 20
+    i = 0
+    while i < len(args):
+        if args[i] == "--limit" and i + 1 < len(args):
+            limit = _parse_sessions_limit(args[i + 1])
+            i += 2
+        else:
+            print(f"Unknown review option: {args[i]}")
+            _print_review_usage()
+            return 2
+
+    _print_review_list(_review_items(eng, limit=limit))
+    return 0
+
+
 def _run_telemetry_cli(sub_args: list[str]) -> None:
     """Handle `engram telemetry <subcommand>`."""
     from piia_engram.telemetry import (
@@ -3624,6 +3789,8 @@ def main() -> None:
         sys.exit(run_doctor(fix=fix))
     elif args[0] == "sessions":
         sys.exit(run_sessions(args[1:]))
+    elif args[0] == "review":
+        sys.exit(run_review(args[1:]))
     elif args[0] == "stats":
         from piia_engram.stats import run_stats, log_stats
         if "--log" in args:
@@ -3666,6 +3833,10 @@ def main() -> None:
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram sessions         List saved cross-tool agent sessions\n"
             "  engram sessions show <id>  Print one saved session\n"
+            "  engram review           List staging knowledge awaiting review\n"
+            "  engram review show <id> Inspect one review item\n"
+            "  engram review approve <id> --yes  Promote staging item\n"
+            "  engram review archive <id> --yes  Archive review item\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram reindex          Rebuild the hybrid search index from JSON\n"

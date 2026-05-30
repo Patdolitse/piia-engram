@@ -732,6 +732,10 @@ piia-engram doctor           # Check config health (all AI tools)
 piia-engram doctor --fix     # Auto-repair any issues found
 piia-engram sessions         # List saved cross-tool agent sessions
 piia-engram sessions show <id>  # Print one saved session
+piia-engram review           # List staging knowledge awaiting review
+piia-engram review show <id> # Inspect one review item
+piia-engram review approve <id> --yes  # Promote a staging item
+piia-engram review archive <id> --yes  # Archive a review item
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
 piia-engram repair-encoding --apply  # Repair reversible cases with a backup
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)
