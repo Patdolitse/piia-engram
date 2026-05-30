@@ -251,6 +251,27 @@ claude mcp add piia-engram -- python -m piia_engram.mcp_server
 
 </details>
 
+<details>
+<summary><strong>国产 AI IDE —— Trae / CodeBuddy / 通义灵码 / 文心快码 / Qoder</strong></summary>
+
+`engram setup` 会自动配置 **Trae**（`~/.trae/mcp.json`）和**腾讯 CodeBuddy**（`~/.codebuddy/mcp.json`）—— 它们都读 home 目录下的标准 `mcpServers` 配置文件。
+
+**通义灵码、文心快码（Comate）、Qoder** 的 MCP 走应用内的 MCP 面板（或项目级配置）管理，向导无法替你写入。打开工具的 MCP 设置，粘贴：
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+零安装写法（无需先 `pip install`）—— 把 `"command"` 改成 `"uvx"`、`"args"` 改成 `["piia-engram-mcp"]`。它们说的都是同一套标准 MCP over stdio 协议。
+
+</details>
+
 ## 升级
 
 ```bash
@@ -353,7 +374,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 | | v3.35.0 (2026-05-29) |
 |---|---|
-| 支持 AI 工具 | **13** 个（4 已验证 + 7 应兼容 + OpenClaw + ChatGPT 回退）|
+| 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具 | **16 个核心**（默认加载）+ **56 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
 | 测试通过 | **1439** 个（单元 + 集成）|
@@ -563,6 +584,8 @@ piia-engram 的数据全部存储在本地 `~/.engram/`，使用 JSON/Markdown �
 | Amazon Q | MCP (stdio) | 应兼容 |
 | Augment | MCP (stdio) | 应兼容 |
 | Zed | MCP (stdio) | 应兼容 |
+| Trae | MCP (stdio) | 应兼容 |
+| 腾讯 CodeBuddy | MCP (stdio) | 应兼容 |
 | OpenClaw | SOUL.md/MEMORY.md 导入导出 | ✅ 已验证 |
 | ChatGPT / Kimi / Gemini | 粘贴身份卡 | 🔧 可用 |
 

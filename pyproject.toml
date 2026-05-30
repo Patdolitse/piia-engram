@@ -31,6 +31,9 @@ Repository = "https://github.com/Patdolitse/piia-engram"
 
 [project.scripts]
 piia-engram = "piia_engram.setup_wizard:main"
+# MCP server entry point — lets any client launch via `piia-engram-mcp` or
+# `uvx piia-engram-mcp` (zero pre-install), instead of `python -m ...`.
+piia-engram-mcp = "piia_engram.mcp_server:main"
 # Backward-compat alias — `engram` will be removed in a future major release.
 engram = "piia_engram.setup_wizard:main"
 

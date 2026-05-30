@@ -248,6 +248,27 @@ For tools without MCP support (ChatGPT, Gemini, Kimi): run `get_identity_card` i
 
 </details>
 
+<details>
+<summary><strong>Domestic AI IDEs — Trae / CodeBuddy / Tongyi Lingma / Comate / Qoder</strong></summary>
+
+`engram setup` auto-configures **Trae** (`~/.trae/mcp.json`) and **Tencent CodeBuddy** (`~/.codebuddy/mcp.json`) — they read a standard `mcpServers` file in your home directory.
+
+**Tongyi Lingma (通义灵码), Baidu Comate (文心快码), and Qoder** manage MCP servers through their in-app MCP panel (or a project-level config), so the wizard can't write them for you. Open the tool's MCP settings and paste:
+```json
+{
+  "mcpServers": {
+    "piia-engram": {
+      "command": "python",
+      "args": ["-m", "piia_engram.mcp_server"]
+    }
+  }
+}
+```
+
+Zero-install alternative (no prior `pip install` needed) — set `"command": "uvx"` and `"args": ["piia-engram-mcp"]`. They all speak the same standard MCP-over-stdio protocol.
+
+</details>
+
 ### See It in Action
 
 ```
@@ -540,6 +561,8 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 | Amazon Q | MCP over stdio | Expected to work |
 | Augment | MCP over stdio | Expected to work |
 | Zed | MCP over stdio | Expected to work |
+| Trae | MCP over stdio | Expected to work |
+| Tencent CodeBuddy | MCP over stdio | Expected to work |
 | OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | ✅ Verified |
 | ChatGPT / Gemini / Kimi | Markdown identity card fallback | 🔧 Usable |
 
@@ -565,7 +588,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 
 | | v3.35.0 (2026-05-29) |
 |---|---|
-| Supported AI tools | **13** (4 verified + 7 expected-to-work + OpenClaw + ChatGPT fallback) |
+| Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **16 Core** (loaded by default) + **56 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
 | Tests passing | **1439** (unit + integration) |

@@ -279,6 +279,20 @@ def _tool_configs() -> dict:
             "config_paths": [home / ".codeium" / "windsurf" / "mcp_config.json"],
             "verified": False,
         },
+        "trae": {
+            "name": "Trae",
+            # Trae stores its global MCP servers in ~/.trae/mcp.json
+            # (standard "mcpServers" JSON, same on Windows/macOS/Linux).
+            "config_paths": [home / ".trae" / "mcp.json"],
+            "verified": False,
+        },
+        "codebuddy": {
+            "name": "CodeBuddy",
+            # Tencent CodeBuddy stores user-scope MCP servers in
+            # ~/.codebuddy/mcp.json (standard "mcpServers" JSON).
+            "config_paths": [home / ".codebuddy" / "mcp.json"],
+            "verified": False,
+        },
         "copilot_vscode": {
             "name": "GitHub Copilot (VS Code)",
             "config_paths": [vscode_storage / "mcp.json"] if vscode_storage else [],
@@ -902,6 +916,14 @@ _RESTART_HINTS: dict[str, tuple[str, str]] = {
     "windsurf": (
         "关闭并重开 Windsurf 窗口",
         "Close and reopen your Windsurf window",
+    ),
+    "trae": (
+        "Ctrl+Shift+P → Reload Window",
+        "Ctrl+Shift+P → Reload Window",
+    ),
+    "codebuddy": (
+        "在 CodeBuddy 的 MCP 设置里点'更新'，或重开 CodeBuddy 窗口",
+        "Click 'Update' in CodeBuddy's MCP settings, or reopen the CodeBuddy window",
     ),
 }
 

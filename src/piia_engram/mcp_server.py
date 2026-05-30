@@ -3778,7 +3778,14 @@ _apply_tool_tier()
 # Entry point
 # ===========================================================================
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console entry point for the Engram MCP server.
+
+    Exposed as the ``piia-engram-mcp`` console script so any MCP client can
+    launch the server with a single command — e.g. ``uvx piia-engram-mcp``
+    (zero pre-install) or a plain ``piia-engram-mcp`` in the client config.
+    Equivalent to ``python -m piia_engram.mcp_server``; both paths call here.
+    """
     args = _parse_args()
 
     # ── Startup self-check: detect stale invocation paths ──
@@ -3876,3 +3883,7 @@ if __name__ == "__main__":
         uvicorn.run(starlette_app, host=args.host, port=args.port)
     else:
         mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()
