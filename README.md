@@ -265,7 +265,7 @@ For tools without MCP support (ChatGPT, Gemini, Kimi): run `get_identity_card` i
 }
 ```
 
-Zero-install alternative (no prior `pip install` needed) — set `"command": "uvx"` and `"args": ["piia-engram-mcp"]`. They all speak the same standard MCP-over-stdio protocol.
+Zero-install alternative (no prior `pip install` needed) — set `"command": "uvx"` and `"args": ["--from", "piia-engram", "piia-engram-mcp"]`. They all speak the same standard MCP-over-stdio protocol.
 
 </details>
 

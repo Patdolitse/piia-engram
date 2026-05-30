@@ -12,7 +12,7 @@ GUI 入口采用版本：piia-engram 现在提供更容易粘贴到各类 GUI AI
 
 ### 新增
 - **`piia-engram-mcp` console 入口**——MCP 客户端现在可以用一个命令启动服务器，不必写完整的 `python -m piia_engram.mcp_server`。旧的模块路径仍然可用，并调用同一个 `main()` 函数。
-- **零安装 MCP 配置写法**——README 示例现在说明 `uvx piia-engram-mcp`，适合用户不想预先 `pip install`、只想在客户端里粘贴命令的场景。
+- **零安装 MCP 配置写法**——README 示例现在说明 `uvx --from piia-engram piia-engram-mcp`，适合用户不想预先 `pip install`、只想在客户端里粘贴命令的场景。
 - **Trae 与腾讯 CodeBuddy setup 支持**——`engram setup` 可以写入它们的标准 home 级 MCP 配置文件（`~/.trae/mcp.json` 与 `~/.codebuddy/mcp.json`）。
 - **国产 AI IDE 接入文档**——README / README.zh-CN 现在区分可自动配置的工具，以及通义灵码、文心快码、Qoder 这类 UI 管理或项目级配置工具。
 

@@ -268,7 +268,7 @@ claude mcp add piia-engram -- python -m piia_engram.mcp_server
 }
 ```
 
-零安装写法（无需先 `pip install`）—— 把 `"command"` 改成 `"uvx"`、`"args"` 改成 `["piia-engram-mcp"]`。它们说的都是同一套标准 MCP over stdio 协议。
+零安装写法（无需先 `pip install`）—— 把 `"command"` 改成 `"uvx"`、`"args"` 改成 `["--from", "piia-engram", "piia-engram-mcp"]`。它们说的都是同一套标准 MCP over stdio 协议。
 
 </details>
 

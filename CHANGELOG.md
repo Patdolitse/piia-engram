@@ -12,7 +12,7 @@ The GUI-entry adoption release: piia-engram now exposes a universal MCP server c
 
 ### Added
 - **`piia-engram-mcp` console entry point** — MCP clients can now launch the server with a single command, instead of spelling out `python -m piia_engram.mcp_server`. The old module path still works and calls the same `main()` function.
-- **Zero-install MCP config path** — README examples now document `uvx piia-engram-mcp` for clients where users want to paste a command without pre-installing the package.
+- **Zero-install MCP config path** — README examples now document `uvx --from piia-engram piia-engram-mcp` for clients where users want to paste a command without pre-installing the package.
 - **Trae and Tencent CodeBuddy setup support** — `engram setup` can write their standard home-level MCP config files (`~/.trae/mcp.json` and `~/.codebuddy/mcp.json`).
 - **Domestic AI IDE setup docs** — README / README.zh-CN now distinguish auto-configurable tools from UI-managed or project-scoped tools such as Tongyi Lingma, Baidu Comate, and Qoder.
 
