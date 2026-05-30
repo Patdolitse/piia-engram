@@ -66,6 +66,171 @@ class TestSessionsCLI:
         assert "codex-s1" in out
         assert "SECRET BODY" not in out
 
+    def test_status_reports_metadata_without_knowledge_bodies(self, tmp_path, monkeypatch, capsys):
+        """engram status should summarize health without printing memory content."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import run_status
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        secret = "ZZSTATUS_SECRET_BODY"
+        eng = Engram()
+        eng.add_lesson(secret, detail="do not print this", domain="security")
+        eng.add_decision(
+            "status privacy",
+            choice=secret,
+            reasoning="do not print this either",
+        )
+        eng.add_playbook(
+            {
+                "title": secret,
+                "triggers": ["status"],
+                "steps": [{"action": "hide", "detail": secret}],
+            }
+        )
+        eng.save_agent_context(tool="codex", content=secret, session_id="status-session")
+
+        assert run_status(["--no-probe"]) == 0
+
+        out = capsys.readouterr().out
+        assert "Engram status" in out
+        assert "Knowledge:" in out
+        assert "Agent sessions:" in out
+        assert str(tmp_path) in out
+        assert secret not in out
+        assert "do not print" not in out
+
+    def test_status_html_writes_redacted_local_report(self, tmp_path, monkeypatch, capsys):
+        """--html should write a local status page with metadata only."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import run_status
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        secret = "ZZSTATUS_HTML_SECRET"
+        eng = Engram()
+        eng.add_lesson(secret, detail=secret, domain="security")
+        output = tmp_path / "status-report.html"
+
+        assert run_status(["--html", "--no-probe", "--output", str(output)]) == 0
+
+        out = capsys.readouterr().out
+        html = output.read_text(encoding="utf-8")
+        assert str(output) in out
+        assert "Engram Status" in html
+        assert "Knowledge" in html
+        assert secret not in html
+
+    def test_status_redacts_caller_controlled_session_ids(self, tmp_path, monkeypatch, capsys):
+        """Status metadata should not echo caller-controlled session IDs."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import run_status
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        secret = "SECRET_CUSTOMER_CASE"
+        eng = Engram()
+        eng.save_agent_context(tool="codex", content="metadata test", session_id=secret)
+        output = tmp_path / "status.html"
+
+        assert run_status(["--no-probe"]) == 0
+        text = capsys.readouterr().out
+        assert secret not in text
+
+        assert run_status(["--html", "--no-probe", "--output", str(output)]) == 0
+        html = output.read_text(encoding="utf-8")
+        assert secret not in html
+
+    def test_status_without_html_rejects_output_path(self, tmp_path, monkeypatch, capsys):
+        """--output without --html should not silently do nothing."""
+        from piia_engram.setup_wizard import run_status
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        output = tmp_path / "ignored.html"
+
+        assert run_status(["--output", str(output), "--no-probe"]) == 2
+
+        out = capsys.readouterr().out
+        assert "--output only applies with --html" in out
+        assert not output.exists()
+
+    def test_status_does_not_write_default_html_report(self, tmp_path, monkeypatch):
+        """Plain text status should not create the default HTML report."""
+        from piia_engram.setup_wizard import run_status
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+        assert run_status(["--no-probe"]) == 0
+
+        assert not (tmp_path / "reports" / "status.html").exists()
+
+    def test_status_marks_warning_rows(self):
+        """Rows with actionable warnings should not still claim [ok]."""
+        from piia_engram.status_report import render_status_text
+
+        text = render_status_text({
+            "version": "test",
+            "storage": {
+                "path": "E:\\Temp\\engram",
+                "file_count": 1,
+                "bytes": 10,
+                "skipped": 1,
+            },
+            "knowledge": {
+                "total": 2,
+                "verified": 1,
+                "staging": 1,
+                "archived": 0,
+            },
+            "sessions": {"count": 0, "latest": None},
+            "encoding": {
+                "stdout": "cp936",
+                "stderr": "cp936",
+                "pythonioencoding": "(not set)",
+                "ok": False,
+            },
+            "telemetry": {
+                "local_enabled": False,
+                "remote_enabled": False,
+                "phase": "1 (local log only)",
+            },
+            "mcp_entry": {
+                "ok": None,
+                "command": "piia-engram-mcp",
+                "message": "probe skipped",
+            },
+            "warnings": [
+                "1 staging item(s) need review",
+                "1 storage file(s) could not be scanned",
+                "terminal is not reporting UTF-8 stdout/stderr",
+            ],
+        })
+
+        assert "  [!!] Storage:" in text
+        assert "  [!!] Knowledge:" in text
+        assert "  [!!] Terminal encoding:" in text
+        assert "  [ok] Storage:" not in text
+        assert "  [ok] Knowledge:" not in text
+
+    def test_main_status_dispatches(self, tmp_path, monkeypatch):
+        """main() with 'status' should dispatch to run_status."""
+        import piia_engram.setup_wizard as sw
+
+        seen = {}
+
+        def fake_run_status(argv):
+            seen["argv"] = argv
+            return 0
+
+        monkeypatch.setattr(sw, "run_status", fake_run_status)
+        monkeypatch.setattr("sys.argv", ["engram", "status", "--html"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            sw.main()
+
+        assert exc_info.value.code == 0
+        assert seen["argv"] == ["--html"]
+
     def test_sessions_filters_by_tool_and_limit(self, tmp_path, monkeypatch, capsys):
         """--tool and --limit should narrow the listed sessions."""
         from piia_engram.core import Engram

@@ -123,13 +123,15 @@ engram setup
 3. **注入 AI 指令**到每个工具的原生配置（`CLAUDE.md`、`.cursorrules`、`AGENTS.md`），确保 AI 主动调用 Engram
 4. 引导你录入种子知识（角色、技术栈、语言）
 5. 智能导入你已有的 `CLAUDE.md` / `.cursorrules` 规则文件
-6. 隐私偏好设置（跨工具同步、匿名使用统计——均可选）
+6. 高级模式（`engram setup --advanced`）可设置隐私偏好（跨工具同步、匿名使用统计，均可选）
 7. **预览你的 AI 身份卡**——安装即见效
 
 设置完成后重启 AI 工具。第一次对话会自动调用 `get_user_context`——AI 已经认识你了。
 
 随时检查健康状态：
 ```bash
+engram status        # 脱敏安装与记忆健康摘要
+engram status --html # 写出本地脱敏状态页
 engram doctor        # 诊断所有工具
 engram doctor --fix  # 自动修复 + 注入缺失的 AI 指令
 engram repair-encoding        # dry-run 扫描乱码 / mojibake
@@ -190,7 +192,7 @@ $ engram doctor
 # 自动配置（推荐）
 engram setup
 # 或手动添加：
-claude mcp add piia-engram -- python -m piia_engram.mcp_server
+claude mcp add piia-engram -- piia-engram-mcp
 ```
 
 </details>
@@ -203,10 +205,18 @@ claude mcp add piia-engram -- python -m piia_engram.mcp_server
 {
   "mcpServers": {
     "piia-engram": {
-      "command": "python",
-      "args": ["-m", "piia_engram.mcp_server"]
+      "command": "piia-engram-mcp",
+      "args": ["--transport", "stdio"]
     }
   }
+}
+```
+
+如果 console script 不在 `PATH`，可用兼容 fallback：
+```json
+{
+  "command": "python",
+  "args": ["-m", "piia_engram.mcp_server"]
 }
 ```
 
@@ -721,6 +731,8 @@ export ENGRAM_AUDIT=1
 ```bash
 engram setup            # 交互式安装向导
 piia-engram doctor           # 检查配置健康状态（所有 AI 工具）
+piia-engram status           # 脱敏安装与记忆健康摘要
+piia-engram status --html    # 写出本地脱敏状态页
 piia-engram doctor --fix     # 自动修复所有问题
 piia-engram sessions         # 列出跨工具保存的 AI 会话
 piia-engram sessions show <id>  # 打印单个保存会话

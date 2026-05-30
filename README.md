@@ -151,13 +151,15 @@ The setup wizard will:
 3. **Inject AI instructions** into each tool's native config (`CLAUDE.md`, `.cursorrules`, `AGENTS.md`) so AI proactively calls Engram
 4. Walk you through seed knowledge (role, tech stack, language)
 5. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
-6. Show your privacy preferences (cross-tool sync, anonymous statistics — both optional)
+6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (cross-tool sync, anonymous statistics)
 7. **Preview your AI identity card** — immediate proof of value
 
 Restart your AI tool after setup. The first conversation will call `get_user_context` automatically — your AI already knows you.
 
 Check health anytime:
 ```bash
+engram status        # redacted install + memory health summary
+engram status --html # write a local redacted status page
 engram doctor        # diagnose all tools
 engram doctor --fix  # auto-repair issues + inject missing instructions
 engram repair-encoding        # dry-run scan for garbled / mojibake text
@@ -173,7 +175,7 @@ engram repair-encoding --apply  # repair reversible cases with a backup
 # Automatic (recommended)
 engram setup
 # Or manual:
-claude mcp add piia-engram -- python -m piia_engram.mcp_server
+claude mcp add piia-engram -- piia-engram-mcp
 ```
 
 </details>
@@ -186,10 +188,18 @@ Add to `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "piia-engram": {
-      "command": "python",
-      "args": ["-m", "piia_engram.mcp_server"]
+      "command": "piia-engram-mcp",
+      "args": ["--transport", "stdio"]
     }
   }
+}
+```
+
+Compatible fallback if console scripts are not on `PATH`:
+```json
+{
+  "command": "python",
+  "args": ["-m", "piia_engram.mcp_server"]
 }
 ```
 
@@ -741,6 +751,8 @@ honest boundaries, and ledger commands.
 ```bash
 engram setup            # Interactive install wizard
 piia-engram doctor           # Check config health (all AI tools)
+piia-engram status           # Redacted install + memory health summary
+piia-engram status --html    # Write a local redacted status page
 piia-engram doctor --fix     # Auto-repair any issues found
 piia-engram sessions         # List saved cross-tool agent sessions
 piia-engram sessions show <id>  # Print one saved session

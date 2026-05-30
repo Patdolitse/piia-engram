@@ -3847,6 +3847,58 @@ def run_verify_ledger(root) -> int:
     return 0 if ok else 1
 
 
+def _print_status_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram status [--no-probe]\n"
+        "  engram status --html [--output PATH] [--no-probe]\n"
+    )
+
+
+def run_status(argv: list[str] | None = None) -> int:
+    """Print a redacted first-run health summary."""
+    from piia_engram.status_report import build_status, render_status_text, write_status_html
+
+    args = list(argv or [])
+    html_output = False
+    no_probe = False
+    output: Path | None = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"-h", "--help"}:
+            _print_status_usage()
+            return 0
+        if arg == "--html":
+            html_output = True
+        elif arg == "--no-probe":
+            no_probe = True
+        elif arg == "--output":
+            if i + 1 >= len(args):
+                print("Missing value for --output")
+                _print_status_usage()
+                return 2
+            output = Path(args[i + 1]).expanduser()
+            i += 1
+        else:
+            print(f"Unknown status option: {arg}")
+            _print_status_usage()
+            return 2
+        i += 1
+
+    if output is not None and not html_output:
+        print("--output only applies with --html")
+        _print_status_usage()
+        return 2
+    status = build_status(probe=not no_probe)
+    if html_output:
+        path = write_status_html(status, output)
+        print(f"Engram status HTML written to: {path}")
+    else:
+        print(render_status_text(status), end="")
+    return 0
+
+
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
@@ -3863,6 +3915,8 @@ def main() -> None:
         sys.exit(run_sessions(args[1:]))
     elif args[0] == "review":
         sys.exit(run_review(args[1:]))
+    elif args[0] == "status":
+        sys.exit(run_status(args[1:]))
     elif args[0] == "stats":
         from piia_engram.stats import run_stats, log_stats
         if "--log" in args:
@@ -3903,6 +3957,8 @@ def main() -> None:
             "  engram setup --advanced Full interactive setup with privacy prompts\n"
             "  engram doctor           Check config health (all AI tools)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
+            "  engram status           Show a redacted install + memory health summary\n"
+            "  engram status --html    Write a local redacted status page\n"
             "  engram sessions         List saved cross-tool agent sessions\n"
             "  engram sessions show <id>  Print one saved session\n"
             "  engram review           List staging knowledge awaiting review\n"

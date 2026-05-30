@@ -51,7 +51,7 @@ Every knowledge record has a `source_tool` field marking which tool wrote it. It
 
 Each AI tool needs to be configured with Engram as an MCP Server:
 
-**Claude Code** — in `~/.claude/` or the project's `.mcp.json`:
+**Claude Code** - in `~/.claude/` or the project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
@@ -63,9 +63,9 @@ Each AI tool needs to be configured with Engram as an MCP Server:
 }
 ```
 
-**Codex** — add an MCP server in the codex configuration pointing to the same command.
+**Codex** - add an MCP server in the codex configuration pointing to the same command.
 
-**Cursor** — add the same configuration in Cursor's MCP settings.
+**Cursor** - add the same configuration in Cursor's MCP settings.
 
 ### 2.2 Shared Instructions File
 
@@ -121,6 +121,8 @@ Knowledge in the staging tier is automatically promoted to `verified` after bein
 ---
 
 ## 4. Multi-Tool Coexistence
+
+The features in this section were introduced in v3.29.4 and remain supported in the current release.
 
 ### 4.1 Description Field Protection (v3.29.4+)
 
@@ -190,7 +192,7 @@ You can use `search_knowledge` to find the conflicting pair, then decide which t
 
 ## 5. Doctor Self-Diagnostics
 
-v3.29.4+ adds the `doctor` MCP tool, which lets you check the health of the memory system at any time.
+The `doctor` MCP tool was introduced in v3.29.4 and remains supported in the current release. It lets you check the health of the memory system at any time.
 
 ### How to Invoke
 
@@ -258,13 +260,13 @@ No. Engram has the following mechanisms to control growth:
 
 ### Q: If multiple tools modify identity at the same time, will it overwrite?
 
-In v3.29.4+, the description field uses append semantics and will not be overwritten. Other fields (role, language, etc.) are still last-write-wins, but with `_provenance` tracking so you can trace who changed them.
+Since v3.29.4, the description field uses append semantics and will not be overwritten. Other fields (role, language, etc.) are still last-write-wins, but with `_provenance` tracking so you can trace who changed them.
 
 ---
 
 ## Appendix: Type-Aware Expiration Policy
 
-Different types of knowledge have different expiration cycles (v3.29.4+):
+Different types of knowledge have different expiration cycles (introduced in v3.29.4 and still supported):
 
 | Knowledge Domain | Review Cycle | Archive Cycle | Description |
 |----------|----------|----------|------|
