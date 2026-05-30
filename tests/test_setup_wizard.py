@@ -1,6 +1,7 @@
 """setup_wizard 辅助函数单元测试。"""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1153,6 +1154,79 @@ class TestDoctorFix:
         assert result > 0
 
 
+class TestDoctorLaunchProbeIntegration:
+    def test_doctor_reports_probe_failure(self, tmp_path, monkeypatch, capsys):
+        from piia_engram.setup_wizard import run_doctor
+
+        config_path = tmp_path / ".claude" / ".mcp.json"
+        config_path.parent.mkdir()
+        config_path.write_text(json.dumps({
+            "mcpServers": {
+                "engram": {"command": "piia-engram-mcp", "args": []},
+            }
+        }), encoding="utf-8")
+
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {
+                "claude_code": {
+                    "name": "Claude Code",
+                    "config_paths": [config_path],
+                    "verified": True,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._probe_mcp_entry",
+            lambda entry: "MCP launch probe exited with code 2: bad option",
+        )
+
+        result = run_doctor(fix=False)
+        out = capsys.readouterr().out
+
+        assert result > 0
+        assert "MCP launch probe exited with code 2" in out
+
+    def test_doctor_skips_probe_for_legacy_script_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from piia_engram.setup_wizard import run_doctor
+
+        config_path = tmp_path / ".claude" / ".mcp.json"
+        config_path.parent.mkdir()
+        config_path.write_text(json.dumps({
+            "mcpServers": {
+                "engram": {"command": "python", "args": ["/tmp/mcp_server.py"]},
+            }
+        }), encoding="utf-8")
+
+        called = False
+
+        def fake_probe(entry):
+            nonlocal called
+            called = True
+            return None
+
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {
+                "claude_code": {
+                    "name": "Claude Code",
+                    "config_paths": [config_path],
+                    "verified": True,
+                }
+            },
+        )
+        monkeypatch.setattr("piia_engram.setup_wizard._probe_mcp_entry", fake_probe)
+
+        result = run_doctor(fix=False)
+        out = capsys.readouterr().out
+
+        assert result > 0
+        assert called is False
+        assert "direct mcp_server.py path" in out
+
+
 # ── 覆盖率补充测试 ──────────────────────────────────────────────────
 
 
@@ -1257,6 +1331,99 @@ class TestWriteMcpConfig:
         # Migration message printed
         out = capsys.readouterr().out
         assert "migrated" in out
+
+
+class TestMcpEntryLaunchProbe:
+    def test_uvx_entry_is_recommended_and_probeable(self):
+        from piia_engram.setup_wizard import _classify_engram_entry
+
+        entry = {
+            "command": "uvx",
+            "args": ["--from", "piia-engram", "piia-engram-mcp"],
+        }
+
+        result = _classify_engram_entry(entry)
+
+        assert result["severity"] == "ok"
+        assert result["style"] == "recommended-uvx"
+        assert result["probe_argv"] == [
+            "uvx", "--from", "piia-engram", "piia-engram-mcp", "--help",
+        ]
+
+    def test_console_script_entry_is_recommended_and_probeable(self):
+        from piia_engram.setup_wizard import _classify_engram_entry
+
+        result = _classify_engram_entry({"command": "piia-engram-mcp", "args": []})
+
+        assert result["severity"] == "ok"
+        assert result["style"] == "recommended-console-script"
+        assert result["probe_argv"] == ["piia-engram-mcp", "--help"]
+
+    def test_python_module_entry_is_compatible_and_probeable(self):
+        from piia_engram.setup_wizard import _classify_engram_entry
+
+        result = _classify_engram_entry({
+            "command": "/usr/bin/python3",
+            "args": ["-m", "piia_engram.mcp_server"],
+        })
+
+        assert result["severity"] == "ok"
+        assert result["style"] == "compatible-python-module"
+        assert result["probe_argv"] == [
+            "/usr/bin/python3", "-m", "piia_engram.mcp_server", "--help",
+        ]
+
+    def test_probe_success_reports_ok(self, monkeypatch):
+        from piia_engram.setup_wizard import _probe_mcp_entry
+
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = "Engram MCP Server"
+            stderr = ""
+
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return Result()
+
+        monkeypatch.setattr("piia_engram.setup_wizard.subprocess.run", fake_run)
+
+        result = _probe_mcp_entry({"command": "piia-engram-mcp", "args": []})
+
+        assert result is None
+        assert calls[0][0] == ["piia-engram-mcp", "--help"]
+        assert calls[0][1]["timeout"] == 5
+
+    def test_probe_nonzero_reports_issue(self, monkeypatch):
+        from piia_engram.setup_wizard import _probe_mcp_entry
+
+        class Result:
+            returncode = 2
+            stdout = ""
+            stderr = "bad option"
+
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard.subprocess.run",
+            lambda *a, **kw: Result(),
+        )
+
+        issue = _probe_mcp_entry({"command": "piia-engram-mcp", "args": []})
+
+        assert issue is not None
+        assert "exited with code 2" in issue
+
+    def test_probe_timeout_reports_issue(self, monkeypatch):
+        from piia_engram.setup_wizard import _probe_mcp_entry
+
+        def fake_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=5)
+
+        monkeypatch.setattr("piia_engram.setup_wizard.subprocess.run", fake_run)
+
+        issue = _probe_mcp_entry({"command": "piia-engram-mcp", "args": []})
+
+        assert issue == "MCP launch probe timed out after 5s"
 
 
 class TestChoiceFunction:

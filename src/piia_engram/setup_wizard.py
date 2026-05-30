@@ -2138,6 +2138,131 @@ def _detect_installed_tools() -> list[dict]:
     return results
 
 
+def _entry_args(entry: dict) -> list[str]:
+    """Return MCP entry args as strings."""
+    args = entry.get("args", [])
+    if args is None:
+        return []
+    if not isinstance(args, list):
+        return []
+    return [str(arg) for arg in args]
+
+
+def _classify_engram_entry(entry: dict) -> dict:
+    """Classify an MCP ``engram`` entry and build a safe ``--help`` probe."""
+    command = str(entry.get("command") or "").strip()
+    raw_args = entry.get("args", [])
+    args = _entry_args(entry)
+
+    if not command:
+        return {
+            "severity": "error",
+            "style": "invalid",
+            "message": "MCP entry is missing command",
+            "probe_argv": None,
+        }
+    if raw_args is not None and not isinstance(raw_args, list):
+        return {
+            "severity": "error",
+            "style": "invalid",
+            "message": "MCP entry args must be a list",
+            "probe_argv": None,
+        }
+
+    if command == "uvx":
+        if args[:3] == ["--from", "piia-engram", "piia-engram-mcp"]:
+            return {
+                "severity": "ok",
+                "style": "recommended-uvx",
+                "message": "Entry point style: recommended uvx zero-install",
+                "probe_argv": [command, *args, "--help"],
+            }
+        return {
+            "severity": "warn",
+            "style": "uvx-other",
+            "message": (
+                "uvx entry should use: "
+                "--from piia-engram piia-engram-mcp"
+            ),
+            "probe_argv": None,
+        }
+
+    if command == "piia-engram-mcp":
+        return {
+            "severity": "ok",
+            "style": "recommended-console-script",
+            "message": "Entry point style: recommended installed console script",
+            "probe_argv": [command, *args, "--help"],
+        }
+
+    for index, arg in enumerate(args):
+        if arg == "-m" and index + 1 < len(args):
+            module_name = args[index + 1]
+            if module_name == "piia_engram.mcp_server":
+                return {
+                    "severity": "ok",
+                    "style": "compatible-python-module",
+                    "message": "Entry point style: compatible python module",
+                    "probe_argv": [command, *args, "--help"],
+                }
+            if "engram_core" in module_name:
+                return {
+                    "severity": "warn",
+                    "style": "legacy-module",
+                    "message": (
+                        f"Uses old module name '{module_name}', use "
+                        f"'{module_name.replace('engram_core', 'piia_engram')}'"
+                    ),
+                    "probe_argv": None,
+                }
+
+    if any(str(arg).endswith("mcp_server.py") for arg in args):
+        return {
+            "severity": "warn",
+            "style": "legacy-script-path",
+            "message": (
+                "Uses direct mcp_server.py path; use "
+                '["-m", "piia_engram.mcp_server"] or piia-engram-mcp'
+            ),
+            "probe_argv": None,
+        }
+
+    return {
+        "severity": "warn",
+        "style": "unknown",
+        "message": (
+            "Unknown MCP entry style; expected piia-engram-mcp, uvx, "
+            "or python -m piia_engram.mcp_server"
+        ),
+        "probe_argv": None,
+    }
+
+
+def _probe_mcp_entry(entry: dict, *, timeout: int = 5) -> str | None:
+    """Run a bounded ``--help`` probe for safe MCP entry shapes."""
+    classification = _classify_engram_entry(entry)
+    probe_argv = classification.get("probe_argv")
+    if not probe_argv:
+        return None
+    try:
+        result = subprocess.run(
+            probe_argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return f"MCP launch probe timed out after {timeout}s"
+    except Exception as exc:
+        return f"MCP launch probe failed: {exc}"
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        suffix = f": {detail[0][:160]}" if detail else ""
+        return f"MCP launch probe exited with code {result.returncode}{suffix}"
+    return None
+
+
 def _validate_engram_entry(servers: dict, config_path: Path) -> list[str]:
     """验证 engram MCP 条目的所有路径是否有效。
 
@@ -2149,9 +2274,20 @@ def _validate_engram_entry(servers: dict, config_path: Path) -> list[str]:
     if not engram:
         return issues
 
+    # Entry-point style + bounded launchability probe. The probe only runs
+    # for shapes where `_classify_engram_entry` can build a safe `--help`.
+    classification = _classify_engram_entry(engram)
+    if classification["severity"] in ("warn", "error"):
+        issues.append(classification["message"])
+    if classification.get("probe_argv"):
+        probe_issue = _probe_mcp_entry(engram)
+        if probe_issue:
+            issues.append(probe_issue)
+
     # 1. Python 可执行路径
     python_exe = engram.get("command", "")
-    if python_exe and python_exe not in ("npx", "node", "uvx"):
+    non_path_commands = {"npx", "node", "uvx", "piia-engram-mcp"}
+    if python_exe and python_exe not in non_path_commands:
         exe_path = Path(python_exe.replace("\\\\", "\\"))
         if not exe_path.is_file():
             issues.append(f"Python 路径不存在: {python_exe}")
