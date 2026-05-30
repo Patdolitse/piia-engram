@@ -303,6 +303,12 @@ $ engram doctor
     [ok] Identity loaded (role: Senior Backend Developer)
     [ok] quick_context.md ready (4096 bytes)
     [ok] MCP server: 16 tools registered
+
+  -- Continuity --
+
+    [--] No saved agent sessions yet
+         Run an AI session, then wrap up or stop the tool to create one.
+    [ok] Resume brief builds (1 section(s))
 ```
 
 

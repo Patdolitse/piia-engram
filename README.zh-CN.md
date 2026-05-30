@@ -166,7 +166,13 @@ $ engram doctor
     [ok] Engram initialized (~/.engram)
     [ok] Identity loaded (role: 后端开发工程师)
     [ok] quick_context.md ready (4096 bytes)
-    [ok] MCP server: 17 tools registered
+    [ok] MCP server: 16 tools registered
+
+  -- Continuity --
+
+    [--] No saved agent sessions yet
+         Run an AI session, then wrap up or stop the tool to create one.
+    [ok] Resume brief builds (1 section(s))
 ```
 
 ### 各工具配置方法
@@ -618,7 +624,7 @@ piia-engram。运行 `pip install piia-engram && engram setup`，两个工具就
 piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。每个 MCP 兼容的 AI 工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）读取同一个上下文，新对话、工具更新、换工具都不会丢失你的信息。
 
 **piia-engram 和官方 MCP memory server 有什么区别？**
-官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 60 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望每个 AI 工具都了解你的编码偏好和过往经验，用 piia-engram。
+官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 72 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望每个 AI 工具都了解你的编码偏好和过往经验，用 piia-engram。
 
 **piia-engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
 那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。piia-engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
@@ -653,8 +659,8 @@ engram setup
 
 | 层级 | 工具数 | 功能 | 加载方式 |
 |------|--------|------|----------|
-| **核心** | 13 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
-| **高级** | 48 | 知识审查、合并、健康评分、工具图谱、导入导出、审计 | `ENGRAM_TOOLS=all` |
+| **核心** | 16 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
+| **高级** | 56 | 知识审查、合并、健康评分、工具图谱、导入导出、审计 | `ENGRAM_TOOLS=all` |
 
 大多数用户无需开启高级工具 —— 核心工具覆盖日常使用。
 
@@ -692,7 +698,7 @@ pip install piia-engram[secure]
 export ENGRAM_SECRET="选一个强口令"
 ```
 
-加密后的字段以 `enc:v1:...` 格式存储在 JSON 文件中。不设置 `ENGRAM_SECRET` 时，piia-engram 照常以明文工作（向后兼容）。
+加密后的字段以 `enc:v2:...` 格式存储在 JSON 文件中；旧版 `enc:v1:...` 值仍可解密。不设置 `ENGRAM_SECRET` 时，piia-engram 照常以明文工作（向后兼容）。
 
 ### 审计日志（可选）
 
@@ -710,6 +716,12 @@ export ENGRAM_AUDIT=1
 engram setup            # 交互式安装向导
 piia-engram doctor           # 检查配置健康状态（所有 AI 工具）
 piia-engram doctor --fix     # 自动修复所有问题
+piia-engram sessions         # 列出跨工具保存的 AI 会话
+piia-engram sessions show <id>  # 打印单个保存会话
+piia-engram review           # 列出待审查的暂存知识
+piia-engram review show <id> # 查看单条待审知识
+piia-engram review approve <id> --yes  # 将暂存条目提升为已确认
+piia-engram review archive <id> --yes  # 归档待审条目
 piia-engram repair-encoding  # dry-run 扫描乱码 / mojibake
 piia-engram repair-encoding --apply  # 备份后修复可逆乱码
 piia-engram stats            # 查看项目增长数据（GitHub + PyPI）

@@ -5,7 +5,7 @@ This document describes how piia-engram is structured internally, why the struct
 It complements the user-facing [README](../README.md) (which answers *"what does it do"*) by answering *"how is it built and where would I extend it"*.
 
 > **Audience**: contributors, integrators, and anyone reading the code.
-> **Version**: v3.19.0 (2026-05-23)
+> **Version**: v3.38.0 (2026-05-30)
 
 ---
 
@@ -54,7 +54,7 @@ The whole thing fits in your laptop's RAM (typical user has < 1 MB on disk) and 
 
 After the v3.14.1 refactor and v3.16.0 reports split, the package is split into **11 focused modules + 7 supporting modules**.
 
-> **Line counts last verified**: v3.19.0 (2026-05-23). Run `wc -l src/piia_engram/*.py` to check.
+> **Line counts are approximate**. Run `wc -l src/piia_engram/*.py` to check current values.
 
 ### Core modules
 
@@ -147,12 +147,15 @@ AI:   calls MCP `add_lesson(summary="...", domain="python,testing")`
 ### 3.3 Review and promotion
 
 ```
-User: opens browser-based review (piia-engram review)
-   └─▶ generate_review_page() emits HTML with rarity-colored items
-   └─▶ User unchecks 3 items (archive), keeps 5 staging items (confirm)
-   └─▶ Click "Confirm Review" → downloads engram_review_*.json
-   └─▶ User: "piia-engram apply_review engram_review_<date>.json"
-         └─▶ apply_review() → promote_knowledge() × 5, archive_knowledge() × 3
+User: reviews staging knowledge
+   ├─▶ Terminal path: `engram review`
+   │     ├─▶ `engram review show <id>` inspects one item
+   │     └─▶ `engram review approve <id> --yes` or
+   │         `engram review archive <id> --yes`
+   └─▶ Browser path: request_outline_review / export_review_page
+         ├─▶ generate_review_page() emits HTML with rarity-colored items
+         ├─▶ user confirms or archives staging items
+         └─▶ apply_review() → promote_knowledge() × N, archive_knowledge() × N
 ```
 
 Promotion is the explicit gate: only items the user keeps survive long-term. This is what separates piia-engram from "everything goes into the memory bag" approaches.
