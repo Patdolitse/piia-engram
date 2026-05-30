@@ -730,6 +730,8 @@ honest boundaries, and ledger commands.
 engram setup            # Interactive install wizard
 piia-engram doctor           # Check config health (all AI tools)
 piia-engram doctor --fix     # Auto-repair any issues found
+piia-engram sessions         # List saved cross-tool agent sessions
+piia-engram sessions show <id>  # Print one saved session
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
 piia-engram repair-encoding --apply  # Repair reversible cases with a backup
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)

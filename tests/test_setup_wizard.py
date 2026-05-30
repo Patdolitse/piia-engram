@@ -1,8 +1,10 @@
 """setup_wizard 辅助函数单元测试。"""
 
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -34,6 +36,168 @@ from piia_engram.setup_wizard import (
     _write_mcp_config,
     main,
 )
+
+
+class TestSessionsCLI:
+    def test_sessions_empty_state_is_successful(self, tmp_path, monkeypatch, capsys):
+        """engram sessions should succeed and guide when no sessions exist."""
+        from piia_engram.setup_wizard import run_sessions
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+        assert run_sessions([]) == 0
+
+        out = capsys.readouterr().out
+        assert "No saved agent sessions" in out
+
+    def test_sessions_lists_metadata_without_content(self, tmp_path, monkeypatch, capsys):
+        """engram sessions should list recent session metadata only."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import run_sessions
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        eng = Engram()
+        eng.save_agent_context(tool="codex", content="SECRET BODY", session_id="codex-s1")
+
+        assert run_sessions([]) == 0
+
+        out = capsys.readouterr().out
+        assert "codex" in out
+        assert "codex-s1" in out
+        assert "SECRET BODY" not in out
+
+    def test_sessions_filters_by_tool_and_limit(self, tmp_path, monkeypatch, capsys):
+        """--tool and --limit should narrow the listed sessions."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import run_sessions
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        eng = Engram()
+        eng.save_agent_context(tool="codex", content="one", session_id="codex-s1")
+        eng.save_agent_context(tool="codex", content="two", session_id="codex-s2")
+        eng.save_agent_context(tool="claude_code", content="other", session_id="claude-s1")
+
+        assert run_sessions(["--tool", "codex", "--limit", "1"]) == 0
+
+        out = capsys.readouterr().out
+        assert "codex" in out
+        assert out.count("codex-s") == 1
+        assert "claude-s1" not in out
+
+    def test_sessions_show_prints_matching_session_content(self, tmp_path, monkeypatch, capsys):
+        """engram sessions show <id> should print that session's content."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import run_sessions
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        Engram().save_agent_context(
+            tool="codex",
+            content="Detailed checkpoint body",
+            session_id="codex-show",
+        )
+
+        assert run_sessions(["show", "codex-show"]) == 0
+
+        out = capsys.readouterr().out
+        assert "codex-show" in out
+        assert "Detailed checkpoint body" in out
+
+    def test_sessions_show_finds_old_session_beyond_list_page(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """show should not be limited to the first 200 recent sessions."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import run_sessions
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        eng = Engram()
+        first = eng.save_agent_context(
+            tool="codex",
+            content="old checkpoint body",
+            session_id="codex-old",
+        )
+        old_path = Path(first["file"])
+        for i in range(201):
+            eng.save_agent_context(
+                tool="codex",
+                content=f"new checkpoint {i}",
+                session_id=f"codex-new-{i:03d}",
+            )
+        old_time = time.time() - 3600
+        os.utime(old_path, (old_time, old_time))
+
+        assert run_sessions(["show", "codex-old"]) == 0
+
+        out = capsys.readouterr().out
+        assert "codex-old" in out
+        assert "old checkpoint body" in out
+
+    def test_sessions_show_missing_returns_nonzero(self, tmp_path, monkeypatch, capsys):
+        """show should return nonzero when the requested session is absent."""
+        from piia_engram.setup_wizard import run_sessions
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+        assert run_sessions(["show", "missing-session"]) == 1
+
+        out = capsys.readouterr().out
+        assert "not found" in out.lower()
+
+
+class TestDoctorContinuityChecks:
+    def test_continuity_check_empty_state_is_informational(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """No saved sessions should not count as a doctor problem."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import _run_continuity_checks
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        eng = Engram()
+
+        assert _run_continuity_checks(eng) == 0
+
+        out = capsys.readouterr().out
+        assert "Continuity" in out
+        assert "No saved agent sessions" in out
+
+    def test_continuity_check_reports_recent_session(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Saved sessions should appear as a healthy continuity signal."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import _run_continuity_checks
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        eng = Engram()
+        eng.save_agent_context(tool="codex", content="checkpoint", session_id="codex-cp")
+
+        assert _run_continuity_checks(eng) == 0
+
+        out = capsys.readouterr().out
+        assert "Continuity" in out
+        assert "codex-cp" in out
+        assert "codex" in out
+
+    def test_functional_checks_runs_continuity_check(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """doctor functional checks should include the continuity section."""
+        import piia_engram.setup_wizard as sw
+
+        called = {}
+
+        def fake_continuity(eng):
+            called["root"] = eng.root
+            print("  -- Continuity --")
+            return 0
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setattr(sw, "_run_continuity_checks", fake_continuity)
+
+        sw._run_functional_checks(fix=False)
+
+        assert called["root"] == tmp_path
 
 
 def test_find_python():
@@ -1002,6 +1166,25 @@ class TestMainCLI:
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 0  # healthy = 0
+
+    def test_main_sessions_dispatches(self, tmp_path, monkeypatch, capsys):
+        """main() with 'sessions' should dispatch to run_sessions."""
+        import piia_engram.setup_wizard as sw
+
+        seen = {}
+
+        def fake_run_sessions(argv):
+            seen["argv"] = argv
+            return 0
+
+        monkeypatch.setattr(sw, "run_sessions", fake_run_sessions)
+        monkeypatch.setattr("sys.argv", ["engram", "sessions", "--limit", "3"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            sw.main()
+
+        assert exc_info.value.code == 0
+        assert seen["argv"] == ["--limit", "3"]
 
     def test_main_repair_encoding_dry_run_dispatches(self, tmp_path, monkeypatch, capsys):
         """repair-encoding should dry-run by default and report findings."""

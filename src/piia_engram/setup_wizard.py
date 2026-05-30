@@ -2560,6 +2560,8 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] MCP server import failed: {exc}")
         problems += 1
 
+    problems += _run_continuity_checks(eng)
+
     # 6. AI instruction snippet injection status
     # v3.31 P0: doctor now checks BOTH presence AND freshness. A snippet
     # that lacks _SNIPPET_FRESHNESS_TOKEN ("get_resume_brief") was injected
@@ -2787,6 +2789,169 @@ def _run_functional_checks(*, fix: bool = False) -> int:
 
     print()
     return problems
+
+
+def _format_session_size(size_bytes: int) -> str:
+    """Human-readable byte count for the small sessions table."""
+    try:
+        size = int(size_bytes)
+    except (TypeError, ValueError):
+        size = 0
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KiB"
+    return f"{size / (1024 * 1024):.1f} MiB"
+
+
+def _parse_sessions_limit(raw: str | None, *, default: int = 20) -> int:
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(value, 200))
+
+
+_SESSION_SCAN_LIMIT = 100_000
+
+
+def _run_continuity_checks(eng) -> int:
+    """Doctor section for cross-tool session continuity.
+
+    This is intentionally informational for the empty-state case: a clean
+    fresh install may have no saved sessions yet, so that must not make doctor
+    exit nonzero.
+    """
+    print()
+    _safe_print("  -- Continuity --\n")
+    problems = 0
+
+    try:
+        all_sessions = eng.list_agent_sessions(limit=_SESSION_SCAN_LIMIT)
+        recent = all_sessions[:1]
+    except Exception as exc:
+        print(f"    [!!] Agent session listing failed: {exc}")
+        return 1
+
+    if not recent:
+        print("    [--] No saved agent sessions yet")
+        print("         Run an AI session, then wrap up or stop the tool to create one.")
+    else:
+        latest = recent[0]
+        tools = sorted({str(s.get("tool", "")) for s in all_sessions if s.get("tool")})
+        _safe_print(
+            "    [ok] Agent sessions: "
+            f"{len(all_sessions)} saved across {len(tools)} tool(s); "
+            f"latest {latest.get('tool', '?')}/{latest.get('session_id', '?')} "
+            f"at {latest.get('modified_at', '?')}"
+        )
+
+    try:
+        brief = eng.get_resume_brief(token_budget=400)
+        included = brief.get("sections_included", []) if isinstance(brief, dict) else []
+        print(f"    [ok] Resume brief builds ({len(included)} section(s))")
+    except Exception as exc:
+        print(f"    [!!] Resume brief failed: {exc}")
+        problems += 1
+
+    return problems
+
+
+def _print_sessions_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram sessions [--tool TOOL] [--limit N]\n"
+        "  engram sessions show <session_id> [--tool TOOL]\n"
+    )
+
+
+def run_sessions(argv: list[str] | None = None) -> int:
+    """List or show saved cross-tool agent sessions."""
+    _configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_sessions_usage()
+        return 0
+
+    from piia_engram.core import Engram  # local import keeps setup startup light
+
+    eng = Engram()
+
+    if args and args[0] == "show":
+        if len(args) < 2:
+            _print_sessions_usage()
+            return 2
+        session_id = args[1]
+        tool = ""
+        i = 2
+        while i < len(args):
+            if args[i] == "--tool" and i + 1 < len(args):
+                tool = args[i + 1]
+                i += 2
+            else:
+                print(f"Unknown sessions option: {args[i]}")
+                _print_sessions_usage()
+                return 2
+
+        metadata = eng.list_agent_sessions(tool=tool, limit=_SESSION_SCAN_LIMIT)
+        match = next((s for s in metadata if s.get("session_id") == session_id), None)
+        if match is None:
+            print(f"Session not found: {session_id}")
+            return 1
+
+        session_path = eng.root / "contexts" / str(match.get("tool", "")) / f"{session_id}.md"
+        try:
+            content = session_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"Session not readable: {session_id} ({exc})")
+            return 1
+
+        _safe_print(f"# Session {match.get('tool', '?')}/{session_id}")
+        _safe_print(f"Modified: {match.get('modified_at', '?')}\n")
+        _safe_print(content)
+        return 0
+
+    tool = ""
+    limit = 20
+    i = 0
+    while i < len(args):
+        if args[i] == "--tool" and i + 1 < len(args):
+            tool = args[i + 1]
+            i += 2
+        elif args[i] == "--limit" and i + 1 < len(args):
+            limit = _parse_sessions_limit(args[i + 1])
+            i += 2
+        else:
+            print(f"Unknown sessions option: {args[i]}")
+            _print_sessions_usage()
+            return 2
+
+    sessions = eng.list_agent_sessions(tool=tool, limit=limit)
+    if not sessions:
+        if tool:
+            print(f"No saved agent sessions found for tool: {tool}")
+        else:
+            print("No saved agent sessions yet.")
+        print("Run an AI session, then wrap up or stop the tool to create one.")
+        return 0
+
+    title = f"Recent agent sessions ({len(sessions)})"
+    if tool:
+        title += f" for {tool}"
+    print(title)
+    print("modified_at           tool          session_id                 size")
+    print("-------------------   -----------   ------------------------   --------")
+    for s in sessions:
+        _safe_print(
+            f"{s.get('modified_at', '?'):<21} "
+            f"{s.get('tool', '?'):<13} "
+            f"{s.get('session_id', '?'):<26} "
+            f"{_format_session_size(s.get('size_bytes', 0))}"
+        )
+    print("\nUse 'engram sessions show <session_id>' to print a session.")
+    return 0
 
 
 def _run_telemetry_cli(sub_args: list[str]) -> None:
@@ -3457,6 +3622,8 @@ def main() -> None:
     elif args[0] == "doctor":
         fix = "--fix" in args
         sys.exit(run_doctor(fix=fix))
+    elif args[0] == "sessions":
+        sys.exit(run_sessions(args[1:]))
     elif args[0] == "stats":
         from piia_engram.stats import run_stats, log_stats
         if "--log" in args:
@@ -3497,6 +3664,8 @@ def main() -> None:
             "  engram setup --advanced Full interactive setup with privacy prompts\n"
             "  engram doctor           Check config health (all AI tools)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
+            "  engram sessions         List saved cross-tool agent sessions\n"
+            "  engram sessions show <id>  Print one saved session\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram reindex          Rebuild the hybrid search index from JSON\n"
@@ -3511,8 +3680,8 @@ def main() -> None:
             "  engram telemetry        Manage anonymous usage statistics\n"
             "  engram privacy          Show what data Engram stores\n\n"
             "Tool tiers:\n"
-            "  Default: 13 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 48 tools.\n"
+            "  Default: 16 核心工具 / core MCP tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 72 tools.\n"
         )
         sys.exit(0)
 
