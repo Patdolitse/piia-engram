@@ -6,6 +6,28 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.39.1] - 2026-05-30
+
+The terminal encoding diagnostics patch release: Engram now helps users distinguish real stored-data mojibake from Windows/terminal display encoding issues.
+
+### Added
+- **Terminal encoding diagnostics in `engram doctor`** — the CLI doctor now reports stdout/stderr encoding, `PYTHONIOENCODING`, and Python runtime encodings separately from stored-data `Encoding health`.
+- **Windows UTF-8 code page support** — code page `cp65001` is recognized as UTF-8 so Windows terminals configured with `chcp 65001` are not reported as legacy encodings.
+
+### Changed
+- `engram doctor` treats an unset `PYTHONIOENCODING` as OK when stdout/stderr are already UTF-8, reducing false "needs attention" output for healthy terminals.
+- README, Chinese README, cross-tool guide, architecture notes, and privacy examples are synced to v3.39.1.
+
+### Fixed
+- Prevented a confusing diagnosis loop where clean Engram data could still look suspicious because the terminal display layer, not the store, rendered Unicode poorly.
+
+### Tests
+- Full suite: **1767 passing**, 4 expected `engram_core` deprecation warnings.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, Claude Code read-only review PASS.
+
+### Release Evidence
+- See `release-evidence/v3.39.1.md`.
+
 ## [3.39.0] - 2026-05-30
 
 The local workflow visibility release: Engram now gives users and AI agents clearer local surfaces for saved sessions, staged-knowledge review, and governance boundaries, without changing the default local-first privacy model.

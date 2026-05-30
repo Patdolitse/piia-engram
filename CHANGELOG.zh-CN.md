@@ -6,6 +6,28 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.39.1] - 2026-05-30
+
+终端编码诊断补丁版：Engram 现在能帮助用户区分真实存储数据乱码与 Windows / 终端显示编码问题。
+
+### 新增
+- **`engram doctor` 终端编码诊断**：CLI doctor 现在会分别报告 stdout/stderr 编码、`PYTHONIOENCODING` 和 Python 运行时编码，并与存储数据的 `Encoding health` 分离。
+- **Windows UTF-8 代码页支持**：将 `cp65001` 识别为 UTF-8，避免 `chcp 65001` 的 Windows 终端被误报为 legacy 编码。
+
+### 变更
+- 当 stdout/stderr 已经是 UTF-8 时，`engram doctor` 会把未设置 `PYTHONIOENCODING` 视为 OK，减少健康终端里的误导性提示。
+- README、中文 README、cross-tool guide、架构说明和隐私示例同步到 v3.39.1。
+
+### 修复
+- 修复“Engram 数据本身干净，但终端显示层 Unicode 渲染异常导致用户误判数据损坏”的诊断盲区。
+
+### 测试
+- 全量套件：**1767 passed**，4 个预期内 `engram_core` 改名兼容 warning。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，Claude Code 只读复审 PASS。
+
+### Release Evidence
+- 见 `release-evidence/v3.39.1.md`。
+
 ## [3.39.0] - 2026-05-30
 
 本地工作流可见性版本：Engram 现在为已保存会话、暂存知识审查和治理边界提供更清晰的本地入口，同时不改变默认本地优先的隐私模型。
