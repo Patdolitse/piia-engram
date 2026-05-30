@@ -6,6 +6,22 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.39.0] - 2026-05-30
+
+The local workflow visibility release: Engram now gives users and AI agents clearer local surfaces for saved sessions, staged-knowledge review, and governance boundaries, without changing the default local-first privacy model.
+
+### Added
+- **Session continuity CLI** — `engram sessions` lists saved cross-tool agent sessions using metadata only, and `engram sessions show <id>` prints one explicitly requested session.
+- **Doctor continuity checks** — `engram doctor` now includes a Continuity section that distinguishes a clean "no saved sessions yet" install from real resume-brief failures.
+- **Staged knowledge review CLI** — `engram review`, `engram review show <id>`, `engram review approve <id> --yes`, and `engram review archive <id> --yes` provide a terminal path for approving or archiving staging lessons and decisions.
+- **Governance documentation** — new public documentation explains caller trust levels, read/write/export gates, file-side-effect hardening, corpus encryption boundaries, and the deny-by-default tool matrix.
+
+### Changed
+- README, Chinese README, architecture notes, and privacy documentation now agree on the 16 Core / 56 Advanced / 72 total MCP tool split, `enc:v2` encryption wording, session storage layout, playbook storage layout, and current CLI surfaces.
+
+### Tests
+- Full suite: **1762 passing**, 4 expected `engram_core` deprecation warnings.
+
 ## [3.38.0] - 2026-05-30
 
 ### Added

@@ -6,6 +6,22 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.39.0] - 2026-05-30
+
+本地工作流可见性版本：Engram 现在为已保存会话、暂存知识审查和治理边界提供更清晰的本地入口，同时不改变默认本地优先的隐私模型。
+
+### 新增
+- **会话连续性 CLI**：`engram sessions` 只用元数据列出跨工具保存的 AI 会话，`engram sessions show <id>` 只打印用户明确指定的单个会话。
+- **doctor 连续性检查**：`engram doctor` 新增 Continuity 段，区分干净新安装的“尚无保存会话”和真正的 resume brief 构建失败。
+- **暂存知识审查 CLI**：`engram review`、`engram review show <id>`、`engram review approve <id> --yes`、`engram review archive <id> --yes` 为暂存 lessons / decisions 提供终端审查、确认和归档路径。
+- **治理文档**：新增公开治理文档，说明调用方信任等级、读/写/导出门控、文件副作用加固、语料加密边界和 deny-by-default 工具矩阵。
+
+### 变更
+- README、中文 README、架构文档和隐私文档现在统一为 16 个核心工具 / 56 个高级工具 / 72 个 MCP 工具总数，并同步 `enc:v2` 加密表述、会话存储路径、playbook 存储路径和当前 CLI 入口。
+
+### 测试
+- 全量套件：**1762 passed**，4 个预期内 `engram_core` 改名兼容 warning。
+
 ## [3.38.0] - 2026-05-30
 
 ### 新增
