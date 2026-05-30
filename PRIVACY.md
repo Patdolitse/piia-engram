@@ -42,7 +42,7 @@ All files are plain JSON. You can open, edit, back up, or delete them at any tim
 
 ### Core tools: zero network requests
 
-All 65 MCP tools (identity, knowledge, search, review, etc.) operate entirely on local files. They make **no network requests** — no API calls, no analytics, no phone-home.
+All 72 MCP tools (identity, knowledge, search, review, etc.) operate entirely on local files. They make **no network requests** — no API calls, no analytics, no phone-home.
 
 The only exception is the optional `read_web_content` tool, which fetches a URL you explicitly provide.
 
@@ -99,14 +99,14 @@ export ENGRAM_SECRET="your-strong-passphrase"
 
 - PBKDF2 with 600,000 iterations (OWASP 2023+ recommendation)
 - Per-value random salt and nonce
-- Encrypted fields stored as `enc:v1:...` in JSON files
+- Encrypted fields stored as `enc:v2:...` in JSON files; legacy `enc:v1:...` values still decrypt
 - Without `ENGRAM_SECRET`, piia-engram works normally with plaintext
 
 ## Access control
 
 - All data is readable by any process with file-system access to `~/.engram/`
 - `restricted_fields` filters sensitive profile fields from cold-start context
-- MCP protocol does not currently support caller identity, so per-tool ACL is not possible
+- Optional agent governance (`ENGRAM_GOVERNANCE=1`) adds self-reported caller trust levels and disclosure receipts; it is not a hardened sandbox or cryptographic caller identity
 - Optional audit logging (`ENGRAM_AUDIT=1`) tracks all read/write operations to `~/.engram/audit.log`
 
 **Recommendation:** Do not store passwords, API keys, or client PII in piia-engram. It is designed for personal AI context, not secrets management.

@@ -20,7 +20,7 @@ It complements the user-facing [README](../README.md) (which answers *"what does
                          │ HTTP/SSE  (self-hosted shared instance)
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  mcp_server.py — exposes 43 tools (Tier-1 by default, opt-in rest)  │
+│  mcp_server.py — exposes 72 tools (Tier-1 by default, opt-in rest)  │
 └────────────────────────┬────────────────────────────────────────────┘
                          │ Python method calls on a single shared
                          │ ``Engram`` instance
@@ -76,7 +76,7 @@ After the v3.14.1 refactor and v3.16.0 reports split, the package is split into 
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1476 | FastMCP server: 43 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
+| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1476 | FastMCP server: 72 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (local log only, no network), payload validation, HMAC daily ID, preview/status CLI support |
 | [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~1723 | `engram setup` + `piia-engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
@@ -203,18 +203,21 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 
 ## 5. The MCP surface
 
-`mcp_server.py` exposes 43 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions:
+`mcp_server.py` exposes 72 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions:
 
 | Tier-1 (default) | Why |
 |------------------|-----|
 | `get_user_context` | Cold-start identity + context |
 | `wrap_up_session` | Save insights + sync at session end |
-| `add_lesson`, `add_decision` | Capture knowledge |
+| `memory_store` | Unified write endpoint for lessons, decisions, and playbooks |
+| `add_lesson`, `add_decision`, `add_playbook` | Capture knowledge |
 | `search_knowledge`, `get_relevant_knowledge` | Retrieve knowledge |
 | `get_identity_card`, `update_identity` | Identity reads/writes |
 | `get_project_context`, `save_project_snapshot` | Per-project state |
+| `get_recent_context`, `get_daily_log`, `get_resume_brief` | Recover recent cross-tool work |
+| `doctor` | Memory system self-diagnosis |
 
-Set `ENGRAM_TOOLS=all` to expose the full 43 tools (review, health, link/unlink, OpenClaw bridge, bulk operations, etc.) for power users.
+Set `ENGRAM_TOOLS=all` to expose the full 72 tools (review, health, link/unlink, OpenClaw bridge, bulk operations, etc.) for power users.
 
 ### Transport modes
 

@@ -302,7 +302,7 @@ $ engram doctor
     [ok] Engram initialized (~/.engram)
     [ok] Identity loaded (role: Senior Backend Developer)
     [ok] quick_context.md ready (4096 bytes)
-    [ok] MCP server: 17 tools registered
+    [ok] MCP server: 16 tools registered
 ```
 
 
@@ -392,7 +392,7 @@ piia-engram ships 72 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 }
 ```
 
-### Tier-1 Core (13 tools — daily workflow)
+### Tier-1 Core (16 tools — daily workflow)
 
 | Tool | Purpose |
 |---|---|
@@ -409,6 +409,9 @@ piia-engram ships 72 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 | `get_project_context` | Read a saved project snapshot |
 | `save_project_snapshot` | Persist project state for future sessions |
 | `get_recent_context` | Recover lost session context after restart |
+| `get_daily_log` | Read a human-friendly project timeline for a day |
+| `get_resume_brief` | Build a cross-session/cross-tool resume brief |
+| `doctor` | Run memory system self-diagnosis |
 
 ### Tier-2 Advanced (56 tools — knowledge management, review, governance, import/export)
 
@@ -670,7 +673,7 @@ piia-engram is functional and actively used, but some things it intentionally do
 | Area | Current State | Planned |
 |---|---|---|
 | **File safety** | Atomic JSON writes with a shared portalocker file lock | Broader stress testing |
-| **Access control** | `restricted_fields` filters profile in `get_user_context`, `get_profile` (default safe=true), `get_identity_card`, and resource endpoints | Per-caller ACL blocked by MCP caller identity |
+| **Access control** | `restricted_fields` filters profile output. Optional agent governance (`ENGRAM_GOVERNANCE=1`) adds trust-level read/write gates, owner-only export/import controls, and a hash-chained disclosure ledger. See [docs/governance.md](docs/governance.md). | Stronger caller identity binding requires MCP/client support |
 | **Encryption** | Optional field-level AES-256-GCM encryption via `ENGRAM_SECRET` env var. Install `pip install piia-engram[secure]`. | Full-disk encryption for all files (v4.0) |
 | **Audit logging** | Optional access audit log via `ENGRAM_AUDIT=1` env var. Logs to `~/.engram/audit.log`. | Per-caller audit (blocked by MCP spec) |
 | **Caller identity** | MCP protocol doesn't pass tool identity | Blocked by MCP spec |
@@ -694,7 +697,7 @@ pip install piia-engram[secure]
 export ENGRAM_SECRET="your-strong-passphrase"
 ```
 
-Encrypted fields are stored as `enc:v1:...` in JSON files. Without `ENGRAM_SECRET`, piia-engram works normally with plaintext (backward compatible).
+Encrypted fields are stored as `enc:v2:...` in JSON files; legacy `enc:v1:...` values still decrypt. Without `ENGRAM_SECRET`, piia-engram works normally with plaintext (backward compatible).
 
 ### Audit logging (optional)
 
@@ -705,6 +708,21 @@ export ENGRAM_AUDIT=1
 ```
 
 Logs are written to `~/.engram/audit.log` in JSON-lines format. Query with `get_audit_log` tool or `grep`.
+
+### Agent governance (advanced, optional)
+
+Enable per-caller trust levels and disclosure receipts:
+
+```bash
+export ENGRAM_GOVERNANCE=1
+export ENGRAM_CLIENT_TYPE=claude_code
+```
+
+Governance is off by default. When enabled, known local coding agents are
+filtered to public/work knowledge, unknown callers fail closed to public-only,
+and owner-only exports/imports/grant changes require `private-self`. See
+[docs/governance.md](docs/governance.md) for the exact trust levels, gates,
+honest boundaries, and ledger commands.
 
 ## CLI Commands
 
