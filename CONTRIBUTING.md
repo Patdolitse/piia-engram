@@ -22,7 +22,7 @@ src/piia_engram/
     hooks/             # Claude Code lifecycle hooks (Stop/PreCompact/PostCompact/SessionStart)
     crypto.py          # AES-256-GCM encryption for sensitive profile fields
     telemetry.py       # Opt-in anonymous usage statistics (local log only)
-tests/                 # 900+ tests across all modules
+tests/                 # 1700+ tests across all modules
 experiments/
     benchmarks/      # Retrieval/injection quality benchmarks
 ```
@@ -49,7 +49,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **900+ tests passing, 0 failures, 96% coverage**. All PRs must maintain this.
+Current baseline: **1700+ tests passing, 0 failures**. All PRs must maintain a passing suite.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash
@@ -106,6 +106,8 @@ Please include:
 - Steps to reproduce
 - Expected vs actual behavior
 - piia-engram version (`pip show piia-engram`)
+
+Automated promotional issues, repeated grading notifications, and unsolicited badge-placement requests are not accepted. piia-engram's README is reserved for official project documentation, verified ecosystem listings, and installation guidance.
 
 **Security vulnerabilities**: Do NOT open a public issue. Email engram-security@proton.me instead.
 
