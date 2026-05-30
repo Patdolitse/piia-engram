@@ -190,6 +190,25 @@ def test_version_specific_evidence(rg, tmp_path):
     assert ok is False
 
 
+def test_blocked_main_message_is_plain_ascii(rg, tmp_path, monkeypatch, capsys):
+    """Blocked release-gate guidance should not use mojibake-prone punctuation."""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_release_gate.py",
+        "--version",
+        "9.9.9",
+        "--root",
+        str(tmp_path),
+    ])
+
+    assert rg.main() == 1
+
+    out = capsys.readouterr().out
+    assert "field-assertion-audit - each 'passed' or 'n/a'" in out
+    assert "鈥" not in out
+
+
 def test_real_pyproject_version_resolves(rg):
     """_pyproject_version reads the actual repo version without error."""
     root = Path(__file__).resolve().parent.parent

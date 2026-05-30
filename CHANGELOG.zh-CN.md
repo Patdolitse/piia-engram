@@ -6,6 +6,32 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.40.0] - 2026-05-31
+
+首次运行信心版本：Engram 现在在安装后提供更清晰的本地状态界面，包括 MCP 客户端配置健康、可分享的脱敏 HTML 状态页，以及后续常用命令。
+
+### 新增
+- **`engram status` MCP 客户端摘要**：CLI 现在用脱敏元数据报告哪些客户端已配置、哪些缺少配置。
+- **更完整的状态 HTML**：`engram status --html` 现在包含 MCP Clients 表格和 Next Commands 区块，提示 `engram doctor`、`engram review`、`engram sessions`。
+- **状态探测测试覆盖**：新增对 MCP 入口有界探测和 `status --help` 输出的回归测试。
+- **Codex + Claude 验收流程**：本地项目流程文档记录了 Codex 实现、Claude 验收的协作闭环。
+
+### 变更
+- `engram status --html` 将 Engram 存储路径渲染为 `<engram-root>`，方便把 HTML 作为脱敏证据分享而不暴露本机用户路径。
+- `scripts/release_sanitize_check.py` 的用户可见消息改为 ASCII，避免 Windows 终端出现 mojibake。
+- README、中文 README、架构说明、隐私示例、MCP Registry 元数据和 Claude 插件元数据同步到 v3.40.0。
+
+### 修复
+- 关闭状态 HTML 通过文本状态块嵌入本机 Engram storage path 的泄漏边界。
+- 新增回归测试，确保 status HTML 不包含 MCP 配置路径、entry args/env、token 或本机 Engram root。
+
+### 测试
+- 全量套件：**1781 passed**，4 个预期内 `engram_core` 改名兼容 warning。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，Codex subagent 审计 PASS，Claude Code 只读验收 PASS。
+
+### Release Evidence
+- 见 `release-evidence/v3.40.0.md`。
+
 ## [3.39.1] - 2026-05-30
 
 终端编码诊断补丁版：Engram 现在能帮助用户区分真实存储数据乱码与 Windows / 终端显示编码问题。

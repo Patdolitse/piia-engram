@@ -164,6 +164,176 @@ class TestSessionsCLI:
 
         assert not (tmp_path / "reports" / "status.html").exists()
 
+    def test_status_reports_mcp_client_summary_without_config_paths(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Client config summaries should show status, not local config paths."""
+        import piia_engram.setup_wizard as sw
+        from piia_engram.setup_wizard import run_status
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+        private_dir = tmp_path / "private-client-path"
+        private_dir.mkdir()
+        config_path = private_dir / "mcp.json"
+        config_path.write_text(
+            json.dumps({
+                "mcpServers": {
+                    "engram": {"command": "piia-engram-mcp", "args": []},
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            sw,
+            "_tool_configs",
+            lambda: {
+                "secret_client": {
+                    "name": "Secret Client",
+                    "config_paths": [config_path],
+                    "verified": True,
+                },
+                "missing_client": {
+                    "name": "Missing Client",
+                    "config_paths": [tmp_path / "missing.json"],
+                    "verified": False,
+                },
+            },
+        )
+
+        assert run_status(["--no-probe"]) == 0
+
+        out = capsys.readouterr().out
+        assert "MCP clients:" in out
+        assert "Secret Client: configured" in out
+        assert "Missing Client: not configured" in out
+        assert "recommended-console-script" in out
+        assert str(private_dir) not in out
+        assert str(config_path) not in out
+
+    def test_status_html_includes_next_action_commands(self, tmp_path, monkeypatch):
+        """HTML status page should include common follow-up commands."""
+        from piia_engram.status_report import render_status_html
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        status = {
+            "version": "test",
+            "storage": {"path": str(tmp_path), "file_count": 0, "bytes": 0, "skipped": 0},
+            "knowledge": {"total": 0, "verified": 0, "staging": 0, "archived": 0},
+            "sessions": {"count": 0, "latest": None},
+            "clients": {
+                "configured": 1,
+                "total": 1,
+                "tools": [{"name": "Codex", "status": "configured", "style": "recommended-console-script"}],
+            },
+            "encoding": {
+                "stdout": "utf-8",
+                "stderr": "utf-8",
+                "pythonioencoding": "utf-8",
+                "ok": True,
+            },
+            "telemetry": {"local_enabled": False, "remote_enabled": False, "phase": "1"},
+            "mcp_entry": {"ok": None, "command": "piia-engram-mcp", "message": "probe skipped"},
+            "warnings": [],
+        }
+
+        html = render_status_html(status)
+
+        assert "MCP Clients" in html
+        assert "engram doctor" in html
+        assert "engram review" in html
+        assert "engram sessions" in html
+
+    def test_status_html_redacts_local_paths_and_client_config(self, tmp_path, monkeypatch, capsys):
+        """HTML status should be shareable without local root or MCP config paths."""
+        import piia_engram.setup_wizard as sw
+        from piia_engram.setup_wizard import run_status
+
+        private_root = tmp_path / "private-engram-root"
+        private_dir = tmp_path / "private-client-path"
+        private_dir.mkdir()
+        config_path = private_dir / "mcp.json"
+        config_path.write_text(
+            json.dumps({
+                "mcpServers": {
+                    "engram": {
+                        "command": "piia-engram-mcp",
+                        "args": ["--private-arg"],
+                        "env": {"SECRET_TOKEN": "do-not-render"},
+                    },
+                },
+            }),
+            encoding="utf-8",
+        )
+        output = tmp_path / "status.html"
+
+        monkeypatch.setenv("ENGRAM_DIR", str(private_root))
+        monkeypatch.setattr(
+            sw,
+            "_tool_configs",
+            lambda: {
+                "secret_client": {
+                    "name": "Secret Client",
+                    "config_paths": [config_path],
+                    "verified": True,
+                },
+            },
+        )
+
+        assert run_status(["--html", "--no-probe", "--output", str(output)]) == 0
+
+        out = capsys.readouterr().out
+        html = output.read_text(encoding="utf-8")
+        assert str(output) in out
+        assert "MCP Clients" in html
+        assert "Secret Client" in html
+        assert "Next Commands" in html
+        assert str(private_root) not in html
+        assert str(private_dir) not in html
+        assert str(config_path) not in html
+        assert "--private-arg" not in html
+        assert "do-not-render" not in html
+
+    def test_status_probe_branch_records_mcp_help_result(self, tmp_path, monkeypatch):
+        """build_status(probe=True) should run the bounded MCP help probe."""
+        from piia_engram.status_report import build_status
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            "piia_engram.status_report.shutil.which",
+            lambda command: "piia-engram-mcp",
+        )
+
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = "Engram MCP Server"
+            stderr = ""
+
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return Result()
+
+        monkeypatch.setattr("piia_engram.status_report.subprocess.run", fake_run)
+
+        status = build_status(probe=True)
+
+        assert status["mcp_entry"]["ok"] is True
+        assert status["mcp_entry"]["message"] == "help probe passed"
+        assert calls[0][0] == ["piia-engram-mcp", "--help"]
+        assert calls[0][1]["timeout"] == 5
+
+    def test_status_help_shows_usage(self, capsys):
+        """engram status --help should document text and HTML modes."""
+        from piia_engram.setup_wizard import run_status
+
+        assert run_status(["--help"]) == 0
+
+        out = capsys.readouterr().out
+        assert "engram status [--no-probe]" in out
+        assert "engram status --html" in out
+
     def test_status_marks_warning_rows(self):
         """Rows with actionable warnings should not still claim [ok]."""
         from piia_engram.status_report import render_status_text

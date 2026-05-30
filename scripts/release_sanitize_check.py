@@ -289,7 +289,7 @@ def main() -> int:
     ap.add_argument("--internal", action="store_true",
                     help="Also scan for internal-disclosure patterns "
                          "(review codes, multi-way review, industry-first, "
-                         "model codenames — see release-playbook.md §1.4)")
+                         "model codenames - see release-playbook.md section 1.4)")
     args = ap.parse_args()
 
     # Assemble the active pattern set.
@@ -308,7 +308,7 @@ def main() -> int:
     if custom:
         print(f"[info] loaded {len(custom)} custom term(s) from ~/.engram-release-sensitive.txt")
     else:
-        print("[info] no ~/.engram-release-sensitive.txt — only built-in patterns")
+        print("[info] no ~/.engram-release-sensitive.txt - only built-in patterns")
 
     total_high = 0
     total_warn = 0

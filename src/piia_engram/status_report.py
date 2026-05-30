@@ -166,6 +166,59 @@ def _telemetry_summary() -> dict[str, Any]:
         return {"error": str(exc), "local_enabled": False, "remote_enabled": False, "phase": "unknown"}
 
 
+def _client_summary() -> dict[str, Any]:
+    """Summarize MCP client configuration without exposing config paths."""
+    try:
+        from .setup_wizard import (
+            _classify_engram_entry,
+            _read_mcp_config,
+            _tool_configs,
+        )
+    except Exception as exc:
+        return {"configured": 0, "total": 0, "tools": [], "error": str(exc)}
+
+    tools: list[dict[str, Any]] = []
+    for tool_id, cfg in _tool_configs().items():
+        name = str(cfg.get("name") or tool_id)
+        fmt = str(cfg.get("format") or "json")
+        server_key = str(cfg.get("server_key") or "mcpServers")
+        row = {
+            "name": name,
+            "status": "not configured",
+            "style": "missing",
+            "verified": bool(cfg.get("verified")),
+        }
+        for raw_path in cfg.get("config_paths", []):
+            path = Path(raw_path)
+            if not path.is_file():
+                continue
+            config = _read_mcp_config(path, fmt)
+            servers = config.get(server_key, {}) if isinstance(config, dict) else {}
+            if not isinstance(servers, dict):
+                continue
+            entry = servers.get("engram") or servers.get("piia-engram")
+            if not isinstance(entry, dict):
+                row.update({"status": "missing entry", "style": "missing"})
+                continue
+            classification = _classify_engram_entry(entry)
+            severity = str(classification.get("severity") or "warn")
+            row.update({
+                "status": "configured" if severity == "ok" else "needs attention",
+                "style": str(classification.get("style") or "unknown"),
+            })
+            break
+        tools.append(row)
+
+    configured = sum(1 for item in tools if item.get("status") == "configured")
+    attention = sum(1 for item in tools if item.get("status") == "needs attention")
+    return {
+        "configured": configured,
+        "attention": attention,
+        "total": len(tools),
+        "tools": tools,
+    }
+
+
 def _probe_mcp_entry() -> dict[str, Any]:
     command = shutil.which("piia-engram-mcp") or "piia-engram-mcp"
     try:
@@ -197,6 +250,7 @@ def build_status(*, probe: bool = True) -> dict[str, Any]:
         "storage": _storage_summary(root),
         "knowledge": _knowledge_summary(root),
         "sessions": _session_summary(root),
+        "clients": _client_summary(),
         "encoding": _encoding_summary(),
         "telemetry": _telemetry_summary(),
         "mcp_entry": {"ok": None, "command": "piia-engram-mcp", "message": "probe skipped"},
@@ -225,10 +279,11 @@ def _bytes_label(size: int) -> str:
     return f"{size / (1024 * 1024):.1f} MiB"
 
 
-def render_status_text(status: dict[str, Any]) -> str:
+def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) -> str:
     storage = status["storage"]
     knowledge = status["knowledge"]
     sessions = status["sessions"]
+    clients = status.get("clients", {"configured": 0, "total": 0, "tools": []})
     encoding = status["encoding"]
     telemetry = status["telemetry"]
     mcp = status["mcp_entry"]
@@ -239,17 +294,20 @@ def render_status_text(status: dict[str, Any]) -> str:
     mcp_mark = "ok" if mcp.get("ok") is True else "--" if mcp.get("ok") is None else "!!"
     storage_mark = "!!" if storage.get("skipped") else "ok"
     knowledge_mark = "!!" if knowledge.get("staging") else "ok"
+    client_mark = "!!" if clients.get("attention") or not clients.get("configured") else "ok"
     encoding_mark = "ok" if encoding.get("ok") else "!!"
+    storage_path = "<engram-root>" if redact_paths else storage["path"]
     lines = [
         "Engram status",
         f"  [ok] Version: {status['version']}",
-        f"  [{storage_mark}] Storage: {storage['path']} ({storage['file_count']} files, {_bytes_label(storage['bytes'])})",
+        f"  [{storage_mark}] Storage: {storage_path} ({storage['file_count']} files, {_bytes_label(storage['bytes'])})",
         (
             f"  [{knowledge_mark}] Knowledge: "
             f"{knowledge['total']} total, {knowledge['verified']} verified, "
             f"{knowledge['staging']} staging, {knowledge['archived']} archived"
         ),
         f"  [ok] Agent sessions: {sessions['count']} saved; latest {session_tail}",
+        f"  [{client_mark}] MCP clients: {clients.get('configured', 0)}/{clients.get('total', 0)} configured",
         f"  [{mcp_mark}] MCP entry: {mcp.get('command')} - {mcp.get('message')}",
         (
             f"  [{encoding_mark}] Terminal encoding: "
@@ -263,6 +321,9 @@ def render_status_text(status: dict[str, Any]) -> str:
             f"{telemetry.get('phase')}"
         ),
     ]
+    for item in clients.get("tools", [])[:6]:
+        style = item.get("style") or "unknown"
+        lines.append(f"       - {item.get('name')}: {item.get('status')} ({style})")
     if status["warnings"]:
         lines.append("Next:")
         for warning in status["warnings"]:
@@ -271,9 +332,20 @@ def render_status_text(status: dict[str, Any]) -> str:
 
 
 def render_status_html(status: dict[str, Any]) -> str:
-    text = html.escape(render_status_text(status))
+    text = html.escape(render_status_text(status, redact_paths=True))
     version = html.escape(str(status["version"]))
     generated_at = html.escape(datetime.now().replace(microsecond=0).isoformat())
+    clients = status.get("clients", {"tools": []})
+    client_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(str(item.get('name', '')))}</td>"
+        f"<td>{html.escape(str(item.get('status', '')))}</td>"
+        f"<td>{html.escape(str(item.get('style', '')))}</td>"
+        "</tr>"
+        for item in clients.get("tools", [])
+    )
+    if not client_rows:
+        client_rows = "<tr><td colspan=\"3\">No client configs detected.</td></tr>"
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -286,6 +358,12 @@ def render_status_html(status: dict[str, Any]) -> str:
     h1 {{ font-size: 28px; margin-bottom: 4px; }}
     .meta {{ color: #64748b; margin-bottom: 24px; }}
     pre {{ background: #f8fafc; border: 1px solid #dbe3ee; border-radius: 8px; padding: 18px; white-space: pre-wrap; }}
+    section {{ margin-top: 24px; }}
+    h2 {{ font-size: 18px; margin-bottom: 8px; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border: 1px solid #dbe3ee; padding: 8px; text-align: left; }}
+    th {{ background: #f8fafc; }}
+    code {{ background: #f1f5f9; border-radius: 4px; padding: 2px 5px; }}
   </style>
 </head>
 <body>
@@ -293,6 +371,21 @@ def render_status_html(status: dict[str, Any]) -> str:
     <h1>Engram Status</h1>
     <div class="meta">Version {version} - generated {generated_at} - redacted metadata only</div>
     <pre>{text}</pre>
+    <section>
+      <h2>MCP Clients</h2>
+      <table>
+        <thead><tr><th>Client</th><th>Status</th><th>Entry Style</th></tr></thead>
+        <tbody>
+{client_rows}
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Next Commands</h2>
+      <p><code>engram doctor</code> checks installation health.</p>
+      <p><code>engram review</code> handles staged knowledge.</p>
+      <p><code>engram sessions</code> lists saved cross-tool sessions.</p>
+    </section>
   </main>
 </body>
 </html>

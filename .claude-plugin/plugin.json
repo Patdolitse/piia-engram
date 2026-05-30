@@ -1,6 +1,6 @@
 {
   "name": "piia-engram",
-  "version": "3.33.2",
+  "version": "3.40.0",
   "description": "Cross-tool personal identity layer. Stores your profile, preferences, lessons, and decisions as local JSON — every AI tool (Claude Code, Cursor, Codex, Windsurf, any MCP client) reads the same memory. AI proposes knowledge; you approve what becomes permanent. Local-first, no cloud, no account.",
   "author": {
     "name": "Engram Contributors",

@@ -6,6 +6,32 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.40.0] - 2026-05-31
+
+The first-run confidence release: Engram now gives users a clearer local status surface after setup, including MCP client configuration health, shareable redacted HTML status, and follow-up commands.
+
+### Added
+- **MCP client summary in `engram status`** - the CLI now reports configured / missing client entries using redacted metadata only.
+- **Richer status HTML** - `engram status --html` now includes an MCP Clients table and Next Commands section for `engram doctor`, `engram review`, and `engram sessions`.
+- **Status probe coverage** - the status path now has regression coverage for bounded MCP entry probing and `status --help` output.
+- **Codex + Claude acceptance workflow** - local project workflow documentation now records the agreed Codex-implements / Claude-accepts review loop.
+
+### Changed
+- `engram status --html` renders the Engram storage path as `<engram-root>` so the generated HTML can be shared as redacted evidence without exposing local user paths.
+- `scripts/release_sanitize_check.py` now uses ASCII-only user-visible messages for the custom sensitive-term notice and internal-scan help text, avoiding Windows terminal mojibake.
+- README, Chinese README, architecture notes, privacy examples, MCP registry metadata, and Claude plugin metadata are synced to v3.40.0.
+
+### Fixed
+- Closed a status-report disclosure edge where HTML output embedded the local Engram storage path through the text status block.
+- Added a regression test to ensure status HTML does not contain MCP config paths, entry args/env, tokens, or local Engram root paths.
+
+### Tests
+- Full suite: **1781 passed**, 4 expected `engram_core` deprecation warnings.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, Codex subagent review PASS, Claude Code read-only acceptance PASS.
+
+### Release Evidence
+- See `release-evidence/v3.40.0.md`.
+
 ## [3.39.1] - 2026-05-30
 
 The terminal encoding diagnostics patch release: Engram now helps users distinguish real stored-data mojibake from Windows/terminal display encoding issues.

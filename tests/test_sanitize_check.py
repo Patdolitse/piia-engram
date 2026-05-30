@@ -112,6 +112,22 @@ def test_external_patterns_file_absent_returns_empty(sc, tmp_path, monkeypatch):
     assert sc._load_internal_patterns_file() == []
 
 
+def test_main_no_custom_terms_message_is_plain_ascii(sc, tmp_path, monkeypatch, capsys):
+    """User-visible sanitize output should avoid mojibake-prone punctuation."""
+    import sys
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sc, "_git_tracked_files", lambda: [])
+    monkeypatch.setattr(sc, "_load_custom_terms", lambda: [])
+    monkeypatch.setattr(sys, "argv", ["release_sanitize_check.py"])
+
+    assert sc.main() == 0
+
+    out = capsys.readouterr().out
+    assert " - only built-in patterns" in out
+    assert "鈥" not in out
+
+
 def test_internal_patterns_are_warn_not_high(sc):
     """Internal disclosure is warn-level — informative, not a hard block
     unless --strict."""

@@ -152,7 +152,7 @@ def main() -> int:
     print("Publishing is blocked until the evidence file records that the")
     print("mandatory gates passed (self-review + codex-review + tests) and the")
     print("presence-only gates are declared (eval-gate, negative-control,")
-    print("field-assertion-audit — each 'passed' or 'n/a'). This gate is enforced")
+    print("field-assertion-audit - each 'passed' or 'n/a'). This gate is enforced")
     print("by CI so it cannot be skipped.")
     return 1
 
