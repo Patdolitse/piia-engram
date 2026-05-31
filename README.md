@@ -171,6 +171,7 @@ Check health anytime:
 ```bash
 engram status        # redacted install + memory health summary
 engram status --html # write a local redacted status page
+engram continuity    # metadata-only proof that cross-tool handoff is ready
 engram doctor        # diagnose all tools
 engram doctor --fix  # auto-repair issues + inject missing instructions
 engram repair-encoding        # dry-run scan for garbled / mojibake text
@@ -773,6 +774,7 @@ engram setup            # Interactive install wizard
 piia-engram doctor           # Check config health (all AI tools)
 piia-engram status           # Redacted install + memory health summary
 piia-engram status --html    # Write a local redacted status page
+piia-engram continuity       # Prove cross-tool handoff readiness (metadata only)
 piia-engram doctor --fix     # Auto-repair any issues found
 piia-engram sessions         # List saved cross-tool agent sessions
 piia-engram sessions show <id>  # Print one saved session

@@ -4276,6 +4276,70 @@ def run_status(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _print_continuity_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram continuity [--project PATH] [--limit N]\n"
+        "  engram continuity --json [--project PATH] [--limit N]\n"
+    )
+
+
+def run_continuity(argv: list[str] | None = None) -> int:
+    """Print a metadata-only cross-tool continuity proof."""
+    from piia_engram.continuity_report import (
+        build_continuity_report,
+        render_continuity_text,
+    )
+    from piia_engram.core import Engram
+
+    args = list(argv or [])
+    project_folder = os.getcwd()
+    limit = 500
+    json_output = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"-h", "--help"}:
+            _print_continuity_usage()
+            return 0
+        if arg == "--json":
+            json_output = True
+        elif arg == "--project":
+            if i + 1 >= len(args):
+                print("Missing value for --project")
+                _print_continuity_usage()
+                return 2
+            project_folder = args[i + 1]
+            i += 1
+        elif arg == "--limit":
+            if i + 1 >= len(args):
+                print("Missing value for --limit")
+                _print_continuity_usage()
+                return 2
+            try:
+                limit = int(args[i + 1])
+            except ValueError:
+                print("--limit must be an integer")
+                return 2
+            i += 1
+        else:
+            print(f"Unknown continuity option: {arg}")
+            _print_continuity_usage()
+            return 2
+        i += 1
+
+    report = build_continuity_report(
+        Engram(),
+        project_folder=project_folder,
+        session_limit=limit,
+    )
+    if json_output:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_continuity_text(report), end="")
+    return 0
+
+
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
@@ -4294,6 +4358,8 @@ def main() -> None:
         sys.exit(run_review(args[1:]))
     elif args[0] == "status":
         sys.exit(run_status(args[1:]))
+    elif args[0] == "continuity":
+        sys.exit(run_continuity(args[1:]))
     elif args[0] == "stats":
         from piia_engram.stats import run_stats, log_stats
         if "--log" in args:
@@ -4338,6 +4404,7 @@ def main() -> None:
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram status           Show a redacted install + memory health summary\n"
             "  engram status --html    Write a local redacted status page\n"
+            "  engram continuity       Prove cross-tool handoff readiness (metadata only)\n"
             "  engram sessions         List saved cross-tool agent sessions\n"
             "  engram sessions show <id>  Print one saved session\n"
             "  engram review           List staging knowledge awaiting review\n"

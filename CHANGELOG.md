@@ -6,6 +6,14 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Metadata-only continuity proof** - `engram continuity` reports saved-session counts, contributing tools, resume-brief build status, and cross-tool readiness without printing memory bodies, session IDs, decision reasoning, or local paths.
+
+### Fixed
+- `engram status` now falls back to a sibling `piia-engram-mcp` launcher when the CLI is started by absolute path and the console-script directory is not on `PATH`, avoiding a false MCP-entry warning in Windows/Codex runtime workflows.
+
 ## [3.42.0] - 2026-05-31
 
 The trust, resume, and portability foundation release: Engram now gives safer recovery diagnostics, a stronger cross-tool resume brief, trust-mode metadata primitives, and metadata-only configuration integrity checks.

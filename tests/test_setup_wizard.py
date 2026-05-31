@@ -1974,6 +1974,48 @@ class TestMainCLI:
         assert exc_info.value.code == 0
         assert seen["argv"] == ["--limit", "3"]
 
+    def test_main_continuity_dispatches(self, monkeypatch):
+        """main() with 'continuity' should dispatch to run_continuity."""
+        import piia_engram.setup_wizard as sw
+
+        seen = {}
+
+        def fake_run_continuity(argv):
+            seen["argv"] = argv
+            return 0
+
+        monkeypatch.setattr(sw, "run_continuity", fake_run_continuity)
+        monkeypatch.setattr("sys.argv", ["engram", "continuity", "--json"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            sw.main()
+
+        assert exc_info.value.code == 0
+        assert seen["argv"] == ["--json"]
+
+    def test_continuity_cli_prints_metadata_only(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """engram continuity should not print saved session bodies."""
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import run_continuity
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        secret = "ZZ_CONTINUITY_CLI_SECRET"
+        eng = Engram()
+        eng.save_agent_context(tool="claude_code", content=secret)
+        eng.save_agent_context(tool="codex", content=secret)
+
+        assert run_continuity(["--project", str(tmp_path)]) == 0
+
+        out = capsys.readouterr().out
+        assert "Engram continuity proof" in out
+        assert "2 saved session" in out
+        assert "claude_code" in out
+        assert "codex" in out
+        assert secret not in out
+        assert str(tmp_path) not in out
+
     def test_main_repair_encoding_dry_run_dispatches(self, tmp_path, monkeypatch, capsys):
         """repair-encoding should dry-run by default and report findings."""
         from piia_engram.setup_wizard import main

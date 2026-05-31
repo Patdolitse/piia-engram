@@ -111,7 +111,18 @@ This is the recommended first call when moving between Claude Code, Codex, Curso
 2. The next tool starts by calling `get_resume_brief()`.
 3. The agent reads the handoff and suggested docs before asking the user to repeat context.
 
-### 3.3 Session Saving
+### 3.3 Metadata-only continuity proof
+
+Use `engram continuity` when you want local proof that the handoff loop is ready without printing private memory bodies:
+
+```bash
+engram continuity --project /path/to/project
+engram continuity --project /path/to/project --json
+```
+
+The report includes session counts, contributing tool names, whether at least two tools have saved context, and whether `get_resume_brief()` can build. It does not print session bodies, lesson text, decision reasoning, session IDs, or local project paths.
+
+### 3.4 Session Saving
 
 At the end of each important conversation, the AI tool should call:
 ```
@@ -120,7 +131,7 @@ save_agent_context(tool="claude_code", content="session summary...", project_fol
 
 This saves the conversation's key context as a persistent record, available for recovery next time.
 
-### 3.4 Wrap-up Automatic Extraction
+### 3.5 Wrap-up Automatic Extraction
 
 When `wrap_up_session` is called, Engram automatically:
 1. Extracts lessons from the conversation content (marked as `tier: "staging"`)

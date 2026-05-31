@@ -143,6 +143,7 @@ engram setup
 ```bash
 engram status        # 脱敏安装与记忆健康摘要
 engram status --html # 写出本地脱敏状态页
+engram continuity    # 仅用元数据证明跨工具接续已就绪
 engram doctor        # 诊断所有工具
 engram doctor --fix  # 自动修复 + 注入缺失的 AI 指令
 engram repair-encoding        # dry-run 扫描乱码 / mojibake
@@ -766,6 +767,7 @@ engram setup            # 交互式安装向导
 piia-engram doctor           # 检查配置健康状态（已配置的 AI 工具）
 piia-engram status           # 脱敏安装与记忆健康摘要
 piia-engram status --html    # 写出本地脱敏状态页
+piia-engram continuity       # 仅用元数据证明跨工具接续已就绪
 piia-engram doctor --fix     # 自动修复所有问题
 piia-engram sessions         # 列出跨工具保存的 AI 会话
 piia-engram sessions show <id>  # 打印单个保存会话
