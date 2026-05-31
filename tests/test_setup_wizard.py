@@ -326,6 +326,41 @@ class TestSessionsCLI:
         assert calls[0][0] == ["piia-engram-mcp", "--help"]
         assert calls[0][1]["timeout"] == 5
 
+    def test_status_probe_falls_back_to_sibling_mcp_script(self, tmp_path, monkeypatch):
+        """Absolute-path CLI launches should find piia-engram-mcp next to engram.exe."""
+        from piia_engram import status_report
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            "piia_engram.status_report.shutil.which",
+            lambda command: None,
+        )
+        scripts = tmp_path / "Scripts"
+        scripts.mkdir()
+        engram_script = scripts / "engram.exe"
+        mcp_script = scripts / "piia-engram-mcp.exe"
+        engram_script.write_text("", encoding="utf-8")
+        mcp_script.write_text("", encoding="utf-8")
+        monkeypatch.setattr(status_report.sys, "argv", [str(engram_script)])
+
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = "Engram MCP Server"
+            stderr = ""
+
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return Result()
+
+        monkeypatch.setattr("piia_engram.status_report.subprocess.run", fake_run)
+
+        status = status_report.build_status(probe=True)
+
+        assert status["mcp_entry"]["ok"] is True
+        assert calls[0][0] == [str(mcp_script.resolve()), "--help"]
+
     def test_status_help_shows_usage(self, capsys):
         """engram status --help should document text and HTML modes."""
         from piia_engram.setup_wizard import run_status

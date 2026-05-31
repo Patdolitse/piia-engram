@@ -220,7 +220,7 @@ def _client_summary() -> dict[str, Any]:
 
 
 def _probe_mcp_entry() -> dict[str, Any]:
-    command = shutil.which("piia-engram-mcp") or "piia-engram-mcp"
+    command = _resolve_mcp_entry_command()
     try:
         result = subprocess.run(
             [command, "--help"],
@@ -238,6 +238,34 @@ def _probe_mcp_entry() -> dict[str, Any]:
         "command": command,
         "message": "help probe passed" if result.returncode == 0 else "help probe failed",
     }
+
+
+def _resolve_mcp_entry_command() -> str:
+    command = shutil.which("piia-engram-mcp")
+    if command:
+        return command
+
+    script_dirs: list[Path] = []
+    for raw in (sys.argv[0], sys.executable):
+        if not raw:
+            continue
+        try:
+            script_dirs.append(Path(raw).resolve().parent)
+        except OSError:
+            continue
+
+    seen: set[Path] = set()
+    suffixes = [".exe", ".cmd", ".bat", ""]
+    for directory in script_dirs:
+        if directory in seen:
+            continue
+        seen.add(directory)
+        for suffix in suffixes:
+            candidate = directory / f"piia-engram-mcp{suffix}"
+            if candidate.is_file():
+                return str(candidate)
+
+    return "piia-engram-mcp"
 
 
 def build_status(*, probe: bool = True) -> dict[str, Any]:
