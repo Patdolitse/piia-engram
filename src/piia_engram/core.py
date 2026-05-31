@@ -25,6 +25,8 @@ from .storage import (  # noqa: F401 — re-exports
     FIELD_WEIGHTS,
     LESSON_TRIGGERS,
     MAX_KNOWLEDGE_ENTRIES,
+    MEMORY_RISK_LEVELS,
+    MEMORY_STATES,
     PLAYBOOK_TRIGGERS,
     SCHEMA_VERSION,
     SEARCH_RELEVANCE_THRESHOLD,
@@ -612,6 +614,68 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         normalized, _ = normalize_entry_text(payload)
         return normalized if isinstance(normalized, dict) else payload
 
+    @staticmethod
+    def _derive_memory_state(entry: dict) -> str:
+        if entry.get("tier") == "staging":
+            return "staging"
+        if entry.get("status") == "rejected":
+            return "rejected"
+        if entry.get("tier") == "archived" or entry.get("status") in {"outdated", "archived", "deprecated"}:
+            return "deprecated"
+        if entry.get("tier") == "verified":
+            return "verified"
+        explicit = entry.get("memory_state")
+        if explicit in MEMORY_STATES:
+            return explicit
+        return "verified"
+
+    @staticmethod
+    def _entry_risk_text(entry: dict) -> str:
+        fields = ("summary", "detail", "question", "choice", "reasoning", "title", "description")
+        return "\n".join(str(entry.get(key) or "") for key in fields)
+
+    def _assess_memory_risk(self, entry: dict) -> dict[str, Any]:
+        text = self._entry_risk_text(entry)
+        lowered = text.lower()
+        flags: list[str] = []
+        if re.search(r"https?://", text):
+            flags.append("external_url")
+        if any(marker in lowered for marker in (
+            "api_key", "apikey", "private key", "secret", "token=", "password",
+            "bearer ", "ssh-rsa", "-----begin",
+        )):
+            flags.append("credential")
+        if any(marker in lowered for marker in (
+            "run command", "powershell", "cmd.exe", "bash ", "curl ", "wget ",
+            "rm -rf", "delete all", "git push", "twine upload",
+        )):
+            flags.append("command")
+        if any(marker in lowered for marker in (
+            "mcp config", "mcp_server", "mcp_servers", "mcpservers", "server_key",
+        )):
+            flags.append("mcp_config")
+        if any(marker in lowered for marker in (
+            "permission", "allowlist", "denylist", "bypass", "approval",
+            "push/tag/publish", "publish without approval",
+        )):
+            flags.append("permission_rule")
+
+        if any(flag in flags for flag in ("credential", "command", "mcp_config", "permission_rule")):
+            level = "high"
+        elif flags:
+            level = "medium"
+        else:
+            level = "low"
+        return {"risk_flags": sorted(set(flags)), "risk_level": level}
+
+    @staticmethod
+    def _max_risk_level(*levels: str) -> str:
+        rank = {"low": 0, "medium": 1, "high": 2}
+        valid = [level for level in levels if level in rank]
+        if not valid:
+            return "low"
+        return max(valid, key=lambda level: rank[level])
+
     def _ensure_fields(self, entry: dict, entry_type: str) -> dict:
         """Backfill v2.1 fields on old lesson/decision entries."""
         if not isinstance(entry, dict):
@@ -638,6 +702,45 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         entry.setdefault("tier", "verified")  # Legacy items default to verified
         if not isinstance(entry.get("related_ids"), list):
             entry["related_ids"] = []
+
+        state = self._derive_memory_state(entry)
+        entry["memory_state"] = state
+        if state == "staging":
+            entry["approval_status"] = "pending"
+        elif state == "rejected":
+            entry["approval_status"] = "rejected"
+        elif state == "deprecated":
+            entry["approval_status"] = "deprecated"
+        else:
+            entry["approval_status"] = "approved"
+
+        provenance = entry.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+        provenance.setdefault("source_tool", entry.get("source_tool") or "unknown")
+        provenance.setdefault("created_at", entry.get("created_at"))
+        provenance.setdefault("entry_type", entry_type)
+        if entry.get("domain"):
+            provenance.setdefault("domain", entry.get("domain"))
+        if entry.get("project"):
+            provenance.setdefault("project", entry.get("project"))
+        entry["provenance"] = provenance
+
+        risk = self._assess_memory_risk(entry)
+        existing_risk_level = entry.get("risk_level")
+        if existing_risk_level not in MEMORY_RISK_LEVELS:
+            existing_risk_level = "low"
+        entry["risk_level"] = self._max_risk_level(existing_risk_level, risk["risk_level"])
+        existing_flags = entry.get("risk_flags")
+        if isinstance(existing_flags, list):
+            flag_set = {str(flag) for flag in existing_flags if str(flag)}
+        else:
+            flag_set = set()
+        flag_set.update(risk["risk_flags"])
+        entry["risk_flags"] = sorted(flag_set)
+        entry["approval_required"] = (
+            entry["memory_state"] == "staging" or entry["risk_level"] == "high"
+        )
 
         return entry
 
@@ -667,7 +770,13 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             return self._crypto.decrypt_entry(data, self._corpus_key, "playbook")
         return data
 
-    def _read_entries(self, path: Path, entry_type: str) -> list[dict]:
+    def _read_entries(
+        self,
+        path: Path,
+        entry_type: str,
+        *,
+        migrate: bool = True,
+    ) -> list[dict]:
         entries = _read_json(path)
         if not isinstance(entries, list):
             return []
@@ -681,7 +790,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 changed = True
             ensured.append(item)
 
-        if changed:
+        if changed and migrate:
             _write_json(path, ensured)  # preserves encrypted fields as-is
 
         # Decrypt content fields for in-memory use
@@ -804,9 +913,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         source_tool: str | None = None,
         limit: int | None = 50,
         _update_access: bool = True,
+        _migrate_fields: bool = True,
     ) -> list[dict]:
         path = self._knowledge_dir / "lessons.json"
-        lessons = self._read_entries(path, "lesson")
+        lessons = self._read_entries(path, "lesson", migrate=_migrate_fields)
         result = []
         for lesson in lessons:
             if lesson.get("status") != "active":
@@ -863,6 +973,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                             new_tier = value
                     lesson[key] = value
                 lesson["last_updated"] = _now_iso()
+                lesson = self._ensure_fields(lesson, "lesson")
                 self._write_entries(path, lessons, "lesson")
                 if tier_changed:
                     self._audit.log(
@@ -1017,9 +1128,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         project: str | None = None,
         domain: str | None = None,
         _update_access: bool = True,
+        _migrate_fields: bool = True,
     ) -> list[dict]:
         path = self._knowledge_dir / "decisions.json"
-        decisions = self._read_entries(path, "decision")
+        decisions = self._read_entries(path, "decision", migrate=_migrate_fields)
         result = []
         for decision in decisions:
             if decision.get("status") != "active":
@@ -1087,6 +1199,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                             new_tier = value
                     decision[key] = value
                 decision["last_updated"] = _now_iso()
+                decision = self._ensure_fields(decision, "decision")
                 self._write_entries(path, decisions, "decision")
                 if tier_changed:
                     self._audit.log(

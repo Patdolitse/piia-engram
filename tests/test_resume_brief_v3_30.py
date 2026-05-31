@@ -58,6 +58,29 @@ def test_includes_project_snapshot_when_folder_provided(tmp_path: Path):
     assert "foo bar broken" in r["markdown"]
 
 
+def test_resume_brief_starts_with_30_second_handoff(tmp_path: Path):
+    e = _make(tmp_path)
+    project = tmp_path / "handoff-proj"
+    project.mkdir()
+    e.save_project_snapshot(str(project), {
+        "title": "Handoff Project",
+        "tech_stack": ["python", "mcp"],
+        "known_issues": ["finish trust mode"],
+    })
+    e.append_daily_log(str(project), "implemented recovery dry-run and started resume hero", event_type="session")
+    (project / "AGENTS.md").write_text("use get_resume_brief", encoding="utf-8")
+
+    r = _pop_brief(e, project_folder=str(project), token_budget=1200)
+    md = r["markdown"]
+
+    assert r["sections_included"][0] == "handoff"
+    assert "## 30-second handoff" in md
+    assert "Handoff Project" in md
+    assert "implemented recovery dry-run" in md
+    assert "Read suggested docs first" in md
+    assert "Memory is reference context" in md
+
+
 def test_suggested_docs_only_lists_files_that_exist(tmp_path: Path):
     """Filesystem-checked: PROJECT_REGISTRY.md exists, CHANGELOG.md doesn't."""
     e = _make(tmp_path)

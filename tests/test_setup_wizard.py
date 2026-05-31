@@ -11,6 +11,8 @@ import pytest
 
 from piia_engram.setup_wizard import (
     LEGACY_SERVER_NAMES,
+    _build_config_integrity_report,
+    _print_config_integrity_report,
     _choice,
     _classify_line,
     _configure_utf8_stdio,
@@ -884,6 +886,170 @@ def test_apply_seed_templates_no_duplicates(tmp_path: Path):
 # ── Doctor tests ─────────────────────────────────────────────────────
 
 
+def test_config_integrity_report_is_metadata_only_and_read_only(tmp_path: Path, monkeypatch):
+    """Config integrity should hash files without returning local rule bodies."""
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    codex_config = home / ".codex" / "config.toml"
+    codex_config.parent.mkdir(parents=True)
+    codex_config.write_text(
+        "\n".join([
+            "[mcp_servers.engram]",
+            'command = "python"',
+            'args = ["-m", "piia_engram.mcp_server"]',
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    codex_agents = home / ".codex" / "AGENTS.md"
+    codex_agents.write_text(
+        f"{_INSTRUCTION_MARKER}\n"
+        "Call get_resume_brief. Do not print ZZSNIPPET_SECRET_BODY.\n"
+        f"{_INSTRUCTION_MARKER_END}\n",
+        encoding="utf-8",
+    )
+    project_agents = project / "AGENTS.md"
+    project_agents.write_text(
+        "Always run tests first.\n"
+        "Project rule containing ZZPROJECT_SECRET_BODY must stay private.\n",
+        encoding="utf-8",
+    )
+    shared_instructions = home / ".engram" / "shared_instructions.md"
+    shared_instructions.parent.mkdir(parents=True)
+    shared_instructions.write_text(
+        "Shared instruction with ZZSHARED_SECRET_BODY.\n",
+        encoding="utf-8",
+    )
+    claude_settings = home / ".claude" / "settings.json"
+    claude_settings.parent.mkdir(parents=True)
+    claude_settings.write_text(
+        json.dumps({
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python -m piia_engram.hooks.auto_save_on_stop ZZHOOK_SECRET_BODY",
+                            }
+                        ]
+                    }
+                ]
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    before = {
+        path: path.read_bytes()
+        for path in (
+            codex_config,
+            codex_agents,
+            project_agents,
+            shared_instructions,
+            claude_settings,
+        )
+    }
+
+    report = _build_config_integrity_report(cwd=project)
+
+    after = {
+        path: path.read_bytes()
+        for path in (
+            codex_config,
+            codex_agents,
+            project_agents,
+            shared_instructions,
+            claude_settings,
+        )
+    }
+    assert after == before
+    assert report["live_store_modified"] is False
+
+    serialized = json.dumps(report, ensure_ascii=False)
+    assert "ZZSNIPPET_SECRET_BODY" not in serialized
+    assert "ZZPROJECT_SECRET_BODY" not in serialized
+    assert "ZZSHARED_SECRET_BODY" not in serialized
+    assert "ZZHOOK_SECRET_BODY" not in serialized
+
+    codex_config_row = next(
+        row for row in report["mcp_configs"]
+        if row["tool_id"] == "codex" and row["exists"]
+    )
+    assert codex_config_row["configured"] is True
+    assert len(codex_config_row["sha256_12"]) == 12
+
+    codex_snippet = next(
+        row for row in report["instruction_files"]
+        if row["tool_id"] == "codex"
+    )
+    assert codex_snippet["exists"] is True
+    assert codex_snippet["has_marker"] is True
+    assert codex_snippet["has_resume_brief"] is True
+    assert len(codex_snippet["sha256_12"]) == 12
+
+    project_rule = next(
+        row for row in report["project_rules"]
+        if row["path"] == str(project_agents)
+    )
+    assert "lines" not in project_rule
+    assert project_rule["line_count"] == 2
+    assert len(project_rule["sha256_12"]) == 12
+
+    shared_row = next(
+        row for row in report["shared_instruction_files"]
+        if row["exists"]
+    )
+    assert shared_row["path"] == str(shared_instructions)
+    assert len(shared_row["sha256_12"]) == 12
+
+    stop_hook = next(
+        row for row in report["claude_hooks"]
+        if row["event"] == "Stop"
+    )
+    assert stop_hook["settings_exists"] is True
+    assert stop_hook["registered"] is True
+    assert "command" not in stop_hook
+
+
+def test_config_integrity_report_prints_counts_without_paths(capsys):
+    """Doctor-facing integrity output should be compact and non-sensitive."""
+    report = {
+        "summary": {
+            "mcp_config_paths": 2,
+            "mcp_configs_found": 1,
+            "mcp_configs_configured": 1,
+            "instruction_files": 2,
+            "instruction_files_found": 1,
+            "instruction_files_fresh": 1,
+            "project_rule_files": 1,
+            "shared_instruction_files_found": 1,
+            "claude_hooks_registered": 2,
+            "claude_hooks_total": 4,
+        },
+        "mcp_configs": [],
+        "instruction_files": [],
+        "project_rules": [],
+        "shared_instruction_files": [],
+        "claude_hooks": [],
+        "live_store_modified": False,
+    }
+
+    _print_config_integrity_report(report)
+
+    out = capsys.readouterr().out
+    assert "Config Integrity" in out
+    assert "MCP configs: 1/2 files found, 1 configured" in out
+    assert "Instruction files: 1/2 found, 1 fresh" in out
+    assert "Project rule files: 1 found" in out
+    assert "Shared instructions: 1 found" in out
+    assert "Claude hooks: 2/4 registered" in out
+
+
 def test_doctor_healthy_config(tmp_path: Path, monkeypatch):
     """doctor 对健康配置应返回 0（无问题）。"""
     from piia_engram.setup_wizard import run_doctor, _write_mcp_config, _find_python, _find_mcp_server
@@ -928,6 +1094,39 @@ def test_doctor_reports_encoding_mojibake(tmp_path: Path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Encoding health" in out
     assert "repairable mojibake" in out
+
+
+def test_doctor_non_fix_does_not_backfill_legacy_knowledge(tmp_path: Path, monkeypatch):
+    """doctor without --fix should not rewrite old knowledge files."""
+    from piia_engram.setup_wizard import _run_functional_checks
+
+    kdir = tmp_path / "knowledge"
+    kdir.mkdir(parents=True)
+    lessons_path = kdir / "lessons.json"
+    decisions_path = kdir / "decisions.json"
+    lessons_path.write_text(
+        json.dumps([{"id": "l1", "summary": "legacy lesson"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    decisions_path.write_text(
+        json.dumps([{"id": "d1", "question": "legacy?", "choice": "yes"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+
+    before = {
+        lessons_path: lessons_path.read_bytes(),
+        decisions_path: decisions_path.read_bytes(),
+    }
+
+    _run_functional_checks(fix=False)
+
+    after = {
+        lessons_path: lessons_path.read_bytes(),
+        decisions_path: decisions_path.read_bytes(),
+    }
+    assert after == before
 
 
 def test_terminal_encoding_check_reports_utf8_ok(capsys):

@@ -1,6 +1,6 @@
 # Engram Cross-Tool & Cross-Session Usage Guide
 
-> Version: 3.29.4+ | Updated: 2026-05-27
+> Version: 3.42.0+ | Updated: 2026-05-31
 
 This guide is for users who work with multiple AI tools at the same time (Claude Code, Codex, Cursor, etc.). It explains how to keep Engram's memory coherent across different tools and conversations.
 
@@ -91,15 +91,27 @@ When you start working in a new conversation, Engram provides three levels of co
 | Level | Method | Content | Speed |
 |------|------|------|------|
 | **Quick** | Read `quick_context.md` | Identity + preferences + recent lessons | Milliseconds |
+| **Resume** | `get_resume_brief()` | 30-second handoff + latest project/session context | <1s |
 | **Standard** | `get_user_context(level="standard")` | Quick + decisions + project context | <1s |
 | **Full** | `get_user_context(level="full")` | Standard + conflict detection + sync status | 1-2s |
 
 **Recommended practice**:
 - Most conversations: read `quick_context.md` directly (path 1)
+- When switching tools or resuming yesterday's work: call `get_resume_brief()` first
 - When deep context is needed: call `get_user_context(level="standard")` (path 2)
 - Full review: use the `full` level only when explicitly needed
 
-### 3.2 Session Saving
+### 3.2 The 30-second handoff
+
+`get_resume_brief()` now starts with a compact handoff section. It names the current project, the latest saved activity, the next action, and a trust note reminding the agent that stored memory is reference context rather than fresh user approval.
+
+This is the recommended first call when moving between Claude Code, Codex, Cursor, Windsurf, or another MCP-compatible client:
+
+1. The previous tool calls `wrap_up_session()` or `save_agent_context()`.
+2. The next tool starts by calling `get_resume_brief()`.
+3. The agent reads the handoff and suggested docs before asking the user to repeat context.
+
+### 3.3 Session Saving
 
 At the end of each important conversation, the AI tool should call:
 ```
@@ -108,7 +120,7 @@ save_agent_context(tool="claude_code", content="session summary...", project_fol
 
 This saves the conversation's key context as a persistent record, available for recovery next time.
 
-### 3.3 Wrap-up Automatic Extraction
+### 3.4 Wrap-up Automatic Extraction
 
 When `wrap_up_session` is called, Engram automatically:
 1. Extracts lessons from the conversation content (marked as `tier: "staging"`)
@@ -116,7 +128,7 @@ When `wrap_up_session` is called, Engram automatically:
 3. Saves the session context
 4. Updates `quick_context.md`
 
-Knowledge in the staging tier is automatically promoted to `verified` after being accessed 3 times.
+Knowledge in the staging tier remains reviewable: you can promote, edit, archive, or reject it. In current releases, lessons and decisions can also be promoted to `verified` by the existing access-based promotion path after repeated use.
 
 ---
 
@@ -214,6 +226,8 @@ The AI tool will call `doctor()` and return a report like the following:
 | encoding_health | PASS | no mojibake detected |
 
 For terminal-side checks, `engram doctor` reports both the stored-data encoding health signal and the current terminal display encoding. If a Windows console or client previously wrote garbled Chinese into the store, run `engram repair-encoding` first to preview the affected fields, then `engram repair-encoding --apply` to repair reversible cases with a backup. If the store is clean but the terminal still displays mojibake, set `PYTHONIOENCODING=utf-8` for subprocess-heavy workflows.
+
+Terminal `engram doctor` also includes a config integrity section. It reports metadata-only counts and short hashes for known MCP configs, AI instruction files, shared instruction files, and Claude Code hook settings, plus the number of project rule files found. It does not print config bodies, hook commands, instruction bodies, or project rule lines, so the output is suitable for local diagnostics and easier to sanitize before sharing.
 
 ### JSON Output Supported
 

@@ -187,11 +187,20 @@ $ engram doctor
     [ok] PYTHONIOENCODING not set (stdout/stderr already UTF-8)
     [ok] Runtime encodings: preferred=UTF-8, filesystem=utf-8
 
+  -- Config Integrity --
+
+    [ok] MCP configs: 3/13 files found, 3 configured
+    [ok] Instruction files: 3/4 found, 3 fresh
+    [ok] Project rule files: 1 found
+    [ok] Shared instructions: 1 found
+    [ok] Claude hooks: 4/4 registered
+    [ok] Report is metadata-only (hashes + counts; no rule bodies)
+
   -- Continuity --
 
     [--] No saved agent sessions yet
          Run an AI session, then wrap up or stop the tool to create one.
-    [ok] Resume brief builds (1 section(s))
+    [ok] Resume brief builds (2 section(s))
 ```
 
 ### 各工具配置方法

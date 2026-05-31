@@ -5,7 +5,7 @@ piia-engram is a local-first personal AI identity layer. It helps your AI coding
 The trust model is simple:
 
 1. Your core identity and knowledge stay on your machine.
-2. AI tools can suggest new knowledge, but suggestions are not durable facts until you approve them.
+2. AI tools can suggest new knowledge; suggested items stay visible for review, and current lessons/decisions may also follow the existing access-based promotion path after repeated use.
 3. Reports meant for sharing should contain status and counts, not private content or local paths.
 4. Engram reduces memory and MCP risk by being transparent and local-first, but it is not a sandbox or a secrets manager.
 
@@ -49,9 +49,27 @@ See [PRIVACY.md](../PRIVACY.md) for the full data-flow description.
 
 Engram is designed around a staging-to-verified workflow.
 
-AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`, or `extract_session_insights`. Those suggestions are useful, but they should not silently become permanent truth. Engram keeps proposed knowledge reviewable so you can approve, edit, archive, or reject it.
+AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`, or `extract_session_insights`. Those suggestions are useful, but they should not be treated as fresh user approval. Engram keeps proposed knowledge reviewable so you can approve, edit, archive, or reject it. For backward compatibility, lessons and decisions in staging may also be promoted by the existing access-based promotion path after repeated use; playbook review remains explicit before trusted use.
 
 This is different from agent-owned memory systems where the agent continuously rewrites its own long-term memory. Engram treats durable memory as a user-owned asset.
+
+Each knowledge entry can carry trust-mode metadata:
+
+| Field | Meaning |
+|---|---|
+| `memory_state` | Canonical lifecycle state: `staging`, `verified`, `rejected`, or `deprecated` |
+| `approval_status` | User-facing approval state derived from the memory state |
+| `provenance` | Metadata such as `source_tool`, `entry_type`, `created_at`, `domain`, and `project` |
+| `risk_level` / `risk_flags` | A conservative local signal for risky memory text, such as credentials, executable commands, MCP config, permissions, or external URLs |
+| `approval_required` | True when the entry is staged or high-risk |
+
+These fields are additive. Existing `tier` and `status` values remain supported for backward compatibility.
+
+## Recovery and retention dry-runs
+
+If a JSON knowledge file becomes unreadable, `engram recover-json lessons` reports recovery candidates without restoring anything automatically. The retention plan compares valid backups by metadata, counts overlap/primary-only/secondary-only IDs, and warns when an active merge would exceed the active knowledge cap.
+
+The dry-run is intentionally content-free: it does not print lesson bodies, details, or raw IDs. Restoring the live `lessons.json` still requires an explicit user decision outside the dry-run report.
 
 ## Public vs private reports
 
@@ -65,6 +83,7 @@ Public or shareable outputs should contain:
 - Health status from `engram doctor`.
 - Redacted storage labels such as `<engram-root>`.
 - Whether telemetry is off or enabled.
+- Metadata-only config integrity counts and short hashes, when useful.
 
 Private diagnostic outputs may contain:
 
@@ -75,6 +94,8 @@ Private diagnostic outputs may contain:
 - Local usernames.
 - Audit details.
 - Session IDs or context file names.
+
+`engram doctor` treats the config integrity report as local diagnostic metadata. It can include local paths and file hashes, but it does not include MCP config contents, Claude hook commands, instruction bodies, or project rule lines.
 
 Do not publish private diagnostic outputs without reviewing and sanitizing them first. Release evidence, issue comments, screenshots, and feedback bundles should use public-style summaries unless the recipient explicitly needs private diagnostics.
 

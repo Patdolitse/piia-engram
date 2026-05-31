@@ -331,11 +331,20 @@ $ engram doctor
     [ok] PYTHONIOENCODING not set (stdout/stderr already UTF-8)
     [ok] Runtime encodings: preferred=UTF-8, filesystem=utf-8
 
+  -- Config Integrity --
+
+    [ok] MCP configs: 3/13 files found, 3 configured
+    [ok] Instruction files: 3/4 found, 3 fresh
+    [ok] Project rule files: 1 found
+    [ok] Shared instructions: 1 found
+    [ok] Claude hooks: 4/4 registered
+    [ok] Report is metadata-only (hashes + counts; no rule bodies)
+
   -- Continuity --
 
     [--] No saved agent sessions yet
          Run an AI session, then wrap up or stop the tool to create one.
-    [ok] Resume brief builds (1 section(s))
+    [ok] Resume brief builds (2 section(s))
 ```
 
 
@@ -352,7 +361,7 @@ piia-engram doctor        # show what's wrong
 piia-engram doctor --fix  # auto-repair and fix in one step
 ```
 
-Then restart the affected AI tool. The doctor command checks Claude Code, Cursor, and Claude Desktop configs and removes any outdated server entries.
+Then restart the affected AI tool. The doctor command checks Claude Code, Cursor, Codex, Windsurf, Claude Desktop, and community-supported MCP config locations, removes outdated server entries, and prints a metadata-only config integrity summary.
 
 ## Remote Deployment
 

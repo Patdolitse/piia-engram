@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import locale
 import logging
@@ -2236,6 +2237,263 @@ def _detect_installed_tools() -> list[dict]:
     return results
 
 
+def _file_sha256_12(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except (OSError, PermissionError):
+        return ""
+
+
+def _servers_from_config(config: dict, server_key: str) -> dict:
+    servers = config.get(server_key, {})
+    if isinstance(servers, dict) and servers:
+        return servers
+    if server_key == "mcpServers":
+        fallback = config.get("mcp_servers", {})
+    elif server_key == "mcp_servers":
+        fallback = config.get("mcpServers", {})
+    else:
+        fallback = {}
+    return fallback if isinstance(fallback, dict) else {}
+
+
+def _shared_instruction_candidates(home: Path) -> list[Path]:
+    data_dir = Path(os.environ.get("ENGRAM_DIR", "") or home / ".engram")
+    candidates = [
+        data_dir / "shared_instructions.md",
+        home / ".piia" / "shared_instructions.md",
+    ]
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key not in seen:
+            deduped.append(path)
+            seen.add(key)
+    return deduped
+
+
+def _claude_hook_rows(home: Path) -> list[dict]:
+    settings_path = home / ".claude" / "settings.json"
+    settings_exists = settings_path.is_file()
+    settings: dict = {}
+    if settings_exists:
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except Exception:
+            settings = {}
+
+    hook_specs = (
+        (
+            "Stop",
+            "Stop",
+            ("auto_save_on_stop", "piia_engram.hooks.auto_save_on_stop"),
+            "any",
+        ),
+        (
+            "PreCompact",
+            "PreCompact",
+            ("CLAUDE_INVOKED_BY=engram_precompact",
+             "piia_engram.hooks.auto_save_on_stop"),
+            "all",
+        ),
+        (
+            "SessionStart",
+            "SessionStart (resume brief inject)",
+            ("auto_inject_resume_brief",
+             "piia_engram.hooks.auto_inject_resume_brief"),
+            "any",
+        ),
+        (
+            "PostCompact",
+            "PostCompact (summary absorb)",
+            ("auto_absorb_compact",
+             "piia_engram.hooks.auto_absorb_compact"),
+            "any",
+        ),
+    )
+
+    rows: list[dict] = []
+    hooks = settings.get("hooks", {}) if isinstance(settings, dict) else {}
+    for event, label, markers, match_mode in hook_specs:
+        registered = False
+        matcher = all if match_mode == "all" else any
+        for event_group in hooks.get(event, []) if isinstance(hooks, dict) else []:
+            for hook in event_group.get("hooks", []):
+                cmd = str(hook.get("command", ""))
+                if matcher(marker in cmd for marker in markers):
+                    registered = True
+                    break
+            if registered:
+                break
+        rows.append({
+            "event": event,
+            "label": label,
+            "settings_path": str(settings_path),
+            "settings_exists": settings_exists,
+            "registered": registered,
+            "sha256_12": _file_sha256_12(settings_path) if settings_exists else "",
+        })
+    return rows
+
+
+def _build_config_integrity_report(cwd: Path | None = None) -> dict:
+    """Build a metadata-only portability/integrity report for local AI config.
+
+    The report intentionally includes hashes, counts, booleans, and paths, but
+    never returns instruction file bodies or project rule lines.
+    """
+    mcp_configs: list[dict] = []
+    for tool_id, cfg in _tool_configs().items():
+        fmt = cfg.get("format", "json")
+        server_key = cfg.get("server_key", "mcpServers")
+        for raw_path in cfg.get("config_paths", []):
+            path = Path(raw_path)
+            exists = path.is_file()
+            config = _read_mcp_config(path, fmt=fmt) if exists else {}
+            servers = _servers_from_config(config, server_key)
+            mcp_configs.append({
+                "tool_id": tool_id,
+                "name": cfg.get("name", tool_id),
+                "path": str(path),
+                "format": fmt,
+                "server_key": server_key,
+                "verified": bool(cfg.get("verified", False)),
+                "parent_exists": path.parent.exists(),
+                "exists": exists,
+                "configured": "engram" in servers,
+                "legacy_servers": [
+                    name for name in LEGACY_SERVER_NAMES if name in servers
+                ],
+                "sha256_12": _file_sha256_12(path) if exists else "",
+            })
+
+    home = Path.home()
+    instruction_files: list[dict] = []
+    for tool_id, info in _INSTRUCTION_SNIPPETS.items():
+        path = Path(info["path_fn"](home))
+        exists = path.is_file()
+        content = ""
+        if exists:
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except (OSError, PermissionError):
+                content = ""
+        if tool_id == "cursor":
+            has_marker = bool(content.strip()) and (
+                "engram" in content.lower() or _SNIPPET_FRESHNESS_TOKEN in content
+            )
+        else:
+            has_marker = _INSTRUCTION_MARKER in content or (
+                "<!-- piia-engram:auto-injected -->" in content
+            )
+        instruction_files.append({
+            "tool_id": tool_id,
+            "path": str(path),
+            "exists": exists,
+            "has_marker": has_marker,
+            "has_resume_brief": _SNIPPET_FRESHNESS_TOKEN in content,
+            "line_count": len(content.splitlines()) if content else 0,
+            "sha256_12": _file_sha256_12(path) if exists else "",
+        })
+
+    shared_instruction_files: list[dict] = []
+    for path in _shared_instruction_candidates(home):
+        exists = path.is_file()
+        line_count = 0
+        if exists:
+            try:
+                line_count = len(path.read_text(encoding="utf-8", errors="replace").splitlines())
+            except (OSError, PermissionError):
+                line_count = 0
+        shared_instruction_files.append({
+            "path": str(path),
+            "exists": exists,
+            "line_count": line_count,
+            "sha256_12": _file_sha256_12(path) if exists else "",
+        })
+
+    claude_hooks = _claude_hook_rows(home)
+
+    project_rules: list[dict] = []
+    for rule in _scan_rule_files(cwd=cwd):
+        path = Path(rule["path"])
+        lines = list(rule.get("lines", []))
+        content_line_count = len([
+            line for line in lines
+            if line.strip() and not line.strip().startswith("#")
+        ])
+        project_rules.append({
+            "path": str(path),
+            "scope": rule.get("scope", ""),
+            "line_count": len(lines),
+            "content_line_count": content_line_count,
+            "sha256_12": _file_sha256_12(path),
+        })
+
+    summary = {
+        "mcp_config_paths": len(mcp_configs),
+        "mcp_configs_found": sum(1 for row in mcp_configs if row["exists"]),
+        "mcp_configs_configured": sum(1 for row in mcp_configs if row["configured"]),
+        "instruction_files": len(instruction_files),
+        "instruction_files_found": sum(1 for row in instruction_files if row["exists"]),
+        "instruction_files_fresh": sum(
+            1 for row in instruction_files
+            if row["exists"] and row["has_resume_brief"]
+        ),
+        "project_rule_files": sum(1 for row in project_rules if row["scope"] == "project"),
+        "legacy_server_configs": sum(1 for row in mcp_configs if row["legacy_servers"]),
+        "shared_instruction_files_found": sum(
+            1 for row in shared_instruction_files if row["exists"]
+        ),
+        "claude_hooks_registered": sum(1 for row in claude_hooks if row["registered"]),
+        "claude_hooks_total": len(claude_hooks),
+    }
+
+    return {
+        "schema_version": 1,
+        "summary": summary,
+        "mcp_configs": mcp_configs,
+        "instruction_files": instruction_files,
+        "shared_instruction_files": shared_instruction_files,
+        "claude_hooks": claude_hooks,
+        "project_rules": project_rules,
+        "live_store_modified": False,
+    }
+
+
+def _print_config_integrity_report(report: dict) -> None:
+    _safe_print("\n  -- Config Integrity --\n")
+    summary = report.get("summary", {})
+    mcp_total = int(summary.get("mcp_config_paths", 0) or 0)
+    mcp_found = int(summary.get("mcp_configs_found", 0) or 0)
+    mcp_configured = int(summary.get("mcp_configs_configured", 0) or 0)
+    instruction_total = int(summary.get("instruction_files", 0) or 0)
+    instruction_found = int(summary.get("instruction_files_found", 0) or 0)
+    instruction_fresh = int(summary.get("instruction_files_fresh", 0) or 0)
+    project_rules = int(summary.get("project_rule_files", 0) or 0)
+    legacy_configs = int(summary.get("legacy_server_configs", 0) or 0)
+    shared_found = int(summary.get("shared_instruction_files_found", 0) or 0)
+    hooks_registered = int(summary.get("claude_hooks_registered", 0) or 0)
+    hooks_total = int(summary.get("claude_hooks_total", 0) or 0)
+
+    mcp_status = "[ok]" if legacy_configs == 0 else "[--]"
+    print(
+        f"    {mcp_status} MCP configs: "
+        f"{mcp_found}/{mcp_total} files found, {mcp_configured} configured"
+    )
+    snippet_status = "[ok]" if instruction_found == instruction_fresh else "[--]"
+    print(
+        f"    {snippet_status} Instruction files: "
+        f"{instruction_found}/{instruction_total} found, {instruction_fresh} fresh"
+    )
+    print(f"    [ok] Project rule files: {project_rules} found")
+    print(f"    [ok] Shared instructions: {shared_found} found")
+    hook_status = "[ok]" if hooks_registered == hooks_total else "[--]"
+    print(f"    {hook_status} Claude hooks: {hooks_registered}/{hooks_total} registered")
+    print("    [ok] Report is metadata-only (hashes + counts; no rule bodies)")
+
+
 def _entry_args(entry: dict) -> list[str]:
     """Return MCP entry args as strings."""
     args = entry.get("args", [])
@@ -2657,6 +2915,12 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         problems += 1
 
     problems += _run_terminal_encoding_check()
+
+    try:
+        _print_config_integrity_report(_build_config_integrity_report(cwd=Path.cwd()))
+    except Exception as exc:
+        print(f"    [!!] Config integrity check failed: {exc}")
+        problems += 1
 
     problems += _run_continuity_checks(eng)
 
@@ -3800,6 +4064,7 @@ def _run_recover_json(args: list[str]) -> int:
     import os as _os
     from piia_engram.recovery import (
         analyze_json_recovery_candidates,
+        analyze_recovery_retention_plan,
         write_recovery_candidate,
     )
 
@@ -3849,6 +4114,18 @@ def _run_recover_json(args: list[str]) -> int:
         print(f"Best candidate: {best['file_name']} entries={best['entries']}")
     else:
         print("Best candidate: none")
+    retention = analyze_recovery_retention_plan(root, dataset=dataset)
+    if retention.get("primary_candidate"):
+        print(
+            "Retention plan: "
+            f"union_ids={retention['union_ids']} "
+            f"overlap_ids={retention['overlap_ids']} "
+            f"primary_only_ids={retention['primary_only_ids']} "
+            f"secondary_only_ids={retention['secondary_only_ids']} "
+            f"overflow_ids={retention['overflow_ids']} "
+            f"active_merge_safe={str(retention['active_merge_safe']).lower()}"
+        )
+        print(f"Recommendation: {retention['recommendation']}")
     print("Live store modified: false")
 
     if output_path:

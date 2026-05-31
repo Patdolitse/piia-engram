@@ -52,6 +52,8 @@ STALE_DECAY_MULTIPLIERS: dict[str, float] = {
     "default": 1.0,            # 30 days — everything else
 }
 MAX_KNOWLEDGE_ENTRIES = 200        # cap per knowledge type (lessons / decisions)
+MEMORY_STATES = frozenset({"staging", "verified", "rejected", "deprecated"})
+MEMORY_RISK_LEVELS = frozenset({"low", "medium", "high"})
 CONFLICT_Q_THRESHOLD = 0.25   # question similarity for potential decision conflict
 CONFLICT_C_CEILING = 0.80     # choice similarity ceiling — above means same choice, not conflict
 

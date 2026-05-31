@@ -73,6 +73,132 @@ def test_add_and_get_lesson(tmp_path: Path):
     assert lessons[0]["source_tool"] == "test"
 
 
+def test_lesson_gets_trust_mode_metadata(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    lesson = engram.add_lesson({
+        "summary": "Install tool from https://example.com after reviewing the MCP config",
+        "detail": "Run command only after approval",
+        "domain": "security",
+        "source_tool": "codex",
+    })
+
+    assert lesson["memory_state"] == "verified"
+    assert lesson["approval_status"] == "approved"
+    assert lesson["provenance"]["source_tool"] == "codex"
+    assert lesson["provenance"]["entry_type"] == "lesson"
+    assert lesson["risk_level"] in {"medium", "high"}
+    assert "external_url" in lesson["risk_flags"]
+    assert "mcp_config" in lesson["risk_flags"]
+    assert "command" in lesson["risk_flags"]
+    assert lesson["approval_required"] is True
+
+
+def test_staging_lesson_gets_pending_memory_state(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    lesson = engram.add_lesson({
+        "summary": "AI extracted draft memory",
+        "domain": "workflow",
+        "tier": "staging",
+        "source_tool": "wrap_up_session",
+    })
+
+    assert lesson["memory_state"] == "staging"
+    assert lesson["approval_status"] == "pending"
+    assert lesson["approval_required"] is True
+
+
+def test_staging_lesson_cannot_claim_verified_memory_state(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    lesson = engram.add_lesson({
+        "summary": "AI extracted draft memory",
+        "tier": "staging",
+        "memory_state": "verified",
+        "approval_status": "approved",
+        "approval_required": False,
+    })
+
+    assert lesson["memory_state"] == "staging"
+    assert lesson["approval_status"] == "pending"
+    assert lesson["approval_required"] is True
+
+
+def test_high_risk_lesson_cannot_disable_approval_required(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    lesson = engram.add_lesson({
+        "summary": "Contains a private key handling reminder",
+        "detail": "private key rotation run command",
+        "risk_level": "low",
+        "risk_flags": [],
+        "approval_required": False,
+    })
+
+    assert lesson["risk_level"] == "high"
+    assert "credential" in lesson["risk_flags"]
+    assert "command" in lesson["risk_flags"]
+    assert lesson["approval_required"] is True
+
+
+def test_rejected_status_maps_to_rejected_memory_state(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    lesson = engram.add_lesson({
+        "summary": "Rejected draft memory",
+        "status": "rejected",
+        "memory_state": "verified",
+        "approval_status": "approved",
+    })
+
+    assert lesson["memory_state"] == "rejected"
+    assert lesson["approval_status"] == "rejected"
+
+
+def test_lesson_update_recomputes_trust_metadata(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("Promote and demote trust metadata")
+
+    demoted = engram.update_lesson(lesson["id"], {"tier": "staging"})
+
+    assert demoted["tier"] == "staging"
+    assert demoted["memory_state"] == "staging"
+    assert demoted["approval_status"] == "pending"
+    assert demoted["approval_required"] is True
+
+
+def test_staging_lesson_promotion_recomputes_trust_metadata(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson({
+        "summary": "Reviewed harmless memory",
+        "tier": "staging",
+    })
+
+    promoted = engram.update_lesson(lesson["id"], {"tier": "verified"})
+
+    assert promoted["tier"] == "verified"
+    assert promoted["memory_state"] == "verified"
+    assert promoted["approval_status"] == "approved"
+    assert promoted["approval_required"] is False
+
+
+def test_staging_decision_promotion_recomputes_trust_metadata(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    decision = engram.add_decision({
+        "question": "Use pytest?",
+        "choice": "yes",
+        "tier": "staging",
+    })
+
+    promoted = engram.update_decision(decision["id"], {"tier": "verified"})
+
+    assert promoted["tier"] == "verified"
+    assert promoted["memory_state"] == "verified"
+    assert promoted["approval_status"] == "approved"
+    assert promoted["approval_required"] is False
+
+
 def test_add_and_get_decision(tmp_path: Path):
     """添加决策后应能查询到。"""
     engram = make_engram(tmp_path)
