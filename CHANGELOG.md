@@ -6,6 +6,34 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.42.0] - 2026-05-31
+
+The trust, resume, and portability foundation release: Engram now gives safer recovery diagnostics, a stronger cross-tool resume brief, trust-mode metadata primitives, and metadata-only configuration integrity checks.
+
+### Added
+- **Recovery retention dry-run** - `engram recover-json lessons` now reports a content-free retention plan for valid recovery candidates, including overlap/union/overflow counts and a recommendation, without restoring or printing lesson bodies/raw IDs.
+- **30-second resume handoff** - `get_resume_brief()` now starts with a compact handoff that names the project, latest activity, next action, and a trust note that memory is reference context rather than fresh user approval.
+- **Trust-mode metadata primitives** - lessons and decisions now carry derived `memory_state`, `approval_status`, `provenance`, `risk_level`, `risk_flags`, and `approval_required` fields while preserving existing `tier`/`status` compatibility.
+- **Config integrity diagnostics** - terminal `engram doctor` now reports metadata-only MCP config, AI instruction, shared instruction, Claude hook, and project-rule integrity counts/hashes.
+
+### Changed
+- Trust metadata is derived server-side and monotonic: callers cannot self-promote staging entries, suppress high-risk flags, or disable approval for high-risk memory.
+- `get_resume_brief()` and non-fix doctor continuity checks read lessons/decisions without implicitly backfilling legacy knowledge files.
+- Documentation now describes the current access-based staging promotion path for lessons/decisions while keeping playbook review explicit.
+
+### Fixed
+- Hardened entry help and encoding reads so CLI help avoids initialization side effects, Windows UTF-8 output decodes reliably, and JSON readers accept UTF-8 BOM.
+- Closed a trust-field self-downgrade edge where caller-supplied `memory_state`, `risk_level`, `risk_flags`, or `approval_required` could conflict with server-derived state.
+- Closed a non-`--fix` doctor side effect where building a resume brief could rewrite old-format knowledge files.
+- Fixed staging-to-verified promotion so derived trust metadata updates from `staging/pending` to `verified/approved` after review or access-based promotion.
+
+### Tests
+- Full suite: **1826 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, Codex subagent reviews PASS, Claude Code read-only acceptance PASS.
+
+### Release Evidence
+- See `release-evidence/v3.42.0.md`.
+
 ## [3.41.0] - 2026-05-31
 
 The market-positioning and trust package release: Engram now presents itself more precisely as a local-first personal AI identity layer for MCP-compatible coding tools, with clearer trust boundaries and a public cross-tool continuity demo.

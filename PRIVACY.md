@@ -66,7 +66,7 @@ Local telemetry and remote sending are separate:
 |-------|---------|-------------------|
 | Tool call counts | `{"add_lesson": {"success": 5, "error": 1}}` | No — tool names + counts only |
 | Knowledge totals | `{"lessons": 47, "decisions": 12}` | No — counts only |
-| Engram version | `"3.41.0"` | No |
+| Engram version | `"3.42.0"` | No |
 | Daily anonymous ID | `"a3f8b2c1e9d04f67"` | HMAC-derived, rotates daily, cannot be linked across days |
 | OS platform | `"win32"` | No detailed version |
 | Python version | `"3.12"` | Major.minor only |

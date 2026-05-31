@@ -5,7 +5,7 @@ This document describes how piia-engram is structured internally, why the struct
 It complements the user-facing [README](../README.md) (which answers *"what does it do"*) by answering *"how is it built and where would I extend it"*.
 
 > **Audience**: contributors, integrators, and anyone reading the code.
-> **Version**: v3.41.0 (2026-05-31)
+> **Version**: v3.42.0 (2026-05-31)
 
 ---
 

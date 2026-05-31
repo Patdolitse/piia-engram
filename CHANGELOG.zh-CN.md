@@ -6,6 +6,34 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.42.0] - 2026-05-31
+
+信任、接续与可携带性基础版本：Engram 现在提供更安全的恢复诊断、更强的跨工具接续简报、信任元数据基础字段，以及只含元数据的配置完整性检查。
+
+### 新增
+- **恢复保留 dry-run**：`engram recover-json lessons` 现在会为有效恢复候选输出不含正文的 retention plan，包含 overlap / union / overflow 计数和建议，不恢复 live store，也不打印 lesson 正文或 raw IDs。
+- **30 秒接续简报**：`get_resume_brief()` 现在以 compact handoff 开头，包含项目、最近活动、下一步动作和 trust note，提醒 AI memory 只是参考上下文，不是新的用户授权。
+- **Trust Mode 元数据基础**：lessons / decisions 现在携带派生的 `memory_state`、`approval_status`、`provenance`、`risk_level`、`risk_flags`、`approval_required`，同时保留既有 `tier` / `status` 兼容。
+- **配置完整性诊断**：终端 `engram doctor` 现在报告 MCP config、AI instruction、shared instruction、Claude hook 和 project rule 的 metadata-only counts / hashes。
+
+### 变更
+- Trust metadata 由服务端派生且单调收紧：调用方不能自提 staging、压低 high-risk flags，或关闭 high-risk approval。
+- `get_resume_brief()` 和非 `--fix` doctor continuity 检查读取 lessons / decisions 时不会隐式 backfill 旧格式 knowledge 文件。
+- 文档现在如实说明 lessons / decisions 当前仍有 access-based staging promotion path，playbook review 仍保持显式确认。
+
+### 修复
+- 加固入口 help 与编码读取：CLI help 避免初始化副作用，Windows UTF-8 输出可靠解码，JSON 读取接受 UTF-8 BOM。
+- 关闭调用方通过 `memory_state`、`risk_level`、`risk_flags`、`approval_required` 与服务端派生状态冲突造成的 trust-field 自降级边界。
+- 关闭非 `--fix` doctor 构建 resume brief 时可能改写旧格式 knowledge 文件的副作用。
+- 修复 staging -> verified promotion 后派生 trust metadata 仍黏在 `staging/pending` 的问题。
+
+### 测试
+- 全量套件：**1826 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，Codex subagent 复审 PASS，Claude Code 只读验收 PASS。
+
+### Release Evidence
+- 见 `release-evidence/v3.42.0.md`。
+
 ## [3.41.0] - 2026-05-31
 
 市场定位与信任说明版本：Engram 现在更精确地表达为面向 MCP 兼容 AI 编程工具的本地优先个人 AI 身份层，并补齐信任边界与公开跨工具连续性 demo。
