@@ -2039,6 +2039,31 @@ class TestMainCLI:
         assert "dry-run" in out
         assert "knowledge\\lessons.json" in out or "knowledge/lessons.json" in out
 
+    def test_main_repair_encoding_clean_result_points_to_display_encoding(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A clean data scan should distinguish storage health from terminal display."""
+        from piia_engram.setup_wizard import main
+
+        kdir = tmp_path / "knowledge"
+        kdir.mkdir(parents=True)
+        (kdir / "lessons.json").write_text(
+            json.dumps([{"id": "l1", "summary": "发布流程测试"}], ensure_ascii=False),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        monkeypatch.setattr("sys.argv", ["engram", "repair-encoding"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "no mojibake detected" in out
+        assert "This confirms stored Engram data is clean" in out
+        assert "Get-Content -Encoding utf8" in out
+
     def test_main_recover_json_dry_run_redacts_content(self, tmp_path, monkeypatch, capsys):
         from piia_engram.setup_wizard import main
 

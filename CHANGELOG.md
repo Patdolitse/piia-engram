@@ -12,6 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **Metadata-only continuity proof** - `engram continuity` reports saved-session counts, contributing tools, resume-brief build status, aggregate context-load / wrap-up signals, and cross-tool readiness without printing memory bodies, raw telemetry events, session IDs, decision reasoning, or local paths.
 
 ### Fixed
+- `engram repair-encoding` now clarifies that a clean scan means stored Engram data is healthy, and points Windows/PowerShell users to terminal display encoding when UTF-8 files still appear garbled.
 - `engram status` now falls back to a sibling `piia-engram-mcp` launcher when the CLI is started by absolute path and the console-script directory is not on `PATH`, avoiding a false MCP-entry warning in Windows/Codex runtime workflows.
 
 ## [3.42.0] - 2026-05-31

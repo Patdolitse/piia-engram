@@ -4053,6 +4053,11 @@ def _run_repair_encoding(args: list[str]) -> int:
     report = scan_engram_root(eng.root)
     if not report.findings:
         print("[ok] Encoding repair dry-run: no mojibake detected.")
+        print(
+            "     This confirms stored Engram data is clean. If text still looks "
+            "garbled in a terminal, check display encoding instead."
+        )
+        print("     PowerShell tip: use Get-Content -Encoding utf8 for UTF-8 files.")
         return 0
 
     print(
