@@ -23,6 +23,7 @@ The trust, resume, and portability foundation release: Engram now gives safer re
 
 ### Fixed
 - Hardened entry help and encoding reads so CLI help avoids initialization side effects, Windows UTF-8 output decodes reliably, and JSON readers accept UTF-8 BOM.
+- Fixed Codex/MCP config generation so Windows-style source paths derive the correct `PYTHONPATH` even when tests or setup run on Linux/macOS.
 - Closed a trust-field self-downgrade edge where caller-supplied `memory_state`, `risk_level`, `risk_flags`, or `approval_required` could conflict with server-derived state.
 - Closed a non-`--fix` doctor side effect where building a resume brief could rewrite old-format knowledge files.
 - Fixed staging-to-verified promotion so derived trust metadata updates from `staging/pending` to `verified/approved` after review or access-based promotion.

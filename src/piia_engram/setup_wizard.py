@@ -13,12 +13,19 @@ import re
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 logger = logging.getLogger(__name__)
 
 # 旧版 MCP server 名称，迁移时需要清理
 LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
+
+
+def _module_src_dir(mcp_server_path: str) -> str:
+    """Return the source root containing the piia_engram package."""
+    if "\\" in mcp_server_path or re.match(r"^[A-Za-z]:[\\/]", mcp_server_path):
+        return str(PureWindowsPath(mcp_server_path).parent.parent)
+    return str(Path(mcp_server_path).parent.parent)
 
 # ---------------------------------------------------------------------------
 # i18n — 双语支持（中文/English）
@@ -1225,7 +1232,7 @@ def _write_mcp_config(
     # inject PYTHONPATH so `-m` can still resolve the package.
     spec = importlib.util.find_spec("piia_engram")
     if not spec and mcp_server_path:
-        src_dir = str(Path(mcp_server_path).parent.parent)
+        src_dir = _module_src_dir(mcp_server_path)
         env["PYTHONPATH"] = src_dir
 
     if data_dir:
@@ -1277,7 +1284,7 @@ def _write_mcp_config_toml(
     spec = importlib.util.find_spec("piia_engram")
     if not spec:
         # piia_engram 不在默认路径，需要 PYTHONPATH
-        src_dir = str(Path(mcp_server_path).parent.parent)
+        src_dir = _module_src_dir(mcp_server_path)
         engram_block.append(f'PYTHONPATH = {toml_string(src_dir)}')
     if data_dir:
         engram_block.append(f'ENGRAM_DIR = {toml_string(data_dir)}')

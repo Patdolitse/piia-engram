@@ -23,6 +23,7 @@
 
 ### 修复
 - 加固入口 help 与编码读取：CLI help 避免初始化副作用，Windows UTF-8 输出可靠解码，JSON 读取接受 UTF-8 BOM。
+- 修复 Codex/MCP 配置生成：即使测试或 setup 运行在 Linux/macOS 上，也能从 Windows 风格源码路径推导正确的 `PYTHONPATH`。
 - 关闭调用方通过 `memory_state`、`risk_level`、`risk_flags`、`approval_required` 与服务端派生状态冲突造成的 trust-field 自降级边界。
 - 关闭非 `--fix` doctor 构建 resume brief 时可能改写旧格式 knowledge 文件的副作用。
 - 修复 staging -> verified promotion 后派生 trust metadata 仍黏在 `staging/pending` 的问题。
