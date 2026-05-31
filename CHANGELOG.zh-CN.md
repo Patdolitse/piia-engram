@@ -6,6 +6,24 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.43.0] - 2026-05-31
+
+连续性诊断版本：Engram 现在提供可分享的 metadata-only 交接证明、recall-loop 计数，以及更清晰的 Windows 编码诊断。
+
+### 新增
+- **仅含元数据的连续性证明**：`engram continuity` 报告已保存 session 数、参与工具、resume brief 构建状态、context-load / wrap-up 聚合信号和跨工具就绪状态，不打印 memory 正文、raw telemetry events、session IDs、decision reasoning 或本地完整路径。
+
+### 修复
+- `engram repair-encoding` 现在会说明 clean scan 代表存储的 Engram 数据是健康的；如果 UTF-8 文件在 Windows/PowerShell 中仍显示乱码，应检查终端显示编码。
+- `engram status` 现在会在 CLI 由绝对路径启动且 console-script 目录不在 `PATH` 时，回退查找同目录的 `piia-engram-mcp` launcher，避免 Windows/Codex runtime 场景中的 MCP entry 误报。
+
+### 测试
+- 全量套件：**1834 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，release evidence 完整，Claude 验收 PASS。
+
+### Release Evidence
+- 见 `release-evidence/v3.43.0.md`。
+
 ## [3.42.0] - 2026-05-31
 
 信任、接续与可携带性基础版本：Engram 现在提供更安全的恢复诊断、更强的跨工具接续简报、信任元数据基础字段，以及只含元数据的配置完整性检查。

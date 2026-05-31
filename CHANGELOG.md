@@ -8,12 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.43.0] - 2026-05-31
+
+The continuity diagnostics release: Engram now has a shareable metadata-only handoff proof, recall-loop counters, and clearer Windows encoding diagnostics.
+
 ### Added
 - **Metadata-only continuity proof** - `engram continuity` reports saved-session counts, contributing tools, resume-brief build status, aggregate context-load / wrap-up signals, and cross-tool readiness without printing memory bodies, raw telemetry events, session IDs, decision reasoning, or local paths.
 
 ### Fixed
 - `engram repair-encoding` now clarifies that a clean scan means stored Engram data is healthy, and points Windows/PowerShell users to terminal display encoding when UTF-8 files still appear garbled.
 - `engram status` now falls back to a sibling `piia-engram-mcp` launcher when the CLI is started by absolute path and the console-script directory is not on `PATH`, avoiding a false MCP-entry warning in Windows/Codex runtime workflows.
+
+### Tests
+- Full suite: **1834 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, release evidence complete, Claude acceptance PASS.
+
+### Release Evidence
+- See `release-evidence/v3.43.0.md`.
 
 ## [3.42.0] - 2026-05-31
 

@@ -29,7 +29,7 @@ def test_mcp_registry_description_stays_within_limit():
     assert "User-approved" in server["description"]
 
 
-def test_pyproject_description_uses_v342_positioning():
+def test_pyproject_description_uses_current_positioning():
     data = tomllib.loads(_read("pyproject.toml"))
     desc = data["project"]["description"]
 
@@ -39,15 +39,15 @@ def test_pyproject_description_uses_v342_positioning():
     assert "every AI tool" not in desc.lower()
 
 
-def test_public_package_metadata_uses_v342_positioning():
+def test_public_package_metadata_uses_current_version():
     pyproject = tomllib.loads(_read("pyproject.toml"))
     server = json.loads(_read(".mcp/server.json"))
     plugin = json.loads(_read(".claude-plugin/plugin.json"))
 
-    assert pyproject["project"]["version"] == "3.42.0"
-    assert server["version"] == "3.42.0"
-    assert server["packages"][0]["version"] == "3.42.0"
-    assert plugin["version"] == "3.42.0"
+    assert pyproject["project"]["version"] == "3.43.0"
+    assert server["version"] == "3.43.0"
+    assert server["packages"][0]["version"] == "3.43.0"
+    assert plugin["version"] == "3.43.0"
     assert "MCP-compatible coding tools" in plugin["description"]
     assert "every AI tool" not in plugin["description"].lower()
 
