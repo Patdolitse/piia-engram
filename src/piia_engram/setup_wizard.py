@@ -3771,6 +3771,73 @@ def _run_repair_encoding(args: list[str]) -> int:
     return 1
 
 
+def _run_recover_json(args: list[str]) -> int:
+    """Dry-run recovery scan for JSON files backed up as ``*.corrupt``."""
+    import os as _os
+    from piia_engram.recovery import (
+        analyze_json_recovery_candidates,
+        write_recovery_candidate,
+    )
+
+    if not args or args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram recover-json lessons\n"
+            "  engram recover-json lessons --write-candidate PATH\n"
+        )
+        return 0
+
+    dataset = args[0]
+    output_path = None
+    if "--write-candidate" in args:
+        idx = args.index("--write-candidate")
+        if idx + 1 >= len(args):
+            print("ERROR: --write-candidate requires a destination path")
+            return 2
+        output_path = args[idx + 1]
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    report = analyze_json_recovery_candidates(root, dataset=dataset)
+    active = report.get("active") or {}
+    best = report.get("best_candidate")
+
+    print(f"JSON recovery dry-run: dataset={dataset}")
+    print(
+        "Active: "
+        f"{active.get('file_name', f'{dataset}.json')} "
+        f"status={active.get('json_status')} "
+        f"entries={active.get('entries')} "
+        f"bom={active.get('starts_bom')}"
+    )
+    print("Candidates:")
+    for item in report["files"]:
+        if item.get("role") != "backup":
+            continue
+        marker = "*" if best and item["file_name"] == best["file_name"] else "-"
+        print(
+            f"  {marker} {item['file_name']} "
+            f"status={item['json_status']} "
+            f"entries={item['entries']} "
+            f"date_max={item['date_max']} "
+            f"sha256={item['sha256_12']}"
+        )
+    if best:
+        print(f"Best candidate: {best['file_name']} entries={best['entries']}")
+    else:
+        print("Best candidate: none")
+    print("Live store modified: false")
+
+    if output_path:
+        result = write_recovery_candidate(root, dataset=dataset, output_path=output_path)
+        print(
+            "Wrote recovery candidate: "
+            f"{result['output_path']} "
+            f"entries={result['entries']} "
+            "live_store_modified=false"
+        )
+    return 0
+
+
 def _governance_root():
     from piia_engram.core import Engram
     return Engram().root
@@ -3935,6 +4002,8 @@ def main() -> None:
         _run_reindex()
     elif args[0] == "repair-encoding":
         sys.exit(_run_repair_encoding(args[1:]))
+    elif args[0] == "recover-json":
+        sys.exit(_run_recover_json(args[1:]))
     elif args[0] == "grants":
         sys.exit(run_grants(_governance_root()))
     elif args[0] == "trust":
@@ -3971,6 +4040,7 @@ def main() -> None:
             "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram reindex          Rebuild the hybrid search index from JSON\n"
             "  engram repair-encoding  Dry-run mojibake scan (use --apply to fix)\n"
+            "  engram recover-json <dataset>  Dry-run metadata scan for corrupt JSON backups\n"
             "  engram grants           List agent trust grants + revocations\n"
             "  engram trust <a> <lvl>  Grant an agent a trust level\n"
             "  engram revoke <agent>   Revoke an agent (future disclosure only)\n"

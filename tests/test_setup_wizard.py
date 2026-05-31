@@ -1639,6 +1639,37 @@ class TestMainCLI:
         assert "dry-run" in out
         assert "knowledge\\lessons.json" in out or "knowledge/lessons.json" in out
 
+    def test_main_recover_json_dry_run_redacts_content(self, tmp_path, monkeypatch, capsys):
+        from piia_engram.setup_wizard import main
+
+        kdir = tmp_path / "knowledge"
+        kdir.mkdir(parents=True)
+        (kdir / "lessons.json").write_bytes(b"\xef\xbb\xbf[]\r\n")
+        (kdir / "lessons.corrupt.20260531_010203.json").write_text(
+            json.dumps([
+                {
+                    "id": "l1",
+                    "summary": "CLI_SECRET_SUMMARY",
+                    "detail": "CLI_SECRET_DETAIL",
+                    "tier": "verified",
+                    "created_at": "2026-05-31T01:02:03",
+                }
+            ]),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        monkeypatch.setattr("sys.argv", ["engram", "recover-json", "lessons"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "lessons.corrupt.20260531_010203.json" in out
+        assert "entries=1" in out
+        assert "CLI_SECRET" not in out
+
     def test_main_telemetry_dispatches(self, tmp_path, monkeypatch, capsys):
         """main() with 'telemetry' should call _run_telemetry_cli."""
         from piia_engram.setup_wizard import main
