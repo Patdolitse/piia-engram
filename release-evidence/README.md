@@ -19,14 +19,16 @@ Create `release-evidence/v<version>.md` with these lines (each `marker: value`):
 
 - self-review: passed
 - codex-review: passed     # independent external (Codex) review + tests
+- claude-review: passed    # independent Claude acceptance review
 - tests: pass              # full pytest suite green (note the count)
 - eval-gate: pass          # or n/a if no retrieval/quality-affecting change
 - negative-control: passed # R1; or n/a if no security-sensitive change
 - field-assertion-audit: passed  # R5; or n/a if no security-sensitive module touched
 ```
 
-Required markers: `self-review`, `codex-review`, `tests` (must be a passing
-value). `eval-gate`, `negative-control` and `field-assertion-audit` must be
+Required markers: `self-review`, `codex-review`, `claude-review`, `tests`
+(must be a passing value). `eval-gate`, `negative-control` and
+`field-assertion-audit` must be
 present (use `n/a` when not applicable).
 
 `negative-control` (R1) and `field-assertion-audit` (R5) encode the self-test

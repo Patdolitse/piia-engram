@@ -565,6 +565,20 @@ def test_tool_configs_include_trae_and_codebuddy(tmp_path: Path, monkeypatch):
     assert configs["codebuddy"]["verified"] is False
 
 
+def test_detect_tools_preserves_config_format_metadata(tmp_path: Path, monkeypatch):
+    """Detected tools must carry format/server_key into run_setup writers."""
+    from piia_engram.setup_wizard import _detect_tools
+
+    monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+    (tmp_path / ".codex").mkdir()
+
+    detected = _detect_tools()
+    codex = next(item for item in detected if item["id"] == "codex")
+
+    assert codex["format"] == "toml"
+    assert codex["server_key"] == "mcp_servers"
+
+
 def test_write_mcp_config_creates_file(tmp_path: Path):
     """_write_mcp_config 应在新路径创建配置文件，使用 -m 模块调用。"""
     config_path = tmp_path / "test_mcp.json"
@@ -626,6 +640,60 @@ def test_write_mcp_config_default_env_without_data_dir(tmp_path: Path):
     assert env["PYTHONIOENCODING"] == "utf-8"
     assert env["ENGRAM_TOOLS"] == "all"
     assert "ENGRAM_DIR" not in env
+
+
+def test_write_mcp_config_respects_custom_server_key(tmp_path: Path):
+    """Clients such as Copilot use top-level 'servers' instead of 'mcpServers'."""
+    config_path = tmp_path / "mcp.json"
+
+    _write_mcp_config(
+        config_path,
+        "/usr/bin/python3",
+        "/path/to/mcp_server.py",
+        server_key="servers",
+    )
+
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "mcpServers" not in config
+    assert config["servers"]["engram"]["command"] == "/usr/bin/python3"
+
+
+def test_write_mcp_config_toml_creates_missing_codex_config(tmp_path: Path):
+    """Codex setup should create config.toml when only ~/.codex exists."""
+    from piia_engram.setup_wizard import _write_mcp_config_toml
+
+    config_path = tmp_path / ".codex" / "config.toml"
+
+    _write_mcp_config_toml(config_path, "/usr/bin/python3", "/path/to/mcp_server.py")
+
+    text = config_path.read_text(encoding="utf-8")
+    assert '[mcp_servers.engram]' in text
+    assert 'PYTHONIOENCODING = "utf-8"' in text
+    assert 'ENGRAM_TOOLS = "all"' in text
+
+
+def test_write_mcp_config_toml_escapes_windows_paths(tmp_path: Path, monkeypatch):
+    """Windows backslashes must produce valid TOML for Codex config.toml."""
+    from piia_engram.setup_wizard import _write_mcp_config_toml
+    try:
+        import tomllib as toml_parser
+    except ImportError:  # pragma: no cover - Python 3.10 fallback
+        toml_parser = pytest.importorskip("tomli")
+
+    config_path = tmp_path / ".codex" / "config.toml"
+    python_path = r"C:\Users\testuser\AppData\Local\Programs\Python\Python312\python.exe"
+    mcp_server_path = r"E:\Temp\engram-worktrees\v342-install-gui\src\piia_engram\mcp_server.py"
+    data_dir = r"C:\Users\testuser\.engram"
+
+    monkeypatch.setattr("piia_engram.setup_wizard.importlib.util.find_spec", lambda _name: None)
+
+    _write_mcp_config_toml(config_path, python_path, mcp_server_path, data_dir)
+
+    parsed = toml_parser.loads(config_path.read_text(encoding="utf-8"))
+    entry = parsed["mcp_servers"]["engram"]
+    assert entry["command"] == python_path
+    assert entry["env"]["PYTHONPATH"] == r"E:\Temp\engram-worktrees\v342-install-gui\src"
+    assert entry["env"]["ENGRAM_DIR"] == data_dir
 
 
 def test_write_mcp_config_overwrites_existing_engram(tmp_path: Path):
@@ -1476,6 +1544,62 @@ class TestRunSetup:
         assert "PIIA Engram" in out
         assert "Step 1/3" in out
         assert "TestTool" in out
+
+    def test_wizard_configures_codex_toml_without_json_rewrite(self, tmp_path, monkeypatch, capsys):
+        """run_setup must dispatch Codex to the TOML writer, not JSON mcpServers."""
+        from piia_engram.setup_wizard import run_setup
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+        monkeypatch.setattr("piia_engram.setup_wizard._scan_rule_files", lambda cwd=None: [])
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_instruction_snippet", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_hook", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_precompact_hook", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_sessionstart_hook", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_postcompact_hook", lambda *_args, **_kwargs: None)
+
+        codex_config = tmp_path / ".codex" / "config.toml"
+        codex_config.parent.mkdir()
+        codex_config.write_text(
+            '[settings]\napproval_policy = "never"\n',
+            encoding="utf-8",
+        )
+
+        answers = iter([
+            "2",   # language: English
+            "",    # data dir: default from ENGRAM_DIR
+            "",    # seed: role
+            "",    # seed: tech_stack
+            "",    # seed: language
+            "",    # seed: no lessons
+            "",    # privacy: reconcile
+            "",    # privacy: telemetry
+        ])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._detect_tools",
+            lambda: [{
+                "id": "codex",
+                "name": "Codex",
+                "config_path": codex_config,
+                "format": "toml",
+                "server_key": "mcp_servers",
+            }],
+        )
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
+
+        run_setup()
+
+        text = codex_config.read_text(encoding="utf-8")
+        assert text.lstrip().startswith("[settings]")
+        assert '[mcp_servers.engram]' in text
+        assert 'args = ["-m", "piia_engram.mcp_server"]' in text
+        assert '"mcpServers"' not in text
+        assert not text.lstrip().startswith("{")
 
     def test_wizard_no_python_exits(self, tmp_path, monkeypatch, capsys):
         """run_setup should exit(1) if no Python found."""

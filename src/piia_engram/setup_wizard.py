@@ -1083,6 +1083,8 @@ def _detect_tools() -> list[dict]:
                         "id": tool_id,
                         "name": cfg["name"],
                         "config_path": config_path,
+                        "format": cfg.get("format", "json"),
+                        "server_key": cfg.get("server_key", "mcpServers"),
                     }
                 )
                 break
@@ -1194,6 +1196,7 @@ def _write_mcp_config(
     python_path: str,
     mcp_server_path: str,
     data_dir: str | None = None,
+    server_key: str = "mcpServers",
 ) -> None:
     """将 engram 写入指定工具的 MCP 配置（合并，不覆盖其他工具的配置）。
     同时自动清理已知的旧版 server 名称（piia-pkc 等）。
@@ -1201,13 +1204,13 @@ def _write_mcp_config(
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config = _read_mcp_config(config_path)
 
-    if "mcpServers" not in config:
-        config["mcpServers"] = {}
+    if server_key not in config:
+        config[server_key] = {}
 
     # 清理旧版 server 名称
-    removed = [name for name in LEGACY_SERVER_NAMES if name in config["mcpServers"]]
+    removed = [name for name in LEGACY_SERVER_NAMES if name in config[server_key]]
     for name in removed:
-        del config["mcpServers"][name]
+        del config[server_key][name]
     if removed:
         print(f"  [migrated] removed legacy server(s): {', '.join(removed)}")
 
@@ -1233,7 +1236,7 @@ def _write_mcp_config(
         "env": env,
     }
 
-    config["mcpServers"]["engram"] = entry
+    config[server_key]["engram"] = entry
 
     config_path.write_text(
         json.dumps(config, ensure_ascii=False, indent=2) + "\n",
@@ -1245,33 +1248,38 @@ def _write_mcp_config_toml(
     config_path: Path,
     python_path: str,
     mcp_server_path: str,
+    data_dir: str | None = None,
 ) -> None:
     """修复 TOML 格式配置文件中的 engram MCP 条目（如 Codex config.toml）。
 
     策略：原地替换 [mcp_servers.engram] 段，保留文件其余内容不动。
     """
-    if not config_path.is_file():
-        return
-
-    lines = config_path.read_text(encoding="utf-8").splitlines()
+    lines = config_path.read_text(encoding="utf-8").splitlines() if config_path.is_file() else []
     new_lines: list[str] = []
     skip_until_next_section = False
+
+    def toml_string(value: str) -> str:
+        return json.dumps(str(value), ensure_ascii=False)
 
     # 构建新的 engram 条目
     # 优先用 -m 模块调用（不依赖绝对路径）
     engram_block = [
         '[mcp_servers.engram]',
-        f'command = "{python_path}"',
+        f'command = {toml_string(python_path)}',
         f'args = ["-m", "piia_engram.mcp_server"]',
+        '',
+        '[mcp_servers.engram.env]',
+        'PYTHONIOENCODING = "utf-8"',
+        'ENGRAM_TOOLS = "all"',
     ]
     # 如果 mcp_server_path 不是通过 -m 可达的（不在 site-packages），加 PYTHONPATH
     spec = importlib.util.find_spec("piia_engram")
     if not spec:
         # piia_engram 不在默认路径，需要 PYTHONPATH
         src_dir = str(Path(mcp_server_path).parent.parent)
-        engram_block.append('')
-        engram_block.append('[mcp_servers.engram.env]')
-        engram_block.append(f'PYTHONPATH = "{src_dir}"')
+        engram_block.append(f'PYTHONPATH = {toml_string(src_dir)}')
+    if data_dir:
+        engram_block.append(f'ENGRAM_DIR = {toml_string(data_dir)}')
 
     inserted = False
     i = 0
@@ -1308,7 +1316,27 @@ def _write_mcp_config_toml(
         new_lines.append('')
         new_lines.extend(engram_block)
 
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
+
+
+def _write_tool_mcp_config(
+    tool: dict,
+    python_path: str,
+    mcp_server_path: str,
+    data_dir: str | None = None,
+) -> None:
+    """Write an MCP config using the target client's declared format."""
+    if tool.get("format", "json") == "toml":
+        _write_mcp_config_toml(tool["config_path"], python_path, mcp_server_path, data_dir)
+        return
+    _write_mcp_config(
+        tool["config_path"],
+        python_path,
+        mcp_server_path,
+        data_dir,
+        server_key=tool.get("server_key", "mcpServers"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1986,7 +2014,7 @@ def run_setup(advanced: bool = False) -> None:
         configured_tool_ids = []
         for tool in tools:
             try:
-                _write_mcp_config(tool["config_path"], python_path, mcp_server_path, data_dir)
+                _write_tool_mcp_config(tool, python_path, mcp_server_path, data_dir)
                 success.append(tool["name"])
                 configured_tool_ids.append(tool["id"])
             except Exception as exc:
@@ -2519,12 +2547,8 @@ def run_doctor(fix: bool = False) -> int:
         if path in seen_paths:
             continue
         seen_paths.add(path)
-        fmt = t.get("format", "json")
         try:
-            if fmt == "toml":
-                _write_mcp_config_toml(path, python_path, mcp_server_path)
-            else:
-                _write_mcp_config(path, python_path, mcp_server_path)
+            _write_tool_mcp_config(t, python_path, mcp_server_path)
             print(f"  [fixed] {t['name']} ({path})")
             fixed += 1
         except Exception as exc:
