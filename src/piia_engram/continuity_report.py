@@ -2,9 +2,105 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+
+_CONTEXT_LOAD_TOOLS = {"get_user_context", "get_resume_brief"}
+_WRAP_UP_TOOLS = {"wrap_up_session"}
+
+
+def _nonnegative_int(value: Any) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
+def _count_selected_tool_calls(tool_calls: Any, names: set[str]) -> int:
+    if not isinstance(tool_calls, dict):
+        return 0
+    total = 0
+    for name in names:
+        counts = tool_calls.get(name)
+        if isinstance(counts, dict):
+            total += _nonnegative_int(counts.get("success"))
+            total += _nonnegative_int(counts.get("error"))
+        else:
+            total += _nonnegative_int(counts)
+    return total
+
+
+def _iter_jsonl_dicts(path: Path):
+    if not path.is_file():
+        return
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            yield item
+
+
+def _build_recall_signals(root: Path) -> dict[str, Any]:
+    telemetry_log = root / "telemetry.log"
+    telemetry_present = telemetry_log.is_file()
+    telemetry_context_load_calls = 0
+    telemetry_wrap_up_calls = 0
+    for entry in _iter_jsonl_dicts(telemetry_log):
+        tool_calls = entry.get("tool_calls")
+        telemetry_context_load_calls += _count_selected_tool_calls(
+            tool_calls, _CONTEXT_LOAD_TOOLS
+        )
+        telemetry_wrap_up_calls += _count_selected_tool_calls(
+            tool_calls, _WRAP_UP_TOOLS
+        )
+
+    beta_events = root / "beta_events.jsonl"
+    beta_present = beta_events.is_file()
+    cold_start_events = 0
+    session_end_events = 0
+    for entry in _iter_jsonl_dicts(beta_events):
+        event = entry.get("event")
+        if event == "cold_start":
+            cold_start_events += 1
+        elif event == "session_end":
+            session_end_events += 1
+
+    observed = any(
+        (
+            telemetry_context_load_calls,
+            telemetry_wrap_up_calls,
+            cold_start_events,
+            session_end_events,
+        )
+    )
+    return {
+        "observed": observed,
+        "context_load_calls": telemetry_context_load_calls,
+        "wrap_up_calls": telemetry_wrap_up_calls,
+        "telemetry": {
+            "present": telemetry_present,
+            "context_load_calls": telemetry_context_load_calls,
+            "wrap_up_calls": telemetry_wrap_up_calls,
+        },
+        "beta_events": {
+            "present": beta_present,
+            "cold_start_events": cold_start_events,
+            "session_end_events": session_end_events,
+        },
+    }
 
 
 def build_continuity_report(
@@ -71,6 +167,7 @@ def build_continuity_report(
             "size_bytes": latest.get("size_bytes") if latest else None,
         },
         "resume_brief": brief_meta,
+        "recall_signals": _build_recall_signals(Path(eng.root)),
         "project": {
             "provided": bool(project_folder),
             "name": Path(project_folder).name if project_folder else "",
@@ -103,6 +200,19 @@ def render_continuity_text(report: dict[str, Any]) -> str:
     else:
         skipped = ", ".join(str(s) for s in brief.get("sections_skipped") or [])
         lines.append(f"  [!!] Resume brief: failed ({skipped or 'unknown'})")
+
+    recall = report.get("recall_signals") or {}
+    recall_mark = "ok" if recall.get("observed") else "--"
+    beta = recall.get("beta_events") or {}
+    lines.append(
+        f"  [{recall_mark}] Context load signals: "
+        f"{recall.get('context_load_calls', 0)} tool call(s), "
+        f"{beta.get('cold_start_events', 0)} cold-start event(s)"
+    )
+    lines.append(
+        f"       Wrap-up signals: {recall.get('wrap_up_calls', 0)} tool call(s), "
+        f"{beta.get('session_end_events', 0)} session-end event(s)"
+    )
 
     if report.get("cross_tool_ready"):
         lines.append("Result: ready for cross-tool handoff proof.")

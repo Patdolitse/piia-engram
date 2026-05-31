@@ -9,7 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 ## [Unreleased]
 
 ### Added
-- **Metadata-only continuity proof** - `engram continuity` reports saved-session counts, contributing tools, resume-brief build status, and cross-tool readiness without printing memory bodies, session IDs, decision reasoning, or local paths.
+- **Metadata-only continuity proof** - `engram continuity` reports saved-session counts, contributing tools, resume-brief build status, aggregate context-load / wrap-up signals, and cross-tool readiness without printing memory bodies, raw telemetry events, session IDs, decision reasoning, or local paths.
 
 ### Fixed
 - `engram status` now falls back to a sibling `piia-engram-mcp` launcher when the CLI is started by absolute path and the console-script directory is not on `PATH`, avoiding a false MCP-entry warning in Windows/Codex runtime workflows.

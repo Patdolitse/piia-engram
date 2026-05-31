@@ -178,6 +178,8 @@ engram repair-encoding        # dry-run scan for garbled / mojibake text
 engram repair-encoding --apply  # repair reversible cases with a backup
 ```
 
+`engram continuity` is metadata-only: it reports saved-session counts, contributing tools, resume-brief readiness, and aggregate context-load / wrap-up signals without printing memory bodies, raw telemetry events, session IDs, or local paths.
+
 ### Configure for Your AI Tool
 
 <details open>

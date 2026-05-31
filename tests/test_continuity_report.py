@@ -72,6 +72,7 @@ def test_continuity_report_schema_is_explicit_allowlist(tmp_path: Path) -> None:
         "cross_tool_ready",
         "latest",
         "resume_brief",
+        "recall_signals",
         "project",
     }
     assert set(report["latest"]) == {"tool", "modified_at", "size_bytes"}
@@ -83,7 +84,89 @@ def test_continuity_report_schema_is_explicit_allowlist(tmp_path: Path) -> None:
         "estimated_tokens",
         "suggested_doc_count",
     }
+    assert set(report["recall_signals"]) == {
+        "observed",
+        "context_load_calls",
+        "wrap_up_calls",
+        "telemetry",
+        "beta_events",
+    }
+    assert set(report["recall_signals"]["telemetry"]) == {
+        "present",
+        "context_load_calls",
+        "wrap_up_calls",
+    }
+    assert set(report["recall_signals"]["beta_events"]) == {
+        "present",
+        "cold_start_events",
+        "session_end_events",
+    }
     assert set(report["project"]) == {"provided", "name"}
+
+
+def test_continuity_report_includes_recall_signals_without_payload_leak(
+    tmp_path: Path,
+) -> None:
+    from piia_engram.continuity_report import (
+        build_continuity_report,
+        render_continuity_text,
+    )
+
+    secret = "ZZ_RECALL_SIGNAL_SECRET"
+    (tmp_path / "telemetry.log").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "tool_calls": {
+                            "get_user_context": {"success": 2, "error": 1},
+                            "get_resume_brief": {"success": 4, "error": 0},
+                            "wrap_up_session": {"success": 3, "error": 0},
+                            secret: {"success": 99, "error": 0},
+                        }
+                    }
+                ),
+                "{not-json",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "beta_events.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"event": "cold_start", "d": {"level": secret}}),
+                json.dumps({"event": "session_end", "d": {"source_tool": secret}}),
+                json.dumps({"event": "knowledge_created", "d": {"summary": secret}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = build_continuity_report(Engram(root=tmp_path), project_folder=str(tmp_path))
+    rendered = render_continuity_text(report)
+    payload = json.dumps(report, ensure_ascii=False)
+
+    assert report["recall_signals"]["observed"] is True
+    assert report["recall_signals"]["context_load_calls"] == 7
+    assert report["recall_signals"]["wrap_up_calls"] == 3
+    assert report["recall_signals"]["telemetry"] == {
+        "present": True,
+        "context_load_calls": 7,
+        "wrap_up_calls": 3,
+    }
+    assert report["recall_signals"]["beta_events"] == {
+        "present": True,
+        "cold_start_events": 1,
+        "session_end_events": 1,
+    }
+    assert "Context load signals" in rendered
+    assert "Wrap-up signals" in rendered
+    assert secret not in payload
+    assert secret not in rendered
+    assert str(tmp_path) not in payload
+    assert str(tmp_path) not in rendered
 
 
 def test_continuity_report_empty_state_is_informational(tmp_path: Path) -> None:
@@ -99,4 +182,5 @@ def test_continuity_report_empty_state_is_informational(tmp_path: Path) -> None:
     assert report["tool_count"] == 0
     assert report["cross_tool_ready"] is False
     assert report["resume_brief"]["builds"] is True
+    assert report["recall_signals"]["observed"] is False
     assert "No saved sessions yet" in rendered

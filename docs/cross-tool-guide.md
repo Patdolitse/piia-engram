@@ -120,7 +120,7 @@ engram continuity --project /path/to/project
 engram continuity --project /path/to/project --json
 ```
 
-The report includes session counts, contributing tool names, whether at least two tools have saved context, and whether `get_resume_brief()` can build. It does not print session bodies, lesson text, decision reasoning, session IDs, or local project paths.
+The report includes session counts, contributing tool names, whether at least two tools have saved context, whether `get_resume_brief()` can build, and aggregate recall-loop signals from local telemetry / beta event counters. It does not print session bodies, lesson text, decision reasoning, raw telemetry events, session IDs, or local project paths.
 
 ### 3.4 Session Saving
 
