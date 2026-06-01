@@ -40,6 +40,14 @@ from piia_engram.setup_wizard import (
 )
 
 
+def _removed_private_builtin_name() -> str:
+    return "-".join(("self", "repair", "loop"))
+
+
+def _removed_private_builtin_title() -> str:
+    return "Self" + "-Repair " + "Loop"
+
+
 class TestSessionsCLI:
     def test_sessions_empty_state_is_successful(self, tmp_path, monkeypatch, capsys):
         """engram sessions should succeed and guide when no sessions exist."""
@@ -102,65 +110,23 @@ class TestSessionsCLI:
         assert secret not in out
         assert "do not print" not in out
 
-    def test_status_reports_self_repair_loop_missing_hint(self, tmp_path, monkeypatch, capsys):
-        """Status should surface the built-in self-repair loop installation gap."""
-        from piia_engram.setup_wizard import run_status
-
-        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-        monkeypatch.setenv("ENGRAM_TEST", "1")
-
-        assert run_status(["--no-probe"]) == 0
-
-        out = capsys.readouterr().out
-        assert "Self-Repair Loop: missing" in out
-        assert "engram playbook install self-repair-loop --yes" in out
-        assert "Enumerate entrypoints" not in out
-
-    def test_status_builtin_summary_uses_builtin_name_key_and_handles_bad_index(
-        self, tmp_path, monkeypatch,
-    ):
-        """Built-in status summary should be keyed by the built-in slug."""
-        from piia_engram.status_report import build_status
-
-        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-        monkeypatch.setenv("ENGRAM_TEST", "1")
-        playbooks_dir = tmp_path / "playbooks"
-        playbooks_dir.mkdir()
-        (playbooks_dir / "_index.json").write_text(
-            json.dumps({"bad": "shape"}),
-            encoding="utf-8",
-        )
-
-        status = build_status(probe=False)
-
-        assert "self-repair-loop" in status["builtins"]
-        assert status["builtins"]["self-repair-loop"]["installed"] is False
-
-    def test_status_reports_self_repair_loop_installed_metadata_only(
+    def test_status_does_not_surface_private_builtin_methodology(
         self, tmp_path, monkeypatch, capsys
     ):
-        """Installed built-ins should be reported from metadata without body details."""
-        from piia_engram.core import Engram
+        """Status should stay product-focused and not advertise private workflows."""
         from piia_engram.status_report import build_status
         from piia_engram.setup_wizard import run_status
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.setenv("ENGRAM_TEST", "1")
-        Engram().install_builtin_playbook(
-            "self-repair-loop",
-            dry_run=False,
-            confirm=True,
-        )
-        status = build_status(probe=False)
 
+        status = build_status(probe=False)
         assert run_status(["--no-probe"]) == 0
 
-        assert status["builtins"]["self-repair-loop"]["installed"] is True
         out = capsys.readouterr().out
-        assert "Self-Repair Loop: installed" in out
-        assert "engram playbook install self-repair-loop --yes" not in out
-        assert "Enumerate entrypoints" not in out
-        assert "Failures become durable process improvements" not in out
+        assert status["builtins"] == {}
+        assert _removed_private_builtin_title() not in out
+        assert _removed_private_builtin_name() not in out
 
     def test_status_html_writes_redacted_local_report(self, tmp_path, monkeypatch, capsys):
         """--html should write a local status page with metadata only."""
@@ -305,7 +271,7 @@ class TestSessionsCLI:
         assert "engram doctor" in html
         assert "engram review" in html
         assert "engram sessions" in html
-        assert "engram playbook install self-repair-loop --yes" in html
+        assert _removed_private_builtin_name() not in html
 
     def test_status_html_redacts_local_paths_and_client_config(self, tmp_path, monkeypatch, capsys):
         """HTML status should be shareable without local root or MCP config paths."""
@@ -3349,7 +3315,7 @@ class TestMainCLIRouting:
             )
 
 
-def test_run_playbook_install_self_repair_loop_defaults_to_dry_run(
+def test_run_playbook_unknown_builtin_reports_error_without_writing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ):
     from piia_engram.core import Engram
@@ -3357,63 +3323,12 @@ def test_run_playbook_install_self_repair_loop_defaults_to_dry_run(
 
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
 
-    code = run_playbook(["install", "self-repair-loop"])
+    code = run_playbook(["install", _removed_private_builtin_name()])
     out = capsys.readouterr().out
 
-    assert code == 0
-    assert "would_install" in out
+    assert code == 1
+    assert "Unknown builtin playbook" in out
     assert Engram(root=tmp_path).get_playbooks(_update_access=False) == []
-
-
-def test_run_playbook_install_self_repair_loop_yes_writes_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-):
-    from piia_engram.core import Engram
-    from piia_engram.setup_wizard import run_playbook
-
-    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-
-    code = run_playbook(["install", "self-repair-loop", "--yes"])
-    first_out = capsys.readouterr().out
-    code_again = run_playbook(["install", "self-repair-loop", "--yes"])
-    second_out = capsys.readouterr().out
-
-    assert code == 0
-    assert code_again == 0
-    assert "installed" in first_out
-    assert "already_installed" in second_out
-    playbooks = Engram(root=tmp_path).get_playbooks(_update_access=False)
-    assert len(playbooks) == 1
-    assert playbooks[0]["title"] == "Self-Repair Loop for Agent Work"
-
-
-def test_run_playbook_install_self_repair_loop_project_scope(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-):
-    from piia_engram.core import Engram
-    from piia_engram.setup_wizard import run_playbook
-
-    project = tmp_path / "project-a"
-    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
-
-    code = run_playbook([
-        "install",
-        "self-repair-loop",
-        "--yes",
-        "--project",
-        str(project),
-    ])
-    out = capsys.readouterr().out
-
-    assert code == 0
-    assert "installed" in out
-    playbooks = Engram(root=tmp_path / "store").get_playbooks(
-        project_folder=str(project),
-        _update_access=False,
-    )
-    assert len(playbooks) == 1
-    assert playbooks[0]["scope"]["type"] == "project"
-    assert playbooks[0]["scope"]["project_folder"] == str(project)
 
 
 class TestScanRuleFilesGlobs:

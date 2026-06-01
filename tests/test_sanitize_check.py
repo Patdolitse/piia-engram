@@ -7,6 +7,8 @@ and exercises the pattern set + per-file scanning.
 from __future__ import annotations
 
 import importlib.util
+import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -16,10 +18,23 @@ _SCRIPT = (
     / "scripts"
     / "release_sanitize_check.py"
 )
+_ARTIFACT_SCRIPT = (
+    Path(__file__).resolve().parent.parent
+    / "scripts"
+    / "check_release_artifact_private_terms.py"
+)
 
 
 def _load_module():
     spec = importlib.util.spec_from_file_location("_sanitize_check", _SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_artifact_module():
+    spec = importlib.util.spec_from_file_location("_artifact_private_scan", _ARTIFACT_SCRIPT)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -93,23 +108,60 @@ def test_external_patterns_file_loader(sc, tmp_path, monkeypatch):
     patterns_file = tmp_path / ".sanitizeignore"
     patterns_file.write_text(
         "# comment\n"
-        r"\bDeepSeek[\s-]*V\d+\b" + "\n"
-        r"[三四五]方(?:审查|评审)" + "\n",
+        r"high:PRIVATE_CANARY_DO_NOT_RELEASE" + "\n"
+        r"\bINTERNAL_MODEL_REVIEW\b" + "\n"
+        r"PRIVATE_REVIEW_GATE" + "\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
     loaded = sc._load_internal_patterns_file()
-    assert len(loaded) == 2
+    assert len(loaded) == 3
+    assert loaded[0][2] == "high"
+    assert all(severity == "warn" for _, _, severity in loaded[1:])
     # And they actually match the project-specific strings.
     doc = tmp_path / "d.md"
-    doc.write_text("judged by DeepSeek V4 Pro after 五方审查\n", encoding="utf-8")
+    doc.write_text(
+        "PRIVATE_CANARY_DO_NOT_RELEASE judged by INTERNAL_MODEL_REVIEW after PRIVATE_REVIEW_GATE\n",
+        encoding="utf-8",
+    )
     hits = sc._scan_file(doc, [], loaded)
-    assert len(hits) >= 2
+    assert any(label == "local#2" and sev == "high" for label, sev, _, _ in hits)
+    assert any(label == "local#3" and sev == "warn" for label, sev, _, _ in hits)
+    assert any(label == "local#4" and sev == "warn" for label, sev, _, _ in hits)
 
 
 def test_external_patterns_file_absent_returns_empty(sc, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # no .sanitizeignore here
     assert sc._load_internal_patterns_file() == []
+
+
+def test_release_artifact_private_scan_checks_built_packages(tmp_path, monkeypatch):
+    artifact_scan = _load_artifact_module()
+    root = tmp_path / "repo"
+    dist = root / "dist"
+    dist.mkdir(parents=True)
+    (root / ".sanitizeignore").write_text(
+        "high:PRIVATE_PLAYBOOK_CANARY\n",
+        encoding="utf-8",
+    )
+
+    whl = dist / "pkg-1.0.0-py3-none-any.whl"
+    with zipfile.ZipFile(whl, "w") as zf:
+        zf.writestr("pkg-1.0.0.dist-info/METADATA", "PRIVATE_PLAYBOOK_CANARY\n")
+
+    sdist = dist / "pkg-1.0.0.tar.gz"
+    payload = tmp_path / "PKG-INFO"
+    payload.write_text("clean metadata\n", encoding="utf-8")
+    with tarfile.open(sdist, "w:gz") as tf:
+        tf.add(payload, arcname="pkg-1.0.0/PKG-INFO")
+
+    monkeypatch.chdir(root)
+    hits = artifact_scan.scan_artifacts(dist, root)
+
+    assert any(
+        label == ".sanitizeignore#1" and severity == "high" and "METADATA" in rel
+        for label, severity, _, rel, _ in hits
+    )
 
 
 def test_main_no_custom_terms_message_is_plain_ascii(sc, tmp_path, monkeypatch, capsys):

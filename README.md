@@ -663,7 +663,7 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.45.2 (2026-06-01) |
+| | v3.45.3 (2026-06-01) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **16 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
@@ -816,8 +816,6 @@ piia-engram review archive <id> --yes  # Archive a review item
 piia-engram management action review approve <id> --yes --json  # Structured metadata-only action receipt
 piia-engram management action playbook delete <id> --yes --json # Soft-delete a Playbook without body echo
 piia-engram management action playbook_scope accept_project <id> --project . --yes --json # Resolve ambiguous Playbook scope
-piia-engram playbook install self-repair-loop        # Dry-run built-in agent self-repair workflow
-piia-engram playbook install self-repair-loop --yes  # Install the reusable workflow Playbook
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
 piia-engram repair-encoding --apply  # Repair reversible cases with a backup
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)

@@ -209,7 +209,9 @@ def test_publish_workflow_release_trigger_and_token():
     """Publish workflow 应在 release published 时使用 PyPI token 发布。"""
     content = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "types: [published]" in content
+    assert "release_sanitize_check.py --internal --strict" in content
     assert "python -m build" in content
+    assert "check_release_artifact_private_terms.py dist --strict" in content
     assert "pypa/gh-action-pypi-publish@release/v1" in content
     assert "secrets.PYPI_API_TOKEN" in content
 
@@ -340,7 +342,6 @@ def test_setup_help_mentions_tool_tiers():
 
     assert "ENGRAM_TOOLS=all" in content
     assert "核心工具" in content
-    assert "playbook install self-repair-loop" in content
 
 
 def test_zh_readme_uses_pypi_install_and_41_tools():
@@ -372,11 +373,6 @@ def test_zh_readme_documents_tool_tiering():
     assert "Tier-2 高级" in content
     assert "`get_user_context`" in content
     assert "`wrap_up_session`" in content
-
-
-def test_readmes_document_self_repair_playbook_cli():
-    assert "playbook install self-repair-loop" in README.read_text(encoding="utf-8")
-    assert "playbook install self-repair-loop" in README_ZH.read_text(encoding="utf-8")
 
 
 def test_readmes_document_playbook_scope_management_cli():

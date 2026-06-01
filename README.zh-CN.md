@@ -432,7 +432,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.45.2 (2026-06-01) |
+| | v3.45.3 (2026-06-01) |
 |---|---|
 | 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具 | **16 个核心**（默认加载）+ **64 个高级**（`ENGRAM_TOOLS=all` 开启）|
@@ -803,8 +803,6 @@ piia-engram review archive <id> --yes  # 归档待审条目
 piia-engram management action review approve <id> --yes --json  # 结构化脱敏操作回执
 piia-engram management action playbook delete <id> --yes --json # 软删除 Playbook，不回显正文
 piia-engram management action playbook_scope accept_project <id> --project . --yes --json # 处理歧义 Playbook 作用域
-piia-engram playbook install self-repair-loop        # dry-run 预览内置自我修复流程
-piia-engram playbook install self-repair-loop --yes  # 安装可复用的自我修复 Playbook
 piia-engram repair-encoding  # dry-run 扫描乱码 / mojibake
 piia-engram repair-encoding --apply  # 备份后修复可逆乱码
 piia-engram stats            # 查看项目增长数据（GitHub + PyPI）

@@ -40,6 +40,7 @@ def _release_ops_markers() -> str:
         "- sanitize: passed\n"
         "- publish-allowlist: passed\n"
         "- package-build: passed\n"
+        "- artifact-private-scan: passed\n"
         "- twine-check: passed\n"
     )
 
@@ -192,6 +193,24 @@ def test_missing_release_ops_marker_blocks(rg, tmp_path):
     assert any("sanitize" in p for p in problems)
 
 
+def test_missing_artifact_private_scan_marker_blocks(rg, tmp_path):
+    _write_evidence(tmp_path, "9.9.9",
+                    "- self-review: passed\n"
+                    "- codex-review: passed\n"
+                    "- claude-review: passed\n"
+                    "- tests: pass\n"
+                    "- sanitize: passed\n"
+                    "- publish-allowlist: passed\n"
+                    "- package-build: passed\n"
+                    "- twine-check: passed\n"
+                    "- eval-gate: n/a\n"
+                    "- negative-control: n/a\n"
+                    "- field-assertion-audit: n/a\n")
+    ok, problems = rg.check_release_gate("9.9.9", tmp_path)
+    assert ok is False
+    assert any("artifact-private-scan" in p for p in problems)
+
+
 def test_inline_comments_after_values_are_ignored(rg, tmp_path):
     """The README template uses 'passed  # note' style — comments must not
     break the passing-value check."""
@@ -204,6 +223,7 @@ def test_inline_comments_after_values_are_ignored(rg, tmp_path):
                     "- sanitize: passed        # high=0\n"
                     "- publish-allowlist: passed  # all tracked files covered\n"
                     "- package-build: passed   # wheel + sdist built\n"
+                    "- artifact-private-scan: passed  # built artifacts clean\n"
                     "- twine-check: passed     # package metadata valid\n"
                     "- eval-gate: n/a          # no retrieval change\n"
                     "- negative-control: n/a   # no security-sensitive change\n"
@@ -223,6 +243,7 @@ def test_parse_markers_accepts_varied_list_prefixes(rg, tmp_path):
                     "- [x] sanitize: passed\n"
                     "3. publish-allowlist: passed\n"
                     "4) package-build: passed\n"
+                    "5. artifact-private-scan: passed\n"
                     "+ twine-check: passed\n"
                     "2) eval-gate: n/a\n"
                     "* negative-control: n/a\n"

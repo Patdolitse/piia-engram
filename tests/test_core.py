@@ -4276,130 +4276,13 @@ def test_list_playbooks_for_management_rejects_negative_limit(tmp_path: Path):
     assert result["error"] == "limit_must_be_positive"
 
 
-def test_install_self_repair_loop_playbook_dry_run_does_not_write(tmp_path: Path):
-    engram = make_engram(tmp_path)
-
-    result = engram.install_builtin_playbook("self-repair-loop")
-
-    assert result["dry_run"] is True
-    assert result["status"] == "would_install"
-    assert result["requires_confirmation"] is True
-    playbook = result["playbook"]
-    assert playbook["title"] == "Self-Repair Loop for Agent Work"
-    assert playbook["scope"]["type"] == "global"
-    assert any("invariant" in step["action"].lower() for step in playbook["steps"])
-    assert engram.get_playbooks(_update_access=False) == []
-
-
-def test_self_repair_loop_playbook_includes_verifier_self_check(tmp_path: Path):
-    """The built-in loop should teach agents to check their own validators."""
-    engram = make_engram(tmp_path)
-
-    playbook = engram.builtin_playbook_template("self-repair-loop")
-    actions = [step["action"] for step in playbook["steps"]]
-    body = json.dumps(playbook, ensure_ascii=False).lower()
-
-    assert "Validate the verifier" in actions
-    assert "validator defect" in body
-    assert "powershell" in body
-    assert "codepoint" in body
-
-
-def test_self_repair_loop_playbook_includes_single_source_convergence_and_research(
-    tmp_path: Path,
-):
-    """The built-in loop should capture the latest self-repair operating method."""
-    engram = make_engram(tmp_path)
-
-    playbook = engram.builtin_playbook_template("self-repair-loop")
-    actions = [step["action"] for step in playbook["steps"]]
-    body = json.dumps(playbook, ensure_ascii=False).lower()
-
-    assert "Verify the deliverable itself" in actions
-    assert "Converge to one trusted artifact" in actions
-    assert "Research in parallel" in actions
-    assert "single trusted version" in body
-    assert "local reproduction" in body
-    assert "official docs" in body
-    assert "community references" in body
-
-
-def test_install_self_repair_loop_playbook_confirm_is_idempotent(tmp_path: Path):
-    engram = make_engram(tmp_path)
-
-    installed = engram.install_builtin_playbook(
-        "self-repair-loop", dry_run=False, confirm=True
-    )
-    repeated = engram.install_builtin_playbook(
-        "self-repair-loop", dry_run=False, confirm=True
-    )
-
-    assert installed["status"] == "installed"
-    assert repeated["status"] == "already_installed"
-    assert repeated["existing_id"] == installed["playbook_id"]
-    playbooks = engram.get_playbooks(_update_access=False)
-    assert len(playbooks) == 1
-    pb = playbooks[0]
-    assert pb["source_tool"] == "engram_builtin"
-    assert pb["builtin_name"] == "self-repair-loop"
-    assert pb["tier"] == "verified"
-    assert pb["scope"]["type"] == "global"
-    assert len(pb["steps"]) >= 8
-    index_entry = engram._read_playbook_index()[0]
-    assert index_entry["builtin_name"] == "self-repair-loop"
-
-
-def test_install_builtin_playbook_legacy_index_without_builtin_name_is_idempotent(
-    tmp_path: Path,
-):
-    engram = make_engram(tmp_path)
-
-    installed = engram.install_builtin_playbook(
-        "self-repair-loop", dry_run=False, confirm=True
-    )
-    index = engram._read_playbook_index()
-    for entry in index:
-        entry.pop("builtin_name", None)
-    engram._write_playbook_index(index)
-
-    repeated = engram.install_builtin_playbook(
-        "self-repair-loop", dry_run=False, confirm=True
-    )
-
-    assert repeated["status"] == "already_installed"
-    assert repeated["existing_id"] == installed["playbook_id"]
-    assert len(engram.get_playbooks(_update_access=False)) == 1
-
-
-def test_install_self_repair_loop_playbook_can_be_project_scoped(tmp_path: Path):
-    engram = make_engram(tmp_path)
-    project = tmp_path / "engram"
-    other = tmp_path / "other"
-
-    result = engram.install_builtin_playbook(
-        "self-repair-loop",
-        project_folder=str(project),
-        dry_run=False,
-        confirm=True,
-    )
-
-    assert result["status"] == "installed"
-    pb = engram.get_playbook(result["playbook_id"], _update_access=False)
-    assert pb["scope"]["type"] == "project"
-    assert pb["scope"]["project_folder"] == str(project)
-    assert [p["id"] for p in engram.get_playbooks(
-        project_folder=str(project), _update_access=False,
-    )] == [pb["id"]]
-    assert engram.get_playbooks(project_folder=str(other), _update_access=False) == []
-
-
 def test_install_builtin_playbook_unknown_name_lists_available(tmp_path: Path):
     engram = make_engram(tmp_path)
 
     result = engram.install_builtin_playbook("missing")
 
     assert "error" in result
-    assert result["available"] == ["self-repair-loop"]
+    assert result["available"] == []
 
 
 def test_search_knowledge_playbooks(tmp_path: Path):

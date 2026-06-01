@@ -46,14 +46,17 @@ jobs:
       - name: Release gate (no publish without review evidence)
         run: python scripts/check_release_gate.py
 
-      - name: Pre-release sanitization scan (HIGH-severity blocks publish)
-        run: python scripts/release_sanitize_check.py
+      - name: Pre-release sanitization scan (internal disclosure blocks publish)
+        run: python scripts/release_sanitize_check.py --internal --strict
 
       - name: Install build tools
         run: pip install build
 
       - name: Build package
         run: python -m build
+
+      - name: Release artifact private-term scan
+        run: python scripts/check_release_artifact_private_terms.py dist --strict
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

@@ -6,6 +6,22 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.45.3] - 2026-06-01
+
+公开边界纠偏版本：Engram 从公开包表面移除一个内部内置 Playbook 模板，并把构建后 artifact 私有词扫描加入发布硬闸。
+
+### 修复
+- 从源码、CLI help、status 输出、README 命令示例、更新日志措辞和 release evidence 中移除内部内置 Playbook 模板；公开包只描述通用 Playbook 引擎能力。
+- status 与 management 表面继续保持 metadata-only，不对外展示维护者工作流模板。
+
+### 安全
+- 新增 release artifact 私有词扫描脚本：构建 wheel / sdist 后解包扫描生成 metadata、README 副本、打包测试和包内文件，并使用 gitignored 的维护者私有规则。
+- PyPI publish workflow 现在使用 internal strict 源码脱敏扫描，并在发布前以 strict 模式运行 artifact 私有词扫描。
+- release evidence 现在要求 `artifact-private-scan` 标记，使包体级私有词扫描成为 CI 强制发布门禁。
+
+### Release Evidence
+- 见 `release-evidence/v3.45.3.md`。
+
 ## [3.45.2] - 2026-06-01
 
 CI 入口补丁版本：Engram 现在让 cross-tool resume benchmark 测试同时适配 GitHub Actions 使用的 `pytest` console-script 入口，而不只依赖本地 `python -m pytest`。
@@ -43,7 +59,6 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 - **短期提醒过滤**：tomorrow / send / email / call / remind 等短期个人任务默认不会进入长期记忆，除非同时带有可复用证据或指标结果。
 - **Playbook 迁移影响摘要**：旧 Playbook 作用域 apply / rollback 预览现在返回只含元数据的影响计数、目标 scope 分布、跳过原因计数和确认状态，不暴露 Playbook 标题、正文、步骤或项目路径。
 - **GUI-ready 管理过滤**：`engram management` 与 `build_management_view()` 支持按 review 类型/质量、Playbook 状态/scope 过滤，同时保持 metadata-only。
-- **扩展 self-repair playbook**：内置 `self-repair-loop` 现在包含交付物自检、收敛到单一可信产物，以及本地复现 + 官方/社区资料并行研究。
 
 ### 变更
 - 管理文本和 JSON 输出继续只汇总计数与状态，不打印本地项目路径或已存知识正文。

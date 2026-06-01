@@ -8,7 +8,19 @@ someone forgets the process.
 
 This enforces the release playbook deterministically:
 self-review -> Codex independent review -> Claude acceptance -> tests ->
-sanitize -> allowlist -> build -> twine -> applicability gates -> release.
+sanitize -> allowlist -> build -> artifact private scan -> twine ->
+applicability gates -> release.
+
+Local maintainer releases should also run the artifact private-term scan after
+building wheel/sdist:
+
+```text
+python scripts/check_release_artifact_private_terms.py dist
+```
+
+This scans the actual publishable package files with local gitignored private
+patterns, so generated metadata, README copies, tests, or packaged artifacts
+cannot carry maintainer-private Playbook content unnoticed.
 
 ## Format
 
@@ -24,6 +36,7 @@ Create `release-evidence/v<version>.md` with these lines, one marker per line:
 - sanitize: passed          # release_sanitize_check high=0
 - publish-allowlist: passed # all tracked public files covered
 - package-build: passed     # wheel + sdist built
+- artifact-private-scan: passed # built artifacts scanned for private terms
 - twine-check: passed       # package metadata valid
 - eval-gate: pass           # or n/a if no retrieval/quality-affecting change
 - negative-control: passed  # R1; or n/a if no security-sensitive change
@@ -39,6 +52,7 @@ Required passing markers:
 - `sanitize`
 - `publish-allowlist`
 - `package-build`
+- `artifact-private-scan`
 - `twine-check`
 
 Applicability markers:

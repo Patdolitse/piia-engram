@@ -8,6 +8,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.45.3] - 2026-06-01
+
+The publication-boundary correction release: Engram removes an internal built-in Playbook template from the public package surface and adds build-artifact private-term scanning to the release gate.
+
+### Fixed
+- Removed the internal built-in Playbook template from source, CLI help, status output, README command examples, changelog wording, and release-note evidence so the public package only describes generic Playbook engine capabilities.
+- Kept status and management surfaces metadata-only without advertising maintainer workflow templates.
+
+### Security
+- Added a release artifact private-term scanner that extracts wheel and sdist artifacts after build and scans generated metadata, README copies, packaged tests, and package files with gitignored maintainer-private patterns.
+- The PyPI publish workflow now runs the source sanitizer with internal strict mode and runs the artifact private-term scan in strict mode before publishing.
+- Release evidence now requires an `artifact-private-scan` marker, so package-level private-term scanning is a CI-enforced release gate.
+
+### Release Evidence
+- See `release-evidence/v3.45.3.md`.
+
 ## [3.45.2] - 2026-06-01
 
 The CI entry-point patch release: Engram now makes the cross-tool resume benchmark test robust under the `pytest` console-script entry point used by GitHub Actions, not only `python -m pytest` local runs.
@@ -45,7 +61,6 @@ The extraction and management workflow release: Engram now filters short-lived r
 - **Ephemeral reminder filter** - short-lived personal reminders such as tomorrow/send/email/call/remind tasks are rejected from durable memory unless they also carry durable evidence or measured outcomes.
 - **Playbook migration impact summaries** - legacy playbook scope apply/rollback previews now include metadata-only impact counts, target scope distributions, skipped reason counts, and confirmation status without exposing playbook titles, bodies, steps, or project paths.
 - **GUI-ready management filters** - `engram management` and `build_management_view()` can filter review items by kind/quality and playbooks by state/scope while keeping the projection metadata-only.
-- **Expanded self-repair playbook** - the built-in `self-repair-loop` now includes deliverable self-checks, convergence to a single trusted artifact, and parallel local reproduction plus official/community research.
 
 ### Changed
 - Management text and JSON outputs continue to summarize counts and states without printing local project paths or stored knowledge bodies.

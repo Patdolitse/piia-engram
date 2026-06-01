@@ -3806,8 +3806,8 @@ def _print_playbook_usage() -> None:
     print(
         "Engram Playbook CLI\n\n"
         "Usage:\n"
-        "  engram playbook install self-repair-loop [--yes] [--project <folder>]\n\n"
-        "Default is dry-run. Pass --yes to write the built-in Playbook."
+        "  engram playbook install <builtin-name> [--yes] [--project <folder>]\n\n"
+        "Default is dry-run. Pass --yes to write a built-in Playbook."
     )
 
 
@@ -5058,7 +5058,7 @@ def main() -> None:
             "  engram review show <id> Inspect one review item\n"
             "  engram review approve <id> --yes  Promote staging item\n"
             "  engram review archive <id> --yes  Archive review item\n"
-            "  engram playbook install self-repair-loop [--yes]\n"
+            "  engram playbook install <builtin-name> [--yes]\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram reindex          Rebuild the hybrid search index from JSON\n"

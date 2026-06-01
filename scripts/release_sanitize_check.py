@@ -75,12 +75,26 @@ _INTERNAL_DISCLOSURE_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
 # one per line (``#`` comments allowed). Absent on fresh clones / CI, so
 # those runs enforce only the generic patterns above; the maintainer's
 # local checkout + pre-commit hook carry the full set.
+#
+# Format:
+#   regex                  -> warn
+#   warn:<regex>           -> warn
+#   high:<regex>           -> high
+#
+# The severity prefix lets maintainers keep exact private-project terms
+# out of the public script while still making those local terms hard
+# release blockers.
 _INTERNAL_PATTERNS_FILE = ".sanitizeignore"
 
 
 def _load_internal_patterns_file() -> list[tuple[str, re.Pattern[str], str]]:
     """Load project-specific internal-disclosure regexes from
-    ``.sanitizeignore`` if present. Returns warn-severity patterns."""
+    ``.sanitizeignore`` if present.
+
+    Lines default to warn severity. Maintainers may prefix a line with
+    ``high:`` to make an exact private term block release even when
+    ``--strict`` is not set.
+    """
     path = Path(_INTERNAL_PATTERNS_FILE)
     if not path.is_file():
         return []
@@ -89,8 +103,17 @@ def _load_internal_patterns_file() -> list[tuple[str, re.Pattern[str], str]]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        severity = "warn"
+        match = re.match(r"^(high|warn)\s*:\s*(.+)$", line, re.IGNORECASE)
+        if match:
+            severity = match.group(1).lower()
+            line = match.group(2).strip()
+            if not line:
+                print(f"[warn] {_INTERNAL_PATTERNS_FILE}:{i} empty regex, skipped",
+                      file=sys.stderr)
+                continue
         try:
-            out.append((f"local#{i}", re.compile(line), "warn"))
+            out.append((f"local#{i}", re.compile(line), severity))
         except re.error:
             print(f"[warn] {_INTERNAL_PATTERNS_FILE}:{i} invalid regex, skipped",
                   file=sys.stderr)

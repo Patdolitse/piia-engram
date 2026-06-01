@@ -6,12 +6,12 @@
     "url": "https://github.com/Patdolitse/piia-engram",
     "source": "github"
   },
-  "version": "3.45.2",
+  "version": "3.45.3",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "piia-engram",
-      "version": "3.45.2",
+      "version": "3.45.3",
       "transport": {
         "type": "stdio"
       }

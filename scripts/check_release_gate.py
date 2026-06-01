@@ -20,6 +20,7 @@ fresh checkout sees it) and must record that each required gate passed:
     - sanitize: passed            # release_sanitize_check high=0
     - publish-allowlist: passed   # all tracked public files are allowlisted
     - package-build: passed       # wheel + sdist built
+    - artifact-private-scan: passed  # built artifacts scanned for private terms
     - twine-check: passed         # package metadata check passed
     - eval-gate: pass             # or: n/a (no retrieval/quality change)
     - negative-control: passed    # R1; or n/a (no security-sensitive change)
@@ -27,9 +28,10 @@ fresh checkout sees it) and must record that each required gate passed:
 
 Required markers: ``self-review``, ``codex-review``, ``claude-review``,
 ``tests``, ``sanitize``, ``publish-allowlist``, ``package-build`` and
-``twine-check``. Each must be on its own line as ``<marker>: <value>`` with a
-passing value (passed/pass/ok/green/yes). ``eval-gate``, ``negative-control``
-and ``field-assertion-audit`` are required to be present but may be ``n/a``.
+``artifact-private-scan`` and ``twine-check``. Each must be on its own line as
+``<marker>: <value>`` with a passing value (passed/pass/ok/green/yes).
+``eval-gate``, ``negative-control`` and ``field-assertion-audit`` are required
+to be present but may be ``n/a``.
 
 The last two encode the self-test admission ruleset (R1/R5) derived from the
 a5 corpus-encryption Codex audits, where "the tests I wrote all pass" hid four
@@ -73,6 +75,7 @@ REQUIRED_MARKERS = (
     "sanitize",
     "publish-allowlist",
     "package-build",
+    "artifact-private-scan",
     "twine-check",
 )
 # Must appear; "n/a" is acceptable. eval-gate guards retrieval/quality
@@ -121,7 +124,8 @@ def check_release_gate(version: str, root: Path) -> tuple[bool, list[str]]:
         return False, [
             f"missing evidence file: {EVIDENCE_DIR}/v{version}.md "
             f"(record self-review / codex-review / claude-review / tests / "
-            f"sanitize / publish-allowlist / package-build / twine-check / eval-gate there)"
+            f"sanitize / publish-allowlist / package-build / "
+            f"artifact-private-scan / twine-check / eval-gate there)"
         ]
 
     markers = _parse_markers(evidence.read_text(encoding="utf-8"))
@@ -167,7 +171,8 @@ def main() -> int:
     print("")
     print("Publishing is blocked until the evidence file records that the")
     print("mandatory gates passed (self-review + codex-review + claude-review + tests +")
-    print("sanitize + publish-allowlist + package-build + twine-check) and the")
+    print("sanitize + publish-allowlist + package-build + artifact-private-scan +")
+    print("twine-check) and the")
     print("presence-only gates are declared (eval-gate, negative-control,")
     print("field-assertion-audit - each 'passed' or 'n/a'). This gate is enforced")
     print("by CI so it cannot be skipped.")

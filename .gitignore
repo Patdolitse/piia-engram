@@ -82,6 +82,16 @@ worker/.wrangler/
 # Internal-only doc drafts (not for publishing)
 docs/_drafts/
 
+# Private/generated Playbook content. Public releases may document the
+# Playbook engine and generic examples, but maintainer-generated Playbook
+# bodies, titles, steps, or workflow exports stay outside the repository.
+playbooks/
+generated_playbooks/
+generated-playbooks/
+*_Playbook_*.md
+*_playbook_*.md
+*.playbook.md
+
 # Competitive intelligence & internal strategy (never publish)
 experiments/competitive_landscape*.md
 experiments/beta_recruitment*.md
