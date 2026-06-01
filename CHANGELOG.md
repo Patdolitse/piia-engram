@@ -8,6 +8,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.45.0] - 2026-06-01
+
+The extraction and management workflow release: Engram now filters short-lived reminders more reliably, keeps metric-backed operational findings, and exposes safer metadata-only management projections for future UI work.
+
+### Added
+- **Metric-backed extraction signal** - automatic extraction now recognizes measured outcomes such as latency reductions, percentages, timing changes, and regressions so concrete operational findings are more likely to be saved for review.
+- **Ephemeral reminder filter** - short-lived personal reminders such as tomorrow/send/email/call/remind tasks are rejected from durable memory unless they also carry durable evidence or measured outcomes.
+- **Playbook migration impact summaries** - legacy playbook scope apply/rollback previews now include metadata-only impact counts, target scope distributions, skipped reason counts, and confirmation status without exposing playbook titles, bodies, steps, or project paths.
+- **GUI-ready management filters** - `engram management` and `build_management_view()` can filter review items by kind/quality and playbooks by state/scope while keeping the projection metadata-only.
+- **Expanded self-repair playbook** - the built-in `self-repair-loop` now includes deliverable self-checks, convergence to a single trusted artifact, and parallel local reproduction plus official/community research.
+
+### Changed
+- Management text and JSON outputs continue to summarize counts and states without printing local project paths or stored knowledge bodies.
+- Claude acceptance is now run as a narrow read-only review while Codex records local test evidence, reducing timeout risk on complex release checks.
+
+### Tests
+- Full suite: **2020 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, Claude acceptance PASS.
+
+### Release Evidence
+- See `release-evidence/v3.45.0.md`.
+
 ## [3.44.0] - 2026-06-01
 
 The setup file-safety release: Engram now defaults to read-only external MCP client configuration during setup, lets users choose the Engram data location, and keeps Engram-owned file backups before replacing local JSON stores.

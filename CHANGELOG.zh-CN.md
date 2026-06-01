@@ -6,6 +6,28 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.45.0] - 2026-06-01
+
+提取质量与管理工作流版本：Engram 现在更可靠地过滤短期提醒，保留带指标结果的工程发现，并为未来 GUI 提供更安全的 metadata-only 管理投影。
+
+### 新增
+- **指标型提取信号**：自动提取现在能识别延迟下降、百分比、耗时变化、回归等 measured outcome，让具体工程发现更容易进入待审核记忆。
+- **短期提醒过滤**：tomorrow / send / email / call / remind 等短期个人任务默认不会进入长期记忆，除非同时带有可复用证据或指标结果。
+- **Playbook 迁移影响摘要**：旧 Playbook 作用域 apply / rollback 预览现在返回只含元数据的影响计数、目标 scope 分布、跳过原因计数和确认状态，不暴露 Playbook 标题、正文、步骤或项目路径。
+- **GUI-ready 管理过滤**：`engram management` 与 `build_management_view()` 支持按 review 类型/质量、Playbook 状态/scope 过滤，同时保持 metadata-only。
+- **扩展 self-repair playbook**：内置 `self-repair-loop` 现在包含交付物自检、收敛到单一可信产物，以及本地复现 + 官方/社区资料并行研究。
+
+### 变更
+- 管理文本和 JSON 输出继续只汇总计数与状态，不打印本地项目路径或已存知识正文。
+- Claude 验收改为窄口径只读审计，由 Codex 记录本地测试证据，降低复杂发布检查中的超时风险。
+
+### 测试
+- 全量套件：**2020 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，Claude 验收 PASS。
+
+### Release Evidence
+- 见 `release-evidence/v3.45.0.md`。
+
 ## [3.44.0] - 2026-06-01
 
 安装文件安全版本：Engram 现在在 setup 阶段默认只读外部 MCP 客户端配置，允许用户选择 Engram 数据目录，并在替换 Engram 自有 JSON 存储前保留备份。
