@@ -1,6 +1,6 @@
 # Engram Cross-Tool & Cross-Session Usage Guide
 
-> Version: 3.43.0+ | Updated: 2026-05-31
+> Version: 3.44.0+ | Updated: 2026-06-01
 
 This guide is for users who work with multiple AI tools at the same time (Claude Code, Codex, Cursor, etc.). It explains how to keep Engram's memory coherent across different tools and conversations.
 

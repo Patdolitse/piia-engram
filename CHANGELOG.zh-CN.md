@@ -6,6 +6,31 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.44.0] - 2026-06-01
+
+安装文件安全版本：Engram 现在在 setup 阶段默认只读外部 MCP 客户端配置，允许用户选择 Engram 数据目录，并在替换 Engram 自有 JSON 存储前保留备份。
+
+### 新增
+- **可选择 Engram 数据目录**：setup wizard 现在允许用户选择默认本地目录、其他磁盘或自定义 Engram root；生成的客户端配置会携带该 `ENGRAM_DIR`。
+- **文件安全备份 ledger**：Engram 自有写入在替换既有 JSON 存储前会创建带时间戳的备份；ledger 只记录元数据和相对 Engram root 的路径。
+- **管理动作 CLI**：`engram management action request|approve|reject|complete|list` 记录只含元数据的管理 receipt，便于后续 UI 提供用户可控的清理与审核流程，同时不打印知识正文。
+
+### 变更
+- setup 默认不再改写外部 AI 客户端配置文件。用户可以用 `--apply-external-config` 显式选择写入；dry-run 和普通 setup 会保持外部文件字节级不变。
+- `engram doctor --fix` 和显式 setup 配置写入现在都会在触碰外部配置前走统一备份与 ledger 路径。
+- 旧 MCP 配置里的自定义 `ENGRAM_DIR` 在 repair 或升级时会被保留，除非用户明确选择新的数据目录。
+
+### 修复
+- `auto_migrate()` 现在把旧 JSON/TOML MCP 客户端配置当作只读迁移提示，不再在 import-time startup 中静默修改。
+- storage 更新现在会在原子替换既有 Engram 自有 JSON 文件前保留备份。
+
+### 测试
+- 全量套件：**1994 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，Claude 验收 PASS。
+
+### Release Evidence
+- 见 `release-evidence/v3.44.0.md`。
+
 ## [3.43.0] - 2026-05-31
 
 连续性诊断版本：Engram 现在提供可分享的 metadata-only 交接证明、recall-loop 计数，以及更清晰的 Windows 编码诊断。

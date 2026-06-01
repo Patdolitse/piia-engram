@@ -8,6 +8,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.44.0] - 2026-06-01
+
+The setup file-safety release: Engram now defaults to read-only external MCP client configuration during setup, lets users choose the Engram data location, and keeps Engram-owned file backups before replacing local JSON stores.
+
+### Added
+- **Selectable Engram data folder** - the setup wizard now lets users choose the default local data folder, another drive, or a custom Engram root; generated client entries carry that `ENGRAM_DIR` forward.
+- **File-safety backup ledger** - Engram-owned writes now create timestamped backups before replacing existing JSON stores, with a redacted ledger that records only metadata and paths relative to the Engram root.
+- **Management action CLI** - `engram management action request|approve|reject|complete|list` records metadata-only management receipts so future UI work can expose user-controlled cleanup and review flows without printing stored knowledge bodies.
+
+### Changed
+- Setup no longer rewrites external AI client config files by default. Users can opt into config updates with `--apply-external-config`, while dry-run and normal setup leave external files byte-for-byte unchanged.
+- `engram doctor --fix` and explicit setup config writes now route through the same backup-and-ledger path before touching external config files.
+- Legacy MCP configs keep their existing custom `ENGRAM_DIR` during repair or upgrade unless the user explicitly selects a new data location.
+
+### Fixed
+- `auto_migrate()` now treats legacy JSON and TOML MCP client configs as read-only guidance instead of silently modifying them during import-time startup.
+- Storage updates now back up existing Engram-owned JSON files before atomic replacement.
+
+### Tests
+- Full suite: **1994 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, Claude acceptance PASS.
+
+### Release Evidence
+- See `release-evidence/v3.44.0.md`.
+
 ## [3.43.0] - 2026-05-31
 
 The continuity diagnostics release: Engram now has a shareable metadata-only handoff proof, recall-loop counters, and clearer Windows encoding diagnostics.

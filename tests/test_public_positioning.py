@@ -44,10 +44,10 @@ def test_public_package_metadata_uses_current_version():
     server = json.loads(_read(".mcp/server.json"))
     plugin = json.loads(_read(".claude-plugin/plugin.json"))
 
-    assert pyproject["project"]["version"] == "3.43.0"
-    assert server["version"] == "3.43.0"
-    assert server["packages"][0]["version"] == "3.43.0"
-    assert plugin["version"] == "3.43.0"
+    assert pyproject["project"]["version"] == "3.44.0"
+    assert server["version"] == "3.44.0"
+    assert server["packages"][0]["version"] == "3.44.0"
+    assert plugin["version"] == "3.44.0"
     assert "MCP-compatible coding tools" in plugin["description"]
     assert "every AI tool" not in plugin["description"].lower()
 
