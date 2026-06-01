@@ -12,6 +12,7 @@ to every field that ends up in the HTML.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,7 @@ def engram(tmp_path: Path) -> Engram:
 def _assert_not_raw_in_html(html: str, raw_payload: str, *, label: str) -> None:
     """Fail if the raw (unescaped) payload appears literally in the HTML."""
     assert raw_payload not in html, (
-        f"{label}: raw payload found in HTML — XSS escape missing.\n"
+        f"{label}: raw payload found in HTML - XSS escape missing.\n"
         f"  payload: {raw_payload!r}"
     )
 
@@ -109,10 +110,18 @@ class TestReviewPageEscaping:
         but we verify _esc is actually applied to the id field rather than
         relying on the input being clean.
         """
-        engram.add_lesson({"summary": "lesson body", "domain": "x"})
+        lesson = engram.add_lesson({"summary": "lesson body", "domain": "x"})
+        payload = 'bad" onclick="alert(1)'
+        path = engram.root / "knowledge" / "lessons.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for item in data:
+            if item.get("id") == lesson["id"]:
+                item["id"] = payload
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
         html = engram.generate_review_page(lang="en")
-        # Just verify the page renders and contains escaped output
-        assert "&quot;" not in html or "data-id=" in html
+        _assert_not_raw_in_html(html, payload, label="data-id attribute break")
+        assert 'data-id="bad&quot; onclick=&quot;alert(1)"' in html
 
     def test_zh_lang_attribute_renders_correctly(self, engram: Engram):
         """Smoke test: lang=zh produces valid HTML with the correct lang attr."""
@@ -128,3 +137,30 @@ class TestReviewPageEscaping:
         # Raw "Tom & Jerry" with a bare & would be malformed HTML
         assert "Tom & Jerry" not in html
         assert "Tom &amp; Jerry" in html
+
+    def test_extraction_quality_metadata_rendered_and_escaped(self, engram: Engram):
+        """Quality metadata is user-controlled storage and must be escaped."""
+        method_payload = 'notes" onclick="alert(1)'
+        signal_payload = "<img src=x onerror=alert(1)>"
+        evidence_payload = "<script>alert('evidence')</script>"
+        engram.add_lesson({
+            "summary": "quality item",
+            "tier": "staging",
+            "extraction": {
+                "method": method_payload,
+                "quality_score": 0.88,
+                "quality_signals": ["durable_rule", signal_payload],
+                "quality_flags": ["reviewable"],
+                "evidence_span": evidence_payload,
+            },
+        })
+
+        html = engram.generate_review_page(lang="en")
+
+        assert "q=0.88" in html
+        assert "durable_rule" in html
+        _assert_not_raw_in_html(html, method_payload, label="quality method")
+        _assert_not_raw_in_html(html, signal_payload, label="quality signal")
+        _assert_not_raw_in_html(html, evidence_payload, label="quality evidence")
+        assert "&lt;img" in html
+        assert "&lt;script&gt;" in html

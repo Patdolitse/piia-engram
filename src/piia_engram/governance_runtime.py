@@ -44,6 +44,7 @@ from .sensitivity import VALID_LEVELS, annotate_items
 from .storage import DataCorruptionError
 
 _TRUTHY = ("1", "true", "yes", "on")
+GOVERNANCE_REFUSAL_SENTINEL = "ENGRAM_GOVERNANCE_REFUSAL"
 
 # The most-privileged tier — the only one allowed to receive an opaque
 # whole-knowledge dump (e.g. the rendered export report), which cannot be
@@ -61,7 +62,18 @@ def _withheld_stub(tool: str, trust: str) -> dict:
     }
 
 
-_DUMP_REFUSAL = (
+def _refusal(message: str) -> str:
+    return f"{GOVERNANCE_REFUSAL_SENTINEL}: {message}"
+
+
+def is_governance_refusal(value) -> bool:
+    return (
+        isinstance(value, str)
+        and value.startswith(f"{GOVERNANCE_REFUSAL_SENTINEL}:")
+    )
+
+
+_DUMP_REFUSAL = _refusal(
     "【治理层】当前信任档无权读取完整知识导出报告（仅 private-self 可读）。"
     " / Governance: full knowledge export is withheld at the current trust level"
     " (private-self only)."
@@ -70,7 +82,7 @@ _DUMP_REFUSAL = (
 # Pre-execution refusal for tools whose disclosure surface is a FILE written to
 # disk (full-store export, review HTML) rather than the MCP return value. The
 # export is skipped entirely for non-owners, so no file is written.
-_EXPORT_REFUSAL = (
+_EXPORT_REFUSAL = _refusal(
     "【治理层】当前信任档无权触发整库导出 / 知识审查页生成（仅 private-self 可用，未写出任何文件）。"
     " / Governance: full-store export / review-page generation is withheld at the"
     " current trust level (private-self only); nothing was written to disk."
@@ -80,7 +92,7 @@ _EXPORT_REFUSAL = (
 # store itself, or whole-store import/overwrite. Permitted for private-self only
 # (NOT trusted-local), and refused BEFORE the side effect so no grant/import is
 # written. Closes the low-trust self-escalation-to-owner path.
-_OWNER_WRITE_REFUSAL = (
+_OWNER_WRITE_REFUSAL = _refusal(
     "【治理层】此操作仅限 knowledge-base 所有者（private-self）执行，"
     "且必须在本机直接进行；当前信任档无权修改授权/导入数据，未写出任何变更。"
     " / Governance: this operation is owner-only (private-self) and must be"
@@ -608,13 +620,13 @@ def describe_caller_permissions(
     return result
 
 
-_WRITE_REFUSAL_NO = (
+_WRITE_REFUSAL_NO = _refusal(
     "【治理层】当前信任档无写入权限（write policy: no）。知识库处于只读模式。"
     " / Governance: the current trust level does not permit writes"
     " (write policy: no). The knowledge base is read-only for this caller."
 )
 
-_WRITE_REFUSAL_PROPOSED = (
+_WRITE_REFUSAL_PROPOSED = _refusal(
     "【治理层】当前信任档仅允许提议写入，不允许直接写入（write policy: proposed_only）。"
     "请通知 knowledge-base 所有者手动完成此写入。"
     " / Governance: the current trust level allows proposed writes only,"

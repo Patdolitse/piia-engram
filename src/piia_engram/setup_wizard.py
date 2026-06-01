@@ -1678,7 +1678,7 @@ def _run_seed_knowledge_onboarding(
             print(_t(f"\n  🌱 已注入 {seed_count} 条通用最佳实践（基于 {effective_tech}）",
                      f"\n  🌱 Injected {seed_count} starter best practices (based on {effective_tech})"))
             print(_t("     这些标记为 staging——使用 3 次后自动晋升为 verified。",
-                     "     These are marked staging — auto-promoted to verified after 3 uses."))
+                     "     These are marked staging — review confirms what becomes verified."))
 
     # Step 4.5 — 智能扫描 + 分流导入
     print(_t("\n  智能导入规则文件",
@@ -3326,7 +3326,7 @@ def run_sessions(argv: list[str] | None = None) -> int:
 def _print_review_usage() -> None:
     print(
         "Usage:\n"
-        "  engram review [--limit N]\n"
+        "  engram review [--limit N] [--sort recent|quality|quality-desc] [--low-quality]\n"
         "  engram review show <id>\n"
         "  engram review approve <id> --yes\n"
         "  engram review archive <id> --yes\n"
@@ -3341,7 +3341,78 @@ def _review_title(item_type: str, item: dict) -> str:
     return str(item.get("summary") or item.get("title") or "")
 
 
-def _review_items(eng, *, limit: int = 20) -> list[dict]:
+def _review_quality_summary(item: dict) -> str:
+    extraction = item.get("extraction")
+    if not isinstance(extraction, dict) or not extraction:
+        return "-"
+    parts: list[str] = []
+    score = extraction.get("quality_score")
+    if isinstance(score, (int, float)):
+        parts.append(f"q={score:.2f}")
+    method = str(extraction.get("method") or "").strip()
+    if method:
+        parts.append(_truncate_review_text(method, 16))
+    return " ".join(parts) if parts else "-"
+
+
+def _review_quality_score(item: dict) -> float | None:
+    extraction = item.get("extraction")
+    if not isinstance(extraction, dict):
+        return None
+    score = extraction.get("quality_score")
+    if isinstance(score, (int, float)):
+        return float(score)
+    return None
+
+
+def _clean_review_inline(value: object) -> str:
+    text = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", str(value or ""))
+    return " ".join(text.split())
+
+
+def _truncate_review_text(value: str, limit: int = 180) -> str:
+    text = _clean_review_inline(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _print_review_quality_detail(item: dict) -> None:
+    extraction = item.get("extraction")
+    if not isinstance(extraction, dict) or not extraction:
+        return
+    method = str(extraction.get("method") or "").strip()
+    source_tool = str(extraction.get("source_tool") or "").strip()
+    source = _truncate_review_text(method, 48) if method else "unknown"
+    if source_tool:
+        source = f"{source} via {_truncate_review_text(source_tool, 48)}"
+    _safe_print(f"source: {source}")
+
+    quality_parts: list[str] = []
+    score = extraction.get("quality_score")
+    if isinstance(score, (int, float)):
+        quality_parts.append(f"q={score:.2f}")
+    signals = extraction.get("quality_signals")
+    if isinstance(signals, list) and signals:
+        quality_parts.append("signals=" + ",".join(_truncate_review_text(s, 32) for s in signals[:6]))
+    flags = extraction.get("quality_flags")
+    if isinstance(flags, list) and flags:
+        quality_parts.append("flags=" + ",".join(_truncate_review_text(f, 32) for f in flags[:6]))
+    if quality_parts:
+        _safe_print("quality: " + "; ".join(quality_parts))
+
+    evidence = str(extraction.get("evidence_span") or "").strip()
+    if evidence:
+        _safe_print(f"evidence: {_truncate_review_text(evidence)}")
+
+
+def _review_items(
+    eng,
+    *,
+    limit: int = 20,
+    sort: str = "recent",
+    low_quality_only: bool = False,
+) -> list[dict]:
     """Return staging lessons/decisions for the terminal review queue.
 
     The explicit ``_update_access=False`` is part of the contract: listing the
@@ -3355,11 +3426,26 @@ def _review_items(eng, *, limit: int = 20) -> list[dict]:
         if item.get("tier") == "staging":
             rows.append({"type": "decision", "item": item})
 
+    if low_quality_only:
+        rows = [
+            row for row in rows
+            if (score := _review_quality_score(row.get("item") or {})) is None or score < 0.70
+        ]
+
     def sort_key(row: dict) -> str:
         item = row.get("item") or {}
         return str(item.get("timestamp") or item.get("created_at") or item.get("id") or "")
 
-    rows.sort(key=sort_key, reverse=True)
+    def quality_sort_key(row: dict, missing_score: float) -> tuple[float, str]:
+        score = _review_quality_score(row.get("item") or {})
+        return (score if score is not None else missing_score, sort_key(row))
+
+    if sort == "quality":
+        rows.sort(key=lambda row: quality_sort_key(row, 99.0))
+    elif sort == "quality-desc":
+        rows.sort(key=lambda row: quality_sort_key(row, -1.0), reverse=True)
+    else:
+        rows.sort(key=sort_key, reverse=True)
     return rows[:limit]
 
 
@@ -3368,18 +3454,20 @@ def _print_review_list(rows: list[dict]) -> None:
         print("No staging knowledge needs review.")
         return
     print(f"Staging knowledge review queue ({len(rows)})")
-    print("type       id                         domain        title")
-    print("---------  -------------------------  ------------  ------------------------------")
+    print("type       id                         domain        quality          title")
+    print("---------  -------------------------  ------------  ---------------  ------------------------------")
     for row in rows:
         item_type = row["type"]
         item = row["item"]
         title = _review_title(item_type, item)
         if len(title) > 70:
             title = title[:67] + "..."
+        quality = _review_quality_summary(item)
         _safe_print(
             f"{item_type:<9}  "
             f"{str(item.get('id', '?')):<25}  "
             f"{str(item.get('domain', ''))[:12]:<12}  "
+            f"{quality:<15}  "
             f"{title}"
         )
     print("\nUse 'engram review show <id>' to inspect one item.")
@@ -3402,6 +3490,7 @@ def _print_review_item(item_type: str, item: dict) -> None:
         _safe_print(f"summary: {item.get('summary') or item.get('title') or ''}")
         if item.get("detail"):
             _safe_print(f"detail: {item.get('detail')}")
+    _print_review_quality_detail(item)
 
 
 def _require_yes(args: list[str], action: str) -> bool:
@@ -3409,6 +3498,54 @@ def _require_yes(args: list[str], action: str) -> bool:
         return True
     print(f"Refusing to {action} without explicit --yes.")
     return False
+
+
+def _print_playbook_usage() -> None:
+    print(
+        "Engram Playbook CLI\n\n"
+        "Usage:\n"
+        "  engram playbook install self-repair-loop [--yes] [--project <folder>]\n\n"
+        "Default is dry-run. Pass --yes to write the built-in Playbook."
+    )
+
+
+def _arg_value(args: list[str], *names: str) -> str:
+    for name in names:
+        if name in args:
+            idx = args.index(name)
+            if idx + 1 >= len(args):
+                return ""
+            return args[idx + 1]
+    return ""
+
+
+def run_playbook(argv: list[str] | None = None) -> int:
+    """Local CLI for installing built-in Playbook templates."""
+    _configure_utf8_stdio()
+    args = list(argv or [])
+    if not args or args[0] in ("-h", "--help"):
+        _print_playbook_usage()
+        return 0
+    if args[0] != "install" or len(args) < 2:
+        _print_playbook_usage()
+        return 2
+
+    project_folder = _arg_value(args, "--project", "--project-folder")
+    if ("--project" in args or "--project-folder" in args) and not project_folder:
+        print("--project requires a folder path")
+        return 2
+
+    Engram = _get_engram_class()
+    eng = Engram()
+    confirm = "--yes" in args
+    result = eng.install_builtin_playbook(
+        args[1],
+        project_folder=project_folder or None,
+        dry_run=not confirm,
+        confirm=confirm,
+    )
+    _safe_print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 1 if result.get("error") else 0
 
 
 def run_review(argv: list[str] | None = None) -> int:
@@ -3474,17 +3611,31 @@ def run_review(argv: list[str] | None = None) -> int:
         return 0
 
     limit = 20
+    sort = "recent"
+    low_quality_only = False
     i = 0
     while i < len(args):
         if args[i] == "--limit" and i + 1 < len(args):
             limit = _parse_sessions_limit(args[i + 1])
             i += 2
+        elif args[i] == "--sort" and i + 1 < len(args):
+            sort = args[i + 1]
+            if sort not in {"recent", "quality", "quality-desc"}:
+                print(f"Invalid review sort: {sort}")
+                _print_review_usage()
+                return 2
+            i += 2
+        elif args[i] == "--low-quality":
+            low_quality_only = True
+            i += 1
         else:
             print(f"Unknown review option: {args[i]}")
             _print_review_usage()
             return 2
 
-    _print_review_list(_review_items(eng, limit=limit))
+    _print_review_list(_review_items(
+        eng, limit=limit, sort=sort, low_quality_only=low_quality_only,
+    ))
     return 0
 
 
@@ -4034,6 +4185,11 @@ def _run_repair_encoding(args: list[str]) -> int:
     eng = Engram()
 
     if apply:
+        if no_backup:
+            print(
+                "[!!] Encoding repair: --no-backup disables automatic backup; "
+                "use only if you already have a separate backup."
+            )
         report = repair_engram_root(eng.root, apply=True, backup=not no_backup)
         if not report.findings:
             print("[ok] Encoding repair: no mojibake detected.")
@@ -4361,6 +4517,8 @@ def main() -> None:
         sys.exit(run_sessions(args[1:]))
     elif args[0] == "review":
         sys.exit(run_review(args[1:]))
+    elif args[0] == "playbook":
+        sys.exit(run_playbook(args[1:]))
     elif args[0] == "status":
         sys.exit(run_status(args[1:]))
     elif args[0] == "continuity":
@@ -4416,6 +4574,7 @@ def main() -> None:
             "  engram review show <id> Inspect one review item\n"
             "  engram review approve <id> --yes  Promote staging item\n"
             "  engram review archive <id> --yes  Archive review item\n"
+            "  engram playbook install self-repair-loop [--yes]\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram reindex          Rebuild the hybrid search index from JSON\n"
@@ -4432,7 +4591,7 @@ def main() -> None:
             "  engram privacy          Show what data Engram stores\n\n"
             "Tool tiers:\n"
             "  Default: 16 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 72 tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 80 tools.\n"
         )
         sys.exit(0)
 

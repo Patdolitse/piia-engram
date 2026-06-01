@@ -73,6 +73,83 @@ from .compat import (  # noqa: F401
 )
 
 
+_BUILTIN_PLAYBOOKS: dict[str, dict] = {
+    "self-repair-loop": {
+        "builtin_name": "self-repair-loop",
+        "title": "Self-Repair Loop for Agent Work",
+        "description": (
+            "A reusable operating loop for agents to turn failures, timeouts, "
+            "encoding issues, and review feedback into stronger tests, safer "
+            "processes, and durable Engram memory."
+        ),
+        "domain": "agent-collaboration,quality,governance",
+        "triggers": [
+            "long task",
+            "code audit",
+            "regression",
+            "Claude review",
+            "self repair",
+            "encoding issue",
+        ],
+        "preconditions": [
+            "The current goal is clear enough to express as testable invariants.",
+            "Commit, push, publish, and merge remain behind the user approval gate.",
+            "Claude review is done in English, with compact facts or snippets.",
+        ],
+        "steps": [
+            {
+                "action": "Enumerate entrypoints",
+                "detail": "List every tool, command, file side effect, or user-visible path touched by the task before narrowing the fix.",
+            },
+            {
+                "action": "Define invariant",
+                "detail": "Convert the desired behavior into one or more falsifiable statements that tests or fact tables can verify.",
+            },
+            {
+                "action": "Write the red test",
+                "detail": "Add the smallest regression test that fails for the current behavior and proves the invariant is real.",
+            },
+            {
+                "action": "Apply the minimal fix",
+                "detail": "Change only the code needed to satisfy the invariant; avoid unrelated refactors while the failure is active.",
+            },
+            {
+                "action": "Run concentric verification",
+                "detail": "Run the narrow test first, then the related matrix or feature tests, then the full suite before claiming closure.",
+            },
+            {
+                "action": "Validate the verifier",
+                "detail": "If a check reports broad or surprising failures, test the checker itself before editing product code; treat shell encoding, PowerShell non-ASCII conversion, stale fixtures, over-broad markers, and bad assumptions as possible validator defects. Prefer byte patterns or Unicode codepoint construction for encoding guards.",
+            },
+            {
+                "action": "Ask Claude for segmented audit",
+                "detail": "Send Claude compact English facts or snippets with no tools; split anything that risks a 90-120 second timeout.",
+            },
+            {
+                "action": "Absorb cheap safety feedback",
+                "detail": "Turn low-cost Claude notes into tests and minimal patches, then request a narrow re-audit.",
+            },
+            {
+                "action": "Record the process upgrade",
+                "detail": "Write the lesson, decision, report path, and verification output back to Engram so the next agent starts stronger.",
+            },
+        ],
+        "pitfalls": [
+            "Do not treat a passing test as proof unless it covers the invariant.",
+            "Do not feed Claude broad multi-file context when a fact table is enough.",
+            "On Windows, verify UTF-8 readback and BOM bytes after generated edits.",
+            "Do not confuse a verifier defect with a product defect; first make the checker reproducible and encoding-safe.",
+        ],
+        "outcome": (
+            "Failures become durable process improvements: stronger tests, clearer "
+            "handoff reports, and reusable memory instead of one-off fixes."
+        ),
+        "tier": "verified",
+        "source_tool": "engram_builtin",
+    }
+}
+
+
 # ---------------------------------------------------------------------------
 # Engram Core Class
 # ---------------------------------------------------------------------------
@@ -1245,7 +1322,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         path = self._playbooks_dir / f"{playbook_id}.json"
         if not path.exists():
             return None
-        return self._read_playbook_file(path) or None
+        pb = self._read_playbook_file(path) or None
+        if pb:
+            pb = self._ensure_playbook_fields(pb)
+        return pb
 
     @staticmethod
     def _extract_parameters(playbook: dict) -> list[str]:
@@ -1275,6 +1355,78 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                     seen.add(name)
         return params
 
+    def _normalize_playbook_scope(
+        self,
+        entry: dict,
+        scope_type: str | None = None,
+        project_folder: str | None = None,
+        project_id: str | None = None,
+    ) -> dict:
+        """Return the canonical scope dict for a playbook.
+
+        Legacy playbooks have no scope metadata; they read as global so older
+        stores remain visible until the user runs a classification migration.
+        """
+        raw_scope = entry.get("scope") if isinstance(entry.get("scope"), dict) else {}
+        folder = (
+            project_folder
+            if project_folder is not None
+            else entry.get("project_folder") or raw_scope.get("project_folder")
+        )
+        pid = project_id or entry.get("project_id") or raw_scope.get("project_id")
+        raw_type = (
+            scope_type
+            or entry.get("scope_type")
+            or raw_scope.get("type")
+            or ("project" if folder or pid else "global")
+        )
+        raw_type = str(raw_type or "global").strip().lower()
+        if raw_type != "project":
+            return {"type": "global"}
+        if not pid and folder:
+            pid = _project_id(str(folder))
+        if not pid:
+            return {"type": "global"}
+        scope = {"type": "project", "project_id": str(pid)}
+        if folder:
+            scope["project_folder"] = str(folder)
+        return scope
+
+    @staticmethod
+    def _apply_playbook_scope(entry: dict, scope: dict) -> dict:
+        """Mirror canonical scope fields onto a playbook or index entry."""
+        entry["scope"] = dict(scope)
+        entry["scope_type"] = scope.get("type", "global")
+        if scope.get("type") == "project":
+            entry["project_id"] = scope.get("project_id", "")
+            if scope.get("project_folder"):
+                entry["project_folder"] = scope["project_folder"]
+        else:
+            entry["project_id"] = ""
+            entry.pop("project_folder", None)
+        return entry
+
+    def _playbook_visible_for_project(
+        self, playbook: dict, project_folder: str | None = None,
+    ) -> bool:
+        """Whether a playbook should be visible in a project context."""
+        scope = self._normalize_playbook_scope(playbook)
+        if scope.get("type") == "global":
+            return True
+        if not project_folder:
+            return False
+        return scope.get("project_id") == _project_id(project_folder)
+
+    def _same_playbook_scope(self, left: dict, right: dict) -> bool:
+        """Scope equality for duplicate detection."""
+        l_scope = self._normalize_playbook_scope(left)
+        r_scope = self._normalize_playbook_scope(right)
+        if l_scope.get("type") != r_scope.get("type"):
+            return False
+        if l_scope.get("type") == "project":
+            return l_scope.get("project_id") == r_scope.get("project_id")
+        return True
+
     def _ensure_playbook_fields(self, entry: dict) -> dict:
         """Backfill metadata fields on a playbook entry."""
         if not isinstance(entry, dict):
@@ -1301,11 +1453,13 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if not isinstance(entry.get("pitfalls"), list):
             entry["pitfalls"] = []
         entry.setdefault("version", 1)
+        scope = self._normalize_playbook_scope(entry)
+        self._apply_playbook_scope(entry, scope)
         return entry
 
     def _playbook_index_entry(self, pb: dict) -> dict:
         """Extract lightweight index entry from a full playbook."""
-        return {
+        entry = {
             "id": pb.get("id", ""),
             "title": pb.get("title", ""),
             "triggers": pb.get("triggers", []),
@@ -1313,6 +1467,9 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "status": pb.get("status", "active"),
             "updated_at": pb.get("last_updated") or pb.get("created_at") or _now_iso(),
         }
+        if pb.get("builtin_name"):
+            entry["builtin_name"] = pb.get("builtin_name", "")
+        return self._apply_playbook_scope(entry, self._normalize_playbook_scope(pb))
 
     def add_playbook(
         self,
@@ -1345,6 +1502,8 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         for entry in index:
             if entry.get("status") != "active":
                 continue
+            if not self._same_playbook_scope(new_pb, entry):
+                continue
             sim = self._bigram_similarity(new_title, entry.get("title", ""))
             if sim >= SIMILARITY_THRESHOLD:
                 return {
@@ -1371,10 +1530,105 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                     self.increment_domain_usage(_d)
         return new_pb
 
+    @staticmethod
+    def available_builtin_playbooks() -> list[str]:
+        """Return built-in Playbook template names."""
+        return sorted(_BUILTIN_PLAYBOOKS)
+
+    def builtin_playbook_template(
+        self,
+        name: str,
+        project_folder: str | None = None,
+    ) -> dict:
+        """Return a normalized built-in Playbook template without writing it."""
+        key = str(name or "").strip().lower()
+        if key not in _BUILTIN_PLAYBOOKS:
+            return {
+                "error": f"Unknown builtin playbook: {name}",
+                "available": self.available_builtin_playbooks(),
+            }
+        template = deepcopy(_BUILTIN_PLAYBOOKS[key])
+        scope_type = "project" if project_folder else "global"
+        scope = self._normalize_playbook_scope(
+            template, scope_type=scope_type, project_folder=project_folder,
+        )
+        self._apply_playbook_scope(template, scope)
+        return self._ensure_playbook_fields(template)
+
+    def _find_existing_builtin_playbook(self, template: dict) -> dict | None:
+        builtin_name = str(template.get("builtin_name") or "").strip().lower()
+        title = str(template.get("title") or "").strip().lower()
+        for entry in self._read_playbook_index():
+            if entry.get("status") != "active":
+                continue
+            entry_builtin_name = str(entry.get("builtin_name") or "").strip().lower()
+            if builtin_name and entry_builtin_name and entry_builtin_name != builtin_name:
+                continue
+            if not entry_builtin_name:
+                if str(entry.get("title") or "").strip().lower() != title:
+                    continue
+            if self._same_playbook_scope(template, entry):
+                return entry
+        return None
+
+    def install_builtin_playbook(
+        self,
+        name: str,
+        *,
+        project_folder: str | None = None,
+        dry_run: bool = True,
+        confirm: bool = False,
+    ) -> dict:
+        """Install a built-in Playbook template with dry-run and idempotency.
+
+        Built-ins are verified local templates, but installation still defaults
+        to preview-only so setup/CLI callers never mutate stores by accident.
+        """
+        template = self.builtin_playbook_template(name, project_folder=project_folder)
+        if "error" in template:
+            return template
+
+        existing = self._find_existing_builtin_playbook(template)
+        if existing:
+            return {
+                "dry_run": bool(dry_run or not confirm),
+                "status": "already_installed",
+                "existing_id": existing.get("id", ""),
+                "playbook": existing,
+            }
+
+        effective_dry_run = bool(dry_run or not confirm)
+        if effective_dry_run:
+            return {
+                "dry_run": True,
+                "requires_confirmation": not confirm,
+                "status": "would_install",
+                "playbook": template,
+            }
+
+        installed = self.add_playbook(
+            template,
+            source_tool=str(template.get("source_tool") or "engram_builtin"),
+        )
+        if "error" in installed or installed.get("status") == "duplicate":
+            return {
+                "dry_run": False,
+                "status": installed.get("status", "error"),
+                "playbook": installed,
+                "existing_id": installed.get("existing_id", ""),
+            }
+        return {
+            "dry_run": False,
+            "status": "installed",
+            "playbook_id": installed.get("id", ""),
+            "playbook": installed,
+        }
+
     def get_playbooks(
         self,
         domain: str | None = None,
         limit: int | None = 20,
+        project_folder: str | None = None,
         _update_access: bool = True,
     ) -> list[dict]:
         """List active playbooks, optionally filtered by domain."""
@@ -1388,7 +1642,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 if domain not in pb_domains:
                     continue
             pb = self._read_playbook_by_id(entry.get("id", ""))
-            if pb:
+            if pb and self._playbook_visible_for_project(pb, project_folder):
                 result.append(pb)
 
         result = result[-limit:] if limit is not None else result
@@ -1403,11 +1657,31 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         self._audit.log("read", "playbooks", detail=f"returned {len(result)} items")
         return result
 
-    def get_playbook(self, playbook_id: str, _update_access: bool = True) -> dict:
-        """Get a single playbook by ID. Includes extracted parameters list."""
+    def get_playbook(
+        self,
+        playbook_id: str,
+        _update_access: bool = True,
+        project_folder: str | None = None,
+        confirm_cross_project: bool = False,
+    ) -> dict:
+        """Get a single playbook by ID. Includes extracted parameters list.
+
+        When a project_folder is supplied, project-scoped playbooks from other
+        projects are refused unless confirm_cross_project=True. Calls without a
+        project context preserve the legacy direct-ID behavior.
+        """
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        if project_folder is not None and not self._playbook_visible_for_project(pb, project_folder):
+            if not confirm_cross_project:
+                return {
+                    "error": "cross_project_playbook",
+                    "playbook_id": playbook_id,
+                    "scope": pb.get("scope", {"type": "global"}),
+                    "project_folder": project_folder,
+                    "message": "Playbook belongs to another project; pass confirm_cross_project=True to use it explicitly.",
+                }
 
         if _update_access:
             pb["last_reviewed"] = _now_iso()
@@ -1418,15 +1692,455 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         pb["parameters"] = self._extract_parameters(pb)
         return pb
 
-    def get_recent_playbooks(self, limit: int = 5) -> list[dict]:
+    def get_recent_playbooks(
+        self, limit: int = 5, project_folder: str | None = None,
+    ) -> list[dict]:
         """Return recently used active playbooks, sorted by last_reviewed descending."""
         all_pbs = self._export_playbooks()
-        active = [pb for pb in all_pbs if pb.get("status") == "active"]
+        active = [
+            pb for pb in all_pbs
+            if pb.get("status") == "active"
+            and self._playbook_visible_for_project(pb, project_folder)
+        ]
         active.sort(key=lambda pb: pb.get("last_reviewed", ""), reverse=True)
         result = active[:limit]
         for pb in result:
             pb["parameters"] = self._extract_parameters(pb)
         return result
+
+    @staticmethod
+    def _playbook_text_for_classification(pb: dict) -> str:
+        parts: list[str] = [
+            str(pb.get("title", "")),
+            str(pb.get("domain", "")),
+            str(pb.get("description", "")),
+            " ".join(str(t) for t in pb.get("triggers", []) if t),
+            " ".join(str(p) for p in pb.get("pitfalls", []) if p),
+        ]
+        for step in pb.get("steps", []):
+            if isinstance(step, str):
+                parts.append(step)
+            elif isinstance(step, dict):
+                parts.append(str(step.get("action", "")))
+                parts.append(str(step.get("detail", "")))
+        return " ".join(parts).lower()
+
+    def classify_legacy_playbooks(
+        self,
+        project_folders: list[str] | None = None,
+    ) -> dict:
+        """Dry-run legacy playbook scope classification.
+
+        This intentionally does not mutate stored playbooks. It produces a
+        reviewable migration plan with confidence and evidence so old users can
+        batch-apply only the high-confidence items later.
+        """
+        projects: list[dict] = []
+        if project_folders is not None:
+            for folder in project_folders:
+                projects.append({
+                    "folder": str(folder),
+                    "title": self._sanitize_project(str(folder)),
+                })
+        else:
+            projects = self.list_projects()
+
+        project_terms: list[dict] = []
+        for project in projects:
+            folder = str(project.get("folder") or project.get("project_folder") or "")
+            title = str(project.get("title") or "")
+            terms = {term.strip().lower() for term in [title, Path(folder).name] if term}
+            terms = {term for term in terms if len(term) >= 3}
+            if folder and terms:
+                project_terms.append({
+                    "folder": folder,
+                    "project_id": _project_id(folder),
+                    "terms": sorted(terms),
+                })
+
+        global_markers = {
+            "global", "universal", "common", "general", "shared",
+            "cross-project", "通用", "共通", "全局",
+        }
+
+        suggestions = []
+        for pb in self._export_playbooks():
+            if pb.get("status") != "active":
+                continue
+            text = self._playbook_text_for_classification(pb)
+            best_project: dict | None = None
+            best_evidence: list[str] = []
+            for project in project_terms:
+                evidence = [term for term in project["terms"] if term in text]
+                if len(evidence) > len(best_evidence):
+                    best_project = project
+                    best_evidence = evidence
+
+            if best_project and best_evidence:
+                confidence = min(0.95, 0.65 + 0.1 * len(best_evidence))
+                suggested_scope = {
+                    "type": "project",
+                    "project_id": best_project["project_id"],
+                    "project_folder": best_project["folder"],
+                }
+                evidence = [f"matched project term: {term}" for term in best_evidence]
+            elif any(marker in text for marker in global_markers):
+                confidence = 0.75
+                suggested_scope = {"type": "global"}
+                evidence = ["matched global/common marker"]
+            else:
+                confidence = 0.35
+                suggested_scope = {"type": "needs_review"}
+                evidence = ["no strong project or global evidence"]
+
+            suggestions.append({
+                "id": pb.get("id", ""),
+                "title": pb.get("title", ""),
+                "current_scope": pb.get("scope", {"type": "global"}),
+                "suggested_scope": suggested_scope,
+                "confidence": round(confidence, 2),
+                "evidence": evidence,
+                "apply_ready": confidence >= 0.7 and suggested_scope.get("type") != "needs_review",
+            })
+
+        return {
+            "dry_run": True,
+            "total": len(suggestions),
+            "suggestions": suggestions,
+        }
+
+    def _write_playbook_and_index(self, pb: dict) -> None:
+        """Persist a playbook and keep the lightweight index in sync."""
+        playbook_id = str(pb.get("id") or "")
+        if not playbook_id:
+            raise ValueError("missing playbook id")
+        self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
+
+        index = self._read_playbook_index()
+        idx_entry = self._playbook_index_entry(pb)
+        for i, entry in enumerate(index):
+            if entry.get("id") == playbook_id:
+                index[i] = idx_entry
+                break
+        else:
+            index.append(idx_entry)
+        self._write_playbook_index(index)
+
+    def apply_legacy_playbook_scope_suggestions(
+        self,
+        project_folders: list[str] | None = None,
+        playbook_ids: list[str] | None = None,
+        min_confidence: float = 0.7,
+        dry_run: bool = True,
+        confirm: bool = False,
+    ) -> dict:
+        """Apply high-confidence legacy Playbook scope suggestions.
+
+        The default is a write-free preview. Actual migration requires
+        ``dry_run=False`` and ``confirm=True`` so old-user data is never
+        silently reorganized.
+        """
+        effective_dry_run = bool(dry_run or not confirm)
+        selected_ids = set(playbook_ids or [])
+        classification = self.classify_legacy_playbooks(project_folders=project_folders)
+        now = _now_iso()
+        would_apply: list[dict] = []
+        applied: list[dict] = []
+        skipped: list[dict] = []
+
+        for suggestion in classification.get("suggestions", []):
+            playbook_id = str(suggestion.get("id") or "")
+            if selected_ids and playbook_id not in selected_ids:
+                continue
+
+            if (
+                not suggestion.get("apply_ready")
+                or float(suggestion.get("confidence") or 0) < min_confidence
+            ):
+                skipped.append({
+                    "id": playbook_id,
+                    "title": suggestion.get("title", ""),
+                    "reason": "not_apply_ready",
+                    "suggested_scope": suggestion.get("suggested_scope"),
+                    "confidence": suggestion.get("confidence", 0),
+                })
+                continue
+
+            pb = self._read_playbook_by_id(playbook_id)
+            if pb is None:
+                skipped.append({
+                    "id": playbook_id,
+                    "title": suggestion.get("title", ""),
+                    "reason": "not_found",
+                })
+                continue
+
+            current_scope = self._normalize_playbook_scope(pb)
+            if current_scope.get("type") != "global":
+                skipped.append({
+                    "id": playbook_id,
+                    "title": pb.get("title", ""),
+                    "reason": "already_scoped",
+                    "current_scope": current_scope,
+                    "suggested_scope": suggestion.get("suggested_scope"),
+                    "confidence": suggestion.get("confidence", 0),
+                })
+                continue
+
+            target_scope = self._normalize_playbook_scope(
+                {"scope": suggestion.get("suggested_scope") or {}}
+            )
+            if target_scope.get("type") not in {"global", "project"}:
+                skipped.append({
+                    "id": playbook_id,
+                    "title": suggestion.get("title", ""),
+                    "reason": "invalid_scope",
+                    "suggested_scope": suggestion.get("suggested_scope"),
+                })
+                continue
+
+            if current_scope == target_scope:
+                skipped.append({
+                    "id": playbook_id,
+                    "title": pb.get("title", ""),
+                    "reason": "unchanged",
+                    "suggested_scope": target_scope,
+                    "confidence": suggestion.get("confidence", 0),
+                })
+                continue
+
+            change = {
+                "id": playbook_id,
+                "title": pb.get("title", suggestion.get("title", "")),
+                "from_scope": current_scope,
+                "to_scope": target_scope,
+                "confidence": suggestion.get("confidence", 0),
+                "evidence": suggestion.get("evidence", []),
+            }
+            if effective_dry_run:
+                would_apply.append(change)
+                continue
+
+            history = list(pb.get("scope_migration_history") or [])
+            history.append({
+                "timestamp": now,
+                "from_scope": current_scope,
+                "to_scope": target_scope,
+                "confidence": suggestion.get("confidence", 0),
+                "evidence": suggestion.get("evidence", []),
+                "reason": "legacy_playbook_scope_classification",
+            })
+            self._apply_playbook_scope(pb, target_scope)
+            pb["scope_migration_history"] = history
+            pb["last_updated"] = now
+            pb["version"] = pb.get("version", 1) + 1
+            self._write_playbook_and_index(pb)
+            applied.append(change)
+
+        if applied:
+            self._audit.log(
+                "write", "playbooks",
+                detail=f"applied scope migration to {len(applied)} playbooks",
+            )
+
+        return {
+            "dry_run": effective_dry_run,
+            "requires_confirmation": not confirm,
+            "total": classification.get("total", 0),
+            "would_apply": would_apply,
+            "applied": applied,
+            "skipped": skipped,
+        }
+
+    def rollback_playbook_scope_migration(
+        self,
+        playbook_ids: list[str] | None = None,
+        dry_run: bool = True,
+        confirm: bool = False,
+    ) -> dict:
+        """Rollback the latest scope migration for selected Playbooks."""
+        effective_dry_run = bool(dry_run or not confirm)
+        selected_ids = set(playbook_ids or [])
+        candidates = self._export_playbooks()
+        if selected_ids:
+            seen = {pb.get("id") for pb in candidates}
+            for missing_id in sorted(selected_ids - seen):
+                candidates.append({"id": missing_id, "_missing": True})
+
+        would_rollback: list[dict] = []
+        rolled_back: list[dict] = []
+        skipped: list[dict] = []
+        now = _now_iso()
+
+        for pb in candidates:
+            playbook_id = str(pb.get("id") or "")
+            if selected_ids and playbook_id not in selected_ids:
+                continue
+            if pb.get("_missing"):
+                skipped.append({"id": playbook_id, "reason": "not_found"})
+                continue
+
+            history = list(pb.get("scope_migration_history") or [])
+            if not history:
+                skipped.append({
+                    "id": playbook_id,
+                    "title": pb.get("title", ""),
+                    "reason": "no_migration_history",
+                })
+                continue
+
+            last = history[-1]
+            target_scope = self._normalize_playbook_scope(
+                {"scope": last.get("from_scope") or {}}
+            )
+            current_scope = self._normalize_playbook_scope(pb)
+            change = {
+                "id": playbook_id,
+                "title": pb.get("title", ""),
+                "from_scope": current_scope,
+                "to_scope": target_scope,
+                "rolled_back_migration": last,
+            }
+            if effective_dry_run:
+                would_rollback.append(change)
+                continue
+
+            history.pop()
+            self._apply_playbook_scope(pb, target_scope)
+            pb["scope_migration_history"] = history
+            pb["last_updated"] = now
+            pb["version"] = pb.get("version", 1) + 1
+            self._write_playbook_and_index(pb)
+            rolled_back.append(change)
+
+        if rolled_back:
+            self._audit.log(
+                "write", "playbooks",
+                detail=f"rolled back scope migration for {len(rolled_back)} playbooks",
+            )
+
+        return {
+            "dry_run": effective_dry_run,
+            "requires_confirmation": not confirm,
+            "would_rollback": would_rollback,
+            "rolled_back": rolled_back,
+            "skipped": skipped,
+        }
+
+    def get_playbook_scope_review_queue(
+        self,
+        project_folders: list[str] | None = None,
+        include_resolved: bool = False,
+        limit: int | None = None,
+    ) -> dict:
+        """Return unresolved legacy Playbooks that need manual scope review."""
+        classification = self.classify_legacy_playbooks(project_folders=project_folders)
+        items: list[dict] = []
+        for suggestion in classification.get("suggestions", []):
+            playbook_id = str(suggestion.get("id") or "")
+            pb = self._read_playbook_by_id(playbook_id)
+            if pb is None or pb.get("status") != "active":
+                continue
+            current_scope = self._normalize_playbook_scope(pb)
+            if current_scope.get("type") != "global":
+                continue
+            review_status = str(pb.get("scope_review_status") or "unresolved")
+            if review_status in {"resolved", "skipped"} and not include_resolved:
+                continue
+            if (
+                suggestion.get("suggested_scope", {}).get("type") != "needs_review"
+                and not include_resolved
+            ):
+                continue
+            item = dict(suggestion)
+            item["scope_review_status"] = review_status
+            item["scope_review_history"] = list(pb.get("scope_review_history") or [])
+            items.append(item)
+
+        if limit is not None:
+            items = items[:limit]
+        return {
+            "dry_run": True,
+            "total": len(items),
+            "items": items,
+        }
+
+    def resolve_playbook_scope_review(
+        self,
+        playbook_id: str,
+        action: str,
+        project_folder: str | None = None,
+        note: str = "",
+        dry_run: bool = True,
+        confirm: bool = False,
+    ) -> dict:
+        """Resolve one Playbook scope review item by keeping, assigning, or skipping."""
+        action = str(action or "").strip().lower()
+        if action not in {"accept_global", "accept_project", "skip"}:
+            return {
+                "error": "invalid_action",
+                "allowed_actions": ["accept_global", "accept_project", "skip"],
+            }
+        if action == "accept_project" and not project_folder:
+            return {"error": "project_folder_required"}
+
+        pb = self._read_playbook_by_id(playbook_id)
+        if pb is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+
+        current_scope = self._normalize_playbook_scope(pb)
+        if action == "accept_project":
+            target_scope = self._normalize_playbook_scope(
+                {}, scope_type="project", project_folder=project_folder,
+            )
+        elif action == "accept_global":
+            target_scope = self._normalize_playbook_scope({}, scope_type="global")
+        else:
+            target_scope = current_scope
+
+        change = {
+            "id": playbook_id,
+            "title": pb.get("title", ""),
+            "action": action,
+            "from_scope": current_scope,
+            "to_scope": target_scope,
+            "note": note,
+        }
+        effective_dry_run = bool(dry_run or not confirm)
+        if effective_dry_run:
+            return {
+                "dry_run": True,
+                "requires_confirmation": not confirm,
+                "would_update": change,
+            }
+
+        now = _now_iso()
+        history = list(pb.get("scope_review_history") or [])
+        history.append({
+            "timestamp": now,
+            "action": action,
+            "from_scope": current_scope,
+            "to_scope": target_scope,
+            "note": note,
+            "reason": "manual_playbook_scope_review",
+        })
+        if action != "skip":
+            self._apply_playbook_scope(pb, target_scope)
+        pb["scope_review_status"] = "skipped" if action == "skip" else "resolved"
+        pb["scope_review_resolution"] = action
+        pb["scope_review_history"] = history
+        pb["last_updated"] = now
+        pb["version"] = pb.get("version", 1) + 1
+        self._write_playbook_and_index(pb)
+        self._audit.log(
+            "write", "playbooks",
+            detail=f"resolved scope review for {playbook_id}: {action}",
+        )
+        return {
+            "dry_run": False,
+            "requires_confirmation": False,
+            "updated": change,
+        }
 
     def update_playbook(self, playbook_id: str, updates: dict) -> dict:
         """Update fields on a playbook entry."""
@@ -1461,6 +2175,192 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
     def archive_playbook(self, playbook_id: str) -> dict:
         """Mark a playbook as outdated without deleting it."""
         return self.update_playbook(playbook_id, {"status": "outdated"})
+
+    @staticmethod
+    def _normalize_playbook_status_filter(status: str | None) -> str:
+        value = str(status or "all").strip().lower()
+        aliases = {
+            "archived": "outdated",
+            "archive": "outdated",
+            "hidden": "deleted",
+            "trash": "deleted",
+        }
+        return aliases.get(value, value)
+
+    def _playbook_management_entry(self, pb: dict, include_content: bool = False) -> dict:
+        """Return a Playbook entry suitable for management views."""
+        if include_content:
+            return dict(pb)
+        return {
+            "id": pb.get("id", ""),
+            "title": pb.get("title", ""),
+            "status": pb.get("status", "active"),
+            "scope": self._normalize_playbook_scope(pb),
+            "scope_review_status": pb.get("scope_review_status", ""),
+            "scope_review_resolution": pb.get("scope_review_resolution", ""),
+            "domain": pb.get("domain", ""),
+            "triggers": list(pb.get("triggers") or []),
+            "created_at": pb.get("created_at", ""),
+            "last_updated": pb.get("last_updated", ""),
+            "last_reviewed": pb.get("last_reviewed", ""),
+            "version": pb.get("version", 1),
+            "deleted_at": pb.get("deleted_at", ""),
+            "deletion_reason": pb.get("deletion_reason", ""),
+        }
+
+    def list_playbooks_for_management(
+        self,
+        status: str = "all",
+        project_folder: str | None = None,
+        scope_type: str = "all",
+        include_content: bool = False,
+        limit: int | None = None,
+    ) -> dict:
+        """List Playbooks for management UI/API surfaces, including hidden items."""
+        status_filter = self._normalize_playbook_status_filter(status)
+        scope_filter = str(scope_type or "all").strip().lower()
+        valid_statuses = {"all", "active", "outdated", "staging", "deleted"}
+        valid_scopes = {"all", "global", "project"}
+        if status_filter not in valid_statuses:
+            return {"error": f"Invalid status {status!r}; must be one of {sorted(valid_statuses)}"}
+        if scope_filter not in valid_scopes:
+            return {"error": f"Invalid scope_type {scope_type!r}; must be one of {sorted(valid_scopes)}"}
+        if limit is not None and limit < 0:
+            return {"error": "limit_must_be_positive"}
+
+        items: list[dict] = []
+        for pb in self._export_playbooks():
+            pb_status = self._normalize_playbook_status_filter(pb.get("status", "active"))
+            if status_filter != "all" and pb_status != status_filter:
+                continue
+            scope = self._normalize_playbook_scope(pb)
+            if scope_filter != "all" and scope.get("type") != scope_filter:
+                continue
+            if project_folder and not self._playbook_visible_for_project(pb, project_folder):
+                continue
+            items.append(self._playbook_management_entry(pb, include_content=include_content))
+
+        items.sort(
+            key=lambda item: (
+                item.get("last_updated")
+                or item.get("last_reviewed")
+                or item.get("created_at")
+                or ""
+            ),
+            reverse=True,
+        )
+        if limit is not None:
+            items = items[:limit]
+        self._audit.log("read", "playbooks", detail=f"management list returned {len(items)} items")
+        return {
+            "total": len(items),
+            "status": status_filter,
+            "scope_type": scope_filter,
+            "items": items,
+        }
+
+    def delete_playbook(
+        self,
+        playbook_id: str,
+        reason: str = "",
+        dry_run: bool = True,
+        confirm: bool = False,
+    ) -> dict:
+        """Soft-delete a Playbook so it is hidden but recoverable."""
+        pb = self._read_playbook_by_id(playbook_id)
+        if pb is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+
+        current_status = self._normalize_playbook_status_filter(pb.get("status", "active"))
+        if current_status == "deleted":
+            return {"error": "playbook_already_deleted", "playbook_id": playbook_id}
+        change = {
+            "id": playbook_id,
+            "title": pb.get("title", ""),
+            "from_status": current_status,
+            "to_status": "deleted",
+            "reason": reason,
+            "soft_delete": True,
+        }
+        effective_dry_run = bool(dry_run or not confirm)
+        if effective_dry_run:
+            return {
+                "dry_run": True,
+                "requires_confirmation": not confirm,
+                "would_delete": change,
+            }
+
+        now = _now_iso()
+        history = list(pb.get("deletion_history") or [])
+        history.append({
+            "timestamp": now,
+            "action": "delete",
+            "from_status": current_status,
+            "to_status": "deleted",
+            "reason": reason,
+        })
+        pb["status"] = "deleted"
+        pb["deleted_at"] = now
+        pb["deletion_reason"] = reason
+        pb["deletion_history"] = history
+        pb["last_updated"] = now
+        pb["version"] = pb.get("version", 1) + 1
+        self._write_playbook_and_index(pb)
+        self._audit.log("write", "playbooks", detail=f"soft-deleted {playbook_id}")
+        return {
+            "dry_run": False,
+            "requires_confirmation": False,
+            "deleted": change,
+        }
+
+    def restore_playbook(
+        self,
+        playbook_id: str,
+        dry_run: bool = True,
+        confirm: bool = False,
+    ) -> dict:
+        """Restore a deleted/outdated Playbook to active status."""
+        pb = self._read_playbook_by_id(playbook_id)
+        if pb is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+
+        current_status = self._normalize_playbook_status_filter(pb.get("status", "active"))
+        if current_status == "active":
+            return {"error": "playbook_already_active", "playbook_id": playbook_id}
+        change = {
+            "id": playbook_id,
+            "title": pb.get("title", ""),
+            "from_status": current_status,
+            "to_status": "active",
+        }
+        effective_dry_run = bool(dry_run or not confirm)
+        if effective_dry_run:
+            return {
+                "dry_run": True,
+                "requires_confirmation": not confirm,
+                "would_restore": change,
+            }
+
+        now = _now_iso()
+        history = list(pb.get("deletion_history") or [])
+        history.append({
+            "timestamp": now,
+            "action": "restore",
+            "from_status": current_status,
+            "to_status": "active",
+        })
+        pb["status"] = "active"
+        pb["restored_at"] = now
+        pb["deletion_history"] = history
+        pb["last_updated"] = now
+        pb["version"] = pb.get("version", 1) + 1
+        self._write_playbook_and_index(pb)
+        self._audit.log("write", "playbooks", detail=f"restored {playbook_id}")
+        return {
+            "dry_run": False,
+            "requires_confirmation": False,
+            "restored": change,
+        }
 
     def merge_playbooks(self, target_id: str, source: dict) -> dict:
         """Merge steps and pitfalls from *source* dict into existing playbook *target_id*.
@@ -1521,7 +2421,11 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         return result
 
     def prepare_playbook_execution(
-        self, playbook_id: str, params: dict[str, str] | None = None,
+        self,
+        playbook_id: str,
+        params: dict[str, str] | None = None,
+        project_folder: str | None = None,
+        confirm_cross_project: bool = False,
     ) -> dict:
         """Prepare a playbook for guided execution with parameter substitution.
 
@@ -1536,7 +2440,12 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         Returns:
             ``{playbook_id, title, execution_plan: [{order, action, status}], parameters_used}``
         """
-        pb = self.get_playbook(playbook_id, _update_access=True)
+        pb = self.get_playbook(
+            playbook_id,
+            _update_access=True,
+            project_folder=project_folder,
+            confirm_cross_project=confirm_cross_project,
+        )
         if pb.get("error"):
             return pb
 
@@ -1567,7 +2476,11 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "parameters_used": params,
             "pitfalls": pb.get("pitfalls", []),
             "preconditions": pb.get("preconditions", []),
+            "scope": pb.get("scope", {"type": "global"}),
         }
+        if confirm_cross_project and project_folder and not self._playbook_visible_for_project(pb, project_folder):
+            result["cross_project_confirmed"] = True
+            result["requested_project_folder"] = project_folder
         self.save_execution_plan(result)
         return result
 

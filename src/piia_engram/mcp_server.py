@@ -679,6 +679,9 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "revoke_caller": "owner_only_write",
     "import_engram": "owner_only_write",
     "import_engram_from_openclaw": "owner_only_write",
+    "apply_legacy_playbook_scope_suggestions": "owner_only_write",
+    "rollback_playbook_scope_migration": "owner_only_write",
+    "resolve_playbook_scope_review": "owner_only_write",
     # --- export_owner_only: full dump / report file to disk ---
     "export_engram": "export_owner_only",
     "export_engram_to_openclaw": "export_owner_only",
@@ -711,6 +714,8 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "update_playbook": "governed_write",
     "update_execution_step": "governed_write",
     "archive_playbook": "governed_write",
+    "delete_playbook": "governed_write",
+    "restore_playbook": "governed_write",
     "wrap_up_session": "governed_write",
     # --- read: no store mutation ---
     "doctor": "read",
@@ -734,6 +739,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "get_lessons": "read",
     "get_permission_profile": "read",
     "get_playbook": "read",
+    "list_playbooks_for_management": "read",
     "get_playbooks": "read",
     "get_preferences": "read",
     "get_profile": "read",
@@ -753,6 +759,8 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "list_tools": "read",
     "read_web_content": "read",
     "search_knowledge": "read",
+    "classify_legacy_playbooks": "read",
+    "get_playbook_scope_review_queue": "read",
     "suggest_merges": "read",
 }
 
@@ -1336,7 +1344,7 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
 
 @mcp.tool()
 async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
-                           filters_json: str = "") -> str:
+                           filters_json: str = "", project_folder: str = "") -> str:
     r"""搜索知识库（lessons/decisions/playbooks）。 / Search lessons, decisions, and playbooks by keyword.
 
     **Lifecycle: retrieval** — 在对话中需要检索历史知识时调用。
@@ -1375,6 +1383,9 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
         if "tier" in filters and filters["tier"] not in ("staging", "verified"):
             return "filters['tier'] 仅支持 'staging' 或 'verified'"
     try:
+        if project_folder:
+            _session.detect_project(project_folder)
+        effective_project = project_folder or _session.project_folder or None
         # The hybrid (ENGRAM_SEARCH=hybrid) path rebuilds the FULL active corpus
         # into <root>/search_index.db BEFORE we govern the return — a non-owner
         # would get an empty/filtered response yet leave the secret bodies
@@ -1385,6 +1396,7 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
         result = _engram.search_knowledge(
             query, scope=scope, limit=limit, filters=filters,
             allow_hybrid_index=allow_index,
+            project_folder=effective_project,
         )
         # governance gate (opt-in; OFF => byte-identical to the line above).
         result = _gov_rt.maybe_govern_buckets(_engram.root, result, tool="search_knowledge")
@@ -1443,6 +1455,198 @@ async def suggest_merges(threshold: float = 0.45, limit: int = 10) -> str:
         _engram.root, merges, tool="suggest_merges"
     )
     return _json(merges)
+
+
+@mcp.tool()
+async def classify_legacy_playbooks(project_folders_json: str = "[]") -> str:
+    """Dry-run classification suggestions for legacy Playbook scopes.
+
+    This scans existing Playbooks and known projects, then returns a reviewable
+    migration plan. It does not mutate stored Playbooks.
+    """
+    project_folders = None
+    if project_folders_json and project_folders_json != "[]":
+        try:
+            parsed = json.loads(project_folders_json)
+        except json.JSONDecodeError:
+            return "project_folders_json must be a valid JSON array"
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            return "project_folders_json must be a JSON array of strings"
+        project_folders = parsed
+    result = _engram.classify_legacy_playbooks(project_folders=project_folders)
+    # Full-library maintenance view: suggestions include playbook titles and
+    # project evidence, so only the owner should see the aggregate report.
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="classify_legacy_playbooks"
+    )
+    return _json(result)
+
+
+@mcp.tool()
+async def apply_legacy_playbook_scope_suggestions(
+    project_folders_json: str = "[]",
+    playbook_ids_json: str = "[]",
+    min_confidence: float = 0.7,
+    dry_run: bool = True,
+    confirm: bool = False,
+) -> str:
+    """Apply high-confidence legacy Playbook project/global scope suggestions.
+
+    Default mode is preview-only. Actual writes require ``dry_run=False`` and
+    ``confirm=True`` and are owner-only because this reorganizes stored
+    Playbook metadata across the whole corpus.
+    """
+    refusal = _gov_rt.maybe_refuse_owner_write(
+        _engram.root, tool="apply_legacy_playbook_scope_suggestions"
+    )
+    if refusal is not None:
+        return refusal
+
+    def _parse_optional_string_list(raw: str, field: str) -> list[str] | None | str:
+        if not raw or raw == "[]":
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return f"{field} must be a valid JSON array"
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            return f"{field} must be a JSON array of strings"
+        return parsed
+
+    project_folders = _parse_optional_string_list(
+        project_folders_json, "project_folders_json"
+    )
+    if isinstance(project_folders, str):
+        return project_folders
+    playbook_ids = _parse_optional_string_list(playbook_ids_json, "playbook_ids_json")
+    if isinstance(playbook_ids, str):
+        return playbook_ids
+
+    try:
+        result = _engram.apply_legacy_playbook_scope_suggestions(
+            project_folders=project_folders,
+            playbook_ids=playbook_ids,
+            min_confidence=min_confidence,
+            dry_run=dry_run,
+            confirm=confirm,
+        )
+        _track("apply_legacy_playbook_scope_suggestions", success=True)
+    except Exception as exc:
+        _track("apply_legacy_playbook_scope_suggestions", success=False)
+        return f"Apply legacy Playbook scope suggestions failed: {_safe_err(exc)}"
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="apply_legacy_playbook_scope_suggestions"
+    )
+    return _json(result)
+
+
+@mcp.tool()
+async def rollback_playbook_scope_migration(
+    playbook_ids_json: str = "[]",
+    dry_run: bool = True,
+    confirm: bool = False,
+) -> str:
+    """Rollback the latest Playbook scope migration for selected Playbooks.
+
+    Default mode is preview-only. Actual rollback requires ``dry_run=False``
+    and ``confirm=True`` and is owner-only.
+    """
+    refusal = _gov_rt.maybe_refuse_owner_write(
+        _engram.root, tool="rollback_playbook_scope_migration"
+    )
+    if refusal is not None:
+        return refusal
+
+    playbook_ids = None
+    if playbook_ids_json and playbook_ids_json != "[]":
+        try:
+            parsed = json.loads(playbook_ids_json)
+        except json.JSONDecodeError:
+            return "playbook_ids_json must be a valid JSON array"
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            return "playbook_ids_json must be a JSON array of strings"
+        playbook_ids = parsed
+
+    try:
+        result = _engram.rollback_playbook_scope_migration(
+            playbook_ids=playbook_ids,
+            dry_run=dry_run,
+            confirm=confirm,
+        )
+        _track("rollback_playbook_scope_migration", success=True)
+    except Exception as exc:
+        _track("rollback_playbook_scope_migration", success=False)
+        return f"Rollback Playbook scope migration failed: {_safe_err(exc)}"
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="rollback_playbook_scope_migration"
+    )
+    return _json(result)
+
+
+@mcp.tool()
+async def get_playbook_scope_review_queue(
+    project_folders_json: str = "[]",
+    include_resolved: bool = False,
+    limit: int = 50,
+) -> str:
+    """List unresolved legacy Playbooks that need manual scope review."""
+    project_folders = None
+    if project_folders_json and project_folders_json != "[]":
+        try:
+            parsed = json.loads(project_folders_json)
+        except json.JSONDecodeError:
+            return "project_folders_json must be a valid JSON array"
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            return "project_folders_json must be a JSON array of strings"
+        project_folders = parsed
+    try:
+        result = _engram.get_playbook_scope_review_queue(
+            project_folders=project_folders,
+            include_resolved=include_resolved,
+            limit=limit,
+        )
+        _track("get_playbook_scope_review_queue", success=True)
+    except Exception as exc:
+        _track("get_playbook_scope_review_queue", success=False)
+        return f"Get Playbook scope review queue failed: {_safe_err(exc)}"
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="get_playbook_scope_review_queue"
+    )
+    return _json(result)
+
+
+@mcp.tool()
+async def resolve_playbook_scope_review(
+    playbook_id: str,
+    action: str,
+    project_folder: str = "",
+    note: str = "",
+    dry_run: bool = True,
+    confirm: bool = False,
+) -> str:
+    """Resolve one Playbook scope review item: accept global/project or skip."""
+    refusal = _gov_rt.maybe_refuse_owner_write(
+        _engram.root, tool="resolve_playbook_scope_review"
+    )
+    if refusal is not None:
+        return refusal
+    try:
+        result = _engram.resolve_playbook_scope_review(
+            playbook_id=playbook_id,
+            action=action,
+            project_folder=project_folder or None,
+            note=note,
+            dry_run=dry_run,
+            confirm=confirm,
+        )
+        _track("resolve_playbook_scope_review", success=True)
+    except Exception as exc:
+        _track("resolve_playbook_scope_review", success=False)
+        return f"Resolve Playbook scope review failed: {_safe_err(exc)}"
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="resolve_playbook_scope_review"
+    )
+    return _json(result)
 
 
 @mcp.tool()
@@ -1542,7 +1746,7 @@ async def memory_store(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="memory_store")
-    if refusal:
+    if refusal is not None:
         _track("memory_store", success=False)
         return refusal
 
@@ -1632,7 +1836,7 @@ async def add_lesson(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_lesson")
-    if refusal:
+    if refusal is not None:
         _track("add_lesson", success=False)
         return refusal
 
@@ -1702,7 +1906,7 @@ async def add_decision(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_decision")
-    if refusal:
+    if refusal is not None:
         _track("add_decision", success=False)
         return refusal
 
@@ -1745,6 +1949,8 @@ async def add_playbook(
     pitfalls: str = "",
     outcome: str = "",
     source_tool: str = "",
+    scope_type: str = "global",
+    project_folder: str = "",
 ) -> str:
     """记录操作手册（Playbook）— 结构化的多步骤流程。 / Record an operational playbook — a structured multi-step procedure.
 
@@ -1769,7 +1975,7 @@ async def add_playbook(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_playbook")
-    if refusal:
+    if refusal is not None:
         _track("add_playbook", success=False)
         return refusal
 
@@ -1793,6 +1999,17 @@ async def add_playbook(
         playbook["outcome"] = outcome
     if source_tool:
         playbook["source_tool"] = source_tool
+    if project_folder:
+        _session.detect_project(project_folder)
+    effective_project = project_folder or _session.project_folder
+    scope_type = (scope_type or "global").strip().lower()
+    if scope_type == "project" or project_folder:
+        if not effective_project:
+            return "project scope requires project_folder"
+        playbook["scope_type"] = "project"
+        playbook["project_folder"] = effective_project
+    else:
+        playbook["scope_type"] = "global"
     try:
         result = _engram.add_playbook(playbook)
         _track("add_playbook", success=True)
@@ -1848,7 +2065,7 @@ def _inject_usage_policy(item, policy=_PLAYBOOK_USAGE_POLICY):
 
 
 @mcp.tool()
-async def get_playbooks(domain: str = "", limit: int = 20) -> str:
+async def get_playbooks(domain: str = "", limit: int = 20, project_folder: str = "") -> str:
     """列出已保存的操作手册（Playbooks）。 / List saved operational playbooks.
 
     用途：查看有哪些已记录的操作流程，可按领域筛选。
@@ -1859,8 +2076,12 @@ async def get_playbooks(domain: str = "", limit: int = 20) -> str:
         limit: 返回条数上限（默认 20）。 / Maximum items to return (default 20).
     """
     try:
+        if project_folder:
+            _session.detect_project(project_folder)
+        effective_project = project_folder or _session.project_folder or None
         result = _engram.get_playbooks(
             domain=domain or None, limit=limit,
+            project_folder=effective_project,
             _update_access=_gov_rt.caller_is_owner(_engram.root),
         )
         result = _gov_rt.maybe_govern_list(_engram.root, result, tool="get_playbooks")
@@ -1876,7 +2097,11 @@ async def get_playbooks(domain: str = "", limit: int = 20) -> str:
 
 
 @mcp.tool()
-async def get_playbook(playbook_id: str) -> str:
+async def get_playbook(
+    playbook_id: str,
+    project_folder: str = "",
+    confirm_cross_project: bool = False,
+) -> str:
     """获取单条 Playbook 的完整内容。 / Get the full content of a single Playbook by ID.
 
     用途：根据 ID 调取某条操作手册的详细步骤。
@@ -1886,8 +2111,14 @@ async def get_playbook(playbook_id: str) -> str:
         playbook_id: Playbook ID。 / The Playbook ID.
     """
     try:
+        if project_folder:
+            _session.detect_project(project_folder)
+        effective_project = project_folder or _session.project_folder or None
         result = _engram.get_playbook(
-            playbook_id, _update_access=_gov_rt.caller_is_owner(_engram.root)
+            playbook_id,
+            _update_access=_gov_rt.caller_is_owner(_engram.root),
+            project_folder=effective_project,
+            confirm_cross_project=confirm_cross_project,
         )
         result = _gov_rt.maybe_govern_one(_engram.root, result, tool="get_playbook")
         _track("get_playbook", success=True)
@@ -1901,7 +2132,7 @@ async def get_playbook(playbook_id: str) -> str:
 
 
 @mcp.tool()
-async def get_recent_playbooks(limit: int = 5) -> str:
+async def get_recent_playbooks(limit: int = 5, project_folder: str = "") -> str:
     """获取最近使用过的 Playbook（按 last_reviewed 倒序）。 / Get recently used Playbooks sorted by last_reviewed descending.
 
     用途：冷启动或会话开始时，主动浮现用户最近用过的操作流程，方便快速复用。
@@ -1911,7 +2142,10 @@ async def get_recent_playbooks(limit: int = 5) -> str:
         limit: 返回条数上限（默认 5）。 / Maximum items to return (default 5).
     """
     try:
-        result = _engram.get_recent_playbooks(limit=limit)
+        if project_folder:
+            _session.detect_project(project_folder)
+        effective_project = project_folder or _session.project_folder or None
+        result = _engram.get_recent_playbooks(limit=limit, project_folder=effective_project)
         result = _gov_rt.maybe_govern_list(
             _engram.root, result, tool="get_recent_playbooks"
         )
@@ -1961,7 +2195,7 @@ async def update_playbook(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="update_playbook")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     updates: dict = {}
@@ -2008,6 +2242,8 @@ async def update_playbook(
 async def prepare_playbook_execution(
     playbook_id: str,
     params_json: str = "{}",
+    project_folder: str = "",
+    confirm_cross_project: bool = False,
 ) -> str:
     """准备 Playbook 引导执行计划（参数替换 + 逐步状态跟踪）。 / Prepare a Playbook execution plan with parameter substitution and per-step tracking.
 
@@ -2037,7 +2273,15 @@ async def prepare_playbook_execution(
     if refusal is not None:
         return refusal
     try:
-        result = _engram.prepare_playbook_execution(playbook_id, params=params)
+        if project_folder:
+            _session.detect_project(project_folder)
+        effective_project = project_folder or _session.project_folder or None
+        result = _engram.prepare_playbook_execution(
+            playbook_id,
+            params=params,
+            project_folder=effective_project,
+            confirm_cross_project=confirm_cross_project,
+        )
         _track("prepare_playbook_execution", success=True)
     except Exception as exc:
         _track("prepare_playbook_execution", success=False)
@@ -2066,7 +2310,7 @@ async def update_execution_step(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="update_execution_step")
-    if refusal:
+    if refusal is not None:
         _track("update_execution_step", success=False)
         return refusal
 
@@ -2119,7 +2363,7 @@ async def archive_playbook(playbook_id: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="archive_playbook")
-    if refusal:
+    if refusal is not None:
         _track("archive_playbook", success=False)
         return refusal
 
@@ -2134,6 +2378,95 @@ async def archive_playbook(playbook_id: str) -> str:
     # Ack echoes the stored playbook title — gate it (round-16 write-echo class).
     ack = f"Playbook 已归档: {result.get('title', playbook_id)}"
     return _gov_rt.maybe_govern_write_ack(_engram.root, ack, tool="archive_playbook")
+
+
+@mcp.tool()
+async def list_playbooks_for_management(
+    status: str = "all",
+    project_folder: str = "",
+    scope_type: str = "all",
+    include_content: bool = False,
+    limit: int = 100,
+) -> str:
+    """List Playbooks for management, including archived/deleted metadata."""
+    try:
+        result = _engram.list_playbooks_for_management(
+            status=status,
+            project_folder=project_folder or None,
+            scope_type=scope_type,
+            include_content=include_content,
+            limit=limit,
+        )
+        _track("list_playbooks_for_management", success=True)
+    except Exception as exc:
+        _track("list_playbooks_for_management", success=False)
+        return f"List Playbooks for management failed: {_safe_err(exc)}"
+    result = _gov_rt.maybe_govern_owner_only(
+        _engram.root, result, tool="list_playbooks_for_management"
+    )
+    return _json(result)
+
+
+@mcp.tool()
+async def delete_playbook(
+    playbook_id: str,
+    reason: str = "",
+    dry_run: bool = True,
+    confirm: bool = False,
+) -> str:
+    """Soft-delete a Playbook after explicit confirmation."""
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="delete_playbook")
+    if refusal is not None:
+        _track("delete_playbook", success=False)
+        return refusal
+
+    try:
+        result = _engram.delete_playbook(
+            playbook_id=playbook_id,
+            reason=reason,
+            dry_run=dry_run,
+            confirm=confirm,
+        )
+        _track("delete_playbook", success=True)
+    except Exception as exc:
+        _track("delete_playbook", success=False)
+        return f"Delete Playbook failed: {_safe_err(exc)}"
+    if result.get("error"):
+        return _json(result)
+    result = _gov_rt.maybe_govern_write_ack(
+        _engram.root, result, tool="delete_playbook"
+    )
+    return _json(result)
+
+
+@mcp.tool()
+async def restore_playbook(
+    playbook_id: str,
+    dry_run: bool = True,
+    confirm: bool = False,
+) -> str:
+    """Restore an archived/deleted Playbook after explicit confirmation."""
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="restore_playbook")
+    if refusal is not None:
+        _track("restore_playbook", success=False)
+        return refusal
+
+    try:
+        result = _engram.restore_playbook(
+            playbook_id=playbook_id,
+            dry_run=dry_run,
+            confirm=confirm,
+        )
+        _track("restore_playbook", success=True)
+    except Exception as exc:
+        _track("restore_playbook", success=False)
+        return f"Restore Playbook failed: {_safe_err(exc)}"
+    if result.get("error"):
+        return _json(result)
+    result = _gov_rt.maybe_govern_write_ack(
+        _engram.root, result, tool="restore_playbook"
+    )
+    return _json(result)
 
 
 @mcp.tool()
@@ -2170,7 +2503,7 @@ async def register_tool(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="register_tool")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     tool_entry: dict = {"name": name}
@@ -2256,7 +2589,7 @@ async def bulk_add_knowledge(items_json: str, item_type: str = "lesson", source_
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="bulk_add_knowledge")
-    if refusal:
+    if refusal is not None:
         return refusal
     try:
         items = json.loads(items_json)
@@ -2284,7 +2617,7 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="ingest_notes")
-    if refusal:
+    if refusal is not None:
         return refusal
     return _json(_engram.ingest_notes(text, source_tool=source_tool, domain=domain))
 
@@ -2308,7 +2641,7 @@ async def extract_session_insights(summary: str, source_tool: str = "") -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="extract_session_insights")
-    if refusal:
+    if refusal is not None:
         return refusal
     return _json(_engram.extract_session_insights(summary, source_tool=source_tool))
 
@@ -2329,7 +2662,7 @@ async def update_knowledge(item_id: str, updates_json: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="update_knowledge")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     try:
@@ -2359,7 +2692,7 @@ async def archive_knowledge(item_id: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="archive_knowledge")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     result = _engram.archive_knowledge(item_id)
@@ -2385,7 +2718,7 @@ async def review_knowledge(knowledge_id: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="review_knowledge")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     result = _engram.review_knowledge(knowledge_id)
@@ -2460,7 +2793,7 @@ async def apply_review(review_text: str) -> str:
     """
     # a4: write-path governance gate — apply_review archives stored items.
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="apply_review")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     import json as _json_mod
@@ -2495,7 +2828,7 @@ async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="merge_knowledge")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     # Returns {primary_title, secondary_title} — stored titles the caller only
@@ -2522,7 +2855,7 @@ async def link_knowledge(id_a: str, id_b: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="link_knowledge")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     # Ack message embeds both item titles ("Linked: <title> ↔ <title>") — gate
@@ -2548,7 +2881,7 @@ async def unlink_knowledge(id_a: str, id_b: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="unlink_knowledge")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     # Ack message embeds both item titles — same write-echo gate as link_knowledge.
@@ -2579,7 +2912,7 @@ async def add_relation(src_id: str, rel: str, dst_id: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_relation")
-    if refusal:
+    if refusal is not None:
         return refusal
     return _json(_engram.add_relation(src_id, rel, dst_id))
 
@@ -2600,7 +2933,7 @@ async def remove_relation(src_id: str, rel: str, dst_id: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="remove_relation")
-    if refusal:
+    if refusal is not None:
         return refusal
     return _json(_engram.remove_relation(src_id, rel, dst_id))
 
@@ -2754,7 +3087,7 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="update_identity")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     if field not in IDENTITY_FIELDS:
@@ -2780,7 +3113,11 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
         _track("update_identity", success=True)
     except Exception as exc:
         _track("update_identity", success=False)
-        raise
+        return _json({
+            "success": False,
+            "field": field,
+            "error": f"update_identity failed: {_safe_err(exc)}",
+        })
     return _json({"success": True, "field": field, "updated_keys": list(updates.keys())})
 
 
@@ -2800,7 +3137,7 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="save_project_snapshot")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     err = _validate_path(project_folder)
@@ -3077,7 +3414,7 @@ async def wrap_up_session(
     # (extract insights/playbook, save snapshot, daily log, evaluate_tiers), so
     # gate the whole entry. read-only-external is refused before any side effect.
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="wrap_up_session")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     _session.detect_tool(source_tool)
@@ -3097,7 +3434,7 @@ async def wrap_up_session(
     # Step 1.5: Auto-extract Playbook if session looks like a procedure
     try:
         playbook = _engram.extract_playbook_from_session(
-            summary, source_tool=source_tool,
+            summary, source_tool=source_tool, project_folder=project_folder,
         )
         if playbook:
             pb_confidence = playbook.get("confidence", "medium")
@@ -3191,12 +3528,11 @@ async def wrap_up_session(
     if _reconcile_imported > 0:
         _beta("reconcile", imported=_reconcile_imported)
 
-    # Step 4: Evaluate tier promotions (staging->verified based on access evidence)
+    # Step 4: Evaluate staging items and surface promotion suggestions.
     try:
         tier_result = _engram.evaluate_tiers()
-        if tier_result["promoted"] > 0:
-            results["tier_promotions"] = tier_result
-            _beta("knowledge_promoted", count=tier_result["promoted"], method="auto_access")
+        if tier_result.get("suggested", 0) > 0:
+            results["promotion_suggestions"] = tier_result
     except Exception as exc:
         logger.warning("evaluate_tiers failed: %s", exc)
 
@@ -3531,7 +3867,7 @@ async def start_project(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="start_project")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     results = {}
@@ -3639,7 +3975,7 @@ async def save_agent_context(
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="save_agent_context")
-    if refusal:
+    if refusal is not None:
         return refusal
 
     _session.detect_tool(tool)

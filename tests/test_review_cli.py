@@ -56,6 +56,34 @@ def test_review_lists_staging_metadata_without_touching_access(tmp_path, monkeyp
     assert stored.get("access_count", 0) == 0
 
 
+def test_review_list_surfaces_quality_without_body_leak(tmp_path, monkeypatch, capsys):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_review
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    Engram().add_lesson({
+        "summary": "quality scored lesson",
+        "detail": "PRIVATE DETAIL BODY",
+        "tier": "staging",
+        "extraction": {
+            "method": "notes",
+            "quality_score": 0.82,
+            "quality_signals": ["evidence_or_outcome"],
+            "quality_flags": [],
+            "evidence_span": "PRIVATE EVIDENCE BODY",
+        },
+    })
+
+    assert run_review([]) == 0
+
+    out = capsys.readouterr().out
+    assert "q=0.82" in out
+    assert "notes" in out
+    assert "quality scored lesson" in out
+    assert "PRIVATE DETAIL BODY" not in out
+    assert "PRIVATE EVIDENCE BODY" not in out
+
+
 def test_review_show_prints_one_item_body(tmp_path, monkeypatch, capsys):
     from piia_engram.core import Engram
     from piia_engram.setup_wizard import run_review
@@ -74,6 +102,174 @@ def test_review_show_prints_one_item_body(tmp_path, monkeypatch, capsys):
     assert lesson["id"] in out
     assert "show me" in out
     assert "Detailed review body" in out
+
+
+def test_review_show_prints_quality_metadata(tmp_path, monkeypatch, capsys):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_review
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    lesson = Engram().add_lesson({
+        "summary": "show quality",
+        "tier": "staging",
+        "extraction": {
+            "method": "session_insights",
+            "source_tool": "codex",
+            "quality_score": 0.91,
+            "quality_signals": ["durable_rule", "concrete_context"],
+            "quality_flags": ["reviewable"],
+            "evidence_span": "Remember to run twine check before publishing",
+        },
+    })
+
+    assert run_review(["show", lesson["id"]]) == 0
+
+    out = capsys.readouterr().out
+    assert "quality: q=0.91" in out
+    assert "session_insights" in out
+    assert "durable_rule" in out
+    assert "Remember to run twine check" in out
+
+
+def test_review_show_truncates_long_evidence(tmp_path, monkeypatch, capsys):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_review
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    long_evidence = "A" * 320
+    lesson = Engram().add_lesson({
+        "summary": "show bounded evidence",
+        "tier": "staging",
+        "extraction": {
+            "method": "session_insights",
+            "quality_score": 0.72,
+            "quality_signals": ["durable_rule"],
+            "evidence_span": long_evidence,
+        },
+    })
+
+    assert run_review(["show", lesson["id"]]) == 0
+
+    out = capsys.readouterr().out
+    assert "A" * 240 not in out
+    assert "..." in out
+
+
+def test_review_quality_metadata_strips_terminal_control_chars(tmp_path, monkeypatch, capsys):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_review
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    lesson = Engram().add_lesson({
+        "summary": "control char quality",
+        "tier": "staging",
+        "extraction": {
+            "method": "\x1b[31mnotes",
+            "source_tool": "codex\x1b[0m",
+            "quality_score": 0.73,
+            "quality_signals": ["durable_rule\x1b[31m"],
+            "evidence_span": "safe evidence\x1b[0m",
+        },
+    })
+
+    assert run_review([]) == 0
+    list_out = capsys.readouterr().out
+    assert "\x1b" not in list_out
+    assert "[31mnotes" in list_out
+
+    assert run_review(["show", lesson["id"]]) == 0
+    show_out = capsys.readouterr().out
+    assert "\x1b" not in show_out
+    assert "durable_rule" in show_out
+
+
+def test_review_list_can_sort_by_quality(tmp_path, monkeypatch, capsys):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_review
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    eng = Engram()
+    low = eng.add_lesson({
+        "summary": "low confidence candidate",
+        "tier": "staging",
+        "extraction": {"method": "notes", "quality_score": 0.41},
+    })
+    high = eng.add_lesson({
+        "summary": "high confidence candidate",
+        "tier": "staging",
+        "extraction": {"method": "notes", "quality_score": 0.93},
+    })
+
+    assert run_review(["--sort", "quality"]) == 0
+
+    out = capsys.readouterr().out
+    assert out.index(low["id"]) < out.index(high["id"])
+
+
+def test_review_list_quality_sort_is_stable_for_equal_scores(
+    tmp_path, monkeypatch, capsys
+):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_review
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    eng = Engram()
+    first = eng.add_lesson({
+        "summary": "first equal quality candidate",
+        "tier": "staging",
+        "timestamp": "2026-06-01T00:00:00Z",
+        "extraction": {"method": "notes", "quality_score": 0.75},
+    })
+    second = eng.add_lesson({
+        "summary": "second equal quality candidate",
+        "tier": "staging",
+        "timestamp": "2026-06-01T00:00:00Z",
+        "extraction": {"method": "notes", "quality_score": 0.75},
+    })
+
+    assert run_review(["--sort", "quality"]) == 0
+
+    out = capsys.readouterr().out
+    assert out.index(first["id"]) < out.index(second["id"])
+
+
+def test_review_list_low_quality_filter_includes_missing_scores(
+    tmp_path, monkeypatch, capsys
+):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_review
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    eng = Engram()
+    low = eng.add_lesson({
+        "summary": "low confidence candidate",
+        "tier": "staging",
+        "extraction": {"method": "notes", "quality_score": 0.41},
+    })
+    missing = eng.add_lesson("legacy staging candidate without score", tier="staging")
+    high = eng.add_lesson({
+        "summary": "high confidence candidate",
+        "tier": "staging",
+        "extraction": {"method": "notes", "quality_score": 0.93},
+    })
+
+    assert run_review(["--low-quality"]) == 0
+
+    out = capsys.readouterr().out
+    assert low["id"] in out
+    assert missing["id"] in out
+    assert high["id"] not in out
+
+
+def test_review_list_rejects_invalid_sort(tmp_path, monkeypatch, capsys):
+    from piia_engram.setup_wizard import run_review
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+    assert run_review(["--sort", "random"]) == 2
+
+    out = capsys.readouterr().out
+    assert "Invalid review sort" in out
 
 
 def test_review_show_missing_returns_nonzero(tmp_path, monkeypatch, capsys):

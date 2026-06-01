@@ -41,22 +41,24 @@ from .storage import (
 class RetrievalMixin:
     """Search, scoring, batch operations and conflict detection."""
 
-    # Promotion threshold — only real evidence (access count) triggers auto-promote.
-    # Time-based auto-promote removed: mere survival is not proof of value.
-    _PROMOTE_ACCESS_COUNT = 3   # Referenced 3+ times → auto-promote
+    # Review-suggestion threshold. Access count is a weak signal: it can flag
+    # staging items for review, but must never auto-promote them to verified.
+    _REVIEW_SUGGEST_ACCESS_COUNT = 3
 
     # ------------------------------------------------------------------
     # Tier promotion / staging
     # ------------------------------------------------------------------
 
     def evaluate_tiers(self) -> dict:
-        """Batch-evaluate tier promotions for all knowledge.
+        """Batch-evaluate tier review suggestions for all knowledge.
 
         Called explicitly during wrap_up_session, NOT on every read.
-        Only promotes staging→verified when access_count >= threshold.
+        Access_count >= threshold marks staging entries with a promotion
+        suggestion; it does not change their tier.
         Returns summary of changes.
         """
         promoted = 0
+        suggested = 0
         for entry_type, path_name in [("lesson", "lessons.json"), ("decision", "decisions.json")]:
             path = self._knowledge_dir / path_name
             entries = self._read_entries(path, entry_type)
@@ -67,20 +69,25 @@ class RetrievalMixin:
                 tier = entry.get("tier", "verified")
                 if tier == "staging":
                     access = entry.get("access_count", 0)
-                    if access >= self._PROMOTE_ACCESS_COUNT:
-                        entry["tier"] = "verified"
-                        entry["promoted_at"] = _now_iso()
-                        entry["promotion_reason"] = f"referenced {access} times"
-                        promoted += 1
-                        changed = True
+                    if access >= self._REVIEW_SUGGEST_ACCESS_COUNT:
+                        reason = f"referenced {access} times"
+                        if (
+                            entry.get("promotion_suggested") is not True
+                            or entry.get("promotion_reason") != reason
+                        ):
+                            entry["promotion_suggested"] = True
+                            entry["promotion_suggested_at"] = _now_iso()
+                            entry["promotion_reason"] = reason
+                            suggested += 1
+                            changed = True
             if changed:
                 self._write_entries(path, entries, entry_type)
 
-        # Playbooks are deliberately excluded from access-count auto-promotion.
-        # Playbook errors can cause operational harm, so promotion requires
-        # explicit user confirmation or successful reuse — not just reads.
+        # Playbooks are also excluded from access-count promotion. Playbook
+        # errors can cause operational harm, so promotion requires explicit
+        # user confirmation or successful reuse — not just reads.
 
-        return {"promoted": promoted}
+        return {"promoted": promoted, "suggested": suggested}
 
     def get_staging_summary(self) -> dict:
         """Count active staging items across lessons and decisions."""
@@ -619,8 +626,9 @@ class RetrievalMixin:
     # ------------------------------------------------------------------
 
     def search_knowledge(self, query: str, scope: str = "all", limit: int = 10,
-                         filters: dict | None = None,
-                         allow_hybrid_index: bool = True) -> dict:
+                          filters: dict | None = None,
+                          allow_hybrid_index: bool = True,
+                          project_folder: str | None = None) -> dict:
         """Search lessons, decisions, and playbooks by weighted multi-term relevance.
 
         Args:
@@ -703,7 +711,11 @@ class RetrievalMixin:
                 if entry.get("status") != "active":
                     continue
                 pb = self._read_playbook_by_id(entry.get("id", ""))
-                if pb and _matches_filters(pb):
+                if (
+                    pb
+                    and self._playbook_visible_for_project(pb, project_folder)
+                    and _matches_filters(pb)
+                ):
                     candidates.append(pb)
             results["playbooks"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
 

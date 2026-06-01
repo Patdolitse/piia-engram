@@ -539,13 +539,13 @@ class TestNoPlaintextLeakOnWriteBack:
         assert raw_after[0]["tier"] == "verified"
 
     def test_evaluate_tiers_preserves_encryption(self, tmp_path, monkeypatch):
-        """retrieval.evaluate_tiers must re-encrypt after auto-promoting."""
+        """retrieval.evaluate_tiers must re-encrypt after writing suggestions."""
         monkeypatch.setenv("ENGRAM_SECRET", "tier-eval-key")
         engram = _setup_engram(tmp_path)
         monkeypatch.setenv("ENGRAM_DIR", str(engram))
         e = _make_engram(engram)
 
-        # Add a staging lesson with enough access_count to trigger promotion
+        # Add a staging lesson with enough access_count to suggest promotion
         e.add_lesson({
             "summary": "auto-promote candidate",
             "tier": "staging",
@@ -560,15 +560,17 @@ class TestNoPlaintextLeakOnWriteBack:
 
         # Run tier evaluation
         result = e.evaluate_tiers()
-        assert result["promoted"] == 1
+        assert result["promoted"] == 0
+        assert result["suggested"] == 1
 
-        # After evaluation, content MUST still be encrypted
+        # After evaluation, content MUST still be encrypted and unverified.
         raw_after = json.loads(
             (engram / "knowledge" / "lessons.json").read_text(encoding="utf-8")
         )
         assert raw_after[0]["summary"].startswith("enc:v2c:"), \
             "evaluate_tiers leaked plaintext to disk!"
-        assert raw_after[0]["tier"] == "verified"
+        assert raw_after[0]["tier"] == "staging"
+        assert raw_after[0]["promotion_suggested"] is True
 
     def test_review_knowledge_preserves_encryption(self, tmp_path, monkeypatch):
         """core.review_knowledge must re-encrypt after marking as reviewed."""

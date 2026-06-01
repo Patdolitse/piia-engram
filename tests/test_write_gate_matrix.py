@@ -40,7 +40,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 
 
-def _mcp_tool_names_from_source() -> set[str]:
+def _mcp_tool_function_nodes_from_source() -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
     """Reflect over the mcp_server source AST for every ``@mcp.tool()`` def.
 
     Source-level (not the live registry) so tier filtering — which removes
@@ -51,7 +51,7 @@ def _mcp_tool_names_from_source() -> set[str]:
 
     src = Path(mcp_server.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
-    names: set[str] = set()
+    nodes: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
             continue
@@ -59,8 +59,24 @@ def _mcp_tool_names_from_source() -> set[str]:
             target = dec.func if isinstance(dec, ast.Call) else dec
             # matches @mcp.tool() and @mcp.tool
             if isinstance(target, ast.Attribute) and target.attr == "tool":
-                names.add(node.name)
-    return names
+                nodes[node.name] = node
+    return nodes
+
+
+def _mcp_tool_names_from_source() -> set[str]:
+    return set(_mcp_tool_function_nodes_from_source())
+
+
+def _node_calls_governance_gate(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, gate_name: str
+) -> bool:
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        if isinstance(func, ast.Attribute) and func.attr == gate_name:
+            return True
+    return False
 
 
 def _setup_engram(tmp_path: Path) -> Path:
@@ -190,9 +206,9 @@ def _dummy_kwargs(func) -> dict:
 
 
 def _is_refusal(result) -> bool:
-    return isinstance(result, str) and (
-        "治理层" in result or "Governance" in result
-    )
+    import piia_engram.mcp_server as mcp_server
+
+    return mcp_server._gov_rt.is_governance_refusal(result)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +245,28 @@ class TestClassificationCompleteness:
             if cat not in mcp_server.WRITE_GATE_CLASSES
         }
         assert not bad, f"Invalid governance categories: {bad}"
+
+    def test_mutating_tools_call_their_declared_gate(self):
+        import piia_engram.mcp_server as mcp_server
+
+        gate_by_category = {
+            "governed_write": "maybe_refuse_write",
+            "owner_only_write": "maybe_refuse_owner_write",
+            "export_owner_only": "maybe_refuse_export",
+        }
+        nodes = _mcp_tool_function_nodes_from_source()
+        missing: dict[str, str] = {}
+        for name, category in mcp_server.TOOL_GOVERNANCE_CLASS.items():
+            gate = gate_by_category.get(category)
+            if gate is None:
+                continue
+            node = nodes.get(name)
+            if node is None or not _node_calls_governance_gate(node, gate):
+                missing[name] = gate
+        assert not missing, (
+            "Mutating tool(s) are classified but do not call their declared "
+            f"governance gate: {missing}"
+        )
 
 
 # ---------------------------------------------------------------------------

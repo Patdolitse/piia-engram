@@ -501,21 +501,25 @@ class TestProjectKnowledgeExceptions:
 
 
 class TestUpdateIdentityException:
-    def test_update_identity_exception_propagates(
+    def test_update_identity_exception_returns_safe_json(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
     ):
-        """Lines 923-925: dispatch[field]() raises -> exception re-raised."""
+        """Internal identity write failures should not bubble raw MCP exceptions."""
 
         def explode(*args, **kwargs):
-            raise RuntimeError("update boom")
+            raise RuntimeError(r"update boom at C:\Users\pp3x3\secret.json")
 
         monkeypatch.setattr(isolated_engram, "update_profile", explode)
-        with pytest.raises(RuntimeError, match="update boom"):
-            _run(
-                mcp_server.update_identity(
-                    field="profile", updates_json='{"role": "test"}'
-                )
+        result = _run(
+            mcp_server.update_identity(
+                field="profile", updates_json='{"role": "test"}'
             )
+        )
+        parsed = json.loads(result)
+        assert parsed["success"] is False
+        assert parsed["field"] == "profile"
+        assert parsed["error"] == "update_identity failed: update boom at <path>"
+        assert "C:\\Users" not in parsed["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -858,10 +862,10 @@ class TestWrapUpSessionErrors:
         result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
         assert "insights" in result
 
-    def test_evaluate_tiers_promoted(
+    def test_evaluate_tiers_suggested(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
     ):
-        """Line 1201: evaluate_tiers returns promoted > 0 -> included in results."""
+        """evaluate_tiers suggestions are surfaced without implying promotion."""
         monkeypatch.setattr(
             isolated_engram,
             "extract_session_insights",
@@ -880,7 +884,7 @@ class TestWrapUpSessionErrors:
         monkeypatch.setattr(
             isolated_engram,
             "evaluate_tiers",
-            lambda *a, **kw: {"promoted": 2, "details": ["a", "b"]},
+            lambda *a, **kw: {"promoted": 0, "suggested": 2, "details": ["a", "b"]},
         )
         monkeypatch.setattr(
             isolated_engram,
@@ -888,7 +892,7 @@ class TestWrapUpSessionErrors:
             lambda *a, **kw: {"total_staging": 0, "staging_lessons": 0, "staging_decisions": 0},
         )
         result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
-        assert result["tier_promotions"]["promoted"] == 2
+        assert result["promotion_suggestions"]["suggested"] == 2
 
     def test_pkg_version_exception(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
@@ -1201,3 +1205,172 @@ class TestDoctorUncleanExitWarn:
         assert unclean_checks[0]["status"] == "WARN", (
             f"Expected status='WARN', got: {unclean_checks[0]['status']}"
         )
+
+
+def test_mcp_apply_legacy_playbook_scope_suggestions_preview(
+    isolated_engram: Engram, tmp_path: Path,
+):
+    """MCP wrapper should expose a safe preview for legacy Playbook migration."""
+    project = str(tmp_path / "engram")
+    isolated_engram.save_project_snapshot(project, {"title": "Engram"})
+    pb = isolated_engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+
+    result = json.loads(_run(
+        mcp_server.apply_legacy_playbook_scope_suggestions(
+            dry_run=True,
+            confirm=False,
+        )
+    ))
+
+    assert result["dry_run"] is True
+    assert [item["id"] for item in result["would_apply"]] == [pb["id"]]
+
+
+def test_mcp_rollback_playbook_scope_migration_preview(
+    isolated_engram: Engram, tmp_path: Path,
+):
+    """MCP wrapper should preview rollback without changing scope."""
+    project = str(tmp_path / "engram")
+    isolated_engram.save_project_snapshot(project, {"title": "Engram"})
+    pb = isolated_engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+    isolated_engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=False,
+        confirm=True,
+    )
+
+    result = json.loads(_run(
+        mcp_server.rollback_playbook_scope_migration(
+            playbook_ids_json=json.dumps([pb["id"]]),
+            dry_run=True,
+            confirm=False,
+        )
+    ))
+
+    assert result["dry_run"] is True
+    assert [item["id"] for item in result["would_rollback"]] == [pb["id"]]
+    assert isolated_engram.get_playbook(
+        pb["id"], _update_access=False,
+    )["scope"]["type"] == "project"
+
+
+def test_mcp_playbook_scope_migration_refuses_web_caller_before_write(
+    isolated_engram: Engram, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """Low-trust web callers must not apply Playbook scope migrations."""
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    project = str(tmp_path / "engram")
+    isolated_engram.save_project_snapshot(project, {"title": "Engram"})
+    pb = isolated_engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+
+    result = _run(mcp_server.apply_legacy_playbook_scope_suggestions(
+        dry_run=False,
+        confirm=True,
+    ))
+
+    assert "Governance" in result or "治理" in result
+    stored = isolated_engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert "scope_migration_history" not in stored
+
+
+def test_mcp_get_playbook_scope_review_queue(
+    isolated_engram: Engram,
+):
+    """MCP wrapper should expose unresolved Playbook scope review items."""
+    pb = isolated_engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = json.loads(_run(mcp_server.get_playbook_scope_review_queue()))
+
+    assert result["total"] == 1
+    assert result["items"][0]["id"] == pb["id"]
+    assert result["items"][0]["suggested_scope"]["type"] == "needs_review"
+
+
+def test_mcp_resolve_playbook_scope_review_refuses_web_caller_before_write(
+    isolated_engram: Engram, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """Low-trust web callers must not resolve Playbook scope review items."""
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    project = str(tmp_path / "engram")
+    pb = isolated_engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = _run(mcp_server.resolve_playbook_scope_review(
+        playbook_id=pb["id"],
+        action="accept_project",
+        project_folder=project,
+        dry_run=False,
+        confirm=True,
+    ))
+
+    assert "Governance" in result or "治理" in result
+    stored = isolated_engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert "scope_review_history" not in stored
+
+
+def test_mcp_list_playbooks_for_management_includes_hidden_items(
+    isolated_engram: Engram,
+):
+    """Management list should expose archived/deleted Playbook metadata."""
+    active = isolated_engram.add_playbook({"title": "Active flow", "triggers": ["active"]})
+    deleted = isolated_engram.add_playbook({"title": "Deleted flow", "triggers": ["delete"]})
+    isolated_engram.delete_playbook(deleted["id"], dry_run=False, confirm=True)
+
+    result = json.loads(_run(mcp_server.list_playbooks_for_management(status="all")))
+
+    by_id = {item["id"]: item for item in result["items"]}
+    assert by_id[active["id"]]["status"] == "active"
+    assert by_id[deleted["id"]]["status"] == "deleted"
+
+
+def test_mcp_delete_playbook_refuses_web_caller_before_write(
+    isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
+):
+    """Low-trust web callers must not soft-delete Playbooks."""
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    pb = isolated_engram.add_playbook({"title": "Do not delete", "triggers": ["safe"]})
+
+    result = _run(mcp_server.delete_playbook(
+        playbook_id=pb["id"],
+        reason="web attempt",
+        dry_run=False,
+        confirm=True,
+    ))
+
+    assert "Governance" in result or "治理" in result
+    assert isolated_engram.get_playbook(
+        pb["id"], _update_access=False,
+    )["status"] == "active"
+
+
+def test_mcp_restore_playbook_refuses_web_caller_before_write(
+    isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
+):
+    """Low-trust web callers must not restore Playbooks."""
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    pb = isolated_engram.add_playbook({"title": "Deleted flow", "triggers": ["safe"]})
+    isolated_engram.delete_playbook(pb["id"], dry_run=False, confirm=True)
+
+    result = _run(mcp_server.restore_playbook(
+        playbook_id=pb["id"],
+        dry_run=False,
+        confirm=True,
+    ))
+
+    assert "Governance" in result or "治理" in result
+    assert isolated_engram.get_playbook(
+        pb["id"], _update_access=False,
+    )["status"] == "deleted"

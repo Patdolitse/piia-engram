@@ -423,7 +423,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 72 MCP tools. By default, only the 16 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 72 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 80 MCP tools. By default, only the 16 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 80 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -458,7 +458,7 @@ piia-engram ships 72 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 | `get_resume_brief` | Build a cross-session/cross-tool resume brief |
 | `doctor` | Run memory system self-diagnosis |
 
-### Tier-2 Advanced (56 tools — knowledge management, review, governance, import/export)
+### Tier-2 Advanced (64 tools — knowledge management, review, governance, import/export)
 
 <details>
 <summary>Click to expand full tool list</summary>
@@ -502,6 +502,14 @@ piia-engram ships 72 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 | `get_related_knowledge` | Follow links between knowledge items |
 | `find_similar_knowledge` | Find similar items by content |
 | `suggest_merges` | Scan for near-duplicates with actionable merge commands |
+| `classify_legacy_playbooks` | Dry-run project/global scope suggestions for older Playbooks |
+| `apply_legacy_playbook_scope_suggestions` | Apply high-confidence legacy Playbook scope suggestions after confirmation |
+| `rollback_playbook_scope_migration` | Roll back the latest Playbook scope migration |
+| `get_playbook_scope_review_queue` | List ambiguous Playbooks that need manual scope review |
+| `resolve_playbook_scope_review` | Accept or skip one Playbook scope review item |
+| `list_playbooks_for_management` | List Playbooks for management, including archived/deleted metadata |
+| `delete_playbook` | Soft-delete a Playbook after confirmation |
+| `restore_playbook` | Restore an archived or deleted Playbook |
 | `get_stale_knowledge` | List items that need review |
 | `export_knowledge_report` | Export a readable Markdown knowledge report |
 | `request_outline_review` | Generate an interactive HTML review page |
@@ -639,7 +647,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | | v3.43.0 (2026-05-31) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools | **16 Core** (loaded by default) + **56 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools | **16 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
 | Tests passing | **1834** (unit + integration) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
@@ -668,7 +676,7 @@ piia-engram. Install with `pip install piia-engram && engram setup`, and both to
 piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured MCP-compatible coding tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same approved context, so new chats and tool switches can start from the same user-owned memory.
 
 **How is piia-engram different from the official MCP memory server?**
-The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 72 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 80 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.
@@ -704,7 +712,7 @@ Two tiers, designed so most users only see 16 tools:
 | Tier | Tools | What they do | Loaded by |
 |------|-------|-------------|-----------|
 | **Core** | 16 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
-| **Advanced** | 56 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
+| **Advanced** | 64 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
 
 Most users never need to enable Advanced tools — Core covers everyday use.
 
@@ -784,6 +792,8 @@ piia-engram review           # List staging knowledge awaiting review
 piia-engram review show <id> # Inspect one review item
 piia-engram review approve <id> --yes  # Promote a staging item
 piia-engram review archive <id> --yes  # Archive a review item
+piia-engram playbook install self-repair-loop        # Dry-run built-in agent self-repair workflow
+piia-engram playbook install self-repair-loop --yes  # Install the reusable workflow Playbook
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
 piia-engram repair-encoding --apply  # Repair reversible cases with a backup
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)

@@ -473,6 +473,7 @@ def test_refuse_export_returns_refusal_for_external(tmp_path, monkeypatch):
         tmp_path, tool="export_engram", client_type="web"
     )
     assert isinstance(refusal, str) and refusal       # caller returns this, skips write
+    assert gr.is_governance_refusal(refusal)
     # Bilingual governance refusal, no store content.
     assert "治理" in refusal or "Governance" in refusal
 
@@ -482,6 +483,29 @@ def test_refuse_export_returns_none_for_owner(tmp_path, monkeypatch):
     assert gr.maybe_refuse_export(
         tmp_path, tool="export_engram", client_type="self"
     ) is None
+
+
+def test_refusal_sentinel_is_stable_and_specific(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+
+    export_refusal = gr.maybe_refuse_export(
+        tmp_path, tool="export_engram", client_type="web"
+    )
+    owner_write_refusal = gr.maybe_refuse_owner_write(
+        tmp_path, tool="set_caller_trust", client_type="web"
+    )
+    write_refusal = gr.maybe_refuse_write(
+        tmp_path, tool="add_lesson", client_type="web"
+    )
+    dump_refusal = gr.maybe_govern_dump(
+        tmp_path, "secret report", tool="export_knowledge_report", client_type="web"
+    )
+
+    for refusal in (export_refusal, owner_write_refusal, write_refusal, dump_refusal):
+        assert gr.is_governance_refusal(refusal)
+        assert gr.GOVERNANCE_REFUSAL_SENTINEL in refusal
+
+    assert not gr.is_governance_refusal("Governance is off — all data accessible")
 
 
 def test_refuse_export_noop_when_flag_off(tmp_path, monkeypatch):

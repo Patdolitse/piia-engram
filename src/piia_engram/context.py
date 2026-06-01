@@ -34,6 +34,188 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type hints
     from .core import Engram
 
 
+def _make_extraction_metadata(
+    method: str,
+    evidence: str,
+    trigger_reason: str,
+    source_tool: str = "",
+    confidence: object = 0.7,
+    quality: dict | None = None,
+) -> dict:
+    """Build review metadata for auto-extracted knowledge candidates."""
+    evidence_span = str(evidence or "").strip()
+    if len(evidence_span) > 200:
+        evidence_span = evidence_span[:197].rstrip() + "..."
+    try:
+        confidence_value = float(confidence)
+    except (TypeError, ValueError):
+        confidence_value = 0.7
+    confidence_value = max(0.0, min(1.0, confidence_value))
+    metadata = {
+        "method": method,
+        "confidence": confidence_value,
+        "evidence_span": evidence_span,
+        "trigger_reason": trigger_reason,
+        "source_tool": source_tool,
+        "extracted_at": _now_iso(),
+        "extractor_version": "v1",
+    }
+    if quality:
+        metadata["quality_score"] = quality.get("score", 0.0)
+        metadata["quality_signals"] = list(quality.get("signals", []))
+        metadata["quality_flags"] = list(quality.get("flags", []))
+        metadata["quality_reason"] = quality.get("reason", "")
+    return metadata
+
+
+def _confidence_float(confidence: object = 0.7) -> float:
+    try:
+        value = float(confidence)
+    except (TypeError, ValueError):
+        value = 0.7
+    return max(0.0, min(1.0, value))
+
+
+def _assess_extraction_candidate(
+    text: str,
+    candidate_type: str,
+    trigger_reason: str,
+    confidence: object = 0.75,
+) -> dict:
+    """Score whether an auto-extracted candidate is durable enough to persist.
+
+    This is intentionally conservative: automatic extraction should create
+    reviewable staging candidates, not convert every plan or open question into
+    long-term memory.
+    """
+    normalized = " ".join(str(text or "").strip().split())
+    lowered = normalized.lower()
+    conf = _confidence_float(confidence)
+    score = 0.35 + (conf * 0.25)
+    signals: list[str] = []
+    flags: list[str] = []
+
+    is_structured_llm = trigger_reason.startswith("llm_extraction")
+    if is_structured_llm and conf >= 0.6:
+        signals.append("structured_llm_candidate")
+        score += 0.12
+
+    if candidate_type == "decision" and trigger_reason == "llm_extraction_choice" and conf >= 0.6:
+        signals.append("structured_decision_choice")
+        score += 0.22
+
+    if candidate_type == "decision" and re.search(
+        r"(decided to|we decided|chose|selected|switched to|therefore|so we|"
+        r"决定|选择|采用|改为|因此|最终)",
+        lowered,
+    ):
+        signals.append("decision_commitment")
+        score += 0.28
+
+    if candidate_type == "lesson" and re.search(
+        r"(remember to|always|never|must|make sure|avoid|do not|don't|need to|should|"
+        r"记得|注意|必须|应该|不要|避免|最好|需要)",
+        lowered,
+    ):
+        signals.append("durable_rule")
+        score += 0.22
+
+    if re.search(
+        r"(because|due to|caused|caught|failed|passed|fixed|found that|learned that|"
+        r"discovered that|"
+        r"因为|由于|导致|发现|修复|通过|失败|踩坑|学到)",
+        lowered,
+    ):
+        signals.append("evidence_or_outcome")
+        score += 0.12
+
+    if re.search(
+        r"\b(pytest|twine|pypi|github|mcp|registry|release|ci|api|"
+        r"pip|venv|fastapi|flask|postgresql|redis|git|rebase|uv|playbook|"
+        r"claude|codex)\b",
+        lowered,
+    ):
+        signals.append("concrete_context")
+        score += 0.05
+
+    if re.search(
+        r"(maybe|consider|evaluate|explore|later|next week|plan:|planned to|"
+        r"讨论|计划|考虑|评估|以后|稍后|下周|要不要)",
+        lowered,
+    ):
+        flags.append("planning_or_uncertain")
+        score -= 0.30
+
+    if "?" in normalized or re.search(r"\b(should we|whether to|do we)\b", lowered):
+        flags.append("open_question")
+        score -= 0.20
+
+    if re.search(r"(discussed|brainstormed|talked about|讨论了|头脑风暴)", lowered):
+        flags.append("meta_discussion")
+        score -= 0.18
+
+    if len(normalized) < 12:
+        flags.append("too_short")
+        score -= 0.20
+
+    score = round(max(0.0, min(1.0, score)), 2)
+    accepted = score >= 0.55
+    durable_signals = ("decision_commitment", "structured_decision_choice", "evidence_or_outcome")
+    if "planning_or_uncertain" in flags and not any(signal in signals for signal in durable_signals):
+        accepted = False
+    if "open_question" in flags and not any(
+        signal in signals for signal in ("decision_commitment", "structured_decision_choice")
+    ):
+        accepted = False
+
+    reason = "accepted" if accepted else "low_quality"
+    return {
+        "accepted": accepted,
+        "score": score,
+        "signals": signals,
+        "flags": flags,
+        "reason": reason,
+        "candidate_type": candidate_type,
+        "trigger_reason": trigger_reason,
+    }
+
+
+def _empty_rejected_quality_summary() -> dict:
+    # Schema is allowlist-tested; add fields only after privacy review.
+    return {
+        "count": 0,
+        "flags": {},
+        "candidate_types": {},
+        "score_min": None,
+        "score_max": None,
+    }
+
+
+def _record_rejected_quality(summary: dict, quality: dict) -> None:
+    summary["count"] = int(summary.get("count") or 0) + 1
+
+    flags = summary.setdefault("flags", {})
+    for flag in quality.get("flags", []):
+        if not flag:
+            continue
+        key = str(flag)
+        flags[key] = int(flags.get(key) or 0) + 1
+
+    candidate_types = summary.setdefault("candidate_types", {})
+    candidate_type = str(quality.get("candidate_type") or "unknown")
+    candidate_types[candidate_type] = int(candidate_types.get(candidate_type) or 0) + 1
+
+    try:
+        score = float(quality.get("score", 0.0))
+    except (TypeError, ValueError):
+        score = 0.0
+    score = round(max(0.0, min(1.0, score)), 2)
+    if summary.get("score_min") is None or score < float(summary["score_min"]):
+        summary["score_min"] = score
+    if summary.get("score_max") is None or score > float(summary["score_max"]):
+        summary["score_max"] = score
+
+
 class ContextMixin:
     """Context generation, token estimation, and ingestion helpers."""
 
@@ -120,7 +302,8 @@ class ContextMixin:
     def ingest_notes(self, text: str, source_tool: str = "", domain: str = "") -> dict:
         """Parse free-form notes and extract lesson/decision candidates."""
         lines = text.splitlines()
-        saved_lessons = saved_decisions = duplicates = skipped = 0
+        saved_lessons = saved_decisions = duplicates = skipped = skipped_low_quality = 0
+        rejected_quality = _empty_rejected_quality_summary()
         results = []
 
         for raw_line in lines:
@@ -151,6 +334,31 @@ class ContextMixin:
                 })
                 continue
 
+            candidate_type = "decision" if is_decision else "lesson"
+            trigger_reason = (
+                "decision_trigger"
+                if is_decision else
+                "lesson_trigger"
+                if is_lesson else
+                "notes_candidate"
+            )
+            quality = _assess_extraction_candidate(
+                line, candidate_type, trigger_reason, 0.75,
+            )
+            if not quality["accepted"]:
+                skipped += 1
+                skipped_low_quality += 1
+                _record_rejected_quality(rejected_quality, quality)
+                results.append({
+                    "type": candidate_type,
+                    "status": "skipped",
+                    "reason": "low_quality",
+                    "quality_score": quality["score"],
+                    "quality_flags": quality["flags"],
+                    "text": line[:80],
+                })
+                continue
+
             item_domain = self._infer_domain(line, domain)
             if is_decision:
                 result = self.add_decision({
@@ -158,6 +366,10 @@ class ContextMixin:
                     "choice": "",
                     "domain": item_domain,
                     "source_tool": source_tool,
+                    "tier": "staging",
+                    "extraction": _make_extraction_metadata(
+                        "notes", line, trigger_reason, source_tool, 0.75, quality,
+                    ),
                 })
                 if result.get("status") == "duplicate":
                     duplicates += 1
@@ -182,6 +394,10 @@ class ContextMixin:
                     "summary": line,
                     "domain": item_domain,
                     "source_tool": source_tool,
+                    "tier": "staging",
+                    "extraction": _make_extraction_metadata(
+                        "notes", line, trigger_reason, source_tool, 0.75, quality,
+                    ),
                 })
                 if result.get("status") == "duplicate":
                     duplicates += 1
@@ -210,6 +426,8 @@ class ContextMixin:
             "saved_decisions": saved_decisions,
             "duplicates": duplicates,
             "skipped": skipped,
+            "skipped_low_quality": skipped_low_quality,
+            "rejected_quality": rejected_quality,
             "results": results,
         }
 
@@ -225,11 +443,14 @@ class ContextMixin:
                 "saved_decisions": 0,
                 "duplicates": 0,
                 "skipped": 0,
+                "skipped_low_quality": 0,
+                "rejected_quality": _empty_rejected_quality_summary(),
                 "results": [],
             }
 
         sentences = re.split(r"[。！？.!?\n]+", summary)
-        saved_lessons = saved_decisions = duplicates = skipped = 0
+        saved_lessons = saved_decisions = duplicates = skipped = skipped_low_quality = 0
+        rejected_quality = _empty_rejected_quality_summary()
         results = []
 
         for raw in sentences:
@@ -262,6 +483,25 @@ class ContextMixin:
                 results.append({"status": "skipped", "text": sentence[:80]})
                 continue
 
+            candidate_type = "decision" if is_decision else "lesson"
+            trigger_reason = "decision_trigger" if is_decision else "lesson_trigger"
+            quality = _assess_extraction_candidate(
+                sentence, candidate_type, trigger_reason, 0.75,
+            )
+            if not quality["accepted"]:
+                skipped += 1
+                skipped_low_quality += 1
+                _record_rejected_quality(rejected_quality, quality)
+                results.append({
+                    "type": candidate_type,
+                    "status": "skipped",
+                    "reason": "low_quality",
+                    "quality_score": quality["score"],
+                    "quality_flags": quality["flags"],
+                    "text": sentence[:80],
+                })
+                continue
+
             item_domain = self._infer_domain(sentence)
             if is_decision:
                 result = self.add_decision({
@@ -270,6 +510,9 @@ class ContextMixin:
                     "domain": item_domain,
                     "source_tool": source_tool,
                     "tier": "staging",
+                    "extraction": _make_extraction_metadata(
+                        "session_insights", sentence, trigger_reason, source_tool, 0.75, quality,
+                    ),
                 })
                 if result.get("status") == "duplicate":
                     duplicates += 1
@@ -294,6 +537,9 @@ class ContextMixin:
                     "domain": item_domain,
                     "source_tool": source_tool,
                     "tier": "staging",
+                    "extraction": _make_extraction_metadata(
+                        "session_insights", sentence, trigger_reason, source_tool, 0.75, quality,
+                    ),
                 })
                 if result.get("status") == "duplicate":
                     duplicates += 1
@@ -318,6 +564,8 @@ class ContextMixin:
             "saved_decisions": saved_decisions,
             "duplicates": duplicates,
             "skipped": skipped,
+            "skipped_low_quality": skipped_low_quality,
+            "rejected_quality": rejected_quality,
             "results": results,
         }
 
@@ -552,6 +800,7 @@ class ContextMixin:
         summary: str,
         source_tool: str = "",
         session_id: str = "",
+        project_folder: str = "",
     ) -> dict | None:
         """Try to auto-extract a Playbook draft from session data.
 
@@ -640,6 +889,9 @@ class ContextMixin:
             "tier": "staging",
             "confidence": confidence,
         }
+        if project_folder:
+            playbook["scope_type"] = "project"
+            playbook["project_folder"] = project_folder
 
         # Save via add_playbook (inherits duplicate detection)
         result = self.add_playbook(playbook, source_tool=source_tool)
@@ -851,7 +1103,7 @@ class ContextMixin:
 
         # Recent playbooks
         if _wants("playbooks"):
-            recent_pbs = self.get_recent_playbooks(limit=5)
+            recent_pbs = self.get_recent_playbooks(limit=5, project_folder=project_folder)
             if recent_pbs:
                 pb_lines: list[str] = ["\n## 近期操作手册"]
                 for pb in recent_pbs:
@@ -1130,6 +1382,8 @@ def ingest_extraction(engram: "Engram", extracted: dict,
                       project_folder: str, session_id: str = "") -> dict:
     """Apply extracted knowledge to the Engram. Returns a summary of what was learned."""
     learned: list[str] = []
+    skipped_low_quality = 0
+    rejected_quality = _empty_rejected_quality_summary()
     source = {"project": project_folder, "session": session_id, "time": _now_iso()}
 
     # Profile updates
@@ -1177,18 +1431,64 @@ def ingest_extraction(engram: "Engram", extracted: dict,
     lessons = extracted.get("lessons", [])
     for l in lessons[:5]:
         if isinstance(l, dict) and l.get("summary"):
-            l["source_project"] = project_folder
-            l["source_session"] = session_id
-            engram.add_lesson(l)
+            quality = _assess_extraction_candidate(
+                str(l.get("summary", "")),
+                "lesson",
+                "llm_extraction",
+                l.get("confidence", 0.7),
+            )
+            if not quality["accepted"]:
+                skipped_low_quality += 1
+                _record_rejected_quality(rejected_quality, quality)
+                continue
+            lesson = dict(l)
+            lesson["source_project"] = project_folder
+            lesson["source_session"] = session_id
+            lesson["tier"] = "staging"
+            lesson["extraction"] = _make_extraction_metadata(
+                "llm",
+                str(lesson.get("summary", "")),
+                "llm_extraction",
+                str(lesson.get("source_tool") or "extract_knowledge"),
+                lesson.get("confidence", 0.7),
+                quality,
+            )
+            engram.add_lesson(lesson)
             learned.append(f"记住了教训: {l['summary'][:40]}")
 
     # Decisions
     decisions = extracted.get("decisions", [])
     for d in decisions[:5]:
         if isinstance(d, dict) and d.get("question"):
-            d["source_project"] = project_folder
-            d["source_session"] = session_id
-            engram.add_decision(d)
+            decision_text = " ".join(
+                str(d.get(key, ""))
+                for key in ("question", "choice", "reasoning")
+                if d.get(key)
+            )
+            trigger_reason = "llm_extraction_choice" if d.get("choice") else "llm_extraction"
+            quality = _assess_extraction_candidate(
+                decision_text,
+                "decision",
+                trigger_reason,
+                d.get("confidence", 0.7),
+            )
+            if not quality["accepted"]:
+                skipped_low_quality += 1
+                _record_rejected_quality(rejected_quality, quality)
+                continue
+            decision = dict(d)
+            decision["source_project"] = project_folder
+            decision["source_session"] = session_id
+            decision["tier"] = "staging"
+            decision["extraction"] = _make_extraction_metadata(
+                "llm",
+                str(decision.get("question", "")),
+                trigger_reason,
+                str(decision.get("source_tool") or "extract_knowledge"),
+                decision.get("confidence", 0.7),
+                quality,
+            )
+            engram.add_decision(decision)
             learned.append(f"记录了决策: {d['question'][:40]}")
 
     # Domain usage
@@ -1208,4 +1508,6 @@ def ingest_extraction(engram: "Engram", extracted: dict,
     return {
         "items_learned": len(learned),
         "summary": learned,
+        "skipped_low_quality": skipped_low_quality,
+        "rejected_quality": rejected_quality,
     }

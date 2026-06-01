@@ -20,7 +20,7 @@ It complements the user-facing [README](../README.md) (which answers *"what does
                          │ HTTP/SSE  (self-hosted shared instance)
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  mcp_server.py — exposes 72 tools (Tier-1 by default, opt-in rest)  │
+│  mcp_server.py — exposes 80 tools (Tier-1 by default, opt-in rest)  │
 └────────────────────────┬────────────────────────────────────────────┘
                          │ Python method calls on a single shared
                          │ ``Engram`` instance
@@ -45,6 +45,8 @@ Three layers:
 1. **Transport** (`mcp_server.py`) — thin async wrappers; one per MCP tool. Validates input, calls one method, returns a string.
 2. **Domain** (`Engram` class + mixins) — the data model and the rules over it. No I/O of its own beyond the `_read_json` / `_write_json` primitives in `storage.py`.
 3. **Storage** — flat JSON files under `~/.engram/`. Atomic writes via temp-file + rename, cross-process locks via `portalocker`.
+
+MCP tool tiering is intentionally conservative: the server defines 80 tools total, with 16 Tier-1 core tools loaded by default and 64 Tier-2 advanced tools behind `ENGRAM_TOOLS=all`.
 
 The whole thing fits in your laptop's RAM (typical user has < 1 MB on disk) and starts in under 100 ms.
 
@@ -76,7 +78,7 @@ After the v3.14.1 refactor and v3.16.0 reports split, the package is split into 
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1476 | FastMCP server: 72 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
+| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1476 | FastMCP server: 80 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (local log only, no network), payload validation, HMAC daily ID, preview/status CLI support |
 | [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~1723 | `engram setup` + `piia-engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
@@ -206,7 +208,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 
 ## 5. The MCP surface
 
-`mcp_server.py` exposes 72 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions:
+`mcp_server.py` exposes 80 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions:
 
 | Tier-1 (default) | Why |
 |------------------|-----|
@@ -220,7 +222,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 | `get_recent_context`, `get_daily_log`, `get_resume_brief` | Recover recent cross-tool work |
 | `doctor` | Memory system self-diagnosis |
 
-Set `ENGRAM_TOOLS=all` to expose the full 72 tools (review, health, link/unlink, OpenClaw bridge, bulk operations, etc.) for power users.
+Set `ENGRAM_TOOLS=all` to expose the full 80 tools (review, health, link/unlink, OpenClaw bridge, bulk operations, etc.) for power users.
 
 ### Transport modes
 

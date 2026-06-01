@@ -27,6 +27,12 @@ class ReviewMixin:
 
         _esc = lambda s: (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#x27;")
 
+        def _short(value: object, limit: int = 180) -> str:
+            text = str(value or "").strip()
+            if len(text) <= limit:
+                return text
+            return text[: max(0, limit - 3)].rstrip() + "..."
+
         rarity_order = {"legendary": 0, "epic": 1, "rare": 2, "staging": 3}
         star_map = {"legendary": "★★★", "epic": "★★", "rare": "★", "staging": ""}
 
@@ -64,6 +70,37 @@ class ReviewMixin:
                     + ("暂存" if zh else "Staging")
                     + "</span>"
                 )
+            quality_badge = ""
+            quality_detail = ""
+            extraction = item.get("extraction")
+            if isinstance(extraction, dict) and extraction:
+                quality_bits: list[str] = []
+                score = extraction.get("quality_score")
+                if isinstance(score, (int, float)):
+                    quality_badge = f'<span class="quality-badge">q={score:.2f}</span>'
+                    quality_bits.append(f"q={score:.2f}")
+                method = str(extraction.get("method") or "").strip()
+                if method:
+                    quality_bits.append("source=" + _esc(_short(method, 32)))
+                signals = extraction.get("quality_signals")
+                if isinstance(signals, list) and signals:
+                    quality_bits.append(
+                        "signals=" + _esc(", ".join(_short(s, 32) for s in signals[:6]))
+                    )
+                flags = extraction.get("quality_flags")
+                if isinstance(flags, list) and flags:
+                    quality_bits.append(
+                        "flags=" + _esc(", ".join(_short(f, 32) for f in flags[:6]))
+                    )
+                evidence = str(extraction.get("evidence_span") or "").strip()
+                if evidence:
+                    quality_bits.append("evidence=" + _esc(_short(evidence, 180)))
+                if quality_bits:
+                    quality_detail = (
+                        '<div class="item-quality">'
+                        + " · ".join(quality_bits)
+                        + "</div>"
+                    )
 
             if itype == "lesson":
                 summary = item.get("summary", "")
@@ -93,11 +130,13 @@ class ReviewMixin:
             <span class="stars" style="color:{color}">{stars}</span>
             <span class="rarity-label" style="color:{color}">{lbl}</span>
             {tier_badge}
+            {quality_badge}
             <span class="item-summary">{_esc(summary[:120])}</span>
             <span class="expand-arrow">&#9656;</span>
           </div>
           <div class="item-expand">
             {f'<div class="item-detail">{_esc(detail)}</div>' if detail else ''}
+            {quality_detail}
             <div class="item-meta">
               <span>{ts}</span>
               {f'<span class="meta-domain">{domain_val}</span>' if domain_val else ''}
@@ -258,6 +297,12 @@ class ReviewMixin:
                  flex-shrink: 0; text-transform: uppercase; letter-spacing: .5px; }}
   .tier-badge.staging {{ background: rgba(245,158,11,.15); color: #f59e0b; border: 1px solid rgba(245,158,11,.3); }}
   .tier-badge.verified {{ background: rgba(34,197,94,.1); color: #22c55e; border: 1px solid rgba(34,197,94,.2); }}
+  .quality-badge {{ font-size: .6rem; padding: 1px 5px; border-radius: 3px; font-weight: 600;
+                    flex-shrink: 0; color: #67e8f9; border: 1px solid rgba(103,232,249,.28);
+                    background: rgba(103,232,249,.1); }}
+  .item-quality {{ font-size: .72rem; color: var(--text2); background: rgba(103,232,249,.06);
+                   border: 1px solid rgba(103,232,249,.12); border-radius: 6px;
+                   padding: .35rem .45rem; margin: .35rem 0; word-break: break-word; }}
 
   .toggle-box {{ position: relative; display: inline-flex; width: 18px; height: 18px;
                  flex-shrink: 0; cursor: pointer; }}

@@ -783,6 +783,54 @@ def test_ingest_notes_basic(tmp_path: Path):
     assert result["parsed"] == 3
 
 
+def test_ingest_notes_auto_candidates_default_to_staging_with_metadata(tmp_path: Path):
+    """Free-form parsed knowledge is auto-extracted, so it must stay review-gated."""
+    engram = make_engram(tmp_path)
+
+    result = engram.ingest_notes(
+        "learned that pytest fixtures keep setup maintainable\n"
+        "decided to use uv for reproducible tool runs",
+        source_tool="codex",
+        domain="testing",
+    )
+
+    assert result["saved_lessons"] == 1
+    assert result["saved_decisions"] == 1
+
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    decisions = engram.get_decisions(limit=None, _update_access=False)
+    lesson = next(l for l in lessons if "pytest fixtures" in l.get("summary", ""))
+    decision = next(d for d in decisions if "uv" in d.get("question", d.get("title", "")))
+
+    assert lesson["tier"] == "staging"
+    assert decision["tier"] == "staging"
+    assert lesson["extraction"]["method"] == "notes"
+    assert decision["extraction"]["method"] == "notes"
+    assert lesson["extraction"]["evidence_span"].startswith("learned that")
+    assert decision["extraction"]["source_tool"] == "codex"
+    assert lesson["extraction"]["quality_score"] >= 0.55
+    assert decision["extraction"]["quality_score"] >= 0.55
+    assert "quality_signals" in lesson["extraction"]
+
+
+def test_ingest_notes_skips_low_quality_planning_candidates(tmp_path: Path):
+    """ingest_notes should not persist vague future plans or loose status chatter."""
+    engram = make_engram(tmp_path)
+
+    result = engram.ingest_notes(
+        "We discussed whether to add graph retrieval later\n"
+        "Maybe consider a memory graph benchmark next week\n"
+        "This is a loose status update without a durable lesson",
+        source_tool="codex",
+    )
+
+    assert result["saved_lessons"] == 0
+    assert result["saved_decisions"] == 0
+    assert result["skipped_low_quality"] >= 2
+    assert not engram.get_lessons(limit=None, _update_access=False)
+    assert not engram.get_decisions(limit=None, _update_access=False)
+
+
 def test_ingest_notes_domain_detection(tmp_path: Path):
     """ingest_notes 应按关键词推断 domain。"""
     engram = make_engram(tmp_path)
@@ -1659,6 +1707,53 @@ def test_extract_session_insights_broader_patterns(tmp_path: Path):
 
 # ── remote deployment ──────────────────────────────────────────────────────
 
+def test_extract_session_insights_skips_planning_only_candidates(tmp_path: Path):
+    """Planning/meta-discussion sentences should not become durable knowledge."""
+    engram = make_engram(tmp_path)
+    summary = (
+        "We discussed whether to add graph retrieval later. "
+        "Maybe we should evaluate a memory graph next week. "
+        "Plan: consider a benchmark after the UI is ready."
+    )
+
+    result = engram.extract_session_insights(summary, source_tool="test")
+
+    assert result["saved_lessons"] == 0
+    assert result["saved_decisions"] == 0
+    assert result["skipped_low_quality"] >= 1
+    assert any(
+        item.get("reason") == "low_quality"
+        for item in result["results"]
+        if item.get("status") == "skipped"
+    )
+
+
+def test_extract_session_insights_adds_quality_metadata(tmp_path: Path):
+    """Accepted auto-extracted candidates should carry reviewable quality evidence."""
+    engram = make_engram(tmp_path)
+    summary = (
+        "Remember to run twine check before publishing because it catches package metadata errors. "
+        "We decided to add twine check to the release gate."
+    )
+
+    result = engram.extract_session_insights(summary, source_tool="test")
+
+    assert result["saved_lessons"] >= 1
+    assert result["saved_decisions"] >= 1
+    lesson = next(
+        item for item in engram.get_lessons(limit=None, _update_access=False)
+        if "twine check" in item.get("summary", "")
+    )
+    decision = next(
+        item for item in engram.get_decisions(limit=None, _update_access=False)
+        if "twine check" in item.get("title", item.get("question", ""))
+    )
+    assert lesson["extraction"]["quality_score"] >= 0.6
+    assert decision["extraction"]["quality_score"] >= 0.6
+    assert "durable_rule" in lesson["extraction"]["quality_signals"]
+    assert "decision_commitment" in decision["extraction"]["quality_signals"]
+
+
 def test_parse_args_defaults():
     """默认参数应为 stdio 模式。"""
     from piia_engram.mcp_server import _parse_args
@@ -2027,6 +2122,80 @@ def test_ingest_extraction_applies_lessons_and_decisions(tmp_path: Path):
     assert any("测试框架" in d.get("question", d.get("title", "")) for d in decisions)
 
 
+def test_ingest_extraction_forces_auto_items_to_staging_with_metadata(tmp_path: Path):
+    """LLM extraction cannot self-certify knowledge as verified."""
+    engram = make_engram(tmp_path)
+    extracted = {
+        "lessons": [
+            {
+                "summary": "never deploy without a rollback rehearsal",
+                "domain": "release",
+                "tier": "verified",
+            },
+        ],
+        "decisions": [
+            {
+                "question": "Which release gate should we use?",
+                "choice": "rollback rehearsal",
+                "tier": "verified",
+            },
+        ],
+    }
+
+    ingest_extraction(engram, extracted, str(tmp_path), session_id="session-123")
+
+    lesson = next(
+        l for l in engram.get_lessons(limit=None, _update_access=False)
+        if "rollback rehearsal" in l.get("summary", "")
+    )
+    decision = next(
+        d for d in engram.get_decisions(limit=None, _update_access=False)
+        if "release gate" in d.get("question", "")
+    )
+
+    assert lesson["tier"] == "staging"
+    assert decision["tier"] == "staging"
+    assert lesson["source_project"] == str(tmp_path)
+    assert lesson["source_session"] == "session-123"
+    assert lesson["extraction"]["method"] == "llm"
+    assert decision["extraction"]["method"] == "llm"
+
+
+def test_ingest_extraction_rejects_low_confidence_planning_candidates(tmp_path: Path):
+    """LLM extraction should not persist vague future plans as long-term knowledge."""
+    engram = make_engram(tmp_path)
+    extracted = {
+        "lessons": [
+            {
+                "summary": "Maybe consider adding graph memory later",
+                "domain": "research",
+                "confidence": 0.2,
+            },
+            {
+                "summary": "Always run twine check before publishing",
+                "domain": "release",
+                "confidence": 0.9,
+            },
+        ],
+        "decisions": [
+            {
+                "question": "Should we evaluate graph memory later?",
+                "choice": "maybe",
+                "confidence": 0.2,
+            },
+        ],
+    }
+
+    result = ingest_extraction(engram, extracted, str(tmp_path), session_id="session-123")
+
+    assert result["skipped_low_quality"] == 2
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    assert any("twine check" in item.get("summary", "") for item in lessons)
+    assert not any("graph memory later" in item.get("summary", "") for item in lessons)
+    decisions = engram.get_decisions(limit=None, _update_access=False)
+    assert not any("graph memory" in item.get("question", "") for item in decisions)
+
+
 def test_ingest_extraction_empty_dict(tmp_path: Path):
     """空提取结果不应崩溃。"""
     engram = make_engram(tmp_path)
@@ -2335,8 +2504,8 @@ def test_classify_rarity_identity_content_scores_high(tmp_path: Path):
 # =====================================================================
 
 
-def test_evaluate_tiers_promotes_referenced_staging(tmp_path: Path):
-    """access_count >= 3 的 staging 条目应被提升为 verified。"""
+def test_evaluate_tiers_suggests_referenced_staging_without_promoting(tmp_path: Path):
+    """access_count >= 3 only suggests review; it must not verify staging."""
     engram = make_engram(tmp_path)
     lesson = engram.add_lesson("高频引用的经验", domain="python", tier="staging")
     # 手动设置 access_count >= 3
@@ -2348,13 +2517,34 @@ def test_evaluate_tiers_promotes_referenced_staging(tmp_path: Path):
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     result = engram.evaluate_tiers()
-    assert result["promoted"] >= 1
+    assert result["promoted"] == 0
+    assert result["suggested"] >= 1
 
     # 验证已变为 verified
     data = json.loads(path.read_text(encoding="utf-8"))
-    promoted_entry = next(e for e in data if e.get("id") == lesson["id"])
-    assert promoted_entry["tier"] == "verified"
-    assert "promoted_at" in promoted_entry
+    suggested_entry = next(e for e in data if e.get("id") == lesson["id"])
+    assert suggested_entry["tier"] == "staging"
+    assert suggested_entry["promotion_suggested"] is True
+    assert "promotion_suggested_at" in suggested_entry
+    assert "promoted_at" not in suggested_entry
+
+
+def test_repeated_reads_cannot_wash_staging_to_verified(tmp_path: Path):
+    """AI/context reads may bump access_count, but review is still required."""
+    engram = make_engram(tmp_path)
+    lesson = engram.add_lesson("staging knowledge must require review", tier="staging")
+
+    for _ in range(3):
+        engram.get_lessons(limit=None)
+
+    result = engram.evaluate_tiers()
+    assert result["promoted"] == 0
+    assert result["suggested"] == 1
+
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    stored = next(l for l in lessons if l.get("id") == lesson["id"])
+    assert stored["tier"] == "staging"
+    assert stored["promotion_suggested"] is True
 
 
 def test_evaluate_tiers_keeps_low_access_staging(tmp_path: Path):
@@ -2921,8 +3111,8 @@ def test_bigram_similarity_completely_different(tmp_path: Path):
 # ── evaluate_tiers tests ────────────────────────────────────────────
 
 
-def test_evaluate_tiers_promotes_accessed_staging(tmp_path: Path):
-    """access_count >= 3 的 staging 条目应被提升为 verified。"""
+def test_evaluate_tiers_marks_accessed_staging_for_review(tmp_path: Path):
+    """access_count >= 3 only suggests review; it must not verify staging."""
     engram = make_engram(tmp_path)
     lesson = engram.add_lesson("test staging promotion")
     # 手动设为 staging 并增加 access_count
@@ -2933,11 +3123,13 @@ def test_evaluate_tiers_promotes_accessed_staging(tmp_path: Path):
     path.write_text(json.dumps(lessons, ensure_ascii=False), encoding="utf-8")
 
     result = engram.evaluate_tiers()
-    assert result["promoted"] == 1
+    assert result["promoted"] == 0
+    assert result["suggested"] == 1
 
     lessons_after = json.loads(path.read_text(encoding="utf-8"))
-    assert lessons_after[-1]["tier"] == "verified"
-    assert "promoted_at" in lessons_after[-1]
+    assert lessons_after[-1]["tier"] == "staging"
+    assert lessons_after[-1]["promotion_suggested"] is True
+    assert "promoted_at" not in lessons_after[-1]
 
 
 def test_evaluate_tiers_no_promote_low_access(tmp_path: Path):
@@ -3965,6 +4157,232 @@ def test_playbook_archive(tmp_path: Path):
     assert pb["status"] == "outdated"
 
 
+def test_list_playbooks_for_management_includes_archived_and_deleted(
+    tmp_path: Path,
+):
+    """Management listing should show non-active Playbooks with metadata."""
+    engram = make_engram(tmp_path)
+    active = engram.add_playbook({"title": "Active flow", "triggers": ["active"]})
+    archived = engram.add_playbook({"title": "Archived flow", "triggers": ["archive"]})
+    deleted = engram.add_playbook({"title": "Deleted flow", "triggers": ["delete"]})
+    engram.archive_playbook(archived["id"])
+    engram.delete_playbook(deleted["id"], dry_run=False, confirm=True)
+
+    result = engram.list_playbooks_for_management(status="all")
+
+    by_id = {item["id"]: item for item in result["items"]}
+    assert by_id[active["id"]]["status"] == "active"
+    assert by_id[archived["id"]]["status"] == "outdated"
+    assert by_id[deleted["id"]]["status"] == "deleted"
+    assert "steps" not in by_id[active["id"]]
+
+
+def test_delete_playbook_is_soft_and_dry_run_until_confirm(tmp_path: Path):
+    """Delete hides the Playbook without removing its file, and requires confirm."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Obsolete flow", "triggers": ["old"]})
+    pb_path = tmp_path / "playbooks" / f"{pb['id']}.json"
+
+    preview = engram.delete_playbook(
+        pb["id"], reason="obsolete", dry_run=True, confirm=False,
+    )
+    assert preview["dry_run"] is True
+    assert engram.get_playbook(pb["id"], _update_access=False)["status"] == "active"
+
+    deleted = engram.delete_playbook(
+        pb["id"], reason="obsolete", dry_run=False, confirm=True,
+    )
+
+    assert deleted["dry_run"] is False
+    assert deleted["deleted"]["to_status"] == "deleted"
+    assert pb_path.exists()
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["status"] == "deleted"
+    assert stored["deletion_history"][-1]["reason"] == "obsolete"
+    assert pb["id"] not in {item["id"] for item in engram.get_playbooks()}
+    assert pb["id"] in {
+        item["id"] for item in engram.list_playbooks_for_management(status="deleted")["items"]
+    }
+
+
+def test_restore_playbook_reactivates_deleted_and_archived_items(tmp_path: Path):
+    """Restore should bring hidden Playbooks back to the active list."""
+    engram = make_engram(tmp_path)
+    deleted = engram.add_playbook({"title": "Deleted flow", "triggers": ["delete"]})
+    archived = engram.add_playbook({"title": "Archived flow", "triggers": ["archive"]})
+    engram.delete_playbook(deleted["id"], dry_run=False, confirm=True)
+    engram.archive_playbook(archived["id"])
+
+    preview = engram.restore_playbook(deleted["id"], dry_run=False, confirm=False)
+    assert preview["dry_run"] is True
+    assert engram.get_playbook(deleted["id"], _update_access=False)["status"] == "deleted"
+
+    restored_deleted = engram.restore_playbook(
+        deleted["id"], dry_run=False, confirm=True,
+    )
+    restored_archived = engram.restore_playbook(
+        archived["id"], dry_run=False, confirm=True,
+    )
+
+    assert restored_deleted["restored"]["from_status"] == "deleted"
+    assert restored_archived["restored"]["from_status"] == "outdated"
+    active_ids = {item["id"] for item in engram.get_playbooks()}
+    assert deleted["id"] in active_ids
+    assert archived["id"] in active_ids
+
+
+def test_delete_playbook_rejects_already_deleted_without_overwriting_history(
+    tmp_path: Path,
+):
+    """Double delete should not overwrite first deletion metadata."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Obsolete flow", "triggers": ["old"]})
+    engram.delete_playbook(pb["id"], reason="first", dry_run=False, confirm=True)
+    first = engram.get_playbook(pb["id"], _update_access=False)
+
+    result = engram.delete_playbook(
+        pb["id"], reason="second", dry_run=False, confirm=True,
+    )
+
+    assert result["error"] == "playbook_already_deleted"
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["deleted_at"] == first["deleted_at"]
+    assert stored["deletion_reason"] == "first"
+    assert len(stored["deletion_history"]) == 1
+
+
+def test_restore_playbook_rejects_already_active_without_version_bump(
+    tmp_path: Path,
+):
+    """Restoring an active Playbook should be a no-op."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Active flow", "triggers": ["active"]})
+
+    result = engram.restore_playbook(pb["id"], dry_run=False, confirm=True)
+
+    assert result["error"] == "playbook_already_active"
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["version"] == pb["version"]
+    assert "deletion_history" not in stored
+
+
+def test_list_playbooks_for_management_rejects_negative_limit(tmp_path: Path):
+    """Negative limits should not silently slice from the end."""
+    engram = make_engram(tmp_path)
+    engram.add_playbook({"title": "Active flow", "triggers": ["active"]})
+
+    result = engram.list_playbooks_for_management(limit=-1)
+
+    assert result["error"] == "limit_must_be_positive"
+
+
+def test_install_self_repair_loop_playbook_dry_run_does_not_write(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    result = engram.install_builtin_playbook("self-repair-loop")
+
+    assert result["dry_run"] is True
+    assert result["status"] == "would_install"
+    assert result["requires_confirmation"] is True
+    playbook = result["playbook"]
+    assert playbook["title"] == "Self-Repair Loop for Agent Work"
+    assert playbook["scope"]["type"] == "global"
+    assert any("invariant" in step["action"].lower() for step in playbook["steps"])
+    assert engram.get_playbooks(_update_access=False) == []
+
+
+def test_self_repair_loop_playbook_includes_verifier_self_check(tmp_path: Path):
+    """The built-in loop should teach agents to check their own validators."""
+    engram = make_engram(tmp_path)
+
+    playbook = engram.builtin_playbook_template("self-repair-loop")
+    actions = [step["action"] for step in playbook["steps"]]
+    body = json.dumps(playbook, ensure_ascii=False).lower()
+
+    assert "Validate the verifier" in actions
+    assert "validator defect" in body
+    assert "powershell" in body
+    assert "codepoint" in body
+
+
+def test_install_self_repair_loop_playbook_confirm_is_idempotent(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    installed = engram.install_builtin_playbook(
+        "self-repair-loop", dry_run=False, confirm=True
+    )
+    repeated = engram.install_builtin_playbook(
+        "self-repair-loop", dry_run=False, confirm=True
+    )
+
+    assert installed["status"] == "installed"
+    assert repeated["status"] == "already_installed"
+    assert repeated["existing_id"] == installed["playbook_id"]
+    playbooks = engram.get_playbooks(_update_access=False)
+    assert len(playbooks) == 1
+    pb = playbooks[0]
+    assert pb["source_tool"] == "engram_builtin"
+    assert pb["builtin_name"] == "self-repair-loop"
+    assert pb["tier"] == "verified"
+    assert pb["scope"]["type"] == "global"
+    assert len(pb["steps"]) >= 8
+    index_entry = engram._read_playbook_index()[0]
+    assert index_entry["builtin_name"] == "self-repair-loop"
+
+
+def test_install_builtin_playbook_legacy_index_without_builtin_name_is_idempotent(
+    tmp_path: Path,
+):
+    engram = make_engram(tmp_path)
+
+    installed = engram.install_builtin_playbook(
+        "self-repair-loop", dry_run=False, confirm=True
+    )
+    index = engram._read_playbook_index()
+    for entry in index:
+        entry.pop("builtin_name", None)
+    engram._write_playbook_index(index)
+
+    repeated = engram.install_builtin_playbook(
+        "self-repair-loop", dry_run=False, confirm=True
+    )
+
+    assert repeated["status"] == "already_installed"
+    assert repeated["existing_id"] == installed["playbook_id"]
+    assert len(engram.get_playbooks(_update_access=False)) == 1
+
+
+def test_install_self_repair_loop_playbook_can_be_project_scoped(tmp_path: Path):
+    engram = make_engram(tmp_path)
+    project = tmp_path / "engram"
+    other = tmp_path / "other"
+
+    result = engram.install_builtin_playbook(
+        "self-repair-loop",
+        project_folder=str(project),
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["status"] == "installed"
+    pb = engram.get_playbook(result["playbook_id"], _update_access=False)
+    assert pb["scope"]["type"] == "project"
+    assert pb["scope"]["project_folder"] == str(project)
+    assert [p["id"] for p in engram.get_playbooks(
+        project_folder=str(project), _update_access=False,
+    )] == [pb["id"]]
+    assert engram.get_playbooks(project_folder=str(other), _update_access=False) == []
+
+
+def test_install_builtin_playbook_unknown_name_lists_available(tmp_path: Path):
+    engram = make_engram(tmp_path)
+
+    result = engram.install_builtin_playbook("missing")
+
+    assert "error" in result
+    assert result["available"] == ["self-repair-loop"]
+
+
 def test_search_knowledge_playbooks(tmp_path: Path):
     """通过 trigger 关键词搜索应命中 Playbook。"""
     engram = make_engram(tmp_path)
@@ -4076,6 +4494,578 @@ def test_playbook_domain_filter(tmp_path: Path):
     docker_pbs = engram.get_playbooks(domain="docker")
     assert len(docker_pbs) == 1
     assert docker_pbs[0]["title"] == "Docker 部署"
+
+
+def test_playbook_legacy_scope_defaults_to_global(tmp_path: Path):
+    """Legacy playbooks without scope metadata remain globally visible."""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook(_sample_playbook())
+
+    stored = engram.get_playbook(added["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert stored["scope_type"] == "global"
+
+    assert len(engram.get_playbooks(project_folder=str(tmp_path / "project-a"))) == 1
+    assert len(engram.get_playbooks(project_folder=None)) == 1
+
+
+def test_project_scoped_playbooks_are_visible_only_in_their_project(tmp_path: Path):
+    """Project-scoped playbooks should not bleed into other project contexts."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "project-a")
+    project_b = str(tmp_path / "project-b")
+
+    global_pb = engram.add_playbook({"title": "Universal release flow", "triggers": ["release"]})
+    a_pb = engram.add_playbook(
+        {"title": "Project A release flow", "triggers": ["release"]},
+        project_folder=project_a,
+    )
+    b_pb = engram.add_playbook(
+        {"title": "Project B release flow", "triggers": ["release"]},
+        project_folder=project_b,
+    )
+
+    visible_a = {pb["id"] for pb in engram.get_playbooks(project_folder=project_a)}
+    visible_b = {pb["id"] for pb in engram.get_playbooks(project_folder=project_b)}
+    visible_global = {pb["id"] for pb in engram.get_playbooks(project_folder=None)}
+
+    assert visible_a == {global_pb["id"], a_pb["id"]}
+    assert visible_b == {global_pb["id"], b_pb["id"]}
+    assert visible_global == {global_pb["id"]}
+
+
+def test_playbook_duplicate_detection_is_same_scope_only(tmp_path: Path):
+    """Same title is allowed across projects but still deduped inside one scope."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "project-a")
+    project_b = str(tmp_path / "project-b")
+
+    first = engram.add_playbook(
+        {"title": "Release checklist", "triggers": ["release"]},
+        project_folder=project_a,
+    )
+    same_project = engram.add_playbook(
+        {"title": "Release checklist", "triggers": ["release"]},
+        project_folder=project_a,
+    )
+    other_project = engram.add_playbook(
+        {"title": "Release checklist", "triggers": ["release"]},
+        project_folder=project_b,
+    )
+
+    assert first.get("id")
+    assert same_project.get("status") == "duplicate"
+    assert other_project.get("id")
+    assert other_project.get("status") != "duplicate"
+
+
+def test_search_knowledge_filters_playbooks_by_project_scope(tmp_path: Path):
+    """Playbook search must respect the same global + current-project visibility."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "project-a")
+    project_b = str(tmp_path / "project-b")
+    global_pb = engram.add_playbook({"title": "Shared deploy flow", "triggers": ["deploy"]})
+    a_pb = engram.add_playbook(
+        {"title": "Alpha deploy flow", "triggers": ["deploy"]},
+        project_folder=project_a,
+    )
+    b_pb = engram.add_playbook(
+        {"title": "Beta deploy flow", "triggers": ["deploy"]},
+        project_folder=project_b,
+    )
+
+    found_a = {
+        pb["id"]
+        for pb in engram.search_knowledge(
+            "deploy", scope="playbooks", project_folder=project_a
+        )["playbooks"]
+    }
+    found_global = {
+        pb["id"]
+        for pb in engram.search_knowledge("deploy", scope="playbooks")["playbooks"]
+    }
+
+    assert global_pb["id"] in found_a
+    assert a_pb["id"] in found_a
+    assert b_pb["id"] not in found_a
+    assert found_global == {global_pb["id"]}
+
+
+def test_prepare_playbook_execution_refuses_cross_project_by_default(tmp_path: Path):
+    """Execution plans are side-effectful, so cross-project use needs explicit confirmation."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "project-a")
+    project_b = str(tmp_path / "project-b")
+    pb = engram.add_playbook(
+        {"title": "Project A deploy", "triggers": ["deploy"], "steps": ["ship it"]},
+        project_folder=project_a,
+    )
+
+    refused = engram.prepare_playbook_execution(
+        pb["id"], project_folder=project_b,
+    )
+    assert refused["error"] == "cross_project_playbook"
+    assert not (tmp_path / "playbooks" / "executions" / f"{pb['id']}.json").exists()
+
+    allowed = engram.prepare_playbook_execution(
+        pb["id"], project_folder=project_b, confirm_cross_project=True,
+    )
+    assert allowed["playbook_id"] == pb["id"]
+    assert allowed["cross_project_confirmed"] is True
+    assert (tmp_path / "playbooks" / "executions" / f"{pb['id']}.json").exists()
+
+
+def test_extract_playbook_from_session_uses_project_scope(tmp_path: Path):
+    """Auto-extracted playbooks should default to the current project scope."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    summary = (
+        "First update the version number, then run tests, then publish the package, "
+        "finally verify the registry listing."
+    )
+
+    result = engram.extract_playbook_from_session(
+        summary, source_tool="codex", project_folder=project,
+    )
+
+    assert result is not None
+    assert result["scope"]["type"] == "project"
+    assert result["scope"]["project_folder"] == project
+    assert result["id"] in {
+        pb["id"] for pb in engram.get_playbooks(project_folder=project, _update_access=False)
+    }
+    assert result["id"] not in {
+        pb["id"] for pb in engram.get_playbooks(project_folder=None, _update_access=False)
+    }
+
+
+def test_classify_legacy_playbooks_dry_run_only(tmp_path: Path):
+    """Legacy classification suggests scopes without mutating playbooks."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    engram.save_project_snapshot(project, {"title": "Engram", "tech_stack": ["python", "mcp"]})
+    project_pb = engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+    global_pb = engram.add_playbook({
+        "title": "Universal maintenance protocol",
+        "triggers": ["maintenance", "common"],
+    })
+
+    result = engram.classify_legacy_playbooks()
+    suggestions = {item["id"]: item for item in result["suggestions"]}
+
+    assert result["dry_run"] is True
+    assert suggestions[project_pb["id"]]["suggested_scope"]["type"] == "project"
+    assert suggestions[project_pb["id"]]["suggested_scope"]["project_folder"] == project
+    assert suggestions[global_pb["id"]]["suggested_scope"]["type"] == "global"
+
+    stored = engram.get_playbook(project_pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+
+
+def test_apply_legacy_playbook_scope_suggestions_dry_run_only(tmp_path: Path):
+    """Legacy scope migration should preview changes until explicitly confirmed."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    engram.save_project_snapshot(project, {"title": "Engram"})
+    pb = engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+
+    result = engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=True, confirm=False,
+    )
+
+    assert result["dry_run"] is True
+    assert result["requires_confirmation"] is True
+    assert [item["id"] for item in result["would_apply"]] == [pb["id"]]
+    assert result["applied"] == []
+
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert "scope_migration_history" not in stored
+
+
+def test_apply_legacy_playbook_scope_suggestions_confirm_alone_still_previews(
+    tmp_path: Path,
+):
+    """confirm=True alone is insufficient; dry_run must be explicitly disabled."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    engram.save_project_snapshot(project, {"title": "Engram"})
+    pb = engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+
+    result = engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=True, confirm=True,
+    )
+
+    assert result["dry_run"] is True
+    assert [item["id"] for item in result["would_apply"]] == [pb["id"]]
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert "scope_migration_history" not in stored
+
+
+def test_apply_legacy_playbook_scope_suggestions_confirm_writes_history_and_index(
+    tmp_path: Path,
+):
+    """Confirmed legacy scope migration should update the playbook and index."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    engram.save_project_snapshot(project, {"title": "Engram"})
+    pb = engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+
+    result = engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=False, confirm=True,
+    )
+
+    assert result["dry_run"] is False
+    assert [item["id"] for item in result["applied"]] == [pb["id"]]
+
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "project"
+    assert stored["scope"]["project_folder"] == project
+    assert stored["scope_migration_history"][-1]["from_scope"]["type"] == "global"
+    assert stored["scope_migration_history"][-1]["to_scope"]["type"] == "project"
+
+    assert pb["id"] in {
+        item["id"] for item in engram.get_playbooks(project_folder=project, _update_access=False)
+    }
+    assert pb["id"] not in {
+        item["id"] for item in engram.get_playbooks(project_folder=None, _update_access=False)
+    }
+
+
+def test_rollback_playbook_scope_migration_restores_previous_scope(tmp_path: Path):
+    """Scope migrations should be reversible for old-user cleanup safety."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    engram.save_project_snapshot(project, {"title": "Engram"})
+    pb = engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+    engram.apply_legacy_playbook_scope_suggestions(dry_run=False, confirm=True)
+
+    preview = engram.rollback_playbook_scope_migration(
+        playbook_ids=[pb["id"]], dry_run=True, confirm=False,
+    )
+    assert preview["dry_run"] is True
+    assert [item["id"] for item in preview["would_rollback"]] == [pb["id"]]
+    assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "project"
+
+    rolled = engram.rollback_playbook_scope_migration(
+        playbook_ids=[pb["id"]], dry_run=False, confirm=True,
+    )
+
+    assert rolled["dry_run"] is False
+    assert [item["id"] for item in rolled["rolled_back"]] == [pb["id"]]
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert stored.get("scope_migration_history") == []
+
+
+def test_rollback_playbook_scope_migration_without_ids_rolls_back_all_confirmed(
+    tmp_path: Path,
+):
+    """No playbook_ids means batch rollback of every Playbook with migration history."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "engram")
+    project_b = str(tmp_path / "atlas")
+    engram.save_project_snapshot(project_a, {"title": "Engram"})
+    engram.save_project_snapshot(project_b, {"title": "Atlas"})
+    pb_a = engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+    pb_b = engram.add_playbook({
+        "title": "Atlas rollout checklist",
+        "triggers": ["atlas", "rollout"],
+    })
+    engram.apply_legacy_playbook_scope_suggestions(dry_run=False, confirm=True)
+
+    rolled = engram.rollback_playbook_scope_migration(
+        dry_run=False, confirm=True,
+    )
+
+    assert {item["id"] for item in rolled["rolled_back"]} == {pb_a["id"], pb_b["id"]}
+    assert engram.get_playbook(pb_a["id"], _update_access=False)["scope"]["type"] == "global"
+    assert engram.get_playbook(pb_b["id"], _update_access=False)["scope"]["type"] == "global"
+
+
+def test_rollback_playbook_scope_migration_skips_items_without_history(
+    tmp_path: Path,
+):
+    """Rollback should report no_migration_history instead of guessing."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Manual global flow", "triggers": ["manual"]})
+
+    result = engram.rollback_playbook_scope_migration(
+        playbook_ids=[pb["id"]],
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["rolled_back"] == []
+    assert result["skipped"] == [{
+        "id": pb["id"],
+        "title": "Manual global flow",
+        "reason": "no_migration_history",
+    }]
+
+
+def test_apply_legacy_playbook_scope_suggestions_skips_low_confidence_items(
+    tmp_path: Path,
+):
+    """Ambiguous Playbooks should remain needs-review until a human decides."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily notes cleanup", "triggers": ["notes"]})
+
+    result = engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=False, confirm=True,
+    )
+
+    assert result["applied"] == []
+    skipped = {item["id"]: item for item in result["skipped"]}
+    assert skipped[pb["id"]]["reason"] == "not_apply_ready"
+    assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "global"
+
+
+def test_apply_legacy_playbook_scope_suggestions_does_not_rewrite_project_scopes(
+    tmp_path: Path,
+):
+    """Legacy migration must not move already-scoped project Playbooks."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "engram")
+    project_b = str(tmp_path / "other")
+    engram.save_project_snapshot(project_a, {"title": "Engram"})
+    pb = engram.add_playbook(
+        {"title": "Engram release checklist", "triggers": ["engram", "release"]},
+        project_folder=project_b,
+    )
+
+    result = engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=False, confirm=True,
+    )
+
+    assert result["applied"] == []
+    skipped = {item["id"]: item for item in result["skipped"]}
+    assert skipped[pb["id"]]["reason"] == "already_scoped"
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["project_folder"] == project_b
+
+
+def test_get_playbook_scope_review_queue_lists_only_unresolved_ambiguous_items(
+    tmp_path: Path,
+):
+    """Review queue should focus humans on unresolved needs-review Playbooks."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    engram.save_project_snapshot(project, {"title": "Engram"})
+    ambiguous = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+    apply_ready = engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+    scoped = engram.add_playbook(
+        {"title": "Scoped daily cleanup", "triggers": ["notes"]},
+        project_folder=project,
+    )
+
+    queue = engram.get_playbook_scope_review_queue()
+
+    ids = {item["id"] for item in queue["items"]}
+    assert ambiguous["id"] in ids
+    assert apply_ready["id"] not in ids
+    assert scoped["id"] not in ids
+    assert queue["total"] == 1
+    assert queue["items"][0]["suggested_scope"]["type"] == "needs_review"
+
+
+def test_resolve_playbook_scope_review_accept_project_dry_run_only(tmp_path: Path):
+    """Manual review resolution should preview until explicitly confirmed."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_project",
+        project_folder=project,
+        dry_run=True,
+        confirm=False,
+    )
+
+    assert result["dry_run"] is True
+    assert result["would_update"]["to_scope"]["project_folder"] == project
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert "scope_review_history" not in stored
+
+
+def test_resolve_playbook_scope_review_accept_project_writes_and_leaves_queue(
+    tmp_path: Path,
+):
+    """Confirmed review can assign an ambiguous legacy Playbook to a project."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_project",
+        project_folder=project,
+        note="belongs to Engram maintenance",
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["updated"]["id"] == pb["id"]
+    assert result["updated"]["to_scope"]["project_folder"] == project
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "project"
+    assert stored["scope"]["project_folder"] == project
+    assert stored["scope_review_status"] == "resolved"
+    assert stored["scope_review_history"][-1]["action"] == "accept_project"
+    assert stored["scope_review_history"][-1]["note"] == "belongs to Engram maintenance"
+    assert pb["id"] not in {
+        item["id"] for item in engram.get_playbook_scope_review_queue()["items"]
+    }
+
+
+def test_resolve_playbook_scope_review_accept_global_marks_resolved(tmp_path: Path):
+    """A human can keep an ambiguous Playbook global and remove it from review."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_global",
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["updated"]["to_scope"]["type"] == "global"
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert stored["scope_review_status"] == "resolved"
+    assert pb["id"] not in {
+        item["id"] for item in engram.get_playbook_scope_review_queue()["items"]
+    }
+
+
+def test_resolve_playbook_scope_review_skip_marks_skipped(tmp_path: Path):
+    """Skip should hide a Playbook from the queue without changing its scope."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="skip",
+        note="too vague",
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["updated"]["action"] == "skip"
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    assert stored["scope_review_status"] == "skipped"
+    assert stored["scope_review_history"][-1]["note"] == "too vague"
+    assert pb["id"] not in {
+        item["id"] for item in engram.get_playbook_scope_review_queue()["items"]
+    }
+
+
+def test_resolve_playbook_scope_review_accept_project_requires_folder(
+    tmp_path: Path,
+):
+    """Project acceptance requires an explicit target project folder."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"], action="accept_project", dry_run=False, confirm=True,
+    )
+
+    assert result["error"] == "project_folder_required"
+    assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "global"
+
+
+def test_resolve_playbook_scope_review_false_dry_run_without_confirm_previews(
+    tmp_path: Path,
+):
+    """confirm is required even when dry_run=False is passed explicitly."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_global",
+        dry_run=False,
+        confirm=False,
+    )
+
+    assert result["dry_run"] is True
+    assert result["requires_confirmation"] is True
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert "scope_review_status" not in stored
+    assert "scope_review_history" not in stored
+
+
+def test_resolve_playbook_scope_review_invalid_action_is_read_only(tmp_path: Path):
+    """Invalid actions should fail before any Playbook mutation."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="delete",
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["error"] == "invalid_action"
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert "scope_review_status" not in stored
+    assert "scope_review_history" not in stored
+
+
+def test_get_playbook_scope_review_queue_include_resolved_and_limit(
+    tmp_path: Path,
+):
+    """Resolved global reviews are hidden by default and visible on request."""
+    engram = make_engram(tmp_path)
+    resolved = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+    pending = engram.add_playbook({"title": "Inbox tidy", "triggers": ["notes"]})
+    engram.resolve_playbook_scope_review(
+        resolved["id"],
+        action="accept_global",
+        dry_run=False,
+        confirm=True,
+    )
+
+    default_ids = {item["id"] for item in engram.get_playbook_scope_review_queue()["items"]}
+    assert resolved["id"] not in default_ids
+    assert pending["id"] in default_ids
+
+    included = engram.get_playbook_scope_review_queue(include_resolved=True)
+    included_ids = {item["id"] for item in included["items"]}
+    assert resolved["id"] in included_ids
+    assert pending["id"] in included_ids
+
+    limited = engram.get_playbook_scope_review_queue(include_resolved=True, limit=1)
+    assert limited["total"] == 1
+    assert len(limited["items"]) == 1
 
 
 # ===========================================================================

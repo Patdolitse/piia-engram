@@ -662,8 +662,8 @@ def test_archive_failure_not_counted_as_success(tmp_path: Path):
     assert len(result.get("errors", [])) >= 1
 
 
-def test_evaluate_tiers_promotes_by_access(tmp_path: Path):
-    """evaluate_tiers should promote staging items with access_count >= 3."""
+def test_evaluate_tiers_suggests_by_access_without_promoting(tmp_path: Path):
+    """evaluate_tiers should suggest review, not auto-promote by access_count."""
     from piia_engram.core import _read_json, _write_json
     engram = _make_engram(tmp_path / "engram")
     lesson = engram.add_lesson("Frequently accessed staging item for test", domain="test", tier="staging")
@@ -678,12 +678,14 @@ def test_evaluate_tiers_promotes_by_access(tmp_path: Path):
     _write_json(lessons_path, data)
 
     result = engram.evaluate_tiers()
-    assert result["promoted"] >= 1
+    assert result["promoted"] == 0
+    assert result["suggested"] >= 1
 
-    # Verify tier changed
+    # Verify tier did not change.
     updated = _read_json(lessons_path)
-    promoted = [l for l in updated if l.get("id") == lesson_id]
-    assert promoted[0]["tier"] == "verified"
+    suggested = [l for l in updated if l.get("id") == lesson_id]
+    assert suggested[0]["tier"] == "staging"
+    assert suggested[0]["promotion_suggested"] is True
 
 
 def test_decode_claude_project_name():

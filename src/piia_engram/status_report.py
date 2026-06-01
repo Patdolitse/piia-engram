@@ -18,6 +18,11 @@ from typing import Any
 from .storage import _engram_root
 
 
+SELF_REPAIR_LOOP_BUILTIN = "self-repair-loop"
+SELF_REPAIR_LOOP_TITLE = "Self-Repair Loop for Agent Work"
+SELF_REPAIR_LOOP_INSTALL_COMMAND = "engram playbook install self-repair-loop --yes"
+
+
 def _read_json_quiet(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -133,6 +138,41 @@ def _knowledge_summary(root: Path) -> dict[str, Any]:
         "decisions": decisions["total"],
         "playbooks": playbooks["total"],
     }
+
+
+def _builtin_playbook_summary(root: Path) -> dict[str, Any]:
+    index = _read_json_quiet(root / "playbooks" / "_index.json")
+    self_repair_status = {
+        "installed": False,
+        "id": "",
+        "scope_type": "",
+        "command": SELF_REPAIR_LOOP_INSTALL_COMMAND,
+    }
+    result = {
+        SELF_REPAIR_LOOP_BUILTIN: self_repair_status
+    }
+    if not isinstance(index, list):
+        return result
+
+    expected_title = SELF_REPAIR_LOOP_TITLE.strip().lower()
+    for entry in index:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("status", "active") != "active":
+            continue
+        builtin_name = str(entry.get("builtin_name") or "").strip().lower()
+        title = str(entry.get("title") or "").strip().lower()
+        if builtin_name != SELF_REPAIR_LOOP_BUILTIN and title != expected_title:
+            continue
+        scope = entry.get("scope") if isinstance(entry.get("scope"), dict) else {}
+        result[SELF_REPAIR_LOOP_BUILTIN] = {
+            "installed": True,
+            "id": str(entry.get("id") or ""),
+            "scope_type": str(scope.get("type") or entry.get("scope_type") or "global"),
+            "command": SELF_REPAIR_LOOP_INSTALL_COMMAND,
+        }
+        break
+    return result
 
 
 def _encoding_summary() -> dict[str, Any]:
@@ -277,6 +317,7 @@ def build_status(*, probe: bool = True) -> dict[str, Any]:
         "root": str(root),
         "storage": _storage_summary(root),
         "knowledge": _knowledge_summary(root),
+        "builtins": _builtin_playbook_summary(root),
         "sessions": _session_summary(root),
         "clients": _client_summary(),
         "encoding": _encoding_summary(),
@@ -312,6 +353,14 @@ def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) ->
     knowledge = status["knowledge"]
     sessions = status["sessions"]
     clients = status.get("clients", {"configured": 0, "total": 0, "tools": []})
+    builtins = status.get("builtins", {})
+    self_repair = {}
+    if isinstance(builtins, dict):
+        self_repair = (
+            builtins.get(SELF_REPAIR_LOOP_BUILTIN)
+            or builtins.get("self_repair_loop")
+            or {}
+        )
     encoding = status["encoding"]
     telemetry = status["telemetry"]
     mcp = status["mcp_entry"]
@@ -325,6 +374,11 @@ def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) ->
     client_mark = "!!" if clients.get("attention") or not clients.get("configured") else "ok"
     encoding_mark = "ok" if encoding.get("ok") else "!!"
     storage_path = "<engram-root>" if redact_paths else storage["path"]
+    self_repair_installed = bool(self_repair.get("installed"))
+    self_repair_line = "  [ok] Self-Repair Loop: installed"
+    if not self_repair_installed:
+        command = str(self_repair.get("command") or SELF_REPAIR_LOOP_INSTALL_COMMAND)
+        self_repair_line = f"  [--] Self-Repair Loop: missing (run: {command})"
     lines = [
         "Engram status",
         f"  [ok] Version: {status['version']}",
@@ -334,6 +388,7 @@ def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) ->
             f"{knowledge['total']} total, {knowledge['verified']} verified, "
             f"{knowledge['staging']} staging, {knowledge['archived']} archived"
         ),
+        self_repair_line,
         f"  [ok] Agent sessions: {sessions['count']} saved; latest {session_tail}",
         f"  [{client_mark}] MCP clients: {clients.get('configured', 0)}/{clients.get('total', 0)} configured",
         f"  [{mcp_mark}] MCP entry: {mcp.get('command')} - {mcp.get('message')}",
@@ -412,6 +467,7 @@ def render_status_html(status: dict[str, Any]) -> str:
       <h2>Next Commands</h2>
       <p><code>engram doctor</code> checks installation health.</p>
       <p><code>engram review</code> handles staged knowledge.</p>
+      <p><code>{html.escape(SELF_REPAIR_LOOP_INSTALL_COMMAND)}</code> installs the self-repair operating loop.</p>
       <p><code>engram sessions</code> lists saved cross-tool sessions.</p>
     </section>
   </main>

@@ -3,6 +3,7 @@
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 README = ROOT / "README.md"
 README_ZH = ROOT / "README.zh-CN.md"
+ARCHITECTURE = ROOT / "docs" / "architecture.md"
 MCP_SERVER = ROOT / "src" / "piia_engram" / "mcp_server.py"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
@@ -289,6 +291,28 @@ def test_mcp_tool_count_and_merge_tool():
     assert "get_knowledge_digest" not in tools
 
 
+def test_source_and_user_facing_docs_are_utf8_without_bom():
+    """Source and public docs must not gain a UTF-8 BOM during Windows edits."""
+    checked = [
+        *sorted((ROOT / "src" / "piia_engram").rglob("*.py")),
+        README,
+        README_ZH,
+        ARCHITECTURE,
+    ]
+    for path in checked:
+        assert not path.read_bytes().startswith(b"\xef\xbb\xbf"), (
+            f"{path.relative_to(ROOT)} starts with a UTF-8 BOM"
+        )
+
+
+def test_architecture_documents_current_tool_split():
+    """Architecture docs should carry the same 80/16/64 tool split as README."""
+    content = ARCHITECTURE.read_text(encoding="utf-8")
+    assert re.search(r"\b80 tools\b", content)
+    assert "16 Tier-1" in content
+    assert "64 Tier-2" in content
+
+
 def test_mcp_tools_default_to_core_tier(tmp_path: Path):
     """未设置 ENGRAM_TOOLS 时默认只加载 Tier-1 核心工具。"""
     tools = _registered_mcp_tools(tmp_path)
@@ -316,6 +340,7 @@ def test_setup_help_mentions_tool_tiers():
 
     assert "ENGRAM_TOOLS=all" in content
     assert "核心工具" in content
+    assert "playbook install self-repair-loop" in content
 
 
 def test_zh_readme_uses_pypi_install_and_41_tools():
@@ -323,7 +348,7 @@ def test_zh_readme_uses_pypi_install_and_41_tools():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "56 个" in content  # Tier-2 tool count
+    assert "64 个" in content  # Tier-2 tool count
     assert "16 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
@@ -347,6 +372,11 @@ def test_zh_readme_documents_tool_tiering():
     assert "Tier-2 高级" in content
     assert "`get_user_context`" in content
     assert "`wrap_up_session`" in content
+
+
+def test_readmes_document_self_repair_playbook_cli():
+    assert "playbook install self-repair-loop" in README.read_text(encoding="utf-8")
+    assert "playbook install self-repair-loop" in README_ZH.read_text(encoding="utf-8")
 
 
 def test_zh_readme_has_remote_deployment_section():

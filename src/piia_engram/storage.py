@@ -118,6 +118,7 @@ _ALLOWED_PLAYBOOK_UPDATE_FIELDS: frozenset = frozenset({
     "title", "description", "triggers", "domain", "steps",
     "preconditions", "pitfalls", "outcome", "source_tool",
     "source_url", "status", "parameters",
+    "scope", "scope_type", "project_id", "project_folder",
 })
 _ALLOWED_TOOL_UPDATE_FIELDS: frozenset = frozenset({
     "name", "category", "path", "version", "purpose",
