@@ -40,6 +40,7 @@ release-evidence/**
 
 # ── Root config & build metadata ────────────────────────────────────
 pyproject.toml
+MANIFEST.in
 .gitignore
 .coveragerc
 Dockerfile

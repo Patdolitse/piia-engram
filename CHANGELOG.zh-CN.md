@@ -6,6 +6,20 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.45.1] - 2026-06-01
+
+CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包处理，使干净 CI checkout 在 Linux、macOS、Windows 上都能稳定收集 cross-tool resume benchmark 测试。
+
+### 修复
+- 为 `demos/` 增加 package initializer，修复 CI 收集 `tests/test_cross_tool_resume_benchmark.py` 时的 `ModuleNotFoundError: No module named 'demos'`。
+
+### 测试
+- 全量套件：**2020 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过。
+
+### Release Evidence
+- 见 `release-evidence/v3.45.1.md`。
+
 ## [3.45.0] - 2026-06-01
 
 提取质量与管理工作流版本：Engram 现在更可靠地过滤短期提醒，保留带指标结果的工程发现，并为未来 GUI 提供更安全的 metadata-only 管理投影。

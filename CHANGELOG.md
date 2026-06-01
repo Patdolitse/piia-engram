@@ -8,6 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.45.1] - 2026-06-01
+
+The CI packaging patch release: Engram now packages the `demos` namespace so clean CI checkouts can import the cross-tool resume benchmark tests consistently on Linux, macOS, and Windows.
+
+### Fixed
+- Added a package initializer for `demos/`, fixing `ModuleNotFoundError: No module named 'demos'` during CI collection of `tests/test_cross_tool_resume_benchmark.py`.
+
+### Tests
+- Full suite: **2020 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed.
+
+### Release Evidence
+- See `release-evidence/v3.45.1.md`.
+
 ## [3.45.0] - 2026-06-01
 
 The extraction and management workflow release: Engram now filters short-lived reminders more reliably, keeps metric-backed operational findings, and exposes safer metadata-only management projections for future UI work.
