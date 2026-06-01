@@ -4807,7 +4807,9 @@ def _print_management_usage() -> None:
     print(
         "Usage:\n"
         "  engram management [--project PATH] [--review-limit N] [--playbook-limit N]\n"
-        "  engram management --json [--project PATH] [--review-limit N] [--playbook-limit N]\n"
+        "                    [--review-kind all|lesson|decision] [--quality all|low|ok|missing]\n"
+        "                    [--playbook-state all|active|archived|deleted|staging] [--scope all|global|project]\n"
+        "  engram management --json [same options]\n"
         "  engram management action review approve|archive <id> [--yes] [--json]\n"
         "  engram management action playbook archive|delete|restore <id> [--yes] [--json]\n"
         "  engram management action playbook_scope accept_global|accept_project|skip <id> [--project PATH] [--yes] [--json]\n"
@@ -4887,6 +4889,10 @@ def run_management(argv: list[str] | None = None) -> int:
     review_limit = 50
     playbook_limit = 50
     json_output = False
+    review_kind = "all"
+    quality_status = "all"
+    playbook_state = "all"
+    scope_type = "all"
     i = 0
     while i < len(args):
         arg = args[i]
@@ -4924,6 +4930,34 @@ def run_management(argv: list[str] | None = None) -> int:
                 print("--playbook-limit must be an integer")
                 return 2
             i += 1
+        elif arg == "--review-kind":
+            if i + 1 >= len(args):
+                print("Missing value for --review-kind")
+                _print_management_usage()
+                return 2
+            review_kind = args[i + 1]
+            i += 1
+        elif arg == "--quality":
+            if i + 1 >= len(args):
+                print("Missing value for --quality")
+                _print_management_usage()
+                return 2
+            quality_status = args[i + 1]
+            i += 1
+        elif arg == "--playbook-state":
+            if i + 1 >= len(args):
+                print("Missing value for --playbook-state")
+                _print_management_usage()
+                return 2
+            playbook_state = args[i + 1]
+            i += 1
+        elif arg == "--scope":
+            if i + 1 >= len(args):
+                print("Missing value for --scope")
+                _print_management_usage()
+                return 2
+            scope_type = args[i + 1]
+            i += 1
         else:
             print(f"Unknown management option: {arg}")
             _print_management_usage()
@@ -4935,6 +4969,10 @@ def run_management(argv: list[str] | None = None) -> int:
         project_folder=project_folder,
         review_limit=review_limit,
         playbook_limit=playbook_limit,
+        review_kind=review_kind,
+        quality_status=quality_status,
+        playbook_state=playbook_state,
+        scope_type=scope_type,
     )
     if json_output:
         print(json.dumps(view, ensure_ascii=False, indent=2))

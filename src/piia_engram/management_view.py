@@ -94,13 +94,34 @@ def _review_entry(kind: str, item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _review_items(eng, limit: int) -> list[dict[str, Any]]:
+    return _review_items_filtered(
+        eng,
+        limit=limit,
+        review_kind="all",
+        quality_status="all",
+    )
+
+
+def _review_items_filtered(
+    eng,
+    *,
+    limit: int,
+    review_kind: str,
+    quality_status: str,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    kind_filter = str(review_kind or "all").strip().lower()
+    quality_filter = str(quality_status or "all").strip().lower()
     for lesson in eng.get_lessons(limit=None, _update_access=False):
         if lesson.get("tier") == "staging":
             rows.append(_review_entry("lesson", lesson))
     for decision in eng.get_decisions(limit=None, _update_access=False):
         if decision.get("tier") == "staging":
             rows.append(_review_entry("decision", decision))
+    if kind_filter in {"lesson", "decision"}:
+        rows = [item for item in rows if item.get("kind") == kind_filter]
+    if quality_filter in {"low", "ok", "missing"}:
+        rows = [item for item in rows if item.get("quality_status") == quality_filter]
     rows.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
     return rows[: max(0, int(limit))]
 
@@ -128,10 +149,18 @@ def _playbook_entry(item: dict[str, Any]) -> dict[str, Any]:
     }, PLAYBOOK_ITEM_KEYS)
 
 
-def _playbook_items(eng, *, project_folder: str, limit: int) -> tuple[list[dict[str, Any]], int]:
+def _playbook_items(
+    eng,
+    *,
+    project_folder: str,
+    limit: int,
+    playbook_state: str,
+    scope_type: str,
+) -> tuple[list[dict[str, Any]], int]:
     result = eng.list_playbooks_for_management(
         status="all",
         project_folder=project_folder or None,
+        scope_type=scope_type,
         include_content=False,
         limit=max(0, int(limit)),
     )
@@ -139,6 +168,9 @@ def _playbook_items(eng, *, project_folder: str, limit: int) -> tuple[list[dict[
     if not isinstance(raw_items, list):
         raw_items = []
     items = [_playbook_entry(item) for item in raw_items if isinstance(item, dict)]
+    state_filter = str(playbook_state or "all").strip().lower()
+    if state_filter in {"active", "archived", "deleted", "staging"}:
+        items = [item for item in items if item.get("state") == state_filter]
 
     scope_review_pending = 0
     try:
@@ -160,13 +192,37 @@ def build_management_view(
     review_limit: int = 50,
     playbook_limit: int = 50,
     session_limit: int = 500,
+    review_kind: str = "all",
+    quality_status: str = "all",
+    playbook_state: str = "all",
+    scope_type: str = "all",
 ) -> dict[str, Any]:
     """Build a closed, metadata-only projection for management UIs."""
-    reviews = _review_items(eng, review_limit)
+    review_kind = str(review_kind or "all").strip().lower()
+    quality_status = str(quality_status or "all").strip().lower()
+    playbook_state = str(playbook_state or "all").strip().lower()
+    scope_type = str(scope_type or "all").strip().lower()
+    if review_kind not in {"all", "lesson", "decision"}:
+        review_kind = "all"
+    if quality_status not in {"all", "low", "ok", "missing"}:
+        quality_status = "all"
+    if playbook_state not in {"all", "active", "archived", "deleted", "staging"}:
+        playbook_state = "all"
+    if scope_type not in {"all", "global", "project"}:
+        scope_type = "all"
+
+    reviews = _review_items_filtered(
+        eng,
+        limit=review_limit,
+        review_kind=review_kind,
+        quality_status=quality_status,
+    )
     playbooks, scope_review_pending = _playbook_items(
         eng,
         project_folder=project_folder,
         limit=playbook_limit,
+        playbook_state=playbook_state,
+        scope_type=scope_type,
     )
     states = [str(item.get("state") or "") for item in playbooks]
     continuity = build_continuity_report(
@@ -181,6 +237,13 @@ def build_management_view(
     return {
         "schema": 1,
         "generated_at": _now_iso(),
+        "filters": {
+            "project": "set" if project_folder else "",
+            "review_kind": review_kind,
+            "quality_status": quality_status,
+            "playbook_state": playbook_state,
+            "scope_type": scope_type,
+        },
         "storage": {
             "kind": "local_json",
             "root_configured": bool(getattr(eng, "root", None)),

@@ -106,6 +106,18 @@ _BUILTIN_PLAYBOOKS: dict[str, dict] = {
                 "detail": "Convert the desired behavior into one or more falsifiable statements that tests or fact tables can verify.",
             },
             {
+                "action": "Verify the deliverable itself",
+                "detail": "Inspect the actual report, file, UI output, or generated artifact against the invariant before trusting helper summaries or intermediate logs.",
+            },
+            {
+                "action": "Converge to one trusted artifact",
+                "detail": "If local patches create contradictory or duplicate facts, stop layering fixes and rewrite or reconcile the output into a single trusted version before running residual scans again.",
+            },
+            {
+                "action": "Research in parallel",
+                "detail": "When a tool, API, or process failure might depend on current behavior, combine local reproduction with official docs and community references instead of relying only on local guesswork.",
+            },
+            {
                 "action": "Write the red test",
                 "detail": "Add the smallest regression test that fails for the current behavior and proves the invariant is real.",
             },
@@ -139,6 +151,8 @@ _BUILTIN_PLAYBOOKS: dict[str, dict] = {
             "Do not feed Claude broad multi-file context when a fact table is enough.",
             "On Windows, verify UTF-8 readback and BOM bytes after generated edits.",
             "Do not confuse a verifier defect with a product defect; first make the checker reproducible and encoding-safe.",
+            "Do not keep multiple contradictory versions of a report or artifact; converge first, then re-verify.",
+            "Do not rely only on local guesswork when current tooling may have changed; check official docs and community references.",
         ],
         "outcome": (
             "Failures become durable process improvements: stronger tests, clearer "
@@ -1826,6 +1840,39 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             index.append(idx_entry)
         self._write_playbook_index(index)
 
+    @staticmethod
+    def _scope_impact_summary(
+        *,
+        pending_key: str,
+        completed_key: str,
+        pending: list[dict],
+        completed: list[dict],
+        skipped: list[dict],
+        requires_confirmation: bool,
+    ) -> dict:
+        """Return metadata-only batch impact counts for management surfaces."""
+        target_scope_counts: dict[str, int] = {}
+        for change in [*pending, *completed]:
+            scope = change.get("to_scope")
+            if not isinstance(scope, dict):
+                continue
+            scope_type = str(scope.get("type") or "unknown")
+            target_scope_counts[scope_type] = target_scope_counts.get(scope_type, 0) + 1
+
+        skipped_reason_counts: dict[str, int] = {}
+        for item in skipped:
+            reason = str(item.get("reason") or "unknown")
+            skipped_reason_counts[reason] = skipped_reason_counts.get(reason, 0) + 1
+
+        return {
+            pending_key: len(pending),
+            completed_key: len(completed),
+            "skipped_count": len(skipped),
+            "target_scope_counts": target_scope_counts,
+            "skipped_reason_counts": skipped_reason_counts,
+            "requires_confirmation": bool(requires_confirmation),
+        }
+
     def apply_legacy_playbook_scope_suggestions(
         self,
         project_folders: list[str] | None = None,
@@ -1950,6 +1997,14 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "would_apply": would_apply,
             "applied": applied,
             "skipped": skipped,
+            "impact": self._scope_impact_summary(
+                pending_key="would_apply_count",
+                completed_key="applied_count",
+                pending=would_apply,
+                completed=applied,
+                skipped=skipped,
+                requires_confirmation=not confirm,
+            ),
         }
 
     def rollback_playbook_scope_migration(
@@ -2025,6 +2080,14 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "would_rollback": would_rollback,
             "rolled_back": rolled_back,
             "skipped": skipped,
+            "impact": self._scope_impact_summary(
+                pending_key="would_rollback_count",
+                completed_key="rolled_back_count",
+                pending=would_rollback,
+                completed=rolled_back,
+                skipped=skipped,
+                requires_confirmation=not confirm,
+            ),
         }
 
     def get_playbook_scope_review_queue(

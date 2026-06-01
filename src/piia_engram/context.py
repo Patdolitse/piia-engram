@@ -130,6 +130,14 @@ def _assess_extraction_candidate(
         score += 0.12
 
     if re.search(
+        r"(\b\d+(?:\.\d+)?\s*(?:%|percent|ms|s|sec|seconds|x)\b|"
+        r"\b(reduced|increased|dropped|improved|regressed|sped up|slowed down)\b)",
+        lowered,
+    ):
+        signals.append("measured_outcome")
+        score += 0.08
+
+    if re.search(
         r"\b(pytest|twine|pypi|github|mcp|registry|release|ci|api|"
         r"pip|venv|fastapi|flask|postgresql|redis|git|rebase|uv|playbook|"
         r"claude|codex)\b",
@@ -154,6 +162,14 @@ def _assess_extraction_candidate(
         flags.append("meta_discussion")
         score -= 0.18
 
+    if re.search(
+        r"\b(today|tomorrow|tonight|this morning|this afternoon|this evening|"
+        r"later today|next week|next month|send|email|call|message|ping|remind)\b",
+        lowered,
+    ) and not any(signal in signals for signal in ("evidence_or_outcome", "measured_outcome")):
+        flags.append("ephemeral_todo")
+        score -= 0.35
+
     if len(normalized) < 12:
         flags.append("too_short")
         score -= 0.20
@@ -166,6 +182,8 @@ def _assess_extraction_candidate(
     if "open_question" in flags and not any(
         signal in signals for signal in ("decision_commitment", "structured_decision_choice")
     ):
+        accepted = False
+    if "ephemeral_todo" in flags:
         accepted = False
 
     reason = "accepted" if accepted else "low_quality"

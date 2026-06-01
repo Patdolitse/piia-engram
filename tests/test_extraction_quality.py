@@ -248,3 +248,43 @@ def test_ingest_extraction_rejected_quality_summary_is_metadata_only(tmp_path: P
     assert rejected["candidate_types"]["decision"] == 1
     assert "Maybe consider" not in str(rejected)
     assert "Should we evaluate" not in str(rejected)
+
+
+def test_auto_extraction_rejects_ephemeral_personal_reminders(tmp_path: Path):
+    """Short-lived reminders should not become durable lessons."""
+    reminder = "Remember to send Alice the status update tomorrow"
+
+    notes_eng = _engram(tmp_path / "notes")
+    notes_result = notes_eng.ingest_notes(reminder, source_tool="test")
+    assert _knowledge_counts(notes_eng) == (0, 0)
+    assert notes_result["rejected_quality"]["flags"]["ephemeral_todo"] == 1
+    assert "Alice" not in str(notes_result["rejected_quality"])
+
+    session_eng = _engram(tmp_path / "session")
+    session_result = session_eng.extract_session_insights(reminder, source_tool="test")
+    assert _knowledge_counts(session_eng) == (0, 0)
+    assert session_result["rejected_quality"]["flags"]["ephemeral_todo"] == 1
+
+    llm_eng = _engram(tmp_path / "llm")
+    extracted = {"lessons": [{"summary": reminder, "confidence": 0.95}]}
+    llm_result = ingest_extraction(llm_eng, extracted, str(tmp_path), session_id="ephemeral")
+    assert _knowledge_counts(llm_eng) == (0, 0)
+    assert llm_result["rejected_quality"]["flags"]["ephemeral_todo"] == 1
+
+
+def test_metric_backed_operational_findings_are_kept(tmp_path: Path):
+    """Concrete measured outcomes are durable even without an explicit lesson verb."""
+    eng = _engram(tmp_path)
+    notes = (
+        "Found that connection pooling reduced API latency by 38 percent "
+        "after switching to Redis"
+    )
+
+    result = eng.ingest_notes(notes, source_tool="test")
+
+    assert result["saved_lessons"] == 1
+    lessons = eng.get_lessons(limit=None, _update_access=False)
+    assert lessons[0]["tier"] == "staging"
+    signals = lessons[0]["extraction"]["quality_signals"]
+    assert "measured_outcome" in signals
+    assert "evidence_or_outcome" in signals

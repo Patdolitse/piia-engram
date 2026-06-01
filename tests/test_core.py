@@ -4305,6 +4305,25 @@ def test_self_repair_loop_playbook_includes_verifier_self_check(tmp_path: Path):
     assert "codepoint" in body
 
 
+def test_self_repair_loop_playbook_includes_single_source_convergence_and_research(
+    tmp_path: Path,
+):
+    """The built-in loop should capture the latest self-repair operating method."""
+    engram = make_engram(tmp_path)
+
+    playbook = engram.builtin_playbook_template("self-repair-loop")
+    actions = [step["action"] for step in playbook["steps"]]
+    body = json.dumps(playbook, ensure_ascii=False).lower()
+
+    assert "Verify the deliverable itself" in actions
+    assert "Converge to one trusted artifact" in actions
+    assert "Research in parallel" in actions
+    assert "single trusted version" in body
+    assert "local reproduction" in body
+    assert "official docs" in body
+    assert "community references" in body
+
+
 def test_install_self_repair_loop_playbook_confirm_is_idempotent(tmp_path: Path):
     engram = make_engram(tmp_path)
 
@@ -4689,6 +4708,36 @@ def test_apply_legacy_playbook_scope_suggestions_dry_run_only(tmp_path: Path):
     assert "scope_migration_history" not in stored
 
 
+def test_apply_legacy_playbook_scope_suggestions_returns_impact_summary(
+    tmp_path: Path,
+):
+    """Batch migration previews should expose metadata-only impact counts."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    engram.save_project_snapshot(project, {"title": "Engram"})
+    ready = engram.add_playbook({
+        "title": "Engram release checklist",
+        "triggers": ["engram", "release"],
+    })
+    ambiguous = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=True,
+        confirm=False,
+    )
+
+    assert result["impact"] == {
+        "would_apply_count": 1,
+        "applied_count": 0,
+        "skipped_count": 1,
+        "target_scope_counts": {"project": 1},
+        "skipped_reason_counts": {"not_apply_ready": 1},
+        "requires_confirmation": True,
+    }
+    assert ready["title"] not in str(result["impact"])
+    assert ambiguous["title"] not in str(result["impact"])
+
+
 def test_apply_legacy_playbook_scope_suggestions_confirm_alone_still_previews(
     tmp_path: Path,
 ):
@@ -4772,6 +4821,35 @@ def test_rollback_playbook_scope_migration_restores_previous_scope(tmp_path: Pat
     stored = engram.get_playbook(pb["id"], _update_access=False)
     assert stored["scope"]["type"] == "global"
     assert stored.get("scope_migration_history") == []
+
+
+def test_rollback_playbook_scope_migration_returns_impact_summary(tmp_path: Path):
+    """Rollback previews should provide counts without Playbook bodies."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    engram.save_project_snapshot(project, {"title": "Engram"})
+    pb = engram.add_playbook({
+        "title": "Engram release checklist",
+        "description": "PRIVATE PLAYBOOK BODY",
+        "triggers": ["engram", "release"],
+    })
+    engram.apply_legacy_playbook_scope_suggestions(dry_run=False, confirm=True)
+
+    result = engram.rollback_playbook_scope_migration(
+        playbook_ids=[pb["id"]],
+        dry_run=True,
+        confirm=False,
+    )
+
+    assert result["impact"] == {
+        "would_rollback_count": 1,
+        "rolled_back_count": 0,
+        "skipped_count": 0,
+        "target_scope_counts": {"global": 1},
+        "skipped_reason_counts": {},
+        "requires_confirmation": True,
+    }
+    assert "PRIVATE PLAYBOOK BODY" not in str(result["impact"])
 
 
 def test_rollback_playbook_scope_migration_without_ids_rolls_back_all_confirmed(

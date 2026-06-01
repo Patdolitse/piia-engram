@@ -54,6 +54,7 @@ def test_management_view_schema_is_closed_and_metadata_only(tmp_path: Path) -> N
     assert set(view) == {
         "schema",
         "generated_at",
+        "filters",
         "storage",
         "continuity",
         "review_queue",
@@ -61,6 +62,13 @@ def test_management_view_schema_is_closed_and_metadata_only(tmp_path: Path) -> N
         "actions",
     }
     assert view["schema"] == 1
+    assert view["filters"] == {
+        "project": "set",
+        "review_kind": "all",
+        "quality_status": "all",
+        "playbook_state": "all",
+        "scope_type": "all",
+    }
     assert view["storage"] == {
         "kind": "local_json",
         "root_configured": True,
@@ -149,6 +157,25 @@ def test_management_view_text_summarizes_counts_without_payloads(
     assert SECRET not in out
 
 
+def test_management_view_text_does_not_echo_project_path(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_management
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    project = tmp_path / "private-project-path"
+    Engram().save_project_snapshot(str(project), {"title": "Private Project"})
+
+    assert run_management(["--project", str(project)]) == 0
+
+    out = capsys.readouterr().out
+    assert "Engram management view" in out
+    assert str(project) not in out
+
+
 def test_management_view_empty_store_and_zero_limits_are_stable(tmp_path: Path) -> None:
     from piia_engram.core import Engram
     from piia_engram.management_view import build_management_view
@@ -164,6 +191,90 @@ def test_management_view_empty_store_and_zero_limits_are_stable(tmp_path: Path) 
     assert view["review_queue"]["items"] == []
     assert view["playbooks"]["total"] == 0
     assert view["playbooks"]["items"] == []
+
+
+def test_management_view_filters_review_and_playbook_metadata_only(tmp_path: Path) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.management_view import build_management_view
+
+    eng = Engram(root=tmp_path)
+    low_lesson = eng.add_lesson({
+        "summary": f"{SECRET} low lesson",
+        "tier": "staging",
+        "extraction": {"quality_score": 0.41},
+    })
+    eng.add_decision({
+        "question": f"{SECRET} ok decision",
+        "choice": f"{SECRET} choice",
+        "tier": "staging",
+        "extraction": {"quality_score": 0.91},
+    })
+    active = eng.add_playbook({
+        "title": "Alpha active management flow",
+        "steps": [{"order": 1, "action": "active"}],
+    })
+    deleted = eng.add_playbook({
+        "title": "Beta deleted management flow",
+        "steps": [{"order": 1, "action": "deleted"}],
+    })
+    eng.delete_playbook(deleted["id"], dry_run=False, confirm=True)
+
+    view = build_management_view(
+        eng,
+        review_kind="lesson",
+        quality_status="low",
+        playbook_state="deleted",
+        scope_type="global",
+    )
+    rendered = json.dumps(view, ensure_ascii=False, sort_keys=True)
+
+    assert view["filters"]["review_kind"] == "lesson"
+    assert view["filters"]["quality_status"] == "low"
+    assert view["filters"]["playbook_state"] == "deleted"
+    assert view["filters"]["scope_type"] == "global"
+    assert [item["id"] for item in view["review_queue"]["items"]] == [low_lesson["id"]]
+    assert [item["id"] for item in view["playbooks"]["items"]] == [deleted["id"]]
+    assert active["id"] not in rendered
+    assert SECRET not in rendered
+
+
+def test_management_view_cli_accepts_gui_filters(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_management
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    eng = Engram()
+    eng.add_lesson({
+        "summary": f"{SECRET} low cli lesson",
+        "tier": "staging",
+        "extraction": {"quality_score": 0.42},
+    })
+    eng.add_decision({
+        "question": f"{SECRET} ok cli decision",
+        "choice": "accepted",
+        "tier": "staging",
+        "extraction": {"quality_score": 0.95},
+    })
+
+    assert run_management([
+        "--json",
+        "--review-kind",
+        "lesson",
+        "--quality",
+        "low",
+    ]) == 0
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["filters"]["review_kind"] == "lesson"
+    assert payload["filters"]["quality_status"] == "low"
+    assert payload["review_queue"]["pending_count"] == 1
+    assert payload["review_queue"]["items"][0]["kind"] == "lesson"
+    assert SECRET not in out
 
 
 def test_management_view_entry_key_contracts_are_runtime_checked(
