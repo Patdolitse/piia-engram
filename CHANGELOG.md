@@ -8,6 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.45.2] - 2026-06-01
+
+The CI entry-point patch release: Engram now makes the cross-tool resume benchmark test robust under the `pytest` console-script entry point used by GitHub Actions, not only `python -m pytest` local runs.
+
+### Fixed
+- Added an explicit repository-root import guard in `tests/test_cross_tool_resume_benchmark.py`, fixing CI collection when `pytest` runs with `src` on `PYTHONPATH` but without the repository root on `sys.path`.
+
+### Tests
+- Full suite: **2020 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
+- CI-style regression: `pytest tests/test_cross_tool_resume_benchmark.py -q` passes without `PYTHONPATH`.
+
+### Release Evidence
+- See `release-evidence/v3.45.2.md`.
+
 ## [3.45.1] - 2026-06-01
 
 The CI packaging patch release: Engram now packages the `demos` namespace so clean CI checkouts can import the cross-tool resume benchmark tests consistently on Linux, macOS, and Windows.

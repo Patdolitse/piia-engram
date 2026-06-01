@@ -6,6 +6,20 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.45.2] - 2026-06-01
+
+CI 入口补丁版本：Engram 现在让 cross-tool resume benchmark 测试同时适配 GitHub Actions 使用的 `pytest` console-script 入口，而不只依赖本地 `python -m pytest`。
+
+### 修复
+- 在 `tests/test_cross_tool_resume_benchmark.py` 增加显式 repo root 导入保护，修复 `pytest` 在只把 `src` 放入 `PYTHONPATH`、但没有把仓库根目录放入 `sys.path` 时的 CI 收集失败。
+
+### 测试
+- 全量套件：**2020 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
+- CI 形态回归：`pytest tests/test_cross_tool_resume_benchmark.py -q` 在不设置 `PYTHONPATH` 时通过。
+
+### Release Evidence
+- 见 `release-evidence/v3.45.2.md`。
+
 ## [3.45.1] - 2026-06-01
 
 CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包处理，使干净 CI checkout 在 Linux、macOS、Windows 上都能稳定收集 cross-tool resume benchmark 测试。

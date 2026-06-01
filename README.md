@@ -663,7 +663,7 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.45.1 (2026-06-01) |
+| | v3.45.2 (2026-06-01) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **16 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
