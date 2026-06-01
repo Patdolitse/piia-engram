@@ -123,3 +123,61 @@ def test_cross_tool_continuity_demo_uses_isolated_store():
     assert "source_tool: claude_code_demo" in out
     assert str(Path.home()) not in out
     assert "DATA FRAGMENTATION" not in out
+
+
+def test_cross_tool_continuity_demo_json_is_metadata_only():
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONPATH"] = str(ROOT / "src")
+    result = subprocess.run(
+        [sys.executable, "demos/cross_tool_continuity_demo.py", "--json"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert set(payload) == {
+        "schema",
+        "isolated_store",
+        "write_tool",
+        "resume_tool",
+        "search_tool",
+        "resume_checks",
+        "search_checks",
+        "loop_checks",
+        "loop_passed",
+        "continuity",
+    }
+    assert payload["schema"] == 1
+    assert payload["isolated_store"] is True
+    assert payload["write_tool"] == "claude_code_demo"
+    assert payload["resume_tool"] == "codex_demo"
+    assert payload["search_tool"] == "cursor_demo"
+    assert payload["loop_checks"] == {
+        "write_created_demo_memory": True,
+        "resume_found_recent_context": True,
+        "resume_preserved_source_tool": True,
+        "search_found_demo_memory": True,
+        "search_preserved_source_tool": True,
+    }
+    assert payload["loop_passed"] is True
+    assert set(payload["continuity"]) == {"readiness_level"}
+    assert payload["continuity"]["readiness_level"] in {
+        "cross_tool_ready",
+        "observed_signals",
+    }
+
+    text = json.dumps(payload, ensure_ascii=False)
+    assert "verify the signature before writing business state" not in text
+    assert "The handler should keep raw event metadata" not in text
+    assert "session_id" not in text
+    assert "memory_body" not in text
+    assert "raw_path" not in text
+    assert "decision_reasoning" not in text
+    assert str(Path.home()) not in text
+    assert "engram-cross-tool-demo-" not in text

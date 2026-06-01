@@ -70,6 +70,29 @@ python demos/cross_tool_continuity_demo.py --keep
 
 The `--keep` mode prints the temporary path. Do not use real user data in screenshots from this mode.
 
+## Machine-readable proof
+
+For CI, audits, or release evidence, use JSON mode:
+
+```bash
+python demos/cross_tool_continuity_demo.py --json
+```
+
+This emits a metadata-only payload with:
+
+- `loop_checks`: booleans for the synthetic write -> resume -> search -> provenance loop;
+- `loop_passed`: `true` only when all loop checks pass;
+- `continuity.readiness_level`: the metadata readiness level from `engram continuity`.
+
+The JSON output does not include memory bodies, local paths, temporary root names, session IDs, or raw telemetry payloads.
+
+Important distinction:
+
+- `engram continuity` reports readiness metadata from an Engram store.
+- `cross_tool_continuity_demo.py --json` proves a synthetic isolated A -> B -> C loop.
+
+Readiness is useful operational evidence, but the demo JSON is the bounded proof that a simulated Claude Code write can be resumed by a simulated Codex session and found by a simulated Cursor/Windsurf search.
+
 ## Public screenshot walkthrough
 
 Use this version for README images, blog posts, or MCP directory screenshots.

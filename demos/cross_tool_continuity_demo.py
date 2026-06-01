@@ -12,6 +12,7 @@ Run from the repository root:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -25,6 +26,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from piia_engram.core import Engram  # noqa: E402
+from piia_engram.continuity_report import build_continuity_report  # noqa: E402
 
 
 DEMO_PROJECT = "<demo-project>"
@@ -34,7 +36,7 @@ def _print_step(title: str) -> None:
     print(f"\n== {title} ==")
 
 
-def _seed_demo_store(root: Path) -> Engram:
+def _seed_demo_store(root: Path, *, verbose: bool = True) -> tuple[Engram, dict[str, str]]:
     engram = Engram(root=root)
 
     engram.update_profile(
@@ -98,32 +100,57 @@ def _seed_demo_store(root: Path) -> Engram:
         ],
     )
 
-    print("[Claude Code] wrote:")
-    print(f"  lesson: {lesson.get('id', '<id>')} source_tool={lesson.get('source_tool')}")
-    print(f"  decision: {decision.get('id', '<id>')} source_tool={decision.get('source_tool')}")
-    print(f"  session: {context.get('session_id')} tool={context.get('tool')}")
+    if verbose:
+        print("[Claude Code] wrote:")
+        print(f"  lesson: {lesson.get('id', '<id>')} source_tool={lesson.get('source_tool')}")
+        print(
+            f"  decision: {decision.get('id', '<id>')} "
+            f"source_tool={decision.get('source_tool')}"
+        )
+        print(f"  session: {context.get('session_id')} tool={context.get('tool')}")
 
-    return engram
+    return engram, {
+        "lesson_id": str(lesson.get("id") or ""),
+        "decision_id": str(decision.get("id") or ""),
+        "session_id": str(context.get("session_id") or ""),
+    }
 
 
-def _simulate_codex(engram: Engram) -> None:
-    _print_step("Codex opens a new session")
+def _simulate_codex(engram: Engram, *, verbose: bool = True) -> dict[str, bool]:
+    if verbose:
+        _print_step("Codex opens a new session")
     brief = engram.get_resume_brief(project_folder=DEMO_PROJECT, token_budget=650)
     markdown = brief.get("markdown", "")
-    checks = [
-        "solo SaaS developer" in markdown,
-        "payment webhook" in markdown.lower(),
-        "claude_code_demo" in markdown,
-    ]
-    print("[Codex] resume brief includes:")
-    print(f"  identity: {'yes' if checks[0] else 'no'}")
-    print(f"  recent payment context: {'yes' if checks[1] else 'no'}")
-    print(f"  source provenance: {'yes' if checks[2] else 'no'}")
-    print("  suggested next step: add retry tests before changing handler logic")
+    checks = {
+        "identity": "solo SaaS developer" in markdown,
+        "recent_context": "payment webhook" in markdown.lower(),
+        "source_provenance": "claude_code_demo" in markdown,
+        "suggested_next_step": "retry tests" in markdown.lower(),
+    }
+    engram.save_agent_context(
+        tool="codex_demo",
+        project_folder=DEMO_PROJECT,
+        content="Read the handoff and identified retry tests as the next safe step.",
+        actions=[
+            {
+                "tool_called": "get_resume_brief",
+                "arguments_summary": "project_folder=<demo-project>, token_budget=650",
+                "result_summary": "metadata-only resume brief loaded",
+            }
+        ],
+    )
+    if verbose:
+        print("[Codex] resume brief includes:")
+        print(f"  identity: {'yes' if checks['identity'] else 'no'}")
+        print(f"  recent payment context: {'yes' if checks['recent_context'] else 'no'}")
+        print(f"  source provenance: {'yes' if checks['source_provenance'] else 'no'}")
+        print("  suggested next step: add retry tests before changing handler logic")
+    return checks
 
 
-def _simulate_cursor(engram: Engram) -> None:
-    _print_step("Cursor/Windsurf searches the same memory")
+def _simulate_cursor(engram: Engram, *, verbose: bool = True) -> dict[str, bool]:
+    if verbose:
+        _print_step("Cursor/Windsurf searches the same memory")
     result = engram.search_knowledge("payment webhooks signature replayable", scope="all", limit=5)
     matches = []
     if isinstance(result, dict):
@@ -134,23 +161,69 @@ def _simulate_cursor(engram: Engram) -> None:
     first = matches[0] if matches else {}
     source_tool = first.get("source_tool", "<missing>")
     summary = first.get("summary") or first.get("question") or "<missing>"
-    print("[Cursor] search_knowledge('payment webhooks signature replayable'):")
-    print(f"  found: {'yes' if matches else 'no'}")
-    print(f"  source_tool: {source_tool}")
-    print(f"  summary: {summary[:100]}")
+    checks = {
+        "found": bool(matches),
+        "source_provenance": source_tool == "claude_code_demo",
+    }
+    engram.save_agent_context(
+        tool="cursor_demo",
+        project_folder=DEMO_PROJECT,
+        content="Searched the shared store and confirmed provenance metadata.",
+        actions=[
+            {
+                "tool_called": "search_knowledge",
+                "arguments_summary": "query=payment webhooks signature replayable",
+                "result_summary": "metadata-only provenance confirmed",
+            }
+        ],
+    )
+    if verbose:
+        print("[Cursor] search_knowledge('payment webhooks signature replayable'):")
+        print(f"  found: {'yes' if matches else 'no'}")
+        print(f"  source_tool: {source_tool}")
+        print(f"  summary: {summary[:100]}")
+    return checks
 
 
 def run_demo(root: Path) -> None:
     print("piia-engram cross-tool continuity demo")
     print("Store: <demo-root> (isolated temporary data, not ~/.engram)")
     _print_step("Claude Code records the handoff")
-    engram = _seed_demo_store(root)
+    engram, _seed = _seed_demo_store(root)
     _simulate_codex(engram)
     _simulate_cursor(engram)
     _print_step("Result")
     print("The same local Engram store was written by a simulated Claude Code client")
     print("and read by simulated Codex and Cursor/Windsurf clients.")
     print("No real user identity, local path, token, or project name is required.")
+
+
+def build_demo_payload(root: Path) -> dict[str, object]:
+    engram, seed = _seed_demo_store(root, verbose=False)
+    resume_checks = _simulate_codex(engram, verbose=False)
+    search_checks = _simulate_cursor(engram, verbose=False)
+    continuity = build_continuity_report(engram, project_folder=DEMO_PROJECT)
+    loop_checks = {
+        "write_created_demo_memory": bool(seed["lesson_id"] and seed["decision_id"]),
+        "resume_found_recent_context": bool(resume_checks["recent_context"]),
+        "resume_preserved_source_tool": bool(resume_checks["source_provenance"]),
+        "search_found_demo_memory": bool(search_checks["found"]),
+        "search_preserved_source_tool": bool(search_checks["source_provenance"]),
+    }
+    return {
+        "schema": 1,
+        "isolated_store": True,
+        "write_tool": "claude_code_demo",
+        "resume_tool": "codex_demo",
+        "search_tool": "cursor_demo",
+        "resume_checks": resume_checks,
+        "search_checks": search_checks,
+        "loop_checks": loop_checks,
+        "loop_passed": all(loop_checks.values()),
+        "continuity": {
+            "readiness_level": continuity.get("readiness_level", continuity.get("verdict", "")),
+        },
+    }
 
 
 def main() -> int:
@@ -160,14 +233,22 @@ def main() -> int:
         action="store_true",
         help="Keep the temporary demo store after the run and print its path.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a metadata-only JSON proof for automated checks.",
+    )
     args = parser.parse_args()
 
     temp_dir = Path(tempfile.mkdtemp(prefix="engram-cross-tool-demo-"))
     previous_engram_test = os.environ.get("ENGRAM_TEST")
     os.environ["ENGRAM_TEST"] = "1"
     try:
-        run_demo(temp_dir)
-        if args.keep:
+        if args.json:
+            print(json.dumps(build_demo_payload(temp_dir), ensure_ascii=False))
+        else:
+            run_demo(temp_dir)
+        if args.keep and not args.json:
             print(f"\nKept demo store: {temp_dir}")
         return 0
     finally:

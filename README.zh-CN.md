@@ -150,6 +150,16 @@ engram repair-encoding        # dry-run 扫描乱码 / mojibake
 engram repair-encoding --apply  # 备份后修复可逆乱码
 ```
 
+`engram continuity` 只报告接续就绪度元数据，不输出记忆正文、原始遥测、session id 或本地路径。
+
+如果需要机器可读的合成链路证明，可以运行：
+
+```bash
+python demos/cross_tool_continuity_demo.py --json
+```
+
+区别是：`engram continuity` 证明当前存储具备接续条件；demo JSON 用合成数据证明 write -> resume -> search -> provenance 这条隔离链路真的能跑通。
+
 ### 效果预览
 
 ```

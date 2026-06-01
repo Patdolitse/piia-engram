@@ -10,6 +10,14 @@ from typing import Any
 
 _CONTEXT_LOAD_TOOLS = {"get_user_context", "get_resume_brief"}
 _WRAP_UP_TOOLS = {"wrap_up_session"}
+READINESS_LEVELS = frozenset(
+    {
+        "not_ready",
+        "single_tool_ready",
+        "cross_tool_ready",
+        "observed_signals",
+    }
+)
 
 
 def _nonnegative_int(value: Any) -> int:
@@ -103,6 +111,22 @@ def _build_recall_signals(root: Path) -> dict[str, Any]:
     }
 
 
+def _readiness_level(checks: dict[str, bool]) -> str:
+    """Map metadata checks to a conservative continuity readiness label."""
+    if not checks.get("has_saved_sessions"):
+        return "not_ready"
+    if (
+        checks.get("has_multiple_tools")
+        and checks.get("resume_brief_builds")
+        and checks.get("has_context_load_signal")
+        and checks.get("has_wrap_up_signal")
+    ):
+        return "observed_signals"
+    if checks.get("has_multiple_tools") and checks.get("resume_brief_builds"):
+        return "cross_tool_ready"
+    return "single_tool_ready"
+
+
 def build_continuity_report(
     eng,
     *,
@@ -144,6 +168,20 @@ def build_continuity_report(
     session_count = len(sessions)
     tool_count = len(tools)
     cross_tool_ready = tool_count >= 2
+    recall_signals = _build_recall_signals(Path(eng.root))
+    beta_events = recall_signals.get("beta_events") or {}
+    readiness_checks = {
+        "has_saved_sessions": session_count > 0,
+        "has_multiple_tools": tool_count >= 2,
+        "resume_brief_builds": bool(brief_meta["builds"]),
+        "has_context_load_signal": _nonnegative_int(
+            recall_signals.get("context_load_calls")
+        )
+        > 0
+        or _nonnegative_int(beta_events.get("cold_start_events")) > 0,
+        "has_wrap_up_signal": _nonnegative_int(recall_signals.get("wrap_up_calls")) > 0
+        or _nonnegative_int(beta_events.get("session_end_events")) > 0,
+    }
     if cross_tool_ready and brief_meta["builds"]:
         verdict = "ready"
     elif session_count and brief_meta["builds"]:
@@ -167,7 +205,9 @@ def build_continuity_report(
             "size_bytes": latest.get("size_bytes") if latest else None,
         },
         "resume_brief": brief_meta,
-        "recall_signals": _build_recall_signals(Path(eng.root)),
+        "recall_signals": recall_signals,
+        "readiness_checks": readiness_checks,
+        "readiness_level": _readiness_level(readiness_checks),
         "project": {
             "provided": bool(project_folder),
             "name": Path(project_folder).name if project_folder else "",

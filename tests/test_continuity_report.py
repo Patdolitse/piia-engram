@@ -73,6 +73,8 @@ def test_continuity_report_schema_is_explicit_allowlist(tmp_path: Path) -> None:
         "latest",
         "resume_brief",
         "recall_signals",
+        "readiness_checks",
+        "readiness_level",
         "project",
     }
     assert set(report["latest"]) == {"tool", "modified_at", "size_bytes"}
@@ -101,7 +103,67 @@ def test_continuity_report_schema_is_explicit_allowlist(tmp_path: Path) -> None:
         "cold_start_events",
         "session_end_events",
     }
+    assert set(report["readiness_checks"]) == {
+        "has_saved_sessions",
+        "has_multiple_tools",
+        "resume_brief_builds",
+        "has_context_load_signal",
+        "has_wrap_up_signal",
+    }
+    assert report["readiness_level"] in {
+        "not_ready",
+        "single_tool_ready",
+        "cross_tool_ready",
+        "observed_signals",
+    }
     assert set(report["project"]) == {"provided", "name"}
+
+
+def test_continuity_readiness_level_mapping() -> None:
+    from piia_engram.continuity_report import READINESS_LEVELS, _readiness_level
+
+    assert READINESS_LEVELS == {
+        "not_ready",
+        "single_tool_ready",
+        "cross_tool_ready",
+        "observed_signals",
+    }
+
+    base = {
+        "has_saved_sessions": False,
+        "has_multiple_tools": False,
+        "resume_brief_builds": False,
+        "has_context_load_signal": False,
+        "has_wrap_up_signal": False,
+    }
+
+    assert _readiness_level(base) == "not_ready"
+    assert _readiness_level({**base, "has_saved_sessions": True}) == "single_tool_ready"
+    assert (
+        _readiness_level(
+            {
+                **base,
+                "has_saved_sessions": True,
+                "has_multiple_tools": True,
+                "resume_brief_builds": True,
+            }
+        )
+        == "cross_tool_ready"
+    )
+    assert (
+        _readiness_level(
+            {
+                **base,
+                "has_saved_sessions": True,
+                "has_multiple_tools": True,
+                "resume_brief_builds": True,
+                "has_context_load_signal": True,
+                "has_wrap_up_signal": True,
+            }
+        )
+        == "observed_signals"
+    )
+    assert _readiness_level(base) in READINESS_LEVELS
 
 
 def test_continuity_report_includes_recall_signals_without_payload_leak(
