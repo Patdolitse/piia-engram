@@ -273,9 +273,48 @@ def _read_json(path: Path, *, allow_corrupt: bool = False) -> Any:
         ) from exc
 
 
+def _maybe_backup_before_engram_json_replace(path: Path, candidate_text: str) -> None:
+    """Back up an existing Engram-owned JSON file before replacing it."""
+    try:
+        from piia_engram.file_safety import (
+            backup_existing_file,
+            classify_path,
+            record_file_write,
+        )
+
+        root = _engram_root()
+        if classify_path(root, path) != "engram_root":
+            return
+        if not path.is_file():
+            return
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            existing = None
+        if existing == candidate_text:
+            return
+        backup_path = backup_existing_file(
+            root,
+            path,
+            scope="engram_root",
+            tool="storage",
+        )
+        record_file_write(
+            root,
+            path,
+            scope="engram_root",
+            tool="storage",
+            backup_path=backup_path,
+        )
+    except Exception:
+        logger.exception("failed to back up %s before Engram JSON write", path.name)
+        raise
+
+
 def _atomic_write_json(path: Path, data: Any) -> None:
     """Atomically write JSON with a file lock for concurrent writers."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     fd, tmp_name = tempfile.mkstemp(
         dir=path.parent,
         prefix=f".{path.name}.",
@@ -286,10 +325,20 @@ def _atomic_write_json(path: Path, data: Any) -> None:
 
     try:
         with portalocker.Lock(lock_path, "a", timeout=5):
+            try:
+                existing = path.read_text(encoding="utf-8") if path.is_file() else None
+            except UnicodeDecodeError:
+                existing = None
+            if existing == candidate_text:
+                os.close(fd)
+                fd = -1
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                return
+            _maybe_backup_before_engram_json_replace(path, candidate_text)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 fd = -1
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.write("\n")
+                f.write(candidate_text)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_path, path)
@@ -327,6 +376,14 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
             # — that would wipe real governance state (grants/revoked/edges).
             current = _read_json(path) if path.is_file() else _default
             new_data = mutator(current)
+            candidate_text = json.dumps(new_data, ensure_ascii=False, indent=2) + "\n"
+            try:
+                existing = path.read_text(encoding="utf-8") if path.is_file() else None
+            except UnicodeDecodeError:
+                existing = None
+            if existing == candidate_text:
+                return new_data
+            _maybe_backup_before_engram_json_replace(path, candidate_text)
             # atomic replace INSIDE the same lock
             fd, tmp_name = tempfile.mkstemp(
                 dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
@@ -334,8 +391,7 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
             tmp_path = Path(tmp_name)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(new_data, f, ensure_ascii=False, indent=2)
-                    f.write("\n")
+                    f.write(candidate_text)
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(tmp_path, path)

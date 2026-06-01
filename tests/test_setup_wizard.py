@@ -707,6 +707,44 @@ def test_write_mcp_config_merges(tmp_path: Path):
     assert "engram" in config["mcpServers"]        # engram 已添加
 
 
+def test_write_mcp_config_backs_up_existing_json_before_write(tmp_path: Path):
+    """Existing client JSON config must be backed up before mutation."""
+    config_path = tmp_path / "mcp.json"
+    original = json.dumps(
+        {"mcpServers": {"other-tool": {"command": "node", "args": ["server.js"]}}},
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n"
+    config_path.write_text(original, encoding="utf-8")
+
+    _write_mcp_config(config_path, "/usr/bin/python3", "/path/to/mcp_server.py")
+
+    backups = list(tmp_path.glob("mcp.json.engram-backup.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "other-tool" in config["mcpServers"]
+    assert "engram" in config["mcpServers"]
+
+
+def test_write_mcp_config_refuses_to_overwrite_unparseable_existing_json(tmp_path: Path):
+    """A commented/malformed existing config must stay byte-for-byte intact."""
+    config_path = tmp_path / "settings.json"
+    original = '{\n  // user comment kept by the client\n  "theme": "Ayu Dark",\n}\n'
+    config_path.write_text(original, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="refusing to overwrite"):
+        _write_mcp_config(
+            config_path,
+            "/usr/bin/python3",
+            "/path/to/mcp_server.py",
+            server_key="context_servers",
+        )
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert list(tmp_path.glob("settings.json.engram-backup.*")) == []
+
+
 def test_write_mcp_config_with_data_dir(tmp_path: Path):
     """设置自定义 ENGRAM_DIR 时应额外写入 ENGRAM_DIR 到 env。"""
     config_path = tmp_path / "mcp.json"
@@ -740,6 +778,30 @@ def test_write_mcp_config_default_env_without_data_dir(tmp_path: Path):
     assert "ENGRAM_DIR" not in env
 
 
+def test_write_mcp_config_preserves_existing_engram_dir_when_not_overridden(tmp_path: Path):
+    """Repairing an existing config must not drop a user's custom ENGRAM_DIR."""
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "engram": {
+                "command": "/old/python",
+                "args": ["old.py"],
+                "env": {"ENGRAM_DIR": "D:/EngramData"},
+            }
+        }
+    }), encoding="utf-8")
+
+    _write_mcp_config(
+        config_path,
+        "/usr/bin/python3",
+        "/path/to/mcp_server.py",
+        data_dir=None,
+    )
+
+    env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["engram"]["env"]
+    assert env["ENGRAM_DIR"] == "D:/EngramData"
+
+
 def test_write_mcp_config_respects_custom_server_key(tmp_path: Path):
     """Clients such as Copilot use top-level 'servers' instead of 'mcpServers'."""
     config_path = tmp_path / "mcp.json"
@@ -768,6 +830,91 @@ def test_write_mcp_config_toml_creates_missing_codex_config(tmp_path: Path):
     assert '[mcp_servers.engram]' in text
     assert 'PYTHONIOENCODING = "utf-8"' in text
     assert 'ENGRAM_TOOLS = "all"' in text
+
+
+def test_write_mcp_config_toml_backs_up_and_preserves_existing_codex_config(tmp_path: Path):
+    """Codex config.toml must stay TOML and get a pre-write backup."""
+    from piia_engram.setup_wizard import _write_mcp_config_toml
+
+    config_path = tmp_path / ".codex" / "config.toml"
+    config_path.parent.mkdir()
+    original = '[settings]\napproval_policy = "never"\n'
+    config_path.write_text(original, encoding="utf-8")
+
+    _write_mcp_config_toml(config_path, "/usr/bin/python3", "/path/to/mcp_server.py")
+
+    backups = list(config_path.parent.glob("config.toml.engram-backup.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+    text = config_path.read_text(encoding="utf-8")
+    assert text.startswith("[settings]")
+    assert '[mcp_servers.engram]' in text
+    assert not text.lstrip().startswith("{")
+
+
+def test_write_mcp_config_toml_preserves_existing_engram_dir_when_not_overridden(tmp_path: Path):
+    """Codex repair must keep an existing custom ENGRAM_DIR for old users."""
+    from piia_engram.setup_wizard import _write_mcp_config_toml
+    try:
+        import tomllib as toml_parser
+    except ModuleNotFoundError:
+        pytest.skip("tomllib unavailable")
+
+    config_path = tmp_path / ".codex" / "config.toml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        '\n'.join([
+            '[mcp_servers.engram]',
+            'command = "/old/python"',
+            'args = ["old.py"]',
+            '',
+            '[mcp_servers.engram.env]',
+            'ENGRAM_DIR = "D:/EngramData"',
+            '',
+        ]),
+        encoding="utf-8",
+    )
+
+    _write_mcp_config_toml(config_path, "/usr/bin/python3", "/path/to/mcp_server.py")
+
+    config = toml_parser.loads(config_path.read_text(encoding="utf-8"))
+    assert config["mcp_servers"]["engram"]["env"]["ENGRAM_DIR"] == "D:/EngramData"
+
+
+def test_write_tool_mcp_config_preserves_zed_settings_and_context_servers(tmp_path: Path):
+    """Zed settings.json should keep unrelated settings and existing servers."""
+    from piia_engram.setup_wizard import _write_tool_mcp_config
+
+    config_path = tmp_path / ".config" / "zed" / "settings.json"
+    config_path.parent.mkdir(parents=True)
+    original_config = {
+        "theme": "Ayu Dark",
+        "agent": {"tool_permissions": {"default": "confirm"}},
+        "context_servers": {
+            "existing": {"command": "node", "args": ["server.js"], "env": {}}
+        },
+    }
+    original = json.dumps(original_config, ensure_ascii=False, indent=2) + "\n"
+    config_path.write_text(original, encoding="utf-8")
+
+    _write_tool_mcp_config(
+        {
+            "name": "Zed",
+            "config_path": config_path,
+            "server_key": "context_servers",
+        },
+        "/usr/bin/python3",
+        "/path/to/mcp_server.py",
+    )
+
+    backups = list(config_path.parent.glob("settings.json.engram-backup.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["theme"] == "Ayu Dark"
+    assert config["agent"]["tool_permissions"]["default"] == "confirm"
+    assert "existing" in config["context_servers"]
+    assert config["context_servers"]["engram"]["args"] == ["-m", "piia_engram.mcp_server"]
 
 
 def test_write_mcp_config_toml_escapes_windows_paths(tmp_path: Path, monkeypatch):
@@ -1739,22 +1886,23 @@ class TestAutoMigrate:
         mtime2 = sentinel.stat().st_mtime
         assert mtime1 == mtime2  # File unchanged
 
-    def test_removes_legacy_server_names(self, tmp_path, monkeypatch):
-        """auto_migrate should remove legacy server names from tool configs."""
+    def test_detects_legacy_server_names_without_external_mutation(self, tmp_path, monkeypatch):
+        """auto_migrate must not mutate external client configs from MCP startup."""
         from piia_engram.setup_wizard import auto_migrate
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
 
         # Create a fake tool config with a legacy name
-        config_dir = tmp_path / ".claude"
-        config_dir.mkdir()
+        config_dir = tmp_path / "home" / ".claude"
+        config_dir.mkdir(parents=True)
         config_path = config_dir / ".mcp.json"
-        config_path.write_text(json.dumps({
+        original = json.dumps({
             "mcpServers": {
                 "piia-pkc": {"command": "python", "args": ["old.py"]},
                 "engram": {"command": "python", "args": ["mcp_server.py"]},
             }
-        }), encoding="utf-8")
+        }, ensure_ascii=False, indent=2) + "\n"
+        config_path.write_text(original, encoding="utf-8")
 
         # Patch _tool_configs to point to our test config
         monkeypatch.setattr(
@@ -1764,14 +1912,77 @@ class TestAutoMigrate:
 
         auto_migrate()
 
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        assert "piia-pkc" not in config["mcpServers"]
-        assert "engram" in config["mcpServers"]
+        assert config_path.read_text(encoding="utf-8") == original
 
-        # Migration log should exist
+        # Migration log should exist inside ENGRAM_DIR and explain the manual action.
         log_file = tmp_path / "migration.log"
         assert log_file.is_file()
-        assert "piia-pkc" in log_file.read_text(encoding="utf-8")
+        log_text = log_file.read_text(encoding="utf-8")
+        assert "piia-pkc" in log_text
+        assert "external config left unchanged" in log_text
+        assert "setup --apply-external-config" in log_text
+
+    def test_auto_migrate_preserves_legacy_only_upgrade_config(self, tmp_path, monkeypatch):
+        """Older users with only a legacy server entry must not be broken on startup."""
+        from piia_engram.setup_wizard import auto_migrate
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+
+        config_path = tmp_path / "home" / ".claude" / ".mcp.json"
+        config_path.parent.mkdir(parents=True)
+        original = json.dumps({
+            "mcpServers": {
+                "piia-pkc": {"command": "python", "args": ["-m", "piia_engram.mcp_server"]}
+            }
+        }, ensure_ascii=False, indent=2) + "\n"
+        config_path.write_text(original, encoding="utf-8")
+
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {"test": {"name": "Test", "config_paths": [config_path]}},
+        )
+
+        auto_migrate()
+
+        assert config_path.read_text(encoding="utf-8") == original
+        log_text = (tmp_path / "engram-root" / "migration.log").read_text(encoding="utf-8")
+        assert "piia-pkc" in log_text
+        assert "external config left unchanged" in log_text
+
+    def test_auto_migrate_logs_toml_legacy_without_external_mutation(self, tmp_path, monkeypatch):
+        """Codex TOML configs should get guidance without silent mutation."""
+        from piia_engram.setup_wizard import auto_migrate
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+
+        config_path = tmp_path / "home" / ".codex" / "config.toml"
+        config_path.parent.mkdir(parents=True)
+        original = '\n'.join([
+            '[mcp_servers.piia-pkc]',
+            'command = "python"',
+            'args = ["-m", "piia_engram.mcp_server"]',
+            '',
+        ])
+        config_path.write_text(original, encoding="utf-8")
+
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._tool_configs",
+            lambda: {
+                "codex": {
+                    "name": "Codex",
+                    "config_paths": [config_path],
+                    "format": "toml",
+                    "server_key": "mcp_servers",
+                }
+            },
+        )
+
+        auto_migrate()
+
+        assert config_path.read_text(encoding="utf-8") == original
+        log_text = (tmp_path / "engram-root" / "migration.log").read_text(encoding="utf-8")
+        assert "piia-pkc" in log_text
+        assert "external config left unchanged" in log_text
 
     def test_migration_failure_doesnt_crash(self, tmp_path, monkeypatch):
         """auto_migrate should log warning on failure, not crash."""
@@ -1841,8 +2052,9 @@ class TestRunSetup:
         assert "TestTool" in out
 
     def test_wizard_configures_codex_toml_without_json_rewrite(self, tmp_path, monkeypatch, capsys):
-        """run_setup must dispatch Codex to the TOML writer, not JSON mcpServers."""
+        """Explicit external config mode must dispatch Codex to the TOML writer."""
         from piia_engram.setup_wizard import run_setup
+        from piia_engram.file_safety import read_ledger_entries
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
@@ -1887,7 +2099,7 @@ class TestRunSetup:
         monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
         monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
 
-        run_setup()
+        run_setup(apply_external_config=True)
 
         text = codex_config.read_text(encoding="utf-8")
         assert text.lstrip().startswith("[settings]")
@@ -1895,6 +2107,252 @@ class TestRunSetup:
         assert 'args = ["-m", "piia_engram.mcp_server"]' in text
         assert '"mcpServers"' not in text
         assert not text.lstrip().startswith("{")
+        assert list(codex_config.parent.glob("config.toml.engram-backup.*")) == []
+        entries = read_ledger_entries(tmp_path / "engram-root")
+        assert any(entry["scope"] == "external" for entry in entries)
+        assert (tmp_path / "engram-root" / "backups" / "file_safety" / "external").is_dir()
+
+    def test_wizard_custom_data_dir_is_used_for_report_and_client_env(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Setup should let users choose a custom Engram root during install."""
+        from piia_engram.setup_wizard import run_setup
+
+        default_root = tmp_path / "default-engram"
+        custom_root = tmp_path / "custom-drive" / "EngramData"
+        monkeypatch.setenv("ENGRAM_DIR", str(default_root))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+        monkeypatch.setattr("piia_engram.setup_wizard._scan_rule_files", lambda cwd=None: [])
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_instruction_snippet", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_hook", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_precompact_hook", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_sessionstart_hook", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_postcompact_hook", lambda *_args, **_kwargs: None)
+
+        claude_config = tmp_path / ".claude" / ".mcp.json"
+        claude_config.parent.mkdir()
+        claude_config.write_text(
+            json.dumps({"mcpServers": {}}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        answers = iter([
+            "2",                 # language: English
+            "c",                 # data dir: custom path
+            str(custom_root),    # custom Engram root
+            "",                  # seed: role
+            "",                  # seed: tech_stack
+            "",                  # seed: language
+            "",                  # seed: no lessons
+            "",                  # privacy: reconcile
+            "",                  # privacy: telemetry
+        ])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._detect_tools",
+            lambda: [{
+                "id": "claude_code",
+                "name": "Claude Code",
+                "config_path": claude_config,
+            }],
+        )
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
+
+        run_setup(apply_external_config=True)
+
+        config = json.loads(claude_config.read_text(encoding="utf-8"))
+        assert config["mcpServers"]["engram"]["env"]["ENGRAM_DIR"] == str(custom_root)
+        assert (custom_root / "setup_report.jsonl").is_file()
+        assert (custom_root / "quick_context.md").is_file()
+        assert not (default_root / "quick_context.md").exists()
+        assert not (default_root / "setup_report.jsonl").exists()
+        report = json.loads(
+            (custom_root / "setup_report.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+        )
+        assert report["external_config_mode"] == "apply"
+
+    def test_wizard_default_does_not_mutate_external_client_configs(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Default setup is read-only for external AI client configs."""
+        from piia_engram.setup_wizard import run_setup
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+        monkeypatch.setattr("piia_engram.setup_wizard._scan_rule_files", lambda cwd=None: [])
+
+        codex_config = tmp_path / ".codex" / "config.toml"
+        codex_config.parent.mkdir()
+        codex_original = '[settings]\napproval_policy = "never"\n'
+        codex_config.write_text(codex_original, encoding="utf-8")
+
+        claude_config = tmp_path / ".claude" / ".mcp.json"
+        claude_config.parent.mkdir()
+        claude_original = json.dumps({
+            "mcpServers": {
+                "existing": {"command": "node", "args": ["server.js"]}
+            }
+        }, ensure_ascii=False, indent=2) + "\n"
+        claude_config.write_text(claude_original, encoding="utf-8")
+
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_instruction_snippet",
+            lambda *args, **kwargs: calls.append(("snippet", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_hook",
+            lambda *args, **kwargs: calls.append(("stop", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_precompact_hook",
+            lambda *args, **kwargs: calls.append(("pre", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_sessionstart_hook",
+            lambda *args, **kwargs: calls.append(("start", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_postcompact_hook",
+            lambda *args, **kwargs: calls.append(("post", args, kwargs)),
+        )
+
+        answers = iter([
+            "2",   # language: English
+            "",    # data dir: default from ENGRAM_DIR
+            "",    # seed: role
+            "",    # seed: tech_stack
+            "",    # seed: language
+            "",    # seed: no lessons
+            "",    # privacy: reconcile
+            "",    # privacy: telemetry
+        ])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._detect_tools",
+            lambda: [
+                {
+                    "id": "claude_code",
+                    "name": "Claude Code",
+                    "config_path": claude_config,
+                },
+                {
+                    "id": "codex",
+                    "name": "Codex",
+                    "config_path": codex_config,
+                    "format": "toml",
+                    "server_key": "mcp_servers",
+                },
+            ],
+        )
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
+
+        run_setup()
+
+        out = capsys.readouterr().out
+        assert "read-only" in out
+        assert "apply-external-config" in out
+        assert "External AI tool configs are unchanged" in out
+        assert "Restart your AI tool to get started" not in out
+        assert codex_config.read_text(encoding="utf-8") == codex_original
+        assert claude_config.read_text(encoding="utf-8") == claude_original
+        assert list(codex_config.parent.glob("*.engram-backup.*")) == []
+        assert list(claude_config.parent.glob("*.engram-backup.*")) == []
+        assert calls == []
+
+        report_lines = (tmp_path / "engram-root" / "setup_report.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        report = json.loads(report_lines[-1])
+        assert report["tools_configured"] == []
+        assert report["tools_failed"] == []
+        assert report["external_config_mode"] == "read_only"
+
+    def test_wizard_failed_config_write_does_not_inject_or_report_configured(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """If a client config is unsafe to mutate, setup must fail closed."""
+        from piia_engram.setup_wizard import run_setup
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+        monkeypatch.setattr("piia_engram.setup_wizard._scan_rule_files", lambda cwd=None: [])
+
+        config_path = tmp_path / ".claude" / ".mcp.json"
+        config_path.parent.mkdir()
+        original = '{\n  // user-managed jsonc\n  "mcpServers": {}\n}\n'
+        config_path.write_text(original, encoding="utf-8")
+
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_instruction_snippet",
+            lambda *args, **kwargs: calls.append(("snippet", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_hook",
+            lambda *args, **kwargs: calls.append(("stop", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_precompact_hook",
+            lambda *args, **kwargs: calls.append(("pre", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_sessionstart_hook",
+            lambda *args, **kwargs: calls.append(("start", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_postcompact_hook",
+            lambda *args, **kwargs: calls.append(("post", args, kwargs)),
+        )
+
+        answers = iter([
+            "2",   # language: English
+            "",    # data dir: default from ENGRAM_DIR
+            "",    # seed: role
+            "",    # seed: tech_stack
+            "",    # seed: language
+            "",    # seed: no lessons
+            "",    # privacy: reconcile
+            "",    # privacy: telemetry
+        ])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._detect_tools",
+            lambda: [{
+                "id": "claude_code",
+                "name": "Claude Code",
+                "config_path": config_path,
+            }],
+        )
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
+
+        run_setup(apply_external_config=True)
+
+        out = capsys.readouterr().out
+        assert "Claude Code" in out
+        assert "failed" in out
+        assert "refusing to overwrite" in out
+        assert config_path.read_text(encoding="utf-8") == original
+        assert calls == []
+
+        report_lines = (tmp_path / "engram-root" / "setup_report.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        report = json.loads(report_lines[-1])
+        assert report["tools_configured"] == []
+        assert any("Claude Code" in item for item in report["tools_failed"])
+        assert report["external_config_mode"] == "apply"
 
     def test_wizard_no_python_exits(self, tmp_path, monkeypatch, capsys):
         """run_setup should exit(1) if no Python found."""
@@ -2344,13 +2802,17 @@ class TestDoctorVerifiedCommunity:
 
 class TestDoctorFix:
     def test_doctor_fix_repairs_invalid_path(self, tmp_path, monkeypatch, capsys):
-        """doctor --fix should repair config with invalid paths."""
+        """doctor --fix should repair external config with Engram-root backup."""
         from piia_engram.setup_wizard import run_doctor, _find_python, _find_mcp_server
+        from piia_engram.file_safety import read_ledger_entries
 
         python_path = _find_python()
         mcp_path = _find_mcp_server()
         if not python_path or not mcp_path:
             pytest.skip("Cannot find Python or mcp_server.py")
+
+        engram_root = tmp_path / "engram-root"
+        monkeypatch.setenv("ENGRAM_DIR", str(engram_root))
 
         config_dir = tmp_path / ".claude"
         config_dir.mkdir()
@@ -2372,6 +2834,12 @@ class TestDoctorFix:
         result = run_doctor(fix=True)
         out = capsys.readouterr().out
         assert "[fixed]" in out
+        assert result >= 0
+        assert list(config_dir.glob("*.engram-backup.*")) == []
+        backups = list((engram_root / "backups" / "file_safety" / "external").glob(".mcp.json.*.bak"))
+        assert len(backups) == 1
+        entries = read_ledger_entries(engram_root)
+        assert any(entry["scope"] == "external" for entry in entries)
 
     def test_doctor_fix_no_python_fails(self, tmp_path, monkeypatch, capsys):
         """doctor --fix without Python should report error."""
@@ -2782,11 +3250,24 @@ class TestMainCLIRouting:
     def test_main_setup_advanced(self, monkeypatch):
         """main() 处理 'setup --advanced' 应传递 advanced=True。"""
         monkeypatch.setattr("sys.argv", ["engram", "setup", "--advanced"])
-        called_with = {}
         from unittest.mock import patch
         with patch("piia_engram.setup_wizard.run_setup") as mock_setup:
             main()
-            mock_setup.assert_called_once_with(advanced=True)
+            mock_setup.assert_called_once_with(
+                advanced=True,
+                apply_external_config=False,
+            )
+
+    def test_main_setup_apply_external_config(self, monkeypatch):
+        """main() should route explicit external config authorization."""
+        monkeypatch.setattr("sys.argv", ["engram", "setup", "--apply-external-config"])
+        from unittest.mock import patch
+        with patch("piia_engram.setup_wizard.run_setup") as mock_setup:
+            main()
+            mock_setup.assert_called_once_with(
+                advanced=False,
+                apply_external_config=True,
+            )
 
 
 def test_run_playbook_install_self_repair_loop_defaults_to_dry_run(

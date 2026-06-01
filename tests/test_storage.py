@@ -14,6 +14,7 @@ from piia_engram.storage import (
     _engram_root,
     _parse_iso,
     _read_json,
+    _update_json,
 )
 
 
@@ -106,6 +107,41 @@ def test_atomic_write_json_success(tmp_path):
     path = tmp_path / "out.json"
     _atomic_write_json(path, {"hello": "world"})
     assert json.loads(path.read_text(encoding="utf-8")) == {"hello": "world"}
+
+
+def test_atomic_write_json_backs_up_existing_engram_file(tmp_path, monkeypatch):
+    """Existing Engram-owned JSON files get a backup before replacement."""
+    from piia_engram.file_safety import read_ledger_entries
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    path = tmp_path / "knowledge" / "lessons.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"items": ["old"]}\n', encoding="utf-8")
+
+    _atomic_write_json(path, {"items": ["new"]})
+
+    backups = list((tmp_path / "backups" / "file_safety" / "engram_root").glob("lessons.json.*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == '{"items": ["old"]}\n'
+    assert json.loads(path.read_text(encoding="utf-8")) == {"items": ["new"]}
+    entries = read_ledger_entries(tmp_path)
+    assert len(entries) == 1
+    assert entries[0]["scope"] == "engram_root"
+    assert entries[0]["path"] == "<engram-root>/knowledge/lessons.json"
+
+
+def test_update_json_backs_up_existing_engram_file(tmp_path, monkeypatch):
+    """Read-modify-write storage path should use the same backup boundary."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    path = tmp_path / "knowledge" / "decisions.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"items": []}\n', encoding="utf-8")
+
+    _update_json(path, lambda current: {"items": current["items"] + ["new"]})
+
+    backups = list((tmp_path / "backups" / "file_safety" / "engram_root").glob("decisions.json.*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == '{"items": []}\n'
 
 
 def test_atomic_write_json_lock_timeout(tmp_path):

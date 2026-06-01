@@ -550,7 +550,13 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
 }
 
 
-def _inject_instruction_snippet(tool_id: str, lang: str = "zh") -> str | None:
+def _inject_instruction_snippet(
+    tool_id: str,
+    lang: str = "zh",
+    *,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
+) -> str | None:
     """Inject Engram instruction snippet into a tool's native instruction file.
 
     Returns the file path on success, or None if skipped/failed.
@@ -577,7 +583,12 @@ def _inject_instruction_snippet(tool_id: str, lang: str = "zh") -> str | None:
 
         if tool_id == "cursor":
             # Cursor .mdc: entire file is ours, just overwrite
-            target_path.write_text(snippet, encoding="utf-8")
+            _write_config_text_with_backup(
+                target_path,
+                snippet,
+                backup_root=file_safety_root,
+                authorized_external_write=authorized_external_write,
+            )
             return str(target_path)
 
         # For CLAUDE.md / AGENTS.md: append or replace marked section
@@ -598,7 +609,12 @@ def _inject_instruction_snippet(tool_id: str, lang: str = "zh") -> str | None:
 
         # Append snippet
         new_content = existing.rstrip("\n") + "\n" + snippet
-        target_path.write_text(new_content, encoding="utf-8")
+        _write_config_text_with_backup(
+            target_path,
+            new_content,
+            backup_root=file_safety_root,
+            authorized_external_write=authorized_external_write,
+        )
         return str(target_path)
 
     except Exception as exc:
@@ -733,6 +749,8 @@ def _inject_claude_code_hook_for_event(
     marker_keywords: tuple[str, ...] = ("piia_engram",),
     async_hook: bool = True,
     force_rewrite: bool = False,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
 ) -> str | None:
     """Register a per-event hook in ``~/.claude/settings.json``.
 
@@ -832,10 +850,11 @@ def _inject_claude_code_hook_for_event(
             else:
                 event_groups.append({"hooks": [engram_hook]})
 
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(
+        _write_config_text_with_backup(
+            settings_path,
             json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+            backup_root=file_safety_root,
+            authorized_external_write=authorized_external_write,
         )
         return str(settings_path)
 
@@ -847,7 +866,11 @@ def _inject_claude_code_hook_for_event(
 
 
 def _inject_claude_code_hook(
-    python_path: str, *, force_rewrite: bool = False,
+    python_path: str,
+    *,
+    force_rewrite: bool = False,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
 ) -> str | None:
     """Register Engram Stop hook in Claude Code settings.json.
 
@@ -864,11 +887,17 @@ def _inject_claude_code_hook(
         marker_keywords=("auto_save_on_stop", "piia_engram.hooks.auto_save_on_stop"),
         async_hook=True,
         force_rewrite=force_rewrite,
+        file_safety_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
     )
 
 
 def _inject_claude_code_precompact_hook(
-    python_path: str, *, force_rewrite: bool = False,
+    python_path: str,
+    *,
+    force_rewrite: bool = False,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
 ) -> str | None:
     """v3.30: register PreCompact hook with asymmetric threshold.
 
@@ -898,11 +927,17 @@ def _inject_claude_code_precompact_hook(
         marker_keywords=("CLAUDE_INVOKED_BY=engram_precompact",),
         async_hook=True,
         force_rewrite=force_rewrite,
+        file_safety_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
     )
 
 
 def _inject_claude_code_sessionstart_hook(
-    python_path: str, *, force_rewrite: bool = False,
+    python_path: str,
+    *,
+    force_rewrite: bool = False,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
 ) -> str | None:
     """v3.30: register SessionStart hook for resume_brief auto-inject.
 
@@ -932,11 +967,17 @@ def _inject_claude_code_sessionstart_hook(
         # brief is written, defeating the whole point of the mechanism.
         async_hook=False,
         force_rewrite=force_rewrite,
+        file_safety_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
     )
 
 
 def _inject_claude_code_postcompact_hook(
-    python_path: str, *, force_rewrite: bool = False,
+    python_path: str,
+    *,
+    force_rewrite: bool = False,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
 ) -> str | None:
     """v3.30: register PostCompact hook to absorb compact summary.
 
@@ -966,6 +1007,8 @@ def _inject_claude_code_postcompact_hook(
         ),
         async_hook=True,
         force_rewrite=force_rewrite,
+        file_safety_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
     )
 
 
@@ -1118,6 +1161,88 @@ def _read_mcp_config(config_path: Path, fmt: str = "json") -> dict:
     return {}
 
 
+def _read_mcp_config_for_write(config_path: Path, fmt: str = "json") -> dict:
+    """Read an existing MCP config for mutation; refuse unsafe overwrites.
+
+    The public read helper is intentionally forgiving for doctor/reporting.
+    Setup writes need the opposite behavior: if a user's existing config cannot
+    be parsed, leave it byte-for-byte intact and surface a clear failure.
+    """
+    if not config_path.is_file():
+        return {}
+    raw = config_path.read_text(encoding="utf-8")
+    try:
+        config = _parse_toml(raw) if fmt == "toml" else json.loads(raw)
+    except Exception as exc:
+        raise ValueError(
+            f"Cannot parse existing {fmt.upper()} config at {config_path}; "
+            "refusing to overwrite it. Please fix the config syntax or move "
+            "the file aside, then re-run 'engram setup'."
+        ) from exc
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"Existing {fmt.upper()} config at {config_path} is not an object; "
+            "refusing to overwrite it."
+        )
+    return config
+
+
+def _backup_existing_config(config_path: Path) -> Path | None:
+    """Create a sibling backup for an existing user config file."""
+    if not config_path.is_file():
+        return None
+    from datetime import datetime, timezone
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = config_path.with_name(f"{config_path.name}.engram-backup.{stamp}")
+    counter = 1
+    while backup_path.exists():
+        backup_path = config_path.with_name(
+            f"{config_path.name}.engram-backup.{stamp}.{counter}"
+        )
+        counter += 1
+    shutil.copy2(config_path, backup_path)
+    return backup_path
+
+
+def _write_config_text_with_backup(
+    config_path: Path,
+    text: str,
+    *,
+    backup_root: str | Path | None = None,
+    authorized_external_write: bool = True,
+) -> None:
+    """Write config text, backing up an existing file before mutation.
+
+    When ``backup_root`` is provided, the write is treated as an explicit
+    external client-config mutation and is routed through the central file
+    safety layer so backups and metadata-only ledger entries live under the
+    selected Engram root.
+    """
+    if backup_root is not None:
+        from piia_engram.file_safety import write_external_config_text
+
+        write_external_config_text(
+            Path(backup_root),
+            config_path,
+            text,
+            tool="setup",
+            authorized=authorized_external_write,
+        )
+        return
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if config_path.is_file():
+        try:
+            existing = config_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            existing = None
+        if existing == text:
+            return
+        _backup_existing_config(config_path)
+    config_path.write_text(text, encoding="utf-8")
+
+
 def _parse_toml(text: str) -> dict:
     """解析 TOML 文本，兼容 Python 3.10（无 tomllib）。"""
     try:
@@ -1205,20 +1330,36 @@ def _write_mcp_config(
     mcp_server_path: str,
     data_dir: str | None = None,
     server_key: str = "mcpServers",
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
 ) -> None:
     """将 engram 写入指定工具的 MCP 配置（合并，不覆盖其他工具的配置）。
     同时自动清理已知的旧版 server 名称（piia-pkc 等）。
     """
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config = _read_mcp_config(config_path)
+    config = _read_mcp_config_for_write(config_path, fmt="json")
 
-    if server_key not in config:
+    servers = config.get(server_key)
+    if servers is None:
         config[server_key] = {}
+        servers = config[server_key]
+    if not isinstance(servers, dict):
+        raise ValueError(
+            f"Existing config key '{server_key}' at {config_path} is not an object; "
+            "refusing to overwrite it."
+        )
+    existing_engram = servers.get("engram")
+    existing_env = (
+        existing_engram.get("env", {})
+        if isinstance(existing_engram, dict)
+        and isinstance(existing_engram.get("env"), dict)
+        else {}
+    )
 
     # 清理旧版 server 名称
-    removed = [name for name in LEGACY_SERVER_NAMES if name in config[server_key]]
+    removed = [name for name in LEGACY_SERVER_NAMES if name in servers]
     for name in removed:
-        del config[server_key][name]
+        del servers[name]
     if removed:
         print(f"  [migrated] removed legacy server(s): {', '.join(removed)}")
 
@@ -1235,8 +1376,9 @@ def _write_mcp_config(
         src_dir = _module_src_dir(mcp_server_path)
         env["PYTHONPATH"] = src_dir
 
-    if data_dir:
-        env["ENGRAM_DIR"] = data_dir
+    preserved_data_dir = data_dir or existing_env.get("ENGRAM_DIR")
+    if preserved_data_dir:
+        env["ENGRAM_DIR"] = str(preserved_data_dir)
 
     entry: dict = {
         "command": python_path,
@@ -1244,11 +1386,13 @@ def _write_mcp_config(
         "env": env,
     }
 
-    config[server_key]["engram"] = entry
+    servers["engram"] = entry
 
-    config_path.write_text(
+    _write_config_text_with_backup(
+        config_path,
         json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+        backup_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
     )
 
 
@@ -1257,11 +1401,25 @@ def _write_mcp_config_toml(
     python_path: str,
     mcp_server_path: str,
     data_dir: str | None = None,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
 ) -> None:
     """修复 TOML 格式配置文件中的 engram MCP 条目（如 Codex config.toml）。
 
     策略：原地替换 [mcp_servers.engram] 段，保留文件其余内容不动。
     """
+    existing_env: dict = {}
+    if config_path.is_file():
+        existing_config = _read_mcp_config_for_write(config_path, fmt="toml")
+        existing_servers = existing_config.get("mcp_servers", {})
+        existing_engram = (
+            existing_servers.get("engram", {})
+            if isinstance(existing_servers, dict)
+            else {}
+        )
+        if isinstance(existing_engram, dict) and isinstance(existing_engram.get("env"), dict):
+            existing_env = existing_engram["env"]
+
     lines = config_path.read_text(encoding="utf-8").splitlines() if config_path.is_file() else []
     new_lines: list[str] = []
     skip_until_next_section = False
@@ -1286,8 +1444,9 @@ def _write_mcp_config_toml(
         # piia_engram 不在默认路径，需要 PYTHONPATH
         src_dir = _module_src_dir(mcp_server_path)
         engram_block.append(f'PYTHONPATH = {toml_string(src_dir)}')
-    if data_dir:
-        engram_block.append(f'ENGRAM_DIR = {toml_string(data_dir)}')
+    preserved_data_dir = data_dir or existing_env.get("ENGRAM_DIR")
+    if preserved_data_dir:
+        engram_block.append(f'ENGRAM_DIR = {toml_string(str(preserved_data_dir))}')
 
     inserted = False
     i = 0
@@ -1324,8 +1483,12 @@ def _write_mcp_config_toml(
         new_lines.append('')
         new_lines.extend(engram_block)
 
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
+    _write_config_text_with_backup(
+        config_path,
+        '\n'.join(new_lines) + '\n',
+        backup_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
+    )
 
 
 def _write_tool_mcp_config(
@@ -1333,10 +1496,19 @@ def _write_tool_mcp_config(
     python_path: str,
     mcp_server_path: str,
     data_dir: str | None = None,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = True,
 ) -> None:
     """Write an MCP config using the target client's declared format."""
     if tool.get("format", "json") == "toml":
-        _write_mcp_config_toml(tool["config_path"], python_path, mcp_server_path, data_dir)
+        _write_mcp_config_toml(
+            tool["config_path"],
+            python_path,
+            mcp_server_path,
+            data_dir,
+            file_safety_root=file_safety_root,
+            authorized_external_write=authorized_external_write,
+        )
         return
     _write_mcp_config(
         tool["config_path"],
@@ -1344,6 +1516,8 @@ def _write_tool_mcp_config(
         mcp_server_path,
         data_dir,
         server_key=tool.get("server_key", "mcpServers"),
+        file_safety_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
     )
 
 
@@ -1368,6 +1542,48 @@ def _yn(message: str, default: bool = True) -> bool:
     if not answer:
         return default
     return answer.startswith("y")
+
+
+def _candidate_engram_roots(default_data_dir: str) -> list[str]:
+    """Return install/root choices for the Engram data folder."""
+    choices: list[str] = [str(Path(default_data_dir).expanduser())]
+    if platform.system() == "Windows":
+        for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive_root = Path(f"{letter}:\\")
+            try:
+                if not drive_root.exists():
+                    continue
+            except OSError:
+                continue
+            candidate = str(drive_root / ".engram")
+            if candidate not in choices:
+                choices.append(candidate)
+    return choices
+
+
+def _choose_data_dir(default_data_dir: str) -> str:
+    """Ask where the Engram root should live."""
+    choices = _candidate_engram_roots(default_data_dir)
+    print(_t("\n  Engram 数据文件夹：", "\n  Engram data folder:"))
+    for idx, choice in enumerate(choices, start=1):
+        label = _t("默认", "default") if idx == 1 else _t("磁盘", "drive")
+        print(f"    {idx}. {choice} ({label})")
+    print(_t("    c. 自定义路径", "    c. Custom path"))
+
+    answer = _prompt(
+        _t("  选择数据位置，或直接输入自定义路径", "  Choose data location, or type a custom path"),
+        "1",
+    ).strip()
+    if not answer:
+        return choices[0]
+    if answer.lower() in {"c", "custom", "自定义"}:
+        custom = _prompt(_t("  请输入 Engram 数据文件夹路径", "  Enter Engram data folder path")).strip()
+        return str(Path(custom).expanduser()) if custom else choices[0]
+    if answer.isdigit():
+        index = int(answer)
+        if 1 <= index <= len(choices):
+            return choices[index - 1]
+    return str(Path(answer).expanduser())
 
 
 def _choice(message: str, options: list[str], allow_custom: bool = True) -> str:
@@ -1553,6 +1769,7 @@ def _apply_seed_templates(engram, tech_stack: str) -> int:
 def _run_seed_knowledge_onboarding(
     data_dir: str | None = None,
     cwd: Path | None = None,
+    external_config_applied: bool = True,
 ) -> dict:
     """Guide first-time users to save enough seed context for get_user_context."""
     Engram = _get_engram_class()
@@ -1791,16 +2008,19 @@ def _run_seed_knowledge_onboarding(
 
     # --- Post-setup checklist ---
     print("========================================")
-    print(_t("  接下来：", "  Next steps:"))
+    print("  Next steps:")
     print("========================================\n")
-    print(_t("  1. 重启你的 AI 工具：", "  1. Restart your AI tool:"))
-    _print_restart_hints()
-    print(_t("  2. 对 AI 说：请同步 Engram 上下文",
-             '  2. Say to AI: "Sync Engram context"'))
-    print(_t("  3. 确认 AI 能说出你的角色和偏好",
-             "  3. Confirm AI knows your role and preferences"))
-    print(_t("  4. 随时运行 engram doctor 检查健康状态\n",
-             "  4. Run 'engram doctor' anytime to check health\n"))
+    if external_config_applied:
+        print("  1. Restart your AI tool:")
+        _print_restart_hints()
+        print('  2. Say to AI: "Sync Engram context"')
+        print("  3. Confirm AI knows your role and preferences")
+        print("  4. Run 'engram doctor' anytime to check health\n")
+    else:
+        print("  1. Engram data is initialized; external AI tool configs were not changed.")
+        print("  2. To connect AI tools automatically, run: engram setup --apply-external-config")
+        print("  3. Or manually add the Engram MCP entry using the detected tool paths above.")
+        print("  4. Run 'engram doctor' anytime to check health\n")
 
     return {
         "profile": profile_updates,
@@ -1962,14 +2182,17 @@ def _run_privacy_defaults(data_dir: str) -> None:
 # 向导主流程
 # ---------------------------------------------------------------------------
 
-def run_setup(advanced: bool = False) -> None:
+def run_setup(advanced: bool = False, apply_external_config: bool = False) -> None:
     """交互式安装向导主流程。
 
-    Streamlined flow: auto-detect + auto-configure where possible,
-    only prompt when there is a real choice to make.
+    Streamlined flow: auto-detect tools and initialize Engram. External AI
+    client config files are read-only by default; automatic mutation requires
+    ``apply_external_config=True`` or the CLI flag ``--apply-external-config``.
 
     Args:
         advanced: If True, show full interactive privacy preferences.
+        apply_external_config: If True, mutate detected AI client configs with
+            backup protection. If False, only detect and print guidance.
     """
     global _lang
     _configure_utf8_stdio()
@@ -2005,11 +2228,13 @@ def run_setup(advanced: bool = False) -> None:
 
     # 数据目录 — 优先读 ENGRAM_DIR 环境变量
     default_data_dir = os.environ.get("ENGRAM_DIR") or str(Path.home() / ".engram")
-    data_dir: str | None = None
-    print(_t(f"  ✅ 数据目录: {default_data_dir}",
-             f"  ✅ Data dir: {default_data_dir}"))
+    selected_data_dir = _choose_data_dir(default_data_dir)
+    # Keep setup-time Engram() calls aligned with the folder the user selected.
+    os.environ["ENGRAM_DIR"] = selected_data_dir
+    print(_t(f"  ✅ 数据目录: {selected_data_dir}",
+             f"  ✅ Data dir: {selected_data_dir}"))
 
-    # 工具检测 — 自动配置
+    # 工具检测 — 默认只读；显式授权时才自动配置外部客户端文件。
     tools = _detect_tools()
     success: list[str] = []
     failed: list[str] = []
@@ -2018,11 +2243,32 @@ def run_setup(advanced: bool = False) -> None:
                  "  ⚠️  No AI tools detected (Claude Code / Cursor / Claude Desktop)"))
         print(_t("  安装后重新运行 'engram setup' 即可。\n",
                  "  Re-run 'engram setup' after installing.\n"))
+    elif not apply_external_config:
+        detected_names = ", ".join(tool["name"] for tool in tools)
+        print(_t(
+            f"  🔎 已检测到 AI 工具（只读检查）：{detected_names}",
+            f"  🔎 Detected AI tools (read-only check): {detected_names}",
+        ))
+        print(_t(
+            "  ℹ️  默认不会更改 Claude/Codex/Zed/Cursor 等外部配置文件。",
+            "  ℹ️  By default, setup does not modify external Claude/Codex/Zed/Cursor config files.",
+        ))
+        print(_t(
+            "      如需自动配置并创建备份，请运行：engram setup --apply-external-config",
+            "      To auto-configure with backups, run: engram setup --apply-external-config",
+        ))
     else:
         configured_tool_ids = []
         for tool in tools:
             try:
-                _write_tool_mcp_config(tool, python_path, mcp_server_path, data_dir)
+                _write_tool_mcp_config(
+                    tool,
+                    python_path,
+                    mcp_server_path,
+                    selected_data_dir,
+                    file_safety_root=selected_data_dir,
+                    authorized_external_write=True,
+                )
                 success.append(tool["name"])
                 configured_tool_ids.append(tool["id"])
             except Exception as exc:
@@ -2036,7 +2282,12 @@ def run_setup(advanced: bool = False) -> None:
         # so AI proactively calls Engram (not relying solely on MCP instructions)
         injected = []
         for tool_id in configured_tool_ids:
-            result = _inject_instruction_snippet(tool_id, _lang)
+            result = _inject_instruction_snippet(
+                tool_id,
+                _lang,
+                file_safety_root=selected_data_dir,
+                authorized_external_write=True,
+            )
             if result:
                 injected.append(result)
         if injected:
@@ -2048,32 +2299,50 @@ def run_setup(advanced: bool = False) -> None:
 
         # Register Claude Code Stop hook for session auto-save
         if "claude_code" in configured_tool_ids:
-            hook_result = _inject_claude_code_hook(python_path)
+            hook_result = _inject_claude_code_hook(
+                python_path,
+                file_safety_root=selected_data_dir,
+                authorized_external_write=True,
+            )
             if hook_result:
                 print(_t(f"  🔗 已注册 Claude Code 会话结束 Hook：{hook_result}",
                          f"  🔗 Registered Claude Code Stop hook: {hook_result}"))
             # v3.30 mechanism (4): PreCompact hook with MIN_TURNS=5 — fires
             # before Claude Code auto-compacts the transcript, so long
             # sessions don't lose pre-compact state.
-            pre_result = _inject_claude_code_precompact_hook(python_path)
+            pre_result = _inject_claude_code_precompact_hook(
+                python_path,
+                file_safety_root=selected_data_dir,
+                authorized_external_write=True,
+            )
             if pre_result:
                 print(_t(f"  🔗 已注册 PreCompact 兜底 Hook（v3.30）",
                          f"  🔗 Registered PreCompact safety-net hook (v3.30)"))
             # v3.30 mechanism (6): SessionStart auto-inject resume brief.
-            ss_result = _inject_claude_code_sessionstart_hook(python_path)
+            ss_result = _inject_claude_code_sessionstart_hook(
+                python_path,
+                file_safety_root=selected_data_dir,
+                authorized_external_write=True,
+            )
             if ss_result:
                 print(_t(f"  🔗 已注册 SessionStart 接续简报 Hook（v3.30）",
                          f"  🔗 Registered SessionStart resume-brief hook (v3.30)"))
             # v3.30 R4: PostCompact hook — absorb compact summary into daily log.
-            pc_result = _inject_claude_code_postcompact_hook(python_path)
+            pc_result = _inject_claude_code_postcompact_hook(
+                python_path,
+                file_safety_root=selected_data_dir,
+                authorized_external_write=True,
+            )
             if pc_result:
                 print(_t(f"  🔗 已注册 PostCompact 摘要吸收 Hook（v3.30）",
                          f"  🔗 Registered PostCompact summary-absorb hook (v3.30)"))
     print()
 
     # Step 2 — 录入身份信息
-    selected_data_dir = data_dir or default_data_dir
-    _run_seed_knowledge_onboarding(selected_data_dir)
+    _run_seed_knowledge_onboarding(
+        selected_data_dir,
+        external_config_applied=apply_external_config,
+    )
 
     # Step 3 — 隐私偏好
     if advanced:
@@ -2083,8 +2352,12 @@ def run_setup(advanced: bool = False) -> None:
 
     # 完成
     print(_t("  重启你的 AI 工具即可使用：",
-             "  Restart your AI tool to get started:"))
-    _print_restart_hints()
+             "  Setup next step:"))
+    if apply_external_config:
+        _print_restart_hints()
+    else:
+        print("  External AI tool configs are unchanged.")
+        print("  To connect tools automatically, run: engram setup --apply-external-config")
     print()
     print(_t("  觉得有用？来聊聊你怎么用的：",
              "  Find Engram useful? Share how you use it:"))
@@ -2094,7 +2367,13 @@ def run_setup(advanced: bool = False) -> None:
     print("  https://github.com/Patdolitse/piia-engram/issues\n")
 
     # Save setup report for activation funnel tracking (local only)
-    _save_setup_report(selected_data_dir, tools, success, failed)
+    _save_setup_report(
+        selected_data_dir,
+        tools,
+        success,
+        failed,
+        external_config_mode="apply" if apply_external_config else "read_only",
+    )
 
 
 def _save_setup_report(
@@ -2102,6 +2381,7 @@ def _save_setup_report(
     detected_tools: list[dict],
     success: list[str],
     failed: list[str],
+    external_config_mode: str = "apply",
 ) -> None:
     """Save a local setup report for activation funnel tracking.
 
@@ -2125,6 +2405,7 @@ def _save_setup_report(
             "tools_detected": [t.get("name", t.get("id", "?")) for t in detected_tools],
             "tools_configured": success,
             "tools_failed": failed,
+            "external_config_mode": external_config_mode,
             "language": _lang,
             "status": "success" if not failed else "partial",
         }
@@ -2163,23 +2444,24 @@ def auto_migrate() -> None:
             return
 
         # 扫描所有工具配置，清理旧版名称
+        # Do not mutate external client files from MCP startup. External
+        # config writes are explicit setup/doctor actions.
         log_lines: list[str] = []
         for _tool_id, cfg in _tool_configs().items():
+            fmt = cfg.get("format", "json")
+            server_key = cfg.get("server_key", "mcpServers")
             for config_path in cfg["config_paths"]:
                 if not config_path.is_file():
                     continue
-                config = _read_mcp_config(config_path)
-                servers = config.get("mcpServers", {})
+                config = _read_mcp_config(config_path, fmt=fmt)
+                servers = config.get(server_key, {})
                 stale = [n for n in LEGACY_SERVER_NAMES if n in servers]
                 if not stale:
                     continue
-                for name in stale:
-                    del servers[name]
-                config_path.write_text(
-                    json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
+                log_lines.append(
+                    f"  {config_path}: detected legacy server(s) {stale}; "
+                    "external config left unchanged"
                 )
-                log_lines.append(f"  {config_path}: removed {stale}")
 
         # 写哨兵（无论是否有迁移，都标记当前版本已处理过）
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -2192,7 +2474,10 @@ def auto_migrate() -> None:
                 f.write(f"\n[{datetime.now().isoformat()}] engram v{_ver} migration:\n")
                 for line in log_lines:
                     f.write(line + "\n")
-                f.write("  Restart affected AI tools to apply changes.\n")
+                f.write(
+                    "  Run 'engram setup --apply-external-config' or "
+                    "'engram doctor --fix' to update external client configs.\n"
+                )
 
         # Telemetry: stays off by default — user opts in via `engram setup`
         # or `engram telemetry on`. Local-first trust > data collection.
@@ -2806,6 +3091,7 @@ def run_doctor(fix: bool = False) -> int:
         return len(issues)
 
     fixed = 0
+    file_safety_root = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
     seen_paths: set[Path] = set()
     for t, _ in issues:
         path = t["config_path"]
@@ -2813,7 +3099,13 @@ def run_doctor(fix: bool = False) -> int:
             continue
         seen_paths.add(path)
         try:
-            _write_tool_mcp_config(t, python_path, mcp_server_path)
+            _write_tool_mcp_config(
+                t,
+                python_path,
+                mcp_server_path,
+                file_safety_root=file_safety_root,
+                authorized_external_write=True,
+            )
             print(f"  [fixed] {t['name']} ({path})")
             fixed += 1
         except Exception as exc:
@@ -2992,7 +3284,12 @@ def _run_functional_checks(*, fix: bool = False) -> int:
             pass
         fixed_snippets = []
         for tool_id in refresh_targets:
-            result = _inject_instruction_snippet(tool_id, lang=lang)
+            result = _inject_instruction_snippet(
+                tool_id,
+                lang=lang,
+                file_safety_root=eng.root,
+                authorized_external_write=True,
+            )
             if result:
                 action = "refreshed" if tool_id in stale_snippets else "fixed"
                 fixed_snippets.append(f"[{action}] {tool_id}: {result}")
@@ -3099,7 +3396,12 @@ def _run_functional_checks(*, fix: bool = False) -> int:
                 # or hooks whose env markers no longer satisfy doctor's
                 # strict-match check). Without force_rewrite, idempotent
                 # skip would let "PreCompact present but stale" survive.
-                result = injector(python_path_for_fix, force_rewrite=True)
+                result = injector(
+                    python_path_for_fix,
+                    force_rewrite=True,
+                    file_safety_root=eng.root,
+                    authorized_external_write=True,
+                )
                 if result:
                     _safe_print(f"    [fixed] {label} hook registered: {result}")
                 else:
@@ -4506,7 +4808,57 @@ def _print_management_usage() -> None:
         "Usage:\n"
         "  engram management [--project PATH] [--review-limit N] [--playbook-limit N]\n"
         "  engram management --json [--project PATH] [--review-limit N] [--playbook-limit N]\n"
+        "  engram management action review approve|archive <id> [--yes] [--json]\n"
+        "  engram management action playbook archive|delete|restore <id> [--yes] [--json]\n"
     )
+
+
+def _run_management_action_cli(args: list[str]) -> int:
+    from piia_engram.core import Engram
+    from piia_engram.management_actions import (
+        render_management_action_text,
+        run_management_action,
+    )
+
+    if len(args) < 4:
+        _print_management_usage()
+        return 2
+    target, action, item_id = args[1], args[2], args[3]
+    tail = args[4:]
+    json_output = "--json" in tail
+    confirm = "--yes" in tail
+    reason = ""
+    i = 0
+    while i < len(tail):
+        arg = tail[i]
+        if arg in {"--json", "--yes"}:
+            i += 1
+            continue
+        if arg == "--reason":
+            if i + 1 >= len(tail):
+                print("Missing value for --reason")
+                _print_management_usage()
+                return 2
+            reason = tail[i + 1]
+            i += 2
+            continue
+        print(f"Unknown management action option: {arg}")
+        _print_management_usage()
+        return 2
+
+    result = run_management_action(
+        Engram(),
+        target=target,
+        action=action,
+        item_id=item_id,
+        confirm=confirm,
+        reason=reason,
+    )
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(render_management_action_text(result), end="")
+    return 0 if result.get("error") is None else 1
 
 
 def run_management(argv: list[str] | None = None) -> int:
@@ -4518,6 +4870,8 @@ def run_management(argv: list[str] | None = None) -> int:
     )
 
     args = list(argv or [])
+    if args and args[0] == "action":
+        return _run_management_action_cli(args)
     project_folder = os.getcwd()
     review_limit = 50
     playbook_limit = 50
@@ -4583,10 +4937,10 @@ def main() -> None:
     _configure_utf8_stdio()
     args = sys.argv[1:]
     if not args or args[0] == "setup":
-        if "--advanced" in args:
-            run_setup(advanced=True)
-        else:
-            run_setup()
+        run_setup(
+            advanced="--advanced" in args,
+            apply_external_config="--apply-external-config" in args,
+        )
     elif args[0] == "doctor":
         fix = "--fix" in args
         sys.exit(run_doctor(fix=fix))
@@ -4640,7 +4994,8 @@ def main() -> None:
         print(
             "Engram CLI\n\n"
             "Usage:\n"
-            "  engram setup            Interactive install wizard (streamlined)\n"
+            "  engram setup            Interactive setup (read-only for external client configs)\n"
+            "  engram setup --apply-external-config  Auto-configure AI clients with backups\n"
             "  engram setup --advanced Full interactive setup with privacy prompts\n"
             "  engram doctor           Check config health (all AI tools)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"

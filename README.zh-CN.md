@@ -128,6 +128,8 @@ pip install piia-engram
 engram setup
 ```
 
+默认安装只会选择 Engram 独立数据目录并只读检测外部 AI 工具配置；如需让 Engram 自动写入 Claude/Codex/Cursor/Zed 等客户端 MCP 配置，请显式运行 `engram setup --apply-external-config`，写入前会在所选 Engram 数据目录下创建备份。
+
 安装向导会自动完成：
 1. 检测 Python 环境
 2. 发现并配置你的 AI 工具（Claude Code、Cursor、Claude Desktop、Codex）
@@ -782,7 +784,8 @@ export ENGRAM_CLIENT_TYPE=claude_code
 ## CLI 命令
 
 ```bash
-engram setup            # 交互式安装向导
+engram setup            # 交互式安装向导（默认不改外部工具配置）
+engram setup --apply-external-config  # 自动配置 AI 客户端 MCP 文件并备份
 piia-engram doctor           # 检查配置健康状态（已配置的 AI 工具）
 piia-engram status           # 脱敏安装与记忆健康摘要
 piia-engram status --html    # 写出本地脱敏状态页
@@ -795,6 +798,8 @@ piia-engram review           # 列出待审查的暂存知识
 piia-engram review show <id> # 查看单条待审知识
 piia-engram review approve <id> --yes  # 将暂存条目提升为已确认
 piia-engram review archive <id> --yes  # 归档待审条目
+piia-engram management action review approve <id> --yes --json  # 结构化脱敏操作回执
+piia-engram management action playbook delete <id> --yes --json # 软删除 Playbook，不回显正文
 piia-engram playbook install self-repair-loop        # dry-run 预览内置自我修复流程
 piia-engram playbook install self-repair-loop --yes  # 安装可复用的自我修复 Playbook
 piia-engram repair-encoding  # dry-run 扫描乱码 / mojibake

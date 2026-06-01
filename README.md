@@ -158,14 +158,22 @@ engram setup
 
 The setup wizard will:
 1. Detect your Python environment
-2. Find and configure your AI tools (Claude Code, Cursor, Claude Desktop, Codex)
-3. **Inject AI instructions** into each tool's native config (`CLAUDE.md`, `.cursorrules`, `AGENTS.md`) so AI proactively calls Engram
+2. Let you choose the Engram data folder (`~/.engram`, another drive, or a custom path)
+3. Detect your AI tools in read-only mode without changing their external config files
 4. Walk you through seed knowledge (role, tech stack, language)
 5. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
 6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (cross-tool sync, anonymous statistics)
 7. **Preview your AI identity card** — immediate proof of value
 
 Restart your AI tool after setup. The first conversation will call `get_user_context` automatically — your AI already knows you.
+
+To let Engram update Claude/Codex/Cursor/Zed MCP config files for you, run:
+
+```bash
+engram setup --apply-external-config
+```
+
+External config writes are explicit opt-in and create backups under the selected Engram data folder.
 
 Check health anytime:
 ```bash
@@ -707,7 +715,7 @@ All data lives in `~/.engram/` on your local machine as plain JSON and Markdown 
 pip install piia-engram
 engram setup
 ```
-The setup wizard detects your AI tools and configures MCP automatically. Restart your AI tool after setup. The AI will call `get_user_context` at the start of each session.
+The setup wizard detects your AI tools without changing their config files by default. To auto-configure MCP entries with backups, run `engram setup --apply-external-config`, then restart your AI tool. The AI will call `get_user_context` at the start of each session.
 
 **After upgrading, my AI tool shows "MCP server disconnected". How do I fix it?**
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files, removes outdated server entries, and repairs broken paths in one step.
@@ -789,7 +797,8 @@ honest boundaries, and ledger commands.
 ## CLI Commands
 
 ```bash
-engram setup            # Interactive install wizard
+engram setup            # Interactive install wizard (external configs stay read-only)
+engram setup --apply-external-config  # Auto-configure AI client MCP files with backups
 piia-engram doctor           # Check config health (all AI tools)
 piia-engram status           # Redacted install + memory health summary
 piia-engram status --html    # Write a local redacted status page
@@ -802,6 +811,8 @@ piia-engram review           # List staging knowledge awaiting review
 piia-engram review show <id> # Inspect one review item
 piia-engram review approve <id> --yes  # Promote a staging item
 piia-engram review archive <id> --yes  # Archive a review item
+piia-engram management action review approve <id> --yes --json  # Structured metadata-only action receipt
+piia-engram management action playbook delete <id> --yes --json # Soft-delete a Playbook without body echo
 piia-engram playbook install self-repair-loop        # Dry-run built-in agent self-repair workflow
 piia-engram playbook install self-repair-loop --yes  # Install the reusable workflow Playbook
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
