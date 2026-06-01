@@ -802,6 +802,85 @@ def test_write_mcp_config_preserves_existing_engram_dir_when_not_overridden(tmp_
     assert env["ENGRAM_DIR"] == "D:/EngramData"
 
 
+def test_external_config_write_requires_explicit_authorization_with_file_safety_root(
+    tmp_path: Path,
+):
+    """External client config writes must fail closed without explicit apply."""
+    engram_root = tmp_path / "engram-root"
+    external_config = tmp_path / "external" / "mcp.json"
+    external_config.parent.mkdir()
+    original = json.dumps(
+        {"mcpServers": {"existing": {"command": "node", "args": ["server.js"]}}},
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n"
+    external_config.write_text(original, encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="explicit authorization"):
+        _write_mcp_config(
+            external_config,
+            "/usr/bin/python3",
+            "/path/to/mcp_server.py",
+            file_safety_root=engram_root,
+            authorized_external_write=False,
+        )
+
+    assert external_config.read_text(encoding="utf-8") == original
+    assert not (engram_root / "file_safety_ledger.jsonl").exists()
+    assert not (engram_root / "backups").exists()
+
+
+def test_external_config_write_uses_engram_root_backup_ledger_and_preserves_old_dir(
+    tmp_path: Path,
+):
+    """Explicit repair should preserve old ENGRAM_DIR and keep backup metadata under Engram root."""
+    from piia_engram.file_safety import read_ledger_entries
+
+    engram_root = tmp_path / "engram-root"
+    external_config = tmp_path / "external" / "mcp.json"
+    external_config.parent.mkdir()
+    original = json.dumps(
+        {
+            "mcpServers": {
+                "engram": {
+                    "command": "/old/python",
+                    "args": ["old.py"],
+                    "env": {"ENGRAM_DIR": "D:/OldEngramData"},
+                }
+            }
+        },
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n"
+    external_config.write_text(original, encoding="utf-8")
+
+    _write_mcp_config(
+        external_config,
+        "/usr/bin/python3",
+        "/path/to/mcp_server.py",
+        data_dir=None,
+        file_safety_root=engram_root,
+        authorized_external_write=True,
+    )
+
+    updated = json.loads(external_config.read_text(encoding="utf-8"))
+    assert updated["mcpServers"]["engram"]["env"]["ENGRAM_DIR"] == "D:/OldEngramData"
+    assert list(external_config.parent.glob("mcp.json.engram-backup.*")) == []
+    backups = list((engram_root / "backups" / "file_safety" / "external").glob("mcp.json.*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+
+    entries = read_ledger_entries(engram_root)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["scope"] == "external"
+    assert entry["tool"] == "setup"
+    assert entry["result"] == "success"
+    assert entry["path"].startswith("<external:")
+    assert str(external_config.parent) not in entry["backup_path"]
+    assert entry["backup_path"].startswith("<engram-root>/backups/file_safety/")
+
+
 def test_write_mcp_config_respects_custom_server_key(tmp_path: Path):
     """Clients such as Copilot use top-level 'servers' instead of 'mcpServers'."""
     config_path = tmp_path / "mcp.json"

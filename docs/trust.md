@@ -35,6 +35,7 @@ By default:
 - Local telemetry, when enabled, writes a local log first; remote telemetry and weekly feedback reports require separate explicit opt-in.
 - Knowledge content, prompts, AI responses, file paths, email addresses, and IP addresses are not collected by telemetry.
 - New AI-suggested knowledge is staged for review before becoming verified memory.
+- `engram setup` does not modify external MCP client config files. It detects them and prints guidance unless you explicitly run `engram setup --apply-external-config`.
 
 Optional features can have different behavior:
 
@@ -44,6 +45,30 @@ Optional features can have different behavior:
 - `engram telemetry feedback on` can send weekly anonymous feedback reports after explicit consent.
 
 See [PRIVACY.md](../PRIVACY.md) for the full data-flow description.
+
+## File-safety and upgrade boundaries
+
+Engram separates its own data folder from external tool configuration.
+
+What Engram may write by default:
+
+- Files inside the selected Engram data folder, such as identity JSON, knowledge JSON, playbooks, local status reports, setup reports, and Engram-owned backups.
+- Project instruction snippets only through explicit setup/doctor actions that are documented in the local diagnostic output.
+
+What Engram does not write by default:
+
+- Claude, Codex, Cursor, Zed, Trae, CodeBuddy, or other external MCP client config files.
+- User project documents outside the Engram data folder.
+- Arbitrary files outside the selected Engram root.
+
+External client config writes are explicit opt-in. If you run `engram setup --apply-external-config` or an approved repair path that updates a client config, Engram writes through the central file-safety layer:
+
+- the previous external config is backed up under `<engram-root>/backups/file_safety/external/`;
+- a metadata-only `file_safety_ledger.jsonl` entry is appended under the Engram root;
+- ledger paths are redacted or hashed instead of storing raw external absolute paths;
+- existing custom `ENGRAM_DIR` values in legacy client configs are preserved unless you explicitly choose a new data folder.
+
+For existing users, the upgrade boundary is conservative: startup migration logs guidance inside the Engram root and leaves old external client configs byte-for-byte unchanged. To update those configs, run the explicit setup or doctor repair command from a terminal you control.
 
 ## AI suggests; you approve
 

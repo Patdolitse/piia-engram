@@ -91,6 +91,25 @@ def test_new_public_docs_are_publish_allowlisted():
         assert path in allowlist
 
 
+def test_setup_file_safety_docs_are_explicit_about_external_config_boundary():
+    english = _read("README.md") + "\n" + _read("SECURITY.md") + "\n" + _read("docs/trust.md")
+    chinese = _read("README.zh-CN.md")
+
+    assert "external client configs stay read-only by default" in english
+    assert "engram setup --apply-external-config" in english
+    assert "External config writes are explicit opt-in" in english
+    assert "What Engram does not write by default" in english
+    assert "auto-configures **Trae**" not in english
+    assert "auto-configures **Tencent CodeBuddy**" not in english
+    assert "configures them, and previews your identity card" not in english
+    assert "完成配置并预览你的身份卡" not in chinese
+    assert "发现并配置你的 AI 工具" not in chinese
+    assert "会自动配置 **Trae**" not in chinese
+    assert "默认不会改写这些文件" in chinese
+    assert "engram setup --apply-external-config" in chinese
+    assert "写入前会先" in chinese
+
+
 def test_cross_tool_demo_doc_uses_public_safe_paths():
     doc = _read("docs/cross-tool-continuity-demo.md")
 

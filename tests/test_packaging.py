@@ -379,6 +379,11 @@ def test_readmes_document_self_repair_playbook_cli():
     assert "playbook install self-repair-loop" in README_ZH.read_text(encoding="utf-8")
 
 
+def test_readmes_document_playbook_scope_management_cli():
+    assert "management action playbook_scope accept_project" in README.read_text(encoding="utf-8")
+    assert "management action playbook_scope accept_project" in README_ZH.read_text(encoding="utf-8")
+
+
 def test_zh_readme_has_remote_deployment_section():
     """中文 README 应说明远程部署和 token 安全提醒。"""
     content = README_ZH.read_text(encoding="utf-8")

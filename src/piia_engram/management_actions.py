@@ -201,6 +201,115 @@ def _playbook_transition(item: dict[str, Any], action: str) -> dict[str, Any]:
     }
 
 
+def _scope_type(item: dict[str, Any]) -> str:
+    scope = item.get("scope")
+    if isinstance(scope, dict):
+        value = str(scope.get("type") or "global").strip().lower()
+        return value or "global"
+    return "global"
+
+
+def _playbook_scope_transition(item: dict[str, Any], action: str) -> dict[str, Any]:
+    if action == "accept_project":
+        target = "project"
+    elif action == "skip":
+        target = "skipped"
+    else:
+        target = "global"
+    return {
+        "kind": "playbook_scope",
+        "from_scope": _scope_type(item),
+        "to_scope": target,
+    }
+
+
+def _run_playbook_scope_action(
+    eng,
+    *,
+    action: str,
+    item_id: str,
+    confirm: bool,
+    project_folder: str = "",
+    reason: str = "",
+) -> dict[str, Any]:
+    if action not in {"accept_global", "accept_project", "skip"}:
+        return _payload(
+            target="playbook_scope",
+            action=action,
+            item_id=item_id,
+            confirm=confirm,
+            dry_run=True,
+            requires_confirmation=False,
+            changed=False,
+            status="invalid_action",
+            error="invalid_action",
+        )
+
+    item = _playbook_item(eng, item_id)
+    if item is None:
+        return _payload(
+            target="playbook_scope",
+            action=action,
+            item_id=item_id,
+            confirm=confirm,
+            dry_run=True,
+            requires_confirmation=False,
+            changed=False,
+            status="not_found",
+            error="item_not_found",
+        )
+    result = _playbook_scope_transition(item, action)
+
+    if action == "accept_project" and not str(project_folder or "").strip():
+        return _payload(
+            target="playbook_scope",
+            action=action,
+            item_id=item_id,
+            confirm=confirm,
+            dry_run=True,
+            requires_confirmation=False,
+            changed=False,
+            status="invalid_state",
+            result=result,
+            error="project_folder_required",
+        )
+
+    if not confirm:
+        return _payload(
+            target="playbook_scope",
+            action=action,
+            item_id=item_id,
+            confirm=False,
+            dry_run=True,
+            requires_confirmation=True,
+            changed=False,
+            status="confirmation_required",
+            result=result,
+        )
+
+    applied = eng.resolve_playbook_scope_review(
+        item_id,
+        action=action,
+        project_folder=project_folder,
+        note=reason,
+        dry_run=False,
+        confirm=True,
+    )
+    ok = not bool(applied.get("error"))
+    return _payload(
+        target="playbook_scope",
+        action=action,
+        item_id=item_id,
+        confirm=True,
+        dry_run=False,
+        requires_confirmation=False,
+        changed=ok,
+        status="applied" if ok else "failed",
+        result=result,
+        error=None if ok else str(applied.get("error") or "scope_action_failed"),
+    )
+
+
 def _run_playbook_action(
     eng,
     *,
@@ -286,6 +395,7 @@ def run_management_action(
     action: str,
     item_id: str,
     confirm: bool = False,
+    project_folder: str = "",
     reason: str = "",
 ) -> dict[str, Any]:
     """Run one metadata-only management action.
@@ -310,6 +420,15 @@ def run_management_action(
             action=action,
             item_id=item_id,
             confirm=confirm,
+            reason=reason,
+        )
+    if target == "playbook_scope":
+        return _run_playbook_scope_action(
+            eng,
+            action=action,
+            item_id=item_id,
+            confirm=confirm,
+            project_folder=project_folder,
             reason=reason,
         )
     return _payload(

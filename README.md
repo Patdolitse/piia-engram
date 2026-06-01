@@ -55,7 +55,7 @@ Want a safe public walkthrough? See the [cross-tool continuity demo](docs/cross-
 pip install piia-engram && engram setup
 ```
 
-The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — configures them, and previews your identity card. Restart your tool; the first conversation already knows you. ([full walkthrough ↓](#quick-start-30-seconds))
+The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — in read-only mode, previews your identity card, and only writes external client config when you explicitly opt in. Restart your configured tool; the first conversation already knows you. ([full walkthrough ↓](#quick-start-30-seconds))
 
 ---
 
@@ -165,7 +165,7 @@ The setup wizard will:
 6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (cross-tool sync, anonymous statistics)
 7. **Preview your AI identity card** — immediate proof of value
 
-Restart your AI tool after setup. The first conversation will call `get_user_context` automatically — your AI already knows you.
+If the MCP client is already configured, restart your AI tool after setup. If it is not configured yet, add the MCP entry manually or run the explicit opt-in command below. The first connected conversation will call `get_user_context` automatically — your AI already knows you.
 
 To let Engram update Claude/Codex/Cursor/Zed MCP config files for you, run:
 
@@ -203,8 +203,10 @@ python demos/cross_tool_continuity_demo.py --json
 <summary><strong>Claude Code</strong></summary>
 
 ```bash
-# Automatic (recommended)
+# Guided setup; external client configs stay read-only by default
 engram setup
+# Explicit opt-in if you want Engram to write the client config with backups
+engram setup --apply-external-config
 # Or manual:
 claude mcp add piia-engram -- piia-engram-mcp
 ```
@@ -294,7 +296,7 @@ For tools without MCP support (ChatGPT, Gemini, Kimi): run `get_identity_card` i
 <details>
 <summary><strong>Domestic AI IDEs — Trae / CodeBuddy / Tongyi Lingma / Comate / Qoder</strong></summary>
 
-`engram setup` auto-configures **Trae** (`~/.trae/mcp.json`) and **Tencent CodeBuddy** (`~/.codebuddy/mcp.json`) — they read a standard `mcpServers` file in your home directory.
+`engram setup` detects **Trae** (`~/.trae/mcp.json`) and **Tencent CodeBuddy** (`~/.codebuddy/mcp.json`) without changing those files by default. To let Engram write those standard `mcpServers` files for you, run `engram setup --apply-external-config`; the previous file is backed up under your selected Engram data folder first.
 
 **Tongyi Lingma (通义灵码), Baidu Comate (文心快码), and Qoder** manage MCP servers through their in-app MCP panel (or a project-level config), so the wizard can't write them for you. Open the tool's MCP settings and paste:
 ```json
@@ -813,6 +815,7 @@ piia-engram review approve <id> --yes  # Promote a staging item
 piia-engram review archive <id> --yes  # Archive a review item
 piia-engram management action review approve <id> --yes --json  # Structured metadata-only action receipt
 piia-engram management action playbook delete <id> --yes --json # Soft-delete a Playbook without body echo
+piia-engram management action playbook_scope accept_project <id> --project . --yes --json # Resolve ambiguous Playbook scope
 piia-engram playbook install self-repair-loop        # Dry-run built-in agent self-repair workflow
 piia-engram playbook install self-repair-loop --yes  # Install the reusable workflow Playbook
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text

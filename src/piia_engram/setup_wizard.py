@@ -4810,6 +4810,7 @@ def _print_management_usage() -> None:
         "  engram management --json [--project PATH] [--review-limit N] [--playbook-limit N]\n"
         "  engram management action review approve|archive <id> [--yes] [--json]\n"
         "  engram management action playbook archive|delete|restore <id> [--yes] [--json]\n"
+        "  engram management action playbook_scope accept_global|accept_project|skip <id> [--project PATH] [--yes] [--json]\n"
     )
 
 
@@ -4827,6 +4828,7 @@ def _run_management_action_cli(args: list[str]) -> int:
     tail = args[4:]
     json_output = "--json" in tail
     confirm = "--yes" in tail
+    project_folder = ""
     reason = ""
     i = 0
     while i < len(tail):
@@ -4842,6 +4844,14 @@ def _run_management_action_cli(args: list[str]) -> int:
             reason = tail[i + 1]
             i += 2
             continue
+        if arg == "--project":
+            if i + 1 >= len(tail):
+                print("Missing value for --project")
+                _print_management_usage()
+                return 2
+            project_folder = tail[i + 1]
+            i += 2
+            continue
         print(f"Unknown management action option: {arg}")
         _print_management_usage()
         return 2
@@ -4852,6 +4862,7 @@ def _run_management_action_cli(args: list[str]) -> int:
         action=action,
         item_id=item_id,
         confirm=confirm,
+        project_folder=project_folder,
         reason=reason,
     )
     if json_output:

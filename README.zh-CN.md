@@ -55,7 +55,7 @@
 pip install piia-engram && engram setup
 ```
 
-向导会自动检测你的 AI 工具——Claude Code、Cursor、Codex、Claude Desktop——完成配置并预览你的身份卡。重启工具，第一次对话它就认识你。（完整步骤见下方"快速开始（30 秒）"）
+向导会以只读方式检测你的 AI 工具——Claude Code、Cursor、Codex、Claude Desktop——预览你的身份卡；只有在你显式选择时才会写入外部客户端配置。重启已配置的工具，第一次对话它就认识你。（完整步骤见下方"快速开始（30 秒）"）
 
 ---
 
@@ -132,14 +132,14 @@ engram setup
 
 安装向导会自动完成：
 1. 检测 Python 环境
-2. 发现并配置你的 AI 工具（Claude Code、Cursor、Claude Desktop、Codex）
+2. 只读发现你的 AI 工具（Claude Code、Cursor、Claude Desktop、Codex），如需自动写入配置需显式选择
 3. **注入 AI 指令**到每个工具的原生配置（`CLAUDE.md`、`.cursorrules`、`AGENTS.md`），确保 AI 主动调用 Engram
 4. 引导你录入种子知识（角色、技术栈、语言）
 5. 智能导入你已有的 `CLAUDE.md` / `.cursorrules` 规则文件
 6. 高级模式（`engram setup --advanced`）可设置隐私偏好（跨工具同步、匿名使用统计，均可选）
 7. **预览你的 AI 身份卡**——安装即见效
 
-设置完成后重启 AI 工具。第一次对话会自动调用 `get_user_context`——AI 已经认识你了。
+如果 MCP 客户端已经配置好，setup 完成后重启 AI 工具即可。若还没有配置，请手动添加 MCP 条目，或运行下面显式授权的自动写入命令。第一次成功连接后的对话会自动调用 `get_user_context`——AI 已经认识你了。
 
 随时检查健康状态：
 ```bash
@@ -223,8 +223,10 @@ $ engram doctor
 <summary><strong>Claude Code</strong></summary>
 
 ```bash
-# 自动配置（推荐）
+# 引导式 setup；默认不改外部客户端配置
 engram setup
+# 如果希望 Engram 自动写入客户端 MCP 配置并创建备份，显式运行：
+engram setup --apply-external-config
 # 或手动添加：
 claude mcp add piia-engram -- piia-engram-mcp
 ```
@@ -312,7 +314,7 @@ claude mcp add piia-engram -- piia-engram-mcp
 <details>
 <summary><strong>国产 AI IDE —— Trae / CodeBuddy / 通义灵码 / 文心快码 / Qoder</strong></summary>
 
-`engram setup` 会自动配置 **Trae**（`~/.trae/mcp.json`）和**腾讯 CodeBuddy**（`~/.codebuddy/mcp.json`）—— 它们都读 home 目录下的标准 `mcpServers` 配置文件。
+`engram setup` 会只读检测 **Trae**（`~/.trae/mcp.json`）和**腾讯 CodeBuddy**（`~/.codebuddy/mcp.json`），默认不会改写这些文件。如果你希望 Engram 自动写入这些标准 `mcpServers` 配置，请显式运行 `engram setup --apply-external-config`；写入前会先在你选择的 Engram 数据目录下创建备份。
 
 **通义灵码、文心快码（Comate）、Qoder** 的 MCP 走应用内的 MCP 面板（或项目级配置）管理，向导无法替你写入。打开工具的 MCP 设置，粘贴：
 ```json
@@ -800,6 +802,7 @@ piia-engram review approve <id> --yes  # 将暂存条目提升为已确认
 piia-engram review archive <id> --yes  # 归档待审条目
 piia-engram management action review approve <id> --yes --json  # 结构化脱敏操作回执
 piia-engram management action playbook delete <id> --yes --json # 软删除 Playbook，不回显正文
+piia-engram management action playbook_scope accept_project <id> --project . --yes --json # 处理歧义 Playbook 作用域
 piia-engram playbook install self-repair-loop        # dry-run 预览内置自我修复流程
 piia-engram playbook install self-repair-loop --yes  # 安装可复用的自我修复 Playbook
 piia-engram repair-encoding  # dry-run 扫描乱码 / mojibake
