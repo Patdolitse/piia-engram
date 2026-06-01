@@ -4501,6 +4501,83 @@ def run_continuity(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _print_management_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram management [--project PATH] [--review-limit N] [--playbook-limit N]\n"
+        "  engram management --json [--project PATH] [--review-limit N] [--playbook-limit N]\n"
+    )
+
+
+def run_management(argv: list[str] | None = None) -> int:
+    """Print a metadata-only management projection for GUI consumers."""
+    from piia_engram.core import Engram
+    from piia_engram.management_view import (
+        build_management_view,
+        render_management_text,
+    )
+
+    args = list(argv or [])
+    project_folder = os.getcwd()
+    review_limit = 50
+    playbook_limit = 50
+    json_output = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"-h", "--help"}:
+            _print_management_usage()
+            return 0
+        if arg == "--json":
+            json_output = True
+        elif arg == "--project":
+            if i + 1 >= len(args):
+                print("Missing value for --project")
+                _print_management_usage()
+                return 2
+            project_folder = args[i + 1]
+            i += 1
+        elif arg == "--review-limit":
+            if i + 1 >= len(args):
+                print("Missing value for --review-limit")
+                _print_management_usage()
+                return 2
+            try:
+                review_limit = int(args[i + 1])
+            except ValueError:
+                print("--review-limit must be an integer")
+                return 2
+            i += 1
+        elif arg == "--playbook-limit":
+            if i + 1 >= len(args):
+                print("Missing value for --playbook-limit")
+                _print_management_usage()
+                return 2
+            try:
+                playbook_limit = int(args[i + 1])
+            except ValueError:
+                print("--playbook-limit must be an integer")
+                return 2
+            i += 1
+        else:
+            print(f"Unknown management option: {arg}")
+            _print_management_usage()
+            return 2
+        i += 1
+
+    view = build_management_view(
+        Engram(),
+        project_folder=project_folder,
+        review_limit=review_limit,
+        playbook_limit=playbook_limit,
+    )
+    if json_output:
+        print(json.dumps(view, ensure_ascii=False, indent=2))
+    else:
+        print(render_management_text(view), end="")
+    return 0
+
+
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
@@ -4523,6 +4600,8 @@ def main() -> None:
         sys.exit(run_status(args[1:]))
     elif args[0] == "continuity":
         sys.exit(run_continuity(args[1:]))
+    elif args[0] == "management":
+        sys.exit(run_management(args[1:]))
     elif args[0] == "stats":
         from piia_engram.stats import run_stats, log_stats
         if "--log" in args:
@@ -4568,6 +4647,7 @@ def main() -> None:
             "  engram status           Show a redacted install + memory health summary\n"
             "  engram status --html    Write a local redacted status page\n"
             "  engram continuity       Prove cross-tool handoff readiness (metadata only)\n"
+            "  engram management       Show a metadata-only review/playbook management view\n"
             "  engram sessions         List saved cross-tool agent sessions\n"
             "  engram sessions show <id>  Print one saved session\n"
             "  engram review           List staging knowledge awaiting review\n"
