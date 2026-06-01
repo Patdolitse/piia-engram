@@ -80,7 +80,23 @@ Use the short listing plus three trust bullets:
 
 ### GitHub release notes
 
-When cutting the next positioning release, lead with positioning rather than features:
+GitHub release notes should be bilingual when the release body is written by
+project maintainers: English first, then Chinese, separated into two clear
+sections. Keep the tag and release title ASCII/English for ecosystem indexing.
+
+Recommended structure:
+
+```text
+## English
+
+[English release summary, highlights, upgrade notes, and verification evidence.]
+
+## Chinese
+
+[Chinese release summary, highlights, upgrade notes, and verification evidence.]
+```
+
+When cutting the next positioning release, lead with positioning rather than features in both sections:
 
 > This release sharpens piia-engram's public positioning as a local-first personal AI identity layer for MCP-compatible coding tools. It updates README messaging, adds a trust model, expands comparison coverage for OpenMemory and native coding-tool memories, and documents a cross-tool continuity demo.
 

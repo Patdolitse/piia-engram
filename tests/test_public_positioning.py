@@ -91,6 +91,17 @@ def test_new_public_docs_are_publish_allowlisted():
         assert path in allowlist
 
 
+def test_release_notes_bilingual_order_is_documented():
+    listing = _read("docs/listing-copy.md")
+    evidence = _read("release-evidence/README.md")
+
+    assert "English first, then Chinese" in listing
+    assert "## English" in listing
+    assert "## Chinese" in listing
+    assert evidence.index("## English") < evidence.index("## Chinese")
+    assert "English must come first" in evidence
+
+
 def test_setup_file_safety_docs_are_explicit_about_external_config_boundary():
     english = _read("README.md") + "\n" + _read("SECURITY.md") + "\n" + _read("docs/trust.md")
     chinese = _read("README.zh-CN.md")

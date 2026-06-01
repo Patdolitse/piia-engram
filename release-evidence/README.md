@@ -79,3 +79,22 @@ all pass" hid plaintext-leak bugs:
 Keep these files factual and minimal. They are public because they are tracked
 in the repo. Put detailed review notes in the gitignored internal changelog,
 not here.
+
+## Release Notes Draft
+
+If a release evidence file includes a GitHub Release body draft, use a bilingual
+two-section format:
+
+```text
+## English
+
+[English release summary, highlights, upgrade notes, and verification evidence.]
+
+## Chinese
+
+[Chinese release summary, highlights, upgrade notes, and verification evidence.]
+```
+
+English must come first for public package indexes, MCP directories, and
+international reviewers. The Chinese section follows as a separate section for
+Chinese readers and maintainer handoff.
