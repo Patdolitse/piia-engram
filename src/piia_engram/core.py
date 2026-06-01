@@ -1281,12 +1281,25 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                     seen.add(name)
         return params
 
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        """Return a clean list of strings from a scalar or sequence."""
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            values = value
+        else:
+            values = [value]
+        return [str(item).strip() for item in values if str(item).strip()]
+
     def _normalize_playbook_scope(
         self,
         entry: dict,
         scope_type: str | None = None,
         project_folder: str | None = None,
         project_id: str | None = None,
+        project_folders: list[str] | None = None,
+        project_ids: list[str] | None = None,
     ) -> dict:
         """Return the canonical scope dict for a playbook.
 
@@ -1307,6 +1320,43 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             or ("project" if folder or pid else "global")
         )
         raw_type = str(raw_type or "global").strip().lower()
+        if raw_type == "shared":
+            folders = (
+                self._string_list(project_folders)
+                or self._string_list(entry.get("project_folders"))
+                or self._string_list(raw_scope.get("project_folders"))
+            )
+            ids = (
+                self._string_list(project_ids)
+                or self._string_list(entry.get("project_ids"))
+                or self._string_list(raw_scope.get("project_ids"))
+            )
+            ordered_ids: list[str] = []
+            folders_by_id: dict[str, str] = {}
+            seen: set[str] = set()
+            for shared_folder in folders:
+                shared_id = _project_id(shared_folder)
+                if not shared_id or shared_id in seen:
+                    continue
+                seen.add(shared_id)
+                ordered_ids.append(shared_id)
+                folders_by_id[shared_id] = shared_folder
+            for shared_id in ids:
+                if not shared_id or shared_id in seen:
+                    continue
+                seen.add(shared_id)
+                ordered_ids.append(shared_id)
+            if not ordered_ids:
+                return {"type": "global"}
+            scope = {"type": "shared", "project_ids": ordered_ids}
+            ordered_folders = [
+                folders_by_id[shared_id]
+                for shared_id in ordered_ids
+                if shared_id in folders_by_id
+            ]
+            if ordered_folders:
+                scope["project_folders"] = ordered_folders
+            return scope
         if raw_type != "project":
             return {"type": "global"}
         if not pid and folder:
@@ -1327,9 +1377,21 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             entry["project_id"] = scope.get("project_id", "")
             if scope.get("project_folder"):
                 entry["project_folder"] = scope["project_folder"]
+            entry.pop("project_ids", None)
+            entry.pop("project_folders", None)
+        elif scope.get("type") == "shared":
+            entry["project_id"] = ""
+            entry.pop("project_folder", None)
+            entry["project_ids"] = list(scope.get("project_ids") or [])
+            if scope.get("project_folders"):
+                entry["project_folders"] = list(scope.get("project_folders") or [])
+            else:
+                entry.pop("project_folders", None)
         else:
             entry["project_id"] = ""
             entry.pop("project_folder", None)
+            entry.pop("project_ids", None)
+            entry.pop("project_folders", None)
         return entry
 
     def _playbook_visible_for_project(
@@ -1341,6 +1403,8 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             return True
         if not project_folder:
             return False
+        if scope.get("type") == "shared":
+            return _project_id(project_folder) in set(scope.get("project_ids") or [])
         return scope.get("project_id") == _project_id(project_folder)
 
     def _same_playbook_scope(self, left: dict, right: dict) -> bool:
@@ -1351,6 +1415,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             return False
         if l_scope.get("type") == "project":
             return l_scope.get("project_id") == r_scope.get("project_id")
+        if l_scope.get("type") == "shared":
+            return set(l_scope.get("project_ids") or []) == set(
+                r_scope.get("project_ids") or []
+            )
         return True
 
     def _ensure_playbook_fields(self, entry: dict) -> dict:
@@ -1694,22 +1762,50 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             if pb.get("status") != "active":
                 continue
             text = self._playbook_text_for_classification(pb)
-            best_project: dict | None = None
-            best_evidence: list[str] = []
+            project_matches: list[dict] = []
             for project in project_terms:
                 evidence = [term for term in project["terms"] if term in text]
-                if len(evidence) > len(best_evidence):
-                    best_project = project
-                    best_evidence = evidence
+                if evidence:
+                    project_matches.append({
+                        "folder": project["folder"],
+                        "project_id": project["project_id"],
+                        "evidence": evidence,
+                    })
 
-            if best_project and best_evidence:
-                confidence = min(0.95, 0.65 + 0.1 * len(best_evidence))
+            project_matches.sort(key=lambda match: len(match["evidence"]), reverse=True)
+            if (
+                len(project_matches) >= 2
+                and len(project_matches[0]["evidence"]) == len(project_matches[1]["evidence"])
+            ):
+                top_count = len(project_matches[0]["evidence"])
+                shared_matches = [
+                    match for match in project_matches
+                    if len(match["evidence"]) == top_count
+                ]
+                confidence = min(
+                    0.95,
+                    0.7 + 0.05 * len(shared_matches)
+                    + 0.03 * sum(len(match["evidence"]) for match in shared_matches),
+                )
+                suggested_scope = {
+                    "type": "shared",
+                    "project_ids": [match["project_id"] for match in shared_matches],
+                    "project_folders": [match["folder"] for match in shared_matches],
+                }
+                evidence = [
+                    f"matched project term: {term}"
+                    for match in shared_matches
+                    for term in match["evidence"]
+                ]
+            elif project_matches:
+                match = project_matches[0]
+                confidence = min(0.95, 0.65 + 0.1 * len(match["evidence"]))
                 suggested_scope = {
                     "type": "project",
-                    "project_id": best_project["project_id"],
-                    "project_folder": best_project["folder"],
+                    "project_id": match["project_id"],
+                    "project_folder": match["folder"],
                 }
-                evidence = [f"matched project term: {term}" for term in best_evidence]
+                evidence = [f"matched project term: {term}" for term in match["evidence"]]
             elif any(marker in text for marker in global_markers):
                 confidence = 0.75
                 suggested_scope = {"type": "global"}
@@ -1849,7 +1945,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             target_scope = self._normalize_playbook_scope(
                 {"scope": suggestion.get("suggested_scope") or {}}
             )
-            if target_scope.get("type") not in {"global", "project"}:
+            if target_scope.get("type") not in {"global", "project", "shared"}:
                 skipped.append({
                     "id": playbook_id,
                     "title": suggestion.get("title", ""),
@@ -2045,19 +2141,27 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         playbook_id: str,
         action: str,
         project_folder: str | None = None,
+        project_folders: list[str] | None = None,
         note: str = "",
         dry_run: bool = True,
         confirm: bool = False,
     ) -> dict:
         """Resolve one Playbook scope review item by keeping, assigning, or skipping."""
         action = str(action or "").strip().lower()
-        if action not in {"accept_global", "accept_project", "skip"}:
+        if action not in {"accept_global", "accept_project", "accept_shared", "skip"}:
             return {
                 "error": "invalid_action",
-                "allowed_actions": ["accept_global", "accept_project", "skip"],
+                "allowed_actions": [
+                    "accept_global",
+                    "accept_project",
+                    "accept_shared",
+                    "skip",
+                ],
             }
         if action == "accept_project" and not project_folder:
             return {"error": "project_folder_required"}
+        if action == "accept_shared" and not project_folders:
+            return {"error": "project_folders_required"}
 
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
@@ -2067,6 +2171,10 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if action == "accept_project":
             target_scope = self._normalize_playbook_scope(
                 {}, scope_type="project", project_folder=project_folder,
+            )
+        elif action == "accept_shared":
+            target_scope = self._normalize_playbook_scope(
+                {}, scope_type="shared", project_folders=project_folders,
             )
         elif action == "accept_global":
             target_scope = self._normalize_playbook_scope({}, scope_type="global")
@@ -2166,21 +2274,30 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         """Return a Playbook entry suitable for management views."""
         if include_content:
             return dict(pb)
+        scope = self._normalize_playbook_scope(pb)
+        scope_type = str(scope.get("type") or "global")
+        if scope_type == "shared":
+            project_count = len(scope.get("project_ids") or [])
+        elif scope_type == "project":
+            project_count = 1
+        else:
+            project_count = 0
+        public_scope = dict(scope)
+        public_scope.pop("project_folder", None)
+        public_scope.pop("project_folders", None)
         return {
             "id": pb.get("id", ""),
-            "title": pb.get("title", ""),
             "status": pb.get("status", "active"),
-            "scope": self._normalize_playbook_scope(pb),
+            "scope": public_scope,
+            "scope_type": scope_type,
+            "project_count": project_count,
             "scope_review_status": pb.get("scope_review_status", ""),
             "scope_review_resolution": pb.get("scope_review_resolution", ""),
-            "domain": pb.get("domain", ""),
-            "triggers": list(pb.get("triggers") or []),
             "created_at": pb.get("created_at", ""),
             "last_updated": pb.get("last_updated", ""),
             "last_reviewed": pb.get("last_reviewed", ""),
             "version": pb.get("version", 1),
             "deleted_at": pb.get("deleted_at", ""),
-            "deletion_reason": pb.get("deletion_reason", ""),
         }
 
     def list_playbooks_for_management(
@@ -2195,7 +2312,7 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         status_filter = self._normalize_playbook_status_filter(status)
         scope_filter = str(scope_type or "all").strip().lower()
         valid_statuses = {"all", "active", "outdated", "staging", "deleted"}
-        valid_scopes = {"all", "global", "project"}
+        valid_scopes = {"all", "global", "project", "shared"}
         if status_filter not in valid_statuses:
             return {"error": f"Invalid status {status!r}; must be one of {sorted(valid_statuses)}"}
         if scope_filter not in valid_scopes:
@@ -2251,10 +2368,8 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             return {"error": "playbook_already_deleted", "playbook_id": playbook_id}
         change = {
             "id": playbook_id,
-            "title": pb.get("title", ""),
             "from_status": current_status,
             "to_status": "deleted",
-            "reason": reason,
             "soft_delete": True,
         }
         effective_dry_run = bool(dry_run or not confirm)
@@ -2304,7 +2419,6 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             return {"error": "playbook_already_active", "playbook_id": playbook_id}
         change = {
             "id": playbook_id,
-            "title": pb.get("title", ""),
             "from_status": current_status,
             "to_status": "active",
         }

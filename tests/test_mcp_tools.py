@@ -1296,6 +1296,29 @@ def test_mcp_get_playbook_scope_review_queue(
     assert result["items"][0]["suggested_scope"]["type"] == "needs_review"
 
 
+def test_mcp_resolve_playbook_scope_review_accept_shared_preview(
+    isolated_engram: Engram, tmp_path: Path,
+):
+    """MCP wrapper should pass explicit shared project folders to review resolution."""
+    project_a = str(tmp_path / "engram")
+    project_b = str(tmp_path / "atlas")
+    pb = isolated_engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = json.loads(_run(mcp_server.resolve_playbook_scope_review(
+        playbook_id=pb["id"],
+        action="accept_shared",
+        project_folders_json=json.dumps([project_a, project_b]),
+        dry_run=True,
+        confirm=False,
+    )))
+
+    assert result["dry_run"] is True
+    assert result["would_update"]["to_scope"]["type"] == "shared"
+    assert result["would_update"]["to_scope"]["project_folders"] == [project_a, project_b]
+    stored = isolated_engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+
+
 def test_mcp_resolve_playbook_scope_review_refuses_web_caller_before_write(
     isolated_engram: Engram, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1332,6 +1355,94 @@ def test_mcp_list_playbooks_for_management_includes_hidden_items(
     by_id = {item["id"]: item for item in result["items"]}
     assert by_id[active["id"]]["status"] == "active"
     assert by_id[deleted["id"]]["status"] == "deleted"
+
+
+def test_mcp_list_playbooks_for_management_default_is_metadata_only(
+    isolated_engram: Engram,
+):
+    """The MCP management list default must not echo Playbook content."""
+    secret = "ZZ_MCP_MANAGEMENT_SECRET"
+    pb = isolated_engram.add_playbook({
+        "title": f"{secret} title",
+        "description": f"{secret} description",
+        "domain": f"{secret} domain",
+        "triggers": [f"{secret} trigger"],
+        "steps": [f"{secret} step"],
+    })
+    isolated_engram.delete_playbook(
+        pb["id"],
+        reason=f"{secret} deletion reason",
+        dry_run=False,
+        confirm=True,
+    )
+
+    result = json.loads(_run(mcp_server.list_playbooks_for_management(status="all")))
+    rendered = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    item = result["items"][0]
+
+    assert secret not in rendered
+    assert "title" not in item
+    assert "description" not in item
+    assert "domain" not in item
+    assert "triggers" not in item
+    assert "steps" not in item
+    assert "deletion_reason" not in item
+
+
+def test_mcp_delete_restore_playbook_receipts_do_not_echo_content(
+    isolated_engram: Engram,
+):
+    """MCP delete/restore receipts should be metadata-only even with governance off."""
+    secret = "ZZ_MCP_DELETE_RECEIPT_SECRET"
+    pb = isolated_engram.add_playbook({
+        "title": f"{secret} title",
+        "steps": [f"{secret} step"],
+    })
+
+    delete_preview = _run(mcp_server.delete_playbook(
+        playbook_id=pb["id"],
+        reason=f"{secret} dry reason",
+        dry_run=True,
+        confirm=False,
+    ))
+    deleted = _run(mcp_server.delete_playbook(
+        playbook_id=pb["id"],
+        reason=f"{secret} applied reason",
+        dry_run=False,
+        confirm=True,
+    ))
+    restore_preview = _run(mcp_server.restore_playbook(
+        playbook_id=pb["id"],
+        dry_run=True,
+        confirm=False,
+    ))
+    restored = _run(mcp_server.restore_playbook(
+        playbook_id=pb["id"],
+        dry_run=False,
+        confirm=True,
+    ))
+    rendered = "\n".join([delete_preview, deleted, restore_preview, restored])
+
+    assert secret not in rendered
+    assert "title" not in rendered
+    assert "reason" not in rendered
+
+
+def test_mcp_archive_playbook_ack_does_not_echo_title(
+    isolated_engram: Engram,
+):
+    """Archive acknowledgement should not echo private Playbook titles."""
+    secret = "ZZ_MCP_ARCHIVE_SECRET"
+    pb = isolated_engram.add_playbook({
+        "title": f"{secret} title",
+        "steps": [f"{secret} step"],
+    })
+
+    result = _run(mcp_server.archive_playbook(pb["id"]))
+
+    assert secret not in result
+    assert "title" not in result
+    assert pb["id"] in result
 
 
 def test_mcp_delete_playbook_refuses_web_caller_before_write(

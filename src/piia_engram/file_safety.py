@@ -201,3 +201,31 @@ def write_external_config_text(
         result="success",
     )
     return backup_path
+
+
+def delete_external_config_file(
+    root: Path,
+    path: Path,
+    *,
+    tool: str,
+    authorized: bool,
+) -> Path | None:
+    """Delete an external config file only after backup and explicit authorization."""
+    root = Path(root)
+    path = Path(path)
+    if not authorized:
+        raise PermissionError(f"external file delete requires explicit authorization: {path}")
+    if not path.is_file():
+        return None
+    backup_path = backup_existing_file(root, path, scope="external", tool=tool)
+    path.unlink()
+    _append_ledger(
+        root,
+        operation="delete",
+        scope="external",
+        tool=tool,
+        path=path,
+        backup_path=backup_path,
+        result="success",
+    )
+    return backup_path

@@ -1620,21 +1620,32 @@ async def resolve_playbook_scope_review(
     playbook_id: str,
     action: str,
     project_folder: str = "",
+    project_folders_json: str = "[]",
     note: str = "",
     dry_run: bool = True,
     confirm: bool = False,
 ) -> str:
-    """Resolve one Playbook scope review item: accept global/project or skip."""
+    """Resolve one Playbook scope review item: accept global/project/shared or skip."""
     refusal = _gov_rt.maybe_refuse_owner_write(
         _engram.root, tool="resolve_playbook_scope_review"
     )
     if refusal is not None:
         return refusal
+    project_folders = None
+    if project_folders_json and project_folders_json != "[]":
+        try:
+            parsed = json.loads(project_folders_json)
+        except json.JSONDecodeError:
+            return "project_folders_json must be a valid JSON array"
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            return "project_folders_json must be a JSON array of strings"
+        project_folders = parsed
     try:
         result = _engram.resolve_playbook_scope_review(
             playbook_id=playbook_id,
             action=action,
             project_folder=project_folder or None,
+            project_folders=project_folders,
             note=note,
             dry_run=dry_run,
             confirm=confirm,
@@ -2375,8 +2386,7 @@ async def archive_playbook(playbook_id: str) -> str:
         return f"归档 Playbook 失败: {_safe_err(exc)}"
     if result.get("error"):
         return _json(result)
-    # Ack echoes the stored playbook title — gate it (round-16 write-echo class).
-    ack = f"Playbook 已归档: {result.get('title', playbook_id)}"
+    ack = f"Playbook archived: {playbook_id}"
     return _gov_rt.maybe_govern_write_ack(_engram.root, ack, tool="archive_playbook")
 
 

@@ -60,8 +60,8 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        # Uses OIDC Trusted Publishing — no API token needed.
-        # Fallback to token if Trusted Publishing is not yet configured on PyPI.
+        # Pure OIDC Trusted Publishing: configure the PyPI project to trust
+        # repo Patdolitse/piia-engram, workflow publish.yml, environment pypi.
+        # Do not pass username/password or long-lived API tokens here.
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true

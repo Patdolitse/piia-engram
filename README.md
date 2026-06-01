@@ -521,11 +521,11 @@ piia-engram ships 80 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 | `get_related_knowledge` | Follow links between knowledge items |
 | `find_similar_knowledge` | Find similar items by content |
 | `suggest_merges` | Scan for near-duplicates with actionable merge commands |
-| `classify_legacy_playbooks` | Dry-run project/global scope suggestions for older Playbooks |
+| `classify_legacy_playbooks` | Dry-run project/global/shared scope suggestions for older Playbooks |
 | `apply_legacy_playbook_scope_suggestions` | Apply high-confidence legacy Playbook scope suggestions after confirmation |
 | `rollback_playbook_scope_migration` | Roll back the latest Playbook scope migration |
 | `get_playbook_scope_review_queue` | List ambiguous Playbooks that need manual scope review |
-| `resolve_playbook_scope_review` | Accept or skip one Playbook scope review item |
+| `resolve_playbook_scope_review` | Accept global, project, or shared scope for one Playbook review item |
 | `list_playbooks_for_management` | List Playbooks for management, including archived/deleted metadata |
 | `delete_playbook` | Soft-delete a Playbook after confirmation |
 | `restore_playbook` | Restore an archived or deleted Playbook |
@@ -816,6 +816,7 @@ piia-engram review archive <id> --yes  # Archive a review item
 piia-engram management action review approve <id> --yes --json  # Structured metadata-only action receipt
 piia-engram management action playbook delete <id> --yes --json # Soft-delete a Playbook without body echo
 piia-engram management action playbook_scope accept_project <id> --project . --yes --json # Resolve ambiguous Playbook scope
+piia-engram management action playbook_scope accept_shared <id> --project ./app-a --project ./app-b --yes --json # Share one Playbook with selected projects
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
 piia-engram repair-encoding --apply  # Repair reversible cases with a backup
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)

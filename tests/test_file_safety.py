@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from piia_engram import file_safety
 from piia_engram.file_safety import (
     classify_path,
     read_ledger_entries,
@@ -85,6 +86,119 @@ def test_authorized_external_write_backs_up_and_ledgers(tmp_path: Path):
     assert entries[0]["tool"] == "setup"
     assert entries[0]["backup_path"].startswith("<engram-root>/backups/file_safety/")
     assert str(external) not in json.dumps(entries[0], ensure_ascii=False)
+
+
+def test_external_delete_refuses_without_authorization(tmp_path: Path):
+    root = tmp_path / "root"
+    external = tmp_path / "home" / ".cursor" / "rules" / "engram.mdc"
+    external.parent.mkdir(parents=True)
+    original = "alwaysApply: true\n"
+    external.write_text(original, encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="external file delete requires"):
+        file_safety.delete_external_config_file(
+            root,
+            external,
+            tool="setup",
+            authorized=False,
+        )
+
+    assert external.read_text(encoding="utf-8") == original
+    assert not (root / "file_safety_ledger.jsonl").exists()
+
+
+def test_authorized_external_delete_backs_up_and_ledgers(tmp_path: Path):
+    root = tmp_path / "root"
+    external = tmp_path / "home" / ".cursor" / "rules" / "engram.mdc"
+    external.parent.mkdir(parents=True)
+    original = "alwaysApply: true\n"
+    external.write_text(original, encoding="utf-8")
+
+    backup = file_safety.delete_external_config_file(
+        root,
+        external,
+        tool="setup",
+        authorized=True,
+    )
+
+    assert backup is not None
+    assert backup.is_file()
+    assert backup.read_text(encoding="utf-8") == original
+    assert not external.exists()
+
+    entries = read_ledger_entries(root)
+    assert len(entries) == 1
+    assert entries[0]["scope"] == "external"
+    assert entries[0]["operation"] == "delete"
+    assert entries[0]["tool"] == "setup"
+    assert entries[0]["backup_path"].startswith("<engram-root>/backups/file_safety/")
+    assert str(external) not in json.dumps(entries[0], ensure_ascii=False)
+
+
+def test_external_delete_missing_file_is_noop_without_ledger(tmp_path: Path):
+    root = tmp_path / "root"
+    external = tmp_path / "home" / ".cursor" / "rules" / "missing.mdc"
+
+    backup = file_safety.delete_external_config_file(
+        root,
+        external,
+        tool="setup",
+        authorized=True,
+    )
+
+    assert backup is None
+    assert not external.exists()
+    assert not (root / "file_safety_ledger.jsonl").exists()
+
+
+def test_external_delete_missing_file_still_requires_authorization(tmp_path: Path):
+    root = tmp_path / "root"
+    external = tmp_path / "home" / ".cursor" / "rules" / "missing.mdc"
+
+    with pytest.raises(PermissionError, match="external file delete requires"):
+        file_safety.delete_external_config_file(
+            root,
+            external,
+            tool="setup",
+            authorized=False,
+        )
+
+    assert not external.exists()
+    assert not (root / "file_safety_ledger.jsonl").exists()
+
+
+def test_external_delete_failure_keeps_file_and_does_not_ledger(
+    tmp_path: Path,
+    monkeypatch,
+):
+    root = tmp_path / "root"
+    external = tmp_path / "home" / ".cursor" / "rules" / "engram.mdc"
+    external.parent.mkdir(parents=True)
+    original = "alwaysApply: true\n"
+    external.write_text(original, encoding="utf-8")
+
+    real_unlink = Path.unlink
+
+    def fail_external_unlink(path: Path, *args, **kwargs):
+        if path == external:
+            raise PermissionError("locked")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_external_unlink)
+
+    with pytest.raises(PermissionError, match="locked"):
+        file_safety.delete_external_config_file(
+            root,
+            external,
+            tool="setup",
+            authorized=True,
+        )
+
+    assert external.read_text(encoding="utf-8") == original
+    backups = list((root / "backups" / "file_safety" / "external").glob("engram.mdc.*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+    assert not (root / "file_safety_ledger.jsonl").exists()
 
 
 def test_engram_write_backs_up_existing_file_and_skips_unchanged(tmp_path: Path):

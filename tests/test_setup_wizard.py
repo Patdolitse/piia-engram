@@ -1,6 +1,7 @@
 """setup_wizard 辅助函数单元测试。"""
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -789,6 +790,33 @@ def test_external_config_write_requires_explicit_authorization_with_file_safety_
             "/path/to/mcp_server.py",
             file_safety_root=engram_root,
             authorized_external_write=False,
+        )
+
+    assert external_config.read_text(encoding="utf-8") == original
+    assert not (engram_root / "file_safety_ledger.jsonl").exists()
+    assert not (engram_root / "backups").exists()
+
+
+def test_external_config_write_with_file_safety_root_fails_closed_by_default(
+    tmp_path: Path,
+):
+    """A caller must explicitly opt in before mutating external config files."""
+    engram_root = tmp_path / "engram-root"
+    external_config = tmp_path / "external" / "mcp.json"
+    external_config.parent.mkdir()
+    original = json.dumps(
+        {"mcpServers": {"existing": {"command": "node", "args": ["server.js"]}}},
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n"
+    external_config.write_text(original, encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="explicit authorization"):
+        _write_mcp_config(
+            external_config,
+            "/usr/bin/python3",
+            "/path/to/mcp_server.py",
+            file_safety_root=engram_root,
         )
 
     assert external_config.read_text(encoding="utf-8") == original
@@ -3510,6 +3538,38 @@ class TestInstructionInjection:
         assert _INSTRUCTION_MARKER in content
         assert "wrap_up_session" in content
 
+    def test_inject_with_file_safety_root_fails_closed_by_default(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """Supplying an Engram backup root is not enough to authorize external writes."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _INSTRUCTION_SNIPPETS,
+        )
+        engram_root = tmp_path / "engram-root"
+        target = tmp_path / "home" / ".claude" / "CLAUDE.md"
+        target.parent.mkdir(parents=True)
+        original = "# My rules\n\nKeep these.\n"
+        target.write_text(original, encoding="utf-8")
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: target,
+        )
+
+        result = _inject_instruction_snippet(
+            "claude_code",
+            lang="zh",
+            file_safety_root=engram_root,
+        )
+
+        assert result is None
+        assert target.read_text(encoding="utf-8") == original
+        assert not (engram_root / "file_safety_ledger.jsonl").exists()
+        assert not (engram_root / "backups").exists()
+
     def test_inject_unknown_tool_returns_none(self):
         """Unknown tool_id should return None."""
         from piia_engram.setup_wizard import _inject_instruction_snippet
@@ -3560,6 +3620,218 @@ class TestInstructionInjection:
         removed = _remove_instruction_snippet("cursor")
         assert removed is True
         assert not mdc_path.is_file()
+
+    def test_remove_claude_code_snippet_with_file_safety_backup_and_ledger(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """External instruction snippet removal should be backed up under ENGRAM_DIR."""
+        from piia_engram.file_safety import read_ledger_entries
+        from piia_engram.setup_wizard import (
+            _remove_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_MARKER_END,
+            _INSTRUCTION_SNIPPETS,
+        )
+        engram_root = tmp_path / "engram-root"
+        target = tmp_path / "home" / ".claude" / "CLAUDE.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "# My rules\n\n"
+            f"{_INSTRUCTION_MARKER}\n"
+            "PIIA Engram test snippet\n"
+            f"{_INSTRUCTION_MARKER_END}\n\n"
+            "Keep these.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: target,
+        )
+        injected = target.read_text(encoding="utf-8")
+        assert _INSTRUCTION_MARKER in injected
+
+        removed = _remove_instruction_snippet(
+            "claude_code",
+            file_safety_root=engram_root,
+            authorized_external_write=True,
+        )
+
+        assert removed is True
+        assert _INSTRUCTION_MARKER not in target.read_text(encoding="utf-8")
+        assert list(target.parent.glob("CLAUDE.md.engram-backup.*")) == []
+        backups = list((engram_root / "backups" / "file_safety" / "external").glob("CLAUDE.md.*.bak"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == injected
+        entries = read_ledger_entries(engram_root)
+        assert len(entries) == 1
+        assert entries[0]["operation"] == "write"
+        assert entries[0]["scope"] == "external"
+        assert str(target.parent) not in json.dumps(entries[0], ensure_ascii=False)
+
+    def test_remove_claude_code_snippet_refuses_unapproved_external_write(
+        self,
+        tmp_path,
+        monkeypatch,
+        caplog,
+    ):
+        """Unapproved snippet removal must leave external files untouched."""
+        from piia_engram.setup_wizard import (
+            _remove_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_MARKER_END,
+            _INSTRUCTION_SNIPPETS,
+        )
+        engram_root = tmp_path / "engram-root"
+        target = tmp_path / "home" / ".claude" / "CLAUDE.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "# My rules\n\n"
+            f"{_INSTRUCTION_MARKER}\n"
+            "PIIA Engram test snippet\n"
+            f"{_INSTRUCTION_MARKER_END}\n\n"
+            "Keep these.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: target,
+        )
+        before = target.read_text(encoding="utf-8")
+        caplog.set_level(logging.WARNING, logger="piia_engram.setup_wizard")
+
+        removed = _remove_instruction_snippet(
+            "claude_code",
+            file_safety_root=engram_root,
+            authorized_external_write=False,
+        )
+
+        assert removed is False
+        assert "instruction removal failed for claude_code" in caplog.text
+        assert target.read_text(encoding="utf-8") == before
+        assert not (engram_root / "file_safety_ledger.jsonl").exists()
+        assert not (engram_root / "backups").exists()
+
+    def test_remove_cursor_snippet_with_file_safety_backup_and_delete_ledger(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """Cursor .mdc removal should back up before deleting the external file."""
+        from piia_engram.file_safety import read_ledger_entries
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _remove_instruction_snippet,
+            _INSTRUCTION_SNIPPETS,
+        )
+        engram_root = tmp_path / "engram-root"
+        mdc_path = tmp_path / "home" / ".cursor" / "rules" / "engram.mdc"
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["cursor"],
+            "path_fn",
+            lambda _home: mdc_path,
+        )
+        _inject_instruction_snippet("cursor")
+        injected = mdc_path.read_text(encoding="utf-8")
+
+        removed = _remove_instruction_snippet(
+            "cursor",
+            file_safety_root=engram_root,
+            authorized_external_write=True,
+        )
+
+        assert removed is True
+        assert not mdc_path.exists()
+        assert list(mdc_path.parent.glob("engram.mdc.engram-backup.*")) == []
+        backups = list((engram_root / "backups" / "file_safety" / "external").glob("engram.mdc.*.bak"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == injected
+        entries = read_ledger_entries(engram_root)
+        assert len(entries) == 1
+        assert entries[0]["operation"] == "delete"
+        assert entries[0]["scope"] == "external"
+        assert str(mdc_path.parent) not in json.dumps(entries[0], ensure_ascii=False)
+
+    def test_remove_cursor_snippet_refuses_unapproved_external_delete(
+        self,
+        tmp_path,
+        monkeypatch,
+        caplog,
+    ):
+        """Unapproved Cursor .mdc removal should preserve the external file."""
+        from piia_engram.setup_wizard import (
+            _inject_instruction_snippet,
+            _remove_instruction_snippet,
+            _INSTRUCTION_SNIPPETS,
+        )
+        engram_root = tmp_path / "engram-root"
+        mdc_path = tmp_path / "home" / ".cursor" / "rules" / "engram.mdc"
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["cursor"],
+            "path_fn",
+            lambda _home: mdc_path,
+        )
+        _inject_instruction_snippet("cursor")
+        before = mdc_path.read_text(encoding="utf-8")
+        caplog.set_level(logging.WARNING, logger="piia_engram.setup_wizard")
+
+        removed = _remove_instruction_snippet(
+            "cursor",
+            file_safety_root=engram_root,
+            authorized_external_write=False,
+        )
+
+        assert removed is False
+        assert "instruction removal failed for cursor" in caplog.text
+        assert mdc_path.read_text(encoding="utf-8") == before
+        assert not (engram_root / "file_safety_ledger.jsonl").exists()
+        assert not (engram_root / "backups").exists()
+
+    def test_remove_with_file_safety_root_fails_closed_by_default(
+        self,
+        tmp_path,
+        monkeypatch,
+        caplog,
+    ):
+        """Snippet removal must also require explicit authorization by default."""
+        from piia_engram.setup_wizard import (
+            _remove_instruction_snippet,
+            _INSTRUCTION_MARKER,
+            _INSTRUCTION_MARKER_END,
+            _INSTRUCTION_SNIPPETS,
+        )
+        engram_root = tmp_path / "engram-root"
+        target = tmp_path / "home" / ".claude" / "CLAUDE.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "# My rules\n\n"
+            f"{_INSTRUCTION_MARKER}\n"
+            "PIIA Engram test snippet\n"
+            f"{_INSTRUCTION_MARKER_END}\n\n"
+            "Keep these.\n",
+            encoding="utf-8",
+        )
+        before = target.read_text(encoding="utf-8")
+        monkeypatch.setitem(
+            _INSTRUCTION_SNIPPETS["claude_code"],
+            "path_fn",
+            lambda _home: target,
+        )
+        caplog.set_level(logging.WARNING, logger="piia_engram.setup_wizard")
+
+        removed = _remove_instruction_snippet(
+            "claude_code",
+            file_safety_root=engram_root,
+        )
+
+        assert removed is False
+        assert "instruction removal failed for claude_code" in caplog.text
+        assert target.read_text(encoding="utf-8") == before
+        assert not (engram_root / "file_safety_ledger.jsonl").exists()
+        assert not (engram_root / "backups").exists()
 
     def test_remove_nonexistent_returns_false(self, tmp_path, monkeypatch):
         """Removing when no snippet exists should return False."""

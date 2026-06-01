@@ -20,6 +20,7 @@ from piia_engram.core import (
     ingest_extraction,
     migrate_from_oca_memory,
 )
+from piia_engram.storage import _project_id
 
 
 def make_engram(tmp_path: Path) -> Engram:
@@ -4276,6 +4277,105 @@ def test_list_playbooks_for_management_rejects_negative_limit(tmp_path: Path):
     assert result["error"] == "limit_must_be_positive"
 
 
+def test_list_playbooks_for_management_does_not_echo_project_paths(
+    tmp_path: Path,
+):
+    """MCP-reachable management lists should expose project counts, not paths."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "private-project-a")
+    project_b = str(tmp_path / "private-project-b")
+    engram.add_playbook({
+        "title": "Shared management path guard",
+        "triggers": ["management"],
+        "scope": {"type": "shared", "project_folders": [project_a, project_b]},
+    })
+
+    result = engram.list_playbooks_for_management(scope_type="shared")
+    rendered = json.dumps(result, ensure_ascii=False, sort_keys=True)
+
+    assert result["items"][0]["scope_type"] == "shared"
+    assert result["items"][0]["project_count"] == 2
+    assert "project_folders" not in rendered
+    assert "project_folder" not in rendered
+    assert project_a not in rendered
+    assert project_b not in rendered
+
+
+def test_list_playbooks_for_management_default_is_metadata_only(tmp_path: Path):
+    """Default management lists should not expose Playbook content fields."""
+    engram = make_engram(tmp_path)
+    secret = "ZZ_CORE_MANAGEMENT_SECRET"
+    pb = engram.add_playbook({
+        "title": f"{secret} title",
+        "description": f"{secret} description",
+        "domain": f"{secret} domain",
+        "triggers": [f"{secret} trigger"],
+        "steps": [f"{secret} step"],
+    })
+    engram.delete_playbook(
+        pb["id"],
+        reason=f"{secret} deletion reason",
+        dry_run=False,
+        confirm=True,
+    )
+
+    result = engram.list_playbooks_for_management(status="all")
+    rendered = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    item = result["items"][0]
+
+    assert secret not in rendered
+    assert "title" not in item
+    assert "description" not in item
+    assert "domain" not in item
+    assert "triggers" not in item
+    assert "steps" not in item
+    assert "deletion_reason" not in item
+
+
+def test_playbook_delete_restore_receipts_do_not_echo_content(tmp_path: Path):
+    """Core delete/restore receipts should be safe for MCP/API acknowledgements."""
+    engram = make_engram(tmp_path)
+    secret = "ZZ_DELETE_RECEIPT_SECRET"
+    pb = engram.add_playbook({
+        "title": f"{secret} title",
+        "steps": [f"{secret} step"],
+    })
+
+    dry_run = engram.delete_playbook(
+        pb["id"],
+        reason=f"{secret} dry reason",
+        dry_run=True,
+        confirm=False,
+    )
+    deleted = engram.delete_playbook(
+        pb["id"],
+        reason=f"{secret} applied reason",
+        dry_run=False,
+        confirm=True,
+    )
+    restore_preview = engram.restore_playbook(
+        pb["id"],
+        dry_run=True,
+        confirm=False,
+    )
+    restored = engram.restore_playbook(
+        pb["id"],
+        dry_run=False,
+        confirm=True,
+    )
+
+    rendered = json.dumps(
+        [dry_run, deleted, restore_preview, restored],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assert secret not in rendered
+    for payload in [dry_run, deleted, restore_preview, restored]:
+        payload_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        assert "title" not in payload_text
+        assert "reason" not in payload_text
+
+
 def test_install_builtin_playbook_unknown_name_lists_available(tmp_path: Path):
     engram = make_engram(tmp_path)
 
@@ -4436,6 +4536,45 @@ def test_project_scoped_playbooks_are_visible_only_in_their_project(tmp_path: Pa
     assert visible_global == {global_pb["id"]}
 
 
+def test_shared_scope_playbooks_are_visible_only_in_selected_projects(
+    tmp_path: Path,
+):
+    """Shared Playbooks should be visible to selected projects, not everyone."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "project-a")
+    project_b = str(tmp_path / "project-b")
+    project_c = str(tmp_path / "project-c")
+
+    global_pb = engram.add_playbook({"title": "Universal release flow", "triggers": ["release"]})
+    shared_pb = engram.add_playbook({
+        "title": "A/B release flow",
+        "triggers": ["release"],
+        "scope": {
+            "type": "shared",
+            "project_folders": [project_a, project_b],
+        },
+    })
+
+    stored = engram.get_playbook(shared_pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "shared"
+    assert stored["scope"]["project_folders"] == [project_a, project_b]
+    assert stored["scope"]["project_ids"] == [
+        _project_id(project_a),
+        _project_id(project_b),
+    ]
+    assert stored["scope_type"] == "shared"
+
+    visible_a = {pb["id"] for pb in engram.get_playbooks(project_folder=project_a)}
+    visible_b = {pb["id"] for pb in engram.get_playbooks(project_folder=project_b)}
+    visible_c = {pb["id"] for pb in engram.get_playbooks(project_folder=project_c)}
+    visible_global = {pb["id"] for pb in engram.get_playbooks(project_folder=None)}
+
+    assert visible_a == {global_pb["id"], shared_pb["id"]}
+    assert visible_b == {global_pb["id"], shared_pb["id"]}
+    assert visible_c == {global_pb["id"]}
+    assert visible_global == {global_pb["id"]}
+
+
 def test_playbook_duplicate_detection_is_same_scope_only(tmp_path: Path):
     """Same title is allowed across projects but still deduped inside one scope."""
     engram = make_engram(tmp_path)
@@ -4459,6 +4598,35 @@ def test_playbook_duplicate_detection_is_same_scope_only(tmp_path: Path):
     assert same_project.get("status") == "duplicate"
     assert other_project.get("id")
     assert other_project.get("status") != "duplicate"
+
+
+def test_playbook_duplicate_detection_uses_shared_project_set(tmp_path: Path):
+    """Shared-scope duplicate checks should compare the selected project set."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "project-a")
+    project_b = str(tmp_path / "project-b")
+    project_c = str(tmp_path / "project-c")
+
+    first = engram.add_playbook({
+        "title": "Shared release checklist",
+        "triggers": ["release"],
+        "scope": {"type": "shared", "project_folders": [project_a, project_b]},
+    })
+    same_shared_scope = engram.add_playbook({
+        "title": "Shared release checklist",
+        "triggers": ["release"],
+        "scope": {"type": "shared", "project_folders": [project_b, project_a]},
+    })
+    other_shared_scope = engram.add_playbook({
+        "title": "Shared release checklist",
+        "triggers": ["release"],
+        "scope": {"type": "shared", "project_folders": [project_a, project_c]},
+    })
+
+    assert first.get("id")
+    assert same_shared_scope.get("status") == "duplicate"
+    assert other_shared_scope.get("id")
+    assert other_shared_scope.get("status") != "duplicate"
 
 
 def test_search_knowledge_filters_playbooks_by_project_scope(tmp_path: Path):
@@ -4490,6 +4658,41 @@ def test_search_knowledge_filters_playbooks_by_project_scope(tmp_path: Path):
     assert global_pb["id"] in found_a
     assert a_pb["id"] in found_a
     assert b_pb["id"] not in found_a
+    assert found_global == {global_pb["id"]}
+
+
+def test_search_knowledge_filters_shared_playbooks_by_project_scope(tmp_path: Path):
+    """Playbook search should include shared scopes only for selected projects."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "project-a")
+    project_b = str(tmp_path / "project-b")
+    project_c = str(tmp_path / "project-c")
+    global_pb = engram.add_playbook({"title": "Global deploy flow", "triggers": ["deploy"]})
+    shared_pb = engram.add_playbook({
+        "title": "Shared deploy flow",
+        "triggers": ["deploy"],
+        "scope": {"type": "shared", "project_folders": [project_a, project_b]},
+    })
+
+    found_a = {
+        pb["id"]
+        for pb in engram.search_knowledge(
+            "deploy", scope="playbooks", project_folder=project_a
+        )["playbooks"]
+    }
+    found_c = {
+        pb["id"]
+        for pb in engram.search_knowledge(
+            "deploy", scope="playbooks", project_folder=project_c
+        )["playbooks"]
+    }
+    found_global = {
+        pb["id"]
+        for pb in engram.search_knowledge("deploy", scope="playbooks")["playbooks"]
+    }
+
+    assert found_a == {global_pb["id"], shared_pb["id"]}
+    assert found_c == {global_pb["id"]}
     assert found_global == {global_pb["id"]}
 
 
@@ -4565,6 +4768,60 @@ def test_classify_legacy_playbooks_dry_run_only(tmp_path: Path):
 
     stored = engram.get_playbook(project_pb["id"], _update_access=False)
     assert stored["scope"]["type"] == "global"
+
+
+def test_classify_legacy_playbooks_can_suggest_shared_scope(tmp_path: Path):
+    """Legacy classification should identify Playbooks shared by multiple projects."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "engram")
+    project_b = str(tmp_path / "atlas")
+    engram.save_project_snapshot(project_a, {"title": "Engram"})
+    engram.save_project_snapshot(project_b, {"title": "Atlas"})
+    pb = engram.add_playbook({
+        "title": "Engram and Atlas release checklist",
+        "triggers": ["engram", "atlas", "release"],
+    })
+
+    result = engram.classify_legacy_playbooks()
+    suggestion = {item["id"]: item for item in result["suggestions"]}[pb["id"]]
+
+    assert suggestion["suggested_scope"]["type"] == "shared"
+    assert set(suggestion["suggested_scope"]["project_ids"]) == {
+        _project_id(project_a),
+        _project_id(project_b),
+    }
+    assert set(suggestion["suggested_scope"]["project_folders"]) == {
+        project_a,
+        project_b,
+    }
+    assert suggestion["apply_ready"] is True
+    assert "matched project term: engram" in suggestion["evidence"]
+    assert "matched project term: atlas" in suggestion["evidence"]
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+
+
+def test_classify_legacy_playbooks_avoids_incidental_shared_suggestion(
+    tmp_path: Path,
+):
+    """A strong single-project match plus one incidental project term is not shared."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "engram-platform")
+    project_b = str(tmp_path / "atlas")
+    engram.save_project_snapshot(project_a, {"title": "Engram Platform"})
+    engram.save_project_snapshot(project_b, {"title": "Atlas"})
+    pb = engram.add_playbook({
+        "title": "Engram Platform release checklist",
+        "triggers": ["engram-platform", "atlas"],
+        "description": "Mentions Atlas only as an integration dependency.",
+    })
+
+    result = engram.classify_legacy_playbooks()
+    suggestion = {item["id"]: item for item in result["suggestions"]}[pb["id"]]
+
+    assert suggestion["suggested_scope"]["type"] == "project"
+    assert suggestion["suggested_scope"]["project_folder"] == project_a
+    assert suggestion["apply_ready"] is True
 
 
 def test_apply_legacy_playbook_scope_suggestions_dry_run_only(tmp_path: Path):
@@ -4675,6 +4932,64 @@ def test_apply_legacy_playbook_scope_suggestions_confirm_writes_history_and_inde
     assert pb["id"] not in {
         item["id"] for item in engram.get_playbooks(project_folder=None, _update_access=False)
     }
+
+
+def test_apply_legacy_playbook_scope_suggestions_can_apply_and_rollback_shared(
+    tmp_path: Path,
+):
+    """Shared-scope legacy migrations must be previewable, writable, and reversible."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "engram")
+    project_b = str(tmp_path / "atlas")
+    project_c = str(tmp_path / "other")
+    engram.save_project_snapshot(project_a, {"title": "Engram"})
+    engram.save_project_snapshot(project_b, {"title": "Atlas"})
+    pb = engram.add_playbook({
+        "title": "Engram Atlas release checklist",
+        "triggers": ["engram", "atlas", "release"],
+    })
+
+    preview = engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=True,
+        confirm=False,
+    )
+
+    assert [item["id"] for item in preview["would_apply"]] == [pb["id"]]
+    assert preview["would_apply"][0]["to_scope"]["type"] == "shared"
+    assert preview["impact"]["target_scope_counts"] == {"shared": 1}
+    assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "global"
+
+    applied = engram.apply_legacy_playbook_scope_suggestions(
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert [item["id"] for item in applied["applied"]] == [pb["id"]]
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "shared"
+    assert set(stored["scope"]["project_folders"]) == {project_a, project_b}
+    assert stored["scope_migration_history"][-1]["to_scope"]["type"] == "shared"
+    assert pb["id"] in {
+        item["id"] for item in engram.get_playbooks(project_folder=project_a, _update_access=False)
+    }
+    assert pb["id"] in {
+        item["id"] for item in engram.get_playbooks(project_folder=project_b, _update_access=False)
+    }
+    assert pb["id"] not in {
+        item["id"] for item in engram.get_playbooks(project_folder=project_c, _update_access=False)
+    }
+    assert pb["id"] not in {
+        item["id"] for item in engram.get_playbooks(project_folder=None, _update_access=False)
+    }
+
+    rolled = engram.rollback_playbook_scope_migration(
+        playbook_ids=[pb["id"]],
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert [item["id"] for item in rolled["rolled_back"]] == [pb["id"]]
+    assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "global"
 
 
 def test_rollback_playbook_scope_migration_restores_previous_scope(tmp_path: Path):
@@ -4903,6 +5218,39 @@ def test_resolve_playbook_scope_review_accept_project_writes_and_leaves_queue(
     }
 
 
+def test_resolve_playbook_scope_review_accept_shared_writes_and_leaves_queue(
+    tmp_path: Path,
+):
+    """Confirmed review can assign an ambiguous legacy Playbook to selected projects."""
+    engram = make_engram(tmp_path)
+    project_a = str(tmp_path / "engram")
+    project_b = str(tmp_path / "atlas")
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_shared",
+        project_folders=[project_a, project_b],
+        note="belongs to Engram and Atlas maintenance",
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["updated"]["id"] == pb["id"]
+    assert result["updated"]["to_scope"]["type"] == "shared"
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "shared"
+    assert stored["scope"]["project_folders"] == [project_a, project_b]
+    assert stored["scope_review_status"] == "resolved"
+    assert stored["scope_review_history"][-1]["action"] == "accept_shared"
+    assert stored["scope_review_history"][-1]["note"] == (
+        "belongs to Engram and Atlas maintenance"
+    )
+    assert pb["id"] not in {
+        item["id"] for item in engram.get_playbook_scope_review_queue()["items"]
+    }
+
+
 def test_resolve_playbook_scope_review_accept_global_marks_resolved(tmp_path: Path):
     """A human can keep an ambiguous Playbook global and remove it from review."""
     engram = make_engram(tmp_path)
@@ -4959,6 +5307,24 @@ def test_resolve_playbook_scope_review_accept_project_requires_folder(
     )
 
     assert result["error"] == "project_folder_required"
+    assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "global"
+
+
+def test_resolve_playbook_scope_review_accept_shared_requires_folders(
+    tmp_path: Path,
+):
+    """Shared acceptance requires explicit selected project folders."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_shared",
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["error"] == "project_folders_required"
     assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "global"
 
 

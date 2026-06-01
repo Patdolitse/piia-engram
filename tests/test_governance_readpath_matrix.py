@@ -120,7 +120,6 @@ _MATRIX = [
      {"id_a": "sec-1", "id_b": "x"}, "withhold"),
     ("update_playbook", "update_playbook",
      {"title": SECRET, "version": 2}, {"playbook_id": "sec-1", "status": "active"}, "withhold"),
-    ("archive_playbook", "archive_playbook", {"title": SECRET}, {"playbook_id": "sec-1"}, "withhold"),
     ("delete_playbook", "delete_playbook",
      {"deleted": {"id": "sec-1", "title": SECRET}},
      {"playbook_id": "sec-1", "dry_run": False, "confirm": True}, "withhold"),
@@ -233,6 +232,7 @@ _SAFE_ALLOWLIST = {
     "get_domains", "list_projects", "list_agent_sessions",
     "find_tool", "list_tools", "export_feedback_report", "doctor",
     "update_execution_step",  # counts/status only, no body
+    "archive_playbook",  # id-only acknowledgement; write-gated separately
     # caller-supplied-content writes — echo only what the caller just passed in,
     # so there is nothing to read *back* above the ceiling.
     # NOTE: add_lesson / add_decision / add_playbook / memory_store were moved
@@ -620,7 +620,6 @@ _SIDE_EFFECT_HARNESS = [
                                        "id_b": ids["decision_id"]}),
     ("update_playbook", lambda ids: {"playbook_id": ids["playbook_id"],
                                       "status": "active"}),
-    ("archive_playbook", lambda ids: {"playbook_id": ids["playbook_id"]}),
     ("delete_playbook", lambda ids: {"playbook_id": ids["playbook_id"],
                                       "dry_run": False, "confirm": True}),
     ("restore_playbook", lambda ids: {"playbook_id": ids["playbook_id"],

@@ -247,6 +247,45 @@ def test_playbook_scope_accept_project_requires_confirmation_and_is_metadata_onl
     _assert_action_metadata_only(preview)
 
 
+def test_playbook_scope_accept_shared_requires_confirmation_and_is_metadata_only(
+    tmp_path: Path,
+) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.management_actions import run_management_action
+
+    eng = Engram(root=tmp_path)
+    project_a = str(tmp_path / f"{SECRET}-project-a")
+    project_b = str(tmp_path / f"{SECRET}-project-b")
+    playbook = eng.add_playbook({
+        "title": f"{SECRET} ambiguous shared playbook",
+        "triggers": [f"{SECRET} trigger"],
+        "steps": [f"{SECRET} step"],
+    })
+
+    preview = run_management_action(
+        eng,
+        target="playbook_scope",
+        action="accept_shared",
+        item_id=playbook["id"],
+        project_folders=[project_a, project_b],
+        confirm=False,
+    )
+
+    assert preview["status"] == "confirmation_required"
+    assert preview["dry_run"] is True
+    assert preview["requires_confirmation"] is True
+    assert preview["changed"] is False
+    assert preview["result"] == {
+        "kind": "playbook_scope",
+        "from_scope": "global",
+        "to_scope": "shared",
+        "project_count": 2,
+    }
+    stored = eng.get_playbook(playbook["id"], _update_access=False)
+    assert stored["scope"]["type"] == "global"
+    _assert_action_metadata_only(preview)
+
+
 def test_playbook_scope_confirmed_actions_resolve_queue_without_body_echo(
     tmp_path: Path,
 ) -> None:
@@ -297,6 +336,46 @@ def test_playbook_scope_confirmed_actions_resolve_queue_without_body_echo(
     assert stored_skipped["scope_review_status"] == "skipped"
     _assert_action_metadata_only(accepted)
     _assert_action_metadata_only(skipped)
+
+
+def test_playbook_scope_accept_shared_confirmed_is_metadata_only(
+    tmp_path: Path,
+) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.management_actions import run_management_action
+
+    eng = Engram(root=tmp_path)
+    project_a = str(tmp_path / f"{SECRET}-project-a")
+    project_b = str(tmp_path / f"{SECRET}-project-b")
+    playbook = eng.add_playbook({
+        "title": f"{SECRET} shared playbook",
+        "description": f"{SECRET} shared description",
+        "triggers": [f"{SECRET} trigger"],
+        "steps": [f"{SECRET} step"],
+    })
+
+    result = run_management_action(
+        eng,
+        target="playbook_scope",
+        action="accept_shared",
+        item_id=playbook["id"],
+        project_folders=[project_a, project_b],
+        confirm=True,
+        reason=f"{SECRET} shared note",
+    )
+
+    assert result["status"] == "applied"
+    assert result["result"] == {
+        "kind": "playbook_scope",
+        "from_scope": "global",
+        "to_scope": "shared",
+        "project_count": 2,
+    }
+    stored = eng.get_playbook(playbook["id"], _update_access=False)
+    assert stored["scope"]["type"] == "shared"
+    assert stored["scope"]["project_folders"] == [project_a, project_b]
+    assert stored["scope_review_status"] == "resolved"
+    _assert_action_metadata_only(result)
 
 
 def test_playbook_scope_accept_global_confirmed_is_metadata_only(
@@ -355,6 +434,33 @@ def test_playbook_scope_accept_project_requires_project_without_mutation(
 
     assert result["status"] == "invalid_state"
     assert result["error"] == "project_folder_required"
+    assert result["changed"] is False
+    assert eng.get_playbook(playbook["id"], _update_access=False)["scope"]["type"] == "global"
+    _assert_action_metadata_only(result)
+
+
+def test_playbook_scope_accept_shared_requires_projects_without_mutation(
+    tmp_path: Path,
+) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.management_actions import run_management_action
+
+    eng = Engram(root=tmp_path)
+    playbook = eng.add_playbook({
+        "title": f"{SECRET} projectless shared playbook",
+        "triggers": [f"{SECRET} trigger"],
+    })
+
+    result = run_management_action(
+        eng,
+        target="playbook_scope",
+        action="accept_shared",
+        item_id=playbook["id"],
+        confirm=True,
+    )
+
+    assert result["status"] == "invalid_state"
+    assert result["error"] == "project_folders_required"
     assert result["changed"] is False
     assert eng.get_playbook(playbook["id"], _update_access=False)["scope"]["type"] == "global"
     _assert_action_metadata_only(result)
@@ -513,5 +619,47 @@ def test_management_action_cli_can_resolve_playbook_scope_without_body_echo(
     assert payload["schema"] == 1
     assert payload["status"] == "applied"
     assert payload["result"]["to_scope"] == "project"
+    assert SECRET not in out
+    _assert_action_metadata_only(payload)
+
+
+def test_management_action_cli_can_resolve_shared_playbook_scope(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import run_management
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    project_a = str(tmp_path / f"{SECRET}-project-a")
+    project_b = str(tmp_path / f"{SECRET}-project-b")
+    playbook = Engram().add_playbook({
+        "title": f"{SECRET} cli shared scope title",
+        "triggers": [f"{SECRET} shared scope"],
+    })
+
+    assert (
+        run_management([
+            "action",
+            "playbook_scope",
+            "accept_shared",
+            playbook["id"],
+            "--project",
+            project_a,
+            "--project",
+            project_b,
+            "--yes",
+            "--json",
+        ])
+        == 0
+    )
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["schema"] == 1
+    assert payload["status"] == "applied"
+    assert payload["result"]["to_scope"] == "shared"
+    assert payload["result"]["project_count"] == 2
     assert SECRET not in out
     _assert_action_metadata_only(payload)

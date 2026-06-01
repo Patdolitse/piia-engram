@@ -555,7 +555,7 @@ def _inject_instruction_snippet(
     lang: str = "zh",
     *,
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> str | None:
     """Inject Engram instruction snippet into a tool's native instruction file.
 
@@ -622,7 +622,12 @@ def _inject_instruction_snippet(
         return None
 
 
-def _remove_instruction_snippet(tool_id: str) -> bool:
+def _remove_instruction_snippet(
+    tool_id: str,
+    *,
+    file_safety_root: str | Path | None = None,
+    authorized_external_write: bool = False,
+) -> bool:
     """Remove Engram instruction snippet from a tool's native instruction file.
 
     Returns True if removed, False if not found or failed.
@@ -637,7 +642,17 @@ def _remove_instruction_snippet(tool_id: str) -> bool:
     try:
         if tool_id == "cursor":
             if target_path.is_file():
-                target_path.unlink()
+                if file_safety_root is not None:
+                    from piia_engram.file_safety import delete_external_config_file
+
+                    delete_external_config_file(
+                        Path(file_safety_root),
+                        target_path,
+                        tool="setup",
+                        authorized=authorized_external_write,
+                    )
+                else:
+                    target_path.unlink()
                 return True
             return False
 
@@ -661,10 +676,16 @@ def _remove_instruction_snippet(tool_id: str) -> bool:
             start -= 1
 
         new_content = content[:start] + content[end:]
-        target_path.write_text(new_content, encoding="utf-8")
+        _write_config_text_with_backup(
+            target_path,
+            new_content,
+            backup_root=file_safety_root,
+            authorized_external_write=authorized_external_write,
+        )
         return True
 
-    except Exception:
+    except Exception as exc:
+        logger.warning("instruction removal failed for %s: %s", tool_id, exc)
         return False
 
 
@@ -750,7 +771,7 @@ def _inject_claude_code_hook_for_event(
     async_hook: bool = True,
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> str | None:
     """Register a per-event hook in ``~/.claude/settings.json``.
 
@@ -870,7 +891,7 @@ def _inject_claude_code_hook(
     *,
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> str | None:
     """Register Engram Stop hook in Claude Code settings.json.
 
@@ -897,7 +918,7 @@ def _inject_claude_code_precompact_hook(
     *,
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> str | None:
     """v3.30: register PreCompact hook with asymmetric threshold.
 
@@ -937,7 +958,7 @@ def _inject_claude_code_sessionstart_hook(
     *,
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> str | None:
     """v3.30: register SessionStart hook for resume_brief auto-inject.
 
@@ -977,7 +998,7 @@ def _inject_claude_code_postcompact_hook(
     *,
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> str | None:
     """v3.30: register PostCompact hook to absorb compact summary.
 
@@ -1210,7 +1231,7 @@ def _write_config_text_with_backup(
     text: str,
     *,
     backup_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> None:
     """Write config text, backing up an existing file before mutation.
 
@@ -1331,7 +1352,7 @@ def _write_mcp_config(
     data_dir: str | None = None,
     server_key: str = "mcpServers",
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> None:
     """将 engram 写入指定工具的 MCP 配置（合并，不覆盖其他工具的配置）。
     同时自动清理已知的旧版 server 名称（piia-pkc 等）。
@@ -1402,7 +1423,7 @@ def _write_mcp_config_toml(
     mcp_server_path: str,
     data_dir: str | None = None,
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> None:
     """修复 TOML 格式配置文件中的 engram MCP 条目（如 Codex config.toml）。
 
@@ -1497,7 +1518,7 @@ def _write_tool_mcp_config(
     mcp_server_path: str,
     data_dir: str | None = None,
     file_safety_root: str | Path | None = None,
-    authorized_external_write: bool = True,
+    authorized_external_write: bool = False,
 ) -> None:
     """Write an MCP config using the target client's declared format."""
     if tool.get("format", "json") == "toml":
@@ -4808,11 +4829,11 @@ def _print_management_usage() -> None:
         "Usage:\n"
         "  engram management [--project PATH] [--review-limit N] [--playbook-limit N]\n"
         "                    [--review-kind all|lesson|decision] [--quality all|low|ok|missing]\n"
-        "                    [--playbook-state all|active|archived|deleted|staging] [--scope all|global|project]\n"
+        "                    [--playbook-state all|active|archived|deleted|staging] [--scope all|global|project|shared]\n"
         "  engram management --json [same options]\n"
         "  engram management action review approve|archive <id> [--yes] [--json]\n"
         "  engram management action playbook archive|delete|restore <id> [--yes] [--json]\n"
-        "  engram management action playbook_scope accept_global|accept_project|skip <id> [--project PATH] [--yes] [--json]\n"
+        "  engram management action playbook_scope accept_global|accept_project|accept_shared|skip <id> [--project PATH] [--yes] [--json]\n"
     )
 
 
@@ -4831,6 +4852,7 @@ def _run_management_action_cli(args: list[str]) -> int:
     json_output = "--json" in tail
     confirm = "--yes" in tail
     project_folder = ""
+    project_folders: list[str] = []
     reason = ""
     i = 0
     while i < len(tail):
@@ -4852,6 +4874,7 @@ def _run_management_action_cli(args: list[str]) -> int:
                 _print_management_usage()
                 return 2
             project_folder = tail[i + 1]
+            project_folders.append(project_folder)
             i += 2
             continue
         print(f"Unknown management action option: {arg}")
@@ -4865,6 +4888,7 @@ def _run_management_action_cli(args: list[str]) -> int:
         item_id=item_id,
         confirm=confirm,
         project_folder=project_folder,
+        project_folders=project_folders,
         reason=reason,
     )
     if json_output:

@@ -30,6 +30,8 @@ PLAYBOOK_ITEM_KEYS = frozenset(
         "state",
         "scope_type",
         "has_project_scope",
+        "has_shared_scope",
+        "project_count",
         "needs_scope_review",
         "version",
         "created_at",
@@ -136,12 +138,21 @@ def _playbook_entry(item: dict[str, Any]) -> dict[str, Any]:
     scope = item.get("scope")
     if not isinstance(scope, dict):
         scope = {}
+    scope_type = str(scope.get("type") or item.get("scope_type") or "global")
+    if scope_type == "shared":
+        project_count = len(scope.get("project_ids") or [])
+    elif scope_type == "project":
+        project_count = 1
+    else:
+        project_count = 0
     state = _playbook_state(item)
     return _closed_entry({
         "id": str(item.get("id") or ""),
         "state": state,
-        "scope_type": str(scope.get("type") or "global"),
-        "has_project_scope": scope.get("type") == "project",
+        "scope_type": scope_type,
+        "has_project_scope": scope_type == "project",
+        "has_shared_scope": scope_type == "shared",
+        "project_count": project_count,
         "needs_scope_review": str(item.get("scope_review_status") or "") == "unresolved",
         "version": int(item.get("version") or 1),
         "created_at": str(item.get("created_at") or ""),
@@ -208,7 +219,7 @@ def build_management_view(
         quality_status = "all"
     if playbook_state not in {"all", "active", "archived", "deleted", "staging"}:
         playbook_state = "all"
-    if scope_type not in {"all", "global", "project"}:
+    if scope_type not in {"all", "global", "project", "shared"}:
         scope_type = "all"
 
     reviews = _review_items_filtered(

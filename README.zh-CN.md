@@ -531,11 +531,11 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_related_knowledge` | 查询关联知识 |
 | `find_similar_knowledge` | 按内容查找相似知识 |
 | `suggest_merges` | 全库扫描近似重复，返回可执行的合并命令 |
-| `classify_legacy_playbooks` | 为旧 Playbook 生成项目/global 分类 dry-run 建议 |
+| `classify_legacy_playbooks` | 为旧 Playbook 生成项目/global/shared 分类 dry-run 建议 |
 | `apply_legacy_playbook_scope_suggestions` | 确认后应用高置信度旧 Playbook 分类建议 |
 | `rollback_playbook_scope_migration` | 回滚最近一次 Playbook 作用域迁移 |
 | `get_playbook_scope_review_queue` | 列出需要人工确认作用域的模糊 Playbook |
-| `resolve_playbook_scope_review` | 接受或跳过一条 Playbook 作用域复核项 |
+| `resolve_playbook_scope_review` | 将一条 Playbook 作用域复核项接受为 global、project 或 shared |
 | `list_playbooks_for_management` | 列出用于管理的 Playbook，包括归档/删除元数据 |
 | `delete_playbook` | 确认后软删除 Playbook |
 | `restore_playbook` | 恢复已归档或已删除的 Playbook |
@@ -803,6 +803,7 @@ piia-engram review archive <id> --yes  # 归档待审条目
 piia-engram management action review approve <id> --yes --json  # 结构化脱敏操作回执
 piia-engram management action playbook delete <id> --yes --json # 软删除 Playbook，不回显正文
 piia-engram management action playbook_scope accept_project <id> --project . --yes --json # 处理歧义 Playbook 作用域
+piia-engram management action playbook_scope accept_shared <id> --project ./app-a --project ./app-b --yes --json # 让一个 Playbook 只在选定项目间共享
 piia-engram repair-encoding  # dry-run 扫描乱码 / mojibake
 piia-engram repair-encoding --apply  # 备份后修复可逆乱码
 piia-engram stats            # 查看项目增长数据（GitHub + PyPI）

@@ -205,15 +205,20 @@ def test_publish_workflow_exists():
     assert PUBLISH_WORKFLOW.is_file()
 
 
-def test_publish_workflow_release_trigger_and_token():
-    """Publish workflow 应在 release published 时使用 PyPI token 发布。"""
+def test_publish_workflow_release_trigger_and_trusted_publishing():
+    """Publish workflow should use pure PyPI Trusted Publishing, not token fallback."""
     content = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "types: [published]" in content
+    assert "id-token: write" in content
+    assert "environment: pypi" in content
     assert "release_sanitize_check.py --internal --strict" in content
     assert "python -m build" in content
     assert "check_release_artifact_private_terms.py dist --strict" in content
     assert "pypa/gh-action-pypi-publish@release/v1" in content
-    assert "secrets.PYPI_API_TOKEN" in content
+    assert "skip-existing: true" in content
+    assert "secrets.PYPI_API_TOKEN" not in content
+    assert "password:" not in content
+    assert "username:" not in content
 
 
 def test_readme_uses_pypi_install_and_badge():
@@ -378,6 +383,8 @@ def test_zh_readme_documents_tool_tiering():
 def test_readmes_document_playbook_scope_management_cli():
     assert "management action playbook_scope accept_project" in README.read_text(encoding="utf-8")
     assert "management action playbook_scope accept_project" in README_ZH.read_text(encoding="utf-8")
+    assert "management action playbook_scope accept_shared" in README.read_text(encoding="utf-8")
+    assert "management action playbook_scope accept_shared" in README_ZH.read_text(encoding="utf-8")
 
 
 def test_zh_readme_has_remote_deployment_section():

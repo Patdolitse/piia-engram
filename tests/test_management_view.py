@@ -238,6 +238,44 @@ def test_management_view_filters_review_and_playbook_metadata_only(tmp_path: Pat
     assert SECRET not in rendered
 
 
+def test_management_view_filters_shared_playbooks_metadata_only(tmp_path: Path) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.management_view import build_management_view
+
+    eng = Engram(root=tmp_path)
+    project_a = str(tmp_path / f"{SECRET}-project-a")
+    project_b = str(tmp_path / f"{SECRET}-project-b")
+    project_c = str(tmp_path / f"{SECRET}-project-c")
+    shared = eng.add_playbook({
+        "title": f"{SECRET} shared playbook",
+        "description": f"{SECRET} shared description",
+        "steps": [f"{SECRET} shared step"],
+        "scope": {"type": "shared", "project_folders": [project_a, project_b]},
+    })
+    eng.add_playbook({
+        "title": "Other project-only playbook",
+        "scope_type": "project",
+        "project_folder": project_c,
+    })
+
+    view = build_management_view(
+        eng,
+        project_folder=project_a,
+        scope_type="shared",
+    )
+    rendered = json.dumps(view, ensure_ascii=False, sort_keys=True)
+
+    assert view["filters"]["scope_type"] == "shared"
+    assert [item["id"] for item in view["playbooks"]["items"]] == [shared["id"]]
+    assert view["playbooks"]["items"][0]["scope_type"] == "shared"
+    assert view["playbooks"]["items"][0]["has_project_scope"] is False
+    assert view["playbooks"]["items"][0]["has_shared_scope"] is True
+    assert view["playbooks"]["items"][0]["project_count"] == 2
+    assert SECRET not in rendered
+    assert project_a not in rendered
+    assert project_b not in rendered
+
+
 def test_management_view_cli_accepts_gui_filters(
     tmp_path: Path,
     monkeypatch,
