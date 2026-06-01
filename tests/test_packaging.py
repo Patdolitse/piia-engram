@@ -19,6 +19,7 @@ PYPROJECT = ROOT / "pyproject.toml"
 README = ROOT / "README.md"
 README_ZH = ROOT / "README.zh-CN.md"
 ARCHITECTURE = ROOT / "docs" / "architecture.md"
+GLAMA_YAML = ROOT / "glama.yaml"
 MCP_SERVER = ROOT / "src" / "piia_engram" / "mcp_server.py"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
@@ -118,6 +119,19 @@ def test_version_consistency():
     assert server_pkg == pyproject_version, (
         f"server.json packages[0] ({server_pkg}) != pyproject ({pyproject_version})"
     )
+
+
+def test_glama_metadata_tracks_current_public_version_and_tool_count():
+    """Glama listing metadata should not lag behind release metadata."""
+    pyproject_version = _load()["project"]["version"]
+    content = GLAMA_YAML.read_text(encoding="utf-8")
+
+    assert f"version: {pyproject_version}" in content
+    assert "80 MCP tools" in content
+    assert "'core' (16 tools)" in content
+    assert "'all' (80 tools)" in content
+    assert "60 MCP tools" not in content
+    assert "'core' (12 tools)" not in content
 
 
 def test_has_scripts_entry():
