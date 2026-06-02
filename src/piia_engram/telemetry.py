@@ -265,7 +265,107 @@ def _normalize_error_categories(categories: dict[str, int] | None) -> dict[str, 
     return normalized
 
 
-def _mark_payload_sent(engram_version: str) -> None:
+# ---------------------------------------------------------------------------
+# Telemetry Analysis Contract v1.1 metadata (P1 — derived/bucketed, no new
+# privacy surface: every field is a coarse bucket computed from values the
+# client already reports or persists locally).
+# ---------------------------------------------------------------------------
+
+CONTRACT_VERSION = "1.1"
+
+# Allowed P1 bucket vocabularies (mirrored by the worker validator).
+_VERSION_ADOPTION_VALUES = frozenset(
+    {"first", "same", "upgrade", "downgrade", "changed"}
+)
+_ACTIVATION_STATES = frozenset({"activated", "not_activated", "unknown"})
+_RETURNING_BUCKETS = frozenset({"new", "returning"})
+_ERROR_TRENDS = frozenset({"none", "first", "up", "down", "flat"})
+
+
+def _version_key(value: Any) -> tuple[int, ...] | None:
+    """Parse a dotted version's leading numeric components, else None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    parts: list[int] = []
+    for chunk in value.strip().split("."):
+        digits = ""
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts) or None
+
+
+def _version_adoption(engram_version: str, prev_version: Any) -> str:
+    """Coarse version-adoption signal: first/same/upgrade/downgrade/changed."""
+    if not prev_version:
+        return "first"
+    if engram_version and engram_version == prev_version:
+        return "same"
+    cur = _version_key(engram_version)
+    prev = _version_key(prev_version)
+    if cur is None or prev is None:
+        return "changed"
+    # Pad to equal length so "3.1" and "3.1.0" compare as equal rather than the
+    # shorter tuple sorting first (which would mislabel 3.1 -> 3.1.0 a downgrade).
+    width = max(len(cur), len(prev))
+    cur = cur + (0,) * (width - len(cur))
+    prev = prev + (0,) * (width - len(prev))
+    if cur > prev:
+        return "upgrade"
+    if cur < prev:
+        return "downgrade"
+    return "same"
+
+
+def _activation_state(knowledge_counts: dict[str, int] | None) -> str:
+    """First-run activation bucket: has the user created durable knowledge yet?"""
+    if not knowledge_counts:
+        return "unknown"
+    try:
+        total = int(knowledge_counts.get("lessons", 0)) + int(
+            knowledge_counts.get("decisions", 0)
+        )
+    except (TypeError, ValueError):
+        return "unknown"
+    return "activated" if total > 0 else "not_activated"
+
+
+def _returning_bucket(cfg: dict[str, Any]) -> str:
+    """Anonymous new-vs-returning bucket (per rotating daily id, not a person)."""
+    return "returning" if cfg.get("first_payload_sent_at") else "new"
+
+
+def _error_total(error_categories: dict[str, int] | None) -> int:
+    if not error_categories:
+        return 0
+    total = 0
+    for value in error_categories.values():
+        try:
+            total += max(0, int(value))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _error_trend(current_total: int, prev_total: Any) -> str:
+    """Error-category trend vs the previously reported total (bucketed)."""
+    if current_total == 0:
+        return "none"
+    if not isinstance(prev_total, int):
+        return "first"
+    if current_total > prev_total:
+        return "up"
+    if current_total < prev_total:
+        return "down"
+    return "flat"
+
+
+def _mark_payload_sent(engram_version: str, error_total: int | None = None) -> None:
     cfg = _load_config()
     now = datetime.now(timezone.utc).isoformat()
     if "first_payload_sent_at" not in cfg:
@@ -274,6 +374,11 @@ def _mark_payload_sent(engram_version: str) -> None:
     cfg["last_engram_version"] = engram_version or ""
     if "first_seen_at" not in cfg:
         cfg["first_seen_at"] = cfg.get("opted_in_at") or now
+    if error_total is not None:
+        try:
+            cfg["last_error_total"] = int(error_total)
+        except (TypeError, ValueError):
+            pass
     _save_config(cfg)
 
 
@@ -363,6 +468,7 @@ def build_payload(
     if not local_uuid:
         return None
 
+    normalized_errors = _normalize_error_categories(error_categories)
     payload: dict[str, Any] = {
         "schema": 1,
         "daily_id": _daily_id(local_uuid),
@@ -372,7 +478,19 @@ def build_payload(
         "install_age_bucket": _install_age_bucket(
             cfg.get("first_seen_at") or cfg.get("opted_in_at")
         ),
-        "error_categories": _normalize_error_categories(error_categories),
+        "error_categories": normalized_errors,
+        # Telemetry Analysis Contract v1.1 (P1, derived buckets). schema stays 1
+        # for transport/storage backward-compat; contract_version flags the
+        # analytic level so a reader can tell v1 from v1.1 events apart.
+        "contract_version": CONTRACT_VERSION,
+        "version_adoption": _version_adoption(
+            engram_version, cfg.get("last_engram_version")
+        ),
+        "activation_state": _activation_state(knowledge_counts),
+        "returning_bucket": _returning_bucket(cfg),
+        "error_trend": _error_trend(
+            _error_total(normalized_errors), cfg.get("last_error_total")
+        ),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "os_platform": sys.platform,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
@@ -439,6 +557,13 @@ def preview_payload(
             "network": "N",
             "unknown": "N",
         },
+        "contract_version": CONTRACT_VERSION,
+        "version_adoption": _version_adoption(
+            engram_version or "", cfg.get("last_engram_version")
+        ),
+        "activation_state": _activation_state(knowledge_counts),
+        "returning_bucket": _returning_bucket(cfg),
+        "error_trend": "(none|first|up|down|flat)",
         "timestamp": "(next daily report time)",
         "os_platform": sys.platform,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
@@ -574,7 +699,10 @@ class ToolCallTracker:
         # Phase 1: local log (always)
         result = log_payload(payload)
         try:
-            _mark_payload_sent(engram_version)
+            _mark_payload_sent(
+                engram_version,
+                error_total=_error_total(payload.get("error_categories")),
+            )
         except Exception:
             pass
 

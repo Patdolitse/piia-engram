@@ -15,7 +15,13 @@ CREATE TABLE IF NOT EXISTS events (
   os         TEXT    NOT NULL DEFAULT '',     -- win32 / darwin / linux
   py         TEXT    NOT NULL DEFAULT '',     -- "3.12" (major.minor only)
   tier       TEXT    NOT NULL DEFAULT 'core', -- core / all
-  schema_v   INTEGER NOT NULL DEFAULT 1
+  schema_v   INTEGER NOT NULL DEFAULT 1,
+  -- Telemetry Analysis Contract v1.1 (P1 — derived buckets, anonymous)
+  contract_version TEXT NOT NULL DEFAULT '',  -- analytic contract level e.g. "1.1"
+  version_adoption TEXT NOT NULL DEFAULT '',  -- first/same/upgrade/downgrade/changed
+  activation_state TEXT NOT NULL DEFAULT '',  -- activated/not_activated/unknown
+  returning_bucket TEXT NOT NULL DEFAULT '',  -- new/returning (anonymous daily id)
+  error_trend      TEXT NOT NULL DEFAULT ''   -- none/first/up/down/flat
 );
 
 -- Fast lookups
@@ -25,6 +31,8 @@ CREATE INDEX IF NOT EXISTS idx_version  ON events(version);
 CREATE INDEX IF NOT EXISTS idx_prev_version ON events(prev_version);
 CREATE INDEX IF NOT EXISTS idx_session_type ON events(session_type);
 CREATE INDEX IF NOT EXISTS idx_install_age_bucket ON events(install_age_bucket);
+CREATE INDEX IF NOT EXISTS idx_version_adoption ON events(version_adoption);
+CREATE INDEX IF NOT EXISTS idx_returning_bucket ON events(returning_bucket);
 
 -- Feedback reports — richer governance/usage snapshots (at most weekly per user)
 CREATE TABLE IF NOT EXISTS feedback (

@@ -86,10 +86,18 @@ const ALLOWED_FIELDS = new Set([
   'schema', 'daily_id', 'engram_version', 'timestamp',
   'tool_calls', 'knowledge_counts', 'os_platform', 'python_version', 'tools_tier',
   'prev_version', 'session_type', 'install_age_bucket', 'error_categories',
+  // Telemetry Analysis Contract v1.1 (P1 — derived buckets, anonymous)
+  'contract_version', 'version_adoption', 'activation_state',
+  'returning_bucket', 'error_trend',
 ]);
 const SESSION_TYPES = new Set(['first_run', 'regular']);
 const INSTALL_AGE_BUCKETS = new Set(['first_day', '2_7_days', '8_30_days', '31_plus_days', 'unknown']);
 const ERROR_CATEGORIES = new Set(['timeout', 'validation', 'io', 'permission', 'network', 'unknown']);
+// v1.1 P1 bucket vocabularies (mirror src/piia_engram/telemetry.py)
+const VERSION_ADOPTION = new Set(['first', 'same', 'upgrade', 'downgrade', 'changed']);
+const ACTIVATION_STATES = new Set(['activated', 'not_activated', 'unknown']);
+const RETURNING_BUCKETS = new Set(['new', 'returning']);
+const ERROR_TRENDS = new Set(['none', 'first', 'up', 'down', 'flat']);
 
 function validatePayload(data) {
   if (!data || typeof data !== 'object') return 'invalid JSON';
@@ -100,6 +108,13 @@ function validatePayload(data) {
   if (data.prev_version && data.prev_version.length > 20) return 'prev_version too long';
   if (data.session_type && !SESSION_TYPES.has(data.session_type)) return 'invalid session_type';
   if (data.install_age_bucket && !INSTALL_AGE_BUCKETS.has(data.install_age_bucket)) return 'invalid install_age_bucket';
+  // v1.1 P1 buckets (all optional; reject unknown values to keep the field clean)
+  if (data.contract_version != null && typeof data.contract_version !== 'string') return 'contract_version must be string';
+  if (data.contract_version && data.contract_version.length > 10) return 'contract_version too long';
+  if (data.version_adoption && !VERSION_ADOPTION.has(data.version_adoption)) return 'invalid version_adoption';
+  if (data.activation_state && !ACTIVATION_STATES.has(data.activation_state)) return 'invalid activation_state';
+  if (data.returning_bucket && !RETURNING_BUCKETS.has(data.returning_bucket)) return 'invalid returning_bucket';
+  if (data.error_trend && !ERROR_TRENDS.has(data.error_trend)) return 'invalid error_trend';
   for (const key of Object.keys(data)) {
     if (!ALLOWED_FIELDS.has(key)) return `unexpected field: ${key}`;
   }
@@ -227,46 +242,90 @@ async function handleEvent(request, env) {
     });
   }
 
+  // Tiered INSERT with graceful column fallback so deploy/migration order stays
+  // flexible (no event is ever dropped):
+  //   1. full v1.1 (P0 + P1 columns)
+  //   2. v1 (P0 columns) — if the v1.1 columns are missing
+  //   3. legacy (base columns) — if the P0 columns are also missing
+  const insertP1 = () => env.DB.prepare(
+    `INSERT INTO events (
+       daily_id, version, prev_version, session_type, install_age_bucket,
+       tool_calls, knowledge, error_categories, os, py, tier, schema_v,
+       contract_version, version_adoption, activation_state, returning_bucket, error_trend
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    data.daily_id,
+    data.engram_version || '',
+    data.prev_version || '',
+    data.session_type || '',
+    data.install_age_bucket || '',
+    JSON.stringify(data.tool_calls || {}),
+    JSON.stringify(data.knowledge_counts || {}),
+    JSON.stringify(data.error_categories || {}),
+    data.os_platform || '',
+    data.python_version || '',
+    data.tools_tier || 'core',
+    data.schema || 1,
+    data.contract_version || '',
+    data.version_adoption || '',
+    data.activation_state || '',
+    data.returning_bucket || '',
+    data.error_trend || '',
+  ).run();
+
+  const insertP0 = () => env.DB.prepare(
+    `INSERT INTO events (
+       daily_id, version, prev_version, session_type, install_age_bucket,
+       tool_calls, knowledge, error_categories, os, py, tier, schema_v
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    data.daily_id,
+    data.engram_version || '',
+    data.prev_version || '',
+    data.session_type || '',
+    data.install_age_bucket || '',
+    JSON.stringify(data.tool_calls || {}),
+    JSON.stringify(data.knowledge_counts || {}),
+    JSON.stringify(data.error_categories || {}),
+    data.os_platform || '',
+    data.python_version || '',
+    data.tools_tier || 'core',
+    data.schema || 1,
+  ).run();
+
+  const insertLegacy = () => env.DB.prepare(
+    `INSERT INTO events (daily_id, version, tool_calls, knowledge, os, py, tier, schema_v)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    data.daily_id,
+    data.engram_version || '',
+    JSON.stringify(data.tool_calls || {}),
+    JSON.stringify(data.knowledge_counts || {}),
+    data.os_platform || '',
+    data.python_version || '',
+    data.tools_tier || 'core',
+    data.schema || 1,
+  ).run();
+
+  const P1_COLS = ['contract_version', 'version_adoption', 'activation_state',
+                   'returning_bucket', 'error_trend'];
+  const P0_COLS = ['prev_version', 'session_type', 'install_age_bucket', 'error_categories'];
+  const mentionsAny = (msg, cols) => cols.some((c) => msg.includes(c));
+
   try {
-    await env.DB.prepare(
-      `INSERT INTO events (
-         daily_id, version, prev_version, session_type, install_age_bucket,
-         tool_calls, knowledge, error_categories, os, py, tier, schema_v
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      data.daily_id,
-      data.engram_version || '',
-      data.prev_version || '',
-      data.session_type || '',
-      data.install_age_bucket || '',
-      JSON.stringify(data.tool_calls || {}),
-      JSON.stringify(data.knowledge_counts || {}),
-      JSON.stringify(data.error_categories || {}),
-      data.os_platform || '',
-      data.python_version || '',
-      data.tools_tier || 'core',
-      data.schema || 1,
-    ).run();
-  } catch (err) {
-    const msg = String(err && err.message || err);
-    if (!msg.includes('prev_version') && !msg.includes('session_type') &&
-        !msg.includes('install_age_bucket') && !msg.includes('error_categories')) {
-      throw err;
+    await insertP1();
+  } catch (err1) {
+    const msg1 = String(err1 && err1.message || err1);
+    if (!mentionsAny(msg1, P1_COLS) && !mentionsAny(msg1, P0_COLS)) throw err1;
+    try {
+      await insertP0();
+    } catch (err2) {
+      const msg2 = String(err2 && err2.message || err2);
+      if (!mentionsAny(msg2, P0_COLS)) throw err2;
+      await insertLegacy();
     }
-    await env.DB.prepare(
-      `INSERT INTO events (daily_id, version, tool_calls, knowledge, os, py, tier, schema_v)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      data.daily_id,
-      data.engram_version || '',
-      JSON.stringify(data.tool_calls || {}),
-      JSON.stringify(data.knowledge_counts || {}),
-      data.os_platform || '',
-      data.python_version || '',
-      data.tools_tier || 'core',
-      data.schema || 1,
-    ).run();
   }
 
   return new Response(JSON.stringify({ ok: true }), {
