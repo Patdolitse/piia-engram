@@ -4630,6 +4630,111 @@ def _run_recover_json(args: list[str]) -> int:
     return 0
 
 
+def _run_backup_plan(args: list[str]) -> int:
+    """Print a metadata-only local backup plan (what to copy before upgrading).
+
+    Read-only and local-only: it enumerates Engram-owned files under the active
+    root, never reads stored knowledge bodies, and never touches files outside
+    the Engram directory. Pass ``--json`` for machine-readable output.
+    """
+    import os as _os
+    from piia_engram.recovery import build_backup_plan
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    plan = build_backup_plan(root)
+
+    if "--json" in args:
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"Engram backup plan (metadata only): {plan['root']}")
+    if not plan["exists"]:
+        print("  (no Engram root found at this path yet — nothing to back up)")
+        return 0
+    print(f"  total: {plan['total_files']} files, {plan['total_bytes']} bytes")
+    print("  groups:")
+    for group in plan["groups"]:
+        print(f"    - {group['name']}: {group['files']} files, {group['bytes']} bytes")
+    if plan["knowledge_datasets"]:
+        print("  knowledge datasets:")
+        for ds in plan["knowledge_datasets"]:
+            print(
+                f"    - {ds['file_name']}: entries={ds['entries']} "
+                f"bytes={ds['bytes']} sha256={ds['sha256_12']}"
+            )
+    print(f"  external files included: {plan['external_files_included']} "
+          f"(excluded: {plan['external_paths_excluded']})")
+    print(f"  {plan['restore_hint']}")
+    print("  live store modified: false")
+    return 0
+
+
+def _run_export_agents_md(args: list[str]) -> int:
+    """Export verified, non-sensitive knowledge as an AGENTS.md / CLAUDE.md block.
+
+    Local + owner-run (CLI): loads the user's own store and renders the curated,
+    committable digest via ``agents_md_export.build_agents_md_export`` — which is
+    verified-only, sensitivity-screened, and summary/metadata-only by
+    construction. Prints to stdout by default; ``--out PATH`` writes the block to
+    an explicit destination and REFUSES to overwrite an existing file (so it can
+    never clobber a hand-maintained AGENTS.md).
+    """
+    import os as _os
+    from piia_engram.agents_md_export import build_agents_md_export
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram export-agents-md [--scope global|project] [--project NAME]\n"
+            "                          [--max-sensitivity public|personal|work]\n"
+            "                          [--out PATH]\n"
+        )
+        return 0
+
+    def _opt(flag: str, default: str = "") -> str:
+        if flag in args:
+            idx = args.index(flag)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    scope = _opt("--scope", "global")
+    if scope not in {"global", "project"}:
+        print("ERROR: --scope must be 'global' or 'project'")
+        return 2
+    project = _opt("--project", "")
+    if scope == "project" and not project:
+        print("ERROR: --scope project requires --project NAME")
+        return 2
+    max_sensitivity = _opt("--max-sensitivity", "work")
+    out_path = _opt("--out", "")
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    lessons = eng.get_lessons(limit=None, _update_access=False)
+    decisions = eng.get_decisions(limit=None, _update_access=False)
+    block = build_agents_md_export(
+        lessons=lessons,
+        decisions=decisions,
+        scope=scope,
+        project=project,
+        max_sensitivity=max_sensitivity,
+    )
+
+    if out_path:
+        dest = Path(out_path).expanduser().resolve()
+        if dest.exists():
+            print(f"ERROR: refusing to overwrite an existing file: {dest}")
+            return 2
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(block, encoding="utf-8")
+        print(f"Wrote AGENTS.md export: {dest}")
+        return 0
+    print(block)
+    return 0
+
+
 def _governance_root():
     from piia_engram.core import Engram
     return Engram().root
@@ -5047,6 +5152,10 @@ def main() -> None:
         sys.exit(_run_repair_encoding(args[1:]))
     elif args[0] == "recover-json":
         sys.exit(_run_recover_json(args[1:]))
+    elif args[0] == "backup-plan":
+        sys.exit(_run_backup_plan(args[1:]))
+    elif args[0] == "export-agents-md":
+        sys.exit(_run_export_agents_md(args[1:]))
     elif args[0] == "grants":
         sys.exit(run_grants(_governance_root()))
     elif args[0] == "trust":
@@ -5088,6 +5197,8 @@ def main() -> None:
             "  engram reindex          Rebuild the hybrid search index from JSON\n"
             "  engram repair-encoding  Dry-run mojibake scan (use --apply to fix)\n"
             "  engram recover-json <dataset>  Dry-run metadata scan for corrupt JSON backups\n"
+            "  engram backup-plan      Metadata-only local backup plan (--json for raw)\n"
+            "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
             "  engram grants           List agent trust grants + revocations\n"
             "  engram trust <a> <lvl>  Grant an agent a trust level\n"
             "  engram revoke <agent>   Revoke an agent (future disclosure only)\n"

@@ -44,5 +44,26 @@ intent-grouped sample of real tools:
 - **Audit / governance**: `get_audit_log`, `extract_session_insights`.
 - **Sessions**: `save_agent_context`, `list_agent_sessions`, `get_recent_context`.
 
+## Local CLI (run in a terminal, not via MCP)
+
+These are real `engram` subcommands the user runs locally. They are read-only or
+explicit-output only — they never touch files outside the Engram directory.
+
+- `engram backup-plan` — metadata-only plan of what to copy before an upgrade
+  (no stored knowledge bodies are printed).
+- `engram export-agents-md [--scope global|project] [--project NAME] [--out PATH]`
+  — render the user's **verified, non-sensitive** knowledge as an `AGENTS.md` /
+  `CLAUDE.md` block. Staging and sensitive items are excluded by construction; it
+  refuses to overwrite an existing file.
+
+## Additive recall/provenance options (backward-compatible)
+
+- `search_knowledge` and `get_relevant_knowledge` accept an optional
+  `include_freshness=true` to attach a per-item freshness hint
+  (`fresh`/`aging`/`stale`/`unknown`). Default is off — the response is unchanged.
+- `add_lesson` / `add_decision` / `add_playbook` accept optional `source_agent`,
+  `run_id`, and `last_validated_at` provenance fields. Omitting them changes
+  nothing.
+
 If you are unsure whether a tool exists or is loaded, list the server's tools or
 fall back to the Tier-1 core set above rather than guessing a name.

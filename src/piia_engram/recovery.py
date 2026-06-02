@@ -326,6 +326,93 @@ def analyze_recovery_retention_plan(
     return plan
 
 
+# Engram-owned datasets worth surfacing individually in a backup plan (the
+# precious, hard-to-recreate knowledge files). Everything else is summarised by
+# top-level group so the plan stays bounded.
+_BACKUP_DATASETS = ("lessons", "decisions")
+
+
+def build_backup_plan(root: str | Path) -> dict[str, Any]:
+    """Return a metadata-only "what to copy before an upgrade/migration" plan.
+
+    Local data sovereignty (Phase 3): this enumerates ONLY Engram-owned files
+    under ``root`` — it never reaches outside the Engram directory, never reads
+    or echoes stored knowledge bodies (only path / byte-size / sha256 / list
+    length), and never modifies anything. ``external_files_included`` is an
+    enforced invariant: every candidate path is re-checked with
+    ``file_safety.classify_path`` and anything that resolves outside ``root`` is
+    excluded and counted, so the plan can be trusted to describe local-only
+    backup scope.
+    """
+    from .file_safety import classify_path
+
+    root_path = Path(root).expanduser().resolve()
+    groups: dict[str, dict[str, int]] = {}
+    total_files = 0
+    total_bytes = 0
+    external_excluded = 0
+
+    if root_path.is_dir():
+        for path in root_path.rglob("*"):
+            if not path.is_file():
+                continue
+            # Defensive sovereignty check: a symlink/junction could point outside
+            # the Engram root. Exclude (and count) anything that does.
+            if classify_path(root_path, path) != "engram_root":
+                external_excluded += 1
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            rel = path.relative_to(root_path)
+            group = rel.parts[0] if len(rel.parts) > 1 else "(root files)"
+            bucket = groups.setdefault(group, {"files": 0, "bytes": 0})
+            bucket["files"] += 1
+            bucket["bytes"] += size
+            total_files += 1
+            total_bytes += size
+
+    group_list = [
+        {"name": name, "files": data["files"], "bytes": data["bytes"]}
+        for name, data in sorted(groups.items())
+    ]
+
+    datasets: list[dict[str, Any]] = []
+    knowledge = _knowledge_dir(root_path)
+    for dataset in _BACKUP_DATASETS:
+        active = knowledge / f"{dataset}.json"
+        if not active.is_file():
+            continue
+        data, status = _read_json_file(active)
+        entries = len(data) if status == "ok" and isinstance(data, list) else None
+        raw = active.read_bytes()
+        datasets.append({
+            "dataset": dataset,
+            "file_name": active.name,
+            "entries": entries,
+            "bytes": len(raw),
+            "sha256_12": hashlib.sha256(raw).hexdigest()[:12],
+        })
+
+    return {
+        "root": str(root_path),
+        "exists": root_path.is_dir(),
+        "groups": group_list,
+        "knowledge_datasets": datasets,
+        "total_files": total_files,
+        "total_bytes": total_bytes,
+        "external_files_included": 0,
+        "external_paths_excluded": external_excluded,
+        "restore_hint": (
+            "Copy the entire Engram root directory to a safe location. To restore, "
+            "stop all MCP clients and copy it back in full. Engram never backs up "
+            "or restores files outside its own root."
+        ),
+        "live_store_modified": False,
+    }
+
+
 def write_recovery_candidate(
     root: str | Path,
     *,

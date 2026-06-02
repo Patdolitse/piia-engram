@@ -1,8 +1,10 @@
 # AGENTS.md / CLAUDE.md export contract
 
-Status: **helper implemented + tested** (`src/piia_engram/agents_md_export.py`,
-`tests/test_agents_md_export.py`). MCP tool / CLI wiring is a deliberate
-follow-up so no new agent-facing surface ships unreviewed.
+Status: **helper + CLI implemented + tested** (`src/piia_engram/agents_md_export.py`,
+`tests/test_agents_md_export.py`, plus the `engram export-agents-md` CLI in
+`setup_wizard.py` covered by `tests/test_export_agents_md_cli.py`). A dedicated
+MCP tool is still intentionally deferred (the CLI is owner-run and sufficient; a
+new agent-facing surface would need its own governance review).
 
 ## Purpose
 
@@ -34,9 +36,11 @@ Both are pure functions over already-loaded entries; they do not touch the store
 
 ## Follow-up (separate review)
 
-1. An MCP tool / CLI subcommand (`engram export-agents-md [--scope ...]
-   [--project ...]`) that loads entries and calls `build_agents_md_export`,
-   gated `export_owner_only` like the other export tools.
+1. ✅ **Implemented** — the `engram export-agents-md [--scope ...] [--project ...]
+   [--max-sensitivity ...] [--out PATH]` CLI subcommand loads entries and calls
+   `build_agents_md_export`. It is owner-run (local CLI), prints to stdout by
+   default, and refuses to overwrite an existing file with `--out`. A separate
+   MCP tool remains deferred (would need `export_owner_only` governance review).
 2. Apply the same verified-only + non-staging filter to `export_engram`, which
    today includes staging items (see the Permission Profile vNext design §3 and
    the explore findings). That change needs its own tests + review because it

@@ -18,10 +18,14 @@ bounded future work — not implemented in this pass.
 | Setup reads external configs read-only by default | `setup` is read-only unless `--apply-external-config`; strict parse refuses to overwrite unparseable config | (manual; see CLI) |
 | Dry-run exists | `engram feedback --dry-run`, `install_builtin_playbook(dry_run=True)` default | (manual) |
 | Non-destructive JSON recovery | `engram recover-json <dataset>` analyzes backups, exports candidate, never overwrites live store | (manual) |
+| Metadata-only local backup plan | `recovery.build_backup_plan` / `engram backup-plan` enumerates Engram-owned files only, reads no knowledge bodies, modifies nothing | `tests/test_backup_plan.py` |
+| Engram ops never touch external project files | backup-plan + recovery analysis snapshot-verified against an external project dir | `test_backup_plan_does_not_touch_external_project` |
+| Symlink escaping the root is excluded from the plan | each path re-checked with `classify_path`; out-of-root paths excluded + counted | `test_symlink_outside_root_is_excluded` |
 
 ## 2. Pre-upgrade checklist (run before any version bump / re-setup)
 
 ```text
+[ ] Review what to back up:     engram backup-plan   (metadata-only; no bodies)
 [ ] Back up the whole store:    copy ~/.engram (or $ENGRAM_DIR) aside.
 [ ] Note ENGRAM_DIR:            echo $ENGRAM_DIR  (default ~/.engram)
 [ ] Health check:               engram doctor
@@ -42,6 +46,29 @@ bounded future work — not implemented in this pass.
 - Every external write/delete is backed up first and recorded (metadata-only).
 - A config that cannot be parsed is **not overwritten** — setup refuses and asks
   the user to fix or move it aside.
+
+## 3.5 Local backup plan + data sovereignty (implemented)
+
+`recovery.build_backup_plan(root)` (CLI: `engram backup-plan [--json]`) answers
+"what should I copy before upgrading?" with a **metadata-only** plan:
+
+- It enumerates only Engram-owned files under the active root, grouped by
+  top-level directory, plus per-dataset entry counts + sizes + sha256 prefixes
+  for the precious knowledge files (`lessons`, `decisions`).
+- It reads **no** stored knowledge bodies (summaries/choices/details never appear
+  in the plan — `test_plan_is_metadata_only_no_bodies`).
+- It modifies nothing (`live_store_modified: false`) and never reaches outside
+  the Engram root: every candidate path is re-checked with
+  `file_safety.classify_path`, and anything resolving outside the root (e.g. a
+  symlink) is **excluded and counted** in `external_paths_excluded`, with
+  `external_files_included` held at `0` as an enforced invariant.
+
+**Data sovereignty boundary (local-only):** Engram backs up and restores *only*
+its own root directory. It never copies, modifies, or deletes files in the
+user's project folders. The restore procedure is deliberately manual and
+explicit: stop MCP clients, copy the saved root back in full. This keeps the
+"the user owns their data, locally" promise honest — there is no remote backup
+and no cross-tree write.
 
 ## 4. Gaps / net-new (bounded specs, NOT implemented here)
 
