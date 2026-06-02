@@ -1,0 +1,46 @@
+[
+  {
+    "summary": "fix it",
+    "domain": "",
+    "source_tool": "claude_code",
+    "tier": "staging",
+    "status": "active",
+    "_expected_reason": "too_short"
+  },
+  {
+    "summary": "Why does the build fail?",
+    "domain": "ci",
+    "source_tool": "claude_code",
+    "tier": "staging",
+    "status": "active",
+    "_expected_reason": "open_question"
+  },
+  {
+    "summary": "TODO: investigate the flaky timeout later, this is just a scratch note",
+    "domain": "ci",
+    "source_tool": "claude_code",
+    "tier": "staging",
+    "status": "active",
+    "_expected_reason": "transient_marker"
+  },
+  {
+    "question": "Which database?",
+    "choice": "sqlite",
+    "reasoning": "",
+    "domain": "",
+    "source_tool": "codex",
+    "tier": "staging",
+    "status": "active",
+    "_expected_reason": "no_clear_choice"
+  },
+  {
+    "title": "Single step thing",
+    "triggers": ["do the thing"],
+    "steps": [{"action": "do it"}],
+    "domain": "misc",
+    "source_tool": "codex",
+    "tier": "staging",
+    "status": "active",
+    "_expected_reason": "too_few_steps"
+  }
+]

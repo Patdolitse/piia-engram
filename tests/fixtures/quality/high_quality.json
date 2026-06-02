@@ -1,0 +1,33 @@
+[
+  {
+    "summary": "On Windows, run Engram's pytest via the E:/Temp venv with PYTHONPATH=src; the WindowsApps python is a stub.",
+    "detail": "Plain `python` resolves to the Store alias and exits 49. Use the venv interpreter and prepend the worktree src.",
+    "domain": "testing, windows",
+    "source_tool": "claude_code",
+    "tier": "verified",
+    "status": "active"
+  },
+  {
+    "question": "How should Engram store telemetry analysis fields without expanding scope?",
+    "choice": "Add only four metadata-only P0 fields to the opt-in payload and worker storage.",
+    "reasoning": "Keeps the privacy boundary intact while enabling version/session/error analysis.",
+    "alternatives": ["Add raw event logging", "Defer telemetry analysis entirely"],
+    "domain": "telemetry, privacy",
+    "source_tool": "codex",
+    "tier": "verified",
+    "status": "active"
+  },
+  {
+    "title": "Release a new Engram version",
+    "triggers": ["cut a release", "publish version"],
+    "steps": [
+      {"action": "run full test suite", "detail": "pytest tests/ green"},
+      {"action": "bump version in pyproject.toml"},
+      {"action": "update CHANGELOG and tag"}
+    ],
+    "domain": "release",
+    "source_tool": "codex",
+    "tier": "verified",
+    "status": "active"
+  }
+]
