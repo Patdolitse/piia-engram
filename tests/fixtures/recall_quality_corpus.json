@@ -1,0 +1,66 @@
+{
+  "description": "Recall-quality evaluation corpus (Phase 6). Each item carries known freshness/provenance metadata plus internal bookkeeping fields that MUST NOT leak through the recall projection. Dates are absolute so freshness buckets are deterministic when evaluated with now=2026-06-03.",
+  "now": "2026-06-03T00:00:00+00:00",
+  "relevant_knowledge": [
+    {
+      "id": "L-fresh",
+      "summary": "Use E:\\Temp venv to run pytest on this machine",
+      "domain": "python",
+      "last_validated_at": "2026-05-28T00:00:00+00:00",
+      "provenance": {"source_agent": "claude_code", "run_id": "r-100"},
+      "access_count": 42,
+      "tier": "verified",
+      "risk_flags": ["none"],
+      "_score": 0.97
+    },
+    {
+      "id": "L-aging",
+      "summary": "Telemetry stays opt-in and metadata-only",
+      "domain": "governance",
+      "last_reviewed": "2026-03-20T00:00:00+00:00",
+      "provenance": {"source_agent": "codex"},
+      "access_count": 7,
+      "tier": "verified"
+    },
+    {
+      "id": "L-stale",
+      "summary": "Old positioning copy that should look stale",
+      "domain": "产品策略",
+      "created_at": "2025-09-01T00:00:00+00:00",
+      "access_count": 1,
+      "tier": "staging"
+    },
+    {
+      "id": "L-dup",
+      "summary": "Duplicate id appears in both relevant and query buckets",
+      "domain": "python",
+      "last_validated_at": "2026-06-01T00:00:00+00:00"
+    }
+  ],
+  "query_knowledge": [
+    {
+      "id": "L-dup",
+      "summary": "Duplicate id appears in both relevant and query buckets",
+      "domain": "python",
+      "last_validated_at": "2026-06-01T00:00:00+00:00"
+    },
+    {
+      "id": "D-decision",
+      "question": "Which mechanism for long tasks?",
+      "choice": "Use the D+ mechanism by default",
+      "domain": "process",
+      "last_validated_at": "2026-06-02T00:00:00+00:00"
+    }
+  ],
+  "expected": {
+    "freshness_by_id": {
+      "L-fresh": "fresh",
+      "L-aging": "aging",
+      "L-stale": "stale",
+      "L-dup": "fresh",
+      "D-decision": "fresh"
+    },
+    "forbidden_substrings": ["access_count", "risk_flags", "_score", "\"tier\""],
+    "unique_ids_after_dedup": ["L-fresh", "L-aging", "L-stale", "L-dup", "D-decision"]
+  }
+}

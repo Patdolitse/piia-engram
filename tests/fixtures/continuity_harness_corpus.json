@@ -1,0 +1,30 @@
+{
+  "description": "Cross-tool continuity harness corpus (Phase 10). Verified store entries that should export, plus a staging + a sensitive entry that must NOT export, plus per-tool end-of-session writeback inputs (Codex/Claude/Cursor) including a secret-shaped item (must be dropped) and a duplicate (must dedup).",
+  "store": {
+    "lessons": [
+      {"id": "L1", "summary": "Telemetry stays opt-in and metadata-only across all tools",
+       "domain": "governance", "tier": "verified", "status": "active", "sensitivity": "work"},
+      {"id": "L2", "summary": "Run pytest from the project virtualenv, not system python",
+       "domain": "python", "tier": "verified", "status": "active", "sensitivity": "public"},
+      {"id": "L-staging", "summary": "UNVERIFIED-STAGING-NOTE should never be exported",
+       "tier": "staging", "status": "active", "sensitivity": "work"},
+      {"id": "L-private", "summary": "Owner private note with email owner@example.com",
+       "tier": "verified", "status": "active", "sensitivity": "private"}
+    ],
+    "decisions": [
+      {"id": "D1", "question": "Which mechanism for long phase tasks?",
+       "choice": "Use the D+ mechanism by default",
+       "tier": "verified", "status": "active", "sensitivity": "work"}
+    ]
+  },
+  "writeback": {
+    "codex": [
+      {"summary": "New durable lesson learned this session about export safety",
+       "detail": "Keep exports verified-only."},
+      {"summary": "Run pytest from the project virtualenv, not system python"},
+      {"summary": "API key for prod", "detail": "sk-proj-ABCD1234EFGH5678IJKL9012MNOP3456"}
+    ],
+    "claude": "## New durable lesson learned this session about export safety\nKeep exports verified-only.\n## Run pytest from the project virtualenv, not system python\n",
+    "cursor": "- New durable lesson learned this session about export safety\n- Run pytest from the project virtualenv, not system python\n"
+  }
+}

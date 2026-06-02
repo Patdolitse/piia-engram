@@ -1,0 +1,188 @@
+"""Non-technical owner control surface (Phase 11) — read-mostly, proposal-only.
+
+A single local dashboard that makes Engram's governance / lifecycle / integrity /
+readiness state legible to a **non-technical owner** in one place. It composes
+the read-only surfaces built in earlier phases — recall trust, lifecycle decay
+proposals, integrity status, and export/telemetry readiness — and renders them
+as bilingual text or escaped HTML.
+
+Constraints:
+- **read-mostly / proposal-only**: the dashboard surfaces *proposals* (lifecycle
+  archive/prune candidates, integrity self-heal suggestions) and the explicit
+  commands to act on them. It performs no destructive action and exposes no
+  one-click destructive control.
+- **metadata only**: counts, statuses, freshness buckets — never stored bodies.
+- **bilingual**: labels go through ``i18n.t(zh, en)``.
+- **safe HTML**: every dynamic value is ``html.escape``-d (the dashboard could
+  surface user-derived strings such as a domain label).
+- **no private-mechanism leak**: the dashboard describes Engram's own state only;
+  it never references private workflow/Core-Self-Optimization mechanisms.
+"""
+
+from __future__ import annotations
+
+import html
+from datetime import datetime, timezone
+from typing import Any
+
+from . import lifecycle as _lifecycle
+from . import provenance as _provenance
+from .agents_md_export import select_exportable
+from .i18n import t
+
+_FRESH_BUCKETS = ("fresh", "aging", "stale", "unknown")
+
+
+def _freshness_distribution(entries: list[dict[str, Any]], now: datetime | None) -> dict[str, int]:
+    dist = {b: 0 for b in _FRESH_BUCKETS}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        status = _provenance.compute_freshness(entry, now=now).get("freshness_status", "unknown")
+        dist[status if status in dist else "unknown"] += 1
+    return dist
+
+
+def build_owner_dashboard(
+    *,
+    lessons: list[dict[str, Any]] | None = None,
+    decisions: list[dict[str, Any]] | None = None,
+    integrity_report: dict[str, Any] | None = None,
+    telemetry_status: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Assemble the owner dashboard from already-loaded read-only inputs.
+
+    Pure: takes active knowledge entries plus optional integrity/telemetry
+    snapshots and returns a structured, metadata-only dashboard dict. Does not
+    read the store or mutate inputs.
+    """
+    lessons = [e for e in (lessons or []) if isinstance(e, dict)]
+    decisions = [e for e in (decisions or []) if isinstance(e, dict)]
+    now = now or datetime.now(timezone.utc)
+    all_entries = lessons + decisions
+
+    # Recall trust — how explainable is the knowledge (freshness + provenance).
+    freshness = _freshness_distribution(all_entries, now)
+    with_provenance = sum(
+        1 for e in all_entries
+        if isinstance(e.get("provenance"), dict) or e.get("source_tool") or e.get("source_agent")
+    )
+    recall_trust = {
+        "lessons": len(lessons),
+        "decisions": len(decisions),
+        "total": len(all_entries),
+        "freshness": freshness,
+        "with_provenance": with_provenance,
+    }
+
+    # Lifecycle — decay/archive proposal counts (proposal-only).
+    lifecycle_report = _lifecycle.build_lifecycle_proposal(all_entries, now=now)
+    lifecycle_summary = {
+        "scored": lifecycle_report["scored"],
+        "counts": lifecycle_report["counts"],
+        "invariant": lifecycle_report["invariant"],
+    }
+
+    # Integrity — health + problem count (from a supplied scan, if any).
+    if isinstance(integrity_report, dict):
+        integrity_summary = {
+            "healthy": integrity_report.get("healthy"),
+            "problems": len(integrity_report.get("problems", [])),
+            "problem_codes": [p.get("code") for p in integrity_report.get("problems", [])],
+        }
+    else:
+        integrity_summary = {"healthy": None, "problems": None, "problem_codes": []}
+
+    # Export readiness — how much verified, non-sensitive knowledge is shareable.
+    exportable = len(select_exportable(all_entries, scope="global", max_sensitivity="work"))
+    export_readiness = {"exportable_global": exportable, "total": len(all_entries)}
+
+    # Telemetry readiness — opt-in state only (never enables anything).
+    ts = telemetry_status if isinstance(telemetry_status, dict) else {}
+    telemetry_readiness = {
+        "enabled": bool(ts.get("enabled", False)),
+        "remote_enabled": bool(ts.get("remote_enabled", False)),
+        "phase": ts.get("phase"),
+    }
+
+    return {
+        "generated_at": now.replace(microsecond=0).isoformat(),
+        "recall_trust": recall_trust,
+        "lifecycle": lifecycle_summary,
+        "integrity": integrity_summary,
+        "export_readiness": export_readiness,
+        "telemetry": telemetry_readiness,
+        "note": "read-only metadata; proposals require explicit owner action",
+    }
+
+
+def render_dashboard_text(dashboard: dict[str, Any]) -> str:
+    """Render the dashboard as bilingual, owner-facing text (metadata only)."""
+    rt = dashboard.get("recall_trust", {})
+    lc = dashboard.get("lifecycle", {})
+    ig = dashboard.get("integrity", {})
+    ex = dashboard.get("export_readiness", {})
+    tm = dashboard.get("telemetry", {})
+    fr = rt.get("freshness", {})
+
+    lines = [
+        t("Engram 控制台（只读，仅元数据）", "Engram dashboard (read-only, metadata only)"),
+        f"  {t('生成时间', 'generated')}: {dashboard.get('generated_at', '')}",
+        t("召回信任 / Recall trust:", "Recall trust:"),
+        f"  {t('知识总数', 'knowledge')}: {rt.get('total', 0)} "
+        f"({t('教训', 'lessons')}={rt.get('lessons', 0)}, {t('决策', 'decisions')}={rt.get('decisions', 0)})",
+        f"  {t('新鲜度', 'freshness')}: fresh={fr.get('fresh', 0)} aging={fr.get('aging', 0)} "
+        f"stale={fr.get('stale', 0)} unknown={fr.get('unknown', 0)}",
+        f"  {t('带来源', 'with provenance')}: {rt.get('with_provenance', 0)}",
+        t("生命周期 / Lifecycle (提案，不会删除):", "Lifecycle (proposals, never deletes):"),
+        f"  keep={lc.get('counts', {}).get('keep', 0)} "
+        f"archive={lc.get('counts', {}).get('archive_candidate', 0)} "
+        f"prune={lc.get('counts', {}).get('prune_candidate', 0)} "
+        f"review={lc.get('counts', {}).get('review', 0)}",
+        t("完整性 / Integrity:", "Integrity:"),
+        f"  {t('健康', 'healthy')}: {ig.get('healthy')}  {t('问题数', 'problems')}: {ig.get('problems')}",
+        t("导出就绪 / Export readiness:", "Export readiness:"),
+        f"  {t('可导出(全局)', 'exportable (global)')}: {ex.get('exportable_global', 0)} / {ex.get('total', 0)}",
+        t("遥测 / Telemetry (默认关闭，需手动开启):", "Telemetry (off by default, opt-in):"),
+        f"  enabled={tm.get('enabled')} remote={tm.get('remote_enabled')} phase={tm.get('phase')}",
+        t("提示: 归档/清理/修复都需你显式确认。",
+          "Note: archive/prune/repair all require your explicit confirmation."),
+    ]
+    return "\n".join(lines)
+
+
+def render_dashboard_html(dashboard: dict[str, Any]) -> str:
+    """Render the dashboard as a self-contained, fully-escaped HTML page."""
+    body = html.escape(render_dashboard_text(dashboard))
+    generated = html.escape(str(dashboard.get("generated_at", "")))
+    title = html.escape(t("Engram 控制台", "Engram Dashboard"))
+    return f"""<!doctype html>
+<html lang="{html.escape(_lang_attr())}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 32px; color: #1f2937; }}
+    main {{ max-width: 760px; }}
+    h1 {{ font-size: 26px; margin-bottom: 4px; }}
+    .meta {{ color: #64748b; margin-bottom: 20px; }}
+    pre {{ background: #f8fafc; border: 1px solid #dbe3ee; border-radius: 8px; padding: 18px; white-space: pre-wrap; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{title}</h1>
+    <div class="meta">{generated} — {html.escape(t('只读元数据，提案需显式确认', 'read-only metadata; proposals need explicit confirmation'))}</div>
+    <pre>{body}</pre>
+  </main>
+</body>
+</html>
+"""
+
+
+def _lang_attr() -> str:
+    from .i18n import get_lang
+
+    return "zh" if get_lang() == "zh" else "en"

@@ -4735,6 +4735,228 @@ def _run_export_agents_md(args: list[str]) -> int:
     return 0
 
 
+def _run_recall(args: list[str]) -> int:
+    """Print a single-call recall digest for the owner (engram recall).
+
+    Local + owner-run (CLI = ``private-self``): composes existing governed read
+    methods (profile slice, recent context, relevant lessons, optional keyword
+    search) via ``recall_service.gather_recall``, collapses superseded knowledge
+    to its current head, and renders a metadata/summary-only digest. It adds no
+    new agent-facing surface — the MCP recall tool stays deferred per
+    docs/specs/recall-surface-v1.md §6.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+    from piia_engram.recall_service import gather_recall, render_recall_text
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram recall [--project NAME] [--query TEXT] [--budget N]\n"
+            "                [--no-freshness] [--no-collapse] [--json]\n"
+        )
+        return 0
+
+    def _opt(flag: str, default: str = "") -> str:
+        if flag in args:
+            idx = args.index(flag)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    project = _opt("--project", "")
+    query = _opt("--query", "")
+    try:
+        budget = int(_opt("--budget", "2000"))
+    except ValueError:
+        print("ERROR: --budget must be an integer")
+        return 2
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    payload = gather_recall(
+        eng,
+        project_folder=project,
+        query=query,
+        token_budget=budget,
+        include_freshness="--no-freshness" not in args,
+        collapse_versions="--no-collapse" not in args,
+    )
+
+    if "--json" in args:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print(render_recall_text(payload))
+    return 0
+
+
+def _run_telemetry_validate(args: list[str]) -> int:
+    """Validate telemetry payload/schema/migration consistency (read-only, no network).
+
+    Static local check: confirms the client payload contract, worker schema, and
+    v1.1 migration agree, the migration is additive/forward-only, and no
+    content-bearing field exists on either side. Performs NO remote action.
+    """
+    from piia_engram.telemetry_validation import (
+        render_validation_text,
+        validate_telemetry_contract,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print("Usage:\n  engram telemetry-validate [--json]\n")
+        return 0
+
+    worker_dir = Path.cwd() / "worker"
+    report = validate_telemetry_contract(worker_dir)
+    if "--json" in args:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_validation_text(report))
+    return 0 if report.get("ok") else 1
+
+
+def _run_release_check(args: list[str]) -> int:
+    """Print a read-only release readiness report (engram release-check).
+
+    Aggregates required-file presence, English-first release notes, publish
+    allowlist, a public-doc private-term scan, and release-evidence completeness.
+    Performs NO build/tag/publish — it only reads the working tree. Exits
+    non-zero when not ready so scripts/CI can gate on it.
+    """
+    from piia_engram.release_readiness import (
+        build_release_readiness,
+        render_release_readiness_text,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print("Usage:\n  engram release-check [--json]\n")
+        return 0
+
+    # Maintainer command: run from the repo root (the working tree to ship).
+    root = Path.cwd()
+    report = build_release_readiness(root)
+    if "--json" in args:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_release_readiness_text(report))
+    return 0 if report.get("ready") else 1
+
+
+def _run_dashboard(args: list[str]) -> int:
+    """Print the non-technical owner control dashboard (engram dashboard).
+
+    Read-only and metadata-only: aggregates recall trust, lifecycle proposals,
+    integrity status, and export/telemetry readiness into one bilingual view.
+    Surfaces proposals + the commands to act on them; performs no destructive
+    action. ``--html`` writes a fully-escaped local HTML page.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+    from piia_engram.integrity import scan_integrity
+    from piia_engram.owner_dashboard import (
+        build_owner_dashboard,
+        render_dashboard_html,
+        render_dashboard_text,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print("Usage:\n  engram dashboard [--json] [--html [PATH]]\n")
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    lessons = eng.get_lessons(limit=None, _update_access=False) or []
+    decisions = eng.get_decisions(limit=None, _update_access=False) or []
+    integrity_report = scan_integrity(root)
+    telemetry_status = {}
+    try:
+        from piia_engram import telemetry as _tel
+        telemetry_status = _tel.get_status()
+    except Exception:
+        telemetry_status = {}
+
+    dashboard = build_owner_dashboard(
+        lessons=list(lessons), decisions=list(decisions),
+        integrity_report=integrity_report, telemetry_status=telemetry_status,
+    )
+
+    if "--json" in args:
+        print(json.dumps(dashboard, ensure_ascii=False, indent=2))
+        return 0
+    if "--html" in args:
+        idx = args.index("--html")
+        out = args[idx + 1] if idx + 1 < len(args) and not args[idx + 1].startswith("-") else ""
+        dest = Path(out).expanduser().resolve() if out else (root / "reports" / "dashboard.html")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(render_dashboard_html(dashboard), encoding="utf-8")
+        print(f"Wrote dashboard: {dest}")
+        return 0
+    print(render_dashboard_text(dashboard))
+    return 0
+
+
+def _run_integrity(args: list[str]) -> int:
+    """Print a metadata-only integrity scan + self-heal proposals (engram integrity).
+
+    Read-only and proposal-only: checks JSON validity, duplicate ids, store/index
+    drift, governance-ledger chain, and relation/version-chain health, then
+    suggests owner commands to fix any problems. It NEVER repairs, rebuilds, or
+    overwrites anything — acting on a proposal is an explicit owner command.
+    """
+    import os as _os
+    from piia_engram.integrity import (
+        build_self_heal_proposals,
+        render_integrity_text,
+        scan_integrity,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print("Usage:\n  engram integrity [--json]\n")
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    report = scan_integrity(root)
+    proposals = build_self_heal_proposals(report)
+
+    if "--json" in args:
+        print(json.dumps({"report": report, "proposals": proposals},
+                         ensure_ascii=False, indent=2))
+        return 0
+    print(render_integrity_text(report, proposals))
+    # Exit non-zero when problems are found so scripts/CI can detect drift.
+    return 0 if report.get("healthy") else 1
+
+
+def _run_lifecycle(args: list[str]) -> int:
+    """Print a metadata-only memory lifecycle / decay proposal (engram lifecycle).
+
+    Read-only and proposal-only: it scores active lessons + decisions by
+    freshness/access/tier/quality metadata and reports archive/prune *candidates*
+    with reasons. It NEVER archives, prunes, or deletes — acting on a proposal is
+    a separate, explicit, owner-confirmed step. See
+    docs/runbooks/memory-lifecycle.md.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+    from piia_engram.lifecycle import build_lifecycle_proposal, render_lifecycle_text
+
+    if args and args[0] in {"-h", "--help"}:
+        print("Usage:\n  engram lifecycle [--json]\n")
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    lessons = eng.get_lessons(limit=None, _update_access=False) or []
+    decisions = eng.get_decisions(limit=None, _update_access=False) or []
+    report = build_lifecycle_proposal(list(lessons) + list(decisions))
+
+    if "--json" in args:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print(render_lifecycle_text(report))
+    return 0
+
+
 def _governance_root():
     from piia_engram.core import Engram
     return Engram().root
@@ -5156,6 +5378,18 @@ def main() -> None:
         sys.exit(_run_backup_plan(args[1:]))
     elif args[0] == "export-agents-md":
         sys.exit(_run_export_agents_md(args[1:]))
+    elif args[0] == "recall":
+        sys.exit(_run_recall(args[1:]))
+    elif args[0] == "lifecycle":
+        sys.exit(_run_lifecycle(args[1:]))
+    elif args[0] == "integrity":
+        sys.exit(_run_integrity(args[1:]))
+    elif args[0] == "dashboard":
+        sys.exit(_run_dashboard(args[1:]))
+    elif args[0] == "release-check":
+        sys.exit(_run_release_check(args[1:]))
+    elif args[0] == "telemetry-validate":
+        sys.exit(_run_telemetry_validate(args[1:]))
     elif args[0] == "grants":
         sys.exit(run_grants(_governance_root()))
     elif args[0] == "trust":
@@ -5199,6 +5433,12 @@ def main() -> None:
             "  engram recover-json <dataset>  Dry-run metadata scan for corrupt JSON backups\n"
             "  engram backup-plan      Metadata-only local backup plan (--json for raw)\n"
             "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
+            "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"
+            "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
+            "  engram integrity        Read-only integrity scan + self-heal proposals\n"
+            "  engram dashboard        Non-technical owner control view (--html/--json)\n"
+            "  engram release-check    Read-only release readiness report (no publish)\n"
+            "  engram telemetry-validate  Static payload/schema/migration consistency check\n"
             "  engram grants           List agent trust grants + revocations\n"
             "  engram trust <a> <lvl>  Grant an agent a trust level\n"
             "  engram revoke <agent>   Revoke an agent (future disclosure only)\n"
