@@ -41,6 +41,7 @@ def _configure_utf8_stdio() -> None:
 
 
 from piia_engram.beta_tracker import track_event as _beta
+from piia_engram import provenance as _provenance
 
 # Starlette imports are deferred to SSE mode — not needed for stdio.
 # Importing eagerly can slow startup and fail in minimal Docker images.
@@ -807,6 +808,38 @@ def _json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
 
 
+def _attach_provenance(
+    entry: dict,
+    *,
+    source_agent: str = "",
+    run_id: str = "",
+    last_validated_at: str = "",
+) -> None:
+    """Merge normalized provenance fields into ``entry['provenance']`` in place.
+
+    Additive only (Provenance & Freshness Contract v1, follow-up A): malformed or
+    empty values are dropped by ``normalize_provenance_fields`` so a write is
+    never blocked, and when nothing valid is supplied the entry is left
+    byte-identical to before (no empty ``provenance`` key is created).
+    """
+    prov = _provenance.normalize_provenance_fields(
+        {
+            "source_agent": source_agent,
+            "run_id": run_id,
+            "last_validated_at": last_validated_at,
+        }
+    )
+    if not prov:
+        return
+    existing = entry.get("provenance")
+    if isinstance(existing, dict):
+        merged = dict(existing)
+        merged.update(prov)
+        entry["provenance"] = merged
+    else:
+        entry["provenance"] = prov
+
+
 def _user_lang() -> str:
     """Detect user language from profile. Returns 'zh' or 'en'."""
     from piia_engram.i18n import get_lang
@@ -1284,7 +1317,9 @@ async def list_projects() -> str:
 
 
 @mcp.tool()
-async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
+async def get_relevant_knowledge(
+    project_folder: str, limit: int = 8, include_freshness: bool = False
+) -> str:
     """按项目路径自动推荐最相关的经验教训（无需搜索词）。 / Automatically recommend the most relevant lessons for a project path, without search keywords.
 
     **Lifecycle: retrieval** — 在对话中需要项目相关的历史知识时调用。
@@ -1299,6 +1334,7 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
     Args:
         project_folder: 当前项目文件夹路径。 / Current project folder path.
         limit: 最多返回多少条（默认 8）。 / Maximum number of items to return (default 8).
+        include_freshness: 为每条结果附加 freshness/新鲜度提示（默认 False，保持旧输出不变）。 / Attach a per-item freshness hint (default False; output is unchanged when omitted).
     """
     try:
         lessons = _engram.get_relevant_lessons(
@@ -1309,6 +1345,11 @@ async def get_relevant_knowledge(project_folder: str, limit: int = 8) -> str:
         lessons = _gov_rt.maybe_govern_list(
             _engram.root, lessons, tool="get_relevant_knowledge"
         )
+        # Freshness annotation is opt-in and applied AFTER governance filtering so
+        # it can only ever annotate items the caller is already allowed to see
+        # (Provenance & Freshness Contract v1, follow-up B). Pure/non-destructive.
+        if include_freshness:
+            lessons = _provenance.annotate_freshness(lessons)
         _track("get_relevant_knowledge", success=True)
     except Exception as exc:
         _track("get_relevant_knowledge", success=False)
@@ -1344,7 +1385,8 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
 
 @mcp.tool()
 async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
-                           filters_json: str = "", project_folder: str = "") -> str:
+                           filters_json: str = "", project_folder: str = "",
+                           include_freshness: bool = False) -> str:
     r"""搜索知识库（lessons/decisions/playbooks）。 / Search lessons, decisions, and playbooks by keyword.
 
     **Lifecycle: retrieval** — 在对话中需要检索历史知识时调用。
@@ -1365,6 +1407,8 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             - "tier": str — only items matching this tier ('staging' or 'verified')
             - "date_after": str — ISO date string, only items created after this date
             Example: '{"tier": "verified", "domain": "python"}'
+        include_freshness: Attach a per-item freshness hint (fresh/aging/stale)
+            to each returned item. Default False keeps the response unchanged.
     """
     filters = None
     if filters_json:
@@ -1400,6 +1444,15 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
         )
         # governance gate (opt-in; OFF => byte-identical to the line above).
         result = _gov_rt.maybe_govern_buckets(_engram.root, result, tool="search_knowledge")
+        # Opt-in freshness annotation, applied AFTER governance filtering so it
+        # only ever annotates items the caller may already see (Provenance &
+        # Freshness Contract v1, follow-up B). Pure/non-destructive; default OFF
+        # keeps the response byte-identical.
+        if include_freshness and isinstance(result, dict):
+            for _bucket in ("lessons", "decisions", "playbooks"):
+                items = result.get(_bucket)
+                if isinstance(items, list):
+                    result[_bucket] = _provenance.annotate_freshness(items)
         _track("search_knowledge", success=True)
     except Exception as exc:
         _track("search_knowledge", success=False)
@@ -1826,6 +1879,9 @@ async def add_lesson(
     domain: str = "",
     source_tool: str = "",
     source_url: str = "",
+    source_agent: str = "",
+    run_id: str = "",
+    last_validated_at: str = "",
 ) -> str:
     """记录单条经验教训（你已经知道要记什么）。 / Record one lesson learned when you already know what to save.
 
@@ -1844,6 +1900,9 @@ async def add_lesson(
         domain: 技术领域（可选），可填多个，逗号分隔，如 'python,testing'。 / Technical domain (optional); may contain multiple comma-separated labels such as 'python,testing'.
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
         source_url: 如果教训来自外部内容，填写来源 URL（可选）。 / Source URL when the lesson comes from external content (optional).
+        source_agent: 产生/校验此条目的 agent 身份（可选，如 'claude_code'，比 source_tool 更细）。 / Agent identity that produced or validated this entry (optional; finer-grained than source_tool).
+        run_id: 产生此条目的工作流/会话运行 ID（可选）。 / Workflow/session run id that produced this entry (optional).
+        last_validated_at: 人/agent 最近确认此条目仍然成立的 ISO-8601 时间（可选）。 / ISO-8601 time this entry was last confirmed to still hold (optional).
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_lesson")
@@ -1860,6 +1919,10 @@ async def add_lesson(
         lesson["source_tool"] = source_tool
     if source_url:
         lesson["source_url"] = source_url
+    _attach_provenance(
+        lesson, source_agent=source_agent, run_id=run_id,
+        last_validated_at=last_validated_at,
+    )
     try:
         result = _engram.add_lesson(lesson)
         _track("add_lesson", success=True)
@@ -1889,6 +1952,9 @@ async def add_decision(
     project: str = "",
     domain: str = "",
     supersedes: str = "",
+    source_agent: str = "",
+    run_id: str = "",
+    last_validated_at: str = "",
 ) -> str:
     """记录单条关键决策（用户明确选了某个方案）。 / Record one key decision when the user explicitly chose an option.
 
@@ -1914,6 +1980,9 @@ async def add_decision(
         project: 关联项目（可选）。 / Related project (optional).
         domain: 技术领域（可选），可填多个，逗号分隔，如 'architecture,database'。 / Technical domain (optional); may contain multiple comma-separated labels such as 'architecture,database'.
         supersedes: 被本决策取代的旧决策 ID（可选）。填写后自动在决策链中建立 supersedes 关系。 / ID of the old decision this one replaces (optional). Creates a supersedes edge in the decision thread.
+        source_agent: 产生/校验此决策的 agent 身份（可选）。 / Agent identity that produced or validated this decision (optional).
+        run_id: 产生此决策的工作流/会话运行 ID（可选）。 / Workflow/session run id that produced this decision (optional).
+        last_validated_at: 最近确认此决策仍然成立的 ISO-8601 时间（可选）。 / ISO-8601 time this decision was last confirmed to still hold (optional).
     """
     # a4: write-path governance gate
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_decision")
@@ -1932,6 +2001,10 @@ async def add_decision(
         decision["domain"] = domain
     if supersedes:
         decision["supersedes"] = supersedes
+    _attach_provenance(
+        decision, source_agent=source_agent, run_id=run_id,
+        last_validated_at=last_validated_at,
+    )
     try:
         result = _engram.add_decision(decision)
         _track("add_decision", success=True)
@@ -1962,6 +2035,9 @@ async def add_playbook(
     source_tool: str = "",
     scope_type: str = "global",
     project_folder: str = "",
+    source_agent: str = "",
+    run_id: str = "",
+    last_validated_at: str = "",
 ) -> str:
     """记录操作手册（Playbook）— 结构化的多步骤流程。 / Record an operational playbook — a structured multi-step procedure.
 
@@ -2021,6 +2097,10 @@ async def add_playbook(
         playbook["project_folder"] = effective_project
     else:
         playbook["scope_type"] = "global"
+    _attach_provenance(
+        playbook, source_agent=source_agent, run_id=run_id,
+        last_validated_at=last_validated_at,
+    )
     try:
         result = _engram.add_playbook(playbook)
         _track("add_playbook", success=True)

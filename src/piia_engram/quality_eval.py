@@ -127,3 +127,42 @@ def evaluate_batch(entries: list[dict[str, Any]]) -> dict[str, Any]:
         "rejected": len(verdicts) - accepted,
         "verdicts": verdicts,
     }
+
+
+def build_quality_report(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate, metadata-only quality report for a set of candidates.
+
+    Wraps :func:`evaluate_batch` and rolls the per-item verdicts up into reason
+    and warning histograms plus a compact, content-free flagged list (id +
+    entry_type + reasons/warnings only). This is a *reporting* helper for review
+    tooling — it never promotes, never deletes, and never echoes summaries or
+    other stored bodies, so it is safe to surface in aggregate views.
+    """
+    batch = evaluate_batch(entries)
+    reason_counts: dict[str, int] = {}
+    warning_counts: dict[str, int] = {}
+    flagged: list[dict[str, Any]] = []
+
+    for entry, verdict in zip(entries or [], batch["verdicts"]):
+        for reason in verdict["reasons"]:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        for warning in verdict["warnings"]:
+            warning_counts[warning] = warning_counts.get(warning, 0) + 1
+        if verdict["reasons"] or verdict["warnings"]:
+            entry_id = entry.get("id", "") if isinstance(entry, dict) else ""
+            flagged.append({
+                "id": entry_id,
+                "entry_type": verdict["entry_type"],
+                "accept": verdict["accept"],
+                "reasons": list(verdict["reasons"]),
+                "warnings": list(verdict["warnings"]),
+            })
+
+    return {
+        "total": batch["total"],
+        "accepted": batch["accepted"],
+        "rejected": batch["rejected"],
+        "reason_counts": reason_counts,
+        "warning_counts": warning_counts,
+        "flagged": flagged,
+    }

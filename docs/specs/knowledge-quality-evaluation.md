@@ -99,9 +99,14 @@ keep vs reject split -> escalate to user with both rationales
 
 ## 5. Follow-up (when wired)
 
-- Surface Layer-1 verdicts in `engram review` and the HTML review page (reasons
-  as badges) so reviewers see why something is flagged.
+- ✅ **Implemented** — Layer-1 verdicts are surfaced in the HTML review page
+  (`reports_review.generate_review_page`): hard reasons render as a red flag
+  badge, soft warnings as an amber badge, and the tokens are HTML-escaped like
+  every other field. It only annotates — it never auto-promotes or rejects.
+  Covered by `tests/test_quality_report.py`. An aggregate, metadata-only
+  `quality_eval.build_quality_report` helper is also available for review tooling.
 - Optionally block one-click promotion of entries with hard reasons until edited.
+  *(still future work — Layer 1 currently annotates only.)*
 - Keep the double-review as an explicit, user-invoked step — never automatic.
 
 ## 6. Non-goals

@@ -107,11 +107,15 @@ shows the aggregator dominates, deprecation can be considered later — separate
 
 ## 6. Implementation plan (when approved)
 
-1. Pure aggregator helper `recall.py` that takes the already-loaded sub-results
-   and assembles the payload + applies `annotate_freshness`. Unit-test the
-   assembly/dedup/trim with fixtures (no store needed).
-2. Thin MCP tool that gathers the sub-results and calls the aggregator, gated as
-   a `read` tool, governed like the others.
+1. ✅ **Implemented** — pure aggregator helper `src/piia_engram/recall.py`
+   (`build_recall_payload`) takes already-loaded sub-results and assembles the
+   payload, de-duplicates by id, projects each item to summary/metadata (never
+   raw stored dicts), applies `annotate_freshness` (opt-in), and trims to a token
+   budget. Unit-tested store-free in `tests/test_recall.py`.
+2. **Deferred (still review-gated)** — the thin MCP tool that gathers the
+   sub-results and calls the aggregator. It touches MCP output and overlaps
+   `get_resume_brief`, so it needs its own governance/leak-matrix review before
+   shipping (see §3 note). The aggregator is intentionally usable on its own.
 3. Add to Tier-1 only after it proves out (it would overlap `get_resume_brief`).
 
 ## 7. Non-goals

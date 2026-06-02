@@ -101,13 +101,16 @@ equally current. This is opt-in at the surface level and changes no stored data.
 
 1. **Now (this contract):** `provenance.py` helper (pure functions) + tests.
    No behavior change to existing tools.
-2. **Follow-up A (write path):** normalize `source_agent`/`run_id`/
-   `last_validated_at` from `**extra` into `provenance` inside the add_* path,
-   covered by write-path tests. Low risk (extra kwargs already accepted).
-3. **Follow-up B (recall path):** call `annotate_freshness` in recall tools
-   behind an opt-in arg (e.g. `include_freshness=True`) so default output is
-   unchanged; add recall-shape tests. Requires explicit review because it
-   touches MCP output.
+2. ✅ **Follow-up A (write path) — implemented:** `add_lesson` / `add_decision` /
+   `add_playbook` accept optional `source_agent` / `run_id` / `last_validated_at`
+   and normalize them into `provenance` via `mcp_server._attach_provenance`.
+   Omitting them leaves the entry's `provenance` unchanged. Covered by
+   `tests/test_provenance_wiring.py`.
+3. ✅ **Follow-up B (recall path) — implemented:** `search_knowledge` and
+   `get_relevant_knowledge` take an opt-in `include_freshness=False`; when true
+   they call `annotate_freshness` **after** governance filtering, so the default
+   output is byte-identical and a non-owner can never have an above-ceiling item
+   annotated. Covered by `tests/test_provenance_wiring.py`.
 4. **Follow-up C (validation tooling):** an explicit `mark_validated` action that
    stamps `last_validated_at` + `source_agent` on review/promote.
 

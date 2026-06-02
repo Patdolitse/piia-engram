@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from . import quality_eval as _quality_eval
 from .storage import _now_iso
 
 
@@ -102,6 +103,46 @@ class ReviewMixin:
                         + "</div>"
                     )
 
+            # Layer-1 metadata-only quality verdict (see
+            # docs/specs/knowledge-quality-evaluation.md §5): surface the reasons
+            # / warnings as badges so the reviewer sees *why* an item is flagged.
+            # This NEVER rejects, promotes, or deletes — it only annotates. The
+            # reason/warning tokens come from a fixed vocabulary, but they are
+            # escaped anyway (defense in depth, same as every other field).
+            qeval_badge = ""
+            qeval_detail = ""
+            try:
+                verdict = _quality_eval.evaluate_candidate(item)
+            except Exception:
+                verdict = None
+            if verdict:
+                reasons = list(verdict.get("reasons", []))
+                warnings = list(verdict.get("warnings", []))
+                if reasons:
+                    qeval_badge = (
+                        '<span class="qeval-badge qeval-reject" title="'
+                        + ("需修订后再保留" if zh else "fix before keeping")
+                        + '">&#9873; '
+                        + _esc(", ".join(reasons))
+                        + "</span>"
+                    )
+                elif warnings:
+                    qeval_badge = (
+                        '<span class="qeval-badge qeval-warn">&#9888; '
+                        + _esc(", ".join(warnings))
+                        + "</span>"
+                    )
+                flags = reasons + warnings
+                if flags:
+                    label = "质量信号" if zh else "quality"
+                    qeval_detail = (
+                        '<div class="item-qeval">'
+                        + label
+                        + ": "
+                        + _esc(", ".join(flags))
+                        + "</div>"
+                    )
+
             if itype == "lesson":
                 summary = item.get("summary", "")
                 detail = item.get("detail", "")
@@ -131,12 +172,14 @@ class ReviewMixin:
             <span class="rarity-label" style="color:{color}">{lbl}</span>
             {tier_badge}
             {quality_badge}
+            {qeval_badge}
             <span class="item-summary">{_esc(summary[:120])}</span>
             <span class="expand-arrow">&#9656;</span>
           </div>
           <div class="item-expand">
             {f'<div class="item-detail">{_esc(detail)}</div>' if detail else ''}
             {quality_detail}
+            {qeval_detail}
             <div class="item-meta">
               <span>{ts}</span>
               {f'<span class="meta-domain">{domain_val}</span>' if domain_val else ''}
