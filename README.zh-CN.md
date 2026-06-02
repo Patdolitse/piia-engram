@@ -701,6 +701,8 @@ piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代�
 **我的数据存在哪里？**
 所有数据以 JSON 和 Markdown 文件存储在本地 `~/.engram/` 目录。无需账号，无需订阅。你可以直接打开、编辑、备份或迁移这些文件。可选 AES-256-GCM 加密：`pip install piia-engram[secure]`。
 
+**本地数据主权（备份只覆盖 Engram 自己的目录）：** 升级前可运行 `engram backup-plan` 查看要备份哪些文件的元数据清单（只列路径/大小/条数，不读取知识正文，也绝不读取 Engram 目录以外的文件）；恢复就是把该目录整份拷回这一显式动作。Engram 从不备份、修改或删除你项目文件夹里的任何文件。详见 [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.md)。
+
 **如何安装 piia-engram？**
 ```bash
 pip install piia-engram
@@ -806,6 +808,8 @@ piia-engram management action playbook_scope accept_project <id> --project . --y
 piia-engram management action playbook_scope accept_shared <id> --project ./app-a --project ./app-b --yes --json # 让一个 Playbook 只在选定项目间共享
 piia-engram repair-encoding  # dry-run 扫描乱码 / mojibake
 piia-engram repair-encoding --apply  # 备份后修复可逆乱码
+piia-engram backup-plan      # 升级前要备份哪些文件的元数据清单（仅本地，不读取知识正文）
+piia-engram export-agents-md # 把已验证、非敏感的知识导出为 AGENTS.md/CLAUDE.md 片段
 piia-engram stats            # 查看项目增长数据（GitHub + PyPI）
 piia-engram stats --log      # 追加统计快照到本地日志
 engram telemetry        # 管理匿名使用统计

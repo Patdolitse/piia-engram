@@ -634,12 +634,18 @@ directly. Three explicit export paths, each with a different boundary:
 | A readable knowledge report | `export_knowledge_report` | Active lessons/decisions grouped by domain/month (Markdown). |
 | A full local backup | `export_engram` | The whole store as JSON. Treat the file as sensitive — it is a complete backup, including staging and labelled items. |
 | OpenClaw files | `export_engram_to_openclaw` | SOUL.md / MEMORY.md / USER.md. |
+| A committable AGENTS.md/CLAUDE.md digest | `engram export-agents-md` | **Verified, non-sensitive** lessons/decisions only, as a summary block. Staging and sensitive items are excluded by construction; refuses to overwrite an existing file. |
 
 Exports are **owner-gated** when `ENGRAM_GOVERNANCE=1` (see
 [docs/governance.md](docs/governance.md)). There is no cloud copy and no hidden memory:
-what you export is exactly what is on your disk. (A curated, committable
-`AGENTS.md`/`CLAUDE.md` digest of *verified, non-sensitive* knowledge is on the
-roadmap — see `docs/specs/agents-md-export-contract.md`.)
+what you export is exactly what is on your disk.
+
+**Local data sovereignty.** Backup and restore cover *only* the Engram directory
+— `engram backup-plan` prints a metadata-only list of what to copy before an
+upgrade (it reads no stored knowledge bodies and never reaches outside the
+Engram root), and restore is the explicit, manual step of copying that directory
+back. Engram never backs up, modifies, or deletes files in your project folders.
+See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.md).
 
 ## Supported Tools
 
@@ -837,6 +843,8 @@ piia-engram management action playbook_scope accept_project <id> --project . --y
 piia-engram management action playbook_scope accept_shared <id> --project ./app-a --project ./app-b --yes --json # Share one Playbook with selected projects
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
 piia-engram repair-encoding --apply  # Repair reversible cases with a backup
+piia-engram backup-plan      # Metadata-only plan of what to copy before upgrading (local-only)
+piia-engram export-agents-md # Export verified, non-sensitive knowledge as an AGENTS.md/CLAUDE.md block
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)
 piia-engram stats --log      # Append stats snapshot to local log
 engram telemetry        # Manage anonymous usage statistics

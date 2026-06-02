@@ -37,6 +37,7 @@ release-evidence/**
 .mcp/**
 .mcp.json
 .claude-plugin/**
+.cursor-plugin/**
 
 # ── Root config & build metadata ────────────────────────────────────
 pyproject.toml
@@ -72,9 +73,19 @@ docs/comparison.md
 docs/cross-tool-continuity-demo.md
 docs/cross-tool-guide.md
 docs/codex-claude-validation.md
+docs/cursor-plugin-validation.md
 docs/governance.md
 docs/hybrid-search.md
 docs/listing-copy.md
+docs/runbooks/setup-upgrade-safety.md
+docs/runbooks/telemetry-contract-v1-remote-closeout.md
+docs/specs/agents-md-export-contract.md
+docs/specs/cursor-stop-hook-governed-writeback-design.md
+docs/specs/knowledge-quality-evaluation.md
+docs/specs/knowledge-version-chain-design.md
+docs/specs/permission-profile-vnext-design.md
+docs/specs/provenance-freshness-contract-v1.md
+docs/specs/recall-surface-v1.md
 docs/superpowers/plans/2026-05-30-gui-entry-doctor-probe.md
 docs/superpowers/plans/2026-05-30-v340-first-run-confidence.md
 docs/superpowers/plans/2026-05-31-trust-resume-portability-foundation.md
@@ -82,6 +93,9 @@ docs/superpowers/plans/2026-05-31-v342-install-gui-entry-validation.md
 docs/superpowers/specs/2026-05-30-gui-entry-doctor-probe-design.md
 docs/superpowers/specs/2026-05-30-v340-first-run-confidence-design.md
 docs/trust.md
+
+# Agent ecosystem entrypoints (public, reviewed; no private workflow content)
+skills/engram/**
 
 # ── Assets, examples, demos, remote-worker deployment ───────────────
 assets/**
