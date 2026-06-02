@@ -85,13 +85,21 @@ const MAX_PAYLOAD_SIZE = 8192;
 const ALLOWED_FIELDS = new Set([
   'schema', 'daily_id', 'engram_version', 'timestamp',
   'tool_calls', 'knowledge_counts', 'os_platform', 'python_version', 'tools_tier',
+  'prev_version', 'session_type', 'install_age_bucket', 'error_categories',
 ]);
+const SESSION_TYPES = new Set(['first_run', 'regular']);
+const INSTALL_AGE_BUCKETS = new Set(['first_day', '2_7_days', '8_30_days', '31_plus_days', 'unknown']);
+const ERROR_CATEGORIES = new Set(['timeout', 'validation', 'io', 'permission', 'network', 'unknown']);
 
 function validatePayload(data) {
   if (!data || typeof data !== 'object') return 'invalid JSON';
   if (!data.daily_id || typeof data.daily_id !== 'string') return 'missing daily_id';
   if (data.daily_id.length > 64) return 'daily_id too long';
   if (data.engram_version && data.engram_version.length > 20) return 'version too long';
+  if (data.prev_version != null && typeof data.prev_version !== 'string') return 'prev_version must be string or null';
+  if (data.prev_version && data.prev_version.length > 20) return 'prev_version too long';
+  if (data.session_type && !SESSION_TYPES.has(data.session_type)) return 'invalid session_type';
+  if (data.install_age_bucket && !INSTALL_AGE_BUCKETS.has(data.install_age_bucket)) return 'invalid install_age_bucket';
   for (const key of Object.keys(data)) {
     if (!ALLOWED_FIELDS.has(key)) return `unexpected field: ${key}`;
   }
@@ -106,6 +114,13 @@ function validatePayload(data) {
     if (typeof data.knowledge_counts !== 'object') return 'knowledge_counts must be object';
     for (const [key, val] of Object.entries(data.knowledge_counts)) {
       if (typeof val !== 'number') return `knowledge_counts.${key} must be number`;
+    }
+  }
+  if (data.error_categories) {
+    if (typeof data.error_categories !== 'object') return 'error_categories must be object';
+    for (const [key, val] of Object.entries(data.error_categories)) {
+      if (!ERROR_CATEGORIES.has(key)) return `invalid error category: ${key}`;
+      if (typeof val !== 'number') return `error_categories.${key} must be number`;
     }
   }
   return null;
@@ -212,19 +227,47 @@ async function handleEvent(request, env) {
     });
   }
 
-  await env.DB.prepare(
-    `INSERT INTO events (daily_id, version, tool_calls, knowledge, os, py, tier, schema_v)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    data.daily_id,
-    data.engram_version || '',
-    JSON.stringify(data.tool_calls || {}),
-    JSON.stringify(data.knowledge_counts || {}),
-    data.os_platform || '',
-    data.python_version || '',
-    data.tools_tier || 'core',
-    data.schema || 1,
-  ).run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO events (
+         daily_id, version, prev_version, session_type, install_age_bucket,
+         tool_calls, knowledge, error_categories, os, py, tier, schema_v
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      data.daily_id,
+      data.engram_version || '',
+      data.prev_version || '',
+      data.session_type || '',
+      data.install_age_bucket || '',
+      JSON.stringify(data.tool_calls || {}),
+      JSON.stringify(data.knowledge_counts || {}),
+      JSON.stringify(data.error_categories || {}),
+      data.os_platform || '',
+      data.python_version || '',
+      data.tools_tier || 'core',
+      data.schema || 1,
+    ).run();
+  } catch (err) {
+    const msg = String(err && err.message || err);
+    if (!msg.includes('prev_version') && !msg.includes('session_type') &&
+        !msg.includes('install_age_bucket') && !msg.includes('error_categories')) {
+      throw err;
+    }
+    await env.DB.prepare(
+      `INSERT INTO events (daily_id, version, tool_calls, knowledge, os, py, tier, schema_v)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      data.daily_id,
+      data.engram_version || '',
+      JSON.stringify(data.tool_calls || {}),
+      JSON.stringify(data.knowledge_counts || {}),
+      data.os_platform || '',
+      data.python_version || '',
+      data.tools_tier || 'core',
+      data.schema || 1,
+    ).run();
+  }
 
   return new Response(JSON.stringify({ ok: true }), {
     status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -257,6 +300,15 @@ async function fetchPypiStats() {
 // --- 数据查询 ---
 
 async function getStatsData(env) {
+  const eventColumnsResult = await env.DB.prepare(`PRAGMA table_info(events)`).all();
+  const eventColumns = new Set((eventColumnsResult.results || []).map(c => c.name));
+  const hasAnalysisContractV1 = [
+    'prev_version',
+    'session_type',
+    'install_age_bucket',
+    'error_categories',
+  ].every(name => eventColumns.has(name));
+
   // 全量统计
   const totals = await env.DB.prepare(`
     SELECT COUNT(*) AS total_events, COUNT(DISTINCT daily_id) AS unique_ids,
@@ -290,6 +342,29 @@ async function getStatsData(env) {
     SELECT version, COUNT(*) AS count FROM events
     WHERE version != '' GROUP BY version ORDER BY count DESC LIMIT 10
   `).all();
+
+  let versionUpgrades = { results: [] };
+  let sessionTypes = { results: [] };
+  let installAgeBuckets = { results: [] };
+  let errorCategoryRows = { results: [] };
+  if (hasAnalysisContractV1) {
+    versionUpgrades = await env.DB.prepare(`
+      SELECT prev_version, version, COUNT(*) AS count FROM events
+      WHERE prev_version != '' AND version != '' AND prev_version != version
+      GROUP BY prev_version, version ORDER BY count DESC LIMIT 10
+    `).all();
+    sessionTypes = await env.DB.prepare(`
+      SELECT session_type, COUNT(*) AS count FROM events
+      WHERE session_type != '' GROUP BY session_type ORDER BY count DESC
+    `).all();
+    installAgeBuckets = await env.DB.prepare(`
+      SELECT install_age_bucket, COUNT(*) AS count FROM events
+      WHERE install_age_bucket != '' GROUP BY install_age_bucket ORDER BY count DESC
+    `).all();
+    errorCategoryRows = await env.DB.prepare(`
+      SELECT error_categories FROM events WHERE error_categories != '{}'
+    `).all();
+  }
 
   // 每日活跃（14天）
   const daily = await env.DB.prepare(`
@@ -336,6 +411,22 @@ async function getStatsData(env) {
       .map(([name, c]) => ({ name, total: c.success + c.error, ...c }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 20);
+  }
+
+  function aggregateErrorCategories(rows) {
+    const agg = {};
+    for (const row of rows.results || []) {
+      try {
+        const categories = JSON.parse(row.error_categories || '{}');
+        for (const [category, count] of Object.entries(categories)) {
+          agg[category] = (agg[category] || 0) + (Number(count) || 0);
+        }
+      } catch { /* skip */ }
+    }
+    return Object.entries(agg)
+      .map(([category, count]) => ({ category, count }))
+      .filter(row => row.count > 0)
+      .sort((a, b) => b.count - a.count);
   }
 
   const todayTools = aggregateTools(todayToolRows);
@@ -402,6 +493,13 @@ async function getStatsData(env) {
   return {
     totals, today, week, month,
     versions: versions.results,
+    analysis_contract_v1: {
+      available: hasAnalysisContractV1,
+      version_upgrades: versionUpgrades.results,
+      session_types: sessionTypes.results,
+      install_age_buckets: installAgeBuckets.results,
+      error_categories: aggregateErrorCategories(errorCategoryRows),
+    },
     daily_active: daily.results,
     monthly_summary: monthly.results,
     today_tools: todayTools,
@@ -448,10 +546,12 @@ function renderDashboard(stats) {
   const metricsHtml = `
     <div class="metrics">
       <div class="metric"><div class="value">${(t.total_events||0).toLocaleString()}</div><div class="label">总事件数</div></div>
-      <div class="metric"><div class="value">${(t.unique_ids||0).toLocaleString()}</div><div class="label">独立用户</div></div>
+      <div class="metric"><div class="value">${(t.unique_ids||0).toLocaleString()}</div><div class="label">匿名日 ID（累计）</div></div>
       <div class="metric"><div class="value">${t.active_days||0}</div><div class="label">活跃天数</div></div>
       <div class="metric"><div class="value">${uptime}</div><div class="label">运行天数</div></div>
     </div>`;
+  const dailyIdNotice = `
+    <div class="notice">口径：daily_id 按 UTC 日期轮换；今日可近似活跃安装，近 7/30 天和月度为匿名日 ID 次数，不等同真实去重用户。</div>`;
 
   // 时段对比卡片
   const td = stats.today || {};
@@ -462,18 +562,18 @@ function renderDashboard(stats) {
       <div class="metric highlight">
         <div class="period-label">今日</div>
         <div class="period-row"><span class="period-val">${td.events||0}</span><span class="period-unit">事件</span></div>
-        <div class="period-row"><span class="period-val">${td.users||0}</span><span class="period-unit">用户</span></div>
+        <div class="period-row"><span class="period-val">${td.users||0}</span><span class="period-unit">匿名日 ID</span></div>
       </div>
       <div class="metric">
         <div class="period-label">近 7 天</div>
         <div class="period-row"><span class="period-val">${wk.events||0}</span><span class="period-unit">事件</span></div>
-        <div class="period-row"><span class="period-val">${wk.users||0}</span><span class="period-unit">用户</span></div>
+        <div class="period-row"><span class="period-val">${wk.users||0}</span><span class="period-unit">匿名日 ID</span></div>
         <div class="period-row"><span class="period-val">${wk.active_days||0}</span><span class="period-unit">活跃天</span></div>
       </div>
       <div class="metric">
         <div class="period-label">近 30 天</div>
         <div class="period-row"><span class="period-val">${mo.events||0}</span><span class="period-unit">事件</span></div>
-        <div class="period-row"><span class="period-val">${mo.users||0}</span><span class="period-unit">用户</span></div>
+        <div class="period-row"><span class="period-val">${mo.users||0}</span><span class="period-unit">匿名日 ID</span></div>
         <div class="period-row"><span class="period-val">${mo.active_days||0}</span><span class="period-unit">活跃天</span></div>
       </div>
       <div class="metric">
@@ -527,6 +627,51 @@ function renderDashboard(stats) {
     `<span class="badge py">${p.py} <small>(${p.count})</small></span>`
   ).join(' ') || '<span class="empty-inline">暂无数据</span>';
 
+  // Contract v1 P0 分析
+  const ac = stats.analysis_contract_v1 || {};
+  const sessionLabels = { first_run: '首跑激活', regular: '常规会话' };
+  const ageLabels = {
+    first_day: '首日',
+    '2_7_days': '2-7 天',
+    '8_30_days': '8-30 天',
+    '31_plus_days': '31 天以上',
+    unknown: '未知',
+  };
+  function countBadges(rows, key, labels = {}) {
+    if (!rows || !rows.length) return '<span class="empty-inline">暂无数据</span>';
+    return rows.map(row =>
+      `<span class="badge">${labels[row[key]] || row[key]} <small>(${row.count})</small></span>`
+    ).join(' ');
+  }
+  const upgradeRows = (ac.version_upgrades || []).map(row => `
+    <tr><td>${row.prev_version}</td><td>${row.version}</td><td>${row.count}</td></tr>
+  `).join('') || '<tr><td colspan="3" class="empty">暂无升级迁移数据</td></tr>';
+  const errorBadges = countBadges(ac.error_categories || [], 'category');
+  const contractHtml = ac.available ? `
+    <div class="section-title">&#128202; Contract v1 分析</div>
+    <div class="grid">
+      <div class="card">
+        <h2>版本升级</h2>
+        <table><thead><tr><th>上一版本</th><th>当前版本</th><th>事件数</th></tr></thead><tbody>${upgradeRows}</tbody></table>
+      </div>
+      <div class="card">
+        <h2>首跑激活</h2>
+        <div class="tags">${countBadges(ac.session_types || [], 'session_type', sessionLabels)}</div>
+      </div>
+      <div class="card">
+        <h2>匿名新老分桶</h2>
+        <div class="tags">${countBadges(ac.install_age_buckets || [], 'install_age_bucket', ageLabels)}</div>
+      </div>
+      <div class="card">
+        <h2>错误类别</h2>
+        <div class="tags">${errorBadges}</div>
+      </div>
+    </div>` : `
+    <div class="section-title">&#128202; Contract v1 分析</div>
+    <div class="card" style="margin-bottom:1.5rem">
+      <div class="empty">D1 schema 尚未应用 Telemetry Analysis Contract v1 迁移，暂无 P0 字段分析。</div>
+    </div>`;
+
   // 最近事件
   const recentRows = stats.recent_events.map(e => {
     let toolCount = 0;
@@ -574,6 +719,7 @@ function renderDashboard(stats) {
   .metric .value { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--blue)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
   .metric .label { color: var(--muted); font-size: 0.8rem; margin-top: 0.25rem; }
   .metric.highlight { border-color: var(--accent); background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.05)); }
+  .notice { color: var(--muted); font-size: 0.78rem; text-align: center; margin: -0.75rem 0 1.5rem; }
 
   .period-label { font-size: 0.85rem; font-weight: 600; color: var(--accent); margin-bottom: 0.75rem; }
   .period-row { display: flex; justify-content: space-between; align-items: baseline; padding: 0.2rem 0; }
@@ -641,6 +787,7 @@ function renderDashboard(stats) {
 
   <!-- 总览 -->
   ${metricsHtml}
+  ${dailyIdNotice}
 
   <!-- PyPI 下载统计 -->
   <div class="section-title">&#128230; PyPI 下载统计</div>
@@ -663,6 +810,7 @@ function renderDashboard(stats) {
   <!-- 时段对比 -->
   <div class="section-title">&#128202; 时段数据</div>
   ${periodHtml}
+  ${contractHtml}
 
   <!-- 工具使用 -->
   <div class="section-title">&#128295; 工具使用分析</div>
@@ -682,11 +830,11 @@ function renderDashboard(stats) {
   <div class="grid">
     <div class="card">
       <h2>每日活跃 <small>（近 14 天）</small></h2>
-      <table><thead><tr><th>日期</th><th>用户数</th><th>事件数</th></tr></thead><tbody>${dailyRows}</tbody></table>
+      <table><thead><tr><th>日期</th><th>匿名日 ID</th><th>事件数</th></tr></thead><tbody>${dailyRows}</tbody></table>
     </div>
     <div class="card">
       <h2>每月汇总</h2>
-      <table><thead><tr><th>月份</th><th>用户数</th><th>事件数</th></tr></thead><tbody>${monthlyRows}</tbody></table>
+      <table><thead><tr><th>月份</th><th>匿名日 ID</th><th>事件数</th></tr></thead><tbody>${monthlyRows}</tbody></table>
     </div>
   </div>
 
@@ -702,7 +850,7 @@ function renderDashboard(stats) {
   <div class="section-title">&#128214; 最近事件</div>
   <div class="card" style="margin-bottom:1.5rem">
     <table>
-      <thead><tr><th>时间</th><th>用户 ID</th><th>版本</th><th>系统</th><th>工具调用</th></tr></thead>
+      <thead><tr><th>时间</th><th>匿名日 ID</th><th>版本</th><th>系统</th><th>工具调用</th></tr></thead>
       <tbody>${recentRows}</tbody>
     </table>
   </div>
@@ -734,13 +882,13 @@ function renderDashboard(stats) {
     }).join('') || '<tr><td colspan="9" class="empty">暂无</td></tr>';
 
     return '<div class="metrics four">' +
-      '<div class="metric highlight"><div class="period-label">反馈总数</div><div class="period-row"><span class="period-val">' + ft.total + '</span><span class="period-unit">份报告</span></div><div class="period-row"><span class="period-val">' + (ft.unique_users || 0) + '</span><span class="period-unit">独立用户</span></div></div>' +
+      '<div class="metric highlight"><div class="period-label">反馈总数</div><div class="period-row"><span class="period-val">' + ft.total + '</span><span class="period-unit">份报告</span></div><div class="period-row"><span class="period-val">' + (ft.unique_users || 0) + '</span><span class="period-unit">匿名日 ID</span></div></div>' +
       '<div class="metric"><div class="period-label">平均知识量</div><div class="period-row"><span class="period-val">' + Math.round(ft.avg_knowledge || 0) + '</span><span class="period-unit">条知识</span></div><div class="period-row"><span class="period-val">' + Math.round(ft.avg_sessions || 0) + '</span><span class="period-unit">会话数</span></div></div>' +
       '<div class="metric"><div class="period-label">治理指标</div><div class="period-row"><span class="period-val">' + avgPR + '</span><span class="period-unit">确认率</span></div><div class="period-row"><span class="period-val">' + avgAge + '</span><span class="period-unit">staging 滞留</span></div></div>' +
       '<div class="metric"><div class="period-label">最后报告</div><div class="period-row"><span class="period-unit">' + (ft.last_feedback || '暂无') + '</span></div></div>' +
     '</div>' +
     '<div class="card" style="margin-top:1rem;margin-bottom:1.5rem"><h2>最近反馈明细</h2>' +
-    '<table><thead><tr><th>时间</th><th>用户</th><th>版本</th><th>知识(S/V)</th><th>确认率</th><th>滞留天</th><th>会话</th><th>活跃天</th><th>来源工具</th></tr></thead><tbody>' + fbRows + '</tbody></table></div>';
+    '<table><thead><tr><th>时间</th><th>匿名日 ID</th><th>版本</th><th>知识(S/V)</th><th>确认率</th><th>滞留天</th><th>会话</th><th>活跃天</th><th>来源工具</th></tr></thead><tbody>' + fbRows + '</tbody></table></div>';
   })()}
 
   <div class="footer">

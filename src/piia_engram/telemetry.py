@@ -12,6 +12,8 @@ Data collected (when opted in):
 5. OS platform (win32/darwin/linux) — no detailed version
 6. Python major.minor version
 7. Tool tier (core/all)
+8. Analysis contract v1 metadata: previous reported version, first/regular
+   session bucket, coarse install-age bucket, and closed error categories
 
 Never collected: lesson/decision content, prompts, file paths, IP, email,
 device fingerprint, or any user-identifiable information.
@@ -40,6 +42,23 @@ _DEFAULT_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/events"
 _DEFAULT_FEEDBACK_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/feedback"
 _REMOTE_TIMEOUT = 3  # seconds — fail fast, never block MCP tools
 _FEEDBACK_INTERVAL_DAYS = 7  # send feedback at most once per week
+
+_ERROR_CATEGORIES = frozenset({
+    "timeout",
+    "validation",
+    "io",
+    "permission",
+    "network",
+    "unknown",
+})
+
+_INSTALL_AGE_BUCKETS = frozenset({
+    "first_day",
+    "2_7_days",
+    "8_30_days",
+    "31_plus_days",
+    "unknown",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -97,11 +116,14 @@ def set_enabled(enabled: bool) -> None:
     """Persist the opt-in/opt-out choice."""
     cfg = _load_config()
     cfg["enabled"] = enabled
+    now = datetime.now(timezone.utc).isoformat()
     if enabled and "local_uuid" not in cfg:
         cfg["local_uuid"] = str(uuid.uuid4())
-        cfg["opted_in_at"] = datetime.now(timezone.utc).isoformat()
+        cfg["opted_in_at"] = now
+    if enabled and "first_seen_at" not in cfg:
+        cfg["first_seen_at"] = cfg.get("opted_in_at") or now
     if not enabled:
-        cfg["opted_out_at"] = datetime.now(timezone.utc).isoformat()
+        cfg["opted_out_at"] = now
     _save_config(cfg)
 
 
@@ -172,6 +194,90 @@ def _daily_id(local_uuid: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Telemetry Analysis Contract v1 metadata
+# ---------------------------------------------------------------------------
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _install_age_bucket(first_seen_at: Any) -> str:
+    first_seen = _parse_iso_datetime(first_seen_at)
+    if first_seen is None:
+        return "unknown"
+    age_days = max(0, (datetime.now(timezone.utc) - first_seen).total_seconds() / 86400)
+    if age_days < 1:
+        return "first_day"
+    if age_days < 8:
+        return "2_7_days"
+    if age_days < 31:
+        return "8_30_days"
+    return "31_plus_days"
+
+
+def _session_type(cfg: dict[str, Any]) -> str:
+    return "regular" if cfg.get("first_payload_sent_at") else "first_run"
+
+
+def _normalize_error_category(category: Any) -> str:
+    if isinstance(category, str) and category in _ERROR_CATEGORIES:
+        return category
+    return "unknown"
+
+
+def _categorize_exception(exc: BaseException | None) -> str:
+    if exc is None:
+        return "unknown"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, PermissionError):
+        return "permission"
+    if isinstance(exc, URLError):
+        return "network"
+    if isinstance(exc, (ValueError, TypeError)):
+        return "validation"
+    if isinstance(exc, OSError):
+        return "io"
+    return "unknown"
+
+
+def _normalize_error_categories(categories: dict[str, int] | None) -> dict[str, int]:
+    normalized: dict[str, int] = {}
+    if not categories:
+        return normalized
+    for category, count in categories.items():
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            continue
+        if n <= 0:
+            continue
+        key = _normalize_error_category(category)
+        normalized[key] = normalized.get(key, 0) + n
+    return normalized
+
+
+def _mark_payload_sent(engram_version: str) -> None:
+    cfg = _load_config()
+    now = datetime.now(timezone.utc).isoformat()
+    if "first_payload_sent_at" not in cfg:
+        cfg["first_payload_sent_at"] = now
+    cfg["last_payload_sent_at"] = now
+    cfg["last_engram_version"] = engram_version or ""
+    if "first_seen_at" not in cfg:
+        cfg["first_seen_at"] = cfg.get("opted_in_at") or now
+    _save_config(cfg)
+
+
+# ---------------------------------------------------------------------------
 # Payload builder and validator
 # ---------------------------------------------------------------------------
 
@@ -236,6 +342,7 @@ def build_payload(
     knowledge_counts: dict[str, int] | None = None,
     engram_version: str = "",
     tools_tier: str = "",
+    error_categories: dict[str, int] | None = None,
 ) -> dict[str, Any] | None:
     """Build an anonymous usage statistics payload.
 
@@ -260,6 +367,12 @@ def build_payload(
         "schema": 1,
         "daily_id": _daily_id(local_uuid),
         "engram_version": engram_version,
+        "prev_version": cfg.get("last_engram_version") or None,
+        "session_type": _session_type(cfg),
+        "install_age_bucket": _install_age_bucket(
+            cfg.get("first_seen_at") or cfg.get("opted_in_at")
+        ),
+        "error_categories": _normalize_error_categories(error_categories),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "os_platform": sys.platform,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
@@ -313,6 +426,19 @@ def preview_payload(
         "schema": 1,
         "daily_id": daily_id,
         "engram_version": engram_version or "(current version)",
+        "prev_version": cfg.get("last_engram_version") or None,
+        "session_type": _session_type(cfg),
+        "install_age_bucket": _install_age_bucket(
+            cfg.get("first_seen_at") or cfg.get("opted_in_at")
+        ),
+        "error_categories": {
+            "timeout": "N",
+            "validation": "N",
+            "io": "N",
+            "permission": "N",
+            "network": "N",
+            "unknown": "N",
+        },
         "timestamp": "(next daily report time)",
         "os_platform": sys.platform,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
@@ -382,18 +508,30 @@ class ToolCallTracker:
 
     def __init__(self) -> None:
         self._calls: dict[str, dict[str, int]] = {}
+        self._error_categories: dict[str, int] = {}
         self._last_flush_date: str = ""
 
-    def record(self, tool_name: str, success: bool = True) -> None:
+    def record(self, tool_name: str, success: bool = True,
+               error_category: str | None = None) -> None:
         """Record a tool call."""
         if tool_name not in self._calls:
             self._calls[tool_name] = {"success": 0, "error": 0}
         key = "success" if success else "error"
         self._calls[tool_name][key] += 1
+        if not success:
+            category = error_category
+            if category is None:
+                category = _categorize_exception(sys.exc_info()[1])
+            category = _normalize_error_category(category)
+            self._error_categories[category] = self._error_categories.get(category, 0) + 1
 
     def get_counts(self) -> dict[str, dict[str, int]]:
         """Return a copy of current counts."""
         return {k: dict(v) for k, v in self._calls.items()}
+
+    def get_error_categories(self) -> dict[str, int]:
+        """Return a copy of current error category counts."""
+        return dict(self._error_categories)
 
     def should_flush(self) -> bool:
         """Check if we should flush (at most once per UTC day)."""
@@ -428,12 +566,17 @@ class ToolCallTracker:
             knowledge_counts=knowledge_counts,
             engram_version=engram_version,
             tools_tier=tools_tier,
+            error_categories=self.get_error_categories(),
         )
         if payload is None:
             return None
 
         # Phase 1: local log (always)
         result = log_payload(payload)
+        try:
+            _mark_payload_sent(engram_version)
+        except Exception:
+            pass
 
         # Phase 2: remote send (if opted in, never raises)
         try:
@@ -443,6 +586,7 @@ class ToolCallTracker:
 
         self._last_flush_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self._calls.clear()
+        self._error_categories.clear()
         return result
 
 

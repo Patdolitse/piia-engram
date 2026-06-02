@@ -67,6 +67,10 @@ Local telemetry and remote sending are separate:
 | Tool call counts | `{"add_lesson": {"success": 5, "error": 1}}` | No — tool names + counts only |
 | Knowledge totals | `{"lessons": 47, "decisions": 12}` | No — counts only |
 | Engram version | `"3.42.0"` | No |
+| Previous reported version | `"3.41.0"` or `null` | No — version string only |
+| Session type | `"first_run"` / `"regular"` | No — first telemetry payload vs later payloads |
+| Install-age bucket | `"first_day"`, `"2_7_days"`, `"8_30_days"`, `"31_plus_days"` | No — coarse bucket only, not the exact install time |
+| Error category counts | `{"timeout": 1, "validation": 2}` | No — closed categories only, never error text or stack traces |
 | Daily anonymous ID | `"a3f8b2c1e9d04f67"` | HMAC-derived, rotates daily, cannot be linked across days |
 | OS platform | `"win32"` | No detailed version |
 | Python version | `"3.12"` | Major.minor only |
@@ -76,6 +80,7 @@ Local telemetry and remote sending are separate:
 - Lesson, decision, or playbook **content** (text, summaries, reasoning)
 - User prompts or AI responses
 - File paths (may reveal username or project names)
+- Error messages, exception text, or stack traces
 - IP addresses, email, or device fingerprints
 - Domain names or project names
 

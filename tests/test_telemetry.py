@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import pytest
@@ -479,3 +480,96 @@ class TestPayloadNewFields:
         assert "os_platform" in parsed
         assert "python_version" in parsed
         assert "tools_tier" in parsed
+
+
+# ---------------------------------------------------------------------------
+# Telemetry Analysis Contract v1: P0 fields
+# ---------------------------------------------------------------------------
+
+class TestTelemetryAnalysisContractV1:
+    def test_payload_includes_first_run_contract_fields(self, isolated_engram_dir):
+        set_enabled(True)
+        payload = build_payload(engram_version="3.45.3")
+
+        assert payload is not None
+        assert payload["prev_version"] is None
+        assert payload["session_type"] == "first_run"
+        assert payload["install_age_bucket"] == "first_day"
+        assert payload["error_categories"] == {}
+
+    def test_payload_uses_previous_reported_version(self, isolated_engram_dir):
+        set_enabled(True)
+        cfg_path = isolated_engram_dir / "telemetry_config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["last_engram_version"] = "3.45.2"
+        cfg["first_payload_sent_at"] = "2026-06-01T00:00:00+00:00"
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+        payload = build_payload(engram_version="3.45.3")
+
+        assert payload is not None
+        assert payload["prev_version"] == "3.45.2"
+        assert payload["session_type"] == "regular"
+
+    def test_install_age_bucket_is_coarse(self, isolated_engram_dir):
+        set_enabled(True)
+        cfg_path = isolated_engram_dir / "telemetry_config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["first_seen_at"] = (
+            datetime.now(timezone.utc) - timedelta(days=10)
+        ).isoformat()
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+        payload = build_payload(engram_version="3.45.3")
+
+        assert payload is not None
+        assert payload["install_age_bucket"] == "8_30_days"
+        assert "first_seen_at" not in payload
+        assert "opted_in_at" not in payload
+
+    def test_tracker_records_closed_error_categories(self, isolated_engram_dir):
+        set_enabled(True)
+        tracker = ToolCallTracker()
+        tracker.record("get_user_context", success=False, error_category="timeout")
+        tracker.record("add_lesson", success=False, error_category="bad-detail")
+
+        result = tracker.flush(engram_version="3.45.3", force=True)
+
+        assert result is not None
+        logged = json.loads(result.read_text(encoding="utf-8").strip())
+        assert logged["error_categories"] == {"timeout": 1, "unknown": 1}
+
+    def test_tracker_infers_error_category_from_exception_context(self, isolated_engram_dir):
+        set_enabled(True)
+        tracker = ToolCallTracker()
+
+        try:
+            raise PermissionError("do not collect this message")
+        except PermissionError:
+            tracker.record("update_identity", success=False)
+
+        result = tracker.flush(engram_version="3.45.3", force=True)
+
+        assert result is not None
+        logged = json.loads(result.read_text(encoding="utf-8").strip())
+        assert logged["error_categories"] == {"permission": 1}
+        assert "do not collect this message" not in json.dumps(logged)
+
+    def test_flush_updates_reported_version_state(self, isolated_engram_dir):
+        set_enabled(True)
+        tracker = ToolCallTracker()
+        tracker.record("get_user_context", success=True)
+        tracker.flush(engram_version="3.45.2", force=True)
+
+        tracker.record("wrap_up_session", success=True)
+        result = tracker.flush(engram_version="3.45.3", force=True)
+
+        assert result is not None
+        lines = result.read_text(encoding="utf-8").strip().splitlines()
+        second = json.loads(lines[-1])
+        assert second["prev_version"] == "3.45.2"
+        assert second["session_type"] == "regular"
+
+        cfg = json.loads((isolated_engram_dir / "telemetry_config.json").read_text(encoding="utf-8"))
+        assert cfg["last_engram_version"] == "3.45.3"
+        assert "first_payload_sent_at" in cfg
