@@ -623,6 +623,24 @@ You can always create playbooks manually with `add_playbook`, regardless of the 
     `-- openclaw/
 ```
 
+### Own & export your data
+
+Everything lives in local JSON you own — inspect, edit, back up, or delete it
+directly. Three explicit export paths, each with a different boundary:
+
+| Want | Tool | What it includes |
+|------|------|------------------|
+| A portable card to paste into ChatGPT/Gemini/Kimi | `get_identity_card` | Curated Markdown: who you are, how you work, recent verified lessons/decisions. Excludes raw config-file knowledge and caps recent items. |
+| A readable knowledge report | `export_knowledge_report` | Active lessons/decisions grouped by domain/month (Markdown). |
+| A full local backup | `export_engram` | The whole store as JSON. Treat the file as sensitive — it is a complete backup, including staging and labelled items. |
+| OpenClaw files | `export_engram_to_openclaw` | SOUL.md / MEMORY.md / USER.md. |
+
+Exports are **owner-gated** when `ENGRAM_GOVERNANCE=1` (see
+[docs/governance.md](docs/governance.md)). There is no cloud copy and no hidden memory:
+what you export is exactly what is on your disk. (A curated, committable
+`AGENTS.md`/`CLAUDE.md` digest of *verified, non-sensitive* knowledge is on the
+roadmap — see `docs/specs/agents-md-export-contract.md`.)
+
 ## Supported Tools
 
 | Tool | Integration | Confidence |
