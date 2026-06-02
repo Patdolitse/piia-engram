@@ -134,11 +134,19 @@ audit/governance ledger machinery.
 
 ## 6. Rollout phases
 
-1. Spec (this doc) + invariant tests for the **pure** parts that need no live
-   Cursor: content-hash/dedup helper, sensitivity-drop, staging-tier tagging.
-2. Hook module behind the opt-in flag, default no-op.
-3. Review-surface filter + audit record.
-4. Live Cursor validation per §5 before it is documented as available.
+1. ✅ **Done** — Spec (this doc) + the **pure** governed-writeback preparation
+   helper and invariant tests that need no live Cursor:
+   `continuity_harness.prepare_writeback_candidates` (content-hash/dedup,
+   sensitivity-drop of secret + private-by-default, staging-tier/pending tagging,
+   metadata-only audit record with `applied: false`) and the simulated E2E
+   cycle `simulate_continuity_cycle`. Tested in `tests/test_continuity_harness.py`
+   across Codex/Claude/Cursor-style export inputs, asserting no
+   staging/sensitive/just-staged content leaks into exported continuity material.
+   **No live hook ships and nothing is written to disk.**
+2. **Deferred (gated)** — Hook module behind the opt-in flag, default no-op.
+3. **Deferred (gated)** — Review-surface filter + audit record persistence.
+4. **Deferred (gated)** — Live Cursor validation per §5 before it is documented
+   as available.
 
 ## 7. Non-goals
 

@@ -77,12 +77,16 @@ docs/cursor-plugin-validation.md
 docs/governance.md
 docs/hybrid-search.md
 docs/listing-copy.md
+docs/runbooks/memory-lifecycle.md
+docs/runbooks/release-build-check.md
 docs/runbooks/setup-upgrade-safety.md
 docs/runbooks/telemetry-contract-v1-remote-closeout.md
+docs/runbooks/telemetry-contract-v1_1-remote-closeout.md
 docs/specs/agents-md-export-contract.md
 docs/specs/cursor-stop-hook-governed-writeback-design.md
 docs/specs/knowledge-quality-evaluation.md
 docs/specs/knowledge-version-chain-design.md
+docs/specs/multi-device-sync-sovereignty.md
 docs/specs/permission-profile-vnext-design.md
 docs/specs/provenance-freshness-contract-v1.md
 docs/specs/recall-surface-v1.md

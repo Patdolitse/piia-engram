@@ -112,11 +112,30 @@ shows the aggregator dominates, deprecation can be considered later — separate
    payload, de-duplicates by id, projects each item to summary/metadata (never
    raw stored dicts), applies `annotate_freshness` (opt-in), and trims to a token
    budget. Unit-tested store-free in `tests/test_recall.py`.
-2. **Deferred (still review-gated)** — the thin MCP tool that gathers the
-   sub-results and calls the aggregator. It touches MCP output and overlaps
-   `get_resume_brief`, so it needs its own governance/leak-matrix review before
-   shipping (see §3 note). The aggregator is intentionally usable on its own.
-3. Add to Tier-1 only after it proves out (it would overlap `get_resume_brief`).
+2. ✅ **Implemented (owner-context CLI only)** — `src/piia_engram/recall_service.py`
+   (`gather_recall` + `render_recall_text`) fetches the sub-results from a live
+   `Engram` through existing governed read methods, optionally collapses
+   superseded versions to HEAD (`version_chain.collapse_to_heads`), and feeds
+   the pure aggregator. Surfaced as **`engram recall`** (CLI = `private-self`
+   owner), so it adds no new agent-facing disclosure surface. Tested store-free
+   with a duck-typed fake in `tests/test_recall_service.py`, plus a metadata-only
+   quality harness in `tests/test_recall_quality.py`.
+3. **Deferred (still review-gated)** — the thin **MCP** tool that exposes recall
+   to *agents*. It touches MCP output and overlaps `get_resume_brief`, so it
+   needs its own governance/leak-matrix review before shipping (see §3 note).
+   The CLI path above is owner-only and does not substitute for that review.
+4. Add to Tier-1 only after it proves out (it would overlap `get_resume_brief`).
+
+### Version-chain read scaffold (Phase 6)
+
+`src/piia_engram/version_chain.py` is a pure read/report layer over the typed
+`supersedes` / `led_to` / `implemented_by` edges already produced by
+`decision_thread`: `resolve_heads`, `collapse_to_heads` (default-recall "prefer
+HEAD"), `lineage` (full history walk), and `build_version_report` (metadata-only
+per-topic report). It reads no store and writes nothing; the richer write-path
+version fields (`parent_id`/`root_id`/`derives_from`) in
+`knowledge-version-chain-design.md` remain deferred. Tested in
+`tests/test_version_chain.py`.
 
 ## 7. Non-goals
 
