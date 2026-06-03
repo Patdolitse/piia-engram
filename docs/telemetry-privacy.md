@@ -25,6 +25,13 @@ and the worker allowlists (`worker/src/index.js`), all pinned by the tests under
   and deploying the worker are explicit owner actions (see
   [`runbooks/telemetry-contract-remote-closeout.md`](runbooks/telemetry-contract-remote-closeout.md)).
   No assistant pass performs them.
+- **Dashboard access is operator-controlled.** The worker's `/` dashboard and
+  `/v1/stats` JSON API are gated by the `DASH_PASSWORD` secret. Auth **fails
+  open**: with `DASH_PASSWORD` unset, both surfaces are public. Only anonymous,
+  metadata-only aggregates (buckets/counts, no PII) are ever exposed there, so a
+  public dashboard is a deliberate operator choice rather than a content leak.
+  The closeout runbook documents setting the secret if a gated dashboard is
+  wanted.
 
 ## What is NEVER collected
 

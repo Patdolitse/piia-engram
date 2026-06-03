@@ -98,6 +98,22 @@ not blind re-run.
 cd worker && wrangler deploy
 ```
 
+**Dashboard access control — set the secret before relying on a gated
+dashboard.** The worker's `/` dashboard and `/v1/stats` JSON API are protected
+by `DASH_PASSWORD`, but the auth **fails open**: when `DASH_PASSWORD` is *unset*,
+`isAuthenticated()` returns `true` and the login form accepts any password, so
+both surfaces are fully public. The data exposed that way is anonymous,
+metadata-only aggregates (buckets/counts, no PII) by design, so a public
+dashboard is a deliberate-but-explicit choice — not a leak of any user's
+content. If you want the dashboard gated, set the secret once:
+
+```bash
+cd worker && wrangler secret put DASH_PASSWORD
+```
+
+If you intend the dashboard to be public, that is fine — just be aware it is
+public until/unless the secret is set; the step below assumes the secret exists.
+
 Order safety: the worker uses a tiered INSERT (full v1.1 → v1 → legacy) and
 falls back when columns are missing, so deploy-before-migrate or
 migrate-before-deploy both avoid dropping events. The order above (migrate, then
@@ -143,9 +159,12 @@ wrangler d1 execute <DB> --remote --command="
 ```
 
 Dashboard copy check — do this **locally against the source**, not by curling
-the live site: the dashboard `/` route is password-gated, so an unauthenticated
-`curl https://<host>/` only returns the login page (it contains neither "匿名日
-ID" nor "独立用户"), which makes a `grep` give false confidence. The readiness
+the live site: when `DASH_PASSWORD` is set (step 4) the dashboard `/` route is
+password-gated, so an unauthenticated `curl https://<host>/` only returns the
+login page (it contains neither "匿名日 ID" nor "独立用户"), which makes a `grep`
+give false confidence. (With `DASH_PASSWORD` unset the route is public and the
+curl would return the rendered dashboard — but you should still copy-check
+against the source.) The readiness
 CLI verifies the wording + v1.1 tiles statically from `worker/src/index.js`:
 
 ```powershell
