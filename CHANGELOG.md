@@ -8,6 +8,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.46.0] - 2026-06-03
+
+The trust-and-readiness release: Engram productionizes the memory trust loop and adds a wide set of local, additive, proposal-only readiness surfaces (phases 6-13) without changing any default behavior or touching remote state.
+
+### Added
+- **Memory trust loop** - recall now carries provenance and freshness signals end to end. New `recall`, `quality_eval`, and `reports_review` surfaces wire the provenance/freshness contract through the MCP server so retrieved knowledge can be shown with its source and staleness without changing ranking defaults.
+- **Recall and version-chain surfaces** - new `recall_service` and `version_chain` modules expose deterministic recall and knowledge version-chain projections locally; covered by recall-quality and recall/version end-to-end audits.
+- **`engram backup-plan` CLI** - previews a metadata-only backup plan for local Engram data before any upgrade, with no destructive action.
+- **`engram export-agents-md` CLI** - exports an `AGENTS.md` identity/context file for non-MCP tools from local knowledge, owner-gated.
+- **Lifecycle / integrity / reconcile safety surfaces** - new `lifecycle`, `integrity`, and `reconcile_proposal` modules plus `engram lifecycle` and `engram integrity` CLIs produce proposal-only previews (decay/scale, self-diagnostics, conflict reconciliation) that never mutate stored knowledge on their own.
+- **Owner control surfaces** - new `engram dashboard` (owner_dashboard), `engram release-check` (release_readiness), and `engram telemetry-validate` (telemetry_validation) local CLIs summarize state, release-evidence readiness, and telemetry payload validity as metadata-only projections.
+- **Cross-tool continuity harness** - new `continuity_harness` module and corpus give a local, deterministic check that resume/continuity output stays coherent across tools.
+- **Permission Profile vNext (read-only scaffolding)** - `permission_profile_vnext` lands the profile model and previews only; the read-gate enforcement wiring remains gated and is not enabled by default.
+
+### Changed
+- **Telemetry analysis contract v1.1 (local buckets)** - opt-in local telemetry payloads now include v1.1 derived buckets (version adoption, activation state, returning bucket, error trend) while keeping the transport `schema` unchanged and all values as short, timestamp-free buckets.
+- Owner/management projections continue to summarize counts and states without printing local project paths or stored knowledge bodies.
+
+### Security
+- **send_feedback boundary hardening** - the feedback/telemetry send boundary now runs a fail-closed denylist and field validation so no free-text knowledge content leaves the local send boundary; ambiguous very-short CJK tokens are rejected as an accepted residual.
+- **Release / public boundary hardening** - publish allowlist refreshed and positioning copy kept honest (no remote-deploy, real-sync, live-Cursor-hook, or read-gate-enforcement claims) so the public package surface stays aligned with what actually ships.
+
+### Tests
+- Full suite: **2327 passed**, 8 skipped, 4 expected `engram_core` deprecation warnings.
+- Added audits: provenance wiring, recall/version end-to-end, proposal correctness/determinism, feedback denylist, telemetry contract v1.1, lifecycle/integrity/reconcile, owner dashboard, release readiness, continuity harness, and permission-profile-vNext previews.
+
+### Not executed (user-gated)
+- No remote Cloudflare Worker / D1 migration, PyPI upload, MCP Registry or Glama update, GitHub Release, tag, or push is performed by this release prep.
+- Permission Profile vNext read-gate enforcement, Cursor live stop-hook write-back, and real multi-device sync remain designed-but-gated and are not enabled.
+
+### Release Evidence
+- See `release-evidence/v3.46.0.md`.
+
 ## [3.45.3] - 2026-06-01
 
 The publication-boundary correction release: Engram removes an internal built-in Playbook template from the public package surface and adds build-artifact private-term scanning to the release gate.

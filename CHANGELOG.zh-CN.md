@@ -6,6 +6,39 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.46.0] - 2026-06-03
+
+信任与就绪版本：Engram 把"记忆信任闭环"产品化，并新增一整套本地、增量、仅提案（proposal-only）的就绪面（phase 6-13），不改变任何默认行为、不触碰远端状态。
+
+### 新增
+- **记忆信任闭环** —— recall 现在端到端携带来源（provenance）与新鲜度（freshness）信号。新增 `recall`、`quality_eval`、`reports_review` 表面，把 provenance/freshness 契约接入 MCP server，使检索到的知识可以连同来源和过期程度一起展示，且不改变默认排序。
+- **Recall 与版本链表面** —— 新增 `recall_service`、`version_chain` 模块，在本地暴露确定性 recall 和知识版本链投影；由 recall 质量与 recall/version 端到端审计覆盖。
+- **`engram backup-plan` CLI** —— 在升级前预览本地 Engram 数据的 metadata-only 备份计划，不执行任何破坏性动作。
+- **`engram export-agents-md` CLI** —— 从本地知识为非 MCP 工具导出 `AGENTS.md` 身份/上下文文件，owner 授权。
+- **生命周期 / 完整性 / 冲突调和 安全面** —— 新增 `lifecycle`、`integrity`、`reconcile_proposal` 模块及 `engram lifecycle`、`engram integrity` CLI，产出仅提案（proposal-only）预览（衰减/规模、自诊断、冲突调和），自身永不改写已存储知识。
+- **Owner 控制面** —— 新增 `engram dashboard`（owner_dashboard）、`engram release-check`（release_readiness）、`engram telemetry-validate`（telemetry_validation）本地 CLI，以 metadata-only 投影汇总状态、发布证据就绪度和遥测载荷有效性。
+- **跨工具连续性 harness** —— 新增 `continuity_harness` 模块与语料，提供本地、确定性的检查，确认 resume/连续性输出在不同工具间保持一致。
+- **Permission Profile vNext（只读脚手架）** —— `permission_profile_vnext` 落地权限档模型与预览；read-gate 强制执行接线仍处于 gated 状态，默认不启用。
+
+### 变更
+- **遥测分析契约 v1.1（本地分桶）** —— 选择性开启的本地遥测载荷现在包含 v1.1 派生分桶（版本采纳、激活状态、回访分桶、错误趋势），传输层 `schema` 保持不变，所有取值均为短、无时间戳的分桶。
+- Owner/management 投影继续只汇总计数与状态，不打印本地项目路径或已存储知识正文。
+
+### 安全
+- **send_feedback 边界加固** —— 反馈/遥测发送边界现在运行 fail-closed 拒绝名单与字段校验，确保没有自由文本知识正文离开本地发送边界；极短、有歧义的 CJK token 被拒绝，作为可接受的残余风险。
+- **发布 / 公开边界加固** —— 刷新 publish allowlist，并保持定位文案诚实（不声称远端部署、真实同步、Cursor 实时 hook 或 read-gate 强制执行），使公开包表面与实际交付一致。
+
+### 测试
+- 全量套件：**2327 passed**，8 skipped，4 个预期内 `engram_core` 改名兼容 warning。
+- 新增审计：provenance 接线、recall/version 端到端、proposal 正确性/确定性、feedback 拒绝名单、遥测契约 v1.1、lifecycle/integrity/reconcile、owner dashboard、发布就绪、连续性 harness、以及 permission-profile-vNext 预览。
+
+### 未执行（用户把关）
+- 本次发布准备不执行任何远端 Cloudflare Worker / D1 迁移、PyPI 上传、MCP Registry 或 Glama 更新、GitHub Release、tag 或 push。
+- Permission Profile vNext read-gate 强制执行、Cursor 实时 stop-hook 回写、真实多设备同步仍为"已设计但 gated"，未启用。
+
+### Release Evidence
+- 见 `release-evidence/v3.46.0.md`。
+
 ## [3.45.3] - 2026-06-01
 
 公开边界纠偏版本：Engram 从公开包表面移除一个内部内置 Playbook 模板，并把构建后 artifact 私有词扫描加入发布硬闸。
