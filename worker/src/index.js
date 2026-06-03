@@ -367,6 +367,16 @@ async function getStatsData(env) {
     'install_age_bucket',
     'error_categories',
   ].every(name => eventColumns.has(name));
+  // Telemetry Analysis Contract v1.1 — derived anonymous buckets. Available only
+  // once the v1.1 migration has been applied; until then the tiles render an
+  // explicit "migration not applied" placeholder (no fabricated numbers).
+  const hasAnalysisContractV1_1 = [
+    'contract_version',
+    'version_adoption',
+    'activation_state',
+    'returning_bucket',
+    'error_trend',
+  ].every(name => eventColumns.has(name));
 
   // 全量统计
   const totals = await env.DB.prepare(`
@@ -422,6 +432,30 @@ async function getStatsData(env) {
     `).all();
     errorCategoryRows = await env.DB.prepare(`
       SELECT error_categories FROM events WHERE error_categories != '{}'
+    `).all();
+  }
+
+  // Contract v1.1 — derived bucket distributions (all anonymous-daily-id based).
+  let versionAdoption = { results: [] };
+  let activationStates = { results: [] };
+  let returningBuckets = { results: [] };
+  let errorTrends = { results: [] };
+  if (hasAnalysisContractV1_1) {
+    versionAdoption = await env.DB.prepare(`
+      SELECT version_adoption, COUNT(*) AS count FROM events
+      WHERE version_adoption != '' GROUP BY version_adoption ORDER BY count DESC
+    `).all();
+    activationStates = await env.DB.prepare(`
+      SELECT activation_state, COUNT(*) AS count FROM events
+      WHERE activation_state != '' GROUP BY activation_state ORDER BY count DESC
+    `).all();
+    returningBuckets = await env.DB.prepare(`
+      SELECT returning_bucket, COUNT(*) AS count FROM events
+      WHERE returning_bucket != '' GROUP BY returning_bucket ORDER BY count DESC
+    `).all();
+    errorTrends = await env.DB.prepare(`
+      SELECT error_trend, COUNT(*) AS count FROM events
+      WHERE error_trend != '' GROUP BY error_trend ORDER BY count DESC
     `).all();
   }
 
@@ -558,6 +592,13 @@ async function getStatsData(env) {
       session_types: sessionTypes.results,
       install_age_buckets: installAgeBuckets.results,
       error_categories: aggregateErrorCategories(errorCategoryRows),
+    },
+    analysis_contract_v1_1: {
+      available: hasAnalysisContractV1_1,
+      version_adoption: versionAdoption.results,
+      activation_states: activationStates.results,
+      returning_buckets: returningBuckets.results,
+      error_trends: errorTrends.results,
     },
     daily_active: daily.results,
     monthly_summary: monthly.results,
@@ -731,6 +772,38 @@ function renderDashboard(stats) {
       <div class="empty">D1 schema 尚未应用 Telemetry Analysis Contract v1 迁移，暂无 P0 字段分析。</div>
     </div>`;
 
+  // Contract v1.1 分析 — 全部基于匿名日 ID 的派生分桶，不代表去重真人。
+  const ac11 = stats.analysis_contract_v1_1 || {};
+  const adoptionLabels = { first: '首次', same: '持平', upgrade: '升级', downgrade: '降级', changed: '变更' };
+  const activationLabels = { activated: '已激活', not_activated: '未激活', unknown: '未知' };
+  const returningLabels = { new: '新增', returning: '回访' };
+  const trendLabels = { none: '无错误', first: '首次', up: '上升', down: '下降', flat: '持平' };
+  const contractV11Html = ac11.available ? `
+    <div class="section-title">&#128203; Contract v1.1 分析 <small style="font-weight:400;color:var(--muted)">（匿名日 ID 派生分桶）</small></div>
+    <div class="grid">
+      <div class="card">
+        <h2>版本采纳</h2>
+        <div class="tags">${countBadges(ac11.version_adoption || [], 'version_adoption', adoptionLabels)}</div>
+      </div>
+      <div class="card">
+        <h2>知识激活</h2>
+        <div class="tags">${countBadges(ac11.activation_states || [], 'activation_state', activationLabels)}</div>
+      </div>
+      <div class="card">
+        <h2>匿名回访分桶</h2>
+        <div class="tags">${countBadges(ac11.returning_buckets || [], 'returning_bucket', returningLabels)}</div>
+        <div class="notice" style="margin:0.5rem 0 0">口径：按轮换的匿名日 ID 划分新增/回访，近似流失趋势，不等同去重真人。</div>
+      </div>
+      <div class="card">
+        <h2>错误趋势</h2>
+        <div class="tags">${countBadges(ac11.error_trends || [], 'error_trend', trendLabels)}</div>
+      </div>
+    </div>` : `
+    <div class="section-title">&#128203; Contract v1.1 分析</div>
+    <div class="card" style="margin-bottom:1.5rem">
+      <div class="empty">D1 schema 尚未应用 Telemetry Analysis Contract v1.1 迁移，暂无派生分桶分析。</div>
+    </div>`;
+
   // 最近事件
   const recentRows = stats.recent_events.map(e => {
     let toolCount = 0;
@@ -870,6 +943,7 @@ function renderDashboard(stats) {
   <div class="section-title">&#128202; 时段数据</div>
   ${periodHtml}
   ${contractHtml}
+  ${contractV11Html}
 
   <!-- 工具使用 -->
   <div class="section-title">&#128295; 工具使用分析</div>
