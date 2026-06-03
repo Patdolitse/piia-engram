@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "_about": "Machine-readable canonical PUBLIC FACTS for piia-engram. This is the single source of truth that scripts/check_public_fact_sync.py enforces against the current-state public documentation surfaces. Update this file (and re-run the guard) whenever the numbers below change. See docs/runbooks/public-truth-sync.md.",
+  "package_name": "piia-engram",
+  "local_dev_version": "3.47.0",
+  "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
+  "facts": {
+    "test_passed": 2414,
+    "test_skipped": 8,
+    "test_collected": 2422,
+    "mcp_tools_total": 80,
+    "mcp_tools_core": 16,
+    "mcp_tools_advanced": 64,
+    "telemetry_default": "off",
+    "telemetry_remote_default": "off"
+  },
+  "last_verified_date": "2026-06-03",
+  "sources": {
+    "package_name": "pyproject.toml [project].name",
+    "local_dev_version": "pyproject.toml [project].version  (cross-check: git tag --sort=-creatordate | head -1)",
+    "test_passed": "ENGRAM_DIR cleared; pytest tests/ -q  ->  '<N> passed'",
+    "test_skipped": "same pytest run  ->  '<N> skipped'",
+    "test_collected": "pytest tests/ --collect-only -q  ->  '<N> tests collected'  (invariant: test_passed + test_skipped == test_collected)",
+    "mcp_tools_total": "python scripts/count_mcp_tools.py --json -> .total (AST count of @mcp.tool() async defs in src/piia_engram/mcp_server.py; equals ENGRAM_TOOLS=all registration)",
+    "mcp_tools_core": "python scripts/count_mcp_tools.py --json -> .core (size of the TIER1_TOOLS frozenset in mcp_server.py, loaded by default when ENGRAM_TOOLS is unset / 'core')",
+    "mcp_tools_advanced": "python scripts/count_mcp_tools.py --json -> .advanced (total - core)",
+    "telemetry_default": "PRIVACY.md and docs/telemetry-privacy.md: telemetry is off by default (inspect PRIVACY.md 'Off by default' language)",
+    "telemetry_remote_default": "PRIVACY.md: remote telemetry is a separate explicit opt-in, off by default (inspect 'engram telemetry remote on/off' language)"
+  },
+  "current_state_surfaces": [
+    "README.md",
+    "README.zh-CN.md",
+    "docs/architecture.md",
+    "glama.yaml",
+    ".mcp/server.json",
+    ".claude-plugin/plugin.json"
+  ],
+  "historical_surfaces": [
+    "CHANGELOG.md",
+    "CHANGELOG.zh-CN.md",
+    "release-evidence/"
+  ],
+  "checks": {
+    "version_bearing": [
+      { "file": ".mcp/server.json", "pattern": "\"version\":\\s*\"([0-9][^\"]*)\"" },
+      { "file": ".claude-plugin/plugin.json", "pattern": "\"version\":\\s*\"([0-9][^\"]*)\"" },
+      { "file": "glama.yaml", "pattern": "(?m)^\\s*version:\\s*([0-9][^\\s]*)" }
+    ],
+    "test_count_patterns": [
+      { "file": "README.md", "pattern": "Tests passing \\| \\*\\*(\\d+)\\*\\*" },
+      { "file": "README.zh-CN.md", "pattern": "测试通过 \\| \\*\\*(\\d+)\\*\\*" }
+    ],
+    "required_substrings": [
+      { "file": "README.md", "must_contain": [
+        "ships 80 MCP tools",
+        "all 80 tools",
+        "16 **Tier-1 Core**",
+        "Tier-2 Advanced (64 tools",
+        "**16 Core**",
+        "**64 Advanced**"
+      ] },
+      { "file": "README.zh-CN.md", "must_contain": [
+        "16 个核心",
+        "64 个高级"
+      ] },
+      { "file": "docs/architecture.md", "must_contain": [
+        "80 tools",
+        "16 Tier-1",
+        "64 Tier-2"
+      ] },
+      { "file": "glama.yaml", "must_contain": [
+        "80 MCP tools",
+        "'core' (16 tools)",
+        "'all' (80 tools)"
+      ] }
+    ],
+    "forbidden_in_current_state": [
+      "**2346**",
+      "2346 passed",
+      "2346 个"
+    ]
+  }
+}
