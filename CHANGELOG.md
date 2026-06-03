@@ -8,6 +8,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+Local product batch — owner-confirmed apply paths and readiness surfacing. All
+changes are CLI / owner-only and metadata-only; no new agent-facing MCP apply
+tool, no telemetry schema change, no permission/governance change, no hard
+delete, and nothing is published.
+
+### Added
+- **Near-duplicate merge apply (N4)** — `engram merge` lists metadata-only
+  near-duplicate suggestions; `engram merge apply` previews/folds them via the
+  existing reversible `merge_knowledge` soft archive (secondary marked
+  `outdated`/`merged_into`, never hard-deleted). Dry-run by default; `--commit
+  --yes` to apply. New `src/piia_engram/merge_apply.py`.
+- **Reconcile import apply (N2)** — `engram reconcile` classifies external AI
+  memory candidates (import / duplicate / conflict / skip); `engram reconcile
+  apply` imports ONLY the novel (`import`) candidates. Duplicates and conflicts
+  are surfaced as metadata no-ops and never mutate existing knowledge
+  (conflict→supersede resolution is deferred). Dry-run by default; `--commit
+  --yes` to import. New `src/piia_engram/reconcile_apply.py` plus a read-only
+  `Engram.collect_memory_candidates()` scanner.
+- **Version-chain HEAD surfacing (N5)** — `version_chain.head_ids()` plus
+  render-only annotations: recall now reports `meta.version_chain`
+  (collapsed/heads_present) and the resume brief notes when superseded version
+  chains exist (recall/dashboard surface the current HEAD).
+- **Owner dashboard readiness counts (D)** — `engram dashboard` now includes a
+  metadata-only `readiness` block: pending owner-confirmed applies across
+  lifecycle, reconcile, near-duplicate merge, and version-chain HEAD state.
+
+### Changed
+- README and README.zh-CN current-state test counts updated to the verified
+  baseline: 2464 passed, 8 skipped, 2472 collected.
+
 ## [3.47.1] - 2026-06-03
 
 Public truth sync patch: Engram now has a machine-readable public facts

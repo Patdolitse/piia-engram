@@ -78,6 +78,21 @@ def collapse_to_heads(
     return kept, collapsed
 
 
+def head_ids(edges: Iterable[dict]) -> set[str]:
+    """Return the set of *current HEAD* ids across every version chain.
+
+    A HEAD is the latest version of a topic (active, no newer version supersedes
+    it, no outgoing forward edge). Pure and store-free: derived from the same
+    per-topic reconstruction as :func:`build_version_report`. Used for render-only
+    "this is the current version" surfacing in recall / resume / dashboard.
+    """
+    report = build_version_report(edges)
+    heads: set[str] = set()
+    for topic in report.get("topics", []):
+        heads.update(topic.get("heads", []))
+    return heads
+
+
 def lineage(
     seed_id: str,
     edges: Iterable[dict],

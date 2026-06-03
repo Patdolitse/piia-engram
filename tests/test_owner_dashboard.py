@@ -112,3 +112,73 @@ def test_empty_store_no_crash():
     assert dash["recall_trust"]["total"] == 0
     text = od.render_dashboard_text(dash)
     assert text  # renders something
+
+
+# --- D: readiness counts (lifecycle / reconcile / merge / version-chain) ----
+
+
+def test_readiness_counts_present_by_default():
+    # Even with no supplied reports, lifecycle readiness derives from the
+    # lifecycle proposal and the rest default to zero counts (metadata-only).
+    s = _store()
+    dash = od.build_owner_dashboard(lessons=s["lessons"], decisions=s["decisions"], now=NOW)
+    r = dash["readiness"]
+    assert set(r) == {"lifecycle", "reconcile", "merge", "version_chain"}
+    assert r["lifecycle"]["pending_apply"] == (
+        r["lifecycle"]["archive_candidates"] + r["lifecycle"]["prune_candidates"]
+    )
+    assert r["merge"]["candidates"] == 0
+    assert r["reconcile"] == {"import": 0, "duplicate": 0, "conflict": 0}
+    assert r["version_chain"] == {"topics": 0, "heads": 0, "superseded": 0}
+
+
+def test_readiness_counts_reflect_supplied_reports():
+    merge_report = {"total_candidates": 2, "suggestions": []}
+    reconcile_report = {"counts": {"import": 3, "duplicate": 1, "conflict": 1, "skip": 0}}
+    version_report = {"totals": {"topics": 2, "heads": 2, "superseded": 3,
+                                 "nodes": 5, "cycles": 0}}
+    dash = od.build_owner_dashboard(
+        lessons=_store()["lessons"],
+        merge_report=merge_report,
+        reconcile_report=reconcile_report,
+        version_report=version_report,
+        now=NOW,
+    )
+    r = dash["readiness"]
+    assert r["merge"]["candidates"] == 2
+    assert r["reconcile"] == {"import": 3, "duplicate": 1, "conflict": 1}
+    assert r["version_chain"] == {"topics": 2, "heads": 2, "superseded": 3}
+
+
+def test_cli_dashboard_includes_readiness(tmp_path, monkeypatch, capsys):
+    import json as _json
+
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import _run_dashboard
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    eng = Engram()
+    a = eng.add_lesson("initial recall collapse approach for version chains", tier="verified")
+    b = eng.add_lesson("revised recall head selection approach for chains", tier="verified")
+    eng.add_relation(b["id"], "supersedes", a["id"])
+
+    assert _run_dashboard(["--json"]) == 0
+    dash = _json.loads(capsys.readouterr().out)
+    assert "readiness" in dash
+    assert dash["readiness"]["version_chain"]["superseded"] == 1
+
+
+def test_readiness_rendered_metadata_only():
+    merge_report = {"total_candidates": 2}
+    version_report = {"totals": {"topics": 1, "heads": 1, "superseded": 4}}
+    dash = od.build_owner_dashboard(
+        lessons=_store()["lessons"], merge_report=merge_report,
+        version_report=version_report, now=NOW,
+    )
+    text = od.render_dashboard_text(dash)
+    html_out = od.render_dashboard_html(dash)
+    assert "Readiness" in text or "就绪" in text
+    # Counts surfaced; no destructive controls in HTML.
+    assert "superseded" in text.lower() or "HEAD" in text
+    for tag in ["<form", "<button", "onclick", "<input"]:
+        assert tag not in html_out.lower()

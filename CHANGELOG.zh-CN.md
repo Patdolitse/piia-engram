@@ -8,6 +8,30 @@
 
 ## [未发布]
 
+本地产品批次——所有者确认的 apply 通路与就绪度展示。全部为 CLI / 仅所有者、
+仅元数据；不新增面向 Agent 的 MCP apply 工具，不改遥测 schema，不改权限/治理，
+不做硬删除，也不对外发布。
+
+### 新增
+- **近重复合并 apply（N4）**——`engram merge` 列出仅元数据的近重复建议；
+  `engram merge apply` 预览/折叠，复用既有可逆的 `merge_knowledge` 软归档
+  （次条标记 `outdated`/`merged_into`，绝不硬删除）。默认 dry-run，
+  `--commit --yes` 才真正应用。新增 `src/piia_engram/merge_apply.py`。
+- **对账导入 apply（N2）**——`engram reconcile` 将外部 AI 记忆候选分类
+  （import / duplicate / conflict / skip）；`engram reconcile apply` 仅导入新颖
+  （`import`）候选。重复与冲突仅作为元数据 no-op 展示，绝不改动既有知识
+  （冲突→supersede 解析推迟）。默认 dry-run，`--commit --yes` 才导入。新增
+  `src/piia_engram/reconcile_apply.py` 与只读 `Engram.collect_memory_candidates()`。
+- **版本链 HEAD 展示（N5）**——新增 `version_chain.head_ids()` 及仅渲染的标注：
+  召回输出新增 `meta.version_chain`（collapsed/heads_present），续接简报在存在被
+  取代的版本链时给出提示（召回/控制台呈现当前 HEAD）。
+- **控制台就绪度计数（D）**——`engram dashboard` 新增仅元数据的 `readiness` 区块：
+  生命周期、对账、近重复合并、版本链 HEAD 的待所有者确认 apply 计数。
+
+### 变更
+- README 与 README.zh-CN 当前状态测试数更新为已验证基线：2464 通过、8 skipped、
+  共收集 2472。
+
 ## [3.47.1] - 2026-06-03
 
 公开事实同步补丁：Engram 新增机器可读的 public facts manifest，并把公开事实漂移检查接入 CI 和 PyPI publish workflow，防止 README、manifest、工具数、测试数和版本号在发布前再次漂移。

@@ -3068,6 +3068,11 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         involved_ids = {primary_id, secondary_id} | set(secondary_related)
         modified_pbs = [pb for pb in playbooks if pb.get("id") in involved_ids]
         self._write_link_collections(lessons, decisions, modified_pbs or None)
+        self._audit.log(
+            "write",
+            "knowledge/merge",
+            detail=f"{secondary_type}:{secondary_id} -> {primary_type}:{primary_id}",
+        )
 
         return {
             "success": True,

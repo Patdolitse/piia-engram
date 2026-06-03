@@ -145,12 +145,20 @@ def gather_recall(
 
     # --- version collapse (prefer HEAD) ---------------------------------
     collapsed_count = 0
+    heads_present = 0
     if collapse_versions:
         edges = _load_relation_edges(eng)
         if edges:
             relevant, collapsed_rel = _vc.collapse_to_heads(relevant, edges)
             query_knowledge, collapsed_q = _vc.collapse_to_heads(query_knowledge, edges)
             collapsed_count = len(collapsed_rel) + len(collapsed_q)
+            # Render-only surfacing: how many *surviving* items are the current
+            # HEAD of a version chain (so the owner sees "this is the latest").
+            heads = _vc.head_ids(edges)
+            heads_present = sum(
+                1 for item in (relevant + query_knowledge)
+                if isinstance(item, dict) and item.get("id") in heads
+            )
 
     governance = None
     if hasattr(eng, "root"):
@@ -169,6 +177,10 @@ def gather_recall(
         now=now,
     )
     payload["meta"]["collapsed_versions"] = collapsed_count
+    payload["meta"]["version_chain"] = {
+        "collapsed": collapsed_count,
+        "heads_present": heads_present,
+    }
     return payload
 
 
@@ -233,6 +245,11 @@ def render_recall_text(payload: dict[str, Any]) -> str:
     gov = meta.get("governance", {})
     excluded = gov.get("excluded_count", 0) if isinstance(gov, dict) else 0
     collapsed = meta.get("collapsed_versions", 0)
-    footer = f"  (trimmed by budget: {excluded}; older versions hidden: {collapsed})"
+    vcmeta = meta.get("version_chain", {}) if isinstance(meta, dict) else {}
+    heads_present = vcmeta.get("heads_present", 0) if isinstance(vcmeta, dict) else 0
+    footer = (
+        f"  (trimmed by budget: {excluded}; older versions hidden: {collapsed}; "
+        f"current versions/HEAD surfaced: {heads_present})"
+    )
     lines.append(footer)
     return "\n".join(lines)

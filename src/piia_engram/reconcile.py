@@ -1,4 +1,4 @@
-"""Engram reconcile layer — sync external AI memory and config files into Engram.
+"""Engram reconcile layer - sync external AI memory and config files into Engram.
 
 ReconcileMixin provides:
 - reconcile_memories: scan ~/.claude/projects/*/memory/*.md and import unique items
@@ -27,7 +27,7 @@ class ReconcileMixin:
         "~/.claude/projects/*/memory/*.md",
     ]
 
-    _RECONCILE_MAX_FILE_SIZE = 10_240  # 10 KB — memory files should be small
+    _RECONCILE_MAX_FILE_SIZE = 10_240  # 10 KB - memory files should be small
 
     # Config file names to look for in each discovered project root
     _AI_CONFIG_FILENAMES = [
@@ -235,6 +235,79 @@ class ReconcileMixin:
             "sources": sources,
         }
 
+    def collect_memory_candidates(self) -> list[dict]:
+        """Read-only scan of external AI memory files into reconcile candidates.
+
+        Mirrors the parsing half of :meth:`reconcile_memories` but performs **no
+        writes and no dedup decisions** - it only extracts ``{summary, detail,
+        domain, source}`` candidate dicts for the owner-confirmed reconcile apply
+        path (``reconcile_apply``) to classify. Honors the same authorization
+        gate and per-file size cap. Returns ``[]`` when not authorized.
+        """
+        if not self._reconcile_authorized():
+            return []
+        candidates: list[dict] = []
+        for glob_pattern in self._CLAUDE_MEMORY_GLOBS:
+            expanded = Path(glob_pattern.replace("~", str(Path.home())))
+            base = Path(str(expanded).split("*")[0])
+            if not base.exists():
+                continue
+            rel_pattern = str(expanded).replace(str(base), "").lstrip("/\\")
+            if not rel_pattern:
+                continue
+            for mem_file in base.glob(rel_pattern):
+                if mem_file.name == "MEMORY.md":
+                    continue
+                try:
+                    if mem_file.stat().st_size > self._RECONCILE_MAX_FILE_SIZE:
+                        continue
+                    content = mem_file.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+                body_lines: list[str] = []
+                fm_type = ""
+                lines = content.splitlines()
+                start_idx = 0
+                if lines and lines[0].strip() == "---":
+                    for i, fmline in enumerate(lines[1:], 1):
+                        fms = fmline.strip()
+                        if fms == "---":
+                            start_idx = i + 1
+                            break
+                        if fms.startswith("type:"):
+                            fm_type = fms.split(":", 1)[1].strip()
+                    else:
+                        start_idx = 0
+                for line in lines[start_idx:]:
+                    stripped = line.strip()
+                    if (
+                        stripped
+                        and not stripped.startswith("#")
+                        and not stripped.startswith("```")
+                        and stripped != "---"
+                    ):
+                        body_lines.append(stripped)
+                if not body_lines:
+                    continue
+
+                summary_candidate = body_lines[0][:200]
+                clean_candidate = re.sub(r"[*_`\[\]()]", "", summary_candidate).strip()
+                if len(clean_candidate) < 5:
+                    continue
+
+                domain = "auto_reconcile"
+                if fm_type in {"project", "feedback", "reference"}:
+                    domain = fm_type
+                detail = "\n".join(body_lines[1:])[:500] if len(body_lines) > 1 else ""
+                candidates.append({
+                    "summary": summary_candidate,
+                    "detail": detail,
+                    "domain": domain,
+                    "source": mem_file.name,
+                })
+        return candidates
+
     # ------------------------------------------------------------------
     # Project discovery from Claude Code state
     # ------------------------------------------------------------------
@@ -269,21 +342,21 @@ class ReconcileMixin:
                 candidates = sorted(
                     (d for d in current.iterdir() if d.is_dir()),
                     key=lambda d: len(d.name),
-                    reverse=True,  # longest name first → greedy match
+                    reverse=True,  # longest name first -> greedy match
                 )
             except PermissionError:
                 return None
             for d in candidates:
                 encoded = re.sub(r"[^a-zA-Z0-9]", "-", d.name)
                 if remaining == encoded:
-                    return d  # exact match → done
+                    return d  # exact match -> done
                 if remaining.startswith(encoded + "-"):
                     current = d
                     remaining = remaining[len(encoded) + 1:]
                     matched = True
                     break
             if not matched:
-                return None  # no directory matched → give up
+                return None  # no directory matched -> give up
         return current
 
     def _discover_project_roots(self) -> list[Path]:
@@ -365,7 +438,7 @@ class ReconcileMixin:
                 if candidate.is_file():
                     config_files.append(candidate)
 
-        _MAX_CFG = 50_000  # 50 KB — config files can be larger than memory
+        _MAX_CFG = 50_000  # 50 KB - config files can be larger than memory
         for cfg in config_files:
             scanned_files += 1
             try:

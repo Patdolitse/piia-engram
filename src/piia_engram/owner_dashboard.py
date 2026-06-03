@@ -49,13 +49,22 @@ def build_owner_dashboard(
     decisions: list[dict[str, Any]] | None = None,
     integrity_report: dict[str, Any] | None = None,
     telemetry_status: dict[str, Any] | None = None,
+    merge_report: dict[str, Any] | None = None,
+    reconcile_report: dict[str, Any] | None = None,
+    version_report: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Assemble the owner dashboard from already-loaded read-only inputs.
 
     Pure: takes active knowledge entries plus optional integrity/telemetry
-    snapshots and returns a structured, metadata-only dashboard dict. Does not
+    snapshots and optional already-computed merge / reconcile / version-chain
+    reports, and returns a structured, metadata-only dashboard dict. Does not
     read the store or mutate inputs.
+
+    The optional reports feed the ``readiness`` block — metadata-only counts of
+    how much owner-confirmed apply work is pending across lifecycle, reconcile
+    (import-only), near-duplicate merge, and version-chain HEAD state. They are
+    counts only; the dashboard never triggers any apply.
     """
     lessons = [e for e in (lessons or []) if isinstance(e, dict)]
     decisions = [e for e in (decisions or []) if isinstance(e, dict)]
@@ -106,6 +115,33 @@ def build_owner_dashboard(
         "phase": ts.get("phase"),
     }
 
+    # Readiness — metadata-only "pending owner-confirmed apply" counts across the
+    # local apply paths. Each block defaults to zero when no report is supplied.
+    lc_counts = lifecycle_report.get("counts", {})
+    archive_n = int(lc_counts.get("archive_candidate", 0) or 0)
+    prune_n = int(lc_counts.get("prune_candidate", 0) or 0)
+    merge_n = int((merge_report or {}).get("total_candidates", 0) or 0)
+    rec_counts = (reconcile_report or {}).get("counts", {})
+    ver_totals = (version_report or {}).get("totals", {})
+    readiness = {
+        "lifecycle": {
+            "archive_candidates": archive_n,
+            "prune_candidates": prune_n,
+            "pending_apply": archive_n + prune_n,
+        },
+        "reconcile": {
+            "import": int(rec_counts.get("import", 0) or 0),
+            "duplicate": int(rec_counts.get("duplicate", 0) or 0),
+            "conflict": int(rec_counts.get("conflict", 0) or 0),
+        },
+        "merge": {"candidates": merge_n},
+        "version_chain": {
+            "topics": int(ver_totals.get("topics", 0) or 0),
+            "heads": int(ver_totals.get("heads", 0) or 0),
+            "superseded": int(ver_totals.get("superseded", 0) or 0),
+        },
+    }
+
     return {
         "generated_at": now.replace(microsecond=0).isoformat(),
         "recall_trust": recall_trust,
@@ -113,6 +149,7 @@ def build_owner_dashboard(
         "integrity": integrity_summary,
         "export_readiness": export_readiness,
         "telemetry": telemetry_readiness,
+        "readiness": readiness,
         "note": "read-only metadata; proposals require explicit owner action",
     }
 
@@ -124,7 +161,12 @@ def render_dashboard_text(dashboard: dict[str, Any]) -> str:
     ig = dashboard.get("integrity", {})
     ex = dashboard.get("export_readiness", {})
     tm = dashboard.get("telemetry", {})
+    rd = dashboard.get("readiness", {})
     fr = rt.get("freshness", {})
+    rd_lc = rd.get("lifecycle", {})
+    rd_rec = rd.get("reconcile", {})
+    rd_mrg = rd.get("merge", {})
+    rd_ver = rd.get("version_chain", {})
 
     lines = [
         t("Engram 控制台（只读，仅元数据）", "Engram dashboard (read-only, metadata only)"),
@@ -146,8 +188,17 @@ def render_dashboard_text(dashboard: dict[str, Any]) -> str:
         f"  {t('可导出(全局)', 'exportable (global)')}: {ex.get('exportable_global', 0)} / {ex.get('total', 0)}",
         t("遥测 / Telemetry (默认关闭，需手动开启):", "Telemetry (off by default, opt-in):"),
         f"  enabled={tm.get('enabled')} remote={tm.get('remote_enabled')} phase={tm.get('phase')}",
-        t("提示: 归档/清理/修复都需你显式确认。",
-          "Note: archive/prune/repair all require your explicit confirmation."),
+        t("待确认就绪 / Readiness (待你确认的本地应用，纯计数):",
+          "Readiness (pending owner-confirmed applies, counts only):"),
+        f"  {t('生命周期', 'lifecycle')}: pending_apply={rd_lc.get('pending_apply', 0)} "
+        f"(archive={rd_lc.get('archive_candidates', 0)} prune={rd_lc.get('prune_candidates', 0)})",
+        f"  {t('对账导入', 'reconcile')}: import={rd_rec.get('import', 0)} "
+        f"duplicate={rd_rec.get('duplicate', 0)} conflict={rd_rec.get('conflict', 0)}",
+        f"  {t('近重复合并', 'merge')}: candidates={rd_mrg.get('candidates', 0)}",
+        f"  {t('版本链', 'version-chain')}: topics={rd_ver.get('topics', 0)} "
+        f"heads={rd_ver.get('heads', 0)} superseded={rd_ver.get('superseded', 0)}",
+        t("提示: 归档/清理/修复/导入/合并都需你显式确认。",
+          "Note: archive/prune/repair/import/merge all require your explicit confirmation."),
     ]
     return "\n".join(lines)
 

@@ -4915,9 +4915,35 @@ def _run_dashboard(args: list[str]) -> int:
     except Exception:
         telemetry_status = {}
 
+    # Readiness reports — all read-only, metadata-only, computed here so the
+    # dashboard surface stays pure. Each is best-effort and degrades to None.
+    merge_report = None
+    try:
+        merge_report = eng.suggest_merges()
+    except Exception:
+        merge_report = None
+    reconcile_report = None
+    try:
+        from piia_engram.reconcile_proposal import build_reconcile_proposal
+        candidates = eng.collect_memory_candidates()
+        reconcile_report = build_reconcile_proposal(
+            candidates, list(lessons) + list(decisions), source="memory_files",
+        )
+    except Exception:
+        reconcile_report = None
+    version_report = None
+    try:
+        from piia_engram.governance_store import RelationStore
+        from piia_engram.version_chain import build_version_report
+        version_report = build_version_report(RelationStore(root).all_edges())
+    except Exception:
+        version_report = None
+
     dashboard = build_owner_dashboard(
         lessons=list(lessons), decisions=list(decisions),
         integrity_report=integrity_report, telemetry_status=telemetry_status,
+        merge_report=merge_report, reconcile_report=reconcile_report,
+        version_report=version_report,
     )
 
     if "--json" in args:
@@ -5114,6 +5140,159 @@ def _run_lifecycle_restore(eng, args: list[str]) -> int:
             f"({payload['from_tier'] or 'none'} -> {payload['to_tier'] or 'none'})"
         )
     return 0 if result.get("error") is None else 1
+
+
+def _run_merge(args: list[str]) -> int:
+    """Near-duplicate merge proposal + owner-confirmed apply (engram merge).
+
+    ``engram merge`` (no subcommand) prints the metadata-only merge *suggestions*
+    (read-only). ``engram merge apply`` previews/applies them via the reversible
+    soft-archive ``merge_knowledge`` primitive: dry-run by default, ``--commit
+    --yes`` to actually fold each secondary into its primary. Never hard-deletes
+    and exposes no agent-facing apply tool.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram merge [--threshold T] [--limit N] [--json]\n"
+            "                                       Metadata-only near-duplicate suggestions\n"
+            "  engram merge apply [--pair PRIMARY:SECONDARY ...] [--threshold T]\n"
+            "                     [--limit N] [--commit] [--yes] [--json]\n"
+            "                                       Owner-confirmed soft-archive merge\n"
+            "                                       (default = dry-run preview; --commit --yes to apply)\n"
+        )
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+
+    if args and args[0] == "apply":
+        return _run_merge_apply(eng, args[1:])
+
+    threshold, limit, _ = _parse_merge_opts(args)
+    result = eng.suggest_merges(threshold=threshold, limit=limit)
+    if "--json" in args:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    print(f"Near-duplicate merge suggestions (threshold={result.get('threshold')}):")
+    for s in result.get("suggestions", []):
+        print(
+            f"  - [{s.get('type')}] sim={s.get('similarity')} "
+            f"{s.get('primary_id')} <- {s.get('secondary_id')}"
+        )
+    print(f"  total: {result.get('total_candidates', 0)} "
+          "(run 'engram merge apply --commit --yes' to fold them)")
+    return 0
+
+
+def _parse_merge_opts(args: list[str]) -> tuple[float, int, list[tuple[str, str]]]:
+    """Parse shared merge options: --threshold, --limit, --pair PRIMARY:SECONDARY."""
+    threshold = 0.45
+    limit = 10
+    pairs: list[tuple[str, str]] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--threshold" and i + 1 < len(args):
+            try:
+                threshold = float(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+            continue
+        if arg == "--limit" and i + 1 < len(args):
+            try:
+                limit = int(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+            continue
+        if arg == "--pair" and i + 1 < len(args):
+            raw = args[i + 1]
+            if ":" in raw:
+                p, s = raw.split(":", 1)
+                if p and s:
+                    pairs.append((p, s))
+            i += 2
+            continue
+        i += 1
+    return threshold, limit, pairs
+
+
+def _run_merge_apply(eng, args: list[str]) -> int:
+    """Owner-confirmed near-duplicate merge apply (dry-run by default)."""
+    from piia_engram.merge_apply import apply_merge, render_merge_apply_text
+
+    json_output = "--json" in args
+    confirm = "--yes" in args
+    commit = "--commit" in args
+    threshold, limit, pairs = _parse_merge_opts(args)
+
+    payload = apply_merge(
+        eng,
+        pairs=pairs or None,
+        threshold=threshold,
+        limit=limit,
+        confirm=confirm,
+        dry_run=not commit,
+    )
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(render_merge_apply_text(payload))
+    return 1 if payload.get("requires_confirmation") else 0
+
+
+def _run_reconcile(args: list[str]) -> int:
+    """Reconcile proposal + owner-confirmed import-only apply (engram reconcile).
+
+    ``engram reconcile`` (no subcommand) scans external AI memory files and
+    prints a metadata-only classification (import / duplicate / conflict / skip),
+    importing nothing. ``engram reconcile apply`` imports ONLY the novel
+    (``import``) candidates via the existing write API: dry-run by default,
+    ``--commit --yes`` to actually import. Duplicates and conflicts are never
+    applied (conflict resolution is deferred); no agent-facing tool is exposed.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+    from piia_engram.reconcile_apply import (
+        apply_reconcile,
+        render_reconcile_apply_text,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram reconcile [--json]                 Metadata-only import proposal\n"
+            "  engram reconcile apply [--commit] [--yes] [--json]\n"
+            "                                            Owner-confirmed import-only apply\n"
+            "                                            (default = dry-run preview; --commit --yes to import)\n"
+        )
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    candidates = eng.collect_memory_candidates()
+
+    json_output = "--json" in args
+    apply = bool(args) and args[0] == "apply"
+    confirm = "--yes" in args
+    commit = apply and "--commit" in args
+
+    payload = apply_reconcile(
+        eng, candidates,
+        source="memory_files",
+        confirm=confirm,
+        dry_run=not commit,
+    )
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(render_reconcile_apply_text(payload))
+    return 1 if payload.get("requires_confirmation") else 0
 
 
 def _governance_root():
@@ -5541,6 +5720,10 @@ def main() -> None:
         sys.exit(_run_recall(args[1:]))
     elif args[0] == "lifecycle":
         sys.exit(_run_lifecycle(args[1:]))
+    elif args[0] == "merge":
+        sys.exit(_run_merge(args[1:]))
+    elif args[0] == "reconcile":
+        sys.exit(_run_reconcile(args[1:]))
     elif args[0] == "integrity":
         sys.exit(_run_integrity(args[1:]))
     elif args[0] == "dashboard":
