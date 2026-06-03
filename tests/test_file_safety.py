@@ -230,3 +230,40 @@ def test_engram_write_refuses_path_outside_root(tmp_path: Path):
         write_engram_text(root, external, "x", tool="storage")
 
     assert not external.exists()
+
+
+def test_backup_existing_file_enforces_retention(tmp_path: Path, monkeypatch):
+    """每次写入都备份，但只保留最近 N 份，防止热文件备份膨胀到数 GB。"""
+    monkeypatch.setattr(file_safety, "BACKUP_RETENTION", 5)
+    path = tmp_path / "lessons.json"
+    path.write_text("[]", encoding="utf-8")
+
+    for i in range(12):
+        path.write_text(f"[{i}]", encoding="utf-8")
+        file_safety.backup_existing_file(
+            tmp_path, path, scope="engram_root", tool="storage"
+        )
+
+    backup_dir = tmp_path / "backups" / "file_safety" / "engram_root"
+    remaining = [p for p in backup_dir.iterdir() if p.is_file()]
+    assert len(remaining) == 5
+
+
+def test_backup_retention_is_per_source_file(tmp_path: Path, monkeypatch):
+    """保留计数按源文件独立，不会因别的文件备份多而误删本文件备份。"""
+    monkeypatch.setattr(file_safety, "BACKUP_RETENTION", 3)
+    a = tmp_path / "lessons.json"
+    b = tmp_path / "domains.json"
+    a.write_text("[]", encoding="utf-8")
+    b.write_text("{}", encoding="utf-8")
+
+    for i in range(6):
+        a.write_text(f"[{i}]", encoding="utf-8")
+        file_safety.backup_existing_file(tmp_path, a, scope="engram_root", tool="t")
+        b.write_text(f'{{"{i}": 1}}', encoding="utf-8")
+        file_safety.backup_existing_file(tmp_path, b, scope="engram_root", tool="t")
+
+    backup_dir = tmp_path / "backups" / "file_safety" / "engram_root"
+    names = [p.name for p in backup_dir.iterdir() if p.is_file()]
+    assert sum(n.startswith("lessons.json.") for n in names) == 3
+    assert sum(n.startswith("domains.json.") for n in names) == 3

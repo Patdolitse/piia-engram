@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -251,27 +252,66 @@ class DataCorruptionError(Exception):
     """Raised when a JSON data file exists but cannot be parsed."""
 
 
+# Standalone reads run OUTSIDE the per-directory write lock, so a concurrent
+# atomic ``os.replace`` (Engram writer) or an external truncate-then-write
+# (e.g. PowerShell ``Out-File``) can make a read transiently fail on a file
+# that is valid milliseconds later. Retry a few times before treating it as
+# real corruption — this prevents quarantining perfectly good files (the
+# source of repeated ``.corrupt.*`` spam on lessons.json/domains.json).
+_READ_RETRIES = 4
+_READ_RETRY_BACKOFF = 0.05  # seconds; multiplied by the attempt number
+
+
+def _corrupt_copy_exists(path: Path, raw: bytes) -> bool:
+    """True if a prior .corrupt copy of this file already holds identical bytes."""
+    try:
+        for sibling in path.parent.glob(f"{path.stem}.corrupt.*{path.suffix}"):
+            try:
+                if sibling.read_bytes() == raw:
+                    return True
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return False
+
+
 def _read_json(path: Path, *, allow_corrupt: bool = False) -> Any:
     if not path.is_file():
         return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception as exc:
-        logger.warning("failed to read %s: %s", path.name, exc)
-        # Back up the corrupted file so it can be recovered manually
+    last_exc: Exception | None = None
+    for attempt in range(_READ_RETRIES):
         try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup = path.with_suffix(f".corrupt.{ts}.json")
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception as exc:  # noqa: BLE001 — retry, then quarantine on final failure
+            last_exc = exc
+            if attempt + 1 < _READ_RETRIES:
+                if not path.is_file():
+                    # File vanished mid-replace; the replacement appears shortly.
+                    return {}
+                time.sleep(_READ_RETRY_BACKOFF * (attempt + 1))
+
+    exc = last_exc
+    logger.warning(
+        "failed to read %s after %d attempts: %s", path.name, _READ_RETRIES, exc
+    )
+    # Genuinely unreadable after retries: back it up so it can be recovered
+    # manually, skipping duplicate quarantine copies of identical content.
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = path.with_suffix(f".corrupt.{ts}.json")
+        raw = path.read_bytes()
+        if not _corrupt_copy_exists(path, raw):
             shutil.copy2(path, backup)
             logger.warning("corrupted file backed up to %s", backup.name)
-        except OSError:
-            pass
-        if allow_corrupt:
-            return {}
-        raise DataCorruptionError(
-            f"{path.name} is corrupted and cannot be read. "
-            f"A backup has been saved. Please check or delete the file."
-        ) from exc
+    except OSError:
+        pass
+    if allow_corrupt:
+        return {}
+    raise DataCorruptionError(
+        f"{path.name} is corrupted and cannot be read. "
+        f"A backup has been saved. Please check or delete the file."
+    ) from exc
 
 
 def _maybe_backup_before_engram_json_replace(path: Path, candidate_text: str) -> None:

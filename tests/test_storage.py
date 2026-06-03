@@ -89,6 +89,41 @@ def test_read_json_corrupt_allow_corrupt(tmp_path):
     assert _read_json(path, allow_corrupt=True) == {}
 
 
+def test_read_json_retries_transient_failure(tmp_path):
+    """并发替换窗口内的瞬时读失败应重试成功，不应隔离有效文件。"""
+    path = tmp_path / "race.json"
+    path.write_text('{"a": 1}', encoding="utf-8")
+
+    real_read_text = Path.read_text
+    calls = {"n": 0}
+
+    def flaky(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("transient: file being replaced mid-read")
+        return real_read_text(self, *args, **kwargs)
+
+    with patch.object(Path, "read_text", flaky):
+        assert _read_json(path) == {"a": 1}
+
+    assert calls["n"] == 2  # failed once, succeeded on retry
+    assert not list(tmp_path.glob("race.corrupt.*.json"))
+
+
+def test_read_json_corrupt_dedup_skips_identical_copy(tmp_path):
+    """已存在相同内容的 .corrupt 副本时，重复读取不应再生成新副本。"""
+    path = tmp_path / "bad.json"
+    path.write_bytes(b"not json!")
+
+    with pytest.raises(DataCorruptionError):
+        _read_json(path)
+    assert len(list(tmp_path.glob("bad.corrupt.*.json"))) == 1
+
+    with pytest.raises(DataCorruptionError):
+        _read_json(path)
+    assert len(list(tmp_path.glob("bad.corrupt.*.json"))) == 1
+
+
 def test_read_json_permission_error(tmp_path):
     """读取权限异常时应抛 DataCorruptionError。"""
     path = tmp_path / "locked.json"

@@ -5,11 +5,21 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 from typing import Literal
 
 PathScope = Literal["engram_root", "external"]
+
+# Keep only the most-recent N backups per source file. Without a cap,
+# backup_existing_file copies the prior version on EVERY write, so hot files
+# (lessons.json, domains.json, session_state.json) accumulate tens of
+# thousands of copies (multi-GB). Override via ENGRAM_BACKUP_RETENTION.
+try:
+    BACKUP_RETENTION = max(1, int(os.environ.get("ENGRAM_BACKUP_RETENTION", "10")))
+except ValueError:
+    BACKUP_RETENTION = 10
 
 
 def _resolve(path: Path) -> Path:
@@ -92,6 +102,33 @@ def read_ledger_entries(root: Path) -> list[dict]:
     return entries
 
 
+def _prune_backups(backup_dir: Path, prefix: str, keep: int) -> int:
+    """Delete all but the ``keep`` most-recent backups sharing ``prefix``.
+
+    Backups for one source file all start with ``{name}.{path_hash}.`` —
+    ``prefix`` is that stem. Returns the number of stale copies removed.
+    """
+    if keep < 1:
+        keep = 1
+    try:
+        candidates = [
+            p
+            for p in backup_dir.iterdir()
+            if p.is_file() and p.name.startswith(prefix + ".")
+        ]
+    except OSError:
+        return 0
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    removed = 0
+    for stale in candidates[keep:]:
+        try:
+            stale.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def backup_existing_file(
     root: Path,
     path: Path,
@@ -105,13 +142,15 @@ def backup_existing_file(
         return None
     backup_dir = Path(root) / "backups" / "file_safety" / scope
     backup_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = f"{path.name}.{path_hash(path)}.{_utc_stamp()}.bak"
+    prefix = f"{path.name}.{path_hash(path)}"
+    safe_name = f"{prefix}.{_utc_stamp()}.bak"
     backup_path = backup_dir / safe_name
     counter = 1
     while backup_path.exists():
         backup_path = backup_dir / f"{safe_name}.{counter}"
         counter += 1
     shutil.copy2(path, backup_path)
+    _prune_backups(backup_dir, prefix, BACKUP_RETENTION)
     return backup_path
 
 
