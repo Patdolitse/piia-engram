@@ -1,0 +1,58 @@
+{
+  "_comment": "Fixed evaluation set for auto-extraction precision (Node N2). positives = durable engineering value / measured outcomes that MUST be kept; negatives = short-term reminders/tasks/planning/meta that MUST be rejected. Bodies here are synthetic, not user-private.",
+  "positives": [
+    {
+      "text": "Switched the test runner to the Codex runtime venv with PYTHONPATH=src because system Python is missing, and pytest now passes.",
+      "type": "lesson"
+    },
+    {
+      "text": "Decided to use OIDC trusted publishing for PyPI instead of stored tokens to avoid credential leakage.",
+      "type": "decision"
+    },
+    {
+      "text": "Reduced cold-start latency by 40% after caching the profile read.",
+      "type": "lesson",
+      "must_keep_signal": "measured_outcome"
+    },
+    {
+      "text": "Always run the publish allowlist check before release because untracked files blocked CI.",
+      "type": "lesson"
+    },
+    {
+      "text": "采用 portalocker 做跨进程文件锁，因为多客户端并发写会损坏 JSON 数据。",
+      "type": "lesson"
+    }
+  ],
+  "negatives": [
+    {
+      "text": "Remember to follow up with the team about the API redesign next sprint.",
+      "type": "lesson",
+      "expect_flag": "ephemeral_todo"
+    },
+    {
+      "text": "TODO: email Alice the dashboard link tomorrow.",
+      "type": "lesson",
+      "expect_flag": "ephemeral_todo"
+    },
+    {
+      "text": "Maybe we should consider evaluating Redis later.",
+      "type": "lesson",
+      "expect_flag": "planning_or_uncertain"
+    },
+    {
+      "text": "Should we switch to Postgres or stay on SQLite?",
+      "type": "decision",
+      "expect_flag": "open_question"
+    },
+    {
+      "text": "记得明天提醒团队部署新版本。",
+      "type": "lesson",
+      "expect_flag": "ephemeral_todo"
+    },
+    {
+      "text": "We discussed the roadmap for next quarter.",
+      "type": "lesson",
+      "expect_flag": "ephemeral_todo"
+    }
+  ]
+}

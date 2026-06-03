@@ -77,6 +77,9 @@ docs/cursor-plugin-validation.md
 docs/governance.md
 docs/hybrid-search.md
 docs/listing-copy.md
+docs/runbooks/data-sovereignty-audit.md
+docs/runbooks/encoding-data-scan.md
+docs/runbooks/install-launch-truth-audit.md
 docs/runbooks/memory-lifecycle.md
 docs/runbooks/release-build-check.md
 docs/runbooks/setup-upgrade-safety.md

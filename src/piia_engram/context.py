@@ -162,11 +162,34 @@ def _assess_extraction_candidate(
         flags.append("meta_discussion")
         score -= 0.18
 
-    if re.search(
+    english_ephemeral = re.search(
         r"\b(today|tomorrow|tonight|this morning|this afternoon|this evening|"
-        r"later today|next week|next month|send|email|call|message|ping|remind)\b",
+        r"later today|next week|next month|next sprint|next quarter|"
+        r"follow up|follow-up|action item|circle back|to-?do|"
+        r"send|email|call|message|ping|remind)\b",
         lowered,
-    ) and not any(signal in signals for signal in ("evidence_or_outcome", "measured_outcome")):
+    )
+    # CJK has no word boundaries; match high-confidence reminder/task markers
+    # directly. These are short-term task words (待办/跟进/明天/…), not durable
+    # rules — kept separate from the durable-rule lexicon (记得/注意/必须/…).
+    # NOTE: "今天" (past-tense "today") is deliberately excluded — it routinely
+    # describes completed work in summaries, not a to-do, so it would over-reject.
+    cjk_ephemeral = re.search(
+        r"(明天|后天|稍后|待办|跟进|代办)",
+        normalized,
+    )
+    # A measured/evidence outcome OR a committed decision is durable enough to
+    # survive an incidental date/task word; only undecided lessons/plans whose
+    # sole content is the reminder itself are dropped.
+    if (english_ephemeral or cjk_ephemeral) and not any(
+        signal in signals
+        for signal in (
+            "evidence_or_outcome",
+            "measured_outcome",
+            "decision_commitment",
+            "structured_decision_choice",
+        )
+    ):
         flags.append("ephemeral_todo")
         score -= 0.35
 

@@ -4501,11 +4501,32 @@ def _run_reindex() -> None:
 def _run_repair_encoding(args: list[str]) -> int:
     """Scan or repair high-confidence mojibake in the active Engram root."""
     from piia_engram.core import Engram
-    from piia_engram.encoding_repair import repair_engram_root, scan_engram_root
+    from piia_engram.encoding_repair import (
+        repair_engram_root,
+        scan_engram_root,
+        summarize_findings,
+    )
 
     apply = "--apply" in args or "--fix" in args
     no_backup = "--no-backup" in args
+    summary_only = "--summary" in args
     eng = Engram()
+
+    if summary_only and not apply:
+        report = scan_engram_root(eng.root)
+        summary = summarize_findings(report)
+        # Metadata-only output: counts and generic reason codes, never bodies
+        # or paths — safe to paste into an audit/report.
+        print("Encoding scan summary (metadata-only, no bodies/paths):")
+        print(f"  files_with_findings: {summary['files_with_findings']}")
+        print(f"  repairable: {summary['repairable_count']}  "
+              f"suspect: {summary['suspect_count']}  "
+              f"total: {summary['total_findings']}")
+        if summary["reasons"]:
+            print("  reasons:")
+            for reason, count in summary["reasons"].items():
+                print(f"    {reason}: {count}")
+        return 0 if summary["suspect_count"] == 0 else 1
 
     if apply:
         if no_backup:

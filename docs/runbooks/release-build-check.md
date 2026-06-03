@@ -22,6 +22,27 @@ release-evidence completeness for the current `pyproject` version. It only reads
 the working tree. The precise maintainer-private term scan lives in
 `scripts/release_sanitize_check.py` (gitignored term sources).
 
+## 0.5 Authorization preflight (before the publish chain)
+
+Before starting any publish steps, confirm the publishing tools are present and
+authorized — this avoids stalling halfway through a release:
+
+```bash
+python scripts/check_release_auth_preflight.py            # report + exit 1 if not ready
+python scripts/check_release_auth_preflight.py --json     # machine-readable
+python scripts/check_release_auth_preflight.py --strict   # warnings also block
+```
+
+It checks (required unless noted): GitHub CLI auth (`gh auth status`),
+`mcp-publisher` availability, `.mcp/server.json` validity + version match with
+`pyproject.toml`, and `twine` runnability. A local PyPI credential source is
+reported as present/absent only (informational — CI publishes via OIDC trusted
+publishing). Cloudflare/Wrangler is out of scope unless `--include-wrangler`.
+
+This check is **non-secret and local-only**: it never reads, logs, or prints any
+token value, performs no network/publish action, and its output is safe to paste
+publicly. It fails closed (exit 1) with an actionable message for each gap.
+
 ## 1. Local check commands (run from repo root)
 
 ```bash

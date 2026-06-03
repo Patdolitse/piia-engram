@@ -154,6 +154,29 @@ class EncodingRepairReport:
         return sum(1 for f in self.findings if not f.repairable)
 
 
+def summarize_findings(report: "EncodingScanReport | EncodingRepairReport") -> dict:
+    """Metadata-only summary of a scan/repair report — safe to share publicly.
+
+    Returns counts only: how many files had findings, repairable vs. suspect
+    totals, and a breakdown by (generic) reason code. It deliberately omits all
+    body text (``original``/``repaired``) and all paths (``relative_path``/
+    ``json_path``) so the summary can never leak stored knowledge or filesystem
+    layout — unlike the per-finding owner view used for local repair.
+    """
+    reasons: dict[str, int] = {}
+    files: set[str] = set()
+    for finding in report.findings:
+        reasons[finding.reason] = reasons.get(finding.reason, 0) + 1
+        files.add(str(finding.relative_path))
+    return {
+        "files_with_findings": len(files),
+        "total_findings": len(report.findings),
+        "repairable_count": report.repairable_count,
+        "suspect_count": report.suspect_count,
+        "reasons": dict(sorted(reasons.items())),
+    }
+
+
 def _mojibake_score(text: str) -> int:
     if not text:
         return 0

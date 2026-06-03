@@ -222,7 +222,13 @@ def render_recall_text(payload: dict[str, Any]) -> str:
         fr = item.get("freshness")
         if isinstance(fr, dict) and fr.get("freshness_status"):
             fresh = f" [{fr['freshness_status']}]"
-        lines.append(f"  - ({prefix}){fresh} {label}")
+        # Surface provenance (source agent) by default so the owner can see where
+        # each item came from — same data already in the payload, just rendered.
+        prov = ""
+        pv = item.get("provenance")
+        if isinstance(pv, dict) and pv.get("source_agent"):
+            prov = f" «src:{pv['source_agent']}»"
+        lines.append(f"  - ({prefix}){fresh}{prov} {label}")
 
     gov = meta.get("governance", {})
     excluded = gov.get("excluded_count", 0) if isinstance(gov, dict) else 0
