@@ -769,9 +769,23 @@ def send_feedback(report: dict[str, Any]) -> bool:
     """Send a feedback report to the remote endpoint. Returns True on success.
 
     Injects the daily_id for anonymous tracking. NEVER raises.
+
+    Privacy egress guard: the report is checked against the feedback allowlist +
+    content guard (``telemetry_validation.validate_feedback_report``) **before**
+    any network serialization. A report carrying an unknown key or a content-like
+    value (free text, prompt, path, email, URL) is dropped here, independent of
+    what the builder produced — the remote worker stores the raw payload, so this
+    is the privacy boundary.
     """
     if not is_feedback_enabled():
         return False
+
+    from .telemetry_validation import validate_feedback_report
+    ok, problems = validate_feedback_report(report)
+    if not ok:
+        logger.warning("feedback report rejected by send-boundary guard: %s", problems)
+        return False
+
     try:
         cfg = _load_config()
         local_uuid = cfg.get("local_uuid", "")

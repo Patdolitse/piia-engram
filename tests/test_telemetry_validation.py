@@ -140,3 +140,93 @@ def test_validate_payload_rejects_high_space_ratio_text():
 
 def test_validate_payload_rejects_pathlike_key():
     assert telemetry._validate_payload({"a/b/c": 1}) is False
+
+
+# --- L3: telemetry contract drift guard (payload/schema/migration/worker) -----
+
+def _worker_js() -> str:
+    return (WORKER / "src" / "index.js").read_text(encoding="utf-8")
+
+
+def test_worker_event_allowlist_matches_client_contract():
+    allow = tv.parse_js_string_set(_worker_js(), "ALLOWED_FIELDS")
+    expected = set(tv.PAYLOAD_TO_COLUMN) | tv.TRANSPORT_ONLY_KEYS
+    assert allow == expected, {"missing": expected - allow, "extra": allow - expected}
+
+
+def test_worker_feedback_allowlist_matches_python_allowlist():
+    allow = tv.parse_js_string_set(_worker_js(), "FEEDBACK_ALLOWED_FIELDS")
+    assert allow == set(tv.FEEDBACK_ALLOWED_KEYS), {
+        "missing": set(tv.FEEDBACK_ALLOWED_KEYS) - allow,
+        "extra": allow - set(tv.FEEDBACK_ALLOWED_KEYS),
+    }
+
+
+def test_no_content_field_in_worker_allowlists():
+    js = _worker_js()
+    allow = (tv.parse_js_string_set(js, "ALLOWED_FIELDS")
+             | tv.parse_js_string_set(js, "FEEDBACK_ALLOWED_FIELDS"))
+    assert tv._content_markers_in(allow) == []
+
+
+def test_full_contract_validation_surfaces_worker_allowlists():
+    report = tv.validate_telemetry_contract(WORKER)
+    assert report["ok"], report["problems"]
+    # The richer report now exposes the parsed worker allowlists.
+    assert report["worker_event_allowlist"]
+    assert report["worker_feedback_allowlist"]
+
+
+# The guard must FAIL on a planted content-like field in any of the four
+# surfaces. We exercise the underlying detectors the contract check composes.
+
+def test_guard_catches_planted_content_in_payload_allowlist():
+    planted = set(tv.PAYLOAD_TO_COLUMN) | {"prompt_text"}
+    assert tv._content_markers_in(planted)  # non-empty ⇒ flagged
+
+
+def test_guard_catches_planted_content_in_migration_added_columns():
+    planted_migration = (
+        "ALTER TABLE events ADD COLUMN install_age_bucket TEXT;\n"
+        "ALTER TABLE events ADD COLUMN summary_body TEXT;\n"  # content — must flag
+    )
+    added = tv.parse_added_columns(planted_migration)
+    assert "summary_body" in added
+    assert tv._content_markers_in(added)
+
+
+def test_guard_catches_planted_content_in_worker_allowlist():
+    planted_js = (
+        "const ALLOWED_FIELDS = new Set([\n"
+        "  'daily_id', 'engram_version', 'message_body',\n"  # content — must flag
+        "]);"
+    )
+    allow = tv.parse_js_string_set(planted_js, "ALLOWED_FIELDS")
+    assert "message_body" in allow
+    assert tv._content_markers_in(allow)
+
+
+def test_contract_validation_flags_drifted_worker_allowlist(tmp_path):
+    # A worker tree whose event allowlist drops a contract field must be flagged.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "migrations").mkdir()
+    # Minimal but valid schema + v1.1 migration so only the drift trips.
+    cols = ", ".join(f"{c} TEXT" for c in sorted(
+        set(tv.PAYLOAD_TO_COLUMN.values()) | tv.V1_1_DERIVED_COLUMNS))
+    (tmp_path / "schema.sql").write_text(
+        f"CREATE TABLE events ({cols});", encoding="utf-8")
+    add_cols = "\n".join(f"ALTER TABLE events ADD COLUMN {c} TEXT;"
+                         for c in sorted(tv.V1_1_DERIVED_COLUMNS))
+    (tmp_path / "migrations" / "20260603_telemetry_contract_v1_1.sql").write_text(
+        add_cols, encoding="utf-8")
+    # Drifted worker: missing 'timestamp' from the event allowlist.
+    drifted = set(tv.PAYLOAD_TO_COLUMN)  # note: no 'timestamp'
+    fb = ", ".join(f"'{k}'" for k in sorted(tv.FEEDBACK_ALLOWED_KEYS))
+    ev = ", ".join(f"'{k}'" for k in sorted(drifted))
+    (tmp_path / "src" / "index.js").write_text(
+        f"const ALLOWED_FIELDS = new Set([{ev}]);\n"
+        f"const FEEDBACK_ALLOWED_FIELDS = new Set([{fb}]);\n",
+        encoding="utf-8")
+    report = tv.validate_telemetry_contract(tmp_path)
+    assert report["ok"] is False
+    assert any("worker event allowlist drift" in p for p in report["problems"])
