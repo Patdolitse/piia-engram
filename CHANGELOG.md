@@ -8,6 +8,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Planned — v3.47.0 Telemetry Completion (local prep, not yet released)
+
+Local, additive prep to make telemetry release-ready without any remote action.
+No package version bump and no opt-in default change.
+
+- **`engram telemetry-validate --remote-readiness`** — a pure, read-only
+  pre-deploy checklist (payload↔schema mapping, worker event/feedback
+  allowlists, both migration files, v1-before-v1.1 sequencing, dashboard
+  anonymous-daily-id wording + v1.1 tiles, client opt-out defaults, no content
+  fields). Performs no network/D1/deploy action.
+- **Dashboard v1.1 analysis tiles** — the worker dashboard now renders the v1.1
+  derived buckets (version adoption, knowledge activation, anonymous returning
+  bucket, error trend), gated on the v1.1 migration and labelled as anonymous
+  daily-id buckets (never "unique users").
+- **Consolidated remote-closeout runbook** — a single canonical sequence
+  (validate → v1 migration → v1.1 migration → deploy → health → smoke → verify
+  → cleanup → rollback) with host/DB placeholders; the v1 and v1.1 runbooks now
+  cross-link to it.
+- **Telemetry privacy evidence** (`docs/telemetry-privacy.md`) — the explicit
+  opt-in / no-content / rotating-daily-id / user-gated-activation statement.
+- **Local worker smoke harness** — static tests pinning the three insert tiers
+  (full v1.1 → v1 fallback → legacy), content-field rejection, and dashboard
+  labels, with an optional node execution harness under `worker/test/`.
+- Fixed a latent `parse_added_columns` false positive that read a column name
+  out of an SQL comment.
+
+All remote actions (D1 migration apply, worker deploy, smoke insert/cleanup)
+remain user-gated and were not performed.
+
 ## [3.46.0] - 2026-06-03
 
 The trust-and-readiness release: Engram productionizes the memory trust loop and adds a wide set of local, additive, proposal-only readiness surfaces (phases 6-13) without changing any default behavior or touching remote state.

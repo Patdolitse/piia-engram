@@ -1,5 +1,12 @@
 # Runbook: Telemetry Analysis Contract v1 — remote closeout
 
+> **Consolidated sequence:** the single canonical step-by-step closeout (local
+> validation → v1 migration → v1.1 migration → deploy → health → smoke →
+> verify → cleanup → rollback) now lives in
+> [`telemetry-contract-remote-closeout.md`](telemetry-contract-remote-closeout.md).
+> Follow that as the running checklist. This file is kept for the **P0 detail /
+> recap** of what v1 added.
+
 Status: **runbook only. DO NOT run the remote steps in this pass.** This is the
 checklist Codex/the user follows to finish the contract remotely. The contract
 code already landed locally (`60d333c feat: add telemetry analysis contract v1`);
@@ -54,8 +61,8 @@ wrangler d1 migrations apply engram-telemetry --remote
 ```
 
 If the project does not use wrangler's migrations tracking, apply the file
-directly (idempotent: it uses `ADD COLUMN` + `CREATE INDEX IF NOT EXISTS`; note
-`ADD COLUMN` is NOT idempotent on re-run — only run once):
+directly (only partially idempotent: the `CREATE INDEX` is `IF NOT EXISTS`, but
+`ADD COLUMN` is NOT idempotent on re-run — apply exactly once):
 
 ```bash
 wrangler d1 execute engram-telemetry --remote --file=migrations/20260603_telemetry_contract_v1.sql

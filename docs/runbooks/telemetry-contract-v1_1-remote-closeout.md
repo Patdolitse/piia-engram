@@ -1,5 +1,12 @@
 # Runbook: Telemetry Analysis Contract v1.1 — remote closeout
 
+> **Consolidated sequence:** the single canonical step-by-step closeout (local
+> validation → v1 migration → v1.1 migration → deploy → health → smoke →
+> verify → cleanup → rollback) now lives in
+> [`telemetry-contract-remote-closeout.md`](telemetry-contract-remote-closeout.md).
+> Follow that as the running checklist. This file is kept for the **P1 detail /
+> recap** of what v1.1 added and its sequencing rationale.
+
 Status: **runbook only. DO NOT run the remote steps in this pass.** This extends
 `telemetry-contract-v1-remote-closeout.md` with the v1.1 sequencing. The v1.1
 contract code already landed locally (client derived buckets in
