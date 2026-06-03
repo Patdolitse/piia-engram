@@ -78,6 +78,7 @@ docs/governance.md
 docs/hybrid-search.md
 docs/listing-copy.md
 docs/public-facts.json
+docs/integrations/hermes.md
 docs/runbooks/data-sovereignty-audit.md
 docs/runbooks/encoding-data-scan.md
 docs/runbooks/install-launch-truth-audit.md
