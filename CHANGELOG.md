@@ -6,7 +6,7 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.48.0] - 2026-06-03
 
 Local product batch — owner-confirmed apply paths and readiness surfacing. All
 changes are CLI / owner-only and metadata-only; no new agent-facing MCP apply

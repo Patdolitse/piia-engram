@@ -6,13 +6,23 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
-## [未发布]
+## [3.48.0] - 2026-06-03
 
 本地产品批次——所有者确认的 apply 通路与就绪度展示。全部为 CLI / 仅所有者、
 仅元数据；不新增面向 Agent 的 MCP apply 工具，不改遥测 schema，不改权限/治理，
 不做硬删除，也不对外发布。
 
 ### 新增
+- **产品使用流程加固**——`engram merge --json` 现在返回与 `engram merge apply`
+  相同的仅元数据 dry-run apply 负载，预览 JSON 不再回显建议摘要或存储正文。
+- **对账冲突预览 v2**——`engram reconcile conflicts [--json]` 仅展示冲突计数与
+  匹配 id。只读、仅元数据，绝不导入、取代或覆盖既有决策。
+- **GUI 安全的所有者操作**——`engram dashboard --json` 新增 `next_action` 及
+  `actions` 列表（含 code/label/command/count/risk 与 `executes=false`），为未来
+  UI 提供可安全渲染的元数据，不引入一键改动。
+- **遥测控制台密码轮换助手**——`scripts/rotate_telemetry_dashboard_password.ps1`
+  生成或接受 shell 安全的 `DASH_PASSWORD`，先打印供所有者交接，仅在带 `-Apply`
+  时才写入 Cloudflare Worker secret。
 - **近重复合并 apply（N4）**——`engram merge` 列出仅元数据的近重复建议；
   `engram merge apply` 预览/折叠，复用既有可逆的 `merge_knowledge` 软归档
   （次条标记 `outdated`/`merged_into`，绝不硬删除）。默认 dry-run，
@@ -29,8 +39,8 @@
   生命周期、对账、近重复合并、版本链 HEAD 的待所有者确认 apply 计数。
 
 ### 变更
-- README 与 README.zh-CN 当前状态测试数更新为已验证基线：2464 通过、8 skipped、
-  共收集 2472。
+- README 与 README.zh-CN 当前状态测试数更新为已验证基线：2469 通过、8 skipped、
+  共收集 2477。
 
 ## [3.47.1] - 2026-06-03
 

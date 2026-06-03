@@ -1,7 +1,7 @@
 metadata:
   name: piia-engram
   description: "Personal intelligence identity layer — one memory across all AI tools. Local-first, user-governed, 80 MCP tools."
-  version: 3.47.1
+  version: 3.48.0
   tags:
     - memory
     - identity
