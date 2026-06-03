@@ -4981,10 +4981,23 @@ def _run_lifecycle(args: list[str]) -> int:
     from piia_engram.lifecycle import build_lifecycle_proposal, render_lifecycle_text
 
     if args and args[0] in {"-h", "--help"}:
-        print("Usage:\n  engram lifecycle [--json]\n")
+        print(
+            "Usage:\n"
+            "  engram lifecycle [--json]                      Metadata-only decay/archive proposal\n"
+            "  engram lifecycle apply [--id ID ...] [--commit] [--yes] [--json]\n"
+            "                                                 Owner-confirmed soft archive of candidates\n"
+            "                                                 (default = dry-run preview; --commit --yes to apply)\n"
+            "  engram lifecycle restore <id> [--yes] [--json] Undo a lifecycle soft archive\n"
+        )
         return 0
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+
+    if args and args[0] == "apply":
+        return _run_lifecycle_apply(Engram(root=root), args[1:])
+    if args and args[0] == "restore":
+        return _run_lifecycle_restore(Engram(root=root), args[1:])
+
     eng = Engram(root=root)
     lessons = eng.get_lessons(limit=None, _update_access=False) or []
     decisions = eng.get_decisions(limit=None, _update_access=False) or []
@@ -4995,6 +5008,112 @@ def _run_lifecycle(args: list[str]) -> int:
         return 0
     print(render_lifecycle_text(report))
     return 0
+
+
+def _run_lifecycle_apply(eng, args: list[str]) -> int:
+    """Owner-confirmed lifecycle archive apply (dry-run by default).
+
+    ``--commit`` opts out of the safe dry-run preview; an actual mutation also
+    requires ``--yes``. Without ``--yes`` a ``--commit`` invocation fails closed
+    (reports ``requires_confirmation`` and changes nothing). ``--id`` (repeatable)
+    narrows the action to a specific candidate subset.
+    """
+    from piia_engram.lifecycle_apply import (
+        apply_lifecycle_archive,
+        render_lifecycle_apply_text,
+    )
+
+    json_output = "--json" in args
+    confirm = "--yes" in args
+    commit = "--commit" in args
+    ids: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"--json", "--yes", "--commit"}:
+            i += 1
+            continue
+        if arg == "--id":
+            if i + 1 >= len(args):
+                print("Missing value for --id")
+                return 2
+            ids.append(args[i + 1])
+            i += 2
+            continue
+        print(f"Unknown lifecycle apply option: {arg}")
+        return 2
+
+    payload = apply_lifecycle_archive(
+        eng,
+        ids=ids or None,
+        confirm=confirm,
+        dry_run=not commit,
+    )
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(render_lifecycle_apply_text(payload))
+    # Fail-closed (confirmation required) is a non-zero exit so scripts notice.
+    return 1 if payload.get("requires_confirmation") else 0
+
+
+def _run_lifecycle_restore(eng, args: list[str]) -> int:
+    """Undo a lifecycle soft archive (owner-confirmed)."""
+    json_output = "--json" in args
+    confirm = "--yes" in args
+    item_id = ""
+    for arg in args:
+        if arg in {"--json", "--yes"}:
+            continue
+        if arg.startswith("--"):
+            print(f"Unknown lifecycle restore option: {arg}")
+            return 2
+        if not item_id:
+            item_id = arg
+    if not item_id:
+        print("Usage: engram lifecycle restore <id> [--yes] [--json]")
+        return 2
+
+    if not confirm:
+        payload = {
+            "schema": 1,
+            "action": "lifecycle_restore",
+            "id": item_id,
+            "requires_confirmation": True,
+            "changed": False,
+            "status": "confirmation_required",
+        }
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"Lifecycle restore for {item_id} requires confirmation - "
+                "re-run with --yes to apply."
+            )
+        return 1
+
+    result = eng.restore_lifecycle_archive(item_id)
+    payload = {
+        "schema": 1,
+        "action": "lifecycle_restore",
+        "id": item_id,
+        "requires_confirmation": False,
+        "changed": bool(result.get("changed")),
+        "status": "restored" if result.get("changed") else (
+            "not_found" if result.get("error") else "noop"
+        ),
+        "from_tier": result.get("from_tier", ""),
+        "to_tier": result.get("to_tier", ""),
+        "error": result.get("error"),
+    }
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"Lifecycle restore {item_id}: {payload['status']} "
+            f"({payload['from_tier'] or 'none'} -> {payload['to_tier'] or 'none'})"
+        )
+    return 0 if result.get("error") is None else 1
 
 
 def _governance_root():

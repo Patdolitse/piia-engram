@@ -2896,6 +2896,111 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             return self.archive_playbook(item_id)
         return self.archive_decision(item_id)
 
+    def soft_archive_knowledge_tier(
+        self,
+        item_id: str,
+        *,
+        now: str | None = None,
+    ) -> dict:
+        """Reversibly soft-archive a lesson/decision into the ``archived`` tier.
+
+        This is the tier-transition primitive behind the owner-confirmed
+        lifecycle archive apply path. It sets ``tier="archived"`` plus an
+        ``archived_at`` timestamp and records the prior tier in
+        ``archived_from_tier`` so the move can be undone. It never deletes and
+        never changes ``status``.
+
+        Fail-closed protections:
+        - a ``verified`` entry is refused (``error="protected_verified"``);
+        - an entry already in the ``archived`` tier is an idempotent no-op
+          (``changed=False``), leaving its existing ``archived_at`` intact.
+
+        Returns a metadata-only dict ``{id, type, changed, from_tier, to_tier,
+        archived_at}`` (no bodies), or ``{"error": ...}`` if not found.
+        """
+        ts = now or _now_iso()
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            path = self._knowledge_dir / fname
+            entries = self._read_entries(path, kind)
+            for entry in entries:
+                if entry.get("id") != item_id:
+                    continue
+                current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
+                if current == "verified":
+                    return {
+                        "id": item_id, "type": kind, "changed": False,
+                        "from_tier": current, "to_tier": current,
+                        "error": "protected_verified",
+                    }
+                if current == "archived":
+                    return {
+                        "id": item_id, "type": kind, "changed": False,
+                        "from_tier": "archived", "to_tier": "archived",
+                        "archived_at": entry.get("archived_at"),
+                    }
+                entry["archived_from_tier"] = current
+                entry["tier"] = "archived"
+                entry["archived_at"] = ts
+                entry["last_updated"] = ts
+                self._ensure_fields(entry, kind)
+                self._write_entries(path, entries, kind)
+                self._audit.log(
+                    "write",
+                    "knowledge/lifecycle_archive",
+                    detail=f"{kind} {item_id}: {current or 'none'} -> archived",
+                )
+                return {
+                    "id": item_id, "type": kind, "changed": True,
+                    "from_tier": current, "to_tier": "archived",
+                    "archived_at": ts,
+                }
+        return {"error": f"Item not found: {item_id}"}
+
+    def restore_lifecycle_archive(
+        self,
+        item_id: str,
+        *,
+        now: str | None = None,
+    ) -> dict:
+        """Undo a lifecycle soft archive: move an ``archived`` entry back.
+
+        Restores the entry to its recorded prior tier (``archived_from_tier``,
+        falling back to ``staging``) and clears the archive markers. A
+        non-archived entry is an idempotent no-op (``changed=False``). Returns a
+        metadata-only dict, or ``{"error": ...}`` if not found.
+        """
+        ts = now or _now_iso()
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            path = self._knowledge_dir / fname
+            entries = self._read_entries(path, kind)
+            for entry in entries:
+                if entry.get("id") != item_id:
+                    continue
+                current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
+                if current != "archived":
+                    return {
+                        "id": item_id, "type": kind, "changed": False,
+                        "from_tier": current, "to_tier": current,
+                    }
+                prior = entry.get("archived_from_tier")
+                to_tier = prior if prior in {"staging", "verified"} else "staging"
+                entry["tier"] = to_tier
+                entry.pop("archived_at", None)
+                entry.pop("archived_from_tier", None)
+                entry["last_updated"] = ts
+                self._ensure_fields(entry, kind)
+                self._write_entries(path, entries, kind)
+                self._audit.log(
+                    "write",
+                    "knowledge/lifecycle_restore",
+                    detail=f"{kind} {item_id}: archived -> {to_tier}",
+                )
+                return {
+                    "id": item_id, "type": kind, "changed": True,
+                    "from_tier": "archived", "to_tier": to_tier,
+                }
+        return {"error": f"Item not found: {item_id}"}
+
     def review_knowledge(self, knowledge_id: str) -> dict:
         """Mark a lesson, decision, or playbook as reviewed without changing its content."""
         lessons, decisions, playbooks = self._read_link_collections()

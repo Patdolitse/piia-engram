@@ -206,6 +206,38 @@ def build_lifecycle_proposal(
     }
 
 
+def select_archive_candidate_ids(
+    report: dict[str, Any],
+    *,
+    requested_ids: list[str] | None = None,
+) -> list[str]:
+    """Return the ids eligible for an owner-confirmed soft archive.
+
+    Eligible means the proposal is ``archive_candidate`` or ``prune_candidate``
+    **and** the entry is neither in the ``verified`` tier (verified/trusted
+    knowledge is never archived by this path) nor already in the ``archived``
+    tier (already-archived entries are not re-proposed). When ``requested_ids``
+    is given, the eligible set is intersected with it (order follows the
+    report's most-decayed-first ordering).
+
+    Pure: derives only from the metadata-only proposal report; mutates nothing.
+    """
+    requested = {str(i) for i in requested_ids} if requested_ids is not None else None
+    eligible: list[str] = []
+    for proposal in report.get("proposals", []):
+        if proposal.get("proposal") not in (PROPOSAL_ARCHIVE, PROPOSAL_PRUNE):
+            continue
+        if proposal.get("tier") in {"verified", "archived"}:
+            continue
+        item_id = proposal.get("id")
+        if not item_id:
+            continue
+        if requested is not None and item_id not in requested:
+            continue
+        eligible.append(item_id)
+    return eligible
+
+
 def render_lifecycle_text(report: dict[str, Any]) -> str:
     """Render a lifecycle proposal as an owner-facing, metadata-only digest."""
     counts = report.get("counts", {})
