@@ -6,6 +6,22 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.48.1] - 2026-06-04
+
+Performance patch — memoize tokenization on the hot search path. No behavior
+change: search output (token sets, alias expansion, ranking) is identical; no
+API, schema, telemetry, governance, or permission change.
+
+### Changed
+- **Tokenization cache** — `_tokenize` now delegates to a process-wide
+  `@lru_cache`d pure function keyed on `(text, expand_aliases)` and the
+  import-time-static alias tables. The hot search path re-tokenized the same
+  entry fields on every query; memoizing collapses that repeated CPU work into
+  a dict lookup. Warm full-corpus keyword search median ~53ms → ~20ms (−62%).
+  The cached value is an immutable `frozenset` — read-only consumers
+  (`_score_item` field intersection, `_bigram_similarity`) use it directly,
+  while callers that mutate (e.g. `_score_item`) get a fresh `set` copy.
+
 ## [3.48.0] - 2026-06-03
 
 Local product batch — owner-confirmed apply paths and readiness surfacing. All

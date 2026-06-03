@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -44,10 +45,14 @@ def test_public_package_metadata_uses_current_version():
     server = json.loads(_read(".mcp/server.json"))
     plugin = json.loads(_read(".claude-plugin/plugin.json"))
 
-    assert pyproject["project"]["version"] == "3.48.0"
-    assert server["version"] == "3.48.0"
-    assert server["packages"][0]["version"] == "3.48.0"
-    assert plugin["version"] == "3.48.0"
+    # Anchor on pyproject (the single source of truth) and assert every other
+    # public surface agrees, instead of pinning a literal that rots each
+    # release. Format is still validated, just not hardcoded.
+    version = pyproject["project"]["version"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version), version
+    assert server["version"] == version
+    assert server["packages"][0]["version"] == version
+    assert plugin["version"] == version
     assert "MCP-compatible coding tools" in plugin["description"]
     assert "every AI tool" not in plugin["description"].lower()
 
