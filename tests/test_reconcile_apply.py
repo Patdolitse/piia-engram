@@ -240,3 +240,41 @@ def test_cli_reconcile_apply_commit_confirmed(tmp_path, monkeypatch, capsys):
     assert payload["counts"]["imported"] == 1
     assert SECRET not in json.dumps(payload)
     assert len(_active_lessons(Engram())) == 1
+
+
+# --- conflict preview v2 (metadata-only; no mutation) ----------------------
+
+
+def _conflict_candidates(self):
+    return [{
+        "question": "which interpreter runs the release pytest suite",
+        "choice": "use the windows store python alias",
+        "reasoning": f"{SECRET} conflicting",
+        "source": "mem.md",
+    }]
+
+
+def test_cli_reconcile_conflicts_preview_is_metadata_only(tmp_path, monkeypatch, capsys):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import _run_reconcile
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    eng = Engram()
+    eng.add_decision(
+        "which interpreter runs the release pytest suite",
+        choice="use the codex primary runtime python",
+        reasoning=f"{SECRET} existing",
+        tier="verified",
+    )
+    monkeypatch.setattr(Engram, "collect_memory_candidates", _conflict_candidates)
+
+    assert _run_reconcile(["conflicts", "--json"]) == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["action"] == "reconcile_conflicts_preview"
+    assert payload["counts"]["conflict"] == 1
+    assert payload["items"][0]["action"] == "conflict"
+    assert payload["items"][0]["match_id"]
+    assert SECRET not in out
+    assert "windows store python alias" not in out
+    assert len(_active_decisions(Engram())) == 1

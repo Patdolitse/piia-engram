@@ -5145,11 +5145,11 @@ def _run_lifecycle_restore(eng, args: list[str]) -> int:
 def _run_merge(args: list[str]) -> int:
     """Near-duplicate merge proposal + owner-confirmed apply (engram merge).
 
-    ``engram merge`` (no subcommand) prints the metadata-only merge *suggestions*
-    (read-only). ``engram merge apply`` previews/applies them via the reversible
-    soft-archive ``merge_knowledge`` primitive: dry-run by default, ``--commit
-    --yes`` to actually fold each secondary into its primary. Never hard-deletes
-    and exposes no agent-facing apply tool.
+    ``engram merge`` (no subcommand) prints the metadata-only merge preview
+    (read-only). ``engram merge apply`` previews/applies the same plan via the
+    reversible soft-archive ``merge_knowledge`` primitive: dry-run by default,
+    ``--commit --yes`` to actually fold each secondary into its primary. Never
+    hard-deletes and exposes no agent-facing apply tool.
     """
     import os as _os
     from piia_engram.core import Engram
@@ -5172,19 +5172,15 @@ def _run_merge(args: list[str]) -> int:
     if args and args[0] == "apply":
         return _run_merge_apply(eng, args[1:])
 
+    from piia_engram.merge_apply import apply_merge, render_merge_apply_text
+
     threshold, limit, _ = _parse_merge_opts(args)
-    result = eng.suggest_merges(threshold=threshold, limit=limit)
+    payload = apply_merge(eng, threshold=threshold, limit=limit, dry_run=True)
     if "--json" in args:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
-    print(f"Near-duplicate merge suggestions (threshold={result.get('threshold')}):")
-    for s in result.get("suggestions", []):
-        print(
-            f"  - [{s.get('type')}] sim={s.get('similarity')} "
-            f"{s.get('primary_id')} <- {s.get('secondary_id')}"
-        )
-    print(f"  total: {result.get('total_candidates', 0)} "
-          "(run 'engram merge apply --commit --yes' to fold them)")
+    print(render_merge_apply_text(payload))
+    print("  run 'engram merge apply --commit --yes' to fold them")
     return 0
 
 
@@ -5260,6 +5256,8 @@ def _run_reconcile(args: list[str]) -> int:
     from piia_engram.core import Engram
     from piia_engram.reconcile_apply import (
         apply_reconcile,
+        preview_reconcile_conflicts,
+        render_reconcile_conflicts_text,
         render_reconcile_apply_text,
     )
 
@@ -5267,6 +5265,7 @@ def _run_reconcile(args: list[str]) -> int:
         print(
             "Usage:\n"
             "  engram reconcile [--json]                 Metadata-only import proposal\n"
+            "  engram reconcile conflicts [--json]       Metadata-only conflict preview\n"
             "  engram reconcile apply [--commit] [--yes] [--json]\n"
             "                                            Owner-confirmed import-only apply\n"
             "                                            (default = dry-run preview; --commit --yes to import)\n"
@@ -5279,8 +5278,20 @@ def _run_reconcile(args: list[str]) -> int:
 
     json_output = "--json" in args
     apply = bool(args) and args[0] == "apply"
+    conflicts = bool(args) and args[0] == "conflicts"
     confirm = "--yes" in args
     commit = apply and "--commit" in args
+
+    if conflicts:
+        payload = preview_reconcile_conflicts(
+            eng, candidates,
+            source="memory_files",
+        )
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(render_reconcile_conflicts_text(payload))
+        return 0
 
     payload = apply_reconcile(
         eng, candidates,

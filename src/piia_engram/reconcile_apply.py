@@ -33,6 +33,7 @@ from typing import Any
 from . import reconcile_proposal as _rp
 
 APPLY_ACTION = "reconcile_import_apply"
+CONFLICTS_PREVIEW_ACTION = "reconcile_conflicts_preview"
 
 # Per-candidate outcome codes (metadata only).
 OUTCOME_PLANNED = "planned"
@@ -148,6 +149,49 @@ def apply_reconcile(
     )
 
 
+def preview_reconcile_conflicts(
+    eng,
+    candidates: list[dict[str, Any]] | None,
+    *,
+    existing: list[dict[str, Any]] | None = None,
+    source: str = "",
+) -> dict[str, Any]:
+    """Return a metadata-only owner preview of reconcile conflicts.
+
+    This is deliberately read-only: it uses the same proposal classifier as the
+    import apply path, then keeps only ``action=conflict`` rows. It never imports,
+    supersedes, overwrites, or echoes candidate/existing bodies.
+    """
+    candidates = [c for c in (candidates or []) if isinstance(c, dict)]
+    if existing is None:
+        existing = _load_existing(eng)
+    proposal = _rp.build_reconcile_proposal(candidates, existing, source=source)
+    conflicts = [
+        {
+            "candidate_ref": idx,
+            "action": item.get("action", "skip"),
+            "reason": item.get("reason", ""),
+            "entry_type": item.get("entry_type", "unknown"),
+            "best_score": item.get("best_score", 0.0),
+            "match_id": item.get("match_id", ""),
+            "outcome": OUTCOME_NOOP,
+        }
+        for idx, item in enumerate(proposal.get("items", []))
+        if item.get("action") == "conflict"
+    ]
+    counts = dict(proposal.get("counts", {}))
+    return {
+        "schema": 1,
+        "action": CONFLICTS_PREVIEW_ACTION,
+        "source": source,
+        "dry_run": True,
+        "changed": False,
+        "counts": counts,
+        "items": conflicts,
+        "note": "metadata-only conflict preview; no existing knowledge is mutated",
+    }
+
+
 def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) -> str:
     """Import a single candidate via the existing write API; return its new id.
 
@@ -251,4 +295,23 @@ def render_reconcile_apply_text(payload: dict[str, Any]) -> str:
         "  import-only: duplicates / conflicts are surfaced but never mutate "
         "existing knowledge (conflict resolution is deferred)."
     )
+    return "\n".join(lines)
+
+
+def render_reconcile_conflicts_text(payload: dict[str, Any]) -> str:
+    """Render conflict preview as an owner-facing, metadata-only digest."""
+    counts = payload.get("counts", {})
+    lines = [
+        "Reconcile conflicts preview - metadata only",
+        f"  conflicts: {counts.get('conflict', 0)}  "
+        f"duplicates: {counts.get('duplicate', 0)}  "
+        f"imports: {counts.get('import', 0)}",
+    ]
+    for it in payload.get("items", [])[:50]:
+        lines.append(
+            f"    - candidate#{it.get('candidate_ref')} "
+            f"type={it.get('entry_type')} score={it.get('best_score')} "
+            f"match={it.get('match_id') or 'none'} reason={it.get('reason')}"
+        )
+    lines.append("  read-only: conflicts are not imported, superseded, or overwritten.")
     return "\n".join(lines)

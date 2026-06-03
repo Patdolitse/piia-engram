@@ -210,6 +210,23 @@ def test_merge_apply_audit_is_metadata_only(tmp_path, monkeypatch):
 # --- CLI surface (owner-only) ----------------------------------------------
 
 
+def test_cli_merge_preview_json_is_metadata_only(tmp_path, monkeypatch, capsys):
+    from piia_engram.core import Engram
+    from piia_engram.setup_wizard import _run_merge
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    _add_dup_pair(Engram())
+
+    assert _run_merge(["--threshold", "0.3", "--json"]) == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["dry_run"] is True
+    assert "items" in payload
+    assert "primary_summary" not in out
+    assert "secondary_summary" not in out
+    assert SECRET not in out
+
+
 def test_cli_merge_apply_commit_requires_confirm(tmp_path, monkeypatch, capsys):
     from piia_engram.core import Engram
     from piia_engram.setup_wizard import _run_merge

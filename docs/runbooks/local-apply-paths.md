@@ -27,8 +27,9 @@ Every apply path below obeys the same gate (mirrors `engram lifecycle apply`):
 
 Module: `src/piia_engram/merge_apply.py`. CLI: `engram merge`.
 
-- `engram merge [--threshold T] [--limit N]` - read-only near-duplicate
-  suggestions (`suggest_merges`), metadata only.
+- `engram merge [--threshold T] [--limit N] [--json]` - read-only
+  near-duplicate preview using the same metadata-only dry-run payload as
+  `engram merge apply`. It does not echo suggestion summaries or stored bodies.
 - `engram merge apply [--pair PRIMARY:SECONDARY ...] [--commit] [--yes]` -
   folds each secondary into its primary via the existing **reversible soft
   archive** `Engram.merge_knowledge`. The secondary is marked
@@ -57,6 +58,10 @@ Module: `src/piia_engram/reconcile_apply.py`. CLI: `engram reconcile`.
   metadata-only no-ops and **never mutate an existing lesson or decision**.
   Conflict->supersede resolution is **deferred** to a later, separately-reviewed
   slice (a conflict today only reports "same question, different choice").
+- `engram reconcile conflicts [--json]` is the conflict-preview v2 surface. It
+  returns only candidate indexes, action/reason/type, scores, and match ids. It
+  never imports, supersedes, overwrites, or echoes question/choice/reasoning
+  bodies.
 - No public / agent mutation surface is added.
 
 Tests: `tests/test_reconcile_apply.py` (dry-run/ fail-closed/ import-only/
@@ -99,10 +104,36 @@ the relation edges) and passes them in. The dashboard remains read-mostly /
 proposal-only: it surfaces the counts and the explicit commands to act on them,
 and exposes no destructive control.
 
-Tests: `tests/test_owner_dashboard.py` (readiness present/ reflects reports/
-rendered metadata-only/ CLI end-to-end).
+For future GUI work, `engram dashboard --json` also exposes:
 
-## 5. What is intentionally NOT here
+```
+next_action: {code, command, count, reason}
+actions[]:   {code, label, command, count, risk, executes=false}
+```
+
+These are metadata-only action descriptors. They are safe for a UI to render,
+but they do not execute commands and do not add one-click mutation.
+
+## 5. Telemetry dashboard password rotation helper
+
+Remote dashboard password rotation is handled by:
+
+```
+powershell -File ./scripts/rotate_telemetry_dashboard_password.ps1 -Generate
+powershell -File ./scripts/rotate_telemetry_dashboard_password.ps1 -Generate -Apply
+```
+
+The helper is owner-handoff first: it prints the generated/supplied
+`DASH_PASSWORD` so the owner can record it privately, then writes the Cloudflare
+Worker secret only when `-Apply` is present. Generated passwords are shell-safe
+(`A-Z`, `a-z`, `0-9`, `_`, `-`) and the apply path uses no-newline stdin to
+avoid accidentally storing a trailing newline or an empty secret.
+
+Tests: `tests/test_owner_dashboard.py` (readiness present/ reflects reports/
+GUI-safe action metadata/ rendered metadata-only/ CLI end-to-end) and
+`tests/test_telemetry_dashboard_password_rotation.py`.
+
+## 6. What is intentionally NOT here
 
 - No new agent-facing MCP apply tool (all surfaces are owner CLI).
 - No telemetry schema/event expansion.

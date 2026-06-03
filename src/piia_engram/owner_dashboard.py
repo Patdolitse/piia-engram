@@ -141,6 +141,8 @@ def build_owner_dashboard(
             "superseded": int(ver_totals.get("superseded", 0) or 0),
         },
     }
+    next_action = _recommend_next_action(readiness)
+    actions = _build_action_metadata(readiness)
 
     return {
         "generated_at": now.replace(microsecond=0).isoformat(),
@@ -150,8 +152,121 @@ def build_owner_dashboard(
         "export_readiness": export_readiness,
         "telemetry": telemetry_readiness,
         "readiness": readiness,
+        "next_action": next_action,
+        "actions": actions,
         "note": "read-only metadata; proposals require explicit owner action",
     }
+
+
+def _recommend_next_action(readiness: dict[str, Any]) -> dict[str, Any]:
+    """Pick one owner-facing next action from metadata-only readiness counts."""
+    rec = readiness.get("reconcile", {})
+    lifecycle = readiness.get("lifecycle", {})
+    merge = readiness.get("merge", {})
+    version = readiness.get("version_chain", {})
+    candidates = [
+        (
+            int(rec.get("conflict", 0) or 0),
+            "review_reconcile_conflicts",
+            "engram reconcile conflicts",
+            "Review reconcile conflicts before importing or merging anything.",
+        ),
+        (
+            int(rec.get("import", 0) or 0),
+            "preview_reconcile_imports",
+            "engram reconcile apply",
+            "Preview import-only reconcile candidates.",
+        ),
+        (
+            int(merge.get("candidates", 0) or 0),
+            "preview_merge_candidates",
+            "engram merge",
+            "Preview near-duplicate merge candidates.",
+        ),
+        (
+            int(lifecycle.get("pending_apply", 0) or 0),
+            "preview_lifecycle_archive",
+            "engram lifecycle apply",
+            "Preview lifecycle archive candidates.",
+        ),
+        (
+            int(version.get("superseded", 0) or 0),
+            "review_version_chain_heads",
+            "engram dashboard",
+            "Review version-chain HEAD/superseded counts.",
+        ),
+    ]
+    for count, code, command, reason in candidates:
+        if count > 0:
+            return {
+                "code": code,
+                "command": command,
+                "count": count,
+                "reason": reason,
+            }
+    return {
+        "code": "none",
+        "command": "",
+        "count": 0,
+        "reason": "No owner-confirmed local apply work is pending.",
+    }
+
+
+def _build_action_metadata(readiness: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return GUI-safe owner action metadata; it never executes commands."""
+    rec = readiness.get("reconcile", {})
+    lifecycle = readiness.get("lifecycle", {})
+    merge = readiness.get("merge", {})
+    version = readiness.get("version_chain", {})
+    specs = [
+        (
+            "review_reconcile_conflicts",
+            "Review reconcile conflicts",
+            "engram reconcile conflicts",
+            int(rec.get("conflict", 0) or 0),
+            "read_only",
+        ),
+        (
+            "preview_reconcile_imports",
+            "Preview reconcile imports",
+            "engram reconcile apply",
+            int(rec.get("import", 0) or 0),
+            "dry_run_default",
+        ),
+        (
+            "preview_merge_candidates",
+            "Preview near-duplicate merges",
+            "engram merge",
+            int(merge.get("candidates", 0) or 0),
+            "dry_run_default",
+        ),
+        (
+            "preview_lifecycle_archive",
+            "Preview lifecycle archive",
+            "engram lifecycle apply",
+            int(lifecycle.get("pending_apply", 0) or 0),
+            "dry_run_default",
+        ),
+        (
+            "review_version_chain_heads",
+            "Review version-chain heads",
+            "engram dashboard",
+            int(version.get("superseded", 0) or 0),
+            "read_only",
+        ),
+    ]
+    return [
+        {
+            "code": code,
+            "label": label,
+            "command": command,
+            "count": count,
+            "risk": risk,
+            "executes": False,
+        }
+        for code, label, command, count, risk in specs
+        if count > 0
+    ]
 
 
 def render_dashboard_text(dashboard: dict[str, Any]) -> str:

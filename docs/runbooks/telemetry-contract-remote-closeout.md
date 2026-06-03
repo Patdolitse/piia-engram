@@ -24,6 +24,23 @@ a runbook full of copy-pasteable `--remote` commands against a named database is
 exactly the thing not to hand someone verbatim.) The owner substitutes the real
 values locally at run time.
 
+## Dashboard password rotation
+
+The remote dashboard secret is `DASH_PASSWORD`. Cloudflare Worker secrets cannot
+be read back in plaintext after they are written, so rotation must be
+owner-handoff first: generate or provide the password, show it to the owner, let
+the owner record it in the private credential store, then apply it.
+
+```bash
+powershell -File ./scripts/rotate_telemetry_dashboard_password.ps1 -Generate
+powershell -File ./scripts/rotate_telemetry_dashboard_password.ps1 -Generate -Apply
+```
+
+The script only writes Cloudflare Worker secret state when `-Apply` is present.
+It uses `wrangler secret put DASH_PASSWORD`; changing the secret invalidates
+existing dashboard sessions because the session cookie is derived from
+`DASH_PASSWORD`.
+
 ## What stays user-gated (never run from an assistant pass)
 
 - `wrangler d1 execute ... --remote` (remote D1 migration).

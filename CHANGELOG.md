@@ -14,6 +14,20 @@ tool, no telemetry schema change, no permission/governance change, no hard
 delete, and nothing is published.
 
 ### Added
+- **Product-use flow hardening** - `engram merge --json` now returns the same
+  metadata-only dry-run apply payload as `engram merge apply`, so preview JSON
+  never echoes suggestion summaries or stored bodies.
+- **Reconcile conflict preview v2** - `engram reconcile conflicts [--json]`
+  surfaces conflict counts and match ids only. It is read-only, metadata-only,
+  and never imports, supersedes, or overwrites existing decisions.
+- **GUI-safe owner actions** - `engram dashboard --json` now includes
+  `next_action` plus an `actions` list with code/label/command/count/risk and
+  `executes=false`, giving a future UI safe metadata to render without adding
+  one-click mutation.
+- **Telemetry dashboard password rotation helper** -
+  `scripts/rotate_telemetry_dashboard_password.ps1` generates or accepts a
+  shell-safe `DASH_PASSWORD`, prints it for owner handoff first, and only writes
+  the Cloudflare Worker secret when `-Apply` is present.
 - **Near-duplicate merge apply (N4)** — `engram merge` lists metadata-only
   near-duplicate suggestions; `engram merge apply` previews/folds them via the
   existing reversible `merge_knowledge` soft archive (secondary marked
@@ -36,7 +50,7 @@ delete, and nothing is published.
 
 ### Changed
 - README and README.zh-CN current-state test counts updated to the verified
-  baseline: 2464 passed, 8 skipped, 2472 collected.
+  baseline: 2469 passed, 8 skipped, 2477 collected.
 
 ## [3.47.1] - 2026-06-03
 

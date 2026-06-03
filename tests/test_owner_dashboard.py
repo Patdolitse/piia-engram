@@ -150,6 +150,37 @@ def test_readiness_counts_reflect_supplied_reports():
     assert r["version_chain"] == {"topics": 2, "heads": 2, "superseded": 3}
 
 
+def test_dashboard_recommends_highest_priority_next_action():
+    dash = od.build_owner_dashboard(
+        lessons=_store()["lessons"],
+        reconcile_report={"counts": {"import": 1, "duplicate": 2, "conflict": 3}},
+        merge_report={"total_candidates": 2},
+        version_report={"totals": {"topics": 1, "heads": 1, "superseded": 4}},
+        now=NOW,
+    )
+    action = dash["next_action"]
+    assert action["code"] == "review_reconcile_conflicts"
+    assert action["command"] == "engram reconcile conflicts"
+    assert action["count"] == 3
+
+
+def test_dashboard_exposes_gui_safe_action_metadata():
+    dash = od.build_owner_dashboard(
+        lessons=_store()["lessons"],
+        reconcile_report={"counts": {"import": 1, "duplicate": 0, "conflict": 1}},
+        merge_report={"total_candidates": 2},
+        now=NOW,
+    )
+    actions = dash["actions"]
+    assert {a["code"] for a in actions} >= {
+        "review_reconcile_conflicts",
+        "preview_reconcile_imports",
+        "preview_merge_candidates",
+    }
+    assert all(a["executes"] is False for a in actions)
+    assert all("command" in a and "count" in a and "risk" in a for a in actions)
+
+
 def test_cli_dashboard_includes_readiness(tmp_path, monkeypatch, capsys):
     import json as _json
 
