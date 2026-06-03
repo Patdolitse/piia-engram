@@ -3725,8 +3725,7 @@ async def doctor(output_format: str = "markdown") -> str:
     Args:
         output_format: "markdown" 或 "json"。 / "markdown" or "json".
     """
-    from pathlib import Path as _Path
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     checks: list[dict] = []
 
