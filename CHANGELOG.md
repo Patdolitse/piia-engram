@@ -8,6 +8,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.47.1] - 2026-06-03
+
+Public truth sync patch: Engram now has a machine-readable public facts
+manifest and release/CI gates that block README, manifest, tool-count,
+test-count, and version drift before public publishing.
+
+### Added
+- `docs/public-facts.json` as the local development source of truth for current
+  version, test count, MCP tool split, and telemetry default posture.
+- `scripts/check_public_fact_sync.py`, now run in CI and the PyPI publish
+  workflow before release gates and package upload.
+- `scripts/count_mcp_tools.py`, a deterministic AST-based helper for re-deriving
+  the MCP tool split without importing the package.
+- `docs/runbooks/public-truth-sync.md`, documenting released-vs-dev truth,
+  remote registry boundaries, and the live verification checklist.
+
+### Changed
+- README and README.zh-CN current-state tables now reflect the verified
+  post-guard baseline: 2415 passed, 8 skipped, 2423 collected.
+- The local release-build runbook now includes the public fact sync guard before
+  private-term scanning and release evidence checks.
+
+### Release Evidence
+- See `release-evidence/v3.47.1.md`.
+
 ## [3.47.0] - 2026-06-03
 
 The telemetry completion release: Engram closes the Telemetry Analysis Contract

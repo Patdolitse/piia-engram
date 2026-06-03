@@ -8,6 +8,23 @@
 
 ## [未发布]
 
+## [3.47.1] - 2026-06-03
+
+公开事实同步补丁：Engram 新增机器可读的 public facts manifest，并把公开事实漂移检查接入 CI 和 PyPI publish workflow，防止 README、manifest、工具数、测试数和版本号在发布前再次漂移。
+
+### 新增
+- `docs/public-facts.json`：当前开发树的单一事实源，记录版本、测试数、MCP 工具分层和 telemetry 默认状态。
+- `scripts/check_public_fact_sync.py`：公开事实漂移检查，已接入 CI 和发布流程。
+- `scripts/count_mcp_tools.py`：通过 AST 确定性计算 MCP 工具数，不导入包、不产生副作用。
+- `docs/runbooks/public-truth-sync.md`：说明 dev truth / released truth 的边界、远端 registry 只在发布时更新，以及实时核验清单。
+
+### 变更
+- README 和 README.zh-CN 当前状态表更新为已验证基线：2415 passed、8 skipped、2423 collected。
+- 本地 release-build runbook 将 public fact sync guard 纳入发布前检查。
+
+### Release Evidence
+- 见 `release-evidence/v3.47.1.md`。
+
 ## [3.47.0] - 2026-06-03
 
 遥测收尾版本：Engram 完成 Telemetry Analysis Contract v1/v1.1 闭环，补齐本地就绪校验、仪表盘分析卡片、远端 D1/Worker 收口证据，以及明确的 dashboard 访问控制说明。遥测仍然是 opt-in；不会收集身份、项目路径、prompt、知识正文或自由文本内容。

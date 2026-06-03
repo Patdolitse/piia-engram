@@ -687,7 +687,7 @@ See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.m
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.47.0 (2026-06-03) |
+| | v3.47.1 (2026-06-03) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **16 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
