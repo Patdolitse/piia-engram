@@ -687,12 +687,12 @@ See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.m
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.46.0 (2026-06-03) |
+| | v3.47.0 (2026-06-03) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **16 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **2327** (unit + integration) |
+| Tests passing | **2346** (unit + integration; 8 skipped) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **2443** (facade + mixins total ~6000; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |

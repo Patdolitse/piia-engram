@@ -134,8 +134,8 @@ delete in step 8.
 ```bash
 curl -s -X POST https://<telemetry-worker-host>/v1/events \
   -H 'Content-Type: application/json' \
-  -d '{"schema":1,"daily_id":"smoke_full_000","engram_version":"3.46.0",
-       "prev_version":"3.45.2","session_type":"regular",
+  -d '{"schema":1,"daily_id":"smoke_full_000","engram_version":"3.47.0",
+       "prev_version":"3.46.0","session_type":"regular",
        "install_age_bucket":"31_plus_days","error_categories":{"timeout":1},
        "contract_version":"1.1","version_adoption":"upgrade",
        "activation_state":"activated","returning_bucket":"returning",

@@ -8,10 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
-### Planned — v3.47.0 Telemetry Completion (local prep, not yet released)
+## [3.47.0] - 2026-06-03
 
-Local, additive prep to make telemetry release-ready without any remote action.
-No package version bump and no opt-in default change.
+The telemetry completion release: Engram closes the Telemetry Analysis Contract
+v1/v1.1 loop with local readiness validation, dashboard analysis tiles, remote
+D1/Worker closeout evidence, and explicit dashboard access-control guidance.
+Telemetry remains opt-in; no identity, project path, prompt, knowledge body, or
+free-text content is collected.
 
 - **`engram telemetry-validate --remote-readiness`** — a pure, read-only
   pre-deploy checklist (payload↔schema mapping, worker event/feedback
@@ -27,15 +30,30 @@ No package version bump and no opt-in default change.
   → cleanup → rollback) with host/DB placeholders; the v1 and v1.1 runbooks now
   cross-link to it.
 - **Telemetry privacy evidence** (`docs/telemetry-privacy.md`) — the explicit
-  opt-in / no-content / rotating-daily-id / user-gated-activation statement.
+  opt-in / no-content / rotating-daily-id / user-gated-activation statement,
+  including the dashboard `DASH_PASSWORD` boundary.
 - **Local worker smoke harness** — static tests pinning the three insert tiers
   (full v1.1 → v1 fallback → legacy), content-field rejection, and dashboard
   labels, with an optional node execution harness under `worker/test/`.
 - Fixed a latent `parse_added_columns` false positive that read a column name
   out of an SQL comment.
 
-All remote actions (D1 migration apply, worker deploy, smoke insert/cleanup)
-remain user-gated and were not performed.
+### Operations
+- After explicit user confirmation, the remote D1 schema was migrated to 19
+  columns, the `engram-telemetry` Worker was deployed, a smoke event verified
+  P0/P1 persistence and was deleted, and `DASH_PASSWORD` was set for the live
+  dashboard.
+- Final remote telemetry count after cleanup: 12 events and 2 anonymous daily-id
+  buckets.
+
+### Tests
+- Telemetry readiness: `READY` (9/9 checks).
+- Telemetry Python tests: 122 passed.
+- Worker/v1.1 tests: 26 passed.
+- Worker smoke harness: all smoke checks passed.
+
+### Release Evidence
+- See `release-evidence/v3.47.0.md`.
 
 ## [3.46.0] - 2026-06-03
 

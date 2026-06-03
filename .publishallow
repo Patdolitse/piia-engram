@@ -80,6 +80,7 @@ docs/listing-copy.md
 docs/runbooks/memory-lifecycle.md
 docs/runbooks/release-build-check.md
 docs/runbooks/setup-upgrade-safety.md
+docs/runbooks/telemetry-contract-remote-closeout.md
 docs/runbooks/telemetry-contract-v1-remote-closeout.md
 docs/runbooks/telemetry-contract-v1_1-remote-closeout.md
 docs/specs/agents-md-export-contract.md
@@ -96,6 +97,7 @@ docs/superpowers/plans/2026-05-31-trust-resume-portability-foundation.md
 docs/superpowers/plans/2026-05-31-v342-install-gui-entry-validation.md
 docs/superpowers/specs/2026-05-30-gui-entry-doctor-probe-design.md
 docs/superpowers/specs/2026-05-30-v340-first-run-confidence-design.md
+docs/telemetry-privacy.md
 docs/trust.md
 
 # Agent ecosystem entrypoints (public, reviewed; no private workflow content)

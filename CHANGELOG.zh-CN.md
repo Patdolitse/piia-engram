@@ -8,18 +8,29 @@
 
 ## [未发布]
 
-### 计划中 —— v3.47.0 遥测收尾（本地准备，尚未发布）
+## [3.47.0] - 2026-06-03
 
-本地、增量的收尾工作，使遥测达到可发布状态，且不执行任何远端动作。不升版本号、不改 opt-in 默认值。
+遥测收尾版本：Engram 完成 Telemetry Analysis Contract v1/v1.1 闭环，补齐本地就绪校验、仪表盘分析卡片、远端 D1/Worker 收口证据，以及明确的 dashboard 访问控制说明。遥测仍然是 opt-in；不会收集身份、项目路径、prompt、知识正文或自由文本内容。
 
 - **`engram telemetry-validate --remote-readiness`** —— 纯只读的部署前检查清单（payload↔schema 映射、worker 事件/反馈白名单、两个迁移文件、v1 先于 v1.1 的顺序、仪表盘"匿名日 ID"措辞 + v1.1 分桶卡片、客户端默认 opt-out、无内容字段）。不执行任何网络/D1/部署动作。
 - **仪表盘 v1.1 分析卡片** —— worker 仪表盘新增 v1.1 派生分桶（版本采纳、知识激活、匿名回访分桶、错误趋势），以 v1.1 迁移为前提渲染，并标注为匿名日 ID 分桶（绝不声称"独立用户"）。
 - **整合远端收尾 runbook** —— 单一规范流程（校验 → v1 迁移 → v1.1 迁移 → 部署 → 健康检查 → 冒烟 → 校验 → 清理 → 回滚），主机/数据库用占位符；v1 与 v1.1 runbook 交叉链接到它。
-- **遥测隐私证据**（`docs/telemetry-privacy.md`）—— 明确的 opt-in / 无内容 / 轮换日 ID / 远端激活需用户授权 的声明。
+- **遥测隐私证据**（`docs/telemetry-privacy.md`）—— 明确的 opt-in / 无内容 / 轮换日 ID / 远端激活需用户授权声明，并补充 dashboard `DASH_PASSWORD` 边界。
 - **本地 worker 冒烟测试** —— 静态测试锁定三层 insert（完整 v1.1 → v1 回退 → legacy）、内容字段拒绝、仪表盘标签，并在 `worker/test/` 下附可选 node 执行 harness。
 - 修复 `parse_added_columns` 把 SQL 注释里的词误读为列名的潜在 bug。
 
-所有远端动作（D1 迁移、worker 部署、冒烟插入/清理）仍需用户授权，本次未执行。
+### 运维
+- 经用户明确确认后，远端 D1 schema 已迁移到 19 列，`engram-telemetry` Worker 已部署，临时冒烟事件验证 P0/P1 落库后已删除，并已为线上 dashboard 设置 `DASH_PASSWORD`。
+- 清理后远端遥测真实计数：12 条事件、2 个匿名日 ID 分桶。
+
+### 测试
+- 遥测就绪检查：`READY`（9/9 项通过）。
+- 遥测 Python 测试：122 passed。
+- Worker/v1.1 测试：26 passed。
+- Worker smoke harness：全部通过。
+
+### Release Evidence
+- 见 `release-evidence/v3.47.0.md`。
 
 ## [3.46.0] - 2026-06-03
 
