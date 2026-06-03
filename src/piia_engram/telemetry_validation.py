@@ -63,6 +63,29 @@ V1_1_DERIVED_COLUMNS = frozenset({
     "returning_bucket", "error_trend",
 })
 
+# The four P0 metadata columns added by the v1 contract. The v1.1 migration must
+# NOT re-add these (proper sequencing: v1 lands them, v1.1 only adds the derived
+# buckets), so the validator can confirm "apply v1 before v1.1" statically.
+V1_P0_COLUMNS = frozenset({
+    "prev_version", "session_type", "install_age_bucket", "error_categories",
+})
+
+# Migration filenames (relative to ``worker/migrations``). Order matters: v1
+# before v1.1.
+V1_MIGRATION_NAME = "20260603_telemetry_contract_v1.sql"
+V1_1_MIGRATION_NAME = "20260603_telemetry_contract_v1_1.sql"
+
+# Dashboard wording the worker MUST keep (anonymous daily-id language) and MUST
+# NOT use (unique-person claims) anywhere a daily_id is being counted. The
+# remote-readiness check and the worker-contract tests both reference these so a
+# single edit can't silently reintroduce a "unique users" claim.
+DASHBOARD_REQUIRED_WORDING = ("匿名日 ID", "daily_id 按 UTC 日期轮换")
+DASHBOARD_FORBIDDEN_WORDING = ("独立用户", "用户数")
+# The v1.1 analysis tiles (all anonymous-daily-id based). Labels are chosen to be
+# distinct from the v1 "首跑激活" session-type tile so the two contracts don't
+# blur together on the dashboard.
+DASHBOARD_V1_1_LABELS = ("版本采纳", "知识激活", "匿名回访分桶", "错误趋势")
+
 # Field-name fragments that would indicate stored *content* (not metadata). The
 # telemetry boundary is metadata-only, so none of these may appear as a payload
 # key or a schema column name.
@@ -119,9 +142,13 @@ def parse_schema_columns(schema_sql: str, table: str = "events") -> set[str]:
 
 
 def parse_added_columns(migration_sql: str) -> set[str]:
-    """Extract column names from ``ALTER TABLE ... ADD COLUMN <name>`` statements."""
+    """Extract column names from ``ALTER TABLE ... ADD COLUMN <name>`` statements.
+
+    Comments are stripped first so prose like ``-- ADD COLUMN is not idempotent``
+    can't inject a phantom column name (e.g. ``is``)."""
+    sql = _strip_sql_comments(migration_sql)
     return set(re.findall(r"ADD\s+COLUMN\s+([A-Za-z_][A-Za-z0-9_]*)",
-                          migration_sql, re.IGNORECASE))
+                          sql, re.IGNORECASE))
 
 
 def parse_js_string_set(js_source: str, var_name: str) -> set[str]:
@@ -290,6 +317,220 @@ def render_validation_text(report: dict[str, Any]) -> str:
              f"  payload fields: {len(report.get('payload_fields', []))}"]
     for p in report.get("problems", []):
         lines.append(f"  - {p}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Remote-readiness report (still pure / local / read-only)
+# ---------------------------------------------------------------------------
+#
+# A pre-deploy checklist the maintainer can run *before* touching any remote D1
+# or worker. It composes the static contract check above with extra checks that
+# matter specifically for a remote rollout: the v1 migration is present, the two
+# migrations are sequenced correctly (v1 lands the P0 columns, v1.1 only adds the
+# derived buckets), the dashboard keeps anonymous-daily-id wording and carries
+# the v1.1 analysis tiles, the client's opt-in/opt-out defaults are unchanged,
+# and no surface carries a content field. It performs NO network/D1/deploy
+# action — it only reads files and the declared contract.
+
+
+def validate_optin_defaults(telemetry_src: str) -> tuple[bool, list[str]]:
+    """Confirm the client keeps telemetry opt-*out* by default and gates remote
+    + feedback sends behind their own consent. Static source scan — never runs
+    the module. Returns ``(ok, problems)``."""
+    problems: list[str] = []
+    src = telemetry_src or ""
+    if not src:
+        return False, ["missing telemetry.py source"]
+    # Local stats default OFF: is_enabled falls back to the stored flag defaulting
+    # to False.
+    if 'get("enabled", False)' not in src:
+        problems.append("local telemetry default is not opt-out (enabled→False)")
+    # The gate pattern: ``if not is_enabled():`` immediately followed by a
+    # ``return False`` (so enabling local stats can't silently turn on a
+    # downstream send). Matched as a unit so a stray ``return False`` elsewhere
+    # in the body doesn't satisfy the check on its own.
+    gate_re = re.compile(r"if not is_enabled\(\):\s*\n\s*return False")
+    # Remote send requires local stats first.
+    if "def is_remote_enabled" in src:
+        body = src.split("def is_remote_enabled", 1)[1].split("\ndef ", 1)[0]
+        if not gate_re.search(body):
+            problems.append("is_remote_enabled does not gate on is_enabled()")
+        if 'get("remote_enabled", False)' not in body:
+            problems.append("remote send default is not opt-out (remote_enabled→False)")
+    else:
+        problems.append("is_remote_enabled missing")
+    # Feedback send requires local stats first and its own consent.
+    if "def is_feedback_enabled" in src:
+        body = src.split("def is_feedback_enabled", 1)[1].split("\ndef ", 1)[0]
+        if not gate_re.search(body):
+            problems.append("is_feedback_enabled does not gate on is_enabled()")
+        if 'get("feedback_enabled", False)' not in body:
+            problems.append("feedback default is not opt-out (feedback_enabled→False)")
+    else:
+        problems.append("is_feedback_enabled missing")
+    return (not problems), problems
+
+
+def validate_dashboard_wording(worker_js: str) -> tuple[bool, list[str]]:
+    """Confirm the dashboard counts anonymous daily IDs (never claims unique
+    people) and renders the v1.1 analysis tiles. Static source scan. Returns
+    ``(ok, problems)``."""
+    problems: list[str] = []
+    src = worker_js or ""
+    if not src:
+        return False, ["missing worker/src/index.js"]
+    for token in DASHBOARD_REQUIRED_WORDING:
+        if token not in src:
+            problems.append(f"dashboard missing required daily-id wording: {token!r}")
+    for token in DASHBOARD_FORBIDDEN_WORDING:
+        if token in src:
+            problems.append(f"dashboard uses unique-person claim: {token!r}")
+    for label in DASHBOARD_V1_1_LABELS:
+        if label not in src:
+            problems.append(f"dashboard missing v1.1 analysis tile label: {label!r}")
+    return (not problems), problems
+
+
+def _default_package_src(worker_dir: Path) -> Path:
+    """Best-effort path to the installed/source ``telemetry.py`` relative to the
+    worker dir (``<repo>/worker`` → ``<repo>/src/piia_engram/telemetry.py``)."""
+    return worker_dir.parent / "src" / "piia_engram" / "telemetry.py"
+
+
+def validate_remote_readiness(
+    worker_dir: str | Path,
+    *,
+    package_src: str | Path | None = None,
+) -> dict[str, Any]:
+    """Produce a local, read-only remote-readiness report.
+
+    Returns a dict with an overall ``ok`` plus a ``checks`` list — one entry per
+    named check (``name``, ``ok``, ``detail``, ``problems``) — and a flattened
+    ``problems`` list. Never raises on a missing file and never performs any
+    network/D1/deploy action.
+
+    Checks: client payload fields, worker event allowlist, worker feedback
+    allowlist, schema columns, v1/v1.1 migration files, dashboard wording,
+    opt-in defaults, no content fields, and D1 migration sequencing (v1 before
+    v1.1).
+    """
+    wdir = Path(worker_dir).expanduser().resolve()
+    contract = validate_telemetry_contract(wdir)
+    checks: list[dict[str, Any]] = []
+
+    def add(name: str, problems: list[str], detail: str) -> None:
+        checks.append({
+            "name": name,
+            "ok": not problems,
+            "detail": detail,
+            "problems": problems,
+        })
+
+    # 1. Client payload fields ↔ schema columns (reuse the contract check).
+    events_columns = set(contract.get("events_columns", []))
+    payload_problems = [
+        f"{key} -> {col}"
+        for key, col in PAYLOAD_TO_COLUMN.items()
+        if col not in events_columns
+    ]
+    add("client_payload_fields", payload_problems,
+        f"{len(PAYLOAD_TO_COLUMN)} declared payload fields")
+
+    # 4. Schema columns present (events table parsed).
+    schema_problems = [] if events_columns else ["events table has no columns / schema.sql missing"]
+    add("schema_columns", schema_problems, f"{len(events_columns)} events columns")
+
+    # 2/3. Worker allowlists in sync (lift the drift problems from the contract).
+    allow_problems = [
+        p for p in contract.get("problems", [])
+        if "allowlist drift" in p or "content-bearing worker allowlist" in p
+    ]
+    ev_allow = contract.get("worker_event_allowlist", [])
+    fb_allow = contract.get("worker_feedback_allowlist", [])
+    add("worker_event_allowlist",
+        [p for p in allow_problems if "event allowlist" in p],
+        f"{len(ev_allow)} event allowlist fields")
+    add("worker_feedback_allowlist",
+        [p for p in allow_problems if "feedback allowlist" in p],
+        f"{len(fb_allow)} feedback allowlist fields")
+
+    # 5 + 9. Migration files present and sequenced (v1 before v1.1).
+    mig_dir = wdir / "migrations"
+    v1_path = mig_dir / V1_MIGRATION_NAME
+    v1_1_path = mig_dir / V1_1_MIGRATION_NAME
+    seq_problems: list[str] = []
+    v1_added: set[str] = set()
+    v1_1_added: set[str] = set()
+    if v1_path.is_file():
+        v1_added = parse_added_columns(v1_path.read_text(encoding="utf-8"))
+        missing_p0 = sorted(V1_P0_COLUMNS - v1_added)
+        if missing_p0:
+            seq_problems.append(f"v1 migration missing P0 columns: {missing_p0}")
+    else:
+        seq_problems.append(f"missing v1 migration: {V1_MIGRATION_NAME}")
+    if v1_1_path.is_file():
+        v1_1_added = parse_added_columns(v1_1_path.read_text(encoding="utf-8"))
+        missing_p1 = sorted(V1_1_DERIVED_COLUMNS - v1_1_added)
+        if missing_p1:
+            seq_problems.append(f"v1.1 migration missing derived columns: {missing_p1}")
+        # Sequencing: v1.1 must not re-add the P0 columns (those are v1's job);
+        # overlap would mean v1.1 can't be applied after v1 without erroring.
+        overlap = sorted(V1_P0_COLUMNS & v1_1_added)
+        if overlap:
+            seq_problems.append(
+                f"v1.1 migration re-adds P0 columns (apply-after-v1 would fail): {overlap}")
+    else:
+        seq_problems.append(f"missing v1.1 migration: {V1_1_MIGRATION_NAME}")
+    # Lexical ordering sanity: the v1 file name sorts before the v1.1 file name,
+    # so a plain `migrations apply` runs them in the right order.
+    if V1_MIGRATION_NAME >= V1_1_MIGRATION_NAME:
+        seq_problems.append("migration filenames do not sort v1 before v1.1")
+    add("migration_files",
+        [p for p in seq_problems if "missing" in p],
+        f"v1 adds {len(v1_added)}, v1.1 adds {len(v1_1_added)} columns")
+    add("migration_sequencing",
+        [p for p in seq_problems if "re-adds" in p or "do not sort" in p],
+        "v1 (P0) then v1.1 (derived buckets)")
+
+    # 6. Dashboard wording + v1.1 tiles.
+    index_path = wdir / "src" / "index.js"
+    worker_js = index_path.read_text(encoding="utf-8") if index_path.is_file() else ""
+    dash_ok, dash_problems = validate_dashboard_wording(worker_js)
+    add("dashboard_wording", dash_problems, "anonymous daily-id wording + v1.1 tiles")
+
+    # 7. Opt-in / opt-out defaults unchanged.
+    src_path = Path(package_src) if package_src else _default_package_src(wdir)
+    telemetry_src = src_path.read_text(encoding="utf-8") if src_path.is_file() else ""
+    optin_ok, optin_problems = validate_optin_defaults(telemetry_src)
+    add("optin_defaults", optin_problems, "telemetry opt-out by default; remote/feedback gated")
+
+    # 8. No content fields anywhere (reuse the contract's content findings).
+    content_problems = [p for p in contract.get("problems", []) if "content-bearing" in p]
+    add("no_content_fields", content_problems, "metadata-only across payload/schema/migration/worker")
+
+    flat_problems: list[str] = []
+    for c in checks:
+        flat_problems.extend(c["problems"])
+
+    return {
+        "worker_dir": str(wdir),
+        "package_src": str(src_path),
+        "checks": checks,
+        "contract_ok": contract.get("ok", False),
+        "problems": flat_problems,
+        "ok": not flat_problems,
+    }
+
+
+def render_readiness_text(report: dict[str, Any]) -> str:
+    status = "READY" if report.get("ok") else f"{len(report.get('problems', []))} blocker(s)"
+    lines = [f"Telemetry remote-readiness: {status}"]
+    for c in report.get("checks", []):
+        mark = "ok " if c["ok"] else "XX "
+        lines.append(f"  [{mark}] {c['name']}: {c['detail']}")
+        for p in c.get("problems", []):
+            lines.append(f"         - {p}")
     return "\n".join(lines)
 
 

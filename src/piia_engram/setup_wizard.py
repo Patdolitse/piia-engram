@@ -4798,15 +4798,34 @@ def _run_telemetry_validate(args: list[str]) -> int:
     content-bearing field exists on either side. Performs NO remote action.
     """
     from piia_engram.telemetry_validation import (
+        render_readiness_text,
         render_validation_text,
+        validate_remote_readiness,
         validate_telemetry_contract,
     )
 
     if args and args[0] in {"-h", "--help"}:
-        print("Usage:\n  engram telemetry-validate [--json]\n")
+        print(
+            "Usage:\n"
+            "  engram telemetry-validate [--json]\n"
+            "  engram telemetry-validate --remote-readiness [--json]\n"
+            "\n"
+            "  --remote-readiness  Pre-deploy checklist (payload/schema/migration\n"
+            "                      sequencing, dashboard wording, opt-in defaults,\n"
+            "                      no content fields). Read-only; performs no remote\n"
+            "                      D1/worker action.\n"
+        )
         return 0
 
     worker_dir = Path.cwd() / "worker"
+    if "--remote-readiness" in args:
+        report = validate_remote_readiness(worker_dir)
+        if "--json" in args:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(render_readiness_text(report))
+        return 0 if report.get("ok") else 1
+
     report = validate_telemetry_contract(worker_dir)
     if "--json" in args:
         print(json.dumps(report, ensure_ascii=False, indent=2))

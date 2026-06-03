@@ -230,3 +230,104 @@ def test_contract_validation_flags_drifted_worker_allowlist(tmp_path):
     report = tv.validate_telemetry_contract(tmp_path)
     assert report["ok"] is False
     assert any("worker event allowlist drift" in p for p in report["problems"])
+
+
+# --- remote-readiness report (pure/local/read-only) --------------------------
+
+TELEMETRY_SRC = ROOT / "src" / "piia_engram" / "telemetry.py"
+
+
+def test_real_remote_readiness_is_green():
+    report = tv.validate_remote_readiness(WORKER)
+    assert report["ok"], report["problems"]
+    names = {c["name"] for c in report["checks"]}
+    # Every required dimension is reported.
+    assert names == {
+        "client_payload_fields", "schema_columns",
+        "worker_event_allowlist", "worker_feedback_allowlist",
+        "migration_files", "migration_sequencing",
+        "dashboard_wording", "optin_defaults", "no_content_fields",
+    }
+    assert all(c["ok"] for c in report["checks"])
+
+
+def test_render_readiness_text_smoke():
+    report = tv.validate_remote_readiness(WORKER)
+    text = tv.render_readiness_text(report)
+    assert "READY" in text
+    assert "migration_sequencing" in text
+
+
+def test_readiness_reports_blockers_for_empty_worker(tmp_path):
+    report = tv.validate_remote_readiness(tmp_path)
+    assert report["ok"] is False
+    assert report["problems"]
+    # Still produces every named check even when files are absent.
+    assert len(report["checks"]) == 9
+
+
+def test_parse_added_columns_ignores_commented_prose():
+    # A comment mentioning "ADD COLUMN is ..." must not register a phantom column.
+    sql = (
+        "-- NOTE: ADD COLUMN is NOT idempotent on re-run.\n"
+        "ALTER TABLE events ADD COLUMN version_adoption TEXT NOT NULL DEFAULT '';\n"
+    )
+    assert tv.parse_added_columns(sql) == {"version_adoption"}
+
+
+def test_real_v1_1_migration_adds_exactly_five_columns():
+    mig = (WORKER / "migrations" / tv.V1_1_MIGRATION_NAME).read_text(encoding="utf-8")
+    assert tv.parse_added_columns(mig) == set(tv.V1_1_DERIVED_COLUMNS)
+
+
+def test_optin_defaults_pass_on_real_client():
+    ok, problems = tv.validate_optin_defaults(TELEMETRY_SRC.read_text(encoding="utf-8"))
+    assert ok, problems
+
+
+def test_optin_defaults_flag_an_opt_out_to_opt_in_flip():
+    # Simulate a client that defaults telemetry ON — must be flagged.
+    flipped = TELEMETRY_SRC.read_text(encoding="utf-8").replace(
+        'get("enabled", False)', 'get("enabled", True)')
+    ok, problems = tv.validate_optin_defaults(flipped)
+    assert ok is False
+    assert any("opt-out" in p for p in problems)
+
+
+def test_dashboard_wording_flags_unique_person_claim():
+    fake = "匿名日 ID daily_id 按 UTC 日期轮换 版本采纳 知识激活 匿名回访分桶 错误趋势 独立用户"
+    ok, problems = tv.validate_dashboard_wording(fake)
+    assert ok is False
+    assert any("unique-person" in p for p in problems)
+
+
+def test_dashboard_wording_flags_missing_v1_1_tile():
+    fake = "匿名日 ID daily_id 按 UTC 日期轮换 版本采纳 知识激活 错误趋势"  # no 匿名回访分桶
+    ok, problems = tv.validate_dashboard_wording(fake)
+    assert ok is False
+    assert any("匿名回访分桶" in p for p in problems)
+
+
+def test_readiness_flags_migration_sequencing_overlap(tmp_path):
+    # A v1.1 migration that re-adds a P0 column would fail when applied after v1.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "migrations").mkdir()
+    cols = ", ".join(f"{c} TEXT" for c in sorted(
+        set(tv.PAYLOAD_TO_COLUMN.values()) | tv.V1_1_DERIVED_COLUMNS | tv.V1_P0_COLUMNS))
+    (tmp_path / "schema.sql").write_text(f"CREATE TABLE events ({cols});", encoding="utf-8")
+    (tmp_path / "migrations" / tv.V1_MIGRATION_NAME).write_text(
+        "\n".join(f"ALTER TABLE events ADD COLUMN {c} TEXT;" for c in sorted(tv.V1_P0_COLUMNS)),
+        encoding="utf-8")
+    # v1.1 wrongly re-adds a P0 column (prev_version) alongside the derived buckets.
+    bad = sorted(tv.V1_1_DERIVED_COLUMNS) + ["prev_version"]
+    (tmp_path / "migrations" / tv.V1_1_MIGRATION_NAME).write_text(
+        "\n".join(f"ALTER TABLE events ADD COLUMN {c} TEXT;" for c in bad), encoding="utf-8")
+    ev = ", ".join(f"'{k}'" for k in sorted(set(tv.PAYLOAD_TO_COLUMN) | tv.TRANSPORT_ONLY_KEYS))
+    fb = ", ".join(f"'{k}'" for k in sorted(tv.FEEDBACK_ALLOWED_KEYS))
+    (tmp_path / "src" / "index.js").write_text(
+        f"const ALLOWED_FIELDS = new Set([{ev}]);\n"
+        f"const FEEDBACK_ALLOWED_FIELDS = new Set([{fb}]);\n", encoding="utf-8")
+    report = tv.validate_remote_readiness(tmp_path)
+    seq = next(c for c in report["checks"] if c["name"] == "migration_sequencing")
+    assert seq["ok"] is False
+    assert any("re-adds P0" in p for p in seq["problems"])
