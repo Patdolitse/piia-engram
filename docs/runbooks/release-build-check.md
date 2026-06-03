@@ -49,6 +49,9 @@ publicly. It fails closed (exit 1) with an actionable message for each gap.
 # Full test suite (must be green before shipping)
 python -m pytest tests -q
 
+# Public truth drift guard (README/docs/manifests must match docs/public-facts.json)
+python scripts/check_public_fact_sync.py
+
 # Tracked-tree private-term sanitizer (high=0 required)
 python scripts/release_sanitize_check.py --staged --strict   # staged only
 python scripts/release_sanitize_check.py --strict            # whole tree

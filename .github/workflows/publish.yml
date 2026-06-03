@@ -43,6 +43,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Public fact sync gate
+        run: python scripts/check_public_fact_sync.py
+
       - name: Release gate (no publish without review evidence)
         run: python scripts/check_release_gate.py
 

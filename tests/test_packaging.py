@@ -225,6 +225,7 @@ def test_publish_workflow_release_trigger_and_trusted_publishing():
     assert "types: [published]" in content
     assert "id-token: write" in content
     assert "environment: pypi" in content
+    assert "check_public_fact_sync.py" in content
     assert "release_sanitize_check.py --internal --strict" in content
     assert "python -m build" in content
     assert "check_release_artifact_private_terms.py dist --strict" in content
@@ -233,6 +234,13 @@ def test_publish_workflow_release_trigger_and_trusted_publishing():
     assert "secrets.PYPI_API_TOKEN" not in content
     assert "password:" not in content
     assert "username:" not in content
+
+
+def test_ci_workflow_runs_public_fact_sync_gate():
+    """CI should catch README/version/tool/test drift before release prep."""
+    content = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert "Public fact sync gate" in content
+    assert "python scripts/check_public_fact_sync.py" in content
 
 
 def test_readme_uses_pypi_install_and_badge():
