@@ -12,6 +12,7 @@ import math
 import os
 import re
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,56 @@ from .storage import (
     _TERM_ALIASES,
     _now_iso,
 )
+
+
+@lru_cache(maxsize=4096)
+def _tokenize_cached(text: str, expand_aliases: bool) -> frozenset[str]:
+    """Pure, process-wide memoized tokenizer.
+
+    Depends only on ``text`` and the import-time-static alias tables
+    (``_ALIAS_LOOKUP`` / ``_TERM_ALIASES``), so the result is stable for a
+    given input and safe to cache without runtime invalidation. The hot search
+    path re-tokenizes the same entry fields on every query; memoizing turns
+    that repeated CPU work into a dict lookup.
+
+    Returns a frozenset so the cached value cannot be mutated by callers.
+    """
+    text_lower = text.lower()
+    tokens: set[str] = set()
+
+    for word in re.split(r"[^a-z0-9]+", text_lower):
+        if not word:
+            continue
+        tokens.add(word)
+        canonical = _ALIAS_LOOKUP.get(word) if expand_aliases else None
+        if canonical:
+            tokens.add(canonical)
+            tokens.update(_TERM_ALIASES.get(canonical, []))
+
+    cjk_chars = [ch for ch in text_lower if "一" <= ch <= "鿿"]
+    for ch in cjk_chars:
+        tokens.add(ch)
+        canonical = _ALIAS_LOOKUP.get(ch) if expand_aliases else None
+        if canonical:
+            tokens.add(canonical)
+            tokens.update(_TERM_ALIASES.get(canonical, []))
+    for i in range(len(cjk_chars) - 1):
+        bigram = cjk_chars[i] + cjk_chars[i + 1]
+        tokens.add(bigram)
+        canonical = _ALIAS_LOOKUP.get(bigram) if expand_aliases else None
+        if canonical:
+            tokens.add(canonical)
+            tokens.update(_TERM_ALIASES.get(canonical, []))
+    if expand_aliases:
+        for i in range(len(cjk_chars) - 2):
+            trigram = cjk_chars[i] + cjk_chars[i + 1] + cjk_chars[i + 2]
+            canonical = _ALIAS_LOOKUP.get(trigram)
+            if canonical:
+                tokens.add(trigram)
+                tokens.add(canonical)
+                tokens.update(_TERM_ALIASES.get(canonical, []))
+
+    return frozenset(tokens)
 
 
 class RetrievalMixin:
@@ -131,57 +182,26 @@ class RetrievalMixin:
     # ------------------------------------------------------------------
 
     def _tokenize(self, text: str, *, expand_aliases: bool = True) -> set[str]:
-        """Tokenize text into character n-grams plus normalized aliases."""
+        """Tokenize text into character n-grams plus normalized aliases.
+
+        Delegates to the process-wide memoized ``_tokenize_cached``. Callers
+        mutate the returned set (e.g. ``_score_item`` does ``.update(...)``), so
+        a fresh ``set`` copy of the cached frozenset is returned each call.
+        """
         if not text:
             return set()
-
-        text_lower = text.lower()
-        tokens: set[str] = set()
-
-        for word in re.split(r"[^a-z0-9]+", text_lower):
-            if not word:
-                continue
-            tokens.add(word)
-            canonical = _ALIAS_LOOKUP.get(word) if expand_aliases else None
-            if canonical:
-                tokens.add(canonical)
-                tokens.update(_TERM_ALIASES.get(canonical, []))
-
-        cjk_chars = [ch for ch in text_lower if "\u4e00" <= ch <= "\u9fff"]
-        for ch in cjk_chars:
-            tokens.add(ch)
-            canonical = _ALIAS_LOOKUP.get(ch) if expand_aliases else None
-            if canonical:
-                tokens.add(canonical)
-                tokens.update(_TERM_ALIASES.get(canonical, []))
-        for i in range(len(cjk_chars) - 1):
-            bigram = cjk_chars[i] + cjk_chars[i + 1]
-            tokens.add(bigram)
-            canonical = _ALIAS_LOOKUP.get(bigram) if expand_aliases else None
-            if canonical:
-                tokens.add(canonical)
-                tokens.update(_TERM_ALIASES.get(canonical, []))
-        if expand_aliases:
-            for i in range(len(cjk_chars) - 2):
-                trigram = cjk_chars[i] + cjk_chars[i + 1] + cjk_chars[i + 2]
-                canonical = _ALIAS_LOOKUP.get(trigram)
-                if canonical:
-                    tokens.add(trigram)
-                    tokens.add(canonical)
-                    tokens.update(_TERM_ALIASES.get(canonical, []))
-
-        return tokens
+        return set(_tokenize_cached(text, expand_aliases))
 
     def _bigram_similarity(self, a: str, b: str) -> float:
         """Similarity score using tokenized sets (works for CJK and ASCII)."""
         if not a or not b:
             return 0.0
         a_tokens = {
-            token for token in self._tokenize(a, expand_aliases=False)
+            token for token in _tokenize_cached(a, False)
             if not (len(token) == 1 and "\u4e00" <= token <= "\u9fff")
         }
         b_tokens = {
-            token for token in self._tokenize(b, expand_aliases=False)
+            token for token in _tokenize_cached(b, False)
             if not (len(token) == 1 and "\u4e00" <= token <= "\u9fff")
         }
         if not a_tokens or not b_tokens:
@@ -210,7 +230,9 @@ class RetrievalMixin:
                 value = str(raw).lower()
             if not value:
                 continue
-            field_tokens = self._tokenize(value)
+            # Read-only intersection below — consume the cached frozenset
+            # directly to skip a per-field defensive set() copy in the hot loop.
+            field_tokens = _tokenize_cached(value, True)
             if not field_tokens:
                 continue
             matched_tokens = query_tokens & field_tokens

@@ -1619,6 +1619,41 @@ def test_tokenize_alias_js_ts_db(tmp_path: Path):
     assert "数据库" in db_tokens
 
 
+def test_tokenize_is_memoized_and_returns_fresh_mutable_set(tmp_path: Path):
+    """分词结果被记忆化，但每次返回独立可变副本，调用方改动不污染缓存。"""
+    engram = make_engram(tmp_path)
+
+    first = engram._tokenize("工具 deploy 数据库")
+    second = engram._tokenize("工具 deploy 数据库")
+    # Same content across calls (memoization is content-stable)...
+    assert first == second
+    # ...but each call returns a distinct mutable set, not a shared object.
+    assert first is not second
+    assert isinstance(first, set)
+
+    # Mutating one returned set must not corrupt the cache or other returns.
+    first.add("__sentinel__")
+    third = engram._tokenize("工具 deploy 数据库")
+    assert "__sentinel__" not in third
+    assert third == second
+
+    # expand_aliases is part of the cache key: results must differ.
+    with_alias = engram._tokenize("tool", expand_aliases=True)
+    without_alias = engram._tokenize("tool", expand_aliases=False)
+    assert "工具" in with_alias
+    assert "工具" not in without_alias
+
+
+def test_tokenize_cached_returns_frozenset(tmp_path: Path):
+    """底层缓存函数返回 frozenset（不可变，防止缓存被原地修改）。"""
+    from piia_engram.retrieval import _tokenize_cached
+
+    cached = _tokenize_cached("数据库 deploy", True)
+    assert isinstance(cached, frozenset)
+    # Second call hits the cache and returns the identical object.
+    assert _tokenize_cached("数据库 deploy", True) is cached
+
+
 def test_search_alias_cross_language_new(tmp_path: Path):
     """CJK 别名搜索应命中英文 lesson（数据库→database、部署→deploy）。"""
     engram = make_engram(tmp_path)
