@@ -6,6 +6,30 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.48.3] - 2026-06-04
+
+Local import candidate release. Engram separates full-backup import/export from
+the core engine and adds a safer owner import preview path. The default import
+CLI remains read-only and metadata-only until the owner explicitly uses
+`--apply --yes`.
+
+### Added
+- **Owner import preview CLI** - `engram import <backup.json>` now defaults to a
+  metadata-only dry run. Mutating import requires `--apply --yes`; `--overwrite`
+  maps to replace-mode import.
+- **Semantic conflict preview** - dry-run import now flags same-summary lessons
+  and same-question decisions with divergent semantic fields as
+  `review_version_chain_candidate` conflicts, without writing version-chain
+  edges or changing stored knowledge.
+
+### Changed
+- **Import/export extraction** - full-backup export/import logic moved into
+  `ImportExportMixin`, reducing the core engine surface and isolating the next
+  version-chain materialization work.
+
+### Release Evidence
+- See `release-evidence/v3.48.3.md`.
+
 ## [3.48.2] - 2026-06-04
 
 OpenClaw bridge hardening patch. The OpenClaw-compatible `MEMORY.md` export now

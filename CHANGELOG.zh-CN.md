@@ -6,6 +6,20 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.48.3] - 2026-06-04
+
+本地导入候选版本。Engram 将完整备份的导入/导出逻辑从核心引擎中拆出，并新增更安全的 owner 导入预览路径。默认 `engram import <backup.json>` 仍然只读、只返回 metadata-only 预览，只有显式使用 `--apply --yes` 才会改写本地数据。
+
+### 新增
+- **Owner 导入预览 CLI**：`engram import <backup.json>` 默认执行 metadata-only dry-run；真正导入必须使用 `--apply --yes`，`--overwrite` 映射到 replace-mode import。
+- **语义冲突预览**：dry-run import 现在会把同 summary 的 lesson、同 question 的 decision 中语义字段不同的候选标记为 `review_version_chain_candidate` 冲突，但不会写入版本链边，也不会改变已存知识。
+
+### 变更
+- **导入/导出拆分**：完整备份 export/import 逻辑迁移到 `ImportExportMixin`，缩小核心引擎文件表面，并为后续版本链实体化工作留出更清晰的边界。
+
+### Release Evidence
+- 见 `release-evidence/v3.48.3.md`。
+
 ## [3.48.2] - 2026-06-04
 
 OpenClaw 兼容桥接加固补丁。OpenClaw 兼容的 `MEMORY.md` 导出现在只包含
