@@ -17,6 +17,10 @@ from .storage import MAX_KNOWLEDGE_ENTRIES, _now_iso
 
 logger = logging.getLogger(__name__)
 
+OPENCLAW_MEMORY_MAX_BYTES = 32 * 1024
+OPENCLAW_SUMMARY_MAX_CHARS = 240
+OPENCLAW_REASONING_MAX_CHARS = 160
+
 if TYPE_CHECKING:  # pragma: no cover
     from .core import Engram
 
@@ -97,6 +101,18 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _is_verified_active(entry: dict) -> bool:
+    """Only approved active knowledge may leave Engram through static bridges."""
+    return entry.get("tier", "verified") == "verified" and entry.get("status", "active") == "active"
+
+
+def _clip_text(value: object, max_chars: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
 def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     """Export Engram data to OpenClaw format (SOUL.md + MEMORY.md + USER.md).
 
@@ -169,28 +185,70 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     user_path.write_text("\n".join(user_lines), encoding="utf-8")
     exported.append(str(user_path))
 
-    # --- MEMORY.md: Long-term memory (lessons + decisions) ---
+    # --- MEMORY.md: Long-term memory (verified lessons + decisions) ---
+    source_footer = f"_Source: Engram ({_now_iso()})_"
     memory_lines = ["# MEMORY", ""]
 
-    lessons = engram.get_lessons(limit=50, _update_access=False)
+    def _would_fit(candidate_lines: list[str]) -> bool:
+        body = "\n".join(candidate_lines + [source_footer])
+        return len(body.encode("utf-8")) <= OPENCLAW_MEMORY_MAX_BYTES
+
+    omitted = 0
+
+    lessons = [
+        lesson
+        for lesson in engram.get_lessons(limit=None, _update_access=False)
+        if _is_verified_active(lesson)
+    ][-50:]
     if lessons:
-        memory_lines.append("## Lessons Learned")
+        candidate = memory_lines + ["## Lessons Learned"]
+        if _would_fit(candidate):
+            memory_lines = candidate
         for l in lessons:
             domain = l.get("domain", "")
             prefix = f"[{domain}] " if domain else ""
-            memory_lines.append(f"- {prefix}{l.get('summary', '')}")
-        memory_lines.append("")
+            line = f"- {prefix}{_clip_text(l.get('summary', ''), OPENCLAW_SUMMARY_MAX_CHARS)}"
+            candidate = memory_lines + [line]
+            if _would_fit(candidate):
+                memory_lines = candidate
+            else:
+                omitted += 1
+        if memory_lines[-1] != "":
+            memory_lines.append("")
 
-    decisions = engram.get_decisions(limit=30, _update_access=False)
+    decisions = [
+        decision
+        for decision in engram.get_decisions(limit=None, _update_access=False)
+        if _is_verified_active(decision)
+    ][-30:]
     if decisions:
-        memory_lines.append("## Key Decisions")
+        candidate = memory_lines + ["## Key Decisions"]
+        if _would_fit(candidate):
+            memory_lines = candidate
         for d in decisions:
-            memory_lines.append(f"- **{d.get('question', '')}**: {d.get('choice', '')}")
+            entry_lines = [
+                (
+                    f"- **{_clip_text(d.get('question', ''), OPENCLAW_SUMMARY_MAX_CHARS)}**: "
+                    f"{_clip_text(d.get('choice', ''), OPENCLAW_SUMMARY_MAX_CHARS)}"
+                )
+            ]
             if d.get("reasoning"):
-                memory_lines.append(f"  - Why: {d['reasoning'][:100]}")
-        memory_lines.append("")
+                entry_lines.append(f"  - Why: {_clip_text(d['reasoning'], OPENCLAW_REASONING_MAX_CHARS)}")
+            candidate = memory_lines + entry_lines
+            if _would_fit(candidate):
+                memory_lines = candidate
+            else:
+                omitted += 1
+        if memory_lines[-1] != "":
+            memory_lines.append("")
 
-    memory_lines.append(f"_Source: Engram ({_now_iso()})_")
+    if omitted:
+        note = f"_OpenClaw export truncated to {OPENCLAW_MEMORY_MAX_BYTES} bytes; omitted {omitted} verified item(s)._"
+        candidate = memory_lines + [note, ""]
+        if _would_fit(candidate):
+            memory_lines = candidate
+
+    memory_lines.append(source_footer)
     memory_path = out / "MEMORY.md"
     memory_path.write_text("\n".join(memory_lines), encoding="utf-8")
     exported.append(str(memory_path))

@@ -61,6 +61,7 @@ _PUBLIC_DOC_CANDIDATES = (
     "docs/comparison.md", "docs/messaging.md", "docs/listing-copy.md",
     "docs/governance.md", "docs/hybrid-search.md",
     "docs/cross-tool-guide.md", "docs/cross-tool-continuity-demo.md",
+    "docs/runbooks/agent-client-validation.md",
 )
 
 # Always-on, committed reverse-disclosure patterns. These are deliberately

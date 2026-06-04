@@ -2420,6 +2420,57 @@ def test_export_to_openclaw_empty_data(tmp_path: Path):
     assert (out_dir / "SOUL.md").is_file()
 
 
+def test_export_to_openclaw_excludes_staging_knowledge(tmp_path: Path):
+    """OpenClaw static snapshots must not include unapproved staging items."""
+    engram = make_engram(tmp_path)
+    engram.add_lesson({"summary": "verified lesson may export", "domain": "safe"})
+    engram.add_lesson({
+        "summary": "staging lesson must stay private",
+        "domain": "draft",
+        "tier": "staging",
+    })
+    engram.add_decision({
+        "question": "verified decision may export",
+        "choice": "yes",
+    })
+    engram.add_decision({
+        "question": "staging decision must stay private",
+        "choice": "no",
+        "tier": "staging",
+    })
+
+    out_dir = tmp_path / "export_verified_only"
+    export_to_openclaw(engram, str(out_dir))
+    memory = (out_dir / "MEMORY.md").read_text(encoding="utf-8")
+
+    assert "verified lesson may export" in memory
+    assert "verified decision may export" in memory
+    assert "staging lesson must stay private" not in memory
+    assert "staging decision must stay private" not in memory
+
+
+def test_export_to_openclaw_memory_has_size_budget(tmp_path: Path):
+    """MEMORY.md should stay below the documented OpenClaw snapshot budget."""
+    engram = make_engram(tmp_path)
+    for idx in range(90):
+        engram.add_lesson({
+            "summary": f"verified long lesson {idx} " + ("x" * 700),
+            "domain": "budget",
+        })
+    for idx in range(45):
+        engram.add_decision({
+            "question": f"verified long decision {idx} " + ("q" * 700),
+            "choice": "use the bounded export",
+            "reasoning": "r" * 700,
+        })
+
+    out_dir = tmp_path / "export_budget"
+    export_to_openclaw(engram, str(out_dir))
+    memory_bytes = (out_dir / "MEMORY.md").read_bytes()
+
+    assert len(memory_bytes) <= 32 * 1024
+
+
 # =====================================================================
 # import_from_openclaw
 # =====================================================================

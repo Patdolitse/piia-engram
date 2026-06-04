@@ -92,8 +92,29 @@ def test_new_public_docs_are_publish_allowlisted():
         "docs/trust.md",
         "docs/listing-copy.md",
         "docs/cross-tool-continuity-demo.md",
+        "docs/runbooks/agent-client-validation.md",
     ]:
         assert path in allowlist
+
+
+def test_agent_client_validation_runbook_is_purpose_first():
+    doc = _read("docs/runbooks/agent-client-validation.md")
+
+    for phrase in [
+        "Every test must be purpose-first",
+        "Purpose: What question does this test answer?",
+        "Decision use: What decision will this result support?",
+        "Not proven: What should nobody claim from this result?",
+        "OPTIMIZATION_NOTES.md",
+        "Optimization Notes Template",
+    ]:
+        assert phrase in doc
+
+    for case in [f"T{i}" for i in range(1, 11)]:
+        assert case in doc
+
+    for client in ["Cursor Agent", "Hermes", "OpenClaw-Compatible Flows"]:
+        assert client in doc
 
 
 def test_release_notes_bilingual_order_is_documented():
