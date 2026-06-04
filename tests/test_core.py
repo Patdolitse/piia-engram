@@ -2449,6 +2449,27 @@ def test_export_to_openclaw_excludes_staging_knowledge(tmp_path: Path):
     assert "staging decision must stay private" not in memory
 
 
+def test_export_to_openclaw_excludes_verified_non_active_knowledge(tmp_path: Path):
+    """Verified entries still need active status before entering MEMORY.md."""
+    engram = make_engram(tmp_path)
+    engram.add_lesson({"summary": "active verified lesson may export"})
+    rejected = engram.add_lesson({"summary": "rejected verified lesson stays out"})
+    outdated = engram.add_decision({
+        "question": "outdated verified decision stays out",
+        "choice": "no",
+    })
+    engram.update_lesson(rejected["id"], {"status": "rejected"})
+    engram.update_decision(outdated["id"], {"status": "outdated"})
+
+    out_dir = tmp_path / "export_active_only"
+    export_to_openclaw(engram, str(out_dir))
+    memory = (out_dir / "MEMORY.md").read_text(encoding="utf-8")
+
+    assert "active verified lesson may export" in memory
+    assert "rejected verified lesson stays out" not in memory
+    assert "outdated verified decision stays out" not in memory
+
+
 def test_export_to_openclaw_memory_has_size_budget(tmp_path: Path):
     """MEMORY.md should stay below the documented OpenClaw snapshot budget."""
     engram = make_engram(tmp_path)

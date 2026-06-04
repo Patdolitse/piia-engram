@@ -6,6 +6,28 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.48.2] - 2026-06-04
+
+OpenClaw bridge hardening patch. The OpenClaw-compatible `MEMORY.md` export now
+includes only verified, active knowledge and enforces a conservative byte budget
+so static file bridges cannot leak staging/pending review content or grow
+without bounds.
+
+### Fixed
+- **OpenClaw `MEMORY.md` export boundary** - `export_to_openclaw` now filters
+  lesson and decision exports to `tier=verified` and `status=active`. Staging,
+  pending, archived, rejected, or non-active entries are excluded from the
+  static bridge files by default.
+
+### Changed
+- **Static bridge size guard** - `MEMORY.md` output is capped at 32 KiB with
+  clipped summaries/reasoning, keeping OpenClaw-compatible snapshots readable
+  and safe for external clients.
+- **Client-validation documentation** - added a purpose-first validation
+  runbook for Cursor Agent, Hermes, OpenClaw-compatible flows, and future MCP
+  hosts, including evidence requirements, negative controls, and zero-pollution
+  checks.
+
 ## [3.48.1] - 2026-06-04
 
 Performance patch — memoize tokenization on the hot search path. No behavior

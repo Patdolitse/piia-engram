@@ -1,6 +1,6 @@
 # Agent Client Validation Runbook
 
-> Version: 3.48.1+ | Updated: 2026-06-04
+> Version: 3.48.2+ | Updated: 2026-06-04
 
 This runbook defines a reusable validation protocol for any AI client that
 claims to use Engram: Cursor Agent, Hermes, OpenClaw-compatible flows, IDE

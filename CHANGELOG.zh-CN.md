@@ -6,6 +6,23 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.48.2] - 2026-06-04
+
+OpenClaw 兼容桥接加固补丁。OpenClaw 兼容的 `MEMORY.md` 导出现在只包含
+verified 且 active 的知识，并加入保守的字节预算，避免静态文件桥把 staging /
+pending review 内容带给外部客户端，也避免快照无限膨胀。
+
+### 修复
+- **OpenClaw `MEMORY.md` 导出边界**：`export_to_openclaw` 现在只导出
+  `tier=verified` 且 `status=active` 的 lesson / decision。staging、pending、
+  archived、rejected 或非 active 条目默认不会进入静态桥接文件。
+
+### 变更
+- **静态桥尺寸保护**：`MEMORY.md` 输出限制为 32 KiB，并裁剪过长 summary /
+  reasoning，让 OpenClaw 兼容快照对外部客户端保持可读且边界清晰。
+- **客户端验证文档**：新增 purpose-first 验证 runbook，覆盖 Cursor Agent、Hermes、
+  OpenClaw 兼容流程和未来 MCP host 的证据要求、负控和零污染检查。
+
 ## [3.48.1] - 2026-06-04
 
 性能补丁——在检索热路径上记忆化分词。无行为变化：搜索输出（token 集合、别名

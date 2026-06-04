@@ -1,6 +1,6 @@
 # Using Engram with Hermes (via MCP)
 
-> Version: 3.48.1+ | Updated: 2026-06-04
+> Version: 3.48.2+ | Updated: 2026-06-04
 > **Status: Path B (MCP) only.** The config schema below is **verified against Hermes source**
 > (`skills/mcp/native-mcp/SKILL.md`, `agent/memory_provider.py`, branch `main`, 2026-06-03).
 > The **end-to-end path was verified locally on 2026-06-03** against `hermes-agent` 0.15.2 (CLI, isolated env):
