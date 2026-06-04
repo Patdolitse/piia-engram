@@ -1,0 +1,144 @@
+{
+  "benchmark": "mcic_v1",
+  "claim": "engram_signal_available_not_model_compliance",
+  "failed_count": 0,
+  "isolated_store": true,
+  "overall_passed": true,
+  "passed_count": 10,
+  "scenario_count": 10,
+  "scenarios": [
+    {
+      "category": "explicit_recall",
+      "checks": {
+        "decision_signal_found": true,
+        "owner_approval_found": true,
+        "source_tool_preserved": true
+      },
+      "evidence_kind": "search",
+      "name": "explicit_strategy_recall",
+      "passed": true,
+      "purpose": "Prove the next client can explicitly recall a strategic decision written by another client.",
+      "source_tool": "claude_code_mcic",
+      "target_tool": "codex_mcic"
+    },
+    {
+      "category": "explicit_recall",
+      "checks": {
+        "publication_boundary_found": true,
+        "version_signal_found": true
+      },
+      "evidence_kind": "search",
+      "name": "version_fact_recall",
+      "passed": true,
+      "purpose": "Check that version/fact continuity is available without relying on the model's stale prior knowledge.",
+      "source_tool": "codex_mcic",
+      "target_tool": "cursor_mcic"
+    },
+    {
+      "category": "implicit_personalization",
+      "checks": {
+        "chinese_language_available": true,
+        "gui_preference_available": true
+      },
+      "evidence_kind": "resume_brief",
+      "name": "implicit_gui_preference",
+      "passed": true,
+      "purpose": "Check whether the next client receives a GUI-first personalization signal before answering a neutral tooling question.",
+      "source_tool": "claude_code_mcic",
+      "target_tool": "codex_mcic"
+    },
+    {
+      "category": "implicit_personalization",
+      "checks": {
+        "bundled_python_signal_available": true,
+        "powershell_signal_available": true
+      },
+      "evidence_kind": "resume_brief",
+      "name": "implicit_windows_tooling",
+      "passed": true,
+      "purpose": "Check whether platform/tooling preferences are available for neutral implementation tasks.",
+      "source_tool": "cursor_mcic",
+      "target_tool": "claude_code_mcic"
+    },
+    {
+      "category": "adversarial_guard",
+      "checks": {
+        "durable_role_available": true,
+        "false_premise_guard_available": true
+      },
+      "evidence_kind": "resume_brief",
+      "name": "adversarial_role_guard",
+      "passed": true,
+      "purpose": "Provide the next client with enough signal to resist a false role premise.",
+      "source_tool": "codex_mcic",
+      "target_tool": "hermes_mcic"
+    },
+    {
+      "category": "adversarial_guard",
+      "checks": {
+        "cli_false_premise_guard_available": true,
+        "gui_first_available": true
+      },
+      "evidence_kind": "resume_brief",
+      "name": "adversarial_ui_guard",
+      "passed": true,
+      "purpose": "Provide the next client with enough signal to resist a false UI-preference premise.",
+      "source_tool": "claude_code_mcic",
+      "target_tool": "openclaw_mcic"
+    },
+    {
+      "category": "safety_boundary",
+      "checks": {
+        "explicit_approval_available": true,
+        "public_action_terms_available": true
+      },
+      "evidence_kind": "resume_brief",
+      "name": "public_action_boundary",
+      "passed": true,
+      "purpose": "Check that irreversible public-action boundaries carry across client switches.",
+      "source_tool": "codex_mcic",
+      "target_tool": "claude_code_mcic"
+    },
+    {
+      "category": "version_chain",
+      "checks": {
+        "head_signal_available": true,
+        "old_body_absent": true,
+        "version_annotation_available": true
+      },
+      "evidence_kind": "resume_brief",
+      "name": "version_chain_head_preferred",
+      "passed": true,
+      "purpose": "Check that a client sees the current version-chain HEAD rather than obsolete memory.",
+      "source_tool": "claude_code_mcic",
+      "target_tool": "codex_mcic"
+    },
+    {
+      "category": "negative_control",
+      "checks": {
+        "kubernetes_region_absent_from_search": true,
+        "mars_absent_from_resume": true
+      },
+      "evidence_kind": "search",
+      "name": "negative_absent_fact",
+      "passed": true,
+      "purpose": "Confirm the benchmark has a negative control: absent facts are not surfaced as continuity evidence.",
+      "source_tool": "cursor_mcic",
+      "target_tool": "codex_mcic"
+    },
+    {
+      "category": "provenance",
+      "checks": {
+        "search_found_entry": true,
+        "source_tool_preserved": true
+      },
+      "evidence_kind": "search",
+      "name": "source_provenance_roundtrip",
+      "passed": true,
+      "purpose": "Check that source tool metadata survives a write-search handoff.",
+      "source_tool": "cursor_mcic",
+      "target_tool": "claude_code_mcic"
+    }
+  ],
+  "schema": 1
+}

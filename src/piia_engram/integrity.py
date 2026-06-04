@@ -104,8 +104,12 @@ def _scan_ledger(root: Path) -> dict[str, Any]:
             return {"present": False, "ok": True, "length": 0}
         ledger = GovernanceLedger(path)
         records = ledger.records()
-        ok = ledger.verify()
-        return {"present": True, "ok": bool(ok), "length": len(records)}
+        # ``verify()`` returns ``(ok, message)``. Unpacking is essential: a bare
+        # ``bool(ledger.verify())`` is ALWAYS True (a non-empty tuple is truthy),
+        # which would silently report a tampered/broken chain as healthy.
+        ok, message = ledger.verify()
+        return {"present": True, "ok": bool(ok), "length": len(records),
+                "detail": message if not ok else ""}
     except Exception as exc:  # corrupt/unreadable ledger is a finding, not a crash
         return {"present": True, "ok": False, "length": None,
                 "error": type(exc).__name__}
@@ -169,7 +173,8 @@ def scan_integrity(root: str | Path, *, now: datetime | None = None) -> dict[str
                          "target": _INDEX_FILE, "detail": "store newer than index"})
     if not ledger["ok"]:
         problems.append({"severity": "high", "code": "ledger_chain_broken",
-                         "target": "governance_ledger", "detail": ledger.get("error", "verify_failed")})
+                         "target": "governance_ledger",
+                         "detail": ledger.get("error") or ledger.get("detail") or "verify_failed"})
     if relations.get("dangling_edges"):
         problems.append({"severity": "medium", "code": "dangling_relations",
                          "target": "relations.json",
