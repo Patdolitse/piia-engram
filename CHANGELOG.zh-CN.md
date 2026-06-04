@@ -8,6 +8,33 @@
 
 ## [Unreleased]
 
+## [3.49.1] - 2026-06-05
+
+### 修复
+- **治理账本完整性检查**：`integrity` 现在会正确解包 ledger verify 返回的
+  `(ok, message)`，不再把非空 tuple 当成天然通过。被篡改或损坏的治理账本会被报告为
+  unhealthy，而不是静默通过。
+
+### 安全
+- **身份卡导出脱敏**：导出的 identity card 现在会在渲染前清理 lesson 摘要和
+  decision question/choice 中的凭证形状、裸邮箱和用户主目录绝对路径，避免已存知识里的敏感片段进入可携带导出面。
+
+### 新增
+- **公开主张漂移扫描**：`scripts/check_public_claim_drift.py` 会扫描当前跟踪的
+  Markdown 文档，发现过期测试数、工具数和过度宣传语；历史 release evidence 会被显式跳过。
+- **导出脱敏 linter**：`scripts/check_export_redaction.py` 可扫描已渲染导出文本，
+  以 metadata-only 结果报告高置信 secret / PII 形状，不回显原始敏感值。
+- **发布流程 dry-run 编排器**：`scripts/release_orchestrator.py` 提供本地只读发布清单，
+  在真正远程发布前提前暴露 GitHub、PyPI、MCP Registry、Glama/manual 等授权和卡点。
+- **确定性证据 harness**：新增离线合成证据脚本，覆盖客户端 A/B 信号、版本链确定性、
+  召回排序复现、备份恢复 round trip、只读管理面、store integrity 故障、MCP schema drift、
+  离线安装矩阵和有界并发压力测试。
+
+### 变更
+- **遥测边界测试**：新增 sealed-network 测试，证明默认关闭时 telemetry 不写本地 log、
+  不尝试远程请求；远程 telemetry 仍然必须由用户显式 opt-in。
+- **公开事实刷新**：当前本地事实更新为 2743 passed、8 skipped、2751 collected。
+
 ## [3.49.0] - 2026-06-04
 
 ### 新增

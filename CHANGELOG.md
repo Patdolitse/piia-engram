@@ -8,6 +8,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.49.1] - 2026-06-05
+
+### Fixed
+- **Governance ledger integrity check** - `integrity` now correctly unpacks the
+  `(ok, message)` result from ledger verification instead of treating any
+  non-empty tuple as truthy. Tampered governance ledgers are now reported as
+  unhealthy instead of silently passing.
+
+### Security
+- **Identity-card export redaction** - exported identity cards now scrub
+  credential-shaped values, bare emails, and absolute user-home paths from
+  lesson summaries and decision question/choice text before rendering.
+
+### Added
+- **Public claim drift sweep** - `scripts/check_public_claim_drift.py` scans
+  current tracked Markdown surfaces for stale quantified public claims and
+  overclaim phrases, while explicitly skipping historical release evidence.
+- **Export redaction linter** - `scripts/check_export_redaction.py` scans
+  rendered export surfaces for high-confidence secret and PII shapes using
+  metadata-only findings.
+- **Release orchestration dry run** - `scripts/release_orchestrator.py` renders
+  a local-only release checklist that makes GitHub, PyPI, MCP Registry, and
+  manual Glama/auth stalls visible before remote release actions.
+- **Deterministic evidence harnesses** - added offline synthetic harnesses for
+  client A/B signal availability, version-chain determinism, recall-ranking
+  reproducibility, backup/restore round trips, read-only management surfaces,
+  store integrity faults, MCP tool schema drift, offline install matrices, and
+  bounded concurrency stress.
+
+### Changed
+- **Telemetry boundary tests** - default-off telemetry is now covered by sealed
+  network tests proving disabled telemetry does not write local logs or attempt
+  remote calls. Remote telemetry still requires explicit opt-in.
+- **Public facts refreshed** - current local facts now report 2743 passed,
+  8 skipped, and 2751 collected tests.
+
 ## [3.49.0] - 2026-06-04
 
 ### Added
