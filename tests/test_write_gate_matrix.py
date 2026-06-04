@@ -837,6 +837,51 @@ class TestReadPathStructuralClosure:
             f"{sorted(set(before) ^ set(after)) or 'content of existing files'}"
         )
 
+    def test_external_get_permission_profile_preflights_before_reading_store(
+        self, tmp_path, monkeypatch
+    ):
+        """Permission landscape is owner-only; non-owners must be refused before
+        the Engram permission profile reader touches grants/audit state."""
+        extra_roots = _external_watch_roots(tmp_path, monkeypatch)
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+        monkeypatch.setenv("ENGRAM_AUDIT", "1")
+        monkeypatch.setenv("ENGRAM_TELEMETRY", "1")
+        monkeypatch.delenv("ENGRAM_BETA_TRACKING", raising=False)
+        monkeypatch.setenv("ENGRAM_HEARTBEAT_INTERVAL", "1")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        _enable_local_telemetry(engram)
+        e = _make_engram(engram)
+
+        import piia_engram.mcp_server as mcp_server
+
+        mcp_server._engram = e
+        _reset_tracking(mcp_server)
+
+        called = {"hit": False}
+
+        def _boom():
+            called["hit"] = True
+            raise AssertionError("permission profile reader must not run")
+
+        monkeypatch.setattr(e, "get_permission_profile", _boom)
+
+        before = _snapshot_many(engram, extra_roots)
+        result = _run(mcp_server.get_permission_profile())
+        mcp_server._session._heartbeat_tick()
+        after = _snapshot_many(engram, extra_roots)
+
+        assert _is_refusal(result), (
+            f"get_permission_profile must refuse a non-owner before reading; "
+            f"returned: {result!r:.200}"
+        )
+        assert called["hit"] is False
+        assert before == after, (
+            "non-owner get_permission_profile wrote files before refusal. Changed: "
+            f"{sorted(set(before) ^ set(after)) or 'content of existing files'}"
+        )
+
     def test_external_get_recall_preflights_before_gathering(self, tmp_path, monkeypatch):
         """Recall bundles identity + knowledge, so non-owners must be refused
         before any search, telemetry, or session-tracking side effect runs."""

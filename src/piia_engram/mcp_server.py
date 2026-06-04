@@ -3101,6 +3101,14 @@ async def get_permission_profile() -> str:
     治理层开启时（ENGRAM_GOVERNANCE=1），仅 private-self 可调用。
     When governance is enabled, only the owner (private-self) can call this.
     """
+    try:
+        is_owner = _gov_rt.caller_is_owner(_engram.root)
+    except Exception:
+        is_owner = False
+    if not is_owner:
+        return _gov_rt.maybe_govern_owner_only(
+            _engram.root, "", tool="get_permission_profile"
+        )
     result = _engram.get_permission_profile()
     result = _gov_rt.maybe_govern_owner_only(
         _engram.root, result, tool="get_permission_profile"
