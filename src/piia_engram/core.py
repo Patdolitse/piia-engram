@@ -3331,6 +3331,318 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
     # Import / Export — 备份、迁移、跨机器同步
     # =====================================================================
 
+    @staticmethod
+    def _import_value_present(value: Any) -> bool:
+        return value not in (None, "", [], {})
+
+    @classmethod
+    def _import_summary(cls, incoming_count: int = 0) -> dict:
+        return {
+            "incoming": incoming_count,
+            "would_add": 0,
+            "would_skip": 0,
+            "conflicts": 0,
+        }
+
+    @classmethod
+    def _merge_dict_preserving_existing(
+        cls,
+        existing: dict,
+        incoming: dict,
+        section: str,
+        *,
+        default_values: dict | None = None,
+        field_prefix: str = "",
+    ) -> tuple[dict, dict, list[dict]]:
+        """Merge a backup section without overwriting existing non-empty values.
+
+        Returns ``(merged, summary, conflicts)``. Conflicts are metadata-only:
+        field names and the planned resolution, never local or incoming values.
+        """
+        merged = deepcopy(existing) if isinstance(existing, dict) else {}
+        summary = cls._import_summary()
+        conflicts: list[dict] = []
+        defaults = default_values or {}
+
+        if not isinstance(incoming, dict):
+            return merged, summary, conflicts
+
+        for key, incoming_value in incoming.items():
+            if key.startswith("_"):
+                continue
+            field = f"{field_prefix}.{key}" if field_prefix else str(key)
+            summary["incoming"] += 1
+            if not cls._import_value_present(incoming_value):
+                summary["would_skip"] += 1
+                continue
+
+            existing_value = merged.get(key)
+            existing_is_default = (
+                key in defaults and existing_value == defaults.get(key)
+            )
+            existing_present = (
+                cls._import_value_present(existing_value)
+                and not existing_is_default
+            )
+
+            if isinstance(existing_value, dict) and isinstance(incoming_value, dict):
+                nested, nested_summary, nested_conflicts = cls._merge_dict_preserving_existing(
+                    existing_value,
+                    incoming_value,
+                    section,
+                    field_prefix=field,
+                )
+                merged[key] = nested
+                for stat_key in summary:
+                    summary[stat_key] += nested_summary[stat_key]
+                conflicts.extend(nested_conflicts)
+                continue
+
+            if isinstance(existing_value, list) and isinstance(incoming_value, list):
+                additions = [item for item in incoming_value if item not in existing_value]
+                if additions:
+                    merged[key] = existing_value + additions
+                    summary["would_add"] += len(additions)
+                    if len(additions) < len(incoming_value):
+                        summary["would_skip"] += len(incoming_value) - len(additions)
+                else:
+                    summary["would_skip"] += 1
+                continue
+
+            if not existing_present:
+                merged[key] = deepcopy(incoming_value)
+                summary["would_add"] += 1
+            elif existing_value == incoming_value:
+                summary["would_skip"] += 1
+            else:
+                summary["conflicts"] += 1
+                conflicts.append({
+                    "section": section,
+                    "field": field,
+                    "resolution": "keep_existing",
+                })
+
+        return merged, summary, conflicts
+
+    @classmethod
+    def _plan_overwrite_dict(
+        cls,
+        existing: dict,
+        incoming: dict,
+        section: str,
+    ) -> tuple[dict, list[dict]]:
+        summary = cls._import_summary(len(incoming) if isinstance(incoming, dict) else 0)
+        conflicts: list[dict] = []
+        if not isinstance(incoming, dict):
+            return summary, conflicts
+        for key, incoming_value in incoming.items():
+            if key.startswith("_"):
+                continue
+            existing_value = existing.get(key) if isinstance(existing, dict) else None
+            if existing_value == incoming_value:
+                summary["would_skip"] += 1
+            elif cls._import_value_present(existing_value):
+                summary["conflicts"] += 1
+                conflicts.append({
+                    "section": section,
+                    "field": str(key),
+                    "resolution": "overwrite_existing",
+                })
+            else:
+                summary["would_add"] += 1
+        return summary, conflicts
+
+    def _read_profile_for_import_plan(self) -> dict:
+        profile = _read_json(self._identity_dir / "profile.json")
+        if not isinstance(profile, dict):
+            return {}
+        return self._crypto.decrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
+
+    def _read_trust_boundaries_for_import_plan(self) -> dict:
+        existing = _read_json(self._identity_dir / "trust_boundaries.json")
+        if not isinstance(existing, dict):
+            existing = {}
+        result = deepcopy(existing)
+        for key, value in DEFAULT_TRUST_BOUNDARIES.items():
+            result.setdefault(key, deepcopy(value))
+        return result
+
+    @staticmethod
+    def _count_new_by_key(existing: list[dict], incoming: list[dict], key: str) -> dict:
+        existing_values = {str(item.get(key, "")) for item in existing}
+        new_count = 0
+        skip_count = 0
+        for item in incoming:
+            value = str(item.get(key, ""))
+            if value in existing_values:
+                skip_count += 1
+            else:
+                existing_values.add(value)
+                new_count += 1
+        return {
+            "incoming": len(incoming),
+            "would_add": new_count,
+            "would_skip": skip_count,
+            "conflicts": 0,
+        }
+
+    def _build_import_plan(
+        self,
+        data: dict,
+        *,
+        merge: bool,
+        input_path: str,
+    ) -> dict:
+        summary: dict[str, dict] = {}
+        conflicts: list[dict] = []
+
+        identity = data.get("identity", {}) if isinstance(data, dict) else {}
+        identity_sections = {
+            "profile": (self._read_profile_for_import_plan(), _ALLOWED_PROFILE_FIELDS, None),
+            "preferences": (
+                _read_json(self._identity_dir / "preferences.json") or {},
+                _ALLOWED_PREFERENCES_FIELDS,
+                None,
+            ),
+            "work_style": (_read_json(self._identity_dir / "work_style.json") or {}, None, None),
+            "quality_standards": (
+                _read_json(self._identity_dir / "quality_standards.json") or {},
+                _ALLOWED_QUALITY_FIELDS,
+                None,
+            ),
+            "trust_boundaries": (
+                self._read_trust_boundaries_for_import_plan(),
+                _ALLOWED_TRUST_FIELDS,
+                DEFAULT_TRUST_BOUNDARIES,
+            ),
+        }
+        for section, incoming_value in identity.items():
+            if section not in identity_sections or not isinstance(incoming_value, dict):
+                continue
+            existing_value, allowed, defaults = identity_sections[section]
+            incoming_section = {
+                key: value
+                for key, value in incoming_value.items()
+                if allowed is None or key in allowed
+            }
+            if merge:
+                _, section_summary, section_conflicts = self._merge_dict_preserving_existing(
+                    existing_value,
+                    incoming_section,
+                    section,
+                    default_values=defaults,
+                )
+            else:
+                section_summary, section_conflicts = self._plan_overwrite_dict(
+                    existing_value,
+                    incoming_section,
+                    section,
+                )
+            summary[section] = section_summary
+            conflicts.extend(section_conflicts)
+
+        knowledge = data.get("knowledge", {}) if isinstance(data, dict) else {}
+        if isinstance(knowledge.get("lessons"), list):
+            existing_lessons = self._read_entries(
+                self._knowledge_dir / "lessons.json",
+                "lesson",
+                migrate=False,
+            )
+            summary["lessons"] = self._count_new_by_key(
+                existing_lessons,
+                knowledge["lessons"],
+                "summary" if merge else "__never_match__",
+            )
+            if not merge:
+                summary["lessons"]["would_add"] = len(knowledge["lessons"])
+                summary["lessons"]["would_skip"] = 0
+        if isinstance(knowledge.get("decisions"), list):
+            existing_decisions = self._read_entries(
+                self._knowledge_dir / "decisions.json",
+                "decision",
+                migrate=False,
+            )
+            summary["decisions"] = self._count_new_by_key(
+                existing_decisions,
+                knowledge["decisions"],
+                "question" if merge else "__never_match__",
+            )
+            if not merge:
+                summary["decisions"]["would_add"] = len(knowledge["decisions"])
+                summary["decisions"]["would_skip"] = 0
+        if isinstance(knowledge.get("domains"), dict):
+            existing_domains = _read_json(self._knowledge_dir / "domains.json") or {}
+            incoming_domains = knowledge["domains"]
+            new_count = sum(1 for name in incoming_domains if name not in existing_domains)
+            summary["domains"] = {
+                "incoming": len(incoming_domains),
+                "would_add": new_count if merge else len(incoming_domains),
+                "would_skip": len(incoming_domains) - new_count if merge else 0,
+                "conflicts": 0,
+            }
+        if isinstance(knowledge.get("playbooks"), list):
+            existing_titles = {e.get("title", "") for e in self._read_playbook_index()}
+            incoming_playbooks = knowledge["playbooks"]
+            new_count = sum(
+                1 for pb in incoming_playbooks
+                if pb.get("title", "") not in existing_titles
+            )
+            summary["playbooks"] = {
+                "incoming": len(incoming_playbooks),
+                "would_add": new_count if merge else len(incoming_playbooks),
+                "would_skip": len(incoming_playbooks) - new_count if merge else 0,
+                "conflicts": 0,
+            }
+
+        environment = data.get("environment", {}) if isinstance(data, dict) else {}
+        if isinstance(environment.get("tools"), list):
+            existing_names = {t.get("name", "").lower() for t in self._read_tools()}
+            incoming_tools = environment["tools"]
+            new_count = sum(
+                1 for tool in incoming_tools
+                if tool.get("name", "").lower() not in existing_names
+            )
+            summary["tools"] = {
+                "incoming": len(incoming_tools),
+                "would_add": new_count if merge else len(incoming_tools),
+                "would_skip": len(incoming_tools) - new_count if merge else 0,
+                "conflicts": 0,
+            }
+
+        projects = data.get("projects", {}) if isinstance(data, dict) else {}
+        if isinstance(projects, dict) and projects:
+            new_count = 0
+            for pid, project_data in projects.items():
+                existing = _read_json(self._projects_dir / f"{pid}.json") or {}
+                if merge and existing and isinstance(project_data, dict):
+                    _, project_summary, project_conflicts = self._merge_dict_preserving_existing(
+                        existing,
+                        project_data,
+                        "projects",
+                        field_prefix=str(pid),
+                    )
+                    conflicts.extend(project_conflicts)
+                    if project_summary["would_add"]:
+                        new_count += 1
+                elif not existing:
+                    new_count += 1
+            conflict_count = sum(1 for c in conflicts if c.get("section") == "projects")
+            summary["projects"] = {
+                "incoming": len(projects),
+                "would_add": new_count if merge else len(projects),
+                "would_skip": len(projects) - new_count if merge else 0,
+                "conflicts": conflict_count,
+            }
+
+        return {
+            "status": "preview",
+            "mode": "merge" if merge else "overwrite",
+            "dry_run": True,
+            "summary": summary,
+            "conflicts": conflicts,
+            "source": input_path,
+        }
+
     def export_all(self, output_path: str | None = None) -> str:
         """导出整个 Engram 为单一 JSON 文件。
 
@@ -3388,12 +3700,13 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         self._audit.log("export", "all", detail=f"exported to {out}")
         return str(out)
 
-    def import_all(self, input_path: str, merge: bool = True) -> dict:
+    def import_all(self, input_path: str, merge: bool = True, dry_run: bool = False) -> dict:
         """从备份文件导入 Engram 数据。
 
         Args:
             input_path: 备份文件路径（export_all 生成的 JSON）。
             merge: True=合并（已有数据保留，新数据追加），False=覆盖。
+            dry_run: True=只返回元数据预览，不写入任何 Engram 数据。
 
         Returns:
             导入结果摘要。
@@ -3406,51 +3719,115 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
         if not data or "schema_version" not in data:
             return {"error": "不是有效的 Engram 备份文件"}
 
+        plan = self._build_import_plan(data, merge=merge, input_path=input_path)
+        if dry_run:
+            return plan
+
         imported = []
 
         # Identity
         identity = data.get("identity", {})
         if identity.get("profile"):
             if merge:
-                existing = self.get_profile()
-                # 合并：新字段补充，不覆盖已有值
-                for k, v in identity["profile"].items():
-                    if k not in existing or not existing[k]:
-                        existing[k] = v
+                existing, _, _ = self._merge_dict_preserving_existing(
+                    self.get_profile(),
+                    {
+                        key: value
+                        for key, value in identity["profile"].items()
+                        if key in _ALLOWED_PROFILE_FIELDS
+                    },
+                    "profile",
+                )
                 self.update_profile(existing)
             else:
-                _write_json(self._identity_dir / "profile.json", identity["profile"])
+                profile = {
+                    key: value
+                    for key, value in identity["profile"].items()
+                    if key in _ALLOWED_PROFILE_FIELDS
+                }
+                encrypted = self._crypto.encrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
+                _write_json(self._identity_dir / "profile.json", encrypted)
             imported.append("profile")
+
+        if identity.get("preferences"):
+            preferences = {
+                key: value
+                for key, value in identity["preferences"].items()
+                if key in _ALLOWED_PREFERENCES_FIELDS
+            }
+            if merge:
+                merged, _, _ = self._merge_dict_preserving_existing(
+                    self.get_preferences(),
+                    preferences,
+                    "preferences",
+                )
+                self.update_preferences(merged)
+            else:
+                _write_json(self._identity_dir / "preferences.json", preferences)
+            imported.append("preferences")
 
         if identity.get("work_style"):
             if merge:
-                existing = self.get_work_style()
-                existing.update(identity["work_style"])
-                self.update_work_style(existing)
+                merged, _, _ = self._merge_dict_preserving_existing(
+                    self.get_work_style(),
+                    identity["work_style"],
+                    "work_style",
+                )
+                self.update_work_style(merged)
             else:
                 _write_json(self._identity_dir / "work_style.json", identity["work_style"])
             imported.append("work_style")
 
         if identity.get("quality_standards"):
             if merge:
-                existing = self.get_quality_standards()
-                new_rules = identity["quality_standards"].get("rules", [])
-                old_rules = set(existing.get("rules", []))
-                merged_rules = list(old_rules | set(new_rules))
-                existing["rules"] = merged_rules[-15:]
-                if identity["quality_standards"].get("acceptance_threshold"):
-                    existing["acceptance_threshold"] = identity["quality_standards"]["acceptance_threshold"]
-                self.update_quality_standards(existing)
+                quality = {
+                    key: value
+                    for key, value in identity["quality_standards"].items()
+                    if key in _ALLOWED_QUALITY_FIELDS
+                }
+                merged, _, _ = self._merge_dict_preserving_existing(
+                    self.get_quality_standards(),
+                    quality,
+                    "quality_standards",
+                )
+                self.update_quality_standards(merged)
             else:
-                _write_json(self._identity_dir / "quality_standards.json", identity["quality_standards"])
+                quality = {
+                    key: value
+                    for key, value in identity["quality_standards"].items()
+                    if key in _ALLOWED_QUALITY_FIELDS
+                }
+                _write_json(self._identity_dir / "quality_standards.json", quality)
             imported.append("quality_standards")
+
+        if identity.get("trust_boundaries"):
+            trust = {
+                key: value
+                for key, value in identity["trust_boundaries"].items()
+                if key in _ALLOWED_TRUST_FIELDS
+            }
+            if merge:
+                merged, _, _ = self._merge_dict_preserving_existing(
+                    self.get_trust_boundaries(),
+                    trust,
+                    "trust_boundaries",
+                    default_values=DEFAULT_TRUST_BOUNDARIES,
+                )
+                self.update_trust_boundaries(merged)
+            else:
+                _write_json(self._identity_dir / "trust_boundaries.json", trust)
+            imported.append("trust_boundaries")
 
         # Knowledge
         knowledge = data.get("knowledge", {})
 
         if knowledge.get("lessons"):
             if merge:
-                existing = _read_json(self._knowledge_dir / "lessons.json") or []
+                existing = self._read_entries(
+                    self._knowledge_dir / "lessons.json",
+                    "lesson",
+                    migrate=False,
+                )
                 existing_summaries = {l.get("summary", "") for l in existing}
                 new_count = 0
                 for lesson in knowledge["lessons"]:
@@ -3467,7 +3844,11 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
 
         if knowledge.get("decisions"):
             if merge:
-                existing = _read_json(self._knowledge_dir / "decisions.json") or []
+                existing = self._read_entries(
+                    self._knowledge_dir / "decisions.json",
+                    "decision",
+                    migrate=False,
+                )
                 existing_questions = {d.get("question", "") for d in existing}
                 new_count = 0
                 for decision in knowledge["decisions"]:
@@ -3539,8 +3920,12 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
                 proj_path = self._projects_dir / f"{pid}.json"
                 if merge and proj_path.exists():
                     existing = _read_json(proj_path)
-                    existing.update(proj_data)
-                    _write_json(proj_path, existing)
+                    merged, _, _ = self._merge_dict_preserving_existing(
+                        existing,
+                        proj_data,
+                        "projects",
+                    )
+                    _write_json(proj_path, merged)
                 else:
                     _write_json(proj_path, proj_data)
             imported.append(f"projects({len(projects)})")
@@ -3550,6 +3935,8 @@ class Engram(RetrievalMixin, ContextMixin, ReconcileMixin, ReportsMixin, Context
             "status": "success",
             "mode": "merge" if merge else "overwrite",
             "imported": imported,
+            "summary": plan.get("summary", {}),
+            "conflicts": plan.get("conflicts", []),
             "source": input_path,
         }
 

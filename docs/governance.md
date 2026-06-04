@@ -39,8 +39,8 @@ level.
 Important current-state note: `proposed_only` is a policy label today, not a
 full staging workflow for direct MCP writes. Ordinary knowledge-store writes
 from `trusted-local` are still allowed by `maybe_refuse_write()`. High-blast
-operations such as grant changes, whole-store imports, and file exports are
-stricter and require `private-self`.
+operations such as grant changes, whole-store imports, import dry-runs that read
+full backup files, and file exports are stricter and require `private-self`.
 
 Explicit grants can override the default mapping:
 

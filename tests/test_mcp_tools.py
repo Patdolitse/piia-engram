@@ -360,6 +360,34 @@ class TestPathValidation:
         parsed = json.loads(result)
         assert "error" in parsed and "NUL" in parsed["error"]
 
+    def test_import_engram_dry_run_returns_preview_without_mutating(
+        self,
+        isolated_engram: Engram,
+        tmp_path: Path,
+    ):
+        """MCP import dry-run should expose a metadata-only preview."""
+        source = Engram(root=tmp_path / "source")
+        source.update_profile({"role": "MCP_INCOMING_SECRET"})
+        export_path = source.export_all(str(tmp_path / "backup.json"))
+
+        isolated_engram.update_profile({"role": "MCP_LOCAL_SECRET"})
+        result = _run(
+            mcp_server.import_engram(
+                input_path=export_path,
+                merge=True,
+                dry_run=True,
+            )
+        )
+        parsed = json.loads(result)
+        serialized = json.dumps(parsed, ensure_ascii=False)
+
+        assert parsed["status"] == "preview"
+        assert parsed["dry_run"] is True
+        assert any(c["section"] == "profile" and c["field"] == "role" for c in parsed["conflicts"])
+        assert "MCP_INCOMING_SECRET" not in serialized
+        assert "MCP_LOCAL_SECRET" not in serialized
+        assert isolated_engram.get_profile()["role"] == "MCP_LOCAL_SECRET"
+
     def test_save_project_snapshot_rejects_null_byte(
         self, isolated_engram: Engram
     ):

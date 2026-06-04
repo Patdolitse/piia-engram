@@ -337,6 +337,93 @@ def test_export_import_round_trip(tmp_path: Path):
     assert len(new_engram.get_decisions()) >= 1
 
 
+def test_import_all_restores_preferences_and_trust_boundaries(tmp_path: Path):
+    """Whole-store import must restore the v2 identity sections exported by export_all."""
+    engram = make_engram(tmp_path)
+    engram.update_preferences({
+        "communication": "简洁",
+        "tool_preferences": {"coding": "Codex"},
+    })
+    engram.update_trust_boundaries({
+        "default_sharing": "limited",
+        "restricted_fields": ["email"],
+    })
+
+    export_path = engram.export_all(str(tmp_path / "backup.json"))
+    imported = Engram(root=tmp_path / "imported")
+    result = imported.import_all(export_path, merge=True)
+
+    assert result["status"] == "success"
+    assert "preferences" in result["imported"]
+    assert "trust_boundaries" in result["imported"]
+    assert imported.get_preferences()["communication"] == "简洁"
+    assert imported.get_preferences()["tool_preferences"]["coding"] == "Codex"
+    assert imported.get_trust_boundaries()["default_sharing"] == "limited"
+    assert imported.get_trust_boundaries()["restricted_fields"] == ["email"]
+
+
+def test_import_all_dry_run_reports_metadata_only_conflicts_without_mutation(
+    tmp_path: Path,
+):
+    """Dry-run import should expose field-level conflicts without leaking values or mutating."""
+    source = make_engram(tmp_path / "source")
+    source.update_profile({"role": "INCOMING_SECRET_ROLE"})
+    source.update_preferences({"communication": "INCOMING_SECRET_COMM"})
+    source.update_trust_boundaries({"default_sharing": "INCOMING_SECRET_SHARING"})
+    export_path = source.export_all(str(tmp_path / "incoming_backup.json"))
+
+    target = make_engram(tmp_path / "target")
+    target.update_profile({"role": "LOCAL_SECRET_ROLE"})
+    target.update_preferences({"communication": "LOCAL_SECRET_COMM"})
+    target.update_trust_boundaries({"default_sharing": "LOCAL_SECRET_SHARING"})
+    before_files = {
+        str(path.relative_to(target.root)): path.read_bytes()
+        for path in sorted(target.root.rglob("*"))
+        if path.is_file()
+    }
+
+    result = target.import_all(export_path, merge=True, dry_run=True)
+    serialized = json.dumps(result, ensure_ascii=False)
+    after_files = {
+        str(path.relative_to(target.root)): path.read_bytes()
+        for path in sorted(target.root.rglob("*"))
+        if path.is_file()
+    }
+
+    assert result["status"] == "preview"
+    assert result["mode"] == "merge"
+    assert result["dry_run"] is True
+    assert any(c["section"] == "profile" and c["field"] == "role" for c in result["conflicts"])
+    assert any(c["section"] == "preferences" and c["field"] == "communication" for c in result["conflicts"])
+    assert any(c["section"] == "trust_boundaries" and c["field"] == "default_sharing" for c in result["conflicts"])
+    assert "INCOMING_SECRET" not in serialized
+    assert "LOCAL_SECRET" not in serialized
+    assert target.get_profile()["role"] == "LOCAL_SECRET_ROLE"
+    assert target.get_preferences()["communication"] == "LOCAL_SECRET_COMM"
+    assert target.get_trust_boundaries()["default_sharing"] == "LOCAL_SECRET_SHARING"
+    assert after_files == before_files
+
+
+def test_import_all_merge_preserves_local_quality_rules_over_legacy_cap(
+    tmp_path: Path,
+):
+    """Full-backup merge must not drop local quality rules when adding more rules."""
+    source = make_engram(tmp_path / "source")
+    source.update_quality_standards({"rules": ["incoming quality rule"]})
+    export_path = source.export_all(str(tmp_path / "source_backup.json"))
+
+    target = make_engram(tmp_path / "target")
+    local_rules = [f"local quality rule {idx}" for idx in range(16)]
+    target.update_quality_standards({"rules": local_rules})
+
+    target.import_all(export_path, merge=True)
+
+    merged_rules = target.get_quality_standards()["rules"]
+    for rule in local_rules:
+        assert rule in merged_rules
+    assert "incoming quality rule" in merged_rules
+
+
 def test_import_all_file_not_found(tmp_path: Path):
     """不存在的备份文件应返回 error。"""
     engram = make_engram(tmp_path)
