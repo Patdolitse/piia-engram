@@ -28,6 +28,15 @@ def make_engram(tmp_path: Path) -> Engram:
     return Engram(root=tmp_path)
 
 
+def test_import_export_methods_are_mixin_backed():
+    """Import/export behavior should live outside the core facade."""
+    from piia_engram.import_export import ImportExportMixin
+
+    assert issubclass(Engram, ImportExportMixin)
+    assert Engram.export_all is ImportExportMixin.export_all
+    assert Engram.import_all is ImportExportMixin.import_all
+
+
 def test_init_creates_structure(tmp_path: Path):
     """初始化应创建完整目录结构。"""
     engram = make_engram(tmp_path)
@@ -422,6 +431,80 @@ def test_import_all_merge_preserves_local_quality_rules_over_legacy_cap(
     for rule in local_rules:
         assert rule in merged_rules
     assert "incoming quality rule" in merged_rules
+
+
+def test_import_all_dry_run_flags_divergent_lesson_as_version_candidate(
+    tmp_path: Path,
+):
+    """Same lesson summary with different body should be a reviewable conflict."""
+    source = make_engram(tmp_path / "source")
+    source.add_lesson({
+        "summary": "stable import conflict topic",
+        "detail": "INCOMING_LESSON_SECRET_DETAIL",
+        "domain": "import",
+    })
+    export_path = source.export_all(str(tmp_path / "source_backup.json"))
+
+    target = make_engram(tmp_path / "target")
+    local = target.add_lesson({
+        "summary": "stable import conflict topic",
+        "detail": "LOCAL_LESSON_SECRET_DETAIL",
+        "domain": "import",
+    })
+
+    result = target.import_all(export_path, merge=True, dry_run=True)
+    serialized = json.dumps(result, ensure_ascii=False)
+
+    conflicts = [
+        c for c in result["conflicts"]
+        if c.get("section") == "lessons"
+        and c.get("match_key") == "summary"
+    ]
+    assert result["summary"]["lessons"]["conflicts"] == 1
+    assert conflicts
+    assert conflicts[0]["resolution"] == "review_version_chain_candidate"
+    assert conflicts[0]["existing_id"] == local["id"]
+    assert conflicts[0]["candidate_relation"] == "supersedes"
+    assert "detail" in conflicts[0]["changed_fields"]
+    assert "INCOMING_LESSON_SECRET" not in serialized
+    assert "LOCAL_LESSON_SECRET" not in serialized
+
+
+def test_import_all_dry_run_flags_divergent_decision_as_version_candidate(
+    tmp_path: Path,
+):
+    """Same decision question with different choice/reasoning should be a conflict."""
+    source = make_engram(tmp_path / "source")
+    source.add_decision({
+        "question": "Which import strategy should Engram use?",
+        "choice": "INCOMING_DECISION_SECRET_CHOICE",
+        "reasoning": "INCOMING_DECISION_SECRET_REASONING",
+    })
+    export_path = source.export_all(str(tmp_path / "source_backup.json"))
+
+    target = make_engram(tmp_path / "target")
+    local = target.add_decision({
+        "question": "Which import strategy should Engram use?",
+        "choice": "LOCAL_DECISION_SECRET_CHOICE",
+        "reasoning": "LOCAL_DECISION_SECRET_REASONING",
+    })
+
+    result = target.import_all(export_path, merge=True, dry_run=True)
+    serialized = json.dumps(result, ensure_ascii=False)
+
+    conflicts = [
+        c for c in result["conflicts"]
+        if c.get("section") == "decisions"
+        and c.get("match_key") == "question"
+    ]
+    assert result["summary"]["decisions"]["conflicts"] == 1
+    assert conflicts
+    assert conflicts[0]["resolution"] == "review_version_chain_candidate"
+    assert conflicts[0]["existing_id"] == local["id"]
+    assert conflicts[0]["candidate_relation"] == "supersedes"
+    assert set(conflicts[0]["changed_fields"]) >= {"choice", "reasoning"}
+    assert "INCOMING_DECISION_SECRET" not in serialized
+    assert "LOCAL_DECISION_SECRET" not in serialized
 
 
 def test_import_all_file_not_found(tmp_path: Path):

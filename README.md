@@ -535,7 +535,7 @@ piia-engram ships 81 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 | `request_outline_review` | Generate an interactive HTML review page |
 | `apply_review` | Process review results (promote/archive staging items) |
 | `export_engram` | Export a full backup |
-| `import_engram` | Import a backup; use `dry_run=True` first for a metadata-only merge preview |
+| `import_engram` | Import a backup; use `dry_run=True` first for a metadata-only merge/conflict preview |
 | `export_engram_to_openclaw` | Export OpenClaw-compatible files |
 | `import_engram_from_openclaw` | Import OpenClaw-compatible files |
 | `read_web_content` | Read webpage via local Reader service |
@@ -633,7 +633,7 @@ directly. Three explicit export paths, each with a different boundary:
 |------|------|------------------|
 | A portable card to paste into ChatGPT/Gemini/Kimi | `get_identity_card` | Curated Markdown: who you are, how you work, recent verified lessons/decisions. Excludes raw config-file knowledge and caps recent items. |
 | A readable knowledge report | `export_knowledge_report` | Active lessons/decisions grouped by domain/month (Markdown). |
-| A full local backup | `export_engram` / `import_engram(dry_run=True)` | The whole store as JSON. Treat the file as sensitive — it is a complete backup, including staging and labelled items. Preview imports first to see add/skip/conflict counts without writing data. |
+| A full local backup | `export_engram` / `import_engram(dry_run=True)` / `engram import <backup.json>` | The whole store as JSON. Treat the file as sensitive — it is a complete backup, including staging and labelled items. Preview imports first to see add/skip/conflict counts without writing data. |
 | OpenClaw files | `export_engram_to_openclaw` | SOUL.md / MEMORY.md / USER.md. |
 | A committable AGENTS.md/CLAUDE.md digest | `engram export-agents-md` | **Verified, non-sensitive** lessons/decisions only, as a summary block. Staging and sensitive items are excluded by construction; refuses to overwrite an existing file. |
 
@@ -644,9 +644,11 @@ what you export is exactly what is on your disk.
 **Local data sovereignty.** Backup and restore cover *only* the Engram directory
 — `engram backup-plan` prints a metadata-only list of what to copy before an
 upgrade (it reads no stored knowledge bodies and never reaches outside the
-Engram root). For JSON backups, `import_engram(..., dry_run=True)` returns a
-metadata-only merge plan with add/skip/conflict counts before any write. Engram
-never backs up, modifies, or deletes files in your project folders.
+Engram root). For JSON backups, `import_engram(..., dry_run=True)` or
+`engram import <backup.json>` returns a metadata-only merge plan with
+add/skip/conflict counts before any write; `--apply --yes` is required to mutate
+the local store. Engram never backs up, modifies, or deletes files in your
+project folders.
 See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.md).
 
 ## Supported Tools
@@ -694,9 +696,9 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **17 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **2556** (unit + integration; 8 skipped, 2564 collected) |
+| Tests passing | **2561** (unit + integration; 8 skipped, 2569 collected) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
-| Lines in `core.py` | **3942** (facade + mixins total ~8045; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
+| Lines in `core.py` | **3336** (facade + mixins total ~8159; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | AES-256-GCM, per-engram salt + per-value random nonce |
 | Cold-start time | < 100 ms typical (local JSON, no network) |

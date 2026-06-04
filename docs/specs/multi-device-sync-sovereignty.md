@@ -3,10 +3,10 @@
 Status: **local import preview slice implemented; no sync transport.** Engram is
 local-first; this spec defines how an owner *could* keep one identity across
 several machines **without** surrendering sovereignty. The shipped slice is
-`import_engram(..., dry_run=True)`: a metadata-only add/skip/conflict preview for
-owner-moved JSON backups. Nothing here moves user data off-device, and live
-transport remains unimplemented until the owner explicitly opts in and the
-privacy boundaries below are enforced.
+`import_engram(..., dry_run=True)` / `engram import <backup.json>`: a
+metadata-only add/skip/conflict preview for owner-moved JSON backups. Nothing
+here moves user data off-device, and live transport remains unimplemented until
+the owner explicitly opts in and the privacy boundaries below are enforced.
 
 ## 1. Principle
 
@@ -40,17 +40,19 @@ reusing what already exists:
 ```text
 Device A:  engram export-engram         -> a full local JSON backup (sensitive)
            (owner copies it to Device B by a channel THEY choose)
-Device B:  import_engram(file, dry_run=True) -> metadata-only merge preview
-           import_engram(file, merge=True)   -> governed local merge
+Device B:  engram import <file>              -> metadata-only merge preview
+           engram import <file> --apply --yes -> owner-confirmed local merge
 ```
 
 `export_engram` / `import_engram` exist and are owner-gated
 (`maybe_refuse_owner_write` for import, export-owner gating for export). The
-current implementation adds local **dry-run merge planning** and restores the v2
-identity sections (`preferences`, `trust_boundaries`) from full backups. It does
-not add a network layer. A live transport (e.g. an owner-configured WebDAV/S3
-bucket, or a git remote of the export) is a strictly later, separately-gated
-increment — and even then it is the owner's remote, satisfying S2.
+current implementation adds local **dry-run merge planning**, restores the v2
+identity sections (`preferences`, `trust_boundaries`) from full backups, and
+surfaces same-key divergent lessons/decisions as reviewable version-chain
+candidates. It does not add a network layer. A live transport (e.g. an
+owner-configured WebDAV/S3 bucket, or a git remote of the export) is a strictly
+later, separately-gated increment — and even then it is the owner's remote,
+satisfying S2.
 
 ## 3. Merge / conflict reconciliation
 
@@ -67,11 +69,13 @@ tools                         -> dedupe by tool name
 The current dry-run preview reports add/skip/conflict counts and field-level
 conflict metadata before the owner applies. Merge mode preserves existing
 non-empty local identity/project fields and only fills missing values or merges
-list/dict additions. The later version-chain increment should reuse Phase 6's
-`version_chain` + typed `supersedes` edges and Phase 8's `reconcile_proposal` so
-same-id divergent knowledge entries can be matched by stable `id`, materialized
-as reviewable versions, and resolved by the owner rather than silently
-clobbering a local edit (S5).
+list/dict additions. Same-summary lessons and same-question decisions with
+different semantic fields are flagged as `review_version_chain_candidate` with
+ids and changed field names only; content values are withheld. The later
+version-chain increment should reuse Phase 6's `version_chain` + typed
+`supersedes` edges and Phase 8's `reconcile_proposal` so divergent candidates
+can be materialized as reviewable versions and resolved by the owner rather
+than silently clobbering a local edit (S5).
 
 ## 4. Privacy boundaries
 
@@ -90,12 +94,12 @@ clobbering a local edit (S5).
 
 ## 5. Rollout phases
 
-1. Spec (this doc) + import **merge-semantics** design. (Done for local preview;
-   version-chain conflict mapping remains future work.)
-2. Import-as-proposal: `import_engram(..., dry_run=True)` reports metadata-only
-   add/skip/conflict counts before any Engram data write. (Implemented, local
-   only.)
-3. Conflict materialization via `supersedes` edges on explicit apply.
+1. Spec (this doc) + import **merge-semantics** design. (Done for local preview.)
+2. Import-as-proposal: `import_engram(..., dry_run=True)` or
+   `engram import <backup.json>` reports metadata-only add/skip/conflict counts
+   before any Engram data write. (Implemented, local only.)
+3. Conflict materialization via `supersedes` edges on explicit apply. (Future
+   work; current apply remains conservative and non-destructive for conflicts.)
 4. Optional owner-configured remote transport (owner's bucket/git), opt-in,
    audited — only after 1–3 are validated.
 

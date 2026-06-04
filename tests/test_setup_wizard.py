@@ -2714,6 +2714,97 @@ class TestMainCLI:
         assert "entries=1" in out
         assert "CLI_SECRET" not in out
 
+    def test_main_import_preview_is_json_metadata_only_and_read_only(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import main
+
+        source = Engram(root=tmp_path / "source")
+        source.add_lesson({
+            "summary": "CLI import topic",
+            "detail": "CLI_IMPORT_INCOMING_SECRET",
+        })
+        backup = source.export_all(str(tmp_path / "backup.json"))
+
+        target_root = tmp_path / "target"
+        target = Engram(root=target_root)
+        target.add_lesson({
+            "summary": "CLI import topic",
+            "detail": "CLI_IMPORT_LOCAL_SECRET",
+        })
+        data_dirs = {"identity", "knowledge", "playbooks", "projects", "environment"}
+        before = {
+            str(path.relative_to(target_root)): path.read_bytes()
+            for path in sorted(target_root.rglob("*"))
+            if path.is_file() and path.relative_to(target_root).parts[0] in data_dirs
+        }
+
+        monkeypatch.setenv("ENGRAM_DIR", str(target_root))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        monkeypatch.setattr("sys.argv", ["engram", "import", backup, "--json"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        payload = json.loads(capsys.readouterr().out)
+        serialized = json.dumps(payload, ensure_ascii=False)
+        after = {
+            str(path.relative_to(target_root)): path.read_bytes()
+            for path in sorted(target_root.rglob("*"))
+            if path.is_file() and path.relative_to(target_root).parts[0] in data_dirs
+        }
+        assert payload["status"] == "preview"
+        assert payload["dry_run"] is True
+        assert payload["summary"]["lessons"]["conflicts"] == 1
+        assert "CLI_IMPORT_INCOMING_SECRET" not in serialized
+        assert "CLI_IMPORT_LOCAL_SECRET" not in serialized
+        assert after == before
+
+    def test_main_import_apply_requires_yes_then_mutates(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from piia_engram.core import Engram
+        from piia_engram.setup_wizard import main
+
+        source = Engram(root=tmp_path / "source")
+        source.add_lesson({"summary": "CLI apply imported lesson"})
+        backup = source.export_all(str(tmp_path / "backup.json"))
+        target_root = tmp_path / "target"
+        Engram(root=target_root)
+
+        monkeypatch.setenv("ENGRAM_DIR", str(target_root))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        monkeypatch.setattr(
+            "sys.argv",
+            ["engram", "import", backup, "--apply", "--json"],
+        )
+
+        with pytest.raises(SystemExit) as denied:
+            main()
+
+        assert denied.value.code == 1
+        denied_payload = json.loads(capsys.readouterr().out)
+        assert denied_payload["requires_confirmation"] is True
+        assert denied_payload["status"] == "preview"
+        assert denied_payload["summary"]["lessons"]["would_add"] == 1
+        assert Engram(root=target_root).get_lessons(limit=None) == []
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["engram", "import", backup, "--apply", "--yes", "--json"],
+        )
+
+        with pytest.raises(SystemExit) as applied:
+            main()
+
+        assert applied.value.code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "success"
+        lessons = Engram(root=target_root).get_lessons(limit=None)
+        assert [lesson["summary"] for lesson in lessons] == ["CLI apply imported lesson"]
+
     def test_main_telemetry_dispatches(self, tmp_path, monkeypatch, capsys):
         """main() with 'telemetry' should call _run_telemetry_cli."""
         from piia_engram.setup_wizard import main

@@ -4690,6 +4690,110 @@ def _run_backup_plan(args: list[str]) -> int:
     return 0
 
 
+def _render_import_result_text(payload: dict) -> str:
+    """Render import preview/apply output without exposing stored values."""
+    status = payload.get("status", "unknown")
+    mode = payload.get("mode", "")
+    dry_run = bool(payload.get("dry_run"))
+    summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
+    conflicts = payload.get("conflicts", []) if isinstance(payload.get("conflicts"), list) else []
+
+    title = "Engram import preview" if dry_run else "Engram import apply"
+    lines = [
+        f"{title} - {status}",
+        f"  mode: {mode or 'merge'}",
+        f"  dry_run: {'true' if dry_run else 'false'}",
+        "  metadata_only: true",
+    ]
+    if payload.get("requires_confirmation"):
+        lines.append("  requires_confirmation: true")
+        lines.append("  re-run with --apply --yes to mutate the local store")
+    if summary:
+        lines.append("  summary:")
+        for section, counts in sorted(summary.items()):
+            lines.append(
+                f"    - {section}: incoming={counts.get('incoming', 0)} "
+                f"add={counts.get('would_add', 0)} "
+                f"skip={counts.get('would_skip', 0)} "
+                f"conflicts={counts.get('conflicts', 0)}"
+            )
+    if conflicts:
+        lines.append(f"  conflicts: {len(conflicts)} (metadata only; values withheld)")
+    if payload.get("error"):
+        lines.append(f"  error: {payload['error']}")
+    if dry_run and not payload.get("requires_confirmation"):
+        lines.append("  run 'engram import <backup.json> --apply --yes' to apply")
+    return "\n".join(lines)
+
+
+def _run_import_backup(args: list[str]) -> int:
+    """Preview/apply a full Engram JSON backup import.
+
+    Default is read-only preview. Mutation requires both ``--apply`` and
+    ``--yes``; overwrite mode is explicit via ``--overwrite``.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if not args or args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram import <backup.json> [--json]\n"
+            "  engram import <backup.json> --apply --yes [--json]\n"
+            "  engram import <backup.json> --overwrite --apply --yes [--json]\n\n"
+            "Default is metadata-only preview. --overwrite maps to merge=False."
+        )
+        return 0 if args and args[0] in {"-h", "--help"} else 2
+
+    json_output = "--json" in args
+    apply = "--apply" in args
+    confirm = "--yes" in args
+    overwrite = "--overwrite" in args
+    known_flags = {"--json", "--apply", "--yes", "--overwrite"}
+    paths = []
+    for arg in args:
+        if arg in known_flags:
+            continue
+        if arg.startswith("--"):
+            payload = {"error": f"Unknown import option: {arg}"}
+            if json_output:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(_render_import_result_text(payload))
+            return 2
+        paths.append(arg)
+
+    if len(paths) != 1:
+        payload = {"error": "Usage: engram import <backup.json> [--json]"}
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(_render_import_result_text(payload))
+        return 2
+
+    backup_path = paths[0]
+    merge = not overwrite
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+
+    if apply and not confirm:
+        payload = eng.import_all(backup_path, merge=merge, dry_run=True)
+        payload["requires_confirmation"] = True
+        payload["confirmation_hint"] = "re-run with --apply --yes to mutate the local store"
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(_render_import_result_text(payload))
+        return 1
+
+    payload = eng.import_all(backup_path, merge=merge, dry_run=not apply)
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(_render_import_result_text(payload))
+    return 1 if payload.get("error") else 0
+
+
 def _run_export_agents_md(args: list[str]) -> int:
     """Export verified, non-sensitive knowledge as an AGENTS.md / CLAUDE.md block.
 
@@ -5725,6 +5829,8 @@ def main() -> None:
         sys.exit(_run_recover_json(args[1:]))
     elif args[0] == "backup-plan":
         sys.exit(_run_backup_plan(args[1:]))
+    elif args[0] == "import":
+        sys.exit(_run_import_backup(args[1:]))
     elif args[0] == "export-agents-md":
         sys.exit(_run_export_agents_md(args[1:]))
     elif args[0] == "recall":
@@ -5785,6 +5891,7 @@ def main() -> None:
             "  engram repair-encoding  Dry-run mojibake scan (use --apply to fix)\n"
             "  engram recover-json <dataset>  Dry-run metadata scan for corrupt JSON backups\n"
             "  engram backup-plan      Metadata-only local backup plan (--json for raw)\n"
+            "  engram import <backup.json>  Metadata-only import preview (--apply --yes to write)\n"
             "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
@@ -5806,8 +5913,8 @@ def main() -> None:
             "  export_knowledge_report Readable Markdown report of active knowledge\n"
             "  export_engram           Full local JSON backup (treat as sensitive)\n\n"
             "Tool tiers:\n"
-            "  Default: 16 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 80 tools.\n"
+            "  Default: 17 核心工具 / core MCP tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 81 tools.\n"
         )
         sys.exit(0)
 

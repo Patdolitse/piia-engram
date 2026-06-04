@@ -437,9 +437,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具 | **17 个核心**（默认加载）+ **64 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **2556** 个（单元 + 集成；8 个 skipped，共收集 2564）|
+| 测试通过 | **2561** 个（单元 + 集成；8 个 skipped，共收集 2569）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
-| `core.py` 行数 | **3942** 行（facade + mixins 合计约 8045 行；v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
+| `core.py` 行数 | **3336** 行（facade + mixins 合计约 8159 行；v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | AES-256-GCM，每个 engram 独立 salt + 每条数据随机 nonce |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
@@ -545,7 +545,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `request_outline_review` | 生成交互式 HTML 知识审查页面 |
 | `apply_review` | 处理审查结果（晋升/归档暂存条目） |
 | `export_engram` | 导出完整备份 |
-| `import_engram` | 导入备份 |
+| `import_engram` | 导入备份；先用 `dry_run=True` 做元数据级合并/冲突预览 |
 | `export_engram_to_openclaw` | 导出 OpenClaw 格式 |
 | `import_engram_from_openclaw` | 导入 OpenClaw 格式 |
 | `read_web_content` | 读取网页内容（需 Reader 服务） |
