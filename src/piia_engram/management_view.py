@@ -288,6 +288,136 @@ def build_management_view(
     }
 
 
+READONLY_SURFACE_KEYS = frozenset(
+    {
+        "schema",
+        "generated_at",
+        "read_only",
+        "capabilities",
+        "view",
+        "version_chains",
+    }
+)
+CAPABILITY_KEYS = frozenset(
+    {
+        "read_only",
+        "exposed_mutations",
+        "advisory_actions",
+        "network_listener",
+        "transport",
+    }
+)
+VERSION_CHAIN_KEYS = frozenset({"topic_count", "head_count", "superseded_count", "cycle_count"})
+
+
+def _version_chain_panel(eng) -> dict[str, Any]:
+    """Metadata-only version-chain summary for the GUI (counts only, no ids/bodies).
+
+    Read-only: loads typed relation edges and derives per-chain totals via the
+    pure :mod:`version_chain` report. Any failure degrades to zeros so the
+    surface is always producible. Never reads or echoes knowledge content.
+    """
+    panel = {"topic_count": 0, "head_count": 0, "superseded_count": 0, "cycle_count": 0}
+    root = getattr(eng, "root", None)
+    if root is None:
+        return panel
+    try:
+        from .governance_store import RelationStore
+        from . import version_chain as _vc
+
+        edges = RelationStore(root).all_edges()
+        report = _vc.build_version_report(edges)
+        totals = report.get("totals", {}) if isinstance(report, dict) else {}
+        panel = {
+            "topic_count": int(totals.get("topics", 0) or 0),
+            "head_count": int(totals.get("heads", 0) or 0),
+            "superseded_count": int(totals.get("superseded", 0) or 0),
+            "cycle_count": int(totals.get("cycles", 0) or 0),
+        }
+    except Exception as exc:  # pragma: no cover - defensive; never block the surface
+        logger.debug("version-chain panel unavailable: %s", exc)
+    return panel
+
+
+def build_readonly_management_surface(
+    eng,
+    *,
+    project_folder: str = "",
+    review_limit: int = 50,
+    playbook_limit: int = 50,
+    session_limit: int = 500,
+    review_kind: str = "all",
+    quality_status: str = "all",
+    playbook_state: str = "all",
+    scope_type: str = "all",
+) -> dict[str, Any]:
+    """Build a strictly read-only, GUI-ready management surface.
+
+    Wraps :func:`build_management_view` (already closed-schema and metadata-only)
+    with an explicit read-only capability contract and a metadata-only
+    version-chain panel. The surface itself performs **no** writes, deletes, or
+    applies and exposes no mutation callable — its ``advisory_actions`` are only
+    labels a GUI could render; executing them stays the caller's separately
+    governed concern. There is no server or network listener; the surface is a
+    plain in-process return value. Use :func:`assert_readonly_surface_closed` to
+    runtime-check the closed schema.
+    """
+    view = build_management_view(
+        eng,
+        project_folder=project_folder,
+        review_limit=review_limit,
+        playbook_limit=playbook_limit,
+        session_limit=session_limit,
+        review_kind=review_kind,
+        quality_status=quality_status,
+        playbook_state=playbook_state,
+        scope_type=scope_type,
+    )
+    advisory = view.get("actions") if isinstance(view.get("actions"), dict) else {}
+    return {
+        "schema": 1,
+        "generated_at": _now_iso(),
+        "read_only": True,
+        "capabilities": {
+            "read_only": True,
+            "exposed_mutations": [],
+            "advisory_actions": advisory,
+            "network_listener": False,
+            "transport": "in_process_return_value",
+        },
+        "view": view,
+        "version_chains": _version_chain_panel(eng),
+    }
+
+
+def assert_readonly_surface_closed(surface: dict[str, Any]) -> dict[str, Any]:
+    """Validate the read-only surface against its closed schema (raises on drift).
+
+    Checks the top-level keys, the capability contract (must declare read-only,
+    no exposed mutations, no network listener), and the version-chain panel keys.
+    Returns the surface unchanged so it can be used inline.
+    """
+    if set(surface) != set(READONLY_SURFACE_KEYS):
+        missing = sorted(READONLY_SURFACE_KEYS - set(surface))
+        extra = sorted(set(surface) - READONLY_SURFACE_KEYS)
+        raise AssertionError(f"readonly surface schema drift: missing={missing} extra={extra}")
+
+    caps = surface.get("capabilities")
+    if not isinstance(caps, dict) or set(caps) != set(CAPABILITY_KEYS):
+        raise AssertionError("readonly surface capability contract drift")
+    if caps.get("read_only") is not True:
+        raise AssertionError("readonly surface must declare read_only=True")
+    if caps.get("exposed_mutations") != []:
+        raise AssertionError("readonly surface must expose no mutations")
+    if caps.get("network_listener") is not False:
+        raise AssertionError("readonly surface must not declare a network listener")
+
+    chains = surface.get("version_chains")
+    if not isinstance(chains, dict) or set(chains) != set(VERSION_CHAIN_KEYS):
+        raise AssertionError("readonly surface version-chain panel schema drift")
+    return surface
+
+
 def render_management_text(view: dict[str, Any]) -> str:
     """Render a compact metadata-only management summary."""
     review = view.get("review_queue") or {}

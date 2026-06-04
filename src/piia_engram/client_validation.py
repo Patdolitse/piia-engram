@@ -229,6 +229,195 @@ def render_zero_pollution_markdown(report: dict[str, Any], *, title: str = "零�
     return "\n".join(lines) + "\n"
 
 
+def snapshot_tree(root: str | Path) -> dict[str, str]:
+    """Map every file under *root* to its sha256, keyed by POSIX-style relpath.
+
+    Deterministic and order-independent (the dict is built from a sorted walk).
+    Used for directory-level zero-pollution: comparing two snapshots proves a
+    copied store arm was not mutated by a read-only run, without ever reading a
+    knowledge body into the report.
+    """
+    base = Path(root)
+    out: dict[str, str] = {}
+    if not base.exists():
+        return out
+    for path in sorted(base.rglob("*")):
+        if path.is_file():
+            rel = str(path.relative_to(base)).replace("\\", "/")
+            out[rel] = hashlib.sha256(path.read_bytes()).hexdigest().upper()
+    return out
+
+
+def tree_digest(tree: dict[str, str]) -> str:
+    """Single rolled-up sha256 over a :func:`snapshot_tree` map.
+
+    Stable across runs and machines: derived only from sorted ``(relpath, hash)``
+    pairs, so two byte-identical stores in different temp dirs produce the same
+    digest. Empty tree → sha256 of the empty string marker.
+    """
+    h = hashlib.sha256()
+    for rel in sorted(tree):
+        h.update(rel.encode("utf-8"))
+        h.update(b"\x00")
+        h.update(tree[rel].encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest().upper()
+
+
+def build_ab_arm(
+    *,
+    arm: str,
+    engram_enabled: bool,
+    surfaced_signal_count: int,
+    before_tree: dict[str, str],
+    after_tree: dict[str, str],
+) -> dict[str, Any]:
+    """Build one metadata-only A/B arm record from before/after tree snapshots.
+
+    Records the arm name, whether the Engram MCP read surface was enabled, the
+    number of knowledge *signals* a read-only recall surfaced (a count, never a
+    body), and a directory-level zero-pollution verdict (digest before == after).
+    Pure: derives everything from its inputs, mutates nothing.
+    """
+    before_digest = tree_digest(before_tree)
+    after_digest = tree_digest(after_tree)
+    return {
+        "arm": str(arm),
+        "engram_enabled": bool(engram_enabled),
+        "surfaced_signal_count": max(0, int(surfaced_signal_count)),
+        "store_digest_before": before_digest,
+        "store_digest_after": after_digest,
+        "zero_pollution_clean": before_digest == after_digest,
+        "checked_file_count": len(before_tree),
+    }
+
+
+def build_ab_evidence(
+    *,
+    on_arm: dict[str, Any],
+    off_arm: dict[str, Any],
+    client_id: str = "synthetic-offline",
+    live_store_digest_before: str = "",
+    live_store_digest_after: str = "",
+) -> dict[str, Any]:
+    """Combine an Engram-on and Engram-off arm into a deterministic A/B report.
+
+    The report is metadata-only and byte-stable: it carries counts, booleans and
+    content digests, never knowledge bodies or absolute paths. The core claim it
+    supports is a *signal differential* — the Engram-on arm surfaces strictly
+    more knowledge signals than the Engram-off arm — proven without any live
+    provider auth or network. ``live_store_digest_*`` are optional; when both are
+    supplied they assert the real user store fingerprint was unchanged.
+    """
+    on_count = max(0, int(on_arm.get("surfaced_signal_count", 0) or 0))
+    off_count = max(0, int(off_arm.get("surfaced_signal_count", 0) or 0))
+    arms_clean = bool(on_arm.get("zero_pollution_clean")) and bool(
+        off_arm.get("zero_pollution_clean")
+    )
+    if live_store_digest_before or live_store_digest_after:
+        live_untouched = bool(
+            live_store_digest_before
+            and live_store_digest_after
+            and live_store_digest_before == live_store_digest_after
+        )
+    else:
+        live_untouched = None
+
+    signal_differential = on_count - off_count
+    return {
+        "schema": 1,
+        "harness": "client_ab_offline_v1",
+        "synthetic_only": True,
+        "live_provider_auth": False,
+        "network_used": False,
+        "client_id": str(client_id),
+        "on_arm": dict(on_arm),
+        "off_arm": dict(off_arm),
+        "signal_differential": signal_differential,
+        "differential_positive": signal_differential > 0,
+        "arms_zero_pollution_clean": arms_clean,
+        "live_store_untouched": live_untouched,
+        "overall_passed": (
+            signal_differential > 0
+            and arms_clean
+            and (live_untouched is not False)
+        ),
+    }
+
+
+def build_public_safe_summary(
+    evidence: dict[str, Any],
+    *,
+    claimed_level: str = "L3",
+    claim: str = "",
+    evidence_mode: str = "static offline A/B (copied synthetic store)",
+) -> dict[str, Any]:
+    """Project A/B evidence to a public-safe summary, gated by the claim guard.
+
+    Strips everything but counts/booleans and routes the headline claim through
+    :func:`validate_public_claim` so an offline static A/B run cannot be dressed
+    up as live-agent or universal-compatibility evidence. ``claim_allowed`` and
+    ``claim_problems`` make any overclaim explicit instead of silently passing.
+    """
+    client_id = str(evidence.get("client_id") or "")
+    default_claim = (
+        f"{client_id or 'client'} offline A/B shows an Engram signal differential "
+        "of "
+        f"{int(evidence.get('signal_differential', 0) or 0)} with zero copied-store "
+        "pollution"
+    )
+    guard = validate_public_claim(
+        client_id=client_id,
+        claimed_level=claimed_level,
+        claim=claim or default_claim,
+        evidence_mode=evidence_mode,
+        live_agent_verified=False,
+    )
+    on_arm = evidence.get("on_arm") or {}
+    off_arm = evidence.get("off_arm") or {}
+    return {
+        "schema": 1,
+        "client_id": client_id,
+        "evidence_mode": evidence_mode,
+        "claimed_level": guard.get("claimed_level", ""),
+        "engram_on_signal_count": int(on_arm.get("surfaced_signal_count", 0) or 0),
+        "engram_off_signal_count": int(off_arm.get("surfaced_signal_count", 0) or 0),
+        "signal_differential": int(evidence.get("signal_differential", 0) or 0),
+        "arms_zero_pollution_clean": bool(evidence.get("arms_zero_pollution_clean")),
+        "live_provider_auth": False,
+        "network_used": False,
+        "claim_allowed": bool(guard.get("allowed")),
+        "claim_problems": list(guard.get("problems", [])),
+    }
+
+
+def render_public_safe_summary_markdown(summary: dict[str, Any]) -> str:
+    """Render a public-safe A/B summary as a compact, user-facing report."""
+    verdict = "通过" if summary.get("claim_allowed") and summary.get(
+        "arms_zero_pollution_clean"
+    ) else "未通过"
+    lines = [
+        "# 离线客户端 A/B 证据（合成、零网络）",
+        "",
+        f"- 客户端：{summary.get('client_id', '')}",
+        f"- 证据模式：{summary.get('evidence_mode', '')}",
+        f"- Engram 开启信号数：{summary.get('engram_on_signal_count', 0)}",
+        f"- Engram 关闭信号数：{summary.get('engram_off_signal_count', 0)}",
+        f"- 信号差：{summary.get('signal_differential', 0)}",
+        f"- 拷贝库零污染：{'是' if summary.get('arms_zero_pollution_clean') else '否'}",
+        f"- 实时 Provider 认证：{'有' if summary.get('live_provider_auth') else '无（离线）'}",
+        f"- 公开声称许可：{'允许' if summary.get('claim_allowed') else '拒绝'}",
+        f"- 结论：{verdict}",
+    ]
+    problems = summary.get("claim_problems") or []
+    if problems:
+        lines.append("")
+        lines.append("## 声称护栏拦截")
+        for problem in problems:
+            lines.append(f"- {problem}")
+    return "\n".join(lines) + "\n"
+
+
 def validate_public_claim(
     *,
     client_id: str,

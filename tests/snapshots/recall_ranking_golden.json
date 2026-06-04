@@ -1,0 +1,184 @@
+{
+  "corpus_fingerprint": "5C643FDFBE01750D09A1720AFF733340F35ECFB96EBE8B205D42937FFEBBF3B0",
+  "harness": "recall_ranking_benchmark_v1",
+  "hit_at_1": 8,
+  "hit_at_k": 8,
+  "mrr": 1.0,
+  "overall_passed": true,
+  "query_count": 8,
+  "remote_embeddings": false,
+  "rows": [
+    {
+      "expected": "K1",
+      "hit_at_1": true,
+      "hit_at_k": true,
+      "query": "python packaging wheel",
+      "rank_of_expected": 1,
+      "ranked": [
+        [
+          "K1",
+          6.15
+        ],
+        [
+          "K7",
+          3.05
+        ],
+        [
+          "K2",
+          0.0
+        ]
+      ]
+    },
+    {
+      "expected": "K2",
+      "hit_at_1": true,
+      "hit_at_k": true,
+      "query": "react frontend rendering performance",
+      "rank_of_expected": 1,
+      "ranked": [
+        [
+          "K2",
+          6.4762
+        ],
+        [
+          "K1",
+          0.0
+        ],
+        [
+          "K3",
+          0.0
+        ]
+      ]
+    },
+    {
+      "expected": "K3",
+      "hit_at_1": true,
+      "hit_at_k": true,
+      "query": "mcp tool json schema",
+      "rank_of_expected": 1,
+      "ranked": [
+        [
+          "K3",
+          6.2576
+        ],
+        [
+          "K1",
+          0.0
+        ],
+        [
+          "K2",
+          0.0
+        ]
+      ]
+    },
+    {
+      "expected": "K4",
+      "hit_at_1": true,
+      "hit_at_k": true,
+      "query": "pypi release auth pipeline",
+      "rank_of_expected": 1,
+      "ranked": [
+        [
+          "K4",
+          6.2159
+        ],
+        [
+          "K1",
+          0.0
+        ],
+        [
+          "K2",
+          0.0
+        ]
+      ]
+    },
+    {
+      "expected": "K5",
+      "hit_at_1": true,
+      "hit_at_k": true,
+      "query": "git rebase merge conflict",
+      "rank_of_expected": 1,
+      "ranked": [
+        [
+          "K5",
+          6.1909
+        ],
+        [
+          "K1",
+          0.0
+        ],
+        [
+          "K2",
+          0.0
+        ]
+      ]
+    },
+    {
+      "expected": "K6",
+      "hit_at_1": true,
+      "hit_at_k": true,
+      "query": "sqlite database local store",
+      "rank_of_expected": 1,
+      "ranked": [
+        [
+          "K6",
+          5.0682
+        ],
+        [
+          "K1",
+          0.0
+        ],
+        [
+          "K2",
+          0.0
+        ]
+      ]
+    },
+    {
+      "expected": "K7",
+      "hit_at_1": true,
+      "hit_at_k": true,
+      "query": "python async concurrency",
+      "rank_of_expected": 1,
+      "ranked": [
+        [
+          "K7",
+          6.15
+        ],
+        [
+          "K1",
+          3.05
+        ],
+        [
+          "K2",
+          0.0
+        ]
+      ]
+    },
+    {
+      "expected": "K8",
+      "hit_at_1": true,
+      "hit_at_k": true,
+      "query": "backup restore migration",
+      "rank_of_expected": 1,
+      "ranked": [
+        [
+          "K8",
+          5.9
+        ],
+        [
+          "K1",
+          0.0
+        ],
+        [
+          "K2",
+          0.0
+        ]
+      ]
+    }
+  ],
+  "schema": 1,
+  "store_access": false,
+  "synthetic_only": true,
+  "top_k": 3
+}

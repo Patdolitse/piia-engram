@@ -41,6 +41,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workspace", default="")
     parser.add_argument("--known-limitation", action="append", default=[])
     parser.add_argument("--snapshot-file", action="append", default=[], help="File to snapshot for zero-pollution evidence.")
+    parser.add_argument(
+        "--ab-evidence",
+        action="store_true",
+        help="Also run the offline synthetic Engram-on/off A/B harness and write "
+        "ab_evidence.json + ab_summary.md into the run dir (no network, no real store).",
+    )
     return parser.parse_args()
 
 
@@ -116,7 +122,36 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    print(json.dumps({"run_dir": str(run_dir), "created": True}, ensure_ascii=False, indent=2))
+    result: dict[str, object] = {"run_dir": str(run_dir), "created": True}
+
+    if args.ab_evidence:
+        import shutil
+        import sys
+        import tempfile
+
+        demos_dir = Path(__file__).resolve().parents[1] / "demos"
+        if str(demos_dir) not in sys.path:
+            sys.path.insert(0, str(demos_dir))
+        import client_ab_evidence_harness as ab  # noqa: E402
+
+        from piia_engram.client_validation import render_public_safe_summary_markdown
+
+        ab_base = Path(tempfile.mkdtemp(prefix="engram-client-ab-"))
+        try:
+            evidence = ab.run_harness(ab_base, client_id=args.client_id)
+        finally:
+            shutil.rmtree(ab_base, ignore_errors=True)
+        _write_json(run_dir / "ab_evidence.json", evidence)
+        (run_dir / "ab_summary.md").write_text(
+            render_public_safe_summary_markdown(evidence.get("public_summary", {})),
+            encoding="utf-8",
+        )
+        result["ab_evidence"] = {
+            "overall_passed": bool(evidence.get("overall_passed")),
+            "signal_differential": evidence.get("signal_differential"),
+        }
+
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

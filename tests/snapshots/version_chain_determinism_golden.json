@@ -1,0 +1,87 @@
+{
+  "corpus_fingerprint": "674AC0BF3447CE098FD81750E1D5B450CA353FD57435C10A8C43C7B78138D4C6",
+  "harness": "version_chain_determinism_v1",
+  "head_ids": [
+    "a3",
+    "b3",
+    "c2"
+  ],
+  "invariants": {
+    "collapsed_matches_superseded": true,
+    "no_superseded_in_kept": true,
+    "superseded_never_head": true
+  },
+  "overall_passed": true,
+  "recall_collapse": {
+    "collapsed_ids": [
+      "a1",
+      "a2",
+      "c1"
+    ],
+    "input_ids": [
+      "a1",
+      "a2",
+      "a3",
+      "b1",
+      "b2",
+      "b3",
+      "c1",
+      "c2"
+    ],
+    "kept_ids": [
+      "a3",
+      "b1",
+      "b2",
+      "b3",
+      "c2"
+    ]
+  },
+  "schema": 1,
+  "superseded_ids": [
+    "a1",
+    "a2",
+    "c1"
+  ],
+  "synthetic_only": true,
+  "version_report": {
+    "topics": [
+      {
+        "active_count": 1,
+        "has_cycle": false,
+        "heads": [
+          "a3"
+        ],
+        "seed": "a1",
+        "size": 3,
+        "superseded_count": 2
+      },
+      {
+        "active_count": 3,
+        "has_cycle": false,
+        "heads": [
+          "b3"
+        ],
+        "seed": "b1",
+        "size": 3,
+        "superseded_count": 0
+      },
+      {
+        "active_count": 1,
+        "has_cycle": false,
+        "heads": [
+          "c2"
+        ],
+        "seed": "c1",
+        "size": 2,
+        "superseded_count": 1
+      }
+    ],
+    "totals": {
+      "cycles": 0,
+      "heads": 3,
+      "nodes": 8,
+      "superseded": 3,
+      "topics": 3
+    }
+  }
+}

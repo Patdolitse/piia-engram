@@ -21,7 +21,12 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ENGRAM_DIR", str(root))
     eng = Engram(root=root)
     # verified (default tier) + non-sensitive → exported
-    eng.add_lesson({"summary": "Always pin dependency versions in CI", "domain": "ci"})
+    eng.add_lesson({
+        "summary": "Always pin dependency versions in CI",
+        "domain": "ci",
+        "tier": "verified",
+        "status": "active",
+    })
     eng.add_decision({"question": "ORM choice", "choice": "use SQLAlchemy"})
     # staging → excluded
     eng.add_lesson({"summary": "DRAFT idea about caching that is not yet vetted",

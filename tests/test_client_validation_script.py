@@ -42,6 +42,8 @@ def test_scaffold_zero_pollution_is_pending_before_real_run(tmp_path: Path):
 
     assert "状态：待补充" in zero_text
     assert "不能声称通过" in zero_text
+    for marker in ("鈥", "鈫", "\ufffd", "寰", "闆", "锛"):
+        assert marker not in zero_text
     assert zero_json["status"] == "pending"
     assert zero_json["clean"] is None
 
