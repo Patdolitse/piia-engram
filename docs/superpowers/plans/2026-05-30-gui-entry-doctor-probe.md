@@ -67,7 +67,7 @@ Run:
 
 ```powershell
 $env:PYTHONIOENCODING='utf-8'; $env:PYTHONPATH='src'
-E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_setup_wizard.py::TestMcpEntryLaunchProbe -q
+<python-runtime>\python.exe -m pytest tests/test_setup_wizard.py::TestMcpEntryLaunchProbe -q
 ```
 
 Expected: FAIL because `_classify_engram_entry` does not exist yet.
@@ -295,7 +295,7 @@ Run:
 
 ```powershell
 $env:PYTHONIOENCODING='utf-8'; $env:PYTHONPATH='src'
-E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_setup_wizard.py::TestMcpEntryLaunchProbe -q
+<python-runtime>\python.exe -m pytest tests/test_setup_wizard.py::TestMcpEntryLaunchProbe -q
 ```
 
 Expected: PASS.
@@ -386,7 +386,7 @@ Run:
 
 ```powershell
 $env:PYTHONIOENCODING='utf-8'; $env:PYTHONPATH='src'
-E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_setup_wizard.py::TestMcpEntryLaunchProbe tests/test_setup_wizard.py::TestDoctorLaunchProbeIntegration tests/test_setup_wizard.py::TestDoctorFix -q
+<python-runtime>\python.exe -m pytest tests/test_setup_wizard.py::TestMcpEntryLaunchProbe tests/test_setup_wizard.py::TestDoctorLaunchProbeIntegration tests/test_setup_wizard.py::TestDoctorFix -q
 ```
 
 Expected: PASS.
@@ -403,7 +403,7 @@ Run:
 
 ```powershell
 $env:PYTHONIOENCODING='utf-8'; $env:PYTHONPATH='src'
-E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_setup_wizard.py -q
+<python-runtime>\python.exe -m pytest tests/test_setup_wizard.py -q
 ```
 
 Expected: PASS.
@@ -414,8 +414,8 @@ Run:
 
 ```powershell
 $env:PYTHONIOENCODING='utf-8'
-E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe scripts/check_publish_allowlist.py
-E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe scripts/release_sanitize_check.py --internal --strict
+<python-runtime>\python.exe scripts/check_publish_allowlist.py
+<python-runtime>\python.exe scripts/release_sanitize_check.py --internal --strict
 git diff --check
 ```
 
