@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [3.49.0] - 2026-06-04
+
 ### 新增
 - **显式导入版本链实体化**：完整备份导入现在支持
   `engram import <backup.json> --apply --yes --materialize-version-chain`，

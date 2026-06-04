@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.49.0] - 2026-06-04
+
 ### Added
 - **Opt-in import version-chain materialization** - full-backup imports now support
   `engram import <backup.json> --apply --yes --materialize-version-chain` for
