@@ -1,3 +1,4 @@
+import asyncio
 import os
 import subprocess
 import sys
@@ -49,6 +50,203 @@ def test_mcp_server_main_configures_stdio_before_run(monkeypatch):
     mcp_server.main()
 
     assert events[:2] == ["utf8", "run:stdio"]
+
+
+def test_mcp_server_startup_sync_defaults_to_background(monkeypatch):
+    from piia_engram import mcp_server
+
+    events = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            events.append(f"thread:{name}:{daemon}")
+            self._target = target
+
+        def start(self):
+            events.append("thread:start")
+            self._target()
+
+    monkeypatch.setattr(
+        mcp_server,
+        "_parse_args",
+        lambda: SimpleNamespace(transport="stdio", host="127.0.0.1", port=8123),
+    )
+    monkeypatch.delenv("ENGRAM_EPHEMERAL", raising=False)
+    monkeypatch.delenv("ENGRAM_MCP_STARTUP_SYNC", raising=False)
+    monkeypatch.setattr(mcp_server, "_configure_utf8_stdio", lambda: events.append("utf8"))
+    monkeypatch.setattr(mcp_server, "_run_startup_auto_migrate", lambda: events.append("migrate"))
+    monkeypatch.setattr(mcp_server._engram, "reconcile_memories", lambda: events.append("mem") or {"imported": 0})
+    monkeypatch.setattr(mcp_server._engram, "reconcile_ai_configs", lambda: events.append("cfg") or {"imported": 0})
+    monkeypatch.setattr(mcp_server.threading, "Thread", FakeThread)
+    monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: events.append(f"run:{transport}"))
+
+    mcp_server.main()
+
+    assert events == [
+        "utf8",
+        "migrate",
+        "thread:engram-startup-sync:True",
+        "thread:start",
+        "mem",
+        "cfg",
+        "run:stdio",
+    ]
+
+
+def test_mcp_server_startup_sync_eager_runs_before_server(monkeypatch):
+    from piia_engram import mcp_server
+
+    events = []
+
+    monkeypatch.setattr(
+        mcp_server,
+        "_parse_args",
+        lambda: SimpleNamespace(transport="stdio", host="127.0.0.1", port=8123),
+    )
+    monkeypatch.delenv("ENGRAM_EPHEMERAL", raising=False)
+    monkeypatch.setenv("ENGRAM_MCP_STARTUP_SYNC", "eager")
+    monkeypatch.setattr(mcp_server, "_configure_utf8_stdio", lambda: events.append("utf8"))
+    monkeypatch.setattr(mcp_server, "_run_startup_auto_migrate", lambda: events.append("migrate"))
+    monkeypatch.setattr(mcp_server._engram, "reconcile_memories", lambda: events.append("mem") or {"imported": 0})
+    monkeypatch.setattr(mcp_server._engram, "reconcile_ai_configs", lambda: events.append("cfg") or {"imported": 0})
+    monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: events.append(f"run:{transport}"))
+
+    mcp_server.main()
+
+    assert events == ["utf8", "migrate", "mem", "cfg", "run:stdio"]
+
+
+def test_startup_sync_mode_truthy_aliases_keep_background(monkeypatch):
+    from piia_engram import mcp_server
+
+    for raw in ("1", "true", "yes", "on", "background", "bg", "async"):
+        monkeypatch.setenv("ENGRAM_MCP_STARTUP_SYNC", raw)
+        assert mcp_server._startup_sync_mode(is_ephemeral=False) == "background"
+
+    for raw in ("eager", "sync"):
+        monkeypatch.setenv("ENGRAM_MCP_STARTUP_SYNC", raw)
+        assert mcp_server._startup_sync_mode(is_ephemeral=False) == "eager"
+
+    for raw in ("off", "0", "false", "no", "none", "disabled"):
+        monkeypatch.setenv("ENGRAM_MCP_STARTUP_SYNC", raw)
+        assert mcp_server._startup_sync_mode(is_ephemeral=False) == "off"
+
+
+def test_mcp_server_startup_sync_off_skips_reconcile(monkeypatch):
+    from piia_engram import mcp_server
+
+    events = []
+
+    monkeypatch.setattr(
+        mcp_server,
+        "_parse_args",
+        lambda: SimpleNamespace(transport="stdio", host="127.0.0.1", port=8123),
+    )
+    monkeypatch.delenv("ENGRAM_EPHEMERAL", raising=False)
+    monkeypatch.setenv("ENGRAM_MCP_STARTUP_SYNC", "off")
+    monkeypatch.setattr(mcp_server, "_configure_utf8_stdio", lambda: events.append("utf8"))
+    monkeypatch.setattr(mcp_server, "_run_startup_auto_migrate", lambda: events.append("migrate"))
+    monkeypatch.setattr(mcp_server._engram, "reconcile_memories", lambda: events.append("mem") or {"imported": 0})
+    monkeypatch.setattr(mcp_server._engram, "reconcile_ai_configs", lambda: events.append("cfg") or {"imported": 0})
+    monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: events.append(f"run:{transport}"))
+
+    mcp_server.main()
+
+    assert events == ["utf8", "migrate", "run:stdio"]
+
+
+def test_mcp_server_ephemeral_overrides_startup_sync(monkeypatch):
+    from piia_engram import mcp_server
+
+    events = []
+
+    monkeypatch.setattr(
+        mcp_server,
+        "_parse_args",
+        lambda: SimpleNamespace(transport="stdio", host="127.0.0.1", port=8123),
+    )
+    monkeypatch.setenv("ENGRAM_EPHEMERAL", "1")
+    monkeypatch.setenv("ENGRAM_MCP_STARTUP_SYNC", "eager")
+    monkeypatch.setattr(mcp_server, "_configure_utf8_stdio", lambda: events.append("utf8"))
+    monkeypatch.setattr(mcp_server, "_run_startup_auto_migrate", lambda: events.append("migrate"))
+    monkeypatch.setattr(mcp_server._engram, "reconcile_memories", lambda: events.append("mem") or {"imported": 0})
+    monkeypatch.setattr(mcp_server._engram, "reconcile_ai_configs", lambda: events.append("cfg") or {"imported": 0})
+    monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: events.append(f"run:{transport}"))
+
+    mcp_server.main()
+
+    assert events == ["utf8", "run:stdio"]
+
+
+def test_mcp_server_background_startup_sync_errors_do_not_crash(monkeypatch):
+    from piia_engram import mcp_server
+
+    events = []
+    warnings = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self._target = target
+
+        def start(self):
+            events.append("thread:start")
+            self._target()
+
+    def boom():
+        events.append("mem")
+        raise RuntimeError("sync boom")
+
+    monkeypatch.setattr(
+        mcp_server,
+        "_parse_args",
+        lambda: SimpleNamespace(transport="stdio", host="127.0.0.1", port=8123),
+    )
+    monkeypatch.delenv("ENGRAM_EPHEMERAL", raising=False)
+    monkeypatch.delenv("ENGRAM_MCP_STARTUP_SYNC", raising=False)
+    monkeypatch.setattr(mcp_server, "_configure_utf8_stdio", lambda: events.append("utf8"))
+    monkeypatch.setattr(mcp_server, "_run_startup_auto_migrate", lambda: events.append("migrate"))
+    monkeypatch.setattr(mcp_server._engram, "reconcile_memories", boom)
+    monkeypatch.setattr(mcp_server._engram, "reconcile_ai_configs", lambda: events.append("cfg") or {"imported": 0})
+    monkeypatch.setattr(mcp_server.threading, "Thread", FakeThread)
+    monkeypatch.setattr(mcp_server.logger, "warning", lambda message, exc: warnings.append((message, str(exc))))
+    monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: events.append(f"run:{transport}"))
+
+    mcp_server.main()
+
+    assert events == ["utf8", "migrate", "thread:start", "mem", "run:stdio"]
+    assert warnings == [("startup sync failed: %s", "sync boom")]
+
+
+def test_startup_sync_and_write_tool_share_write_lock(monkeypatch):
+    from piia_engram import mcp_server
+
+    events = []
+
+    class FakeLock:
+        def __enter__(self):
+            events.append("lock:enter")
+
+        def __exit__(self, exc_type, exc, tb):
+            events.append("lock:exit")
+
+    monkeypatch.setattr(mcp_server, "_write_operation_lock", FakeLock())
+    monkeypatch.setattr(mcp_server._engram, "reconcile_memories", lambda: events.append("mem") or {"imported": 0})
+    monkeypatch.setattr(mcp_server._engram, "reconcile_ai_configs", lambda: events.append("cfg") or {"imported": 0})
+
+    mcp_server._run_startup_sync()
+
+    assert events == ["lock:enter", "mem", "cfg", "lock:exit"]
+
+    events.clear()
+    monkeypatch.setattr(mcp_server._gov_rt, "maybe_refuse_write", lambda root, tool: None)
+    monkeypatch.setattr(mcp_server._engram, "add_lesson", lambda lesson: events.append("add") or {"id": "lesson-1"})
+    monkeypatch.setattr(mcp_server, "_track", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mcp_server, "_beta", lambda *args, **kwargs: None)
+
+    result = asyncio.run(mcp_server.add_lesson("locked write"))
+
+    assert result == "教训已记录: locked write"
+    assert events == ["lock:enter", "add", "lock:exit"]
 
 
 def test_help_detection_only_applies_to_mcp_entrypoint():

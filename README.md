@@ -456,6 +456,8 @@ piia-engram ships 81 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 }
 ```
 
+**Startup sync:** Engram reconciles memories/config snippets from local AI tools when an MCP server starts. By default this runs in the background so stdio clients can initialize quickly. Set `ENGRAM_MCP_STARTUP_SYNC=eager` to restore synchronous startup sync, or `ENGRAM_MCP_STARTUP_SYNC=off` to skip startup sync for latency-sensitive test arms. `ENGRAM_EPHEMERAL=1` also skips startup sync and migration work in container/ephemeral clients.
+
 ### Tier-1 Core (17 tools — daily workflow)
 
 | Tool | Purpose |

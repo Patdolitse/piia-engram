@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+_write_operation_lock = threading.RLock()
 
 
 def _configure_utf8_stdio() -> None:
@@ -38,6 +39,86 @@ def _configure_utf8_stdio() -> None:
             reconfigure(encoding="utf-8", errors="replace")
         except (TypeError, ValueError, OSError):
             pass
+
+
+def _env_flag_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def _locked_engram_call(fn, *args, **kwargs):
+    """Serialize MCP write operations that may read-modify-write JSON stores."""
+    with _write_operation_lock:
+        return fn(*args, **kwargs)
+
+
+def _startup_sync_mode(is_ephemeral: bool) -> str:
+    """Return startup reconcile mode: background (default), eager, or off."""
+    if is_ephemeral:
+        return "off"
+
+    raw = os.environ.get("ENGRAM_MCP_STARTUP_SYNC", "").strip().lower()
+    if not raw:
+        return "background"
+    if raw in ("background", "bg", "async", "lazy", "on", "1", "true", "yes"):
+        return "background"
+    if raw in ("eager", "sync"):
+        return "eager"
+    if raw in ("off", "0", "false", "no", "none", "disabled"):
+        return "off"
+
+    logger.warning(
+        "invalid ENGRAM_MCP_STARTUP_SYNC=%r; using background startup sync",
+        raw,
+    )
+    return "background"
+
+
+def _run_startup_auto_migrate() -> None:
+    """Run stdio startup migration without writing to stdout."""
+    try:
+        from piia_engram.setup_wizard import auto_migrate  # type: ignore[import]
+    except ImportError:
+        try:
+            from setup_wizard import auto_migrate  # type: ignore[import]
+        except ImportError:
+            auto_migrate = None  # type: ignore[assignment]
+    if auto_migrate is not None:
+        auto_migrate()
+
+
+def _run_startup_sync() -> None:
+    """Reconcile external AI memories/configs on MCP startup."""
+    try:
+        with _write_operation_lock:
+            _mem = _engram.reconcile_memories()
+            _cfg = _engram.reconcile_ai_configs()
+        if _mem["imported"] or _cfg["imported"]:
+            _msgs = []
+            if _mem["imported"]:
+                _msgs.append(f"memories={_mem['imported']}")
+            if _cfg["imported"]:
+                _msgs.append(f"configs={_cfg['imported']}")
+            print(
+                f"[engram] startup sync: {', '.join(_msgs)}",
+                file=sys.stderr,
+            )
+    except Exception as exc:
+        logger.warning("startup sync failed: %s", exc)
+
+
+def _schedule_startup_sync(mode: str) -> None:
+    if mode == "off":
+        return
+    if mode == "eager":
+        _run_startup_sync()
+        return
+
+    thread = threading.Thread(
+        target=_run_startup_sync,
+        name="engram-startup-sync",
+        daemon=True,
+    )
+    thread.start()
 
 
 from piia_engram.beta_tracker import track_event as _beta
@@ -358,7 +439,8 @@ class _SessionTracker:
             for c in self.calls[-30:]
         ]
         try:
-            _engram.save_agent_context(
+            _locked_engram_call(
+                _engram.save_agent_context,
                 tool=tool,
                 content=content,
                 session_id=f"{self.session_id}-cp{self._checkpoint_seq}",
@@ -435,7 +517,8 @@ class _SessionTracker:
             ]
 
             try:
-                _engram.save_agent_context(
+                _locked_engram_call(
+                    _engram.save_agent_context,
                     tool=tool,
                     content=content,
                     session_id=self.session_id,
@@ -451,8 +534,10 @@ class _SessionTracker:
                 project_info = _collect_project_info(self.project_folder)
                 if project_info:
                     project_info["last_auto_snapshot"] = _dt.now().isoformat()
-                    _engram.save_project_snapshot(
-                        self.project_folder, project_info,
+                    _locked_engram_call(
+                        _engram.save_project_snapshot,
+                        self.project_folder,
+                        project_info,
                     )
             except Exception as exc:
                 logger.warning("project snapshot auto-update failed: %s", exc)
@@ -1853,7 +1938,7 @@ async def memory_store(
 
     try:
         if kind == "lesson":
-            result = _engram.add_lesson(content)
+            result = _locked_engram_call(_engram.add_lesson, content)
             label = content.get("summary", "")[:60]
             _track("memory_store", success=True)
             if result.get("status") == "duplicate":
@@ -1861,7 +1946,7 @@ async def memory_store(
                 return _json(_gov_rt.maybe_govern_write_ack(_engram.root, result, tool="memory_store"))
             return f"教训已记录: {label}"
         elif kind == "decision":
-            result = _engram.add_decision(content)
+            result = _locked_engram_call(_engram.add_decision, content)
             label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
             _track("memory_store", success=True)
             if result.get("status") == "duplicate":
@@ -1869,7 +1954,7 @@ async def memory_store(
                 return _json(_gov_rt.maybe_govern_write_ack(_engram.root, result, tool="memory_store"))
             return f"决策已记录: {label}"
         else:  # playbook
-            result = _engram.add_playbook(content)
+            result = _locked_engram_call(_engram.add_playbook, content)
             label = content.get("title", "")[:60]
             _track("memory_store", success=True)
             return f"Playbook 已记录: {label}"
@@ -1930,7 +2015,7 @@ async def add_lesson(
         last_validated_at=last_validated_at,
     )
     try:
-        result = _engram.add_lesson(lesson)
+        result = _locked_engram_call(_engram.add_lesson, lesson)
         _track("add_lesson", success=True)
         _beta("knowledge_created", kind="lesson",
               domain=domain[:80] if domain else "",
@@ -2012,7 +2097,7 @@ async def add_decision(
         last_validated_at=last_validated_at,
     )
     try:
-        result = _engram.add_decision(decision)
+        result = _locked_engram_call(_engram.add_decision, decision)
         _track("add_decision", success=True)
         _beta("knowledge_created", kind="decision",
               domain=domain[:80] if domain else "",
@@ -2108,7 +2193,7 @@ async def add_playbook(
         last_validated_at=last_validated_at,
     )
     try:
-        result = _engram.add_playbook(playbook)
+        result = _locked_engram_call(_engram.add_playbook, playbook)
         _track("add_playbook", success=True)
     except Exception as exc:
         _track("add_playbook", success=False)
@@ -2322,7 +2407,7 @@ async def update_playbook(
     if not updates:
         return "未提供任何更新字段。 / No update fields provided."
     try:
-        result = _engram.update_playbook(playbook_id, updates)
+        result = _locked_engram_call(_engram.update_playbook, playbook_id, updates)
         _track("update_playbook", success=True)
     except Exception as exc:
         _track("update_playbook", success=False)
@@ -2373,7 +2458,8 @@ async def prepare_playbook_execution(
         if project_folder:
             _session.detect_project(project_folder)
         effective_project = project_folder or _session.project_folder or None
-        result = _engram.prepare_playbook_execution(
+        result = _locked_engram_call(
+            _engram.prepare_playbook_execution,
             playbook_id,
             params=params,
             project_folder=effective_project,
@@ -2412,7 +2498,13 @@ async def update_execution_step(
         return refusal
 
     try:
-        result = _engram.update_execution_step(playbook_id, step_order, status, notes)
+        result = _locked_engram_call(
+            _engram.update_execution_step,
+            playbook_id,
+            step_order,
+            status,
+            notes,
+        )
         _track("update_execution_step", success=True)
     except Exception as exc:
         _track("update_execution_step", success=False)
@@ -2465,7 +2557,7 @@ async def archive_playbook(playbook_id: str) -> str:
         return refusal
 
     try:
-        result = _engram.archive_playbook(playbook_id)
+        result = _locked_engram_call(_engram.archive_playbook, playbook_id)
         _track("archive_playbook", success=True)
     except Exception as exc:
         _track("archive_playbook", success=False)
@@ -2517,7 +2609,8 @@ async def delete_playbook(
         return refusal
 
     try:
-        result = _engram.delete_playbook(
+        result = _locked_engram_call(
+            _engram.delete_playbook,
             playbook_id=playbook_id,
             reason=reason,
             dry_run=dry_run,
@@ -2548,7 +2641,8 @@ async def restore_playbook(
         return refusal
 
     try:
-        result = _engram.restore_playbook(
+        result = _locked_engram_call(
+            _engram.restore_playbook,
             playbook_id=playbook_id,
             dry_run=dry_run,
             confirm=confirm,
@@ -2616,7 +2710,11 @@ async def register_tool(
     if notes:
         tool_entry["notes"] = notes
     try:
-        result = _engram.register_tool(tool_entry, registered_by=source_tool)
+        result = _locked_engram_call(
+            _engram.register_tool,
+            tool_entry,
+            registered_by=source_tool,
+        )
         _track("register_tool", success=True)
     except Exception as exc:
         _track("register_tool", success=False)
@@ -2693,7 +2791,12 @@ async def bulk_add_knowledge(items_json: str, item_type: str = "lesson", source_
         return _json({"error": "items_json must be a valid JSON array"})
     if not isinstance(items, list):
         return _json({"error": "items_json must be a JSON array"})
-    return _json(_engram.bulk_add_knowledge(items, item_type=item_type, source_tool=source_tool))
+    return _json(_locked_engram_call(
+        _engram.bulk_add_knowledge,
+        items,
+        item_type=item_type,
+        source_tool=source_tool,
+    ))
 
 
 @mcp.tool()
@@ -2715,7 +2818,12 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="ingest_notes")
     if refusal is not None:
         return refusal
-    return _json(_engram.ingest_notes(text, source_tool=source_tool, domain=domain))
+    return _json(_locked_engram_call(
+        _engram.ingest_notes,
+        text,
+        source_tool=source_tool,
+        domain=domain,
+    ))
 
 
 @mcp.tool()
@@ -2739,7 +2847,11 @@ async def extract_session_insights(summary: str, source_tool: str = "") -> str:
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="extract_session_insights")
     if refusal is not None:
         return refusal
-    return _json(_engram.extract_session_insights(summary, source_tool=source_tool))
+    return _json(_locked_engram_call(
+        _engram.extract_session_insights,
+        summary,
+        source_tool=source_tool,
+    ))
 
 
 @mcp.tool()
@@ -2768,7 +2880,7 @@ async def update_knowledge(item_id: str, updates_json: str) -> str:
     # Returns the FULL stored item; an attacker who guesses an id can no-op
     # update and read a secret item back through this "write" tool (Codex
     # round-16 P1-3). Gate the returned item — over-ceiling → withheld stub.
-    result = _engram.update_knowledge(item_id, updates)
+    result = _locked_engram_call(_engram.update_knowledge, item_id, updates)
     result = _gov_rt.maybe_govern_one(_engram.root, result, tool="update_knowledge")
     return _json(result)
 
@@ -2791,7 +2903,7 @@ async def archive_knowledge(item_id: str) -> str:
     if refusal is not None:
         return refusal
 
-    result = _engram.archive_knowledge(item_id)
+    result = _locked_engram_call(_engram.archive_knowledge, item_id)
     _beta("knowledge_rejected", action="archive")
     # Returns the full stored item (delegates to update_*) — same read-back
     # bypass as update_knowledge; gate the returned item (Codex round-16 P1-3).
@@ -2817,7 +2929,7 @@ async def review_knowledge(knowledge_id: str) -> str:
     if refusal is not None:
         return refusal
 
-    result = _engram.review_knowledge(knowledge_id)
+    result = _locked_engram_call(_engram.review_knowledge, knowledge_id)
     _beta("knowledge_reviewed")
     # Pure read-disguised-as-write: only bumps last_reviewed yet returns the full
     # stored item. Gate the returned item (Codex round-16 P1-3).
@@ -2898,13 +3010,13 @@ async def apply_review(review_text: str) -> str:
     try:
         data = _json_mod.loads(review_text)
         if isinstance(data, dict) and "archive" in data:
-            result = _engram.apply_review(data)
+            result = _locked_engram_call(_engram.apply_review, data)
             return _json(result)
     except (ValueError, TypeError):
         pass
 
     # Treat as text format
-    result = _engram.apply_review(review_text)
+    result = _locked_engram_call(_engram.apply_review, review_text)
     return _json(result)
 
 
@@ -2930,7 +3042,7 @@ async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
     # Returns {primary_title, secondary_title} — stored titles the caller only
     # referenced by id. Gate the ack so lower tiers don't read titles back
     # (Codex round-16 write-echo class).
-    result = _engram.merge_knowledge(primary_id, secondary_id)
+    result = _locked_engram_call(_engram.merge_knowledge, primary_id, secondary_id)
     result = _gov_rt.maybe_govern_write_ack(_engram.root, result, tool="merge_knowledge")
     return _json(result)
 
@@ -2956,7 +3068,7 @@ async def link_knowledge(id_a: str, id_b: str) -> str:
 
     # Ack message embeds both item titles ("Linked: <title> ↔ <title>") — gate
     # so a low-trust caller can't read a secret title back (round-16 write-echo).
-    result = _engram.link_knowledge(id_a, id_b)
+    result = _locked_engram_call(_engram.link_knowledge, id_a, id_b)
     result = _gov_rt.maybe_govern_write_ack(_engram.root, result, tool="link_knowledge")
     return _json(result)
 
@@ -2981,7 +3093,7 @@ async def unlink_knowledge(id_a: str, id_b: str) -> str:
         return refusal
 
     # Ack message embeds both item titles — same write-echo gate as link_knowledge.
-    result = _engram.unlink_knowledge(id_a, id_b)
+    result = _locked_engram_call(_engram.unlink_knowledge, id_a, id_b)
     result = _gov_rt.maybe_govern_write_ack(_engram.root, result, tool="unlink_knowledge")
     return _json(result)
 
@@ -3010,7 +3122,7 @@ async def add_relation(src_id: str, rel: str, dst_id: str) -> str:
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="add_relation")
     if refusal is not None:
         return refusal
-    return _json(_engram.add_relation(src_id, rel, dst_id))
+    return _json(_locked_engram_call(_engram.add_relation, src_id, rel, dst_id))
 
 
 @mcp.tool()
@@ -3031,7 +3143,7 @@ async def remove_relation(src_id: str, rel: str, dst_id: str) -> str:
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="remove_relation")
     if refusal is not None:
         return refusal
-    return _json(_engram.remove_relation(src_id, rel, dst_id))
+    return _json(_locked_engram_call(_engram.remove_relation, src_id, rel, dst_id))
 
 
 @mcp.tool()
@@ -3137,7 +3249,7 @@ async def set_caller_trust(agent_id: str, trust_level: str) -> str:
     refusal = _gov_rt.maybe_refuse_owner_write(_engram.root, tool="set_caller_trust")
     if refusal is not None:
         return refusal
-    result = _engram.set_caller_trust(agent_id, trust_level)
+    result = _locked_engram_call(_engram.set_caller_trust, agent_id, trust_level)
     result = _gov_rt.maybe_govern_owner_only(
         _engram.root, result, tool="set_caller_trust"
     )
@@ -3160,7 +3272,7 @@ async def revoke_caller(agent_id: str) -> str:
     refusal = _gov_rt.maybe_refuse_owner_write(_engram.root, tool="revoke_caller")
     if refusal is not None:
         return refusal
-    result = _engram.revoke_caller(agent_id)
+    result = _locked_engram_call(_engram.revoke_caller, agent_id)
     result = _gov_rt.maybe_govern_owner_only(
         _engram.root, result, tool="revoke_caller"
     )
@@ -3211,9 +3323,9 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
         fn = dispatch[field]
         # Pass source_tool for provenance tracking (profile supports it)
         if field == "profile" and source_tool:
-            fn(updates, source_tool=source_tool)
+            _locked_engram_call(fn, updates, source_tool=source_tool)
         else:
-            fn(updates)
+            _locked_engram_call(fn, updates)
         _track("update_identity", success=True)
     except Exception as exc:
         _track("update_identity", success=False)
@@ -3253,7 +3365,7 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
         return "错误: data_json 必须是合法的 JSON。"
     if not isinstance(data, dict):
         return "错误: data_json 应为 JSON 对象（{}），不能是数组或标量。"
-    _engram.save_project_snapshot(project_folder, data)
+    _locked_engram_call(_engram.save_project_snapshot, project_folder, data)
     _track("save_project_snapshot", success=True)
     return f"项目快照已保存: {project_folder}"
 
@@ -3530,7 +3642,11 @@ async def wrap_up_session(
 
     # Step 1: Extract insights
     try:
-        insights = _engram.extract_session_insights(summary, source_tool=source_tool)
+        insights = _locked_engram_call(
+            _engram.extract_session_insights,
+            summary,
+            source_tool=source_tool,
+        )
         results["insights"] = insights
     except Exception as exc:
         logger.warning("extract_session_insights failed: %s", exc)
@@ -3538,8 +3654,11 @@ async def wrap_up_session(
 
     # Step 1.5: Auto-extract Playbook if session looks like a procedure
     try:
-        playbook = _engram.extract_playbook_from_session(
-            summary, source_tool=source_tool, project_folder=project_folder,
+        playbook = _locked_engram_call(
+            _engram.extract_playbook_from_session,
+            summary,
+            source_tool=source_tool,
+            project_folder=project_folder,
         )
         if playbook:
             pb_confidence = playbook.get("confidence", "medium")
@@ -3572,7 +3691,7 @@ async def wrap_up_session(
                 snapshot_data["tech_stack"] = [s.strip() for s in tech_stack.split(",") if s.strip()]
             if known_issues:
                 snapshot_data["known_issues"] = [s.strip() for s in known_issues.split(",") if s.strip()]
-            _engram.save_project_snapshot(project_folder, snapshot_data)
+            _locked_engram_call(_engram.save_project_snapshot, project_folder, snapshot_data)
             results["project_snapshot"] = {"saved": True, "folder": project_folder}
         except Exception as exc:
             logger.warning("save_project_snapshot failed: %s", exc)
@@ -3599,7 +3718,8 @@ async def wrap_up_session(
         if len(body) > 600:
             body = body[:600].rstrip() + "…"
         daily_content = f"_{tally}_\n\n{body}"
-        daily_result = _engram.append_daily_log(
+        daily_result = _locked_engram_call(
+            _engram.append_daily_log,
             project_folder=daily_target,
             content=daily_content,
             event_type="session",
@@ -3615,7 +3735,7 @@ async def wrap_up_session(
     # Step 3: Auto-reconcile external AI memories and configs
     _reconcile_imported = 0
     try:
-        reconcile = _engram.reconcile_memories()
+        reconcile = _locked_engram_call(_engram.reconcile_memories)
         if reconcile["imported"] > 0:
             results["memory_sync"] = reconcile
             _reconcile_imported += reconcile["imported"]
@@ -3623,7 +3743,7 @@ async def wrap_up_session(
         logger.warning("reconcile_memories failed: %s", exc)
 
     try:
-        cfg_sync = _engram.reconcile_ai_configs()
+        cfg_sync = _locked_engram_call(_engram.reconcile_ai_configs)
         if cfg_sync["imported"] > 0:
             results["config_sync"] = cfg_sync
             _reconcile_imported += cfg_sync["imported"]
@@ -3635,7 +3755,7 @@ async def wrap_up_session(
 
     # Step 4: Evaluate staging items and surface promotion suggestions.
     try:
-        tier_result = _engram.evaluate_tiers()
+        tier_result = _locked_engram_call(_engram.evaluate_tiers)
         if tier_result.get("suggested", 0) > 0:
             results["promotion_suggestions"] = tier_result
     except Exception as exc:
@@ -3996,7 +4116,7 @@ async def start_project(
         snapshot_data["title"] = description[:80]
     if tech_stack:
         snapshot_data["tech_stack"] = [s.strip() for s in tech_stack.split(",") if s.strip()]
-    _engram.save_project_snapshot(project_folder, snapshot_data)
+    _locked_engram_call(_engram.save_project_snapshot, project_folder, snapshot_data)
     results["project_snapshot"] = {"created": True, "folder": project_folder}
 
     return _json(results)
@@ -4093,7 +4213,8 @@ async def save_agent_context(
                 actions = parsed
         except json.JSONDecodeError:
             pass
-    result = _engram.save_agent_context(
+    result = _locked_engram_call(
+        _engram.save_agent_context,
         tool=tool,
         content=content,
         session_id=session_id,
@@ -4335,44 +4456,19 @@ def main() -> None:
     # Detect ephemeral/Docker environments where no local AI tools exist.
     # Skip auto_migrate and reconcile to speed up startup (critical for
     # mcp-proxy which has short connection timeouts).
-    _is_ephemeral = (
-        os.path.isfile("/.dockerenv")
-        or os.environ.get("ENGRAM_EPHEMERAL", "").strip().lower() in ("1", "true", "yes")
-    )
+    _is_ephemeral = os.path.isfile("/.dockerenv") or _env_flag_enabled("ENGRAM_EPHEMERAL")
 
     # Auto-migrate legacy configs on first run after upgrade (stdio only;
     # must happen before mcp.run() to avoid polluting the MCP stdio channel).
     if args.transport == "stdio" and not _is_ephemeral:
-        try:
-            from piia_engram.setup_wizard import auto_migrate  # type: ignore[import]
-        except ImportError:
-            try:
-                from setup_wizard import auto_migrate  # type: ignore[import]
-            except ImportError:
-                auto_migrate = None  # type: ignore[assignment]
-        if auto_migrate is not None:
-            auto_migrate()
+        _run_startup_auto_migrate()
 
     # Auto-reconcile on MCP server startup — runs once regardless of which
     # AI tool connects.  This ensures cross-tool memory sync happens even if
     # the AI tool never calls get_user_context.
     # Skip in ephemeral containers — no AI tool configs to scan.
-    if not _is_ephemeral:
-        try:
-            _mem = _engram.reconcile_memories()
-            _cfg = _engram.reconcile_ai_configs()
-            if _mem["imported"] or _cfg["imported"]:
-                _msgs = []
-                if _mem["imported"]:
-                    _msgs.append(f"memories={_mem['imported']}")
-                if _cfg["imported"]:
-                    _msgs.append(f"configs={_cfg['imported']}")
-                print(
-                    f"[engram] startup sync: {', '.join(_msgs)}",
-                    file=sys.stderr,
-                )
-        except Exception as exc:
-            logger.warning("startup sync failed: %s", exc)
+    # Startup sync policy: background by default, eager/off by env override.
+    _schedule_startup_sync(_startup_sync_mode(_is_ephemeral))
 
     if args.transport == "sse":
         if not _HAS_STARLETTE:

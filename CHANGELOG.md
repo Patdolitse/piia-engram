@@ -6,6 +6,11 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **MCP startup sync latency** - startup reconciliation now runs in a daemon background thread by default, so stdio clients are not blocked during MCP initialize by local AI memory/config scans. Set `ENGRAM_MCP_STARTUP_SYNC=eager` to restore the previous synchronous behavior or `ENGRAM_MCP_STARTUP_SYNC=off` to skip startup sync for latency-sensitive validation arms. `auto_migrate()` remains synchronous for stdio startup, and startup reconcile shares a process-local write lock with MCP write tools to avoid overlapping read-modify-write JSON updates.
+
 ## [3.48.3] - 2026-06-04
 
 Local import candidate release. Engram separates full-backup import/export from

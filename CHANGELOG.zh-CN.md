@@ -6,6 +6,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 变更
+- **MCP 启动同步延迟**：启动对账现在默认在 daemon 后台线程中执行，避免 stdio 客户端在 MCP initialize 阶段被本地 AI 记忆/配置扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感验证臂中跳过启动同步。stdio 启动下的 `auto_migrate()` 仍保持同步执行；启动对账与 MCP 写工具共享进程内写锁，避免启动期读-改-写 JSON 更新互相覆盖。
+
 ## [3.48.3] - 2026-06-04
 
 本地导入候选版本。Engram 将完整备份的导入/导出逻辑从核心引擎中拆出，并新增更安全的 owner 导入预览路径。默认 `engram import <backup.json>` 仍然只读、只返回 metadata-only 预览，只有显式使用 `--apply --yes` 才会改写本地数据。
