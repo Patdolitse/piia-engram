@@ -188,6 +188,8 @@ _MATRIX = [
     # on disk for a non-owner. They are now pre-write gated like export_engram.
     ("get_user_context", "generate_context", "identity card\n" + SECRET, {}, "withhold"),
     ("get_resume_brief", "get_resume_brief", "resume brief\n" + SECRET, {}, "withhold"),
+    ("get_recall", "get_relevant_lessons", [_pub(), _sec()],
+     {"project_folder": "/x"}, "withhold"),
     ("get_daily_log", "get_daily_log", "daily log\n" + SECRET,
      {"project_folder": "/x"}, "withhold"),
     # audit.log entries carry the first 100 chars of a written lesson summary /
@@ -596,6 +598,8 @@ _SIDE_EFFECT_HARNESS = [
     ("get_execution_status", lambda ids: {"playbook_id": ids["playbook_id"]}),
     ("get_user_context", lambda ids: {}),
     ("get_resume_brief", lambda ids: {}),
+    ("get_recall", lambda ids: {"project_folder": str(ids["_root"]),
+                                "query": "secret lesson choice"}),
     ("get_daily_log", lambda ids: {"project_folder": str(ids["_root"])}),
     ("get_audit_log", lambda ids: {}),
     # ── export / file-writer tools ──

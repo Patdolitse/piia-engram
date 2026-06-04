@@ -1,8 +1,8 @@
 # Recall Surface v1 — single-call recall (spec)
 
-Status: **spec only.** No broad refactor. This defines a single, stronger recall
-contract that *composes existing tools* rather than replacing them. Existing
-tools stay; the new surface is additive and backward-compatible.
+Status: **implemented as an additive surface.** No broad refactor. This defines
+a single, stronger recall contract that *composes existing tools* rather than
+replacing them. Existing tools stay; the new surface is backward-compatible.
 
 ## 1. Problem
 
@@ -120,11 +120,15 @@ shows the aggregator dominates, deprecation can be considered later — separate
    owner), so it adds no new agent-facing disclosure surface. Tested store-free
    with a duck-typed fake in `tests/test_recall_service.py`, plus a metadata-only
    quality harness in `tests/test_recall_quality.py`.
-3. **Deferred (still review-gated)** — the thin **MCP** tool that exposes recall
-   to *agents*. It touches MCP output and overlaps `get_resume_brief`, so it
-   needs its own governance/leak-matrix review before shipping (see §3 note).
-   The CLI path above is owner-only and does not substitute for that review.
-4. Add to Tier-1 only after it proves out (it would overlap `get_resume_brief`).
+3. ✅ **Implemented** — thin **MCP** tool `get_recall` exposes the same
+   structured Recall Surface v1 payload to agents. Because the aggregate can
+   combine identity, recent activity, and multiple knowledge classes, governance
+   mode treats it as owner-only: non-owner callers are refused before any gather,
+   search, telemetry, or session-tracking side effect runs. Covered by
+   `tests/test_mcp_tools.py::TestRecallWrapper` and the write-gate leak-matrix
+   preflight regression in `tests/test_write_gate_matrix.py`.
+4. ✅ **Promoted to Tier-1** — `get_recall` is now part of the default core MCP
+   surface for daily workflow usage.
 
 ### Version-chain read scaffold (Phase 6)
 

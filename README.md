@@ -345,7 +345,7 @@ $ engram doctor
     [ok] Engram initialized (~/.engram)
     [ok] Identity loaded (role: Senior Backend Developer)
     [ok] quick_context.md ready (4096 bytes)
-    [ok] MCP server: 16 tools registered
+    [ok] MCP server: 17 tools registered
 
   -- Terminal encoding --
 
@@ -442,7 +442,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 80 MCP tools. By default, only the 16 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 80 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 81 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 81 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -456,7 +456,7 @@ piia-engram ships 80 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 }
 ```
 
-### Tier-1 Core (16 tools — daily workflow)
+### Tier-1 Core (17 tools — daily workflow)
 
 | Tool | Purpose |
 |---|---|
@@ -468,6 +468,7 @@ piia-engram ships 80 MCP tools. By default, only the 16 **Tier-1 Core** tools ar
 | `add_playbook` | Record an operational playbook (multi-step procedure with trigger keywords) |
 | `search_knowledge` | **Retrieval** — Search lessons, decisions, and playbooks (supports `filters_json` for domain/tier/date filtering) |
 | `get_relevant_knowledge` | Find knowledge relevant to current project |
+| `get_recall` | Return one structured identity + recent activity + relevant knowledge recall payload |
 | `get_identity_card` | Export Markdown identity card for non-MCP tools |
 | `update_identity` | Update profile, preferences, or quality standards |
 | `get_project_context` | Read a saved project snapshot |
@@ -690,9 +691,9 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | | v3.47.1 (2026-06-03) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools | **16 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools | **17 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **2541** (unit + integration; 8 skipped, 2549 collected) |
+| Tests passing | **2551** (unit + integration; 8 skipped, 2559 collected) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **2443** (facade + mixins total ~6000; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -719,7 +720,7 @@ piia-engram. Install with `pip install piia-engram && engram setup`, and both to
 piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured MCP-compatible coding tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same approved context, so new chats and tool switches can start from the same user-owned memory.
 
 **How is piia-engram different from the official MCP memory server?**
-The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 80 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 81 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.
@@ -750,11 +751,11 @@ Run `engram doctor --fix` in a terminal, then restart your AI tool. This command
 Not by default. Identity and knowledge tools use local files, and telemetry is **off by default**. Optional anonymous usage statistics can be enabled as a local log; remote telemetry and weekly feedback reports require separate explicit opt-in and send counts only, never knowledge content. You can inspect the next payload with `engram telemetry preview`, disable anytime with `engram telemetry off`, and turn remote sending off with `engram telemetry remote off`. See **[PRIVACY.md](PRIVACY.md)** for the full data flow diagram, what is and isn't collected, and your data rights.
 
 **How many MCP tools does piia-engram provide?**
-Two tiers, designed so most users only see 16 tools:
+Two tiers, designed so most users only see 17 tools:
 
 | Tier | Tools | What they do | Loaded by |
 |------|-------|-------------|-----------|
-| **Core** | 16 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
+| **Core** | 17 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
 | **Advanced** | 64 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
 
 Most users never need to enable Advanced tools — Core covers everyday use.

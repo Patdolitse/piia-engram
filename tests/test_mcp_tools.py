@@ -1157,6 +1157,40 @@ class TestResumeBriefWrapper:
         )
 
 
+class TestRecallWrapper:
+    def test_mcp_get_recall_wrapper_returns_recall_payload(
+        self, isolated_engram: Engram, tmp_path: Path
+    ):
+        """get_recall should expose the structured Recall Surface v1 payload."""
+        isolated_engram.update_profile({
+            "role": "developer",
+            "language": "zh",
+            "technical_level": "senior",
+        })
+        isolated_engram.add_lesson({
+            "summary": "Release gates should stay focused before publishing.",
+            "domain": "release",
+        })
+
+        result = json.loads(_run(mcp_server.get_recall(
+            project_folder=str(tmp_path),
+            query="release gates",
+            limit=3,
+            token_budget=512,
+        )))
+
+        assert result["identity"]["role"] == "developer"
+        assert result["identity"]["language"] == "zh"
+        assert result["meta"]["project"] == str(tmp_path)
+        assert result["meta"]["query"] == "release gates"
+        assert result["meta"]["token_budget"] == 512
+        assert result["meta"]["_caller_permissions"]["trust_level"] == "unrestricted"
+        assert any(
+            item.get("summary") == "Release gates should stay focused before publishing."
+            for item in result["knowledge"]
+        )
+
+
 class TestDoctorUncleanExitWarn:
     def test_doctor_surfaces_unclean_exit_warn(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """M11-2: When session_state.json shows an unclean prior exit,

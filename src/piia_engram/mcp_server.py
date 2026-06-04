@@ -69,6 +69,10 @@ try:
     from . import governance_runtime as _gov_rt  # noqa: E402
 except ImportError:
     import governance_runtime as _gov_rt  # noqa: E402
+try:
+    from . import recall_service as _recall_service  # noqa: E402
+except ImportError:
+    import recall_service as _recall_service  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -630,6 +634,7 @@ TIER1_TOOLS = frozenset({
     # Knowledge read (retrieval)
     "search_knowledge",          # search across all knowledge
     "get_relevant_knowledge",    # project-aware knowledge retrieval
+    "get_recall",                # structured identity + recent + knowledge recall bundle
     # Identity
     "get_identity_card",         # export identity for non-MCP tools
     "update_identity",           # update profile/preferences/standards
@@ -746,6 +751,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "get_profile": "read",
     "get_project_context": "read",
     "get_quality_standards": "read",
+    "get_recall": "read",
     "get_recent_context": "read",
     "get_recent_playbooks": "read",
     "get_related_knowledge": "read",
@@ -4189,6 +4195,71 @@ async def get_resume_brief(
     )
     _track("get_resume_brief", success=True)
     return _json(brief)
+
+
+@mcp.tool()
+async def get_recall(
+    project_folder: str = "",
+    query: str = "",
+    limit: int = 8,
+    token_budget: int = 2000,
+    include_freshness: bool = True,
+    collapse_versions: bool = True,
+) -> str:
+    """获取结构化 Recall Surface v1 载荷。 / Get a structured Recall Surface v1 payload.
+
+    用途：在新任务、跨工具接续或需要"一次拿到可执行记忆包"时调用。
+    返回身份摘要、最近活动、项目/查询相关知识和治理元数据。
+    Purpose: Call when a new task or cross-tool handoff needs one structured,
+    actionable memory bundle: identity slice, recent activity, relevant
+    knowledge, and governance metadata.
+
+    注意：该聚合视图可能组合多类知识和最近上下文，因此治理开启时仅 owner
+    (private-self) 可读；非 owner 会在读取前被拒绝，不触发搜索或遥测写入。
+    Note: Because this aggregate view can combine multiple knowledge classes and
+    recent context, it is owner-only when governance is enabled. Non-owners are
+    refused before any search or telemetry side effect runs.
+
+    Args:
+        project_folder: 项目文件夹路径（可选）。 / Project folder path (optional).
+        query: 可选搜索焦点。 / Optional search focus.
+        limit: 最多返回多少条知识（默认 8，上限 20）。 / Max knowledge items (default 8, max 20).
+        token_budget: 知识片段的粗略 token 预算（默认 2000）。 / Rough token budget for knowledge items.
+        include_freshness: 是否附加 freshness 提示。 / Attach freshness hints.
+        collapse_versions: 是否折叠版本链到当前 HEAD。 / Collapse version chains to current heads.
+    """
+    try:
+        is_owner = _gov_rt.caller_is_owner(_engram.root)
+    except Exception:
+        is_owner = False
+    if not is_owner:
+        return _gov_rt.maybe_govern_owner_only(_engram.root, "", tool="get_recall")
+
+    try:
+        if project_folder:
+            _session.detect_project(project_folder)
+        safe_limit = max(1, min(int(limit), 20))
+        safe_budget = max(0, int(token_budget))
+        payload = _recall_service.gather_recall(
+            _engram,
+            project_folder=project_folder,
+            query=query,
+            limit=safe_limit,
+            token_budget=safe_budget,
+            include_freshness=include_freshness,
+            collapse_versions=collapse_versions,
+        )
+        perms = _gov_rt.describe_caller_permissions(_engram.root)
+        meta = payload.setdefault("meta", {})
+        governance = meta.setdefault("governance", {})
+        if isinstance(governance, dict):
+            governance["trust_level"] = perms.get("trust_level", governance.get("trust_level"))
+        meta["_caller_permissions"] = perms
+        _track("get_recall", success=True)
+    except Exception as exc:
+        _track("get_recall", success=False)
+        return _json({"error": f"recall failed: {_safe_err(exc)}"})
+    return _json(payload)
 
 
 @mcp.tool()

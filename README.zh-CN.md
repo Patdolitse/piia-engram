@@ -193,7 +193,7 @@ $ engram doctor
     [ok] Engram initialized (~/.engram)
     [ok] Identity loaded (role: 后端开发工程师)
     [ok] quick_context.md ready (4096 bytes)
-    [ok] MCP server: 16 tools registered
+    [ok] MCP server: 17 tools registered
 
   -- Terminal encoding --
 
@@ -417,7 +417,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | 特性 | piia-engram | Claude Memory | 手动 CLAUDE.md | Mem0 | Letta (MemGPT) |
 |------|--------|--------------|----------------|------|----------------|
 | 主要定位 | 跨工具的用户身份 | 单对话记忆 | 单项目笔记 | Agent 向量记忆 | Agent 自编辑记忆 |
-| 跨工具协作 | ✅ MCP 原生（16 个核心工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
+| 跨工具协作 | ✅ MCP 原生（17 个核心工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
 | 存储位置 | 本地 JSON (`~/.engram/`) | 云端 | 本地 | 向量库 + Mem0 Cloud | Postgres 或 Letta Cloud |
 | 默认本地优先 | ✅ | ❌ | ✅ | ⚠ Cloud 是默认路径 | ⚠ Cloud 是默认路径 |
 | 静态加密 | ✅ AES-256-GCM, PBKDF2 600k（可选）| 视云端策略 | ❌ 明文 Markdown | 视存储后端配置 | 视 Postgres 配置 |
@@ -435,9 +435,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | | v3.47.1 (2026-06-03) |
 |---|---|
 | 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
-| MCP 工具 | **16 个核心**（默认加载）+ **64 个高级**（`ENGRAM_TOOLS=all` 开启）|
+| MCP 工具 | **17 个核心**（默认加载）+ **64 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **2541** 个（单元 + 集成；8 个 skipped，共收集 2549）|
+| 测试通过 | **2551** 个（单元 + 集成；8 个 skipped，共收集 2559）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **2443** 行（v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -464,7 +464,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | **知识质量** | 发现久未复查的知识，生成摘要和 Markdown 报告 |
 | **知识关联** | 让经验教训和关键决策互相引用，形成知识网络 |
 
-### Tier-1 核心工具（16 个 — 日常工作流）
+### Tier-1 核心工具（17 个 — 日常工作流）
 
 | 工具 | 功能 |
 |------|------|
@@ -476,6 +476,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `add_playbook` | 记录操作手册（多步骤流程 + 关键词锚点，方便日后调取） |
 | `search_knowledge` | **检索阶段** — 多词加权搜索经验、决策和操作手册（支持 `filters_json` 按领域/层级/日期过滤） |
 | `get_relevant_knowledge` | 按当前项目检索相关知识 |
+| `get_recall` | 一次返回结构化身份 + 最近活动 + 相关知识的 Recall 载荷 |
 | `get_identity_card` | 导出 Markdown 身份卡（给无 MCP 工具用） |
 | `update_identity` | 更新身份画像、偏好或质量标准 |
 | `get_project_context` | 读取项目快照 |
@@ -485,7 +486,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_resume_brief` | v3.30: 跨会话/跨工具恢复摘要 |
 | `doctor` | 记忆系统自诊断 |
 
-默认只加载以上 16 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 64 个高级工具。
+默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 64 个高级工具。
 
 ### Tier-2 高级工具（64 个 — 知识管理、审查、导入导出）
 
@@ -684,7 +685,7 @@ piia-engram。运行 `pip install piia-engram && engram setup`，两个工具就
 piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。已配置的 MCP 兼容编程工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）可以读取同一份已批准上下文，让新对话和换工具从同一份用户自有记忆开始。
 
 **piia-engram 和官方 MCP memory server 有什么区别？**
-官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 80 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望已配置的 MCP 兼容编程工具从同一份已批准的编码偏好和过往经验开始，用 piia-engram。
+官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 81 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望已配置的 MCP 兼容编程工具从同一份已批准的编码偏好和过往经验开始，用 piia-engram。
 
 **piia-engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
 那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。piia-engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
@@ -717,11 +718,11 @@ engram setup
 默认不会。身份与知识工具使用本地文件，telemetry **默认关闭**。可选的匿名使用统计可作为本地日志开启；远程 telemetry 和每周反馈报告必须单独显式开启，只发送计数，绝不发送知识正文。随时用 `engram telemetry preview` 查看下一次 payload，用 `engram telemetry off` 关闭统计，用 `engram telemetry remote off` 关闭远程发送。详见 **[PRIVACY.md](PRIVACY.md)**。
 
 **piia-engram 有多少个 MCP 工具？**
-两层设计，大多数用户只会看到 16 个工具：
+两层设计，大多数用户只会看到 17 个工具：
 
 | 层级 | 工具数 | 功能 | 加载方式 |
 |------|--------|------|----------|
-| **核心** | 16 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
+| **核心** | 17 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
 | **高级** | 64 | 知识审查、合并、健康评分、工具图谱、导入导出、审计 | `ENGRAM_TOOLS=all` |
 
 大多数用户无需开启高级工具 —— 核心工具覆盖日常使用。

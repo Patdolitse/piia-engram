@@ -34,6 +34,7 @@ CORE_MCP_TOOLS = {
     "add_playbook",
     "search_knowledge",
     "get_relevant_knowledge",
+    "get_recall",
     "get_identity_card",
     "update_identity",
     "get_project_context",
@@ -127,9 +128,9 @@ def test_glama_metadata_tracks_current_public_version_and_tool_count():
     content = GLAMA_YAML.read_text(encoding="utf-8")
 
     assert f"version: {pyproject_version}" in content
-    assert "80 MCP tools" in content
-    assert "'core' (16 tools)" in content
-    assert "'all' (80 tools)" in content
+    assert "81 MCP tools" in content
+    assert "'core' (17 tools)" in content
+    assert "'all' (81 tools)" in content
     assert "60 MCP tools" not in content
     assert "'core' (12 tools)" not in content
 
@@ -335,10 +336,10 @@ def test_source_and_user_facing_docs_are_utf8_without_bom():
 
 
 def test_architecture_documents_current_tool_split():
-    """Architecture docs should carry the same 80/16/64 tool split as README."""
+    """Architecture docs should carry the same 81/17/64 tool split as README."""
     content = ARCHITECTURE.read_text(encoding="utf-8")
-    assert re.search(r"\b80 tools\b", content)
-    assert "16 Tier-1" in content
+    assert re.search(r"\b81 tools\b", content)
+    assert "17 Tier-1" in content
     assert "64 Tier-2" in content
 
 
@@ -371,13 +372,13 @@ def test_setup_help_mentions_tool_tiers():
     assert "核心工具" in content
 
 
-def test_zh_readme_uses_pypi_install_and_41_tools():
+def test_zh_readme_uses_pypi_install_and_current_tool_split():
     """中文 README 应同步 PyPI badge、安装命令和工具数量。"""
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
     assert "64 个" in content  # Tier-2 tool count
-    assert "16 个" in content  # Tier-1 tool count
+    assert "17 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content

@@ -586,6 +586,12 @@ def _read_tool_kwargs(tool_name: str, ids: dict[str, str]) -> dict:
         },
         "get_playbook": {"playbook_id": ids["playbook_id"]},
         "get_project_context": {"project_folder": ids["project_folder"]},
+        "get_recall": {
+            "project_folder": ids["project_folder"],
+            "query": "public",
+            "limit": 5,
+            "token_budget": 500,
+        },
         "get_related_knowledge": {"item_id": ids["lesson_id"]},
         "get_relevant_knowledge": {"project_folder": ids["project_folder"], "limit": 5},
         "get_resume_brief": {"project_folder": ids["project_folder"], "token_budget": 500},
@@ -828,6 +834,46 @@ class TestReadPathStructuralClosure:
         assert before == after, (
             f"{client_type} repeated read {tool_name} ({reps}x) wrote inside or "
             f"outside the Engram root. Changed: "
+            f"{sorted(set(before) ^ set(after)) or 'content of existing files'}"
+        )
+
+    def test_external_get_recall_preflights_before_gathering(self, tmp_path, monkeypatch):
+        """Recall bundles identity + knowledge, so non-owners must be refused
+        before any search, telemetry, or session-tracking side effect runs."""
+        extra_roots = _external_watch_roots(tmp_path, monkeypatch)
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+        monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+        monkeypatch.setenv("ENGRAM_AUDIT", "1")
+        monkeypatch.setenv("ENGRAM_TELEMETRY", "1")
+        monkeypatch.delenv("ENGRAM_BETA_TRACKING", raising=False)
+        monkeypatch.setenv("ENGRAM_HEARTBEAT_INTERVAL", "1")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        _enable_local_telemetry(engram)
+        e = _make_engram(engram)
+        ids = _seed_read_probe_store(tmp_path, e)
+
+        import piia_engram.mcp_server as mcp_server
+
+        mcp_server._engram = e
+        _reset_tracking(mcp_server)
+
+        before = _snapshot_many(engram, extra_roots)
+        result = _run(mcp_server.get_recall(
+            project_folder=ids["project_folder"],
+            query="public",
+            limit=5,
+            token_budget=500,
+        ))
+        mcp_server._session._heartbeat_tick()
+        after = _snapshot_many(engram, extra_roots)
+
+        assert _is_refusal(result), (
+            f"get_recall must refuse a non-owner before gathering; returned: {result!r:.200}"
+        )
+        assert before == after, (
+            "non-owner get_recall wrote files before refusal. Changed: "
             f"{sorted(set(before) ^ set(after)) or 'content of existing files'}"
         )
 

@@ -6,14 +6,13 @@ fetches those sub-results from a live :class:`Engram` through its existing,
 already-governed read methods, optionally collapses superseded versions to HEAD
 (:mod:`version_chain`), and renders a human-readable digest for the CLI.
 
-Why CLI / owner-context only (no new MCP tool here):
-    The agent-facing MCP recall tool is *deliberately deferred* in
-    ``docs/specs/recall-surface-v1.md`` §6 step 2 — it touches MCP output and
-    overlaps ``get_resume_brief``, so it needs its own governance/leak-matrix
-    review before shipping. The CLI (``engram recall``) runs as the owner
-    (``private-self``) over the user's own store, so it adds no new agent-facing
-    disclosure surface. It composes only existing read methods; it introduces no
-    new retrieval or ranking.
+MCP exposure:
+    ``get_recall`` is now exposed as a thin MCP wrapper around this gather layer.
+    Because the aggregate overlaps ``get_resume_brief`` and can combine identity,
+    recent activity, and knowledge, the wrapper performs an owner-only governance
+    preflight before calling this function. Non-owner callers are refused before
+    any gather/search/telemetry side effect can run. The CLI (``engram recall``)
+    continues to run as the owner (``private-self``) over the user's own store.
 
 The gather layer is duck-typed against the Engram read API and defensive: a
 missing/empty sub-result degrades to an empty slice rather than raising, so the

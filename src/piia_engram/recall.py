@@ -6,9 +6,10 @@ recent-activity digest, project-relevant knowledge, optional query knowledge).
 It composes existing capabilities; it introduces **no new retrieval/ranking** and
 does **not** touch the store.
 
-The thin MCP tool that gathers the sub-results and calls this aggregator is a
-deliberate, separately-reviewed follow-up (spec §6 step 2 / §3 "requires explicit
-review because it touches MCP output"), so no new agent-facing surface ships here.
+The thin MCP tool that gathers the sub-results and calls this aggregator is
+implemented as ``get_recall``. Governance-enabled non-owner callers are refused
+before the gather layer runs because this aggregate surface overlaps the
+owner-only resume brief and can combine several knowledge classes.
 
 Design constraints:
 - stdlib only, side-effect free, safe to unit-test with fixtures.
