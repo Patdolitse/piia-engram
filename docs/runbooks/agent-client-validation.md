@@ -168,6 +168,7 @@ Each run should create one run directory under a temporary test root:
   timings.json
   zero_pollution.txt
   REPORT.md
+  OPTIMIZATION_NOTES.md
 ```
 
 `run_meta.json` should include:
@@ -214,7 +215,54 @@ or metadata only.
 
 ---
 
-## 4. Safety Rules
+## 4. Harness Usage
+
+Engram ships a small evidence-scaffolding helper so future client validations do
+not hand-roll `run_meta.json`, `tool_locations.json`, and zero-pollution
+reports.
+
+The helper is intentionally split into two layers:
+
+- `piia_engram.client_validation` — pure helpers for evidence layout,
+  run metadata, tool locations, file snapshots, zero-pollution comparison, and
+  public-claim guardrails.
+- `scripts/run_client_validation.py` — a thin CLI that creates a standard run
+  directory and writes starter evidence files. It does **not** run Hermes,
+  OpenClaw, Cursor, or any other AI client.
+
+Example:
+
+```powershell
+$py = "E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$env:PYTHONPATH = "E:\Personal Intelligence Identity Asset\engram\src"
+& $py scripts\run_client_validation.py `
+  --run-root E:\Temp\engram-client-validation `
+  --client-id hermes `
+  --client-version 0.15.2 `
+  --surface CLI `
+  --model deepseek-v4-flash `
+  --engram-mode "MCP read-only" `
+  --environment-arm "Engram-isolated" `
+  --client-executable E:\hermes-test\venv\Scripts\hermes.exe `
+  --engram-mcp-executable E:\codex-runtimes\codex-primary-runtime\dependencies\python\Scripts\piia-engram-mcp.exe `
+  --snapshot-file E:\EngramData\.engram\knowledge\lessons.json `
+  --snapshot-file E:\EngramData\.engram\knowledge\decisions.json
+```
+
+For local/internal validation reports, write `REPORT.md`,
+`OPTIMIZATION_NOTES.md`, and `zero_pollution.txt` in Chinese by default because
+they are primarily for the project owner. In Chinese: 本地/内部验证报告默认使用中文。
+Public release summaries may be English-first bilingual, but must remain
+scrubbed and metadata-only.
+
+Before turning any run into a public claim, run the claim through
+`validate_public_claim(...)`. This is especially important for OpenClaw:
+current evidence supports **L3 static snapshot A/B** only, not live agent or
+live model continuity.
+
+---
+
+## 5. Safety Rules
 
 1. Use English prompts for external CLI agents; ask the agent to answer in the
    desired language. This avoids Windows command-line encoding and argument
@@ -234,7 +282,7 @@ or metadata only.
 
 ---
 
-## 5. Environment Arms
+## 6. Environment Arms
 
 Do not confuse realistic product testing with variable-isolation testing. Most
 users will not disable their AI client's built-in tools, memory, or session
@@ -255,7 +303,7 @@ the only source of context.
 
 ---
 
-## 6. Client Matrix
+## 7. Client Matrix
 
 ### Cursor Agent
 
@@ -328,7 +376,7 @@ Known constraints:
 
 ---
 
-## 7. Reporting Template
+## 8. Reporting Template
 
 ```text
 # <client-id> Engram Validation Report
@@ -385,7 +433,7 @@ Run directory:
 
 ---
 
-## 8. Claim Language
+## 9. Claim Language
 
 Use conservative wording:
 
