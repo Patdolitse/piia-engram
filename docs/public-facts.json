@@ -5,9 +5,9 @@
   "local_dev_version": "3.49.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 2593,
+    "test_passed": 2595,
     "test_skipped": 8,
-    "test_collected": 2601,
+    "test_collected": 2603,
     "mcp_tools_total": 81,
     "mcp_tools_core": 17,
     "mcp_tools_advanced": 64,
@@ -18,7 +18,7 @@
   "sources": {
     "package_name": "pyproject.toml [project].name",
     "local_dev_version": "pyproject.toml [project].version  (cross-check: git tag --sort=-creatordate | head -1)",
-    "test_passed": "ENGRAM_DIR cleared; pytest tests/ -q  ->  '<N> passed'",
+    "test_passed": "isolated ENGRAM_DIR; pytest tests/ -q  ->  '<N> passed'",
     "test_skipped": "same pytest run  ->  '<N> skipped'",
     "test_collected": "pytest tests/ --collect-only -q  ->  '<N> tests collected'  (invariant: test_passed + test_skipped == test_collected)",
     "mcp_tools_total": "python scripts/count_mcp_tools.py --json -> .total (AST count of @mcp.tool() async defs in src/piia_engram/mcp_server.py; equals ENGRAM_TOOLS=all registration)",

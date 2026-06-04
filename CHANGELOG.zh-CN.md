@@ -23,9 +23,16 @@
   对抗假前提防护信号、公开动作边界、版本链 HEAD 选择、负控和 provenance
   往返。该基准的主张刻意收窄：Engram 让下一个客户端拿得到信号；真实模型是否
   会照做仍需要单独 A/B 测试。
+- **客户端验证证据脚手架**：新增 `src/piia_engram/client_validation.py`
+  和 `scripts/run_client_validation.py`，把 Hermes、OpenClaw、Cursor
+  以及后续 MCP host 的复制数据目录测试标准化。脚手架会记录测试目的、
+  隔离的来源/目标路径、零污染 hash 证据和公开安全的双语摘要，并通过主张闸门
+  避免把未经验证的 live client 行为写成已通过。
 
 ### 变更
 - **MCP 启动同步延迟**：启动对账现在默认在 daemon 后台线程中执行，避免 stdio 客户端在 MCP initialize 阶段被本地 AI 记忆/配置扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感验证臂中跳过启动同步。stdio 启动下的 `auto_migrate()` 仍保持同步执行；启动对账与 MCP 写工具共享进程内写锁，避免启动期读-改-写 JSON 更新互相覆盖。
+- **Cursor 插件显示名**：Cursor 插件 manifest 的显示名改为
+  `piia-engram`，让本地插件界面与包名、MCP Registry 身份保持一致。
 
 ## [3.48.3] - 2026-06-04
 

@@ -25,9 +25,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
   version-chain HEAD selection, negative control, and provenance round-trip. The
   benchmark's claim is intentionally narrow: Engram makes the signal available
   to the next client; live model compliance still needs separate A/B testing.
+- **Client-validation evidence harness** - `src/piia_engram/client_validation.py`
+  and `scripts/run_client_validation.py` standardize copied-store client tests
+  for Hermes, OpenClaw, Cursor, and future MCP hosts. The scaffold records
+  purpose, isolated source/target paths, zero-pollution hash evidence, and
+  public-safe bilingual summaries, while claim guards prevent unverified live
+  client behavior from being reported as passed.
 
 ### Changed
 - **MCP startup sync latency** - startup reconciliation now runs in a daemon background thread by default, so stdio clients are not blocked during MCP initialize by local AI memory/config scans. Set `ENGRAM_MCP_STARTUP_SYNC=eager` to restore the previous synchronous behavior or `ENGRAM_MCP_STARTUP_SYNC=off` to skip startup sync for latency-sensitive validation arms. `auto_migrate()` remains synchronous for stdio startup, and startup reconcile shares a process-local write lock with MCP write tools to avoid overlapping read-modify-write JSON updates.
+- **Cursor plugin display name** - the Cursor plugin manifest now uses
+  `piia-engram` as its display name so the local plugin surface matches the
+  package and MCP Registry identity.
 
 ## [3.48.3] - 2026-06-04
 

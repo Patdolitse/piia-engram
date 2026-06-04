@@ -1,6 +1,6 @@
 {
   "name": "engram",
-  "displayName": "Engram",
+  "displayName": "piia-engram",
   "version": "0.1.0",
   "description": "Connect Cursor to Engram, a local-first personal AI identity and memory layer for MCP-compatible coding tools. Stores user-approved lessons, decisions, playbooks, and project context as local JSON. AI suggests; you decide what becomes permanent. Local-first, no cloud account.",
   "author": {
