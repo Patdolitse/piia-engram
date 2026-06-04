@@ -8,6 +8,15 @@
 
 ## [Unreleased]
 
+### 新增
+- **显式导入版本链实体化**：完整备份导入现在支持
+  `engram import <backup.json> --apply --yes --materialize-version-chain`，
+  用于 owner 确认后的同 key 知识冲突落链。dry-run 已标记为
+  `review_version_chain_candidate` 的分歧 lesson / decision 会被导入为新的
+  active 条目，写入 `supersedes` 边，并把旧条目标记为 `outdated`。默认
+  `--apply --yes` 合并行为保持保守，不会实体化冲突；返回结果仍是
+  metadata-only。
+
 ### 变更
 - **MCP 启动同步延迟**：启动对账现在默认在 daemon 后台线程中执行，避免 stdio 客户端在 MCP initialize 阶段被本地 AI 记忆/配置扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感验证臂中跳过启动同步。stdio 启动下的 `auto_migrate()` 仍保持同步执行；启动对账与 MCP 写工具共享进程内写锁，避免启动期读-改-写 JSON 更新互相覆盖。
 

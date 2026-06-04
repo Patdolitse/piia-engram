@@ -4740,6 +4740,7 @@ def _run_import_backup(args: list[str]) -> int:
             "Usage:\n"
             "  engram import <backup.json> [--json]\n"
             "  engram import <backup.json> --apply --yes [--json]\n"
+            "  engram import <backup.json> --apply --yes --materialize-version-chain [--json]\n"
             "  engram import <backup.json> --overwrite --apply --yes [--json]\n\n"
             "Default is metadata-only preview. --overwrite maps to merge=False."
         )
@@ -4749,7 +4750,14 @@ def _run_import_backup(args: list[str]) -> int:
     apply = "--apply" in args
     confirm = "--yes" in args
     overwrite = "--overwrite" in args
-    known_flags = {"--json", "--apply", "--yes", "--overwrite"}
+    materialize_version_chain = "--materialize-version-chain" in args
+    known_flags = {
+        "--json",
+        "--apply",
+        "--yes",
+        "--overwrite",
+        "--materialize-version-chain",
+    }
     paths = []
     for arg in args:
         if arg in known_flags:
@@ -4786,7 +4794,12 @@ def _run_import_backup(args: list[str]) -> int:
             print(_render_import_result_text(payload))
         return 1
 
-    payload = eng.import_all(backup_path, merge=merge, dry_run=not apply)
+    payload = eng.import_all(
+        backup_path,
+        merge=merge,
+        dry_run=not apply,
+        materialize_version_chain=materialize_version_chain and merge,
+    )
     if json_output:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:

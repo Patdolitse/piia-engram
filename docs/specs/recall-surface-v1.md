@@ -136,10 +136,10 @@ shows the aggregator dominates, deprecation can be considered later — separate
 `supersedes` / `led_to` / `implemented_by` edges already produced by
 `decision_thread`: `resolve_heads`, `collapse_to_heads` (default-recall "prefer
 HEAD"), `lineage` (full history walk), and `build_version_report` (metadata-only
-per-topic report). It reads no store and writes nothing; the richer write-path
-version fields (`parent_id`/`root_id`/`derives_from`) in
-`knowledge-version-chain-design.md` remain deferred. Tested in
-`tests/test_version_chain.py`.
+per-topic report). It reads no store and writes nothing; general agent-facing
+version writes remain deferred, while owner-confirmed full-backup import can
+materialize same-key conflicts as `supersedes` chains with
+`parent_id`/`root_id` metadata. Tested in `tests/test_version_chain.py`.
 
 ## 7. Non-goals
 

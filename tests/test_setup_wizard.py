@@ -1209,6 +1209,7 @@ def test_config_integrity_report_is_metadata_only_and_read_only(tmp_path: Path, 
     home.mkdir()
     project.mkdir()
     monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.delenv("ENGRAM_DIR", raising=False)
 
     codex_config = home / ".codex" / "config.toml"
     codex_config.parent.mkdir(parents=True)
@@ -2804,6 +2805,56 @@ class TestMainCLI:
         assert payload["status"] == "success"
         lessons = Engram(root=target_root).get_lessons(limit=None)
         assert [lesson["summary"] for lesson in lessons] == ["CLI apply imported lesson"]
+
+    def test_main_import_apply_materialize_version_chain_flag(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from piia_engram.core import Engram
+        from piia_engram.governance_store import RelationStore
+        from piia_engram.setup_wizard import main
+
+        source = Engram(root=tmp_path / "source")
+        source.add_lesson({
+            "summary": "CLI materialize import topic",
+            "detail": "CLI_MATERIALIZE_INCOMING_SECRET_DETAIL",
+        })
+        backup = source.export_all(str(tmp_path / "backup.json"))
+        target_root = tmp_path / "target"
+        target = Engram(root=target_root)
+        local = target.add_lesson({
+            "summary": "CLI materialize import topic",
+            "detail": "CLI_MATERIALIZE_LOCAL_SECRET_DETAIL",
+        })
+
+        monkeypatch.setenv("ENGRAM_DIR", str(target_root))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "engram",
+                "import",
+                backup,
+                "--apply",
+                "--yes",
+                "--materialize-version-chain",
+                "--json",
+            ],
+        )
+
+        with pytest.raises(SystemExit) as applied:
+            main()
+
+        assert applied.value.code == 0
+        payload = json.loads(capsys.readouterr().out)
+        serialized = json.dumps(payload, ensure_ascii=False)
+        vc = payload["version_chain_materialization"]
+        assert vc["materialized"] == 1
+        assert vc["items"][0]["existing_id"] == local["id"]
+        assert "CLI_MATERIALIZE_INCOMING_SECRET" not in serialized
+        assert "CLI_MATERIALIZE_LOCAL_SECRET" not in serialized
+        assert {"src": vc["items"][0]["new_id"], "rel": "supersedes", "dst": local["id"]} in RelationStore(
+            target_root
+        ).all_edges()
 
     def test_main_telemetry_dispatches(self, tmp_path, monkeypatch, capsys):
         """main() with 'telemetry' should call _run_telemetry_cli."""

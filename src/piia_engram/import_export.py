@@ -6,6 +6,8 @@ the core facade while preserving Engram.export_all/import_all compatibility.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -422,6 +424,257 @@ class ImportExportMixin:
             "source": input_path,
         }
 
+    @staticmethod
+    def _import_version_hash(entry: dict, entry_type: str) -> str:
+        """Stable content hash for import materialization idempotency."""
+        if entry_type == "decision":
+            fields = {
+                "question": entry.get("question", ""),
+                "choice": entry.get("choice", ""),
+                "reasoning": entry.get("reasoning", ""),
+                "alternatives": entry.get("alternatives", []),
+                "domain": entry.get("domain", ""),
+                "project": entry.get("project", ""),
+                "tier": entry.get("tier", ""),
+            }
+        else:
+            fields = {
+                "summary": entry.get("summary", ""),
+                "detail": entry.get("detail", ""),
+                "domain": entry.get("domain", ""),
+                "tier": entry.get("tier", ""),
+            }
+        payload = json.dumps(fields, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _materialized_import_id(
+        section: str,
+        existing_id: str,
+        version_hash: str,
+    ) -> str:
+        seed = f"import-version:{section}:{existing_id}:{version_hash}"
+        return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+
+    def _materialize_version_chain_candidates(
+        self,
+        data: dict,
+        conflicts: list[dict],
+        *,
+        input_path: str,
+    ) -> dict:
+        """Apply opt-in import conflict -> supersedes-chain materialization.
+
+        This is owner-confirmed import-only behavior. It consumes the existing
+        metadata-only conflict plan and returns only metadata: ids, counts, and
+        reason codes, never incoming or local bodies.
+        """
+        payload = {
+            "enabled": True,
+            "materialized": 0,
+            "skipped": 0,
+            "items": [],
+        }
+        knowledge = data.get("knowledge", {}) if isinstance(data, dict) else {}
+        sections = {
+            "lessons": ("lesson", "lessons.json"),
+            "decisions": ("decision", "decisions.json"),
+        }
+
+        for conflict in conflicts:
+            section = str(conflict.get("section") or "")
+            if section not in sections:
+                continue
+            if conflict.get("resolution") != "review_version_chain_candidate":
+                continue
+            if conflict.get("candidate_relation") != "supersedes":
+                continue
+
+            existing_id = str(conflict.get("existing_id") or "")
+            incoming_id = str(conflict.get("incoming_id") or "")
+            item = {
+                "section": section,
+                "existing_id": existing_id,
+                "incoming_id": incoming_id,
+                "changed_fields": list(conflict.get("changed_fields") or []),
+                "outcome": "skipped",
+                "reason": "",
+            }
+            incoming_items = knowledge.get(section)
+            if not existing_id or not incoming_id or not isinstance(incoming_items, list):
+                item["reason"] = "missing_ids"
+                payload["skipped"] += 1
+                payload["items"].append(item)
+                continue
+
+            incoming = next(
+                (
+                    candidate for candidate in incoming_items
+                    if isinstance(candidate, dict)
+                    and str(candidate.get("id") or "") == incoming_id
+                ),
+                None,
+            )
+            if not isinstance(incoming, dict):
+                item["reason"] = "incoming_not_found"
+                payload["skipped"] += 1
+                payload["items"].append(item)
+                continue
+
+            entry_type, filename = sections[section]
+            result = self._materialize_one_version_entry(
+                section,
+                entry_type,
+                filename,
+                incoming,
+                existing_id=existing_id,
+                incoming_id=incoming_id,
+                input_path=input_path,
+            )
+            item.update(result)
+            if item["outcome"] == "materialized":
+                payload["materialized"] += 1
+            else:
+                payload["skipped"] += 1
+            payload["items"].append(item)
+
+        return payload
+
+    def _materialize_one_version_entry(
+        self,
+        section: str,
+        entry_type: str,
+        filename: str,
+        incoming: dict,
+        *,
+        existing_id: str,
+        incoming_id: str,
+        input_path: str,
+    ) -> dict:
+        from .governance_store import RelationStore
+
+        path = self._knowledge_dir / filename
+        original_entries = self._read_entries(path, entry_type, migrate=False)
+        existing = next(
+            (entry for entry in original_entries if str(entry.get("id") or "") == existing_id),
+            None,
+        )
+        if not isinstance(existing, dict):
+            return {"outcome": "skipped", "reason": "existing_not_found"}
+
+        version_hash = self._import_version_hash(incoming, entry_type)
+        relation_store = RelationStore(self.root)
+        existing_edges = relation_store.all_edges()
+        existing_edge_src = next(
+            (
+                edge["src"] for edge in existing_edges
+                if edge.get("rel") == "supersedes"
+                and edge.get("dst") == existing_id
+            ),
+            "",
+        )
+        if existing.get("status") != "active":
+            return {
+                "outcome": "skipped",
+                "reason": "existing_not_active",
+                "new_id": existing_edge_src,
+            }
+
+        ids = {str(entry.get("id") or "") for entry in original_entries if entry.get("id")}
+        materialized = next(
+            (
+                entry for entry in original_entries
+                if str(entry.get("supersedes") or "") == existing_id
+                and str(entry.get("import_version_hash") or "") == version_hash
+            ),
+            None,
+        )
+
+        candidate: dict | None = None
+        added_entry = False
+        new_id = ""
+        entries_for_relation = original_entries
+        if isinstance(materialized, dict):
+            new_id = str(materialized.get("id") or "")
+            if not new_id:
+                return {"outcome": "skipped", "reason": "materialized_id_missing"}
+        else:
+            candidate = deepcopy(incoming)
+            desired_id = str(candidate.get("id") or "")
+            if desired_id and desired_id not in ids and desired_id != existing_id:
+                new_id = desired_id
+            else:
+                new_id = self._materialized_import_id(section, existing_id, version_hash)
+                if new_id in ids:
+                    return {"outcome": "skipped", "reason": "id_collision"}
+                if desired_id:
+                    candidate["source_import_id"] = desired_id
+            candidate["id"] = new_id
+            candidate["status"] = "active"
+            candidate["supersedes"] = existing_id
+            candidate["parent_id"] = existing_id
+            candidate["root_id"] = existing.get("root_id") or existing_id
+            candidate["import_version_hash"] = version_hash
+            candidate["version_materialized_at"] = _now_iso()
+            candidate["import_source"] = str(input_path)
+            provenance = candidate.get("provenance")
+            if not isinstance(provenance, dict):
+                provenance = {}
+            provenance.setdefault("source_tool", candidate.get("source_tool") or "import")
+            provenance["import_source"] = str(input_path)
+            provenance["supersedes"] = existing_id
+            candidate["provenance"] = provenance
+            candidate = self._ensure_fields(candidate, entry_type)
+            entries_for_relation = original_entries + [candidate]
+            added_entry = True
+
+        relation_added = False
+        try:
+            if added_entry:
+                self._write_entries(path, entries_for_relation, entry_type)
+
+            relation = self.add_relation(new_id, "supersedes", existing_id)
+            relation_added = bool(relation.get("added"))
+            edge_present = any(
+                edge.get("src") == new_id
+                and edge.get("rel") == "supersedes"
+                and edge.get("dst") == existing_id
+                for edge in relation_store.all_edges()
+            )
+            if not edge_present:
+                if added_entry:
+                    self._write_entries(path, original_entries, entry_type)
+                return {"outcome": "skipped", "reason": "relation_failed"}
+
+            final_entries = []
+            for entry in entries_for_relation:
+                updated = dict(entry)
+                if str(updated.get("id") or "") == existing_id:
+                    updated["status"] = "outdated"
+                    updated["last_updated"] = _now_iso()
+                    updated = self._ensure_fields(updated, entry_type)
+                final_entries.append(updated)
+            self._write_entries(path, final_entries, entry_type)
+        except Exception:
+            if relation_added:
+                try:
+                    self.remove_relation(new_id, "supersedes", existing_id)
+                except Exception:
+                    pass
+            if added_entry:
+                try:
+                    self._write_entries(path, original_entries, entry_type)
+                except Exception:
+                    pass
+            return {"outcome": "skipped", "reason": "write_failed"}
+
+        self._audit.log(
+            "write",
+            "knowledge/import_version_chain",
+            detail=f"{section}:{new_id} supersedes {existing_id}",
+        )
+        return {"outcome": "materialized", "reason": "", "new_id": new_id}
+
     def export_all(self, output_path: str | None = None) -> str:
         """导出整个 Engram 为单一 JSON 文件。
 
@@ -479,13 +732,21 @@ class ImportExportMixin:
         self._audit.log("export", "all", detail=f"exported to {out}")
         return str(out)
 
-    def import_all(self, input_path: str, merge: bool = True, dry_run: bool = False) -> dict:
+    def import_all(
+        self,
+        input_path: str,
+        merge: bool = True,
+        dry_run: bool = False,
+        materialize_version_chain: bool = False,
+    ) -> dict:
         """从备份文件导入 Engram 数据。
 
         Args:
             input_path: 备份文件路径（export_all 生成的 JSON）。
             merge: True=合并（已有数据保留，新数据追加），False=覆盖。
             dry_run: True=只返回元数据预览，不写入任何 Engram 数据。
+            materialize_version_chain: True=在 merge apply 时，将 dry-run
+                标出的 same-key 分歧知识导入为 supersedes 版本链。
 
         Returns:
             导入结果摘要。
@@ -709,8 +970,20 @@ class ImportExportMixin:
                     _write_json(proj_path, proj_data)
             imported.append(f"projects({len(projects)})")
 
+        version_chain_materialization = None
+        if merge and materialize_version_chain:
+            version_chain_materialization = self._materialize_version_chain_candidates(
+                data,
+                plan.get("conflicts", []),
+                input_path=input_path,
+            )
+            imported.append(
+                "version_chains"
+                f"(+{version_chain_materialization.get('materialized', 0)})"
+            )
+
         self._audit.log("import", "all", detail=f"imported from {input_path}")
-        return {
+        result = {
             "status": "success",
             "mode": "merge" if merge else "overwrite",
             "imported": imported,
@@ -718,3 +991,6 @@ class ImportExportMixin:
             "conflicts": plan.get("conflicts", []),
             "source": input_path,
         }
+        if version_chain_materialization is not None:
+            result["version_chain_materialization"] = version_chain_materialization
+        return result

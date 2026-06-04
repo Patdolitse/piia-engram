@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Added
+- **Opt-in import version-chain materialization** - full-backup imports now support
+  `engram import <backup.json> --apply --yes --materialize-version-chain` for
+  owner-confirmed same-key knowledge conflicts. Divergent lessons/decisions that
+  dry-run already marks as `review_version_chain_candidate` are imported as new
+  active entries, linked with a `supersedes` edge, and the older entry is marked
+  `outdated`. Default `--apply --yes` merge behavior remains conservative and
+  does not materialize conflicts. The result payload is metadata-only.
+
 ### Changed
 - **MCP startup sync latency** - startup reconciliation now runs in a daemon background thread by default, so stdio clients are not blocked during MCP initialize by local AI memory/config scans. Set `ENGRAM_MCP_STARTUP_SYNC=eager` to restore the previous synchronous behavior or `ENGRAM_MCP_STARTUP_SYNC=off` to skip startup sync for latency-sensitive validation arms. `auto_migrate()` remains synchronous for stdio startup, and startup reconcile shares a process-local write lock with MCP write tools to avoid overlapping read-modify-write JSON updates.
 

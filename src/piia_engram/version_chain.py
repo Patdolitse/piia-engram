@@ -21,9 +21,11 @@ Design constraints (mirrors ``recall.py`` / ``decision_thread.py``):
 - never reads the store; callers pass already-loaded ``edges`` + ``entries``.
 - never mutates inputs; returns fresh dicts/lists.
 - this is a *read/report* scaffold: it proposes nothing destructive and writes
-  nothing. The write-path version fields (parent_id/root_id/derives_from) remain
-  deferred per the design spec; this layer works with what the store has today
-  (``supersedes`` edges) and degrades gracefully when richer fields arrive.
+  nothing. General agent-facing version writes remain deferred; owner-confirmed
+  import materialization may now populate richer version metadata
+  (``parent_id`` / ``root_id`` / ``supersedes``). This layer still treats
+  ``supersedes`` edges as the source of truth and degrades gracefully when fields
+  are absent.
 """
 
 from __future__ import annotations

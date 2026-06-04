@@ -547,7 +547,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `request_outline_review` | 生成交互式 HTML 知识审查页面 |
 | `apply_review` | 处理审查结果（晋升/归档暂存条目） |
 | `export_engram` | 导出完整备份 |
-| `import_engram` | 导入备份；先用 `dry_run=True` 做元数据级合并/冲突预览 |
+| `import_engram` | 导入备份；先用 `dry_run=True` 做元数据级合并/冲突预览；CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
 | `export_engram_to_openclaw` | 导出 OpenClaw 格式 |
 | `import_engram_from_openclaw` | 导入 OpenClaw 格式 |
 | `read_web_content` | 读取网页内容（需 Reader 服务） |

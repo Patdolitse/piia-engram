@@ -2,7 +2,7 @@
 
 Status: **implemented (CLI / owner-only, metadata-only) + tests.**
 
-This runbook documents the local product batch that adds three owner-confirmed
+This runbook documents the local product batch that adds four owner-confirmed
 "apply" paths and two read-only surfacings on top of the existing proposal
 layers. Everything here is **CLI / owner-only and metadata-only**. None of it
 adds an agent-facing MCP apply tool, changes telemetry, changes
@@ -20,6 +20,10 @@ Every apply path below obeys the same gate (mirrors `engram lifecycle apply`):
   `requires_confirmation`, mutates nothing, and exits non-zero so scripts notice.
 - `--commit --yes` is the only path that mutates, and only via existing reviewed
   write primitives.
+- Full-backup import uses its legacy CLI spelling (`engram import <backup.json>
+  --apply --yes`) for the same owner-confirmed mutation gate. Version-chain
+  conflict materialization is an additional explicit flag:
+  `--materialize-version-chain`.
 - Every payload and audit line is **metadata only**: ids, types, scores,
   outcomes - never stored bodies, summaries, or private paths.
 
@@ -84,7 +88,30 @@ change what is stored or selected:
 
 Tests: `tests/test_version_chain_surfacing.py`.
 
-## 4. Owner dashboard readiness counts (D) - metadata-only
+## 4. Full-backup import version-chain materialization - opt-in apply
+
+Module: `src/piia_engram/import_export.py`. CLI: `engram import`.
+
+- `engram import <backup.json>` remains a read-only, metadata-only dry-run plan.
+  It reports add/skip/conflict counts and flags same-summary lessons or
+  same-question decisions with divergent semantic fields as
+  `review_version_chain_candidate`.
+- `engram import <backup.json> --apply --yes` keeps the conservative merge
+  behavior: it appends only new keys and does **not** materialize conflicts.
+- `engram import <backup.json> --apply --yes --materialize-version-chain`
+  materializes only those already-previewed version-chain candidates. The
+  incoming candidate is written as a new active entry, `new -> old` is linked
+  with `supersedes`, and the old entry is marked `status="outdated"`.
+- The apply result is metadata-only (`enabled`, counts, section, existing id,
+  incoming id, new id, changed fields, outcome/reason). It never echoes local or
+  incoming bodies.
+- Re-running the same backup is idempotent: once the incoming version is the
+  active HEAD, later imports skip rather than duplicating entries or edges.
+
+Tests: `tests/test_core.py` import materialization cases and
+`tests/test_setup_wizard.py::TestMainCLI::test_main_import_apply_materialize_version_chain_flag`.
+
+## 5. Owner dashboard readiness counts (D) - metadata-only
 
 `owner_dashboard.build_owner_dashboard` now accepts optional already-computed
 `merge_report` / `reconcile_report` / `version_report` and emits a
@@ -114,7 +141,7 @@ actions[]:   {code, label, command, count, risk, executes=false}
 These are metadata-only action descriptors. They are safe for a UI to render,
 but they do not execute commands and do not add one-click mutation.
 
-## 5. Telemetry dashboard password rotation helper
+## 6. Telemetry dashboard password rotation helper
 
 Remote dashboard password rotation is handled by:
 

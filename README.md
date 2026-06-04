@@ -649,8 +649,11 @@ upgrade (it reads no stored knowledge bodies and never reaches outside the
 Engram root). For JSON backups, `import_engram(..., dry_run=True)` or
 `engram import <backup.json>` returns a metadata-only merge plan with
 add/skip/conflict counts before any write; `--apply --yes` is required to mutate
-the local store. Engram never backs up, modifies, or deletes files in your
-project folders.
+the local store. Same-summary lessons and same-question decisions with divergent
+semantic fields are previewed as version-chain candidates; they are materialized
+only when the owner explicitly runs
+`engram import <backup.json> --apply --yes --materialize-version-chain`. Engram
+never backs up, modifies, or deletes files in your project folders.
 See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.md).
 
 ## Supported Tools

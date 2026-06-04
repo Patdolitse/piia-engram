@@ -507,6 +507,153 @@ def test_import_all_dry_run_flags_divergent_decision_as_version_candidate(
     assert "LOCAL_DECISION_SECRET" not in serialized
 
 
+def test_import_all_apply_default_does_not_materialize_version_chain(
+    tmp_path: Path,
+):
+    """Plain merge apply preserves the old conservative same-key skip behavior."""
+    source = make_engram(tmp_path / "source")
+    source.add_lesson({
+        "summary": "default import conflict topic",
+        "detail": "DEFAULT_INCOMING_SECRET_DETAIL",
+        "domain": "import",
+    })
+    export_path = source.export_all(str(tmp_path / "source_backup.json"))
+
+    target = make_engram(tmp_path / "target")
+    local = target.add_lesson({
+        "summary": "default import conflict topic",
+        "detail": "DEFAULT_LOCAL_SECRET_DETAIL",
+        "domain": "import",
+    })
+
+    result = target.import_all(export_path, merge=True)
+
+    assert result["status"] == "success"
+    assert "version_chain_materialization" not in result
+    lessons = target._read_entries(
+        target._knowledge_dir / "lessons.json", "lesson", migrate=False
+    )
+    assert len(lessons) == 1
+    assert lessons[0]["id"] == local["id"]
+    assert lessons[0]["status"] == "active"
+
+
+def test_import_all_materializes_divergent_lesson_version_chain(
+    tmp_path: Path,
+):
+    """Opt-in materialization imports the incoming lesson as a superseding HEAD."""
+    from piia_engram.governance_store import RelationStore
+
+    source = make_engram(tmp_path / "source")
+    source.add_lesson({
+        "summary": "materialized lesson conflict topic",
+        "detail": "MATERIALIZE_INCOMING_LESSON_SECRET_DETAIL",
+        "domain": "import",
+    })
+    export_path = source.export_all(str(tmp_path / "source_backup.json"))
+
+    target = make_engram(tmp_path / "target")
+    local = target.add_lesson({
+        "summary": "materialized lesson conflict topic",
+        "detail": "MATERIALIZE_LOCAL_LESSON_SECRET_DETAIL",
+        "domain": "import",
+    })
+
+    result = target.import_all(
+        export_path,
+        merge=True,
+        dry_run=False,
+        materialize_version_chain=True,
+    )
+    serialized = json.dumps(result, ensure_ascii=False)
+
+    assert result["status"] == "success"
+    vc = result["version_chain_materialization"]
+    assert vc["enabled"] is True
+    assert vc["materialized"] == 1
+    assert vc["items"][0]["section"] == "lessons"
+    assert vc["items"][0]["existing_id"] == local["id"]
+    assert "MATERIALIZE_INCOMING_LESSON_SECRET" not in serialized
+    assert "MATERIALIZE_LOCAL_LESSON_SECRET" not in serialized
+
+    lessons = target._read_entries(
+        target._knowledge_dir / "lessons.json", "lesson", migrate=False
+    )
+    old = next(item for item in lessons if item["id"] == local["id"])
+    new_id = vc["items"][0]["new_id"]
+    new = next(item for item in lessons if item["id"] == new_id)
+    assert old["status"] == "outdated"
+    assert new["status"] == "active"
+    assert new["supersedes"] == local["id"]
+    assert new["parent_id"] == local["id"]
+    assert new["root_id"] == local["id"]
+    assert new["detail"] == "MATERIALIZE_INCOMING_LESSON_SECRET_DETAIL"
+    assert {"src": new_id, "rel": "supersedes", "dst": local["id"]} in RelationStore(
+        target.root
+    ).all_edges()
+    assert [lesson["id"] for lesson in target.get_lessons(limit=None)] == [new_id]
+
+    second = target.import_all(
+        export_path,
+        merge=True,
+        dry_run=False,
+        materialize_version_chain=True,
+    )
+    assert second["version_chain_materialization"]["materialized"] == 0
+    assert len(RelationStore(target.root).all_edges()) == 1
+
+
+def test_import_all_materializes_divergent_decision_version_chain(
+    tmp_path: Path,
+):
+    """Opt-in materialization handles decision conflicts without leaking bodies."""
+    from piia_engram.governance_store import RelationStore
+
+    source = make_engram(tmp_path / "source")
+    source.add_decision({
+        "question": "Which import version-chain path should be used?",
+        "choice": "MATERIALIZE_INCOMING_DECISION_SECRET_CHOICE",
+        "reasoning": "MATERIALIZE_INCOMING_DECISION_SECRET_REASONING",
+    })
+    export_path = source.export_all(str(tmp_path / "source_backup.json"))
+
+    target = make_engram(tmp_path / "target")
+    local = target.add_decision({
+        "question": "Which import version-chain path should be used?",
+        "choice": "MATERIALIZE_LOCAL_DECISION_SECRET_CHOICE",
+        "reasoning": "MATERIALIZE_LOCAL_DECISION_SECRET_REASONING",
+    })
+
+    result = target.import_all(
+        export_path,
+        merge=True,
+        dry_run=False,
+        materialize_version_chain=True,
+    )
+    serialized = json.dumps(result, ensure_ascii=False)
+
+    vc = result["version_chain_materialization"]
+    assert vc["materialized"] == 1
+    assert vc["items"][0]["section"] == "decisions"
+    assert vc["items"][0]["existing_id"] == local["id"]
+    assert "MATERIALIZE_INCOMING_DECISION_SECRET" not in serialized
+    assert "MATERIALIZE_LOCAL_DECISION_SECRET" not in serialized
+
+    decisions = target._read_entries(
+        target._knowledge_dir / "decisions.json", "decision", migrate=False
+    )
+    old = next(item for item in decisions if item["id"] == local["id"])
+    new_id = vc["items"][0]["new_id"]
+    new = next(item for item in decisions if item["id"] == new_id)
+    assert old["status"] == "outdated"
+    assert new["status"] == "active"
+    assert new["supersedes"] == local["id"]
+    assert new["choice"] == "MATERIALIZE_INCOMING_DECISION_SECRET_CHOICE"
+    assert {"src": new_id, "rel": "supersedes", "dst": local["id"]} in RelationStore(
+        target.root
+    ).all_edges()
+
+
 def test_import_all_file_not_found(tmp_path: Path):
     """不存在的备份文件应返回 error。"""
     engram = make_engram(tmp_path)
