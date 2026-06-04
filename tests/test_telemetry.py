@@ -399,6 +399,35 @@ class TestRemoteSender:
         result = _send_remote({"schema": 1, "daily_id": "test"})
         assert result is False
 
+    def test_send_remote_default_off_never_opens_network(self, monkeypatch):
+        """Default-off telemetry must return before constructing any request."""
+        called = {"urlopen": 0}
+
+        def boom(*args, **kwargs):
+            called["urlopen"] += 1
+            raise AssertionError("urlopen must not be called when remote is off")
+
+        monkeypatch.setattr("piia_engram.telemetry.urlopen", boom)
+
+        result = _send_remote({"schema": 1, "daily_id": "test"})
+
+        assert result is False
+        assert called["urlopen"] == 0
+
+    def test_flush_default_off_never_opens_network_or_writes(self, monkeypatch, isolated_engram_dir):
+        """With telemetry disabled, flush exits before local log and remote send."""
+        monkeypatch.setattr(
+            "piia_engram.telemetry.urlopen",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no network")),
+        )
+        tracker = ToolCallTracker()
+        tracker.record("get_user_context", success=True)
+
+        result = tracker.flush(engram_version="3.49.0", force=True)
+
+        assert result is None
+        assert not (isolated_engram_dir / "telemetry.log").exists()
+
     def test_send_remote_never_raises_on_network_error(self, isolated_engram_dir):
         """Even with invalid endpoint, _send_remote must never raise."""
         set_enabled(True)

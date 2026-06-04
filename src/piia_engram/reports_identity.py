@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 
+from .export_redaction import redact_export_text
 from .i18n import get_lang
 from .storage import _now_iso
 
@@ -108,7 +109,9 @@ class IdentityCardMixin:
                 summary = l.get("summary", "")
                 if not summary or _CONFIG_PATTERNS.match(summary):
                     continue
-                filtered.append(summary)
+                # Boundary scrub: a credential/abs-path/email that leaked into a
+                # stored lesson summary must never reach this export surface.
+                filtered.append(redact_export_text(summary))
                 if len(filtered) >= _MAX_LESSONS:
                     break
             if filtered:
@@ -130,8 +133,8 @@ class IdentityCardMixin:
                 question = d.get("question") or d.get("title") or ""
                 choice = d.get("choice", "")
                 # Cut everything from first XML tag onward
-                question = _XML_CUT.sub("", question).strip()
-                choice = _XML_CUT.sub("", choice).strip()
+                question = redact_export_text(_XML_CUT.sub("", question).strip())
+                choice = redact_export_text(_XML_CUT.sub("", choice).strip())
                 # Truncate overly long choices
                 if len(choice) > _MAX_CHOICE_LEN:
                     choice = choice[:_MAX_CHOICE_LEN].rsplit(",", 1)[0] + "..."

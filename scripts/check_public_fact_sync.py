@@ -22,7 +22,8 @@ What it checks (all driven by the manifest):
    exactly ``local_dev_version``.
 4. Test-count renderings in README / README.zh-CN equal ``facts.test_passed``
    (generic: catches 2346 and any other stale number, now or future).
-5. Required current-state substrings (tool split 80/16/64, etc.) are present.
+5. Required current-state substrings (the manifest's current tool split, etc.)
+   are present.
 6. No known-stale string (e.g. ``**2346**``) appears in any current-state
    surface.
 
