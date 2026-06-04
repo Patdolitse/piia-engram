@@ -233,20 +233,21 @@ The helper is intentionally split into two layers:
 Example:
 
 ```powershell
-$py = "E:\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-$env:PYTHONPATH = "E:\Personal Intelligence Identity Asset\engram\src"
+$py = "<python-runtime>\python.exe"
+$repo = "<path-to-piia-engram-repo>"
+$env:PYTHONPATH = "$repo\src"
 & $py scripts\run_client_validation.py `
-  --run-root E:\Temp\engram-client-validation `
+  --run-root <isolated-run-root> `
   --client-id hermes `
   --client-version 0.15.2 `
   --surface CLI `
   --model deepseek-v4-flash `
   --engram-mode "MCP read-only" `
   --environment-arm "Engram-isolated" `
-  --client-executable E:\hermes-test\venv\Scripts\hermes.exe `
-  --engram-mcp-executable E:\codex-runtimes\codex-primary-runtime\dependencies\python\Scripts\piia-engram-mcp.exe `
-  --snapshot-file E:\EngramData\.engram\knowledge\lessons.json `
-  --snapshot-file E:\EngramData\.engram\knowledge\decisions.json
+  --client-executable <client-venv>\Scripts\hermes.exe `
+  --engram-mcp-executable <python-runtime>\Scripts\piia-engram-mcp.exe `
+  --snapshot-file <isolated-engram-dir>\knowledge\lessons.json `
+  --snapshot-file <isolated-engram-dir>\knowledge\decisions.json
 ```
 
 For local/internal validation reports, write `REPORT.md`,

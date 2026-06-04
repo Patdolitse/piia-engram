@@ -62,7 +62,7 @@
 ### Task 5: Verification And Audit
 
 **Files:**
-- Create: `C:/Users/pp3x3/Desktop/Engram_v3.42_Install_GUI_Validation_Report_2026-05-31.md`
+- Create: `<owner-desktop>/Engram_v3.42_Install_GUI_Validation_Report_2026-05-31.md`
 
 - [x] Run full `pytest tests/ -q`.
 - [x] Run `scripts/release_sanitize_check.py --internal --strict`.

@@ -18,6 +18,12 @@
 ### 安全
 - **身份卡导出脱敏**：导出的 identity card 现在会在渲染前清理 lesson 摘要和
   decision question/choice 中的凭证形状、裸邮箱和用户主目录绝对路径，避免已存知识里的敏感片段进入可携带导出面。
+- **遥测信任文档纠偏**：`SECURITY.md`、`CONTRIBUTING.md`、
+  `docs/architecture.md` 和 `docs/comparison.md` 现在与 `PRIVACY.md` 使用同一套分层遥测口径：
+  local telemetry 先写本地，remote telemetry 和 feedback 是独立显式 opt-in，
+  且不收集身份正文、知识正文、项目路径、自由文本或错误栈。
+- **测试数据边界文案**：客户端验证 runbook 和历史计划文档现在使用 isolated run root、
+  isolated Engram dir、owner desktop 等占位路径，不再固化真实本机路径。
 
 ### 新增
 - **公开主张漂移扫描**：`scripts/check_public_claim_drift.py` 会扫描当前跟踪的

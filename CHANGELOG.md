@@ -20,6 +20,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **Identity-card export redaction** - exported identity cards now scrub
   credential-shaped values, bare emails, and absolute user-home paths from
   lesson summaries and decision question/choice text before rendering.
+- **Telemetry trust-document correction** - `SECURITY.md`, `CONTRIBUTING.md`,
+  `docs/architecture.md`, and `docs/comparison.md` now describe the same layered telemetry model as
+  `PRIVACY.md`: local telemetry first, remote telemetry and feedback as separate
+  explicit opt-ins, and no identity/content/project-path/free-text collection.
+- **Test-data boundary wording** - client-validation and historical plan docs now
+  use placeholder paths for isolated run roots and owner desktops instead of
+  real local machine paths.
 
 ### Added
 - **Public claim drift sweep** - `scripts/check_public_claim_drift.py` scans

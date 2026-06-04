@@ -21,14 +21,14 @@ src/piia_engram/
     setup_wizard.py    # Interactive setup CLI + doctor diagnostics + instruction injection
     hooks/             # Claude Code lifecycle hooks (Stop/PreCompact/PostCompact/SessionStart)
     crypto.py          # AES-256-GCM encryption for sensitive profile fields
-    telemetry.py       # Opt-in anonymous usage statistics (local log only)
-tests/                 # 1700+ tests across all modules
+    telemetry.py       # Opt-in anonymous usage statistics (local log first; remote/feedback are separate opt-ins)
+tests/                 # 2700+ tests across all modules
 experiments/
     benchmarks/      # Retrieval/injection quality benchmarks
 ```
 
 Key design principles:
-- **100% local by default** — opt-in anonymous usage statistics (local log only), no cloud
+- **100% local by default** — identity and knowledge tools are local; telemetry/feedback remain separate explicit opt-ins
 - **User-owned data** — all knowledge stored as human-readable JSON files
 - **MCP-native** — every capability exposed as an MCP tool or resource
 - **Privacy by default** — trust boundaries, encryption at rest, safe profile filtering
@@ -49,7 +49,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **1700+ tests passing, 0 failures**. All PRs must maintain a passing suite.
+Current baseline: **2700+ tests passing, 0 failures**. All PRs must maintain a passing suite.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash
@@ -73,7 +73,7 @@ Security-sensitive, release, encoding, privacy, governance, permission, encrypti
 - **Keep changes focused** — one concern per PR
 - **Readable over clever** — three similar lines beat a premature abstraction
 - **Test behavioral changes** — add or update tests when logic changes
-- **No external calls in core operations** — piia-engram must never make network requests in core operations. Opt-in anonymous usage statistics (local log only) and `read_web_content` (optional, requires Reader sidecar) are the only exceptions
+- **No external calls in core operations** — piia-engram must never make network requests in core identity, knowledge, search, review, or governance operations. Local telemetry logging makes no network requests; remote telemetry and feedback reports require separate explicit opt-ins and send metadata-only counts. `read_web_content` is optional and makes outbound HTTP only when explicitly invoked for a URL
 - **Bilingual content** — user-facing strings should support both Chinese and English
 
 ## Security Guidelines
