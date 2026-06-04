@@ -3,8 +3,8 @@
 The orchestrator is a DRY-RUN, metadata-only checklist. These tests lock:
 - the three-phase ordering (LOCAL -> AUTH -> REMOTE),
 - that it never reads or emits a secret value (token env vars are NAMES only),
-- that the primary hidden stall (mcp-publisher device-flow auth) is surfaced and
-  explicitly flagged as NOT covered by the preflight,
+- that the primary hidden stall (mcp-publisher auth) is surfaced and covered by
+  the explicit ``--warm-mcp`` preflight command,
 - that --probe reports presence booleans only and computes auth gaps,
 - that no remote action is described as being executed.
 Probes are dependency-injected so the suite is host-independent.
@@ -58,13 +58,13 @@ class TestChecklist:
                 assert s["token_env"].isupper()
                 assert " " not in s["token_env"]
 
-    def test_mcp_publisher_auth_stall_is_surfaced_and_uncovered(self, mod):
+    def test_mcp_publisher_auth_stall_is_surfaced_and_warmable(self, mod):
         steps = {s["id"]: s for s in mod.build_checklist()}
         step = steps["mcp_publisher_auth"]
         assert step["auth_required"] is True
-        assert step["auth_kind"] == mod.DEVICE_FLOW
-        # The whole point: preflight does NOT cover auth state.
-        assert step["preflight_covered"] is False
+        assert step["auth_kind"] == mod.TOKEN
+        assert "--warm-mcp" in step["command"]
+        assert step["preflight_covered"] is True
         assert step["stall_risk"] and "device-flow" in step["stall_risk"].lower()
 
     def test_remote_steps_are_described_not_executed(self, mod):
@@ -82,8 +82,9 @@ class TestReport:
         assert c["total"] == len(rep["steps"])
         assert c["auth_required"] >= 1
         assert c["remote_actions"] >= 3
-        # at least the mcp-publisher-auth + pypi-oidc gaps are uncovered
-        assert c["uncovered_by_preflight"] >= 2
+        # PyPI OIDC remains a one-time remote trust setting that cannot be
+        # proven locally; MCP auth is now covered by --warm-mcp.
+        assert c["uncovered_by_preflight"] >= 1
         # no probe section without --probe
         assert "presence" not in rep
 
@@ -109,9 +110,10 @@ class TestReport:
         rep = mod.build_report(probe=True, which=lambda n: None, env={})
         gap_ids = {g["id"] for g in rep["auth_gaps"]}
         assert "gh_auth" in gap_ids
-        # mcp_publisher_auth is always a human-verify gap (un-probeable).
+        # mcp_publisher_auth now depends on the same gh presence needed for
+        # --warm-mcp instead of becoming a hidden human-verify gap.
         kinds = {g["id"]: g["kind"] for g in rep["auth_gaps"]}
-        assert kinds.get("mcp_publisher_auth") == "human_verify"
+        assert kinds.get("mcp_publisher_auth") == "presence_missing"
 
     def test_probe_present_tools_reduce_gaps(self, mod):
         present = {"gh", "mcp-publisher", "twine", "python"}
@@ -131,6 +133,16 @@ class TestReport:
             which=lambda n: None,
             env={"MCP_PUBLISHER_PATH": str(exe)},
         )
+
+        assert rep["presence"]["mcp_publisher_on_path"] is True
+        assert str(exe) not in json.dumps(rep)
+
+    def test_known_mcp_publisher_fallback_is_presence_only(self, mod, tmp_path, monkeypatch):
+        exe = tmp_path / "mcp-publisher.exe"
+        exe.write_text("fake binary placeholder", encoding="utf-8")
+        monkeypatch.setattr(mod, "DEFAULT_MCP_PUBLISHER_CANDIDATES", (str(exe),))
+
+        rep = mod.build_report(probe=True, which=lambda n: None, env={})
 
         assert rep["presence"]["mcp_publisher_on_path"] is True
         assert str(exe) not in json.dumps(rep)

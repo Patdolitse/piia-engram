@@ -31,6 +31,7 @@ authorized — this avoids stalling halfway through a release:
 python scripts/check_release_auth_preflight.py            # report + exit 1 if not ready
 python scripts/check_release_auth_preflight.py --json     # machine-readable
 python scripts/check_release_auth_preflight.py --strict   # warnings also block
+python scripts/check_release_auth_preflight.py --warm-mcp # refresh MCP Registry auth
 ```
 
 It checks (required unless noted): GitHub CLI auth (`gh auth status`),
@@ -39,9 +40,17 @@ It checks (required unless noted): GitHub CLI auth (`gh auth status`),
 reported as present/absent only (informational — CI publishes via OIDC trusted
 publishing). Cloudflare/Wrangler is out of scope unless `--include-wrangler`.
 
-This check is **non-secret and local-only**: it never reads, logs, or prints any
-token value, performs no network/publish action, and its output is safe to paste
-publicly. It fails closed (exit 1) with an actionable message for each gap.
+`--warm-mcp` is the fast-path fix for the MCP Registry login stall. It runs
+`gh auth token`, passes that token directly to
+`mcp-publisher login github -token <token>`, and reports only success/failure.
+It never prints the token and it does **not** push, tag, upload, publish, or
+write a registry entry. Run it before remote release steps so a stale MCP
+Registry token fails early instead of blocking inside `mcp-publisher publish`.
+
+This check is **non-secret and publish-safe**: default mode never reads token
+values; `--warm-mcp` reads a GitHub CLI token only to refresh local
+`mcp-publisher` auth and never logs the value. Output is safe to paste publicly.
+It fails closed (exit 1) with an actionable message for each gap.
 
 ## 1. Local check commands (run from repo root)
 
@@ -74,6 +83,15 @@ python scripts/check_release_artifact_private_terms.py dist --strict
 # Metadata sanity (does not upload)
 python -m twine check dist/*
 ```
+
+If a local PyPI upload is needed after a partial release attempt, use
+`python -m twine upload --skip-existing dist/*` so already-uploaded wheel/sdist
+files do not turn the closeout into a false blocker. CI trusted publishing is
+still the preferred normal path.
+
+`PROJECT_REGISTRY.md` lives in the parent workspace, not inside this git repo.
+Update it after a successful push/release as a workspace synchronization step;
+do not treat it as an Engram repo commit blocker.
 
 ## 3. Release notes are English-first
 

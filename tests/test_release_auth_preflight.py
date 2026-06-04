@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_release_auth_preflight.py"
+SECRET = "sk-SUPERSECRETTOKENVALUE-do-not-print"
 
 
 @pytest.fixture(scope="module")
@@ -131,6 +132,91 @@ def test_mcp_publisher_local_fallback_candidate(mod, tmp_path):
     assert r["status"] == mod.OK
 
 
+def test_warm_mcp_registry_auth_success_no_secret_in_result(mod, tmp_path):
+    local = tmp_path / "mcp-publisher.exe"
+    local.write_text("stub", encoding="utf-8")
+    calls = []
+
+    def run(cmd, timeout=20):
+        calls.append(cmd)
+        if cmd == ["gh", "auth", "token"]:
+            return 0, SECRET, ""
+        if cmd[:3] == [str(local), "login", "github"]:
+            assert cmd[-2:] == ["-token", SECRET]
+            assert timeout == 60
+            return 0, "logged in", ""
+        return 1, "", "unexpected command"
+
+    r = mod.warm_mcp_registry_auth(
+        which=_which_factory({"gh"}),
+        run=run,
+        candidates=[str(local)],
+    )
+
+    assert r["status"] == mod.OK
+    assert SECRET not in json.dumps(r)
+    assert calls[0] == ["gh", "auth", "token"]
+    assert calls[1][0] == str(local)
+
+
+def test_warm_mcp_registry_auth_fails_when_gh_missing(mod, tmp_path):
+    local = tmp_path / "mcp-publisher.exe"
+    local.write_text("stub", encoding="utf-8")
+    r = mod.warm_mcp_registry_auth(
+        which=_which_factory(set()),
+        run=_run_factory({}),
+        candidates=[str(local)],
+    )
+    assert r["status"] == mod.FAIL
+    assert "gh" in r["detail"]
+
+
+def test_warm_mcp_registry_auth_fails_when_publisher_missing(mod):
+    r = mod.warm_mcp_registry_auth(
+        which=_which_factory({"gh"}),
+        run=_run_factory({"gh": 0}),
+        candidates=[str(Path("/does-not-exist"))],
+    )
+    assert r["status"] == mod.FAIL
+    assert "mcp-publisher" in r["detail"]
+
+
+def test_warm_mcp_registry_auth_fails_without_token(mod, tmp_path):
+    local = tmp_path / "mcp-publisher.exe"
+    local.write_text("stub", encoding="utf-8")
+
+    def run(cmd, timeout=20):
+        if cmd == ["gh", "auth", "token"]:
+            return 0, "   ", ""
+        return 0, "", ""
+
+    r = mod.warm_mcp_registry_auth(
+        which=_which_factory({"gh"}),
+        run=run,
+        candidates=[str(local)],
+    )
+    assert r["status"] == mod.FAIL
+    assert "gh auth login" in r["detail"]
+
+
+def test_warm_mcp_registry_auth_fails_when_publisher_login_fails(mod, tmp_path):
+    local = tmp_path / "mcp-publisher.exe"
+    local.write_text("stub", encoding="utf-8")
+
+    def run(cmd, timeout=20):
+        if cmd == ["gh", "auth", "token"]:
+            return 0, SECRET, ""
+        return 1, "", "login failed"
+
+    r = mod.warm_mcp_registry_auth(
+        which=_which_factory({"gh"}),
+        run=run,
+        candidates=[str(local)],
+    )
+    assert r["status"] == mod.FAIL
+    assert SECRET not in json.dumps(r)
+
+
 def test_twine_available_and_missing(mod):
     ok_results = mod.check_twine(run=_run_factory({"twine": 0}), env={})
     names = {r["name"]: r for r in ok_results}
@@ -222,6 +308,38 @@ def test_run_preflight_all_ok(mod, tmp_path):
     assert all(r["status"] in (mod.OK, mod.SKIP) for r in results if r["required"])
 
 
+def test_run_preflight_with_warm_mcp_includes_auth_result(mod, tmp_path):
+    _write_pyproject(tmp_path, "3.47.0")
+    _write_server_json(tmp_path, "3.47.0")
+    local = tmp_path / "mcp-publisher.exe"
+    local.write_text("stub", encoding="utf-8")
+
+    def run(cmd, timeout=20):
+        if cmd == ["gh", "auth", "status"]:
+            return 0, "", ""
+        if cmd == ["gh", "auth", "token"]:
+            return 0, SECRET, ""
+        if cmd[0] == str(local):
+            return 0, "", ""
+        if "twine" in cmd:
+            return 0, "", ""
+        return 1, "", "unexpected command"
+
+    ok, results = mod.run_preflight(
+        tmp_path,
+        warm_mcp=True,
+        which=_which_factory({"gh"}),
+        run=run,
+        env={"TWINE_API_KEY": "x"},
+        mcp_publisher_candidates=[str(local)],
+    )
+
+    by = {r["name"]: r for r in results}
+    assert ok is True
+    assert by["mcp_registry_auth_warm"]["status"] == mod.OK
+    assert SECRET not in json.dumps(results)
+
+
 def test_run_preflight_fails_closed_when_gh_missing(mod, tmp_path):
     _write_pyproject(tmp_path, "3.47.0")
     _write_server_json(tmp_path, "3.47.0")
@@ -232,9 +350,6 @@ def test_run_preflight_fails_closed_when_gh_missing(mod, tmp_path):
         env={},
     )
     assert ok is False
-
-
-SECRET = "sk-SUPERSECRETTOKENVALUE-do-not-print"
 
 
 def test_no_secret_value_in_results_or_output(mod, tmp_path):

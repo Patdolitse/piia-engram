@@ -1,12 +1,11 @@
 """Release orchestrator -- dry-run, auth-visible release checklist (local only).
 
 WHY: releases were stalling. The local pre-publish checks are fast, but the
-*publish chain* (push → GitHub Release → PyPI → MCP Registry → Glama) interleaves
-steps that silently block on an interactive auth prompt -- most notably
-``mcp-publisher publish``, which opens a GitHub OAuth **device-flow** in a browser
-if its token is stale. The existing ``check_release_auth_preflight.py`` only
-verifies that the ``mcp-publisher`` *binary* exists, not that it is *authenticated*,
-so that stall stays invisible until it happens mid-release.
+*publish chain* (push -> GitHub Release -> PyPI -> MCP Registry -> Glama)
+interleaves steps that can silently block on an interactive auth prompt. The
+highest-friction case is ``mcp-publisher publish`` with a stale token. The auth
+preflight now has a ``--warm-mcp`` mode that refreshes the publisher token
+non-interactively via ``gh auth token`` before any remote publish step begins.
 
 This orchestrator makes the whole pipeline visible BEFORE anything blocks. It
 emits an ordered checklist grouped into three phases --
@@ -52,6 +51,11 @@ NONE = "none"
 OIDC = "oidc"
 DEVICE_FLOW = "device_flow"
 TOKEN = "token"
+
+DEFAULT_MCP_PUBLISHER_CANDIDATES = (
+    r"E:\Temp\mcp-publisher.exe",
+    r"E:\Temp\mcp-publisher-v1.7.9-windows-amd64\mcp-publisher.exe",
+)
 
 
 def _step(
@@ -122,16 +126,17 @@ def build_checklist() -> list[dict]:
               "where mcp-publisher   # or known local fallback path",
               auth_required=False, auth_kind=NONE,
               preflight_covered=True, probe="mcp_publisher_on_path"),
-        _step("mcp_publisher_auth", AUTH, "mcp-publisher ALREADY authenticated",
-              "mcp-publisher login   # pre-authorize so publish won't stall",
-              auth_required=True, auth_kind=DEVICE_FLOW, token_env=None,
+        _step("mcp_publisher_auth", AUTH, "Warm MCP Registry auth",
+              "python scripts/check_release_auth_preflight.py --warm-mcp",
+              auth_required=True, auth_kind=TOKEN, token_env="GITHUB_TOKEN",
               blocking=True,
-              stall_risk="PRIMARY HIDDEN STALL: 'mcp-publisher publish' opens a "
-                         "GitHub OAuth device-flow in a browser if its token is "
-                         "stale. Preflight checks only that the BINARY exists, "
-                         "NOT that it is authenticated -- pre-authorize here.",
-              timeout_hint="run the login interactively before starting REMOTE steps",
-              preflight_covered=False, probe=None),
+              stall_risk="PRIMARY HIDDEN STALL AVOIDED: warm-mcp reads the GitHub "
+                         "CLI token and runs 'mcp-publisher login github -token "
+                         "<token>' before REMOTE steps, so publish should not open "
+                         "a hidden device-flow prompt.",
+              timeout_hint="run before REMOTE steps; it refreshes auth only, "
+                           "not publish",
+              preflight_covered=True, probe="gh_on_path"),
         _step("mcp_version_match", AUTH, ".mcp/server.json version == pyproject",
               "python scripts/check_release_auth_preflight.py",
               auth_required=False, preflight_covered=True, probe=None),
@@ -177,10 +182,10 @@ def build_checklist() -> list[dict]:
 def probe_presence(which=shutil.which, env=None) -> dict[str, bool]:
     """Local presence booleans for the steps that declare a ``probe`` key.
 
-    Reads only PATH availability and env-var PRESENCE -- never any value. There is
-    deliberately NO probe for ``mcp_publisher_auth``: authentication state cannot
-    be checked without triggering the very device-flow we are warning about, so it
-    stays a human-verified pre-authorize step.
+    Reads only PATH availability and env-var PRESENCE -- never any value.
+    ``mcp_publisher_auth`` is covered by the auth preflight's ``--warm-mcp`` mode,
+    so its probe only verifies that GitHub CLI is present before that command can
+    run.
     """
     env = os.environ if env is None else env
 
@@ -188,7 +193,9 @@ def probe_presence(which=shutil.which, env=None) -> dict[str, bool]:
         if which("mcp-publisher"):
             return True
         explicit = str(env.get("MCP_PUBLISHER_PATH", "")).strip()
-        return bool(explicit and Path(explicit).is_file())
+        if explicit and Path(explicit).is_file():
+            return True
+        return any(Path(raw).is_file() for raw in DEFAULT_MCP_PUBLISHER_CANDIDATES)
 
     def _token_present() -> bool:
         for key in ("TWINE_PASSWORD", "TWINE_API_KEY", "TWINE_USERNAME"):
@@ -213,8 +220,8 @@ def build_report(*, probe: bool = False, which=shutil.which, env=None) -> dict:
 
     When ``probe`` is True, each step's ``probe`` key is resolved to a boolean
     under ``presence`` and an ``auth_gaps`` list is computed: required auth steps
-    whose presence probe is False, PLUS the always-listed un-probeable gaps
-    (mcp_publisher_auth, pypi_oidc) flagged as ``human_verify``.
+    whose presence probe is False, PLUS the always-listed un-probeable gaps such
+    as ``pypi_oidc`` flagged as ``human_verify``.
     """
     steps = build_checklist()
     report: dict = {

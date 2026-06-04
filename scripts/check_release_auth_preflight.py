@@ -24,6 +24,7 @@ Run from repo root:
     python scripts/check_release_auth_preflight.py            # report + exit 1 if not ready
     python scripts/check_release_auth_preflight.py --json     # machine-readable
     python scripts/check_release_auth_preflight.py --strict   # warnings also block
+    python scripts/check_release_auth_preflight.py --warm-mcp # refresh MCP Registry auth
 
 Exit codes:
 - 0  every required check passed (and, with --strict, no warnings)
@@ -146,6 +147,47 @@ def check_mcp_publisher(which=shutil.which, candidates=None) -> dict:
     return _result(
         "mcp_publisher", FAIL, True,
         "mcp-publisher not found on PATH or known local fallback paths.",
+    )
+
+
+def warm_mcp_registry_auth(which=shutil.which, run=_run, candidates=None) -> dict:
+    """Refresh MCP Registry auth non-interactively via GitHub CLI.
+
+    This is intentionally separate from the default preflight: it reads a token
+    from ``gh auth token`` and passes it directly to ``mcp-publisher login
+    github -token <token>``. The token is never printed, logged, or returned in
+    the result detail. The operation refreshes local publisher auth only; it
+    does not push, tag, upload, or publish.
+    """
+    if not which("gh"):
+        return _result(
+            "mcp_registry_auth_warm", FAIL, True,
+            "GitHub CLI 'gh' not found on PATH (install it, then 'gh auth login').",
+        )
+    publisher = _resolve_mcp_publisher(which=which, candidates=candidates)
+    if not publisher:
+        return _result(
+            "mcp_registry_auth_warm", FAIL, True,
+            "mcp-publisher not found on PATH or known local fallback paths.",
+        )
+
+    rc, out, _err = run(["gh", "auth", "token"])
+    token = out.strip()
+    if rc != 0 or not token:
+        return _result(
+            "mcp_registry_auth_warm", FAIL, True,
+            "could not read a GitHub CLI token (run 'gh auth login' first).",
+        )
+
+    rc, _out, _err = run([publisher, "login", "github", "-token", token], timeout=60)
+    if rc == 0:
+        return _result(
+            "mcp_registry_auth_warm", OK, True,
+            "mcp-publisher GitHub token login succeeded (token value not printed).",
+        )
+    return _result(
+        "mcp_registry_auth_warm", FAIL, True,
+        "mcp-publisher GitHub token login failed.",
     )
 
 
@@ -295,6 +337,7 @@ def run_preflight(
     root: Path,
     *,
     include_wrangler: bool = False,
+    warm_mcp: bool = False,
     which=shutil.which,
     run=_run,
     env=None,
@@ -305,6 +348,12 @@ def run_preflight(
     results: list[dict] = []
     results.append(check_github_cli(which=which, run=run))
     results.append(check_mcp_publisher(which=which, candidates=mcp_publisher_candidates))
+    if warm_mcp:
+        results.append(warm_mcp_registry_auth(
+            which=which,
+            run=run,
+            candidates=mcp_publisher_candidates,
+        ))
     results.extend(check_server_json(
         root,
         which=which,
@@ -347,6 +396,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="Treat warnings as blocking (exit 1).")
     ap.add_argument("--include-wrangler", action="store_true",
                     help="Also check Cloudflare Wrangler availability.")
+    ap.add_argument("--warm-mcp", action="store_true",
+                    help=("Refresh MCP Registry auth via 'gh auth token' + "
+                          "'mcp-publisher login github -token <token>'. "
+                          "No publish action; token value is never printed."))
     args = ap.parse_args(argv)
 
     root = Path(args.root).resolve()
@@ -355,7 +408,11 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
-    required_ok, results = run_preflight(root, include_wrangler=args.include_wrangler)
+    required_ok, results = run_preflight(
+        root,
+        include_wrangler=args.include_wrangler,
+        warm_mcp=args.warm_mcp,
+    )
     warns = [r for r in results if r["status"] == WARN]
     passed = required_ok and not (args.strict and warns)
 
