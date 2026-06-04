@@ -16,6 +16,11 @@
   active 条目，写入 `supersedes` 边，并把旧条目标记为 `outdated`。默认
   `--apply --yes` 合并行为保持保守，不会实体化冲突；返回结果仍是
   metadata-only。
+- **MCIC v1 基准**：新增 `demos/mcic_benchmark.py`，提供 10 个带测试目的的
+  合成、metadata-only 多客户端身份连续性场景。覆盖显式召回、隐式个性化信号、
+  对抗假前提防护信号、公开动作边界、版本链 HEAD 选择、负控和 provenance
+  往返。该基准的主张刻意收窄：Engram 让下一个客户端拿得到信号；真实模型是否
+  会照做仍需要单独 A/B 测试。
 
 ### 变更
 - **MCP 启动同步延迟**：启动对账现在默认在 daemon 后台线程中执行，避免 stdio 客户端在 MCP initialize 阶段被本地 AI 记忆/配置扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感验证臂中跳过启动同步。stdio 启动下的 `auto_migrate()` 仍保持同步执行；启动对账与 MCP 写工具共享进程内写锁，避免启动期读-改-写 JSON 更新互相覆盖。

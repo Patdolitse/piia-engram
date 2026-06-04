@@ -163,6 +163,14 @@ python demos/cross_tool_continuity_demo.py --json
 
 区别是：`engram continuity` 证明当前存储具备接续条件；demo JSON 用合成数据证明 write -> resume -> search -> provenance 这条隔离链路真的能跑通。
 
+如果要做更完整的发布证据，可以运行合成 MCIC 基准：
+
+```bash
+python demos/mcic_benchmark.py --json
+```
+
+MCIC v1 包含 10 个带测试目的的连续性场景，覆盖显式召回、隐式个性化信号、假前提防护信号、公开动作边界、版本链 HEAD 选择、负控和 provenance。它的主张很窄：Engram 让下一个客户端拿得到正确的信号；真实模型是否会照做仍需要单独 A/B 测试。
+
 ### 效果预览
 
 ```

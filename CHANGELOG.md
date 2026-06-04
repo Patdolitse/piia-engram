@@ -16,6 +16,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
   active entries, linked with a `supersedes` edge, and the older entry is marked
   `outdated`. Default `--apply --yes` merge behavior remains conservative and
   does not materialize conflicts. The result payload is metadata-only.
+- **MCIC v1 benchmark** - `demos/mcic_benchmark.py` adds a synthetic,
+  metadata-only Multi-Client Identity Continuity benchmark with 10 purpose-labeled
+  scenarios. It covers explicit recall, implicit personalization signals,
+  adversarial false-premise guard signals, public-action boundaries,
+  version-chain HEAD selection, negative control, and provenance round-trip. The
+  benchmark's claim is intentionally narrow: Engram makes the signal available
+  to the next client; live model compliance still needs separate A/B testing.
 
 ### Changed
 - **MCP startup sync latency** - startup reconciliation now runs in a daemon background thread by default, so stdio clients are not blocked during MCP initialize by local AI memory/config scans. Set `ENGRAM_MCP_STARTUP_SYNC=eager` to restore the previous synchronous behavior or `ENGRAM_MCP_STARTUP_SYNC=off` to skip startup sync for latency-sensitive validation arms. `auto_migrate()` remains synchronous for stdio startup, and startup reconcile shares a process-local write lock with MCP write tools to avoid overlapping read-modify-write JSON updates.

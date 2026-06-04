@@ -197,6 +197,18 @@ python demos/cross_tool_continuity_demo.py --json
 
 `engram continuity` reports readiness metadata. The demo JSON proves an isolated write -> resume -> search -> provenance loop using synthetic data only.
 
+For broader release evidence, run the synthetic MCIC benchmark:
+
+```bash
+python demos/mcic_benchmark.py --json
+```
+
+MCIC v1 contains 10 purpose-labeled continuity scenarios covering explicit
+recall, implicit personalization signals, false-premise guard signals, public
+action boundaries, version-chain HEAD selection, negative control, and
+provenance. Its claim is narrow: Engram makes the right signal available to the
+next client; live model compliance still needs separate A/B testing.
+
 ### Configure for Your AI Tool
 
 <details open>

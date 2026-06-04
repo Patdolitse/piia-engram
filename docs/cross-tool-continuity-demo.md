@@ -90,8 +90,21 @@ Important distinction:
 
 - `engram continuity` reports readiness metadata from an Engram store.
 - `cross_tool_continuity_demo.py --json` proves a synthetic isolated A -> B -> C loop.
+- `mcic_benchmark.py --json` runs 10 purpose-labeled synthetic continuity
+  scenarios and reports whether Engram made the required signal available.
 
 Readiness is useful operational evidence, but the demo JSON is the bounded proof that a simulated Claude Code write can be resumed by a simulated Codex session and found by a simulated Cursor/Windsurf search.
+
+For broader release evidence:
+
+```bash
+python demos/mcic_benchmark.py --json
+```
+
+MCIC v1 covers explicit recall, implicit personalization signals, adversarial
+false-premise guard signals, public-action boundaries, version-chain HEAD
+selection, negative control, and provenance. It does **not** claim a live model
+will always follow those signals; that still needs separate A/B testing.
 
 ## Public screenshot walkthrough
 
