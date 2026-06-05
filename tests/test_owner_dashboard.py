@@ -48,6 +48,8 @@ def test_dashboard_assembles_all_sections():
     assert dash["integrity"]["problem_codes"] == ["index_stale"]
     assert dash["export_readiness"]["exportable_global"] == 2  # 2 verified work entries
     assert dash["telemetry"]["enabled"] is False
+    assert dash["telemetry"]["vnext_local_signals"]["default_on"] is False
+    assert dash["telemetry"]["vnext_local_signals"]["in_remote_d1"] is False
 
 
 def test_text_render_bilingual_en():
@@ -56,6 +58,9 @@ def test_text_render_bilingual_en():
     text = od.render_dashboard_text(dash)
     assert "Recall trust" in text
     assert "never deletes" in text
+    assert "vNext Local Signals" in text
+    assert "local only" in text
+    assert "not in remote D1" in text
 
 
 def test_text_render_bilingual_zh():
@@ -103,6 +108,15 @@ def test_proposal_only_no_destructive_controls():
     dash = od.build_owner_dashboard(lessons=_store()["lessons"], now=NOW)
     html_out = od.render_dashboard_html(dash)
     # No form/button that could trigger a destructive action.
+    for tag in ["<form", "<button", "onclick", "<input"]:
+        assert tag not in html_out.lower()
+
+
+def test_html_vnext_tile_no_destructive_controls():
+    dash = od.build_owner_dashboard(now=NOW)
+    html_out = od.render_dashboard_html(dash)
+    assert "vNext Local Signals" in html_out
+    assert "not in remote D1" in html_out
     for tag in ["<form", "<button", "onclick", "<input"]:
         assert tag not in html_out.lower()
 

@@ -804,6 +804,21 @@ function renderDashboard(stats) {
       <div class="empty">D1 schema 尚未应用 Telemetry Analysis Contract v1.1 迁移，暂无派生分桶分析。</div>
     </div>`;
 
+  const contractVNextLocalHtml = `
+    <div class="section-title">&#128269; vNext 本地信号 <small style="font-weight:400;color:var(--muted)">（默认关闭 / 仅本地 / 未写入远程 D1）</small></div>
+    <div class="card" style="margin-bottom:1.5rem">
+      <h2>本地分析预览</h2>
+      <div class="tags">
+        <span class="badge">recall_hit_rate</span>
+        <span class="badge">cross_tool_handoffs</span>
+        <span class="badge">user_bucket</span>
+        <span class="badge">activation_depth</span>
+      </div>
+      <div class="notice" style="margin:0.5rem 0 0;text-align:left">
+        口径：这些信号只在客户端显式请求本地预览时计算，用于判断跨工具接续、使用强度和激活深度；默认关闭，不随远程遥测发送，也不写入当前 D1 schema。
+      </div>
+    </div>`;
+
   // 最近事件
   const recentRows = stats.recent_events.map(e => {
     let toolCount = 0;
@@ -944,6 +959,7 @@ function renderDashboard(stats) {
   ${periodHtml}
   ${contractHtml}
   ${contractV11Html}
+  ${contractVNextLocalHtml}
 
   <!-- 工具使用 -->
   <div class="section-title">&#128295; 工具使用分析</div>

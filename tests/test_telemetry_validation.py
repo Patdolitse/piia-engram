@@ -308,6 +308,31 @@ def test_dashboard_wording_flags_missing_v1_1_tile():
     assert any("匿名回访分桶" in p for p in problems)
 
 
+def test_dashboard_wording_flags_missing_vnext_local_tile():
+    fake = (
+        "匿名日 ID daily_id 按 UTC 日期轮换 版本采纳 知识激活 "
+        "匿名回访分桶 错误趋势"
+    )
+    ok, problems = tv.validate_dashboard_wording(fake)
+    assert ok is False
+    assert any("vNext 本地信号" in p for p in problems)
+
+
+def test_dashboard_wording_passes_with_vnext_local_copy():
+    fake = (
+        "匿名日 ID daily_id 按 UTC 日期轮换 版本采纳 知识激活 "
+        "匿名回访分桶 错误趋势 vNext 本地信号 默认关闭 / 仅本地 / 未写入远程 D1"
+    )
+    ok, problems = tv.validate_dashboard_wording(fake)
+    assert ok is True, problems
+
+
+def test_dashboard_vnext_labels_stay_out_of_remote_contract():
+    labels = set(tv.DASHBOARD_VNEXT_LOCAL_LABELS)
+    assert labels.isdisjoint(tv.PAYLOAD_TO_COLUMN)
+    assert labels.isdisjoint(tv.V1_1_DERIVED_COLUMNS)
+
+
 def test_readiness_flags_migration_sequencing_overlap(tmp_path):
     # A v1.1 migration that re-adds a P0 column would fail when applied after v1.
     (tmp_path / "src").mkdir()

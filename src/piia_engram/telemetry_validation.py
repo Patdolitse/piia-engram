@@ -80,11 +80,13 @@ V1_1_MIGRATION_NAME = "20260603_telemetry_contract_v1_1.sql"
 # remote-readiness check and the worker-contract tests both reference these so a
 # single edit can't silently reintroduce a "unique users" claim.
 DASHBOARD_REQUIRED_WORDING = ("匿名日 ID", "daily_id 按 UTC 日期轮换")
+DASHBOARD_VNEXT_REQUIRED_WORDING = ("默认关闭 / 仅本地 / 未写入远程 D1",)
 DASHBOARD_FORBIDDEN_WORDING = ("独立用户", "用户数")
 # The v1.1 analysis tiles (all anonymous-daily-id based). Labels are chosen to be
 # distinct from the v1 "首跑激活" session-type tile so the two contracts don't
 # blur together on the dashboard.
 DASHBOARD_V1_1_LABELS = ("版本采纳", "知识激活", "匿名回访分桶", "错误趋势")
+DASHBOARD_VNEXT_LOCAL_LABELS = ("vNext 本地信号",)
 
 # Field-name fragments that would indicate stored *content* (not metadata). The
 # telemetry boundary is metadata-only, so none of these may appear as a payload
@@ -389,6 +391,12 @@ def validate_dashboard_wording(worker_js: str) -> tuple[bool, list[str]]:
     for label in DASHBOARD_V1_1_LABELS:
         if label not in src:
             problems.append(f"dashboard missing v1.1 analysis tile label: {label!r}")
+    for label in DASHBOARD_VNEXT_LOCAL_LABELS:
+        if label not in src:
+            problems.append(f"dashboard missing vNext local signal label: {label!r}")
+    for token in DASHBOARD_VNEXT_REQUIRED_WORDING:
+        if token not in src:
+            problems.append(f"dashboard missing vNext local-only wording: {token!r}")
     return (not problems), problems
 
 

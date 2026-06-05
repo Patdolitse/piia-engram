@@ -113,6 +113,19 @@ def build_owner_dashboard(
         "enabled": bool(ts.get("enabled", False)),
         "remote_enabled": bool(ts.get("remote_enabled", False)),
         "phase": ts.get("phase"),
+        "vnext_local_signals": {
+            "names": [
+                "recall_hit_rate",
+                "cross_tool_handoffs",
+                "user_bucket",
+                "activation_depth",
+            ],
+            "default_on": False,
+            "in_remote_d1": False,
+            "note": (
+                "Computed locally only; default off; not transmitted to remote D1."
+            ),
+        },
     }
 
     # Readiness — metadata-only "pending owner-confirmed apply" counts across the
@@ -276,6 +289,7 @@ def render_dashboard_text(dashboard: dict[str, Any]) -> str:
     ig = dashboard.get("integrity", {})
     ex = dashboard.get("export_readiness", {})
     tm = dashboard.get("telemetry", {})
+    vn = tm.get("vnext_local_signals", {}) if isinstance(tm, dict) else {}
     rd = dashboard.get("readiness", {})
     fr = rt.get("freshness", {})
     rd_lc = rd.get("lifecycle", {})
@@ -303,6 +317,9 @@ def render_dashboard_text(dashboard: dict[str, Any]) -> str:
         f"  {t('可导出(全局)', 'exportable (global)')}: {ex.get('exportable_global', 0)} / {ex.get('total', 0)}",
         t("遥测 / Telemetry (默认关闭，需手动开启):", "Telemetry (off by default, opt-in):"),
         f"  enabled={tm.get('enabled')} remote={tm.get('remote_enabled')} phase={tm.get('phase')}",
+        t("vNext 本地信号 / vNext Local Signals:", "vNext Local Signals:"),
+        f"  {', '.join(vn.get('names', []))} — "
+        f"{t('默认关闭 / 仅本地 / 未写入远程 D1', 'default OFF / local only / not in remote D1')}",
         t("待确认就绪 / Readiness (待你确认的本地应用，纯计数):",
           "Readiness (pending owner-confirmed applies, counts only):"),
         f"  {t('生命周期', 'lifecycle')}: pending_apply={rd_lc.get('pending_apply', 0)} "
