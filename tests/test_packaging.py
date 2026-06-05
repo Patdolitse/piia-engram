@@ -373,6 +373,14 @@ def test_architecture_documents_current_tool_split():
     assert "66 Tier-2" in content
 
 
+def test_cli_help_documents_current_tool_split():
+    """CLI help text should not drift from the public 83/17 tool split."""
+    content = SETUP_WIZARD.read_text(encoding="utf-8")
+    assert "17 核心工具 / core MCP tools" in content
+    assert "unlock all 83 tools" in content
+    assert "unlock all 82 tools" not in content
+
+
 def test_mcp_tools_default_to_core_tier(tmp_path: Path):
     """未设置 ENGRAM_TOOLS 时默认只加载 Tier-1 核心工具。"""
     tools = _registered_mcp_tools(tmp_path)
