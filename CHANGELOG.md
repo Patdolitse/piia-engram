@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Changed
+- **Playbook passive-reference contract** - normalized saved playbooks into a
+  versioned structural contract, preserved prose pitfalls/preconditions, exposed
+  execution outcome rollups, added optional `required_tools` declarations with
+  runtime-only `resolved_tools`, and extended the MCP `usage_policy` runtime hint
+  to `search_knowledge` playbook hits so the main reuse path stays governed.
+
 ## [3.51.1] - 2026-06-05
 
 ### Added

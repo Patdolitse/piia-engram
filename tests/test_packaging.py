@@ -440,6 +440,30 @@ def test_readmes_document_playbook_scope_management_cli():
     assert "management action playbook_scope accept_shared" in README_ZH.read_text(encoding="utf-8")
 
 
+def test_playbook_docs_preserve_passive_reference_and_outcome_contract():
+    readme = README.read_text(encoding="utf-8")
+    readme_zh = README_ZH.read_text(encoding="utf-8")
+    trust = (ROOT / "docs" / "trust.md").read_text(encoding="utf-8")
+    mcp_server = MCP_SERVER.read_text(encoding="utf-8")
+
+    assert "passive reference" in readme
+    assert "outcome rollup" in readme
+    assert "required_tools" in readme
+    assert "resolved_tools" in readme
+    assert "does not silently execute" in trust
+    assert "does not store resolved local tool paths" in trust
+    assert "被动参考" in readme_zh
+    assert "结果汇总" in readme_zh
+    assert "required_tools" in readme_zh
+    assert "resolved_tools" in readme_zh
+    assert "_PLAYBOOK_USAGE_POLICY" in mcp_server
+    assert "the AI finds the playbook and follows it" not in readme
+    assert "Generate an executable plan" not in readme
+    assert "return an executable plan" not in mcp_server
+    assert "直接按流程走" not in readme_zh
+    assert "生成可执行的操作计划" not in readme_zh
+
+
 def test_zh_readme_has_remote_deployment_section():
     """中文 README 应说明远程部署和 token 安全提醒。"""
     content = README_ZH.read_text(encoding="utf-8")

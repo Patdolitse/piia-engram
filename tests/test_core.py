@@ -4508,6 +4508,233 @@ def test_add_and_get_playbook(tmp_path: Path):
     assert playbooks[0]["title"] == "MCP Registry 发布流程"
 
 
+def test_add_playbook_normalizes_loose_shape_to_contract(tmp_path: Path):
+    """Loose legacy/API shapes should persist as a stable Playbook contract."""
+    engram = make_engram(tmp_path)
+
+    result = engram.add_playbook({
+        "title": "Release smoke flow",
+        "triggers": "release, publish, release",
+        "preconditions": "clean tree, auth ready",
+        "pitfalls": "do not publish twice\nwait for package propagation",
+        "steps": [
+            "Run tests",
+            {"action": "Build package", "detail": "Use isolated dist"},
+        ],
+    })
+
+    assert result["schema_version"] == 1
+    assert result["triggers"] == ["release", "publish"]
+    assert result["preconditions"] == ["clean tree, auth ready"]
+    assert result["pitfalls"] == [
+        "do not publish twice",
+        "wait for package propagation",
+    ]
+    assert result["steps"] == [
+        {"order": 1, "action": "Run tests", "detail": ""},
+        {"order": 2, "action": "Build package", "detail": "Use isolated dist"},
+    ]
+
+
+def test_add_playbook_preserves_prose_commas_in_pitfalls_and_preconditions(
+    tmp_path: Path,
+):
+    """Prose fields should not be fragmented by punctuation normalization."""
+    engram = make_engram(tmp_path)
+
+    result = engram.add_playbook({
+        "title": "Comma prose flow",
+        "triggers": ["release, publish"],
+        "preconditions": ["Only publish once, or version reuse will fail"],
+        "pitfalls": ["Wait for propagation, then verify the package"],
+        "steps": ["Run tests", "Verify package"],
+    })
+
+    assert result["triggers"] == ["release", "publish"]
+    assert result["preconditions"] == [
+        "Only publish once, or version reuse will fail",
+    ]
+    assert result["pitfalls"] == [
+        "Wait for propagation, then verify the package",
+    ]
+
+
+def test_add_playbook_records_quality_contract_without_rejecting_user_data(
+    tmp_path: Path,
+):
+    """Thin playbooks stay reviewable but carry machine-readable quality signals."""
+    engram = make_engram(tmp_path)
+
+    result = engram.add_playbook({
+        "title": "Thin flow",
+        "triggers": [],
+        "steps": ["Do the thing"],
+    })
+
+    assert result["title"] == "Thin flow"
+    assert result["contract"]["entry_type"] == "playbook"
+    assert result["contract"]["accept"] is False
+    assert "too_few_steps" in result["contract"]["reasons"]
+    assert "missing_triggers" in result["contract"]["warnings"]
+
+
+def test_add_playbook_invalid_schema_version_falls_back_to_current_contract(
+    tmp_path: Path,
+):
+    """Bad legacy schema markers should not make old Playbooks unreadable."""
+    engram = make_engram(tmp_path)
+
+    result = engram.add_playbook({
+        "title": "Legacy schema marker",
+        "schema_version": "legacy",
+        "triggers": ["legacy"],
+        "steps": ["one", "two"],
+    })
+
+    assert result["schema_version"] == 1
+    assert result["contract"]["schema_version"] == 1
+
+
+def test_add_playbook_normalizes_required_tools_and_tool_refs(tmp_path: Path):
+    """Playbooks declare tool dependencies without storing local paths."""
+    engram = make_engram(tmp_path)
+
+    result = engram.add_playbook({
+        "title": "Tool-aware flow",
+        "triggers": ["tools"],
+        "tool_refs": ["Node.js", "gh"],
+        "required_tools": [
+            {
+                "name": "gh",
+                "purpose": "GitHub release",
+                "optional": True,
+                "min_version": "2.88.0",
+                "query": "GitHub CLI",
+            },
+        ],
+        "steps": ["Prepare", "Publish"],
+    })
+
+    assert result["required_tools"] == [
+        {
+            "name": "gh",
+            "purpose": "GitHub release",
+            "optional": True,
+            "min_version": "2.88.0",
+            "query": "GitHub CLI",
+        },
+        {
+            "name": "Node.js",
+            "purpose": "",
+            "optional": False,
+            "min_version": "",
+            "query": "",
+        },
+    ]
+    assert "tool_refs" not in result
+    assert "Node.js" in {tool["name"] for tool in result["required_tools"]}
+    assert "resolved_tools" not in result["contract"]
+
+
+def test_update_playbook_refreshes_structural_contract(tmp_path: Path):
+    """Updating a thin Playbook should refresh normalized fields and contract."""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook({
+        "title": "Thin release flow",
+        "triggers": [],
+        "steps": ["Run one command"],
+    })
+    assert added["contract"]["accept"] is False
+
+    updated = engram.update_playbook(added["id"], {
+        "triggers": "release, publish",
+        "steps": ["Run tests", "Build package"],
+    })
+
+    assert updated["version"] == 2
+    assert updated["triggers"] == ["release", "publish"]
+    assert updated["steps"] == [
+        {"order": 1, "action": "Run tests", "detail": ""},
+        {"order": 2, "action": "Build package", "detail": ""},
+    ]
+    assert updated["contract"]["accept"] is True
+    assert updated["contract"]["reasons"] == []
+    assert "missing_triggers" not in updated["contract"]["warnings"]
+
+
+def test_update_playbook_refreshes_required_tools_contract(tmp_path: Path):
+    """Playbook tool dependencies should be maintainable through updates."""
+    engram = make_engram(tmp_path)
+    added = engram.add_playbook({
+        "title": "Tool update flow",
+        "triggers": ["tools"],
+        "steps": ["Prepare", "Verify"],
+    })
+
+    updated = engram.update_playbook(added["id"], {
+        "tool_refs": ["mcp-publisher", "gh"],
+        "required_tools": [{"name": "gh", "purpose": "GitHub release"}],
+    })
+
+    assert updated["required_tools"] == [
+        {
+            "name": "gh",
+            "purpose": "GitHub release",
+            "optional": False,
+            "min_version": "",
+            "query": "",
+        },
+        {
+            "name": "mcp-publisher",
+            "purpose": "",
+            "optional": False,
+            "min_version": "",
+            "query": "",
+        },
+    ]
+
+
+def test_legacy_on_disk_playbook_normalizes_on_read_and_execution(
+    tmp_path: Path,
+):
+    """Old Playbook files should remain readable and execution-ready."""
+    engram = make_engram(tmp_path)
+    legacy_id = "legacy-flow"
+    legacy = {
+        "id": legacy_id,
+        "title": "Legacy flow",
+        "triggers": "legacy, release",
+        "steps": ["Run tests", {"action": "Publish"}],
+        "status": "active",
+    }
+    playbooks_dir = tmp_path / "playbooks"
+    (playbooks_dir / f"{legacy_id}.json").write_text(
+        json.dumps(legacy),
+        encoding="utf-8",
+    )
+    (playbooks_dir / "_index.json").write_text(
+        json.dumps([{
+            "id": legacy_id,
+            "title": "Legacy flow",
+            "triggers": ["legacy"],
+            "status": "active",
+        }]),
+        encoding="utf-8",
+    )
+
+    restored = engram.get_playbook(legacy_id, _update_access=False)
+    assert restored["schema_version"] == 1
+    assert restored["triggers"] == ["legacy", "release"]
+    assert restored["steps"] == [
+        {"order": 1, "action": "Run tests", "detail": ""},
+        {"order": 2, "action": "Publish", "detail": ""},
+    ]
+
+    execution = engram.prepare_playbook_execution(legacy_id)
+    assert execution["execution_plan"][0]["action"] == "Run tests"
+    assert execution["execution_plan"][1]["action"] == "Publish"
+
+
 def test_get_playbook_by_id(tmp_path: Path):
     """通过 ID 获取单条 Playbook。"""
     engram = make_engram(tmp_path)
@@ -5142,6 +5369,329 @@ def test_prepare_playbook_execution_refuses_cross_project_by_default(tmp_path: P
     assert allowed["playbook_id"] == pb["id"]
     assert allowed["cross_project_confirmed"] is True
     assert (tmp_path / "playbooks" / "executions" / f"{pb['id']}.json").exists()
+
+
+def test_prepare_playbook_execution_resolves_required_tools_without_persisting_paths(
+    tmp_path: Path,
+):
+    """Tool paths are runtime-only and must not be written to execution files."""
+    engram = make_engram(tmp_path)
+    tool_path = "C:/Private/Tools/gh.exe"
+    registered = engram.register_tool({
+        "name": "gh",
+        "path": tool_path,
+        "version": "2.88.1",
+        "purpose": "GitHub CLI",
+        "category": "cli",
+    })
+    pb = engram.add_playbook({
+        "title": "Release with tools",
+        "triggers": ["release"],
+        "required_tools": [
+            {
+                "name": "gh",
+                "purpose": "GitHub release",
+                "min_version": "2.80.0",
+            },
+        ],
+        "steps": ["Create release", "Verify release"],
+    })
+
+    result = engram.prepare_playbook_execution(pb["id"])
+
+    assert result["tools_ready"] is True
+    assert result["missing_tools"] == []
+    assert result["resolved_tools"] == [
+        {
+            "name": "gh",
+            "status": "resolved",
+            "optional": False,
+            "tool_id": registered["id"],
+            "path": tool_path,
+            "version": "2.88.1",
+            "version_satisfied": True,
+        },
+    ]
+    raw_execution = (tmp_path / "playbooks" / "executions" / f"{pb['id']}.json").read_text(
+        encoding="utf-8",
+    )
+    assert "resolved_tools" not in raw_execution
+    assert "tools_ready" not in raw_execution
+    assert tool_path not in raw_execution
+
+
+def test_prepare_playbook_execution_reports_missing_optional_tools_without_blocking(
+    tmp_path: Path,
+):
+    """Optional missing tool dependencies should be visible but not block readiness."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({
+        "title": "Optional tool flow",
+        "triggers": ["optional"],
+        "required_tools": [{"name": "preview-cli", "optional": True}],
+        "steps": ["Prepare", "Verify"],
+    })
+
+    result = engram.prepare_playbook_execution(pb["id"])
+
+    assert result["tools_ready"] is True
+    assert result["missing_tools"] == []
+    assert result["resolved_tools"] == [
+        {
+            "name": "preview-cli",
+            "status": "missing",
+            "optional": True,
+        },
+    ]
+
+
+def test_prepare_playbook_execution_does_not_guess_ambiguous_tool_matches(
+    tmp_path: Path,
+):
+    """Wide find_tool matches should be surfaced as ambiguous, not auto-selected."""
+    engram = make_engram(tmp_path)
+    engram.register_tool({
+        "name": "github-release-helper",
+        "path": "/tools/helper",
+        "purpose": "GitHub release",
+    })
+    engram.register_tool({
+        "name": "release-notes-gh",
+        "path": "/tools/notes",
+        "purpose": "GitHub release notes",
+    })
+    pb = engram.add_playbook({
+        "title": "Ambiguous tool flow",
+        "triggers": ["ambiguous"],
+        "required_tools": [
+            {
+                "name": "gh",
+                "query": "GitHub release",
+                "purpose": "GitHub release",
+            },
+        ],
+        "steps": ["Prepare", "Verify"],
+    })
+
+    result = engram.prepare_playbook_execution(pb["id"])
+
+    assert result["tools_ready"] is False
+    assert result["missing_tools"] == ["gh"]
+    assert result["resolved_tools"] == [
+        {
+            "name": "gh",
+            "status": "ambiguous",
+            "optional": False,
+            "candidate_count": 2,
+        },
+    ]
+
+
+def test_prepare_playbook_execution_resolves_required_tools_by_purpose_fallback(
+    tmp_path: Path,
+):
+    """Purpose fallback keeps old Playbooks useful when names drift."""
+    engram = make_engram(tmp_path)
+    registered = engram.register_tool({
+        "name": "mcp-publisher",
+        "path": "/tools/mcp-publisher",
+        "version": "1.7.9",
+        "purpose": "MCP Registry publish",
+    })
+    pb = engram.add_playbook({
+        "title": "Purpose fallback flow",
+        "triggers": ["registry"],
+        "required_tools": [
+            {
+                "name": "registry-publisher",
+                "purpose": "MCP Registry publish",
+            },
+        ],
+        "steps": ["Publish", "Verify"],
+    })
+
+    result = engram.prepare_playbook_execution(pb["id"])
+
+    assert result["tools_ready"] is True
+    assert result["missing_tools"] == []
+    assert result["resolved_tools"][0]["status"] == "resolved_by_purpose"
+    assert result["resolved_tools"][0]["tool_id"] == registered["id"]
+    assert result["resolved_tools"][0]["path"] == "/tools/mcp-publisher"
+
+
+def test_prepare_playbook_execution_treats_unknown_versions_as_not_ready(
+    tmp_path: Path,
+):
+    """A min_version requirement should not pass when registry version is unknown."""
+    engram = make_engram(tmp_path)
+    engram.register_tool({
+        "name": "gh",
+        "path": "/tools/gh",
+        "version": "unknown",
+        "purpose": "GitHub CLI",
+    })
+    pb = engram.add_playbook({
+        "title": "Version guard flow",
+        "triggers": ["version"],
+        "required_tools": [{"name": "gh", "min_version": "2.80.0"}],
+        "steps": ["Prepare", "Verify"],
+    })
+
+    result = engram.prepare_playbook_execution(pb["id"])
+
+    assert result["tools_ready"] is False
+    assert result["missing_tools"] == ["gh"]
+    assert result["resolved_tools"][0]["status"] == "resolved"
+    assert result["resolved_tools"][0]["version"] == "unknown"
+    assert result["resolved_tools"][0]["version_satisfied"] is False
+    assert result["resolved_tools"][0]["version_status"] == "unknown"
+
+
+def test_merge_playbooks_unions_required_tools_by_name(tmp_path: Path):
+    """Merging Playbooks should not drop source tool dependencies."""
+    engram = make_engram(tmp_path)
+    target = engram.add_playbook({
+        "title": "Release merge target",
+        "triggers": ["release-target"],
+        "required_tools": [{"name": "gh", "purpose": "GitHub release"}],
+        "steps": ["Prepare", "Verify"],
+    })
+    source = {
+        "triggers": ["publish"],
+        "required_tools": [
+            {"name": "gh", "purpose": "GitHub release override"},
+            {"name": "mcp-publisher", "purpose": "MCP Registry publish"},
+        ],
+        "steps": ["Publish"],
+    }
+
+    merged = engram.merge_playbooks(target["id"], source)
+
+    assert merged["required_tools"] == [
+        {
+            "name": "gh",
+            "purpose": "GitHub release",
+            "optional": False,
+            "min_version": "",
+            "query": "",
+        },
+        {
+            "name": "mcp-publisher",
+            "purpose": "MCP Registry publish",
+            "optional": False,
+            "min_version": "",
+            "query": "",
+        },
+    ]
+
+
+def test_execution_status_reports_outcome_rollup_without_treating_skips_as_success(
+    tmp_path: Path,
+):
+    """Execution status should expose outcome, not hide skips inside success."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({
+        "title": "Outcome flow",
+        "triggers": ["outcome"],
+        "steps": [
+            {"order": 1, "action": "Prepare"},
+            {"order": 2, "action": "Optional cleanup"},
+            {"order": 3, "action": "Verify"},
+        ],
+    })
+
+    engram.prepare_playbook_execution(pb["id"])
+    engram.update_execution_step(pb["id"], 1, "completed")
+    engram.update_execution_step(pb["id"], 2, "skipped", notes="Not needed")
+    status = engram.get_execution_status(pb["id"])
+
+    assert status["outcome"] == {
+        "status": "partial",
+        "completed": 1,
+        "skipped": 1,
+        "failed": 0,
+        "pending": 1,
+        "total": 3,
+    }
+    assert status["completed"] == 2  # legacy terminal-step progress remains.
+
+
+def test_execution_status_reports_failure_and_preserves_failure_notes(
+    tmp_path: Path,
+):
+    """A failed step should dominate outcome rollup and keep its note visible."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({
+        "title": "Failure flow",
+        "triggers": ["failure"],
+        "steps": ["Prepare", "Publish", "Verify"],
+    })
+
+    engram.prepare_playbook_execution(pb["id"])
+    engram.update_execution_step(pb["id"], 1, "completed")
+    engram.update_execution_step(pb["id"], 2, "failed", notes="registry timeout")
+    status = engram.get_execution_status(pb["id"])
+
+    assert status["outcome"]["status"] == "failed"
+    assert status["outcome"]["failed"] == 1
+    assert status["steps"][1]["notes"] == "registry timeout"
+
+
+def test_execution_status_all_skipped_is_partial_without_completed_at(
+    tmp_path: Path,
+):
+    """Skipped-only plans are terminal for progress but not successful outcomes."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({
+        "title": "Skipped flow",
+        "triggers": ["skip"],
+        "steps": ["Optional one", "Optional two"],
+    })
+
+    engram.prepare_playbook_execution(pb["id"])
+    engram.update_execution_step(pb["id"], 1, "skipped")
+    result = engram.update_execution_step(pb["id"], 2, "skipped")
+    status = engram.get_execution_status(pb["id"])
+
+    assert result["outcome"]["status"] == "partial"
+    assert status["outcome"] == {
+        "status": "partial",
+        "completed": 0,
+        "skipped": 2,
+        "failed": 0,
+        "pending": 0,
+        "total": 2,
+    }
+    assert status["completed"] == 2  # legacy terminal-step progress remains.
+    assert status["completed_at"] is None
+
+
+def test_execution_status_all_completed_is_succeeded_with_completed_at(
+    tmp_path: Path,
+):
+    """Only fully completed plans should be marked as succeeded."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({
+        "title": "Completed flow",
+        "triggers": ["complete"],
+        "steps": ["Prepare", "Verify"],
+    })
+
+    engram.prepare_playbook_execution(pb["id"])
+    engram.update_execution_step(pb["id"], 1, "completed")
+    result = engram.update_execution_step(pb["id"], 2, "completed")
+    status = engram.get_execution_status(pb["id"])
+
+    assert result["outcome"]["status"] == "succeeded"
+    assert status["outcome"] == {
+        "status": "succeeded",
+        "completed": 2,
+        "skipped": 0,
+        "failed": 0,
+        "pending": 0,
+        "total": 2,
+    }
+    assert status["completed_at"] is not None
 
 
 def test_extract_playbook_from_session_uses_project_scope(tmp_path: Path):

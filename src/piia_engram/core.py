@@ -1301,6 +1301,156 @@ class Engram(
             values = [value]
         return [str(item).strip() for item in values if str(item).strip()]
 
+    @staticmethod
+    def _playbook_text_list(
+        value: Any,
+        *,
+        split_punctuation: bool = True,
+    ) -> list[str]:
+        """Normalize Playbook list-like text while preserving item order."""
+        raw_items: list[Any]
+        if value is None:
+            raw_items = []
+        elif isinstance(value, (list, tuple, set)):
+            raw_items = list(value)
+        else:
+            raw_items = [value]
+
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            if isinstance(item, str):
+                if split_punctuation:
+                    parts = re.split(r"[\n,;，、；]+", item)
+                else:
+                    parts = re.split(r"[\n]+", item)
+            else:
+                parts = [str(item)]
+            for part in parts:
+                text = str(part).strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                result.append(text)
+        return result
+
+    @staticmethod
+    def _normalize_playbook_steps(value: Any) -> list[dict]:
+        """Normalize Playbook steps into {order, action, detail} dictionaries."""
+        if not isinstance(value, list):
+            return []
+        steps: list[dict] = []
+        next_order = 1
+        for raw in value:
+            if isinstance(raw, str):
+                action = raw.strip()
+                detail = ""
+                order = next_order
+            elif isinstance(raw, dict):
+                action = str(raw.get("action") or "").strip()
+                detail = str(raw.get("detail") or "").strip()
+                try:
+                    order = int(raw.get("order", next_order))
+                except (TypeError, ValueError):
+                    order = next_order
+            else:
+                continue
+            if not action:
+                continue
+            steps.append({"order": order, "action": action, "detail": detail})
+            next_order = max(next_order + 1, order + 1)
+        return steps
+
+    @staticmethod
+    def _truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(value)
+
+    @classmethod
+    def _normalize_playbook_required_tools(
+        cls,
+        required_tools: Any,
+        tool_refs: Any = None,
+    ) -> list[dict]:
+        """Normalize Playbook tool dependencies without resolving local paths."""
+        tools: list[dict] = []
+        seen: set[str] = set()
+
+        def add_tool(raw: Any) -> None:
+            if isinstance(raw, dict):
+                name = str(raw.get("name") or "").strip()
+                if not name:
+                    return
+                item = {
+                    "name": name,
+                    "purpose": str(raw.get("purpose") or "").strip(),
+                    "optional": cls._truthy(raw.get("optional", False)),
+                    "min_version": str(raw.get("min_version") or "").strip(),
+                    "query": str(raw.get("query") or "").strip(),
+                }
+            else:
+                name = str(raw or "").strip()
+                if not name:
+                    return
+                item = {
+                    "name": name,
+                    "purpose": "",
+                    "optional": False,
+                    "min_version": "",
+                    "query": "",
+                }
+            key = item["name"].lower()
+            if key in seen:
+                return
+            seen.add(key)
+            tools.append(item)
+
+        raw_required = required_tools
+        if raw_required is None:
+            raw_required = []
+        elif not isinstance(raw_required, (list, tuple, set)):
+            raw_required = [raw_required]
+        for raw in raw_required:
+            add_tool(raw)
+
+        raw_refs = tool_refs
+        if raw_refs is None:
+            raw_refs = []
+        elif isinstance(raw_refs, str):
+            raw_refs = re.split(r"[\n,;，、；]+", raw_refs)
+        elif not isinstance(raw_refs, (list, tuple, set)):
+            raw_refs = [raw_refs]
+        for raw in raw_refs:
+            add_tool(raw)
+
+        return tools
+
+    @staticmethod
+    def _playbook_contract(entry: dict) -> dict:
+        """Return metadata-only structural quality signals for a Playbook."""
+        from . import quality_eval as _quality_eval
+
+        verdict = _quality_eval.evaluate_candidate(entry)
+        return {
+            "schema_version": entry.get("schema_version", 1),
+            "entry_type": verdict.get("entry_type", "playbook"),
+            "accept": bool(verdict.get("accept", True)),
+            "reasons": list(verdict.get("reasons") or []),
+            "warnings": list(verdict.get("warnings") or []),
+        }
+
+    @staticmethod
+    def _playbook_schema_version(value: Any) -> int:
+        """Return the current Playbook contract version for bad legacy markers."""
+        try:
+            version = int(value or 1)
+        except (TypeError, ValueError):
+            return 1
+        return version if version > 0 else 1
+
     def _normalize_playbook_scope(
         self,
         entry: dict,
@@ -1434,6 +1584,9 @@ class Engram(
         """Backfill metadata fields on a playbook entry."""
         if not isinstance(entry, dict):
             entry = {}
+        entry["schema_version"] = self._playbook_schema_version(
+            entry.get("schema_version")
+        )
         if not entry.get("timestamp"):
             entry["timestamp"] = _now_iso()
         entry.setdefault("created_at", entry.get("timestamp", _now_iso()))
@@ -1447,17 +1600,32 @@ class Engram(
         entry.setdefault("tier", "verified")
         if not isinstance(entry.get("related_ids"), list):
             entry["related_ids"] = []
-        if not isinstance(entry.get("triggers"), list):
-            entry["triggers"] = []
-        if not isinstance(entry.get("steps"), list):
-            entry["steps"] = []
-        if not isinstance(entry.get("preconditions"), list):
-            entry["preconditions"] = []
-        if not isinstance(entry.get("pitfalls"), list):
-            entry["pitfalls"] = []
+        entry["triggers"] = self._playbook_text_list(
+            entry.get("triggers"),
+            split_punctuation=True,
+        )
+        entry["steps"] = self._normalize_playbook_steps(entry.get("steps"))
+        entry["preconditions"] = self._playbook_text_list(
+            entry.get("preconditions"),
+            split_punctuation=False,
+        )
+        entry["pitfalls"] = self._playbook_text_list(
+            entry.get("pitfalls"),
+            split_punctuation=False,
+        )
+        required_tools = self._normalize_playbook_required_tools(
+            entry.get("required_tools"),
+            entry.get("tool_refs"),
+        )
+        if required_tools:
+            entry["required_tools"] = required_tools
+        else:
+            entry.pop("required_tools", None)
+        entry.pop("tool_refs", None)
         entry.setdefault("version", 1)
         scope = self._normalize_playbook_scope(entry)
         self._apply_playbook_scope(entry, scope)
+        entry["contract"] = self._playbook_contract(entry)
         return entry
 
     def _playbook_index_entry(self, pb: dict) -> dict:
@@ -2246,6 +2414,7 @@ class Engram(
                 pb[key] = value
         pb["last_updated"] = _now_iso()
         pb["version"] = pb.get("version", 1) + 1
+        pb = self._ensure_playbook_fields(pb)
         self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
 
         # Update index entry
@@ -2509,14 +2678,139 @@ class Engram(
                 merged_triggers.append(t)
                 existing_triggers.add(t)
 
+        existing_tools = self._normalize_playbook_required_tools(
+            target.get("required_tools"),
+            target.get("tool_refs"),
+        )
+        merged_tools = list(existing_tools)
+        existing_tool_names = {tool["name"].lower() for tool in merged_tools}
+        for tool in self._normalize_playbook_required_tools(
+            source.get("required_tools"),
+            source.get("tool_refs"),
+        ):
+            key = tool["name"].lower()
+            if key in existing_tool_names:
+                continue
+            existing_tool_names.add(key)
+            merged_tools.append(tool)
+
         updates = {
             "steps": merged_steps,
             "pitfalls": merged_pitfalls,
             "triggers": merged_triggers,
         }
+        if merged_tools:
+            updates["required_tools"] = merged_tools
         result = self.update_playbook(target_id, updates)
         result["merged"] = True
         return result
+
+    @staticmethod
+    def _version_tuple(value: Any) -> tuple[int, ...]:
+        parts = re.findall(r"\d+", str(value or ""))
+        return tuple(int(part) for part in parts[:4])
+
+    @classmethod
+    def _version_satisfies(cls, actual: Any, minimum: Any) -> bool | None:
+        actual_parts = cls._version_tuple(actual)
+        min_parts = cls._version_tuple(minimum)
+        if not actual_parts or not min_parts:
+            return None
+        width = max(len(actual_parts), len(min_parts))
+        actual_padded = actual_parts + (0,) * (width - len(actual_parts))
+        min_padded = min_parts + (0,) * (width - len(min_parts))
+        return actual_padded >= min_padded
+
+    def _resolved_tool_entry(
+        self,
+        requirement: dict,
+        *,
+        candidate: dict | None = None,
+        status: str,
+        candidate_count: int | None = None,
+    ) -> dict:
+        item = {
+            "name": requirement.get("name", ""),
+            "status": status,
+            "optional": bool(requirement.get("optional")),
+        }
+        if candidate is not None:
+            item["tool_id"] = candidate.get("id", "")
+            if candidate.get("path"):
+                item["path"] = candidate.get("path", "")
+            if candidate.get("version"):
+                item["version"] = candidate.get("version", "")
+            if requirement.get("min_version"):
+                satisfied = self._version_satisfies(
+                    candidate.get("version", ""),
+                    requirement.get("min_version", ""),
+                )
+                if satisfied is None:
+                    item["version_satisfied"] = False
+                    item["version_status"] = "unknown"
+                else:
+                    item["version_satisfied"] = satisfied
+        if candidate_count is not None:
+            item["candidate_count"] = candidate_count
+        return item
+
+    def _resolve_playbook_required_tools(self, required_tools: Any) -> dict:
+        """Resolve Playbook tool dependencies against the local tools registry."""
+        requirements = self._normalize_playbook_required_tools(required_tools)
+        resolved_tools: list[dict] = []
+        missing_tools: list[str] = []
+
+        for requirement in requirements:
+            name = requirement["name"]
+            optional = bool(requirement.get("optional"))
+            query = requirement.get("query") or name
+            candidates = self.find_tool(query)
+            exact = [
+                candidate for candidate in candidates
+                if str(candidate.get("name", "")).lower() == name.lower()
+            ]
+            if len(exact) == 1:
+                resolved = self._resolved_tool_entry(
+                    requirement,
+                    candidate=exact[0],
+                    status="resolved",
+                )
+            elif len(exact) > 1:
+                resolved = self._resolved_tool_entry(
+                    requirement,
+                    status="ambiguous",
+                    candidate_count=len(exact),
+                )
+            elif candidates:
+                resolved = self._resolved_tool_entry(
+                    requirement,
+                    status="ambiguous",
+                    candidate_count=len(candidates),
+                )
+            elif requirement.get("purpose"):
+                purpose_candidates = self.find_tool(requirement["purpose"])
+                if len(purpose_candidates) == 1:
+                    resolved = self._resolved_tool_entry(
+                        requirement,
+                        candidate=purpose_candidates[0],
+                        status="resolved_by_purpose",
+                    )
+                else:
+                    resolved = self._resolved_tool_entry(requirement, status="missing")
+            else:
+                resolved = self._resolved_tool_entry(requirement, status="missing")
+
+            resolved_tools.append(resolved)
+            ready_status = resolved.get("status") in {"resolved", "resolved_by_purpose"}
+            version_ready = resolved.get("version_satisfied", True) is not False
+            if not optional and (not ready_status or not version_ready):
+                missing_tools.append(name)
+
+        return {
+            "resolved_tools": resolved_tools,
+            "tools_ready": not missing_tools,
+            "missing_tools": missing_tools,
+        }
 
     def prepare_playbook_execution(
         self,
@@ -2580,6 +2874,7 @@ class Engram(
             result["cross_project_confirmed"] = True
             result["requested_project_folder"] = project_folder
         self.save_execution_plan(result)
+        result.update(self._resolve_playbook_required_tools(pb.get("required_tools")))
         return result
 
     # ------------------------------------------------------------------
@@ -2593,6 +2888,31 @@ class Engram(
 
     def _execution_path(self, playbook_id: str) -> Path:
         return self._executions_dir() / f"{playbook_id}.json"
+
+    @staticmethod
+    def _execution_outcome(steps: list[dict]) -> dict:
+        """Summarize step states without treating skipped work as success."""
+        total = len(steps)
+        completed = sum(1 for s in steps if s.get("status") == "completed")
+        skipped = sum(1 for s in steps if s.get("status") == "skipped")
+        failed = sum(1 for s in steps if s.get("status") == "failed")
+        pending = sum(1 for s in steps if s.get("status", "pending") == "pending")
+        if failed:
+            status = "failed"
+        elif total == 0 or (completed == 0 and skipped == 0 and pending == total):
+            status = "pending"
+        elif completed == total:
+            status = "succeeded"
+        else:
+            status = "partial"
+        return {
+            "status": status,
+            "completed": completed,
+            "skipped": skipped,
+            "failed": failed,
+            "pending": pending,
+            "total": total,
+        }
 
     def _encrypt_execution_plan(self, plan: dict) -> dict:
         """Encrypt sensitive fields in an execution plan for at-rest storage."""
@@ -2705,10 +3025,13 @@ class Engram(
         plan["updated_at"] = _now_iso()
 
         steps = plan.get("execution_plan", [])
-        completed = sum(1 for s in steps if s.get("status") in ("completed", "skipped"))
-        total = len(steps)
-        if completed == total:
-            plan["completed_at"] = _now_iso()
+        outcome = self._execution_outcome(steps)
+        completed = outcome["completed"] + outcome["skipped"]
+        total = outcome["total"]
+        if outcome["status"] == "succeeded":
+            plan["completed_at"] = plan.get("completed_at") or _now_iso()
+        else:
+            plan.pop("completed_at", None)
 
         _write_json(path, self._encrypt_execution_plan(plan))
         return {
@@ -2718,6 +3041,7 @@ class Engram(
             "playbook_id": playbook_id,
             "completed": completed,
             "total": total,
+            "outcome": outcome,
         }
 
     def get_execution_status(self, playbook_id: str) -> dict:
@@ -2735,6 +3059,7 @@ class Engram(
             "steps": steps,
             "completed": sum(1 for s in steps if s.get("status") in ("completed", "skipped")),
             "total": len(steps),
+            "outcome": self._execution_outcome(steps),
         }
 
     def _export_playbooks(self) -> list[dict]:

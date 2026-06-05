@@ -120,7 +120,7 @@ PLAYBOOK_TRIGGERS = [
 _ALLOWED_PLAYBOOK_UPDATE_FIELDS: frozenset = frozenset({
     "title", "description", "triggers", "domain", "steps",
     "preconditions", "pitfalls", "outcome", "source_tool",
-    "source_url", "status", "parameters",
+    "source_url", "status", "parameters", "required_tools", "tool_refs",
     "scope", "scope_type", "project_id", "project_folder",
     "project_ids", "project_folders",
 })

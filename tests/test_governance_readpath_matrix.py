@@ -769,6 +769,7 @@ from piia_engram.mcp_server import _PLAYBOOK_USAGE_POLICY, _EXECUTION_USAGE_POLI
 
 # Tools that should carry the playbook usage policy
 _PLAYBOOK_POLICY_TOOLS = [
+    ("search_knowledge", {"query": "policy", "scope": "all"}, _PLAYBOOK_USAGE_POLICY),
     ("get_playbook", {"playbook_id": "PB_ID"}, _PLAYBOOK_USAGE_POLICY),
     ("get_playbooks", {}, _PLAYBOOK_USAGE_POLICY),
     ("get_recent_playbooks", {}, _PLAYBOOK_USAGE_POLICY),

@@ -1546,6 +1546,11 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
                 items = result.get(_bucket)
                 if isinstance(items, list):
                     result[_bucket] = _provenance.annotate_freshness(items)
+        if isinstance(result, dict):
+            playbooks = result.get("playbooks")
+            if isinstance(playbooks, list):
+                for item in playbooks:
+                    _inject_usage_policy(item)
         _track("search_knowledge", success=True)
     except Exception as exc:
         _track("search_knowledge", success=False)
@@ -2120,6 +2125,8 @@ async def add_playbook(
     title: str,
     triggers: str,
     steps_json: str = "[]",
+    required_tools_json: str = "[]",
+    tool_refs: str = "",
     description: str = "",
     domain: str = "",
     preconditions: str = "",
@@ -2146,6 +2153,8 @@ async def add_playbook(
         title: 流程名称，如 'MCP Registry 发布流程'。 / Playbook name, e.g., 'MCP Registry publish workflow'.
         triggers: 记忆点关键词，逗号分隔，如 '发布,registry,上架'。 / Trigger keywords (comma-separated) for quick retrieval.
         steps_json: 步骤 JSON 数组，每个元素含 order/action/detail。 / Steps as a JSON array, each with order/action/detail.
+        required_tools_json: 工具依赖 JSON 数组（可选），只声明工具名/用途，不写本机路径。 / Tool dependencies JSON array (optional); declares names/purposes, not local paths.
+        tool_refs: 简写工具名，逗号分隔（可选）。 / Shorthand tool names, comma-separated (optional).
         description: 流程概述（可选）。 / Brief description (optional).
         domain: 技术领域，逗号分隔（可选）。 / Domain labels, comma-separated (optional).
         preconditions: 前提条件，逗号分隔（可选）。 / Preconditions, comma-separated (optional).
@@ -2167,6 +2176,16 @@ async def add_playbook(
             playbook["steps"] = steps
     except json.JSONDecodeError:
         return "steps_json 格式错误，需要有效的 JSON 数组"
+    if required_tools_json and required_tools_json != "[]":
+        try:
+            required_tools = json.loads(required_tools_json)
+            if not isinstance(required_tools, list):
+                return "required_tools_json 格式错误，需要有效的 JSON 数组"
+            playbook["required_tools"] = required_tools
+        except json.JSONDecodeError:
+            return "required_tools_json 格式错误，需要有效的 JSON 数组"
+    if tool_refs:
+        playbook["tool_refs"] = [t.strip() for t in re.split(r"[\n,;，、；]+", tool_refs) if t.strip()]
     if description:
         playbook["description"] = description
     if domain:
@@ -2350,6 +2369,8 @@ async def update_playbook(
     title: str = "",
     triggers: str = "",
     steps_json: str = "",
+    required_tools_json: str = "",
+    tool_refs: str = "",
     description: str = "",
     domain: str = "",
     preconditions: str = "",
@@ -2370,6 +2391,8 @@ async def update_playbook(
         title: 新标题（可选）。 / New title (optional).
         triggers: 新触发词，逗号分隔（可选）。 / New trigger keywords, comma-separated (optional).
         steps_json: 新步骤 JSON 数组（可选）。 / New steps as a JSON array (optional).
+        required_tools_json: 新工具依赖 JSON 数组（可选），只声明工具名/用途。 / New tool dependencies JSON array (optional); declares names/purposes only.
+        tool_refs: 新简写工具名，逗号分隔（可选）。 / New shorthand tool names, comma-separated (optional).
         description: 新描述（可选）。 / New description (optional).
         domain: 新领域（可选）。 / New domain (optional).
         preconditions: 新前提条件，逗号分隔（可选）。 / New preconditions, comma-separated (optional).
@@ -2394,6 +2417,16 @@ async def update_playbook(
                 updates["steps"] = steps
         except json.JSONDecodeError:
             return "steps_json 格式错误，需要有效的 JSON 数组"
+    if required_tools_json:
+        try:
+            required_tools = json.loads(required_tools_json)
+            if not isinstance(required_tools, list):
+                return "required_tools_json 格式错误，需要有效的 JSON 数组"
+            updates["required_tools"] = required_tools
+        except json.JSONDecodeError:
+            return "required_tools_json 格式错误，需要有效的 JSON 数组"
+    if tool_refs:
+        updates["tool_refs"] = [t.strip() for t in re.split(r"[\n,;，、；]+", tool_refs) if t.strip()]
     if description:
         updates["description"] = description
     if domain:
@@ -2429,10 +2462,10 @@ async def prepare_playbook_execution(
     project_folder: str = "",
     confirm_cross_project: bool = False,
 ) -> str:
-    """准备 Playbook 引导执行计划（参数替换 + 逐步状态跟踪）。 / Prepare a Playbook execution plan with parameter substitution and per-step tracking.
+    """准备 Playbook 逐步参考计划（参数替换 + 逐步状态跟踪）。 / Prepare a guided Playbook step plan with parameter substitution and per-step tracking.
 
-    用途："按上次流程来" — 调取已有 Playbook，替换参数后返回可执行计划。AI 逐步确认执行，不自动运行。
-    Purpose: "Follow the previous procedure" — fetch a Playbook, substitute parameters, return an executable plan. AI confirms each step; no auto-execution.
+    用途："按上次流程来" — 调取已有 Playbook，替换参数后返回被动参考计划。AI 逐步确认执行，不自动运行。
+    Purpose: "Use the previous procedure" — fetch a Playbook, substitute parameters, return a passive step reference. AI confirms each step; no auto-execution.
 
     Args:
         playbook_id: Playbook ID。 / The Playbook ID.
@@ -2518,10 +2551,10 @@ async def update_execution_step(
 
 @mcp.tool()
 async def get_execution_status(playbook_id: str) -> str:
-    """查看 Playbook 的当前执行进度。 / Get current execution progress of a Playbook.
+    """查看 Playbook 的当前步骤状态与结果汇总。 / Get current step status and outcome rollup for a Playbook.
 
-    返回每一步的状态和整体完成度。
-    Returns step-by-step status and overall completion.
+    返回每一步的状态、旧版完成度字段，以及 pending/partial/succeeded/failed 结果汇总。
+    Returns step-by-step status, legacy progress fields, and a pending/partial/succeeded/failed outcome rollup.
 
     Args:
         playbook_id: Playbook ID。

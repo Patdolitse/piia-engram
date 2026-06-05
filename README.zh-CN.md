@@ -113,7 +113,7 @@ piia-engram 为同时使用多个 AI 编程工具、厌倦重复自我介绍的�
 ChatGPT、Gemini、Kimi 没有 MCP 接口。`get_identity_card` 导出一张即粘即用的 Markdown 身份卡，你的 AI 上下文连不能直接连接的工具也能用上。
 
 **自动流程提取**  
-完成一个多步骤的操作流程——发布到 PyPI、部署到 Cloudflare、上架到 MCP Registry——piia-engram 在会话结束时自动检测。它生成结构化的 Playbook 草稿（步骤、踩坑记录、触发关键词），存入暂存区。下次遇到同样的任务，AI 找到这份 Playbook 直接按流程走，跳过你已经解决过的坑。无需手动记录——Engram 起草，你确认，AI 完成。详见下方 [Playbook 自动提取](#playbook-自动提取)。
+完成一个多步骤的操作流程——发布到 PyPI、部署到 Cloudflare、上架到 MCP Registry——piia-engram 在会话结束时自动检测。它生成结构化的 Playbook 草稿（步骤、踩坑记录、触发关键词），存入暂存区。下次遇到同样的任务，AI 可以把确认后的 Playbook 当作被动参考调出，逐步和你确认执行，并记录结果。无需手动记录——Engram 负责起草与治理，宿主 AI 对执行过程负责。详见下方 [Playbook 自动提取](#playbook-自动提取)。
 
 **本地工具图谱**  
 AI 工具总是在找本地的程序、运行时和 CLI。`register_tool` 记录已安装的工具和路径；`find_tool` 一步调取。不再每次都 `which python`——环境图谱跨工具、跨会话持久可用。
@@ -536,9 +536,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_recent_playbooks` | 按最近使用时间列出操作手册 |
 | `update_playbook` | 更新操作手册的步骤、触发词等字段 |
 | `archive_playbook` | 归档不再使用的操作手册 |
-| `prepare_playbook_execution` | 参数替换后生成可执行的操作计划 |
+| `prepare_playbook_execution` | 参数替换后生成逐步参考计划（被动参考，不自动执行） |
 | `update_execution_step` | 标记步骤为已完成、跳过或失败 |
-| `get_execution_status` | 查看操作手册的当前执行进度 |
+| `get_execution_status` | 查看操作手册的步骤进度和结果汇总 |
 | `get_lessons` | 列出经验教训 |
 | `get_decisions` | 列出关键决策 |
 | `get_domains` | 读取领域经验图谱 |
@@ -596,11 +596,13 @@ piia-engram 能自动检测你在会话中完成的多步骤操作流程，并�
 1. **检测** — 当你调用 `wrap_up_session` 或 `save_agent_context` 时，piia-engram 扫描检查点步骤、操作动词和触发关键词等流程信号。
 2. **草稿生成** — 如果检测到操作流程，自动生成包含步骤、踩坑记录、触发关键词和前置条件的 Playbook 草稿。敏感信息（API Key、Token、绝对路径）在存储前自动脱敏。
 3. **暂存** — 草稿存入暂存区，不会自动晋升为正式知识。你审查确认后才变成可信的 Playbook。
-4. **复用** — 下次遇到类似任务，`search_knowledge` 通过触发关键词匹配到这份 Playbook，AI 按已验证的步骤执行，跳过你已经踩过的坑。
+4. **结构契约** — 存储后的 Playbook 会被规范化为带版本的契约：触发关键词、前置条件、踩坑记录、结构化步骤和可选 `required_tools` 工具依赖声明都会保持稳定格式。过薄的草稿不会被直接丢弃，但会带上机器可读的质量提醒。
+5. **工具解析** — Playbook 只声明需要什么工具名或用途，本机路径仍由工具图谱保存。`prepare_playbook_execution` 会在运行时返回 `resolved_tools`、`tools_ready` 和 `missing_tools`，让宿主 AI 知道哪些本地工具可用，同时不把解析后的路径写进 Playbook。
+6. **复用与结果回流** — 下次遇到类似任务，`search_knowledge` 通过触发关键词匹配到这份 Playbook，并把它作为被动参考返回给宿主 AI。宿主 AI 逐步和你确认执行，`get_execution_status` 会报告结果汇总（`pending`、`partial`、`succeeded` 或 `failed`），不会把跳过的步骤静默当成成功。
 
-### 设计哲学：Engram 起草，用户确认，AI 完成
+### 设计哲学：Engram 起草，用户确认，AI 协作
 
-Playbook 自动提取不是全自动的。piia-engram 检测流程并生成粗略草稿——但草稿会留在暂存区，等你明确确认后才生效。确认后，AI 工具可以自主完善和执行这份 Playbook。这保证了人在关键环节把关，同时省去了手写操作手册的麻烦。
+Playbook 自动提取不是全自动的。piia-engram 检测流程并生成粗略草稿——但草稿会留在暂存区，等你明确确认后才生效。确认后，AI 工具可以把这份 Playbook 当作受治理的被动参考，并记录每一步的结果；Engram 不会替宿主 AI 静默执行整个流程。这保证了人在关键环节把关，同时省去了手写操作手册的麻烦。
 
 ### 置信度分级
 

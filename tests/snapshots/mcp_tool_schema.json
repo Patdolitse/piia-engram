@@ -163,6 +163,20 @@
           "kind": "positional_or_keyword"
         },
         {
+          "name": "required_tools_json",
+          "annotation": "str",
+          "required": false,
+          "default": "[]",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "tool_refs",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
           "name": "description",
           "annotation": "str",
           "required": false,
@@ -1893,6 +1907,20 @@
         },
         {
           "name": "steps_json",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "required_tools_json",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "tool_refs",
           "annotation": "str",
           "required": false,
           "default": "",

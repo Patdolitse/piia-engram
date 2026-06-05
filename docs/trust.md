@@ -78,6 +78,10 @@ AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`
 
 This is different from agent-owned memory systems where the agent continuously rewrites its own long-term memory. Engram treats durable memory as a user-owned asset.
 
+Playbooks follow the same trust boundary. Engram normalizes Playbooks into a versioned structural contract and can track execution outcomes, but it does not silently execute workflows. Host AI tools receive Playbooks as passive references, walk through steps in their own runtime, and can report step status back so the result is visible as `pending`, `partial`, `succeeded`, or `failed`.
+
+Playbooks may declare tool dependencies through `required_tools`, but Engram does not store resolved local tool paths in the Playbook. `prepare_playbook_execution` resolves those dependencies against the local tools registry at runtime and returns `resolved_tools` only to the owner-gated caller; it does not store resolved local tool paths in execution-plan files.
+
 Each knowledge entry can carry trust-mode metadata:
 
 | Field | Meaning |

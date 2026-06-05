@@ -94,6 +94,9 @@ def evaluate_candidate(entry: dict[str, Any]) -> dict[str, Any]:
         steps = entry.get("steps")
         if not isinstance(steps, list) or len(steps) < 2:
             reasons.append("too_few_steps")
+        triggers = entry.get("triggers")
+        if not isinstance(triggers, list) or not any(_text(t) for t in triggers):
+            warnings.append("missing_triggers")
 
     if _has_transient_marker(summary, detail, choice, question, reasoning):
         reasons.append("transient_marker")

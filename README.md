@@ -141,7 +141,7 @@ Paste a session summary into `extract_session_insights` and piia-engram extracts
 ChatGPT, Gemini, Kimi — `get_identity_card` exports a ready-to-paste Markdown identity card. Your context travels even to tools that cannot connect directly.
 
 **Automatic playbook extraction**  
-Finish a multi-step workflow — release to PyPI, deploy to Cloudflare, publish to MCP Registry — and piia-engram detects it at session end. It generates a structured draft playbook (steps, pitfalls, trigger keywords) and saves it to a staging area. Next time you do the same task, the AI finds the playbook and follows it, skipping the mistakes you already solved. No manual recording required — Engram starts the draft, you confirm, AI completes. See [Playbook Auto-Extraction](#playbook-auto-extraction) below.
+Finish a multi-step workflow — release to PyPI, deploy to Cloudflare, publish to MCP Registry — and piia-engram detects it at session end. It generates a structured draft playbook (steps, pitfalls, trigger keywords) and saves it to a staging area. Next time you do the same task, the AI can retrieve the confirmed playbook as a passive reference, walk through the steps with you, and record the outcome. No manual recording required — Engram starts the draft, you confirm, the host AI stays accountable. See [Playbook Auto-Extraction](#playbook-auto-extraction) below.
 
 **Local tools registry**  
 AI tools constantly search for local programs, runtimes, and CLIs. `register_tool` records what's installed and where; `find_tool` retrieves it instantly. No more `which python` every session — the environment map persists across tools and conversations.
@@ -530,9 +530,9 @@ piia-engram ships 83 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 | `get_recent_playbooks` | List playbooks by most recent use |
 | `update_playbook` | Update playbook steps, triggers, or other fields |
 | `archive_playbook` | Archive a playbook that is no longer used |
-| `prepare_playbook_execution` | Generate an executable plan with parameter substitution |
+| `prepare_playbook_execution` | Prepare a guided step plan with parameter substitution (passive reference; no auto-execution) |
 | `update_execution_step` | Mark a step as completed, skipped, or failed |
-| `get_execution_status` | View current execution progress of a playbook |
+| `get_execution_status` | View step progress and outcome rollup for a playbook |
 | `get_lessons` | List reusable lessons learned |
 | `get_decisions` | List key decisions and reasons |
 | `get_domains` | Read domain experience stats |
@@ -590,11 +590,13 @@ piia-engram can detect multi-step workflows you complete during a session and au
 1. **Detection** — When you call `wrap_up_session` or `save_agent_context`, piia-engram scans for procedural workflow signals: checkpoint steps, action verbs, and trigger keywords.
 2. **Draft generation** — If a workflow is detected, a playbook draft is created with steps, pitfalls, trigger keywords, and preconditions. Sensitive information (API keys, tokens, absolute paths) is automatically redacted before storage.
 3. **Staging** — The draft is saved to a staging area, never auto-promoted to verified. You review and confirm before it becomes a trusted playbook.
-4. **Reuse** — Next time an AI tool encounters a similar task, `search_knowledge` matches the trigger keywords and returns the playbook. The AI follows the proven steps instead of improvising.
+4. **Schema contract** — Stored playbooks are normalized into a versioned contract: trigger keywords, preconditions, pitfalls, structured steps, and optional `required_tools` declarations. Thin drafts remain reviewable, but carry machine-readable quality warnings.
+5. **Tool resolution** — Playbooks declare tool needs by name or purpose, while local paths stay in the tools registry. `prepare_playbook_execution` returns `resolved_tools`, `tools_ready`, and `missing_tools` at runtime so the host AI can see which local tools are available without storing resolved paths in the Playbook.
+6. **Reuse and outcome** — Next time an AI tool encounters a similar task, `search_knowledge` matches the trigger keywords and returns the playbook as a passive reference. The host AI walks through the steps with you and `get_execution_status` reports an outcome rollup (`pending`, `partial`, `succeeded`, or `failed`) instead of treating skipped steps as silent success.
 
-### Design Philosophy: Engram Starts, You Confirm, AI Completes
+### Design Philosophy: Engram Starts, You Confirm, AI Applies
 
-Playbook auto-extraction is not fully automatic. piia-engram detects the workflow and generates a rough draft — but the draft stays in staging until you explicitly confirm it. Once confirmed, AI tools can refine and follow the playbook autonomously. This keeps humans in the loop for quality control while eliminating the manual work of writing operational procedures.
+Playbook auto-extraction is not fully automatic. piia-engram detects the workflow and generates a rough draft — but the draft stays in staging until you explicitly confirm it. Once confirmed, AI tools can use the playbook as a governed, passive reference and record step outcomes; Engram does not silently execute the workflow for them. This keeps humans in the loop for quality control while eliminating the manual work of writing operational procedures.
 
 ### Confidence Levels
 

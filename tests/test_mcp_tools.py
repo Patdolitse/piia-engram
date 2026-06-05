@@ -256,6 +256,136 @@ class TestSearchTools:
         # a3: permissions metadata is always present
         assert "_caller_permissions" in result
 
+    def test_search_knowledge_playbooks_include_usage_policy(
+        self, isolated_engram: Engram
+    ):
+        isolated_engram.add_playbook({
+            "title": "Release checklist",
+            "triggers": ["release", "publish"],
+            "steps": ["Run tests", "Verify package"],
+        })
+
+        result = json.loads(_run(
+            mcp_server.search_knowledge("release", scope="playbooks")
+        ))
+
+        assert result["playbooks"]
+        policy = result["playbooks"][0]["usage_policy"]
+        assert "被动参考" in policy
+        assert "passive reference" in policy
+        assert "Do not auto-drive" in policy
+
+    def test_mcp_execution_status_exposes_outcome_rollup(
+        self, isolated_engram: Engram
+    ):
+        pb = isolated_engram.add_playbook({
+            "title": "MCP outcome flow",
+            "triggers": ["outcome"],
+            "steps": ["Prepare", "Optional cleanup", "Verify"],
+        })
+
+        plan = json.loads(_run(mcp_server.prepare_playbook_execution(pb["id"])))
+        assert "step-by-step confirmation" in plan["usage_policy"]
+
+        update = json.loads(_run(
+            mcp_server.update_execution_step(pb["id"], 1, "completed")
+        ))
+        assert update["outcome"]["status"] == "partial"
+
+        json.loads(_run(
+            mcp_server.update_execution_step(
+                pb["id"], 2, "skipped", notes="Not needed"
+            )
+        ))
+        status = json.loads(_run(mcp_server.get_execution_status(pb["id"])))
+
+        assert status["outcome"] == {
+            "status": "partial",
+            "completed": 1,
+            "skipped": 1,
+            "failed": 0,
+            "pending": 1,
+            "total": 3,
+        }
+        assert "step-by-step confirmation" in status["usage_policy"]
+
+    def test_mcp_prepare_playbook_execution_returns_resolved_tools(
+        self, isolated_engram: Engram
+    ):
+        registered = isolated_engram.register_tool({
+            "name": "gh",
+            "path": "/tools/gh",
+            "version": "2.88.1",
+            "purpose": "GitHub CLI",
+        })
+        pb = isolated_engram.add_playbook({
+            "title": "MCP tool-aware flow",
+            "triggers": ["tools"],
+            "required_tools": [{"name": "gh", "purpose": "GitHub release"}],
+            "steps": ["Prepare", "Verify"],
+        })
+
+        result = json.loads(_run(mcp_server.prepare_playbook_execution(pb["id"])))
+
+        assert result["tools_ready"] is True
+        assert result["missing_tools"] == []
+        assert result["resolved_tools"][0]["status"] == "resolved"
+        assert result["resolved_tools"][0]["tool_id"] == registered["id"]
+        assert result["resolved_tools"][0]["path"] == "/tools/gh"
+        assert "step-by-step confirmation" in result["usage_policy"]
+
+    def test_mcp_add_playbook_accepts_required_tools_json_and_tool_refs(
+        self, isolated_engram: Engram
+    ):
+        result = _run(mcp_server.add_playbook(
+            "MCP declared tool flow",
+            "tools",
+            steps_json='["Prepare", "Verify"]',
+            required_tools_json='[{"name": "gh", "purpose": "GitHub release"}]',
+            tool_refs="Node.js",
+        ))
+
+        assert "Playbook 已记录" in result
+        stored = isolated_engram.get_playbooks()[0]
+        assert stored["required_tools"] == [
+            {
+                "name": "gh",
+                "purpose": "GitHub release",
+                "optional": False,
+                "min_version": "",
+                "query": "",
+            },
+            {
+                "name": "Node.js",
+                "purpose": "",
+                "optional": False,
+                "min_version": "",
+                "query": "",
+            },
+        ]
+
+    def test_mcp_update_playbook_accepts_required_tools_json_and_tool_refs(
+        self, isolated_engram: Engram
+    ):
+        pb = isolated_engram.add_playbook({
+            "title": "MCP update tool flow",
+            "triggers": ["tools"],
+            "steps": ["Prepare", "Verify"],
+        })
+
+        result = _run(mcp_server.update_playbook(
+            pb["id"],
+            required_tools_json='[{"name": "mcp-publisher"}]',
+            tool_refs="gh",
+        ))
+
+        assert "Playbook 已更新" in result
+        stored = isolated_engram.get_playbook(pb["id"], _update_access=False)
+        assert [tool["name"] for tool in stored["required_tools"]] == [
+            "mcp-publisher",
+            "gh",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Error handling
