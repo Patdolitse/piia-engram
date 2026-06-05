@@ -8,6 +8,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.50.0] - 2026-06-05
+
+### Added
+- **Generated export redaction gate** - added a dynamic release/CI guard that
+  builds synthetic Engram data, renders real identity-card, knowledge-report,
+  and AGENTS export surfaces, and scans those generated outputs for secret,
+  path, and email-shaped leakage.
+- **Read-only staging queue tool** - added `list_pending_staging` as a
+  metadata-only MCP read tool for reviewer and GUI workflows, while keeping
+  `batch_review_staging` mutations behind write governance.
+- **Telemetry vNext and dashboard alignment** - continued local/default-off
+  telemetry contract hardening and aligned dashboard-facing copy with the
+  current contract.
+
+### Fixed
+- **Export metadata redaction** - domain labels, source-tool labels, section
+  headers, lesson summaries/details, decision text, stale titles, and related
+  titles are now redacted before identity-card, knowledge-report, and AGENTS
+  export rendering can expose them.
+- **Release guard coverage** - the release orchestrator, CI workflow, and
+  publish workflow now all include the generated export redaction gate in
+  addition to the static clean-sample guard.
+
+### Changed
+- **Public facts refreshed** - current local facts now report 2830 passed,
+  2 skipped, 2832 collected tests, and 83 MCP tools: 17 core plus 66 advanced.
+- **OpenClaw claim boundary held** - OpenClaw remains documented as L3 static
+  file-bridge evidence only; live OpenClaw agent/model continuity is still not
+  claimed.
+
 ## [3.49.2] - 2026-06-05
 
 ### Added

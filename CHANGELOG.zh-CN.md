@@ -8,6 +8,31 @@
 
 ## [Unreleased]
 
+## [3.50.0] - 2026-06-05
+
+### 新增
+- **动态生成导出脱敏 gate**：新增 release / CI guard，会构造合成 Engram 数据，
+  真实生成 identity card、knowledge report 和 AGENTS export，再扫描生成物中是否
+  存在 secret、路径、邮箱等泄漏形状。
+- **只读 staging 队列工具**：新增 `list_pending_staging`，作为 reviewer / GUI
+  可用的 metadata-only MCP 读取工具；`batch_review_staging` 的实际 mutation
+  仍然受 write governance 约束。
+- **Telemetry vNext 与 dashboard 文案对齐**：继续加固本地优先、默认关闭的
+  telemetry contract，并让 dashboard 可见文案匹配当前能力边界。
+
+### 修复
+- **导出 metadata 脱敏**：domain label、source-tool label、section header、
+  lesson summary/detail、decision 文本、stale title 和 related title 现在都会在
+  identity card、knowledge report、AGENTS export 渲染前经过脱敏。
+- **发布 guard 覆盖面**：release orchestrator、CI workflow 和 publish workflow
+  都已接入动态生成导出脱敏 gate，不再只依赖静态 clean sample。
+
+### 变更
+- **公开事实刷新**：当前本地事实更新为 2830 passed、2 skipped、2832 collected；
+  MCP 工具数为 83 个：17 个 core，66 个 advanced。
+- **OpenClaw 公开边界保持收窄**：OpenClaw 仍只声明 L3 static file bridge
+  静态文件桥证据；不声明 live OpenClaw agent / model continuity。
+
 ## [3.49.2] - 2026-06-05
 
 ### 新增
