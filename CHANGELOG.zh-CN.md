@@ -8,6 +8,25 @@
 
 ## [Unreleased]
 
+## [3.51.2] - 2026-06-06
+
+### 变更
+- **Playbook 被动引用契约**：将已保存 Playbook 归一化为带版本的结构契约，
+  保留 pitfalls / preconditions 等 prose 字段，暴露执行 outcome 汇总，
+  增加可选 `required_tools` 工具依赖声明，并把 MCP `usage_policy` 运行时提示
+  扩展到 `search_knowledge` 命中的 Playbook，让主复用路径保持治理语义。
+- **Playbook 与工具图谱桥接**：Playbook 现在可用 canonical `required_tools`
+  元数据声明本地工具需求，同时保留 `tool_refs` 作为输入别名。
+  `prepare_playbook_execution` 会在运行时通过工具图谱解析可用性，返回
+  `resolved_tools`、`tools_ready` 和 `missing_tools`，但不会把本机绝对路径写入
+  Playbook 或 execution plan。
+
+### 修复
+- **工具版本未知状态**：当已登记工具没有可判断版本时，现在会显式返回
+  unknown / unsatisfied 状态，而不是误报满足 `min_version` 要求。
+- **公开事实刷新**：当前本地事实更新为 2906 passed、2 skipped、
+  2908 collected。
+
 ## [3.51.1] - 2026-06-05
 
 ### 新增

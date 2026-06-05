@@ -8,12 +8,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.51.2] - 2026-06-06
+
 ### Changed
 - **Playbook passive-reference contract** - normalized saved playbooks into a
   versioned structural contract, preserved prose pitfalls/preconditions, exposed
   execution outcome rollups, added optional `required_tools` declarations with
   runtime-only `resolved_tools`, and extended the MCP `usage_policy` runtime hint
   to `search_knowledge` playbook hits so the main reuse path stays governed.
+- **Playbook-to-tools-registry bridge** - Playbooks can now declare local tool
+  needs through canonical `required_tools` metadata while preserving
+  `tool_refs` as an input alias. `prepare_playbook_execution` resolves
+  availability through the tools registry at runtime and returns
+  `resolved_tools`, `tools_ready`, and `missing_tools` without persisting local
+  absolute paths into Playbooks or execution plans.
+
+### Fixed
+- **Tool version uncertainty** - unknown registered tool versions now surface as
+  an explicit unknown / unsatisfied status instead of pretending the
+  `min_version` requirement is satisfied.
+- **Public facts refreshed** - current local facts now report 2906 passed,
+  2 skipped, and 2908 collected tests.
 
 ## [3.51.1] - 2026-06-05
 
