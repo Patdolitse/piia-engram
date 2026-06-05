@@ -8,6 +8,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.49.2] - 2026-06-05
+
+### Added
+- **Cursor writeback hook, opt-in and staging-only** - added a guarded Cursor
+  stop-hook entry point that is disabled by default, re-entry protected,
+  transcript-bounded, and routed through `extract_session_insights` so extracted
+  knowledge lands in staging review instead of becoming verified automatically.
+- **Batch staging review MCP tool** - added `batch_review_staging`, a
+  metadata-only staging approval/rejection helper. It defaults to dry-run,
+  requires explicit `confirm=true` for mutation, and only acts on staging
+  lessons or decisions.
+- **Continuity and compatibility signals** - refreshed MCIC/client-continuity
+  evidence and compatibility scaffolding so Hermes/OpenClaw evidence remains
+  narrowly labeled and reproducible from copied-store or static-bridge runs.
+
+### Fixed
+- **Encoding repair false positive** - valid Chinese text with ordinary ASCII
+  question marks is no longer treated as lossy mojibake. Repairable-loss
+  detection now requires the Unicode replacement character while existing
+  strong mojibake markers remain covered.
+- **Permission Profile vNext staging boundary** - `staging_optin` can no longer
+  override review/publish-stage staging exclusion; staging visibility remains
+  constrained by the current lifecycle stage.
+- **Doctor MCP entry probes** - locked supported MCP entry shapes and bounded
+  `--help` probing behavior in setup-wizard tests.
+
+### Changed
+- **Public facts refreshed** - current local facts now report 2782 passed,
+  2 skipped, 2784 collected tests, and 82 MCP tools: 17 core plus 65 advanced.
+- **OpenClaw claim boundary held** - OpenClaw remains documented as L3 static
+  snapshot A/B for the compatible file bridge; live OpenClaw agent/model
+  continuity is still not claimed.
+
 ## [3.49.1] - 2026-06-05
 
 ### Fixed

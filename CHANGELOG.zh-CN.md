@@ -8,6 +8,33 @@
 
 ## [Unreleased]
 
+## [3.49.2] - 2026-06-05
+
+### 新增
+- **Cursor 写回 hook（默认关闭、只进 staging）**：新增受保护的 Cursor
+  stop-hook 入口。默认不启用，带重入保护、transcript 大小上限，并统一通过
+  `extract_session_insights` 写入 staging review，不会自动变成 verified 知识。
+- **批量 staging 审查 MCP 工具**：新增 `batch_review_staging`，用于批量预览或
+  审批/拒绝 staging lesson / decision。默认 dry-run，真正改写必须显式
+  `confirm=true`，返回内容保持 metadata-only。
+- **连续性与兼容性证据信号**：刷新 MCIC / client-continuity 相关证据和兼容脚手架，
+  让 Hermes / OpenClaw 证据继续保持可复现、边界清楚，只基于 copied-store 或静态桥运行。
+
+### 修复
+- **乱码修复误报**：普通 ASCII 问号和正常中文不会再被误判为可修复乱码。现在只有
+  Unicode replacement character 这类真实损坏符号才作为 repairable-loss 证据，
+  原有强 mojibake marker 仍然保留。
+- **Permission Profile vNext staging 边界**：`staging_optin` 不能再覆盖
+  review / publish 阶段的 staging 排除规则，staging 可见性继续受生命周期阶段约束。
+- **Doctor MCP 入口探测**：用测试锁定 setup wizard 对 MCP entry shape 的分类和
+  有界 `--help` 探测行为。
+
+### 变更
+- **公开事实刷新**：当前本地事实更新为 2782 passed、2 skipped、2784 collected；
+  MCP 工具数为 82 个：17 个 core，65 个 advanced。
+- **OpenClaw 公开边界保持收窄**：OpenClaw 仍只声明 L3 static snapshot A/B
+  静态文件桥验证通过；不声明 live OpenClaw agent / model continuity。
+
 ## [3.49.1] - 2026-06-05
 
 ### 修复
