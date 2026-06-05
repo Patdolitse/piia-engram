@@ -15,10 +15,14 @@ They are additive regression guards; they assert existing behavior.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from piia_engram import Engram
 from piia_engram import file_safety as FS
 from piia_engram import storage
+from piia_engram import setup_wizard
 
 
 def test_engram_root_prefers_env_then_legacy(monkeypatch, tmp_path):
@@ -81,3 +85,38 @@ def test_refused_external_write_leaves_no_file_and_no_ledger(tmp_path):
     assert not external.exists()
     # No silent side effect: a refused write records nothing.
     assert FS.read_ledger_entries(root) == []
+
+
+def test_setup_external_config_preserves_selected_engram_dir(tmp_path):
+    root = tmp_path / "custom_engram_root"
+    external = tmp_path / "client" / "settings.json"
+
+    setup_wizard._write_mcp_config(
+        external,
+        python_path="python",
+        mcp_server_path="",
+        data_dir=str(root),
+        file_safety_root=root,
+        authorized_external_write=True,
+    )
+
+    config = json.loads(external.read_text(encoding="utf-8"))
+    env = config["mcpServers"]["engram"]["env"]
+    assert env["ENGRAM_DIR"] == str(root)
+    ledger = FS.read_ledger_entries(root)
+    assert ledger and ledger[-1]["scope"] == "external"
+    assert str(external) not in json.dumps(ledger, ensure_ascii=False)
+
+
+def test_import_dry_run_source_is_metadata_only(tmp_path):
+    source = Engram(root=tmp_path / "source")
+    source.add_lesson({"summary": "portable backup lesson", "domain": "backup"})
+    backup = source.export_all(str(tmp_path / "private" / "backup.json"))
+
+    target = Engram(root=tmp_path / "target")
+    plan = target.import_all(backup, merge=True, dry_run=True)
+    blob = json.dumps(plan, ensure_ascii=False)
+
+    assert plan["source"] == {"file_name": "backup.json"}
+    assert str(tmp_path) not in blob
+    assert "private" not in blob

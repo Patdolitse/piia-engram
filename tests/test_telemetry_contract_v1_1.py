@@ -16,6 +16,7 @@ import pytest
 from piia_engram.telemetry import (
     CONTRACT_VERSION,
     ToolCallTracker,
+    _compute_vnext_signals,
     _validate_payload,
     build_payload,
     preview_payload,
@@ -139,6 +140,82 @@ class TestPrivacyShape:
         text = preview_payload(engram_version="3.45.3")
         assert "contract_version" in text
         assert "version_adoption" in text
+
+
+class TestVNextSignals:
+    def test_vnext_signal_computation_from_aggregate_counts(self):
+        signals = _compute_vnext_signals({
+            "get_resume_brief": {"success": 4, "error": 1},
+            "get_resume_brief_nonempty": {"success": 3, "error": 0},
+            "wrap_up_session": {"success": 2, "error": 0},
+        })
+
+        assert signals == {
+            "recall_hit_rate": 0.75,
+            "cross_tool_handoffs": 2,
+        }
+
+    def test_vnext_recall_hit_rate_unknown_without_nonempty_counter(self):
+        signals = _compute_vnext_signals({
+            "get_resume_brief": {"success": 4, "error": 0},
+            "wrap_up_session": {"success": 1, "error": 0},
+        })
+
+        assert signals["recall_hit_rate"] is None
+        assert signals["cross_tool_handoffs"] == 1
+
+    def test_vnext_counts_are_clamped_and_do_not_exceed_resume_success(self):
+        signals = _compute_vnext_signals({
+            "get_resume_brief": {"success": 2, "error": 0},
+            "get_resume_brief_nonempty": {"success": 9, "error": 0},
+            "wrap_up_session": {"success": "7", "error": 0},
+        })
+
+        assert signals["recall_hit_rate"] == 1.0
+        assert signals["cross_tool_handoffs"] == 2
+
+    def test_vnext_signals_default_off(self, isolated_engram_dir):
+        set_enabled(True)
+        payload = build_payload(
+            engram_version="3.49.1",
+            tool_calls={"get_resume_brief": {"success": 1, "error": 0}},
+        )
+
+        assert "vnext_signals" not in payload
+
+    def test_vnext_signals_opt_in_and_validator_safe(self, isolated_engram_dir):
+        set_enabled(True)
+        payload = build_payload(
+            engram_version="3.49.1",
+            tool_calls={
+                "get_resume_brief": {"success": 2, "error": 0},
+                "get_resume_brief_nonempty": {"success": 1, "error": 0},
+                "wrap_up_session": {"success": 1, "error": 0},
+            },
+            include_vnext_signals=True,
+        )
+
+        assert payload["vnext_signals"] == {
+            "recall_hit_rate": 0.5,
+            "cross_tool_handoffs": 1,
+        }
+        assert _validate_payload(payload) is True
+
+    def test_vnext_signals_do_not_add_content_fields(self, isolated_engram_dir):
+        set_enabled(True)
+        payload = build_payload(
+            engram_version="3.49.1",
+            tool_calls={
+                "get_resume_brief": {"success": 1, "error": 0},
+                "get_resume_brief_nonempty": {"success": 1, "error": 0},
+            },
+            include_vnext_signals=True,
+        )
+        blob = json.dumps(payload, ensure_ascii=False)
+
+        assert "prompt" not in blob
+        assert "path" not in blob
+        assert "session_id" not in blob
 
 
 WORKER_INDEX = Path(__file__).resolve().parents[1] / "worker" / "src" / "index.js"

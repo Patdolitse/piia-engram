@@ -134,6 +134,7 @@ def _scenario(
     evidence_kind: str,
     checks: dict[str, bool],
 ) -> dict[str, Any]:
+    ts_bucket = "synthetic_run"
     return {
         "name": name,
         "purpose": purpose,
@@ -141,6 +142,18 @@ def _scenario(
         "source_tool": source_tool,
         "target_tool": target_tool,
         "evidence_kind": evidence_kind,
+        "evidence_events": [
+            {
+                "tool": source_tool,
+                "kind": "write_signal",
+                "ts_bucket": ts_bucket,
+            },
+            {
+                "tool": target_tool,
+                "kind": evidence_kind,
+                "ts_bucket": ts_bucket,
+            },
+        ],
         "checks": checks,
         "passed": all(checks.values()),
     }

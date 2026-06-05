@@ -28,6 +28,12 @@ from .storage import (
 )
 
 
+def _metadata_source(input_path: str) -> dict[str, str]:
+    """Return a metadata-only source descriptor for import previews/results."""
+    name = Path(input_path).name
+    return {"file_name": name} if name else {"file_name": ""}
+
+
 class ImportExportMixin:
     # =====================================================================
     # Import / Export — 备份、迁移、跨机器同步
@@ -421,7 +427,7 @@ class ImportExportMixin:
             "dry_run": True,
             "summary": summary,
             "conflicts": conflicts,
-            "source": input_path,
+            "source": _metadata_source(input_path),
         }
 
     @staticmethod
@@ -616,12 +622,13 @@ class ImportExportMixin:
             candidate["root_id"] = existing.get("root_id") or existing_id
             candidate["import_version_hash"] = version_hash
             candidate["version_materialized_at"] = _now_iso()
-            candidate["import_source"] = str(input_path)
+            source_name = _metadata_source(input_path)["file_name"]
+            candidate["import_source"] = source_name
             provenance = candidate.get("provenance")
             if not isinstance(provenance, dict):
                 provenance = {}
             provenance.setdefault("source_tool", candidate.get("source_tool") or "import")
-            provenance["import_source"] = str(input_path)
+            provenance["import_source"] = source_name
             provenance["supersedes"] = existing_id
             candidate["provenance"] = provenance
             candidate = self._ensure_fields(candidate, entry_type)
@@ -989,7 +996,7 @@ class ImportExportMixin:
             "imported": imported,
             "summary": plan.get("summary", {}),
             "conflicts": plan.get("conflicts", []),
-            "source": input_path,
+            "source": _metadata_source(input_path),
         }
         if version_chain_materialization is not None:
             result["version_chain_materialization"] = version_chain_materialization

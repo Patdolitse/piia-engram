@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,8 @@ logger = logging.getLogger(__name__)
 OPENCLAW_MEMORY_MAX_BYTES = 32 * 1024
 OPENCLAW_SUMMARY_MAX_CHARS = 240
 OPENCLAW_REASONING_MAX_CHARS = 160
+HERMES_HANDOFF_MAX_TEXT_CHARS = 160
+HERMES_HANDOFF_MAX_DECISIONS = 8
 
 if TYPE_CHECKING:  # pragma: no cover
     from .core import Engram
@@ -111,6 +114,73 @@ def _clip_text(value: object, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 1].rstrip() + "…"
+
+
+_PATHISH_RE = re.compile(
+    r"([A-Za-z]:\\|\\\\|/[^/\s]+/|~[/\\]|https?://|file://)",
+    re.IGNORECASE,
+)
+
+
+def _handoff_text(value: object, max_chars: int = HERMES_HANDOFF_MAX_TEXT_CHARS) -> str:
+    """Return a short bridge-safe text field with path-like values removed."""
+    text = str(value or "").strip()
+    if not text or _PATHISH_RE.search(text):
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "..."
+
+
+def hermes_handoff_payload(engram: "Engram") -> dict:
+    """Build a schema-stable, metadata-only handoff payload for Hermes-like agents.
+
+    This is a compatibility bridge, not a live plugin: it exposes a compact
+    identity summary and active verified decision summaries without raw paths,
+    session IDs, full memory bodies, or decision reasoning.
+    """
+    try:
+        profile = engram.get_profile(safe=True)
+    except TypeError:  # pragma: no cover - older Engram-like facade
+        profile = engram.get_profile()
+    profile = profile if isinstance(profile, dict) else {}
+
+    lessons = [
+        lesson
+        for lesson in engram.get_lessons(limit=None, _update_access=False)
+        if _is_verified_active(lesson)
+    ]
+    decisions = [
+        decision
+        for decision in engram.get_decisions(limit=None, _update_access=False)
+        if _is_verified_active(decision)
+    ]
+
+    active_decisions = []
+    for decision in decisions[-HERMES_HANDOFF_MAX_DECISIONS:]:
+        item = {
+            "question": _handoff_text(decision.get("question")),
+            "choice": _handoff_text(decision.get("choice")),
+        }
+        domain = _handoff_text(decision.get("domain"), 64)
+        if domain:
+            item["domain"] = domain
+        if item["question"] or item["choice"]:
+            active_decisions.append(item)
+
+    identity_summary = {}
+    for key in ("role", "language", "technical_level", "description"):
+        value = _handoff_text(profile.get(key))
+        if value:
+            identity_summary[key] = value
+
+    return {
+        "schema": "hermes_handoff_v1",
+        "source": "piia-engram",
+        "identity_summary": identity_summary,
+        "active_decisions": active_decisions,
+        "lessons_count": len(lessons),
+    }
 
 
 def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:

@@ -53,6 +53,11 @@ def test_mcic_benchmark_passes_ten_purposeful_scenarios(tmp_path: Path) -> None:
         assert scenario["target_tool"]
         assert scenario["passed"] is True
         assert scenario["evidence_kind"] in {"resume_brief", "search", "direct_context"}
+        assert len(scenario["evidence_events"]) == 2
+        for event in scenario["evidence_events"]:
+            assert set(event) == {"tool", "kind", "ts_bucket"}
+            assert event["tool"] in {scenario["source_tool"], scenario["target_tool"]}
+            assert event["ts_bucket"] == "synthetic_run"
         assert all(scenario["checks"].values())
 
 
@@ -76,6 +81,7 @@ def test_mcic_benchmark_payload_is_metadata_only(tmp_path: Path) -> None:
             "source_tool",
             "target_tool",
             "evidence_kind",
+            "evidence_events",
             "checks",
             "passed",
         }

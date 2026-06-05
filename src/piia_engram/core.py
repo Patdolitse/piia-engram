@@ -69,6 +69,7 @@ from .encoding_repair import normalize_entry_text
 # from piia_engram.core directly).
 from .compat import (  # noqa: F401
     export_to_openclaw,
+    hermes_handoff_payload,
     import_from_openclaw,
     migrate_from_oca_memory,
 )

@@ -14,6 +14,18 @@
         "owner_approval_found": true,
         "source_tool_preserved": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "claude_code_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "search",
+          "tool": "codex_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "search",
       "name": "explicit_strategy_recall",
       "passed": true,
@@ -27,6 +39,18 @@
         "publication_boundary_found": true,
         "version_signal_found": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "codex_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "search",
+          "tool": "cursor_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "search",
       "name": "version_fact_recall",
       "passed": true,
@@ -40,6 +64,18 @@
         "chinese_language_available": true,
         "gui_preference_available": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "claude_code_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "resume_brief",
+          "tool": "codex_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "resume_brief",
       "name": "implicit_gui_preference",
       "passed": true,
@@ -53,6 +89,18 @@
         "bundled_python_signal_available": true,
         "powershell_signal_available": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "cursor_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "resume_brief",
+          "tool": "claude_code_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "resume_brief",
       "name": "implicit_windows_tooling",
       "passed": true,
@@ -66,6 +114,18 @@
         "durable_role_available": true,
         "false_premise_guard_available": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "codex_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "resume_brief",
+          "tool": "hermes_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "resume_brief",
       "name": "adversarial_role_guard",
       "passed": true,
@@ -79,6 +139,18 @@
         "cli_false_premise_guard_available": true,
         "gui_first_available": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "claude_code_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "resume_brief",
+          "tool": "openclaw_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "resume_brief",
       "name": "adversarial_ui_guard",
       "passed": true,
@@ -92,6 +164,18 @@
         "explicit_approval_available": true,
         "public_action_terms_available": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "codex_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "resume_brief",
+          "tool": "claude_code_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "resume_brief",
       "name": "public_action_boundary",
       "passed": true,
@@ -106,6 +190,18 @@
         "old_body_absent": true,
         "version_annotation_available": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "claude_code_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "resume_brief",
+          "tool": "codex_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "resume_brief",
       "name": "version_chain_head_preferred",
       "passed": true,
@@ -119,6 +215,18 @@
         "kubernetes_region_absent_from_search": true,
         "mars_absent_from_resume": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "cursor_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "search",
+          "tool": "codex_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "search",
       "name": "negative_absent_fact",
       "passed": true,
@@ -132,6 +240,18 @@
         "search_found_entry": true,
         "source_tool_preserved": true
       },
+      "evidence_events": [
+        {
+          "kind": "write_signal",
+          "tool": "cursor_mcic",
+          "ts_bucket": "synthetic_run"
+        },
+        {
+          "kind": "search",
+          "tool": "claude_code_mcic",
+          "ts_bucket": "synthetic_run"
+        }
+      ],
       "evidence_kind": "search",
       "name": "source_provenance_roundtrip",
       "passed": true,

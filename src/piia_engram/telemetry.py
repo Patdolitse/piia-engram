@@ -365,6 +365,38 @@ def _error_trend(current_total: int, prev_total: Any) -> str:
     return "flat"
 
 
+def _tool_success_count(tool_calls: dict[str, dict[str, int]] | None, name: str) -> int:
+    if not isinstance(tool_calls, dict):
+        return 0
+    counts = tool_calls.get(name)
+    if not isinstance(counts, dict):
+        return 0
+    try:
+        return max(0, int(counts.get("success", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _compute_vnext_signals(tool_calls: dict[str, dict[str, int]] | None) -> dict[str, Any]:
+    """Compute opt-in vNext analysis signals from aggregate tool-call counts.
+
+    The inputs are existing count buckets only. No arguments, content, paths, or
+    session IDs are inspected. ``get_resume_brief_nonempty`` is an optional
+    aggregate counter for successful resume briefs that returned non-empty
+    output; when absent, recall hit rate is reported as ``None``.
+    """
+    resume_success = _tool_success_count(tool_calls, "get_resume_brief")
+    nonempty_success = _tool_success_count(tool_calls, "get_resume_brief_nonempty")
+    wrap_success = _tool_success_count(tool_calls, "wrap_up_session")
+    recall_hit_rate = None
+    if resume_success > 0 and nonempty_success > 0:
+        recall_hit_rate = round(min(nonempty_success, resume_success) / resume_success, 3)
+    return {
+        "recall_hit_rate": recall_hit_rate,
+        "cross_tool_handoffs": min(resume_success, wrap_success),
+    }
+
+
 def _mark_payload_sent(engram_version: str, error_total: int | None = None) -> None:
     cfg = _load_config()
     now = datetime.now(timezone.utc).isoformat()
@@ -448,6 +480,7 @@ def build_payload(
     engram_version: str = "",
     tools_tier: str = "",
     error_categories: dict[str, int] | None = None,
+    include_vnext_signals: bool = False,
 ) -> dict[str, Any] | None:
     """Build an anonymous usage statistics payload.
 
@@ -456,6 +489,7 @@ def build_payload(
         knowledge_counts: {"lessons": N, "decisions": N, "domains": N}
         engram_version: e.g. "3.15.0"
         tools_tier: "core" or "all"
+        include_vnext_signals: opt-in derived analysis signals for local review
 
     Returns:
         The payload dict, or None if validation fails or stats are disabled.
@@ -502,6 +536,9 @@ def build_payload(
 
     if knowledge_counts:
         payload["knowledge_counts"] = knowledge_counts
+
+    if include_vnext_signals:
+        payload["vnext_signals"] = _compute_vnext_signals(tool_calls)
 
     if not _validate_payload(payload):
         return None
