@@ -69,6 +69,8 @@ _TEST_CLAIM_PATTERNS = (
 _TOOL_CLAIM_PATTERNS = (
     (re.compile(r"(\d{2,3})\s+MCP tools"), "mcp_tools_total"),
     (re.compile(r"ships\s+(\d{2,3})\s+MCP"), "mcp_tools_total"),
+    (re.compile(r"(\d{2,3})\s*个\s*MCP\s*工具"), "mcp_tools_total"),
+    (re.compile(r"(\d{2,3})\s*个知识生命周期管理工具"), "mcp_tools_total"),
 )
 
 # Negation / disclaimer markers. A phrase that appears in the SAME or an adjacent

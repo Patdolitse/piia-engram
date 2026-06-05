@@ -209,6 +209,19 @@ action boundaries, version-chain HEAD selection, negative control, and
 provenance. Its claim is narrow: Engram makes the right signal available to the
 next client; live model compliance still needs separate A/B testing.
 
+### Trust & Evidence
+
+piia-engram treats trust claims as release artifacts, not marketing copy:
+
+| Claim | Public evidence | What it proves | Boundary |
+|---|---|---|---|
+| Memory retrieval stays measurable | [`docs/benchmarks/memory-eval-suite-v1.md`](docs/benchmarks/memory-eval-suite-v1.md), `python scripts/run_memory_evals.py` | Recall/admission fixtures pass deterministic, knowledge-ID-scored checks with no LLM judge | Synthetic regression floor, not a broad live-agent benchmark |
+| Public numbers do not drift silently | `python scripts/check_public_fact_sync.py` and `python scripts/check_public_claim_drift.py` | README / registry / architecture facts match `docs/public-facts.json` | Historical CHANGELOG and `release-evidence/` keep old release facts |
+| Security and privacy wording stays consistent | `python scripts/check_public_trust_claims.py` | Network, telemetry, endpoint, plaintext, and optional-encryption statements stay aligned across public docs | Prose consistency guard, not a third-party security audit |
+| Releases cannot skip evidence | [`release-evidence/README.md`](release-evidence/README.md), `python scripts/check_release_gate.py` | Each release records tests, sanitize, allowlist, package, artifact scan, eval, and review markers | Evidence files are factual summaries, not private review logs |
+
+Release evidence index: [`release-evidence/README.md`](release-evidence/README.md). Each tagged release records a matching `release-evidence/v<version>.md` file.
+
 ### Configure for Your AI Tool
 
 <details open>
@@ -713,11 +726,11 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **17 Core** (loaded by default) + **66 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **2870** (unit + integration; 2 skipped, 2872 collected) |
+| Tests passing | **2876** (unit + integration; 2 skipped, 2878 collected) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **3336** (facade + mixins total ~8159; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
-| Encryption | AES-256-GCM, per-engram salt + per-value random nonce |
+| Encryption | Optional field-level AES-256-GCM for supported profile fields; local files are plaintext JSON/Markdown by default |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
 | Network calls by default | **0** for identity and knowledge tools — except optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
 

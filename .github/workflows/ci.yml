@@ -46,6 +46,9 @@ jobs:
       - name: Public claim drift gate
         run: python scripts/check_public_claim_drift.py
 
+      - name: Public trust claim gate
+        run: python scripts/check_public_trust_claims.py
+
       - name: Export redaction sample gate
         run: python scripts/check_export_redaction.py --strict docs/samples/export-redaction-clean-sample.md
 
@@ -90,6 +93,9 @@ jobs:
 
       - name: Public claim drift gate
         run: python scripts/check_public_claim_drift.py
+
+      - name: Public trust claim gate
+        run: python scripts/check_public_trust_claims.py
 
       - name: Export redaction sample gate
         run: python scripts/check_export_redaction.py --strict docs/samples/export-redaction-clean-sample.md

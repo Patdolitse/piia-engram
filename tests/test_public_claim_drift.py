@@ -72,6 +72,27 @@ def test_accepts_current_counts_and_tool_count(mod, tmp_path: Path):
     assert result["problems"] == []
 
 
+def test_catches_stale_chinese_tool_count(mod, tmp_path: Path):
+    _write_manifest(tmp_path)
+    (tmp_path / "README.zh-CN.md").write_text(
+        "piia-engram 提供 81 个知识生命周期管理工具。\n",
+        encoding="utf-8",
+    )
+
+    result = mod.scan(tmp_path)
+
+    assert result["ok"] is False
+    assert result["problems"] == [
+        {
+            "file": "README.zh-CN.md",
+            "kind": "stale_claim",
+            "fact": "mcp_tools_total",
+            "claimed": 81,
+            "expected": 80,
+        }
+    ]
+
+
 def test_catches_public_overclaim_phrase(mod, tmp_path: Path):
     _write_manifest(tmp_path)
     (tmp_path / "copy.md").write_text(
