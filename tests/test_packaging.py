@@ -247,6 +247,8 @@ def test_ci_workflow_runs_public_fact_sync_gate():
 def test_ci_workflow_runs_claim_drift_and_export_redaction_gates():
     """CI should catch public overclaims and generated export leaks early."""
     content = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert "Publish workflow order gate" in content
+    assert "python scripts/check_publish_workflow_order.py" in content
     assert "Public claim drift gate" in content
     assert "python scripts/check_public_claim_drift.py" in content
     assert "Export redaction sample gate" in content
@@ -258,6 +260,10 @@ def test_ci_workflow_runs_claim_drift_and_export_redaction_gates():
 def test_publish_workflow_runs_claim_drift_and_export_redaction_gates():
     """Publish workflow should repeat public/drift and export-boundary checks."""
     content = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    assert "Publish workflow order gate" in content
+    assert "python scripts/check_publish_workflow_order.py" in content
+    assert content.index("python scripts/check_publish_workflow_order.py") < content.index("pip install -e .")
+    assert content.index("pip install -e .") < content.index("python scripts/check_export_redaction.py")
     assert "Public claim drift gate" in content
     assert "python scripts/check_public_claim_drift.py" in content
     assert "Export redaction sample gate" in content

@@ -43,6 +43,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Publish workflow order gate
+        run: python scripts/check_publish_workflow_order.py
+
       - name: Install project dependencies for release gates
         run: pip install -e .
 

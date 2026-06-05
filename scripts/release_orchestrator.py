@@ -102,6 +102,8 @@ def build_checklist() -> list[dict]:
               "python scripts/check_public_fact_sync.py"),
         _step("claim_drift", LOCAL, "Public claim drift sweep",
               "python scripts/check_public_claim_drift.py"),
+        _step("publish_workflow_order", LOCAL, "Publish workflow dependency-order lint",
+              "python scripts/check_publish_workflow_order.py"),
         _step("export_redaction", LOCAL, "Export redaction sample guard",
               "python scripts/check_export_redaction.py --strict "
               "docs/samples/export-redaction-clean-sample.md"),
@@ -146,7 +148,8 @@ def build_checklist() -> list[dict]:
               "python scripts/check_release_auth_preflight.py",
               auth_required=False, preflight_covered=True, probe=None),
         _step("twine_available", AUTH, "twine runnable (local upload path)",
-              "python -m twine --version",
+              "python -m twine --version   # fallback upload: "
+              "python scripts/publish_pypi_fallback.py dist/*",
               auth_required=False, preflight_covered=True, probe="twine_runnable"),
         _step("pypi_oidc", AUTH, "PyPI Trusted Publishing configured",
               "(one-time) configure OIDC trust for Patdolitse/piia-engram on pypi.org",
@@ -171,10 +174,17 @@ def build_checklist() -> list[dict]:
               stall_risk="no token needed; fails only if OIDC trust misconfigured",
               timeout_hint="watch the Actions run; ~1-2 min"),
         _step("mcp_publish", REMOTE, "MCP Registry publish",
-              "cd .mcp && mcp-publisher publish   # wait ~10s after PyPI propagates",
+              "python scripts/publish_mcp_registry.py .mcp/server.json   # waits on "
+              "PyPI propagation outside this command",
               auth_required=True, auth_kind=DEVICE_FLOW, token_env=None,
-              stall_risk="device-flow prompt if mcp_publisher_auth was skipped",
+              stall_risk="device-flow prompt if mcp_publisher_auth was skipped; "
+                         "401/expired JWT is retried once via gh token login",
               timeout_hint="pre-authorize (mcp_publisher_auth) to avoid the stall"),
+        _step("mcp_verify", REMOTE, "Verify MCP Registry version (paginated)",
+              "python scripts/verify_mcp_registry_version.py --version X.Y.Z",
+              auth_required=False, blocking=True,
+              stall_risk="first search page can omit the newest version; verifier "
+                         "must follow nextCursor"),
         _step("glama_manual_auth", REMOTE, "Glama manual/auth visibility",
               "(manual) verify Glama listing after GitHub/PyPI/MCP publish",
               auth_required=False, blocking=False,

@@ -31,6 +31,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Publish workflow order gate
+        run: python scripts/check_publish_workflow_order.py
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
@@ -66,6 +69,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+
+      - name: Publish workflow order gate
+        run: python scripts/check_publish_workflow_order.py
 
       - name: Install dependencies
         run: pip install -e ".[dev]"

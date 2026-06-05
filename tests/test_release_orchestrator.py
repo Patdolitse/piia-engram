@@ -73,6 +73,9 @@ class TestChecklist:
         assert steps["claim_drift"]["phase"] == mod.LOCAL
         assert "check_public_claim_drift.py" in steps["claim_drift"]["command"]
 
+        assert steps["publish_workflow_order"]["phase"] == mod.LOCAL
+        assert "check_publish_workflow_order.py" in steps["publish_workflow_order"]["command"]
+
         assert steps["export_redaction"]["phase"] == mod.LOCAL
         assert "check_export_redaction.py" in steps["export_redaction"]["command"]
         assert "--strict" in steps["export_redaction"]["command"]
@@ -87,6 +90,16 @@ class TestChecklist:
         remote = [s for s in mod.build_checklist() if s["phase"] == mod.REMOTE]
         assert any(s["id"] == "mcp_publish" for s in remote)
         assert any(s["id"] == "gh_release" for s in remote)
+        assert any(s["id"] == "mcp_verify" for s in remote)
+
+    def test_mcp_publish_uses_retrying_wrapper(self, mod):
+        step = {s["id"]: s for s in mod.build_checklist()}["mcp_publish"]
+        assert "publish_mcp_registry.py" in step["command"]
+        assert "expired JWT" in step["stall_risk"]
+
+    def test_twine_fallback_wrapper_is_visible(self, mod):
+        step = {s["id"]: s for s in mod.build_checklist()}["twine_available"]
+        assert "publish_pypi_fallback.py" in step["command"]
 
     def test_glama_step_is_manual_high_stall_visibility(self, mod):
         step = {s["id"]: s for s in mod.build_checklist()}["glama_manual_auth"]
