@@ -248,6 +248,9 @@ _SAFE_ALLOWLIST = {
     "register_tool", "update_identity",
     # relation/maintenance ops returning caller IDs / counts only.
     "add_relation", "remove_relation", "apply_review",
+    # staging batch review returns ids/actions/statuses/counts only; the write
+    # path is still maybe_refuse_write-gated as governed_write in mcp_server.
+    "batch_review_staging",
     # permission profile: governance metadata, no knowledge bodies.
     "get_permission_profile", "set_caller_trust", "revoke_caller",
     # imports / external fetch.

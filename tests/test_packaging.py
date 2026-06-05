@@ -128,9 +128,9 @@ def test_glama_metadata_tracks_current_public_version_and_tool_count():
     content = GLAMA_YAML.read_text(encoding="utf-8")
 
     assert f"version: {pyproject_version}" in content
-    assert "81 MCP tools" in content
+    assert "82 MCP tools" in content
     assert "'core' (17 tools)" in content
-    assert "'all' (81 tools)" in content
+    assert "'all' (82 tools)" in content
     assert "60 MCP tools" not in content
     assert "'core' (12 tools)" not in content
 
@@ -336,11 +336,11 @@ def test_source_and_user_facing_docs_are_utf8_without_bom():
 
 
 def test_architecture_documents_current_tool_split():
-    """Architecture docs should carry the same 81/17/64 tool split as README."""
+    """Architecture docs should carry the same 82/17/65 tool split as README."""
     content = ARCHITECTURE.read_text(encoding="utf-8")
-    assert re.search(r"\b81 tools\b", content)
+    assert re.search(r"\b82 tools\b", content)
     assert "17 Tier-1" in content
-    assert "64 Tier-2" in content
+    assert "65 Tier-2" in content
 
 
 def test_mcp_tools_default_to_core_tier(tmp_path: Path):
@@ -377,7 +377,7 @@ def test_zh_readme_uses_pypi_install_and_current_tool_split():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "64 个" in content  # Tier-2 tool count
+    assert "65 个" in content  # Tier-2 tool count
     assert "17 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content

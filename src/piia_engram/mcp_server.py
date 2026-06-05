@@ -791,6 +791,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "update_knowledge": "governed_write",
     "archive_knowledge": "governed_write",
     "review_knowledge": "governed_write",
+    "batch_review_staging": "governed_write",
     "merge_knowledge": "governed_write",
     "link_knowledge": "governed_write",
     "unlink_knowledge": "governed_write",
@@ -2935,6 +2936,46 @@ async def review_knowledge(knowledge_id: str) -> str:
     # stored item. Gate the returned item (Codex round-16 P1-3).
     result = _gov_rt.maybe_govern_one(_engram.root, result, tool="review_knowledge")
     return _json(result)
+
+
+@mcp.tool()
+async def batch_review_staging(
+    actions_json: str,
+    confirm: bool = False,
+    dry_run: bool = True,
+) -> str:
+    """批量审核 staging 知识候选（默认只预览）。 / Batch-review staging knowledge candidates (preview by default).
+
+    Purpose: Use when multiple staging lessons or decisions should be approved
+    or rejected in one owner-reviewed operation. The payload is metadata-only:
+    ids, actions, statuses, and counts; it never echoes stored bodies.
+
+    Args:
+        actions_json: JSON array of {"id": "...", "action": "approve|reject"}.
+        confirm: Must be true together with dry_run=false to mutate.
+        dry_run: Defaults to true. When true, no knowledge is changed.
+    """
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="batch_review_staging")
+    if refusal is not None:
+        return refusal
+    try:
+        actions = json.loads(actions_json)
+    except json.JSONDecodeError:
+        return _json({"error": "actions_json must be a valid JSON array"})
+    if not isinstance(actions, list):
+        return _json({"error": "actions_json must be a JSON array"})
+    from piia_engram.staging_review import batch_review_staging as _batch_review
+
+    result = _locked_engram_call(
+        _batch_review,
+        _engram,
+        actions,
+        confirm=confirm,
+        dry_run=dry_run,
+    )
+    return _json(_gov_rt.maybe_govern_write_ack(
+        _engram.root, result, tool="batch_review_staging",
+    ))
 
 
 @mcp.tool()

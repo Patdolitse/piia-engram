@@ -454,7 +454,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 81 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 81 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 82 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 82 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -492,7 +492,7 @@ piia-engram ships 81 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 | `get_resume_brief` | Build a cross-session/cross-tool resume brief |
 | `doctor` | Run memory system self-diagnosis |
 
-### Tier-2 Advanced (64 tools — knowledge management, review, governance, import/export)
+### Tier-2 Advanced (65 tools — knowledge management, review, governance, import/export)
 
 <details>
 <summary>Click to expand full tool list</summary>
@@ -711,9 +711,9 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | | v3.49.1 (2026-06-05) |
 |---|---|
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
-| MCP tools | **17 Core** (loaded by default) + **64 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools | **17 Core** (loaded by default) + **65 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **2743** (unit + integration; 8 skipped, 2751 collected) |
+| Tests passing | **2782** (unit + integration; 2 skipped, 2784 collected) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **3336** (facade + mixins total ~8159; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -740,7 +740,7 @@ piia-engram. Install with `pip install piia-engram && engram setup`, and both to
 piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured MCP-compatible coding tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same approved context, so new chats and tool switches can start from the same user-owned memory.
 
 **How is piia-engram different from the official MCP memory server?**
-The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 81 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 82 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.

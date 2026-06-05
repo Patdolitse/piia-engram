@@ -118,7 +118,7 @@ def test_scan_reports_unrepairable_mojibake_without_writing(tmp_path: Path):
     kdir = tmp_path / "knowledge"
     kdir.mkdir(parents=True)
     lessons_path = kdir / "lessons.json"
-    damaged = "\u5bee\u20ac\u9359?"  # irreversible mojibake with replacement '?'
+    damaged = "\u5bee\u20ac\u9359\ufffd"  # irreversible mojibake with replacement marker
     lessons_path.write_text(
         json.dumps([{"id": "l1", "summary": damaged}], ensure_ascii=False),
         encoding="utf-8",
@@ -134,6 +134,33 @@ def test_scan_reports_unrepairable_mojibake_without_writing(tmp_path: Path):
 
     assert report.changed_files == []
     assert json.loads(lessons_path.read_text(encoding="utf-8"))[0]["summary"] == damaged
+
+
+def test_scan_does_not_flag_valid_chinese_with_plain_question_mark(tmp_path: Path):
+    from piia_engram.encoding_repair import scan_engram_root
+
+    kdir = tmp_path / "knowledge"
+    kdir.mkdir(parents=True)
+    (kdir / "lessons.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "l1",
+                    "summary": "社区发帖打法",
+                    "detail": (
+                        "普通用户没东西可补、不敢来辩,只能干看。\n"
+                        "坏钓鱼(刷帖,必避): 模板彩虹屁开头?"
+                    ),
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    scan = scan_engram_root(tmp_path)
+
+    assert scan.findings == []
 
 
 def test_scan_does_not_flag_valid_rare_chinese_words(tmp_path: Path):

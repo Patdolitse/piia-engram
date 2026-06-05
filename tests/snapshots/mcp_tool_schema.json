@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "src/piia_engram/mcp_server.py",
-  "tool_count": 81,
+  "tool_count": 82,
   "tools": {
     "add_decision": {
       "params": [
@@ -339,6 +339,32 @@
           "annotation": "str",
           "required": true,
           "default": null,
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
+    "batch_review_staging": {
+      "params": [
+        {
+          "name": "actions_json",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "confirm",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "dry_run",
+          "annotation": "bool",
+          "required": false,
+          "default": true,
           "kind": "positional_or_keyword"
         }
       ],

@@ -92,6 +92,18 @@ def test_restore_grant_only_undoes_depth_not_widens():
     assert eff.effective_ceiling == "work"
 
 
+def test_restore_grant_on_external_trust_cannot_escalate():
+    ctx = CallerContext(
+        client_type="unknown-web",
+        caller_role="owner",
+        workflow_stage="explore",
+        caller_depth=1,
+    )
+    eff = resolve_effective_profile("read-only-external", ctx, restore_depth=True)
+    assert eff.effective_ceiling == "public"
+    assert eff.effective_write == "no"
+
+
 # --- T3: staging opt-in only honored for the owner ---
 
 def test_T3_staging_optin_ignored_for_non_owner():
@@ -107,6 +119,14 @@ def test_T3_staging_optin_honored_for_owner():
     assert eff.staging_excluded is False
 
 
+def test_T3_staging_optin_cannot_override_review_publish_stage():
+    for stage in ("review", "publish"):
+        ctx = CallerContext(client_type="cli", workflow_stage=stage)
+        eff = resolve_effective_profile("private-self", ctx, staging_optin=True)
+        assert eff.staging_excluded is True
+        assert "staging_optin_ignored_stage" in eff.reasons
+
+
 def test_staging_excluded_in_review_publish_even_for_owner():
     for stage in ("review", "publish"):
         ctx = CallerContext(workflow_stage=stage)
@@ -117,7 +137,13 @@ def test_staging_excluded_in_review_publish_even_for_owner():
 # --- T4: profile carries no content (it only carries labels/flags) ---
 
 def test_T4_profile_fields_are_labels_only():
-    ctx = CallerContext(caller_role="assistant", workflow_stage="review", caller_depth=1)
+    ctx = CallerContext(
+        agent_id="secret-agent-id-123",
+        client_type="codex",
+        caller_role="assistant",
+        workflow_stage="review",
+        caller_depth=1,
+    )
     eff = resolve_effective_profile("trusted-local", ctx)
     blob = repr(eff)
     # Only enum-like labels / booleans / reason codes — assert known vocab.
@@ -125,6 +151,8 @@ def test_T4_profile_fields_are_labels_only():
     assert eff.effective_write in _WRITE_RANK
     assert isinstance(eff.downgraded_by_depth, bool)
     assert isinstance(eff.staging_excluded, bool)
+    assert "secret-agent-id-123" not in blob
+    assert "codex" not in blob
 
 
 # --- T6: malformed inputs fail closed (most restrictive), never to owner ---

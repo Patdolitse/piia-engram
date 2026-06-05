@@ -1573,7 +1573,7 @@ def test_doctor_reports_unrepairable_encoding_suspect(tmp_path: Path, monkeypatc
     kdir = tmp_path / "knowledge"
     kdir.mkdir(parents=True)
     (kdir / "lessons.json").write_text(
-        json.dumps([{"id": "l1", "summary": "\u5bee\u20ac\u9359?"}], ensure_ascii=False),
+        json.dumps([{"id": "l1", "summary": "\u5bee\u20ac\u9359\ufffd"}], ensure_ascii=False),
         encoding="utf-8",
     )
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
@@ -3085,6 +3085,85 @@ class TestDoctorFix:
 
 
 class TestDoctorLaunchProbeIntegration:
+    def test_classifies_supported_mcp_entry_shapes(self):
+        from piia_engram.setup_wizard import _classify_engram_entry
+
+        cases = [
+            (
+                {"command": "uvx", "args": ["--from", "piia-engram", "piia-engram-mcp"]},
+                "recommended-uvx",
+                "ok",
+                ["uvx", "--from", "piia-engram", "piia-engram-mcp", "--help"],
+            ),
+            (
+                {"command": "piia-engram-mcp", "args": []},
+                "recommended-console-script",
+                "ok",
+                ["piia-engram-mcp", "--help"],
+            ),
+            (
+                {"command": "python", "args": ["-m", "piia_engram.mcp_server"]},
+                "compatible-python-module",
+                "ok",
+                ["python", "-m", "piia_engram.mcp_server", "--help"],
+            ),
+            (
+                {"command": "python", "args": ["/tmp/mcp_server.py"]},
+                "legacy-script-path",
+                "warn",
+                None,
+            ),
+            (
+                {"command": "node", "args": ["server.js"]},
+                "unknown",
+                "warn",
+                None,
+            ),
+        ]
+
+        for entry, style, severity, probe in cases:
+            result = _classify_engram_entry(entry)
+            assert result["style"] == style
+            assert result["severity"] == severity
+            assert result["probe_argv"] == probe
+
+    def test_classifies_invalid_mcp_entry_shapes(self):
+        from piia_engram.setup_wizard import _classify_engram_entry
+
+        missing = _classify_engram_entry({"args": []})
+        bad_args = _classify_engram_entry({"command": "python", "args": "-m x"})
+
+        assert missing["style"] == "invalid"
+        assert missing["severity"] == "error"
+        assert bad_args["style"] == "invalid"
+        assert bad_args["severity"] == "error"
+
+    def test_probe_mcp_entry_uses_bounded_help_command(self, monkeypatch):
+        from piia_engram.setup_wizard import _probe_mcp_entry
+
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = "Engram MCP Server"
+            stderr = ""
+
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return Result()
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        issue = _probe_mcp_entry(
+            {"command": "piia-engram-mcp", "args": []},
+            timeout=5,
+        )
+
+        assert issue is None
+        assert calls[0][0] == ["piia-engram-mcp", "--help"]
+        assert calls[0][1]["timeout"] == 5
+        assert calls[0][1]["capture_output"] is True
+
     def test_doctor_reports_probe_failure(self, tmp_path, monkeypatch, capsys):
         from piia_engram.setup_wizard import run_doctor
 

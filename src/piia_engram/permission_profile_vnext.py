@@ -182,10 +182,13 @@ def resolve_effective_profile(
 
     # --- staging exclusion ----------------------------------------------
     is_owner = trust == "private-self"
-    staging_excluded = (not is_owner) or (stage in _STAGING_EXCLUDING_STAGES)
-    if staging_optin and is_owner:
+    stage_excludes_staging = stage in _STAGING_EXCLUDING_STAGES
+    staging_excluded = (not is_owner) or stage_excludes_staging
+    if staging_optin and is_owner and not stage_excludes_staging:
         staging_excluded = False
         reasons.append("staging_optin_owner")
+    elif staging_optin and stage_excludes_staging:
+        reasons.append("staging_optin_ignored_stage")
     elif staging_optin and not is_owner:
         reasons.append("staging_optin_ignored_non_owner")
     if staging_excluded:

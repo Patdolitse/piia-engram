@@ -139,15 +139,15 @@ def test_stale_tool_count_fails(guard, tmp_path):
     m = _base_manifest()
     m["checks"] = {
         "required_substrings": [
-            {"file": "README.md", "must_contain": ["**64 Advanced**"]}
+            {"file": "README.md", "must_contain": ["**65 Advanced**"]}
         ]
     }
     path = _write_manifest(tmp_path, m)
-    # Stale tool count: 60 instead of 64.
+    # Stale tool count: 60 instead of 65.
     _write(tmp_path, "README.md", "MCP tools: **16 Core** + **60 Advanced**\n")
     ok, report = guard.run(path, tmp_path)
     assert ok is False
-    assert any("64 Advanced" in p for p in report["problems"])
+    assert any("65 Advanced" in p for p in report["problems"])
 
 
 def test_stale_version_fails(guard, tmp_path):

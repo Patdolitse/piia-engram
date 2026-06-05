@@ -198,8 +198,10 @@ def _looks_repairable(text: str) -> bool:
     if _has_strong_marker(text):
         return True
     suspicious = sum(1 for ch in text if ch in _SUSPICIOUS_CHARS)
-    has_loss_marker = "?" in text or "\ufffd" in text
-    return has_loss_marker and suspicious >= 2
+    # A plain ASCII question mark is common in natural text, URLs, and issue
+    # titles. Treat only Unicode replacement characters as lossy evidence here;
+    # otherwise normal Chinese such as "辩"/"板" can become false positives.
+    return "\ufffd" in text and suspicious >= 2
 
 
 def _candidate_repairs(text: str) -> list[tuple[str, str]]:
