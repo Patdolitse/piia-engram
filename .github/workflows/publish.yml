@@ -61,6 +61,9 @@ jobs:
       - name: Generated export redaction gate
         run: python scripts/check_generated_export_redaction.py
 
+      - name: Memory eval suite gate
+        run: python scripts/run_memory_evals.py --json
+
       - name: Release gate (no publish without review evidence)
         run: python scripts/check_release_gate.py
 

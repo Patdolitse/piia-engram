@@ -85,6 +85,10 @@ class TestChecklist:
         assert "check_generated_export_redaction.py" in steps["generated_export_redaction"]["command"]
         assert steps["generated_export_redaction"]["auth_required"] is False
 
+        assert steps["memory_eval_suite"]["phase"] == mod.LOCAL
+        assert "run_memory_evals.py --json" in steps["memory_eval_suite"]["command"]
+        assert steps["memory_eval_suite"]["auth_required"] is False
+
     def test_remote_steps_are_described_not_executed(self, mod):
         # No step command should be auto-run; the orchestrator only renders text.
         remote = [s for s in mod.build_checklist() if s["phase"] == mod.REMOTE]

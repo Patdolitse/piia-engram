@@ -109,6 +109,8 @@ def build_checklist() -> list[dict]:
               "docs/samples/export-redaction-clean-sample.md"),
         _step("generated_export_redaction", LOCAL, "Generated export redaction guard",
               "python scripts/check_generated_export_redaction.py"),
+        _step("memory_eval_suite", LOCAL, "Memory eval suite guard",
+              "python scripts/run_memory_evals.py --json"),
         _step("sanitize", LOCAL, "Secret + strategy disclosure scan",
               "python scripts/release_sanitize_check.py --internal --strict"),
         _step("allowlist", LOCAL, "Default-deny publish allowlist",

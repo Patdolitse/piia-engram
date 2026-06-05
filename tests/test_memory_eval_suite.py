@@ -46,6 +46,34 @@ def test_memory_eval_suite_summary_is_metadata_only() -> None:
         assert secret not in blob
 
 
+def test_memory_eval_suite_goes_red_on_failed_admission_expectation(tmp_path: Path) -> None:
+    bad_fixture = tmp_path / "bad_admission.json"
+    bad_fixture.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "guard": "bad_admission_fixture",
+                "public_safe": True,
+                "existing": [],
+                "candidates": [
+                    {
+                        "id": "C-too-short",
+                        "summary": "tiny",
+                        "domain": "test",
+                        "_expected_action": "accept",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = run_suite(recall_fixtures=[], admission_fixtures=[bad_fixture])
+
+    assert summary["overall_passed"] is False
+    assert summary["admission"][0]["failed_expectation_count"] == 1
+
+
 def test_memory_eval_suite_markdown_is_citable() -> None:
     report = render_markdown(run_suite())
 
