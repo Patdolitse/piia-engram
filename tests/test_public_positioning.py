@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import ast
 from pathlib import Path
 
 try:
@@ -20,6 +21,22 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def _mcp_tool_names() -> set[str]:
+    tree = ast.parse(_read("src/piia_engram/mcp_server.py"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        for dec in node.decorator_list:
+            if (
+                isinstance(dec, ast.Call)
+                and isinstance(dec.func, ast.Attribute)
+                and dec.func.attr == "tool"
+            ):
+                names.add(node.name)
+    return names
 
 
 def test_mcp_registry_description_stays_within_limit():
@@ -65,6 +82,9 @@ def test_public_positioning_docs_do_not_reintroduce_overclaims():
         "docs/cross-tool-continuity-demo.md",
         "docs/trust.md",
         "docs/comparison.md",
+        "docs/trust-evidence.md",
+        "docs/quickstart-first-value.md",
+        "docs/tool-surface-analysis.md",
     ]
     text = "\n".join(_read(path) for path in files)
 
@@ -90,11 +110,95 @@ def test_new_public_docs_are_publish_allowlisted():
 
     for path in [
         "docs/trust.md",
+        "docs/trust-evidence.md",
+        "docs/quickstart-first-value.md",
+        "docs/tool-surface-analysis.md",
         "docs/listing-copy.md",
         "docs/cross-tool-continuity-demo.md",
         "docs/runbooks/agent-client-validation.md",
     ]:
         assert path in allowlist
+
+
+def test_public_evidence_doc_is_outsider_legible_and_bounded():
+    doc = _read("docs/trust-evidence.md")
+
+    for phrase in [
+        "How to read this page",
+        "Claim",
+        "Evidence",
+        "Check it yourself",
+        "What this evidence does not prove",
+        "not a security audit",
+        "not a live-agent benchmark",
+        "python scripts/check_public_trust_claims.py",
+        "python scripts/run_memory_evals.py",
+    ]:
+        assert phrase in doc
+
+    for forbidden in [
+        "state-of-the-art",
+        "beats Mem0",
+        "outperforms Letta",
+        "proves live model compliance",
+    ]:
+        assert forbidden not in doc
+
+
+def test_quickstart_first_value_stays_core_and_honest():
+    doc = _read("docs/quickstart-first-value.md")
+
+    for phrase in [
+        "Goal",
+        "17 core tools",
+        "ENGRAM_TOOLS=core",
+        "ENGRAM_TOOLS=all",
+        "staging",
+        "verified only after you approve",
+        "get_user_context",
+        "search_knowledge",
+        "add_lesson",
+        "doctor",
+    ]:
+        assert phrase in doc
+
+    for forbidden in [
+        "every MCP client",
+        "works with every AI tool",
+        "verified immediately",
+        "under 30 seconds",
+    ]:
+        assert forbidden not in doc
+
+
+def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims():
+    doc = _read("docs/tool-surface-analysis.md")
+    tools = _mcp_tool_names()
+
+    assert len(tools) == 83
+    assert "17 core tools" in doc
+    assert "66 advanced tools" in doc
+    assert "does not propose merging, renaming, hiding, or removing any tool" in doc
+    assert "analysis only" in doc.lower()
+    for name in sorted(tools):
+        assert f"`{name}`" in doc, name
+
+
+def test_comparison_disambiguates_same_name_engram_without_overclaim():
+    doc = _read("docs/comparison.md")
+
+    assert "Gentleman-Programming/engram" in doc
+    assert "unrelated" in doc
+    assert "single Go binary" in doc
+    assert "user-owned identity layer" in doc
+    assert "better than Gentleman" not in doc
+
+
+def test_architecture_does_not_carry_stale_mcp_wrapper_count():
+    doc = _read("docs/architecture.md")
+
+    assert "81 `@mcp.tool()`" not in doc
+    assert "83 `@mcp.tool()`" in doc
 
 
 def test_agent_client_validation_runbook_is_purpose_first():

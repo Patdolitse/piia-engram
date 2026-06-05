@@ -79,8 +79,10 @@ docs/cursor-plugin-validation.md
 docs/governance.md
 docs/hybrid-search.md
 docs/listing-copy.md
+docs/quickstart-first-value.md
 docs/public-facts.json
 docs/samples/export-redaction-clean-sample.md
+docs/tool-surface-analysis.md
 docs/integrations/client-continuity-evidence.md
 docs/integrations/hermes.md
 docs/runbooks/data-sovereignty-audit.md
@@ -114,6 +116,7 @@ docs/superpowers/specs/2026-05-30-gui-entry-doctor-probe-design.md
 docs/superpowers/specs/2026-05-30-v340-first-run-confidence-design.md
 docs/telemetry-privacy.md
 docs/trust.md
+docs/trust-evidence.md
 
 # Agent ecosystem entrypoints (public, reviewed; no private workflow content)
 skills/engram/**

@@ -72,6 +72,8 @@ Tools that store the **user's** identity, preferences, and accumulated knowledge
 
 **This is where piia-engram lives.** Among the projects we've surveyed, piia-engram makes **staging → verified** the central data model across tools — knowledge proposed by the AI lands in a review tier and only becomes permanent after the user approves it. OpenMemory is the closest direct product comparison for a local-first MCP memory layer; piia-engram's narrower angle is the user-owned identity layer: preferences, standards, lessons, decisions, and playbooks that remain portable across tools.
 
+**Naming note:** [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram) is an unrelated project. It is a single Go binary with SQLite + FTS5, MCP/HTTP/CLI/TUI surfaces, and a different product shape. piia-engram is the Python package on PyPI and the user-owned identity layer described here; the two projects are not affiliated.
+
 ---
 
 ## vs. native coding-tool memory

@@ -128,6 +128,8 @@ pip install piia-engram
 engram setup
 ```
 
+第一次使用？可以先看更完整的 [first-value quickstart](docs/quickstart-first-value.md)，按默认 17 个核心工具完成 install -> first memory -> fresh-session recall 这条最短路径。
+
 默认安装只会选择 Engram 独立数据目录并只读检测外部 AI 工具配置；如需让 Engram 自动写入 Claude/Codex/Cursor/Zed 等客户端 MCP 配置，请显式运行 `engram setup --apply-external-config`，写入前会在所选 Engram 数据目录下创建备份。
 
 安装向导会自动完成：
@@ -177,7 +179,7 @@ piia-engram 把可信声明当作发布证据，而不是营销文案：
 
 | 声明 | 公开证据 | 证明什么 | 边界 |
 |---|---|---|---|
-| 记忆检索质量可衡量 | [`docs/benchmarks/memory-eval-suite-v1.md`](docs/benchmarks/memory-eval-suite-v1.md), `python scripts/run_memory_evals.py` | Recall/admission fixtures 通过确定性、按知识 ID 打分的检查，不依赖 LLM judge | 合成回归底线，不是广泛 live-agent benchmark |
+| 记忆检索质量可衡量 | [`docs/trust-evidence.md`](docs/trust-evidence.md), [`docs/benchmarks/memory-eval-suite-v1.md`](docs/benchmarks/memory-eval-suite-v1.md), `python scripts/run_memory_evals.py` | Recall/admission fixtures 通过确定性、按知识 ID 打分的检查，不依赖 LLM judge | 合成回归底线，不是广泛 live-agent benchmark |
 | 公开数字不会静默漂移 | `python scripts/check_public_fact_sync.py` 和 `python scripts/check_public_claim_drift.py` | README / registry / architecture 的公开事实与 `docs/public-facts.json` 一致 | CHANGELOG 和 `release-evidence/` 保留历史版本事实 |
 | 安全与隐私措辞保持一致 | `python scripts/check_public_trust_claims.py` | 网络、telemetry、endpoint、默认明文、可选加密等声明在公开文档中一致 | 文案一致性闸，不等同第三方安全审计 |
 | 发布不能跳过证据 | [`release-evidence/README.md`](release-evidence/README.md), `python scripts/check_release_gate.py` | 每个版本记录测试、脱敏、allowlist、构建、产物扫描、eval 和复核标记 | evidence 文件是事实摘要，不放内部评审日志 |
@@ -458,7 +460,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
 | MCP 工具 | **17 个核心**（默认加载）+ **66 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **2876** 个（单元 + 集成；2 个 skipped，共收集 2878）|
+| 测试通过 | **2881** 个（单元 + 集成；2 个 skipped，共收集 2883）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **3336** 行（facade + mixins 合计约 8159 行；v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -746,7 +748,7 @@ engram setup
 | 层级 | 工具数 | 功能 | 加载方式 |
 |------|--------|------|----------|
 | **核心** | 17 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
-| **高级** | 64 | 知识审查、合并、健康评分、工具图谱、导入导出、审计 | `ENGRAM_TOOLS=all` |
+| **高级** | 66 | 知识审查、合并、健康评分、工具图谱、导入导出、审计 | `ENGRAM_TOOLS=all` |
 
 大多数用户无需开启高级工具 —— 核心工具覆盖日常使用。
 

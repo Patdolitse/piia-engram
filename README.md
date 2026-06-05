@@ -156,6 +156,8 @@ pip install piia-engram
 engram setup
 ```
 
+New to piia-engram? See the fuller [first-value quickstart](docs/quickstart-first-value.md) for the install -> first memory -> fresh-session recall path using only the default 17 core tools.
+
 The setup wizard will:
 1. Detect your Python environment
 2. Let you choose the Engram data folder (`~/.engram`, another drive, or a custom path)
@@ -215,7 +217,7 @@ piia-engram treats trust claims as release artifacts, not marketing copy:
 
 | Claim | Public evidence | What it proves | Boundary |
 |---|---|---|---|
-| Memory retrieval stays measurable | [`docs/benchmarks/memory-eval-suite-v1.md`](docs/benchmarks/memory-eval-suite-v1.md), `python scripts/run_memory_evals.py` | Recall/admission fixtures pass deterministic, knowledge-ID-scored checks with no LLM judge | Synthetic regression floor, not a broad live-agent benchmark |
+| Memory retrieval stays measurable | [`docs/trust-evidence.md`](docs/trust-evidence.md), [`docs/benchmarks/memory-eval-suite-v1.md`](docs/benchmarks/memory-eval-suite-v1.md), `python scripts/run_memory_evals.py` | Recall/admission fixtures pass deterministic, knowledge-ID-scored checks with no LLM judge | Synthetic regression floor, not a broad live-agent benchmark |
 | Public numbers do not drift silently | `python scripts/check_public_fact_sync.py` and `python scripts/check_public_claim_drift.py` | README / registry / architecture facts match `docs/public-facts.json` | Historical CHANGELOG and `release-evidence/` keep old release facts |
 | Security and privacy wording stays consistent | `python scripts/check_public_trust_claims.py` | Network, telemetry, endpoint, plaintext, and optional-encryption statements stay aligned across public docs | Prose consistency guard, not a third-party security audit |
 | Releases cannot skip evidence | [`release-evidence/README.md`](release-evidence/README.md), `python scripts/check_release_gate.py` | Each release records tests, sanitize, allowlist, package, artifact scan, eval, and review markers | Evidence files are factual summaries, not private review logs |
@@ -726,7 +728,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **17 Core** (loaded by default) + **66 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **2876** (unit + integration; 2 skipped, 2878 collected) |
+| Tests passing | **2881** (unit + integration; 2 skipped, 2883 collected) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **3336** (facade + mixins total ~8159; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -789,7 +791,7 @@ Two tiers, designed so most users only see 17 tools:
 | Tier | Tools | What they do | Loaded by |
 |------|-------|-------------|-----------|
 | **Core** | 17 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
-| **Advanced** | 64 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
+| **Advanced** | 66 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
 
 Most users never need to enable Advanced tools — Core covers everyday use.
 
