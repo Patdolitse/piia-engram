@@ -8,6 +8,31 @@
 
 ## [Unreleased]
 
+## [3.51.1] - 2026-06-05
+
+### 新增
+- **公开信任证据页**：新增 `docs/trust-evidence.md`，把隐私 / 信任声明映射到
+  确定性本地检查，并明确说明这些证据不能证明什么，方便外部技术读者审阅。
+- **首价值 quickstart**：新增 `docs/quickstart-first-value.md`，用默认核心工具完成
+  从安装、首次批准记忆，到新会话召回的最短路径。
+- **MCP 工具面分析**：新增 `docs/tool-surface-analysis.md`，作为 analysis-only
+  文档梳理 83 个 MCP 工具、17 core / 66 advanced 分层、功能簇和治理类别。
+
+### 修复
+- **公开信任声明漂移 guard**：新增 `scripts/check_public_trust_claims.py`、测试和
+  CI / publish 接线，确保 README、SECURITY、PRIVACY、telemetry 文档中的网络、
+  遥测、明文、可选加密和 endpoint 口径保持一致。
+- **CI-like pytest 入口 guard**：新增本地检查，提前捕捉 `PYTHONPATH=src` 下测试
+  导入 `scripts.*` 导致 GitHub Actions 失败的问题。
+- **公开工具数漂移**：修正残留的 64 / 81 工具数表述，统一为当前 83 total、
+  17 core、66 advanced。
+- **同名项目区分**：澄清 `Gentleman-Programming/engram` 是无关项目，产品形态不同。
+
+### 变更
+- **公开事实刷新**：当前本地事实更新为 2881 passed、2 skipped、2883 collected。
+- **发布流程可见性**：release orchestrator 拆分为 `prep` 和 `publish-fast` 模式，
+  让本地证据检查与真正发布的热路径分开。
+
 ## [3.51.0] - 2026-06-05
 
 ### 新增

@@ -8,6 +8,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.51.1] - 2026-06-05
+
+### Added
+- **Public trust evidence page** - added `docs/trust-evidence.md` as an
+  outsider-readable map from trust/privacy claims to deterministic local
+  checks, including explicit boundaries for what the evidence does not prove.
+- **First-value quickstart** - added `docs/quickstart-first-value.md`, a short
+  path from install to first approved memory to fresh-session recall using the
+  default core tool surface.
+- **MCP tool-surface analysis** - added `docs/tool-surface-analysis.md`, an
+  analysis-only map of all 83 MCP tools, the 17 core / 66 advanced split,
+  functional clusters, and governance classes.
+
+### Fixed
+- **Public trust-claim drift guard** - added
+  `scripts/check_public_trust_claims.py`, tests, and CI/publish wiring so
+  network, telemetry, plaintext, optional-encryption, and endpoint claims stay
+  aligned across README, SECURITY, PRIVACY, and telemetry docs.
+- **CI-like pytest entrypoint guard** - added a local guard that catches tests
+  importing `scripts.*` under `PYTHONPATH=src` before GitHub Actions fails.
+- **Public tool-count drift** - corrected stale 64/81 tool-count wording to
+  the current 83 total, 17 core, and 66 advanced tools.
+- **Same-name project disambiguation** - clarified that
+  `Gentleman-Programming/engram` is an unrelated project with a different
+  product shape.
+
+### Changed
+- **Public facts refreshed** - current local facts now report 2881 passed,
+  2 skipped, and 2883 collected tests.
+- **Release flow visibility** - split the release orchestrator into `prep` and
+  `publish-fast` modes so local evidence checks stay separate from the hot
+  publish path.
+
 ## [3.51.0] - 2026-06-05
 
 ### Added
