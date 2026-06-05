@@ -19,6 +19,7 @@ from .storage import MAX_KNOWLEDGE_ENTRIES, _now_iso
 logger = logging.getLogger(__name__)
 
 OPENCLAW_MEMORY_MAX_BYTES = 32 * 1024
+OPENCLAW_BRIDGE_LEVEL = "L3_STATIC_FILE_BRIDGE"
 OPENCLAW_SUMMARY_MAX_CHARS = 240
 OPENCLAW_REASONING_MAX_CHARS = 160
 HERMES_HANDOFF_MAX_TEXT_CHARS = 160
@@ -323,7 +324,11 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     memory_path.write_text("\n".join(memory_lines), encoding="utf-8")
     exported.append(str(memory_path))
 
-    return {"status": "success", "files": exported}
+    return {
+        "status": "success",
+        "bridge_level": OPENCLAW_BRIDGE_LEVEL,
+        "files": exported,
+    }
 
 
 def import_from_openclaw(
@@ -444,5 +449,6 @@ def import_from_openclaw(
 
     return {
         "status": "success" if imported else "no_new_data",
+        "bridge_level": OPENCLAW_BRIDGE_LEVEL,
         "imported": imported,
     }

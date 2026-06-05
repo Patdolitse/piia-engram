@@ -38,8 +38,10 @@ from .governance import (
     LedgerCorruptionError,
     default_ledger_path,
     gate,
+    _sens_rank,
 )
 from .governance_store import GrantStore
+from .permission_profile_vnext import CallerContext, resolve_effective_profile
 from .sensitivity import VALID_LEVELS, annotate_items
 from .storage import DataCorruptionError
 
@@ -126,6 +128,37 @@ def current_client_type() -> str:
     return os.environ.get("ENGRAM_CLIENT_TYPE", "").strip()
 
 
+def _env_bool(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+def _env_depth() -> object:
+    raw = os.environ.get("ENGRAM_CALLER_DEPTH", "").strip()
+    if raw == "":
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        return raw
+
+
+def _current_vnext_profile(agent_id: str, client_type: str, trust: str):
+    ctx = CallerContext(
+        agent_id=agent_id,
+        client_type=client_type,
+        caller_role=os.environ.get("ENGRAM_CALLER_ROLE", "").strip(),
+        workflow_stage=os.environ.get("ENGRAM_WORKFLOW_STAGE", "").strip(),
+        caller_depth=_env_depth(),
+    )
+    eff = resolve_effective_profile(
+        trust,
+        ctx,
+        restore_depth=_env_bool("ENGRAM_RESTORE_DEPTH"),
+        staging_optin=_env_bool("ENGRAM_STAGING_OPTIN"),
+    )
+    return ctx, eff
+
+
 def resolve_caller(root, *, agent_id: str = "", client_type: str | None = None):
     """Resolve ``(agent_id, trust_level, revoked, grant_error)`` for the caller.
 
@@ -153,7 +186,15 @@ def resolve_caller(root, *, agent_id: str = "", client_type: str | None = None):
         return aid, DEFAULT_TRUST_LEVEL, False, str(exc)
 
 
-def _filter_keep_originals(items, trust_level, *, revoked, restricted_fields):
+def _filter_keep_originals(
+    items,
+    trust_level,
+    *,
+    revoked,
+    restricted_fields,
+    effective_ceiling: str | None = None,
+    exclude_staging: bool = False,
+):
     """Annotate + gate, but return the ORIGINAL objects (filtered).
 
     The gate decision is delegated wholesale to ``governance.gate`` (the single
@@ -192,6 +233,26 @@ def _filter_keep_originals(items, trust_level, *, revoked, restricted_fields):
             ann["sensitivity"] = "secret"
     allowed_copies, receipt = gate(annotated, trust_level, revoked=revoked)
     allowed_ids = {id(c) for c in allowed_copies}
+    if effective_ceiling is not None:
+        ceiling = _sens_rank(effective_ceiling)
+        narrowed_ids = set()
+        narrowed_out = 0
+        for orig, ann in zip(items, annotated):
+            if id(ann) not in allowed_ids:
+                continue
+            if exclude_staging and isinstance(orig, dict) and orig.get("tier") == "staging":
+                narrowed_out += 1
+                continue
+            if _sens_rank(ann.get("sensitivity")) > ceiling:
+                narrowed_out += 1
+                continue
+            narrowed_ids.add(id(ann))
+        allowed_ids = narrowed_ids
+        if narrowed_out:
+            receipt = dict(receipt)
+            receipt["excluded_by_sensitivity"] = (
+                int(receipt.get("excluded_by_sensitivity", 0)) + narrowed_out
+            )
     allowed = [orig for orig, ann in zip(items, annotated) if id(ann) in allowed_ids]
     return allowed, receipt
 
@@ -224,6 +285,7 @@ def _finalize_receipt(
     excluded_sens: int,
     excluded_malformed: int,
     grant_error: str = "",
+    effective_profile=None,
 ) -> dict:
     """Build the one-per-call disclosure receipt and best-effort log it.
 
@@ -232,6 +294,10 @@ def _finalize_receipt(
     receipt and exactly one audit record.
     """
     level = TRUST_LEVELS.get(trust, TRUST_LEVELS[DEFAULT_TRUST_LEVEL])
+    max_sensitivity = (
+        effective_profile.effective_ceiling if effective_profile is not None
+        else level["max_sensitivity"]
+    )
     receipt = {
         "receipt_id": "ctx_" + uuid.uuid4().hex[:12],
         "ts": datetime.now().replace(microsecond=0).isoformat(),
@@ -240,7 +306,8 @@ def _finalize_receipt(
         "client_type": ct,
         "trust_level": trust if trust in TRUST_LEVELS else DEFAULT_TRUST_LEVEL,
         "declared_task": declared_task[:200],
-        "max_sensitivity": level["max_sensitivity"],
+        "max_sensitivity": max_sensitivity,
+        "trust_max_sensitivity": level["max_sensitivity"],
         "returned_count": sum(returned_by_type.values()),
         "returned_by_type": returned_by_type,
         "excluded_by_sensitivity": excluded_sens,
@@ -249,6 +316,13 @@ def _finalize_receipt(
     }
     if grant_error:
         receipt["grant_error"] = grant_error
+    if effective_profile is not None:
+        receipt["permission_profile_vnext"] = {
+            "effective_write": effective_profile.effective_write,
+            "staging_excluded": effective_profile.staging_excluded,
+            "downgraded_by_depth": effective_profile.downgraded_by_depth,
+            "reasons": list(effective_profile.reasons),
+        }
     logged, err = _log_disclosure(root, receipt)
     receipt["audit_logged"] = logged
     if err:
@@ -277,6 +351,8 @@ def govern_buckets(
     aid, trust, revoked, grant_error = resolve_caller(
         root, agent_id=agent_id, client_type=client_type
     )
+    ct = current_client_type() if client_type is None else (client_type or "")
+    _ctx, eff = _current_vnext_profile(aid, ct, trust)
     restricted = tuple(restricted_fields)
     out: dict = {}
     returned_by_type: dict[str, int] = {}
@@ -285,7 +361,9 @@ def govern_buckets(
     for name, items in buckets.items():
         if isinstance(items, list):
             allowed, rc = _filter_keep_originals(
-                items, trust, revoked=revoked, restricted_fields=restricted
+                items, trust, revoked=revoked, restricted_fields=restricted,
+                effective_ceiling=eff.effective_ceiling,
+                exclude_staging=eff.staging_excluded,
             )
             out[name] = allowed
             returned_by_type[name] = len(allowed)
@@ -293,11 +371,11 @@ def govern_buckets(
             excluded_malformed += rc["excluded_malformed"]
         else:
             out[name] = items
-    ct = current_client_type() if client_type is None else (client_type or "")
     receipt = _finalize_receipt(
         root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
         revoked=revoked, returned_by_type=returned_by_type, excluded_sens=excluded_sens,
         excluded_malformed=excluded_malformed, grant_error=grant_error,
+        effective_profile=eff,
     )
     return out, receipt
 
@@ -340,6 +418,8 @@ def govern_result(
     aid, trust, revoked, grant_error = resolve_caller(
         root, agent_id=agent_id, client_type=client_type
     )
+    ct = current_client_type() if client_type is None else (client_type or "")
+    _ctx, eff = _current_vnext_profile(aid, ct, trust)
     restricted = tuple(restricted_fields)
     returned_by_type: dict[str, int] = {}
     excluded_sens = 0
@@ -350,7 +430,9 @@ def govern_result(
             items = payload.get(field)
             if isinstance(items, list):
                 allowed, rc = _filter_keep_originals(
-                    items, trust, revoked=revoked, restricted_fields=restricted
+                    items, trust, revoked=revoked, restricted_fields=restricted,
+                    effective_ceiling=eff.effective_ceiling,
+                    exclude_staging=eff.staging_excluded,
                 )
                 out[field] = allowed
                 returned_by_type[field] = len(allowed)
@@ -360,7 +442,9 @@ def govern_result(
             item = payload.get(field)
             if isinstance(item, dict):
                 allowed, rc = _filter_keep_originals(
-                    [item], trust, revoked=revoked, restricted_fields=restricted
+                    [item], trust, revoked=revoked, restricted_fields=restricted,
+                    effective_ceiling=eff.effective_ceiling,
+                    exclude_staging=eff.staging_excluded,
                 )
                 if allowed:
                     out[field] = allowed[0]
@@ -370,11 +454,11 @@ def govern_result(
                     returned_by_type[field] = 0
                 excluded_sens += rc["excluded_by_sensitivity"]
                 excluded_malformed += rc["excluded_malformed"]
-    ct = current_client_type() if client_type is None else (client_type or "")
     receipt = _finalize_receipt(
         root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
         revoked=revoked, returned_by_type=returned_by_type, excluded_sens=excluded_sens,
         excluded_malformed=excluded_malformed, grant_error=grant_error,
+        effective_profile=eff,
     )
     return out, receipt
 
@@ -408,19 +492,24 @@ def govern_owner_only(
     aid, trust, revoked, grant_error = resolve_caller(
         root, agent_id=agent_id, client_type=client_type
     )
-    allowed_full = (not revoked) and trust == _PRIVATE_SELF
+    ct = current_client_type() if client_type is None else (client_type or "")
+    _ctx, eff = _current_vnext_profile(aid, ct, trust)
+    allowed_full = (
+        (not revoked)
+        and trust == _PRIVATE_SELF
+        and eff.effective_ceiling == "secret"
+    )
     if allowed_full:
         out = payload
     elif isinstance(payload, str):
         out = _DUMP_REFUSAL
     else:
         out = _withheld_stub(tool, trust)
-    ct = current_client_type() if client_type is None else (client_type or "")
     receipt = _finalize_receipt(
         root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
         revoked=revoked, returned_by_type={"_owner_only": 1 if allowed_full else 0},
         excluded_sens=0 if allowed_full else 1, excluded_malformed=0,
-        grant_error=grant_error,
+        grant_error=grant_error, effective_profile=eff,
     )
     return out, receipt
 
@@ -452,7 +541,13 @@ def govern_write_ack(
     aid, trust, revoked, grant_error = resolve_caller(
         root, agent_id=agent_id, client_type=client_type
     )
-    owner = (not revoked) and trust == _PRIVATE_SELF
+    ct = current_client_type() if client_type is None else (client_type or "")
+    _ctx, eff = _current_vnext_profile(aid, ct, trust)
+    owner = (
+        (not revoked)
+        and trust == _PRIVATE_SELF
+        and eff.effective_ceiling == "secret"
+    )
     withheld = 0
     if owner:
         out = payload
@@ -472,11 +567,11 @@ def govern_write_ack(
         withheld = 1
     else:
         out = payload
-    ct = current_client_type() if client_type is None else (client_type or "")
     receipt = _finalize_receipt(
         root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
         revoked=revoked, returned_by_type={"_write_ack": 0 if withheld else 1},
         excluded_sens=withheld, excluded_malformed=0, grant_error=grant_error,
+        effective_profile=eff,
     )
     return out, receipt
 
@@ -603,15 +698,26 @@ def describe_caller_permissions(
         root, agent_id=agent_id, client_type=client_type
     )
     level_info = TRUST_LEVELS.get(trust, TRUST_LEVELS[DEFAULT_TRUST_LEVEL])
+    ct = current_client_type() if client_type is None else (client_type or "")
+    ctx, eff = _current_vnext_profile(aid, ct, trust)
     result: dict = {
         "governance_enabled": True,
         "agent_id": aid,
         "trust_level": trust,
-        "max_sensitivity": level_info["max_sensitivity"],
-        "write_policy": level_info["write"],
+        "trust_max_sensitivity": level_info["max_sensitivity"],
+        "max_sensitivity": eff.effective_ceiling,
+        "write_policy": eff.effective_write,
         "revoked": revoked,
+        "permission_profile_vnext": {
+            "caller_role": ctx.caller_role,
+            "workflow_stage": ctx.workflow_stage or "implement",
+            "caller_depth": ctx.caller_depth,
+            "staging_excluded": eff.staging_excluded,
+            "downgraded_by_depth": eff.downgraded_by_depth,
+            "reasons": list(eff.reasons),
+        },
         "note": (
-            f"Items above '{level_info['max_sensitivity']}' sensitivity "
+            f"Items above '{eff.effective_ceiling}' sensitivity "
             "are filtered from responses."
         ),
     }
@@ -655,13 +761,12 @@ def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
     """
     if not governance_enabled():
         return None
+    ct = current_client_type() if client_type is None else (client_type or "")
     aid, trust, revoked, grant_error = resolve_caller(
         root, agent_id=agent_id, client_type=client_type
     )
-    level_info = TRUST_LEVELS.get(trust, TRUST_LEVELS[DEFAULT_TRUST_LEVEL])
-    write_policy = level_info["write"]
-
-    ct = current_client_type() if client_type is None else (client_type or "")
+    _ctx, eff = _current_vnext_profile(aid, ct, trust)
+    write_policy = eff.effective_write
 
     if revoked:
         _finalize_receipt(
@@ -669,7 +774,7 @@ def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
             declared_task=declared_task, revoked=True,
             returned_by_type={"_write_refused": 1},
             excluded_sens=1, excluded_malformed=0,
-            grant_error=grant_error,
+            grant_error=grant_error, effective_profile=eff,
         )
         return _WRITE_REFUSAL_NO
 
@@ -684,7 +789,7 @@ def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
         declared_task=declared_task, revoked=False,
         returned_by_type={"_write_refused": 1},
         excluded_sens=1, excluded_malformed=0,
-        grant_error=grant_error,
+        grant_error=grant_error, effective_profile=eff,
     )
     return _WRITE_REFUSAL_NO
 
@@ -705,12 +810,18 @@ def maybe_refuse_export(root, *, tool: str, agent_id: str = "",
     aid, trust, revoked, grant_error = resolve_caller(
         root, agent_id=agent_id, client_type=client_type
     )
-    allowed = (not revoked) and trust == _PRIVATE_SELF
     ct = current_client_type() if client_type is None else (client_type or "")
+    _ctx, eff = _current_vnext_profile(aid, ct, trust)
+    allowed = (
+        (not revoked)
+        and trust == _PRIVATE_SELF
+        and eff.effective_ceiling == "secret"
+    )
     _finalize_receipt(
         root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
         revoked=revoked, returned_by_type={"_owner_only": 1 if allowed else 0},
         excluded_sens=0 if allowed else 1, excluded_malformed=0, grant_error=grant_error,
+        effective_profile=eff,
     )
     return None if allowed else _EXPORT_REFUSAL
 
@@ -737,11 +848,17 @@ def maybe_refuse_owner_write(root, *, tool: str, agent_id: str = "",
     aid, trust, revoked, grant_error = resolve_caller(
         root, agent_id=agent_id, client_type=client_type
     )
-    allowed = (not revoked) and trust == _PRIVATE_SELF
     ct = current_client_type() if client_type is None else (client_type or "")
+    _ctx, eff = _current_vnext_profile(aid, ct, trust)
+    allowed = (
+        (not revoked)
+        and trust == _PRIVATE_SELF
+        and eff.effective_ceiling == "secret"
+    )
     _finalize_receipt(
         root, tool=tool, aid=aid, ct=ct, trust=trust, declared_task=declared_task,
         revoked=revoked, returned_by_type={"_owner_write_refused": 0 if allowed else 1},
         excluded_sens=0 if allowed else 1, excluded_malformed=0, grant_error=grant_error,
+        effective_profile=eff,
     )
     return None if allowed else _OWNER_WRITE_REFUSAL

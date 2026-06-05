@@ -193,3 +193,38 @@ def test_unrestricted_profile_is_owner_full():
     assert eff.effective_ceiling == "secret"
     assert eff.effective_write == "verified"
     assert eff.staging_excluded is False
+
+
+def test_phase2_govern_list_honors_vnext_depth(monkeypatch, tmp_path):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "cli")
+    monkeypatch.setenv("ENGRAM_CALLER_ROLE", "assistant")
+    monkeypatch.setenv("ENGRAM_WORKFLOW_STAGE", "review")
+    monkeypatch.setenv("ENGRAM_CALLER_DEPTH", "1")
+
+    from piia_engram import governance_runtime as grt
+
+    items = [
+        {"id": "public", "summary": "public ok", "sensitivity": "public"},
+        {"id": "work", "summary": "work hidden", "sensitivity": "work"},
+    ]
+
+    filtered = grt.maybe_govern_list(tmp_path, items, tool="test_tool")
+
+    assert [item["id"] for item in filtered] == ["public"]
+
+
+def test_phase2_govern_list_excludes_staging_for_non_owner(monkeypatch, tmp_path):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")
+
+    from piia_engram import governance_runtime as grt
+
+    items = [
+        {"id": "verified", "summary": "safe", "sensitivity": "public", "tier": "verified"},
+        {"id": "staging", "summary": "draft", "sensitivity": "public", "tier": "staging"},
+    ]
+
+    filtered = grt.maybe_govern_list(tmp_path, items, tool="test_tool")
+
+    assert [item["id"] for item in filtered] == ["verified"]

@@ -153,6 +153,13 @@ class TestMCICScenarios:
                 f"{s['id']} should start with {expected}"
             )
 
+    def test_adversarial_false_premise_has_at_least_five_cases(self):
+        adversarial = [
+            s for s in default_mcic_scenarios()
+            if s["category"] == "adversarial_false_premise"
+        ]
+        assert len(adversarial) >= 5
+
 
 # ===================================================================
 # 2. Scenario validation edge cases
@@ -377,8 +384,8 @@ class TestScoreABResult:
     def test_adversarial_correction_rate(self):
         scores = score_ab_result(_make_valid_run())
         ac = scores["adversarial_correction"]
-        assert ac["total"] == 3
-        assert ac["passed"] == 3
+        assert ac["total"] == 5
+        assert ac["passed"] == 5
 
     def test_negative_control_is_validity_not_product_win(self):
         scores = score_ab_result(_make_valid_run())

@@ -102,6 +102,9 @@ def build_checklist() -> list[dict]:
               "python scripts/check_public_fact_sync.py"),
         _step("claim_drift", LOCAL, "Public claim drift sweep",
               "python scripts/check_public_claim_drift.py"),
+        _step("export_redaction", LOCAL, "Export redaction sample guard",
+              "python scripts/check_export_redaction.py --strict "
+              "docs/samples/export-redaction-clean-sample.md"),
         _step("sanitize", LOCAL, "Secret + strategy disclosure scan",
               "python scripts/release_sanitize_check.py --internal --strict"),
         _step("allowlist", LOCAL, "Default-deny publish allowlist",

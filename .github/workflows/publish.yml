@@ -46,6 +46,12 @@ jobs:
       - name: Public fact sync gate
         run: python scripts/check_public_fact_sync.py
 
+      - name: Public claim drift gate
+        run: python scripts/check_public_claim_drift.py
+
+      - name: Export redaction sample gate
+        run: python scripts/check_export_redaction.py --strict docs/samples/export-redaction-clean-sample.md
+
       - name: Release gate (no publish without review evidence)
         run: python scripts/check_release_gate.py
 

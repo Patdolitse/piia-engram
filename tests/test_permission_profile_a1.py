@@ -81,6 +81,27 @@ class TestDescribeCallerPermissions:
         assert result["max_sensitivity"] == "work"
         assert result["write_policy"] == "proposed_only"
 
+    def test_vnext_context_narrows_described_profile(self, tmp_path, monkeypatch):
+        """Phase 2: role/stage/depth must narrow the live described profile."""
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "cli")
+        monkeypatch.setenv("ENGRAM_CALLER_ROLE", "assistant")
+        monkeypatch.setenv("ENGRAM_WORKFLOW_STAGE", "review")
+        monkeypatch.setenv("ENGRAM_CALLER_DEPTH", "1")
+
+        from piia_engram import governance_runtime as grt
+
+        result = grt.describe_caller_permissions(tmp_path)
+
+        assert result["trust_level"] == "private-self"
+        assert result["trust_max_sensitivity"] == "secret"
+        assert result["max_sensitivity"] == "public"
+        assert result["write_policy"] == "proposed_only"
+        assert result["permission_profile_vnext"]["caller_role"] == "assistant"
+        assert result["permission_profile_vnext"]["workflow_stage"] == "review"
+        assert result["permission_profile_vnext"]["caller_depth"] == 1
+        assert "downgraded_by_depth" in result["permission_profile_vnext"]["reasons"]
+
     def test_governance_on_unknown_agent(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
         monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "random_web_bot")

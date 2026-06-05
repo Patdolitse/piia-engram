@@ -67,6 +67,17 @@ class TestChecklist:
         assert step["preflight_covered"] is True
         assert step["stall_risk"] and "device-flow" in step["stall_risk"].lower()
 
+    def test_export_redaction_and_claim_drift_are_local_gates(self, mod):
+        steps = {s["id"]: s for s in mod.build_checklist()}
+
+        assert steps["claim_drift"]["phase"] == mod.LOCAL
+        assert "check_public_claim_drift.py" in steps["claim_drift"]["command"]
+
+        assert steps["export_redaction"]["phase"] == mod.LOCAL
+        assert "check_export_redaction.py" in steps["export_redaction"]["command"]
+        assert "--strict" in steps["export_redaction"]["command"]
+        assert steps["export_redaction"]["auth_required"] is False
+
     def test_remote_steps_are_described_not_executed(self, mod):
         # No step command should be auto-run; the orchestrator only renders text.
         remote = [s for s in mod.build_checklist() if s["phase"] == mod.REMOTE]

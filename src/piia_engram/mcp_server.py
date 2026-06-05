@@ -2943,6 +2943,10 @@ async def batch_review_staging(
     actions_json: str,
     confirm: bool = False,
     dry_run: bool = True,
+    operation: str = "review",
+    filters_json: str = "{}",
+    limit: int = 50,
+    offset: int = 0,
 ) -> str:
     """批量审核 staging 知识候选（默认只预览）。 / Batch-review staging knowledge candidates (preview by default).
 
@@ -2954,6 +2958,11 @@ async def batch_review_staging(
         actions_json: JSON array of {"id": "...", "action": "approve|reject"}.
         confirm: Must be true together with dry_run=false to mutate.
         dry_run: Defaults to true. When true, no knowledge is changed.
+        operation: "review" (default) or "list_pending" for metadata-only queue.
+        filters_json: JSON object for list_pending filters, e.g.
+            {"type":"decision","domain":"release"}.
+        limit: Max pending items to list.
+        offset: Pending-list offset.
     """
     refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="batch_review_staging")
     if refusal is not None:
@@ -2964,6 +2973,12 @@ async def batch_review_staging(
         return _json({"error": "actions_json must be a valid JSON array"})
     if not isinstance(actions, list):
         return _json({"error": "actions_json must be a JSON array"})
+    try:
+        filters = json.loads(filters_json or "{}")
+    except json.JSONDecodeError:
+        return _json({"error": "filters_json must be a valid JSON object"})
+    if not isinstance(filters, dict):
+        return _json({"error": "filters_json must be a JSON object"})
     from piia_engram.staging_review import batch_review_staging as _batch_review
 
     result = _locked_engram_call(
@@ -2972,6 +2987,10 @@ async def batch_review_staging(
         actions,
         confirm=confirm,
         dry_run=dry_run,
+        operation=operation,
+        filters=filters,
+        limit=limit,
+        offset=offset,
     )
     return _json(_gov_rt.maybe_govern_write_ack(
         _engram.root, result, tool="batch_review_staging",

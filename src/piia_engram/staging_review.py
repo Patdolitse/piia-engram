@@ -14,6 +14,10 @@ def batch_review_staging(
     *,
     confirm: bool = False,
     dry_run: bool = True,
+    operation: str = "review",
+    filters: dict[str, Any] | None = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """Preview or apply staging approve/reject actions.
 
@@ -21,6 +25,10 @@ def batch_review_staging(
     ``confirm=True``. Returned payload is metadata-only: ids, action labels,
     status codes and counts, never stored bodies.
     """
+    op = str(operation or "review").strip().lower()
+    if op in {"list", "list_pending", "pending"}:
+        return _list_pending(eng, filters=filters, limit=limit, offset=offset)
+
     rows = [a for a in (actions or []) if isinstance(a, dict)]
     counts = {
         "requested": len(rows),
@@ -150,4 +158,95 @@ def _payload(
         "changed": bool(changed),
         "counts": counts,
         "items": items,
+    }
+
+
+def _list_pending(
+    eng,
+    *,
+    filters: dict[str, Any] | None,
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    filters = filters if isinstance(filters, dict) else {}
+    type_filter = str(filters.get("type") or "").strip().lower()
+    domain_filter = str(filters.get("domain") or "").strip().lower()
+    try:
+        safe_limit = max(0, min(int(limit), 200))
+    except (TypeError, ValueError):
+        safe_limit = 50
+    try:
+        safe_offset = max(0, int(offset))
+    except (TypeError, ValueError):
+        safe_offset = 0
+
+    candidates: list[dict[str, Any]] = []
+    for item_type, rows in (
+        ("lesson", eng.get_lessons(limit=None, _update_access=False)),
+        ("decision", eng.get_decisions(limit=None, _update_access=False)),
+    ):
+        for item in rows:
+            if not isinstance(item, dict) or item.get("tier") != "staging":
+                continue
+            candidates.append(_pending_item(item_type, item))
+
+    total_pending = len(candidates)
+    filtered = [
+        item for item in candidates
+        if (not type_filter or item["type"] == type_filter)
+        and (not domain_filter or item["domain"].lower() == domain_filter)
+    ]
+    filtered.sort(key=lambda item: (-item["priority"], item["type"], item["id"]))
+    page = filtered[safe_offset:safe_offset + safe_limit]
+
+    return {
+        "schema": 1,
+        "action": "staging_list_pending",
+        "status": "listed",
+        "dry_run": True,
+        "confirmed": False,
+        "requires_confirmation": False,
+        "changed": False,
+        "filters": {
+            "type": type_filter,
+            "domain": domain_filter,
+            "limit": safe_limit,
+            "offset": safe_offset,
+        },
+        "counts": {
+            "total_pending": total_pending,
+            "matched": len(filtered),
+            "listed": len(page),
+            "filtered_out": total_pending - len(filtered),
+        },
+        "items": page,
+    }
+
+
+def _pending_item(item_type: str, item: dict[str, Any]) -> dict[str, Any]:
+    reasons: list[str] = []
+    priority = 0
+    if item_type == "decision":
+        priority += 10
+        reasons.append("decision")
+    if item.get("promotion_suggested"):
+        priority += 100
+        reasons.append("promotion_suggested")
+    access_count = item.get("access_count", 0)
+    if isinstance(access_count, int) and access_count > 0:
+        priority += min(access_count, 50)
+        reasons.append("access_count")
+    if not reasons:
+        reasons.append("fifo")
+
+    return {
+        "id": str(item.get("id") or ""),
+        "type": item_type,
+        "domain": str(item.get("domain") or ""),
+        "status": "pending",
+        "tier": "staging",
+        "priority": priority,
+        "priority_reasons": reasons,
+        "access_count": access_count if isinstance(access_count, int) else 0,
+        "promotion_suggested": bool(item.get("promotion_suggested")),
     }
