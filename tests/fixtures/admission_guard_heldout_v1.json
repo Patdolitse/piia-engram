@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "guard": "admission_guard_heldout_v1",
+  "description": "Synthetic, public-safe held-out admission guard fixture. Keep separate from admission_guard_v1 so the baseline stays frozen.",
+  "public_safe": true,
+  "existing": [
+    {
+      "id": "L-release-confirm",
+      "summary": "Public release actions should require explicit user confirmation before push, tag, registry sync, or package publishing.",
+      "domain": "release"
+    },
+    {
+      "id": "L-retry-backoff",
+      "summary": "Retry queues should use bounded exponential backoff before manual escalation.",
+      "domain": "reliability"
+    },
+    {
+      "id": "D-telemetry-password",
+      "question": "How should telemetry dashboard access be protected?",
+      "choice": "Require a password for dashboard access and provide a controlled password change flow.",
+      "reasoning": "Telemetry summaries are low-content but still operationally sensitive.",
+      "domain": "telemetry"
+    },
+    {
+      "id": "L-zero-downtime",
+      "summary": "Zero downtime deployments should keep service available during rollout.",
+      "domain": "deployment"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "C-public-auto-near-miss",
+      "summary": "Public release actions should run without user confirmation when automation is available.",
+      "domain": "release",
+      "_expected_action": "review_update"
+    },
+    {
+      "id": "C-retry-duplicate",
+      "summary": "Retry queues should use bounded exponential backoff before manual escalation.",
+      "domain": "reliability",
+      "_expected_action": "duplicate"
+    },
+    {
+      "id": "C-placeholder-zh-en",
+      "summary": "Placeholder debug note for tomorrow approval test",
+      "domain": "debug",
+      "_expected_action": "reject"
+    },
+    {
+      "id": "C-unscoped-durable",
+      "summary": "Held-out evaluation should track false positives separately from missing expected IDs.",
+      "_expected_action": "stage"
+    },
+    {
+      "id": "C-good-threshold-decision",
+      "question": "How should held-out eval thresholds be changed after failures?",
+      "choice": "Keep thresholds fixed and diagnose fixture or implementation gaps before changing them.",
+      "reasoning": "Changing thresholds after seeing failures would overfit the evaluation.",
+      "domain": "evaluation",
+      "_expected_action": "accept"
+    },
+    {
+      "id": "C-good-review-playbook",
+      "title": "Held-out eval review checklist",
+      "triggers": ["eval", "regression"],
+      "steps": ["Run recall eval", "Run admission guard", "Compare metrics before ranking changes"],
+      "domain": "evaluation",
+      "_expected_action": "accept"
+    },
+    {
+      "id": "C-telemetry-open-conflict",
+      "question": "How should telemetry dashboard access be protected?",
+      "choice": "Allow dashboard access without a password during local development.",
+      "reasoning": "Skipping passwords is faster for development.",
+      "domain": "telemetry",
+      "_expected_action": "review_update"
+    },
+    {
+      "id": "C-without-downtime-not-conflict",
+      "summary": "Deploy without downtime during service rollout should use blue-green strategy.",
+      "domain": "deployment",
+      "_expected_action": "accept"
+    }
+  ]
+}

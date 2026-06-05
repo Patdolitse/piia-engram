@@ -1,0 +1,201 @@
+{
+  "schema": 1,
+  "benchmark": "recall_eval_heldout_v1",
+  "description": "Synthetic, public-safe held-out recall eval seed. Keep separate from recall_eval_v1 so the baseline stays frozen.",
+  "public_safe": true,
+  "thresholds": {
+    "min_mean_recall_at_k": 0.8,
+    "min_mean_mrr": 0.7,
+    "max_forbidden_leak_rate": 0.0,
+    "max_negative_false_positive_rate": 0.1
+  },
+  "stores": {
+    "heldout": {
+      "lessons": [
+        {
+          "id": "L-codex-public-notes",
+          "summary": "Codex-origin public changelog notes should list English updates before Chinese updates.",
+          "detail": "Claude Code should preserve this release-note preference when it resumes work from a Codex handoff.",
+          "domain": "collaboration,release",
+          "source_tool": "codex"
+        },
+        {
+          "id": "L-claude-handoff-tests",
+          "summary": "Claude Code-origin implementation handoffs should include changed files, commit hashes, and test commands.",
+          "detail": "Codex should recall this when resuming local implementation work after a Claude Code session.",
+          "domain": "collaboration,testing",
+          "source_tool": "claude_code"
+        },
+        {
+          "id": "L-auth-old-manual",
+          "summary": "Old registry authorization relied on manual login reminders and should not be surfaced as current guidance.",
+          "detail": "SYNTHETIC_OLD_AUTH_BODY old manual login reminder.",
+          "domain": "release",
+          "source_tool": "codex"
+        },
+        {
+          "id": "L-auth-current-preflight",
+          "summary": "Current registry authorization uses a preflight check and explicit refresh prompt before release.",
+          "detail": "This replaces the old manual login reminder and keeps registry authorization visible before public actions.",
+          "domain": "release",
+          "source_tool": "codex"
+        },
+        {
+          "id": "L-bilingual-retry",
+          "summary": "Retry queue backoff policy maps to Chinese aliases 重试队列 and 退避策略.",
+          "detail": "Use bounded retry attempts before manual escalation.",
+          "domain": "reliability",
+          "source_tool": "claude_code"
+        },
+        {
+          "id": "L-bilingual-approval",
+          "summary": "Release authorization maps to Chinese aliases 用户确认 and 发布授权.",
+          "detail": "Public push, tag, package publish, registry sync, and public comments need explicit confirmation.",
+          "domain": "release",
+          "source_tool": "codex"
+        }
+      ],
+      "decisions": [
+        {
+          "id": "D-public-auth",
+          "question": "How should public maintenance actions be authorized?",
+          "choice": "Require explicit user confirmation before public push, tag, release, registry, package, or public comment actions.",
+          "reasoning": "These actions are visible and may be hard to undo.",
+          "domain": "release",
+          "source_tool": "codex"
+        }
+      ],
+      "playbooks": [
+        {
+          "id": "PB-alpha-migration",
+          "title": "Shared migration checklist",
+          "triggers": ["migration", "upgrade"],
+          "steps": ["Run alpha schema check", "Export alpha backup", "Apply alpha migration"],
+          "domain": "migration",
+          "scope": "project",
+          "project_id": "alpha"
+        },
+        {
+          "id": "PB-beta-migration",
+          "title": "Shared migration checklist",
+          "triggers": ["migration", "upgrade"],
+          "steps": ["Run beta smoke test", "Notify beta reviewers", "Apply beta migration"],
+          "domain": "migration",
+          "scope": "project",
+          "project_id": "beta"
+        }
+      ],
+      "relation_edges": [
+        {"src": "L-auth-current-preflight", "rel": "supersedes", "dst": "L-auth-old-manual"}
+      ],
+      "projects": {
+        "alpha": {"folder": "E:/synthetic/alpha", "title": "Synthetic Alpha"},
+        "beta": {"folder": "E:/synthetic/beta", "title": "Synthetic Beta"}
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "cross-tool-codex-to-claude",
+      "scenario": "cross_tool_source",
+      "store": "heldout",
+      "query": "claude resume public changelog English Chinese",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-codex-public-notes"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "cross-tool-claude-to-codex",
+      "scenario": "cross_tool_source",
+      "store": "heldout",
+      "query": "codex resume commit hashes test commands",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-claude-handoff-tests"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "superseded-current-auth",
+      "scenario": "version_supersession",
+      "store": "heldout",
+      "query": "current registry authorization preflight refresh",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-auth-current-preflight"],
+      "forbidden_ids": ["L-auth-old-manual"]
+    },
+    {
+      "id": "superseded-old-term-collapses",
+      "scenario": "version_supersession",
+      "store": "heldout",
+      "query": "old manual login reminder registry authorization",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-auth-current-preflight"],
+      "forbidden_ids": ["L-auth-old-manual"]
+    },
+    {
+      "id": "project-scope-alpha",
+      "scenario": "project_isolation",
+      "store": "heldout",
+      "query": "shared migration checklist",
+      "scope": "playbooks",
+      "limit": 5,
+      "project_folder": "E:/synthetic/alpha",
+      "expected_ids": ["PB-alpha-migration"],
+      "forbidden_ids": ["PB-beta-migration"]
+    },
+    {
+      "id": "project-scope-beta",
+      "scenario": "project_isolation",
+      "store": "heldout",
+      "query": "shared migration checklist",
+      "scope": "playbooks",
+      "limit": 5,
+      "project_folder": "E:/synthetic/beta",
+      "expected_ids": ["PB-beta-migration"],
+      "forbidden_ids": ["PB-alpha-migration"]
+    },
+    {
+      "id": "chinese-alias-retry",
+      "scenario": "chinese_alias",
+      "store": "heldout",
+      "query": "重试队列 退避策略",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-bilingual-retry"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "chinese-alias-approval",
+      "scenario": "chinese_alias",
+      "store": "heldout",
+      "query": "用户确认 发布授权",
+      "scope": "all",
+      "limit": 5,
+      "expected_ids": ["L-bilingual-approval"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "negative-near-miss-canary",
+      "scenario": "negative_near_miss",
+      "store": "heldout",
+      "query": "canary rollback semaphore",
+      "scope": "all",
+      "limit": 5,
+      "expected_ids": [],
+      "forbidden_ids": []
+    },
+    {
+      "id": "negative-near-miss-visual-memory",
+      "scenario": "negative_near_miss",
+      "store": "heldout",
+      "query": "visual memory leaderboard screenshot",
+      "scope": "all",
+      "limit": 5,
+      "expected_ids": [],
+      "forbidden_ids": []
+    }
+  ]
+}

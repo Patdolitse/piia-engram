@@ -24,6 +24,7 @@ from scripts.eval_recall import (
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "recall_eval_v1.json"
+HELDOUT_FIXTURE = Path(__file__).parent / "fixtures" / "recall_eval_heldout_v1.json"
 
 
 def test_fixture_carries_public_safe_seed_contract() -> None:
@@ -43,6 +44,28 @@ def test_fixture_carries_public_safe_seed_contract() -> None:
         "negative_absent",
         "version_supersession",
         "project_isolation",
+    }
+
+
+def test_heldout_fixture_carries_edge_class_contract() -> None:
+    corpus = load_corpus(HELDOUT_FIXTURE)
+
+    assert corpus["schema"] == 1
+    assert corpus["benchmark"] == "recall_eval_heldout_v1"
+    assert corpus["public_safe"] is True
+    assert corpus["thresholds"] == {
+        "min_mean_recall_at_k": 0.8,
+        "min_mean_mrr": 0.7,
+        "max_forbidden_leak_rate": 0.0,
+        "max_negative_false_positive_rate": 0.1,
+    }
+    assert len(corpus["cases"]) >= 10
+    assert {case["scenario"] for case in corpus["cases"]} >= {
+        "cross_tool_source",
+        "version_supersession",
+        "project_isolation",
+        "chinese_alias",
+        "negative_near_miss",
     }
 
 
@@ -91,6 +114,25 @@ def test_corpus_summary_has_thresholds_and_no_forbidden_leaks(tmp_path: Path) ->
     assert summary["metrics"]["negative_false_positive_rate"] <= summary["thresholds"]["max_negative_false_positive_rate"]
 
 
+def test_heldout_corpus_passes_without_forbidden_leaks(tmp_path: Path) -> None:
+    corpus = load_corpus(HELDOUT_FIXTURE)
+
+    summary = evaluate_corpus(corpus, tmp_path)
+
+    assert summary["benchmark"] == "recall_eval_heldout_v1"
+    assert summary["case_count"] == len(corpus["cases"])
+    assert summary["passed_count"] == summary["case_count"]
+    assert summary["failed_count"] == 0
+    assert summary["overall_passed"] is True
+    assert summary["metrics"]["forbidden_leak_rate"] == pytest.approx(0.0)
+    assert summary["metrics"]["negative_false_positive_rate"] == pytest.approx(0.0)
+    assert "L-auth-old-manual" not in {
+        item_id
+        for case in summary["cases"]
+        for item_id in case["actual_ids"]
+    }
+
+
 def test_markdown_report_is_shareable_and_metadata_only(tmp_path: Path) -> None:
     corpus = load_corpus(FIXTURE)
     summary = evaluate_corpus(corpus, tmp_path)
@@ -124,6 +166,7 @@ def test_eval_recall_json_cli(tmp_path: Path) -> None:
     script = Path("scripts") / "eval_recall.py"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     env.pop("ENGRAM_TEST", None)
+    env.pop("PYTHONPATH", None)
 
     result = subprocess.run(
         [sys.executable, str(script), "--fixture", str(FIXTURE), "--workdir", str(tmp_path), "--json"],
@@ -145,6 +188,7 @@ def test_eval_recall_default_cli_does_not_leave_repo_tmp() -> None:
     script = Path("scripts") / "eval_recall.py"
     repo_tmp = Path(__file__).resolve().parents[1] / ".tmp"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    env.pop("PYTHONPATH", None)
     before = (
         {path.relative_to(repo_tmp).as_posix() for path in repo_tmp.rglob("*")}
         if repo_tmp.exists()

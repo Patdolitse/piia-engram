@@ -62,6 +62,8 @@ CONFLICT_C_CEILING = 0.80     # choice similarity ceiling — above means same c
 _NEGATION_MARKERS = frozenset({
     "不", "不要", "避免", "别", "禁止", "不能", "不推荐",
     "don't", "avoid", "never", "shouldn't", "not recommended",
+    "without approval", "without confirmation", "without user confirmation",
+    "without explicit confirmation",
 })
 _AFFIRMATION_MARKERS = frozenset({
     "推荐", "应该", "建议", "优先", "必须",

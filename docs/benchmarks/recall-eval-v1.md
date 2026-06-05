@@ -75,8 +75,8 @@ V1 thresholds are intentionally loose except for forbidden leaks:
 
 ## Next Ratchets
 
-1. Add a held-out fixture file that is not used while tuning retrieval.
+1. Keep the held-out fixture separate from V1 and do not tune V1 to fit new
+   cases.
 2. Add active contradiction cases, where both entries are active but only the
    current decision should rank first.
-3. Add admission-quality cases once the write-quality guard lands.
-4. Record per-version baseline deltas before publishing broader MCIC evidence.
+3. Record per-version baseline deltas before publishing broader MCIC evidence.
