@@ -4508,6 +4508,10 @@ async def get_recall(
             token_budget=safe_budget,
             include_freshness=include_freshness,
             collapse_versions=collapse_versions,
+            # Owner gate decides whether this aggregate view may be read at all.
+            # When governance is on, role-scoped memory then narrows which
+            # sensitivity tiers the owner-context call may project.
+            role_scoped_memory=_gov_rt.governance_enabled(),
         )
         perms = _gov_rt.describe_caller_permissions(_engram.root)
         meta = payload.setdefault("meta", {})

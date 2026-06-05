@@ -153,6 +153,43 @@ class TestTokenBudgetTrim:
         assert len(payload["knowledge"]) == 1
 
 
+class TestContextUsageReport:
+    def test_usage_report_counts_loaded_returned_and_trimmed_items(self):
+        items = [_lesson(id=f"L{i}", summary="x" * 200) for i in range(5)]
+        payload = recall.build_recall_payload(
+            relevant_knowledge=items[:3],
+            query_knowledge=items[3:],
+            token_budget=60,
+            include_freshness=False,
+        )
+        usage = payload["meta"]["context_usage"]
+
+        assert usage["sources"]["project_relevant"]["loaded"] == 3
+        assert usage["sources"]["query"]["loaded"] == 2
+        assert usage["knowledge"]["merged"] == 5
+        assert usage["knowledge"]["returned"] == len(payload["knowledge"])
+        assert usage["knowledge"]["trimmed_by_budget"] > 0
+        assert usage["budget"]["requested_tokens"] == 60
+        assert usage["budget"]["estimated_used_tokens"] > 0
+        assert isinstance(usage["budget"]["over_budget"], bool)
+
+    def test_usage_report_surfaces_freshness_and_provenance_coverage(self):
+        now = datetime(2026, 6, 3, tzinfo=timezone.utc)
+        payload = recall.build_recall_payload(
+            relevant_knowledge=[
+                _lesson(id="L1", source_tool="codex", created_at=now.isoformat()),
+                _lesson(id="L2", created_at=now.isoformat()),
+            ],
+            include_freshness=True,
+            now=now,
+        )
+        usage = payload["meta"]["context_usage"]
+
+        assert usage["freshness"]["attached"] == 2
+        assert usage["provenance"]["with_source_agent"] == 1
+        assert "source_tool" not in usage
+
+
 class TestGovernanceMeta:
     def test_trust_level_passthrough(self):
         payload = recall.build_recall_payload(

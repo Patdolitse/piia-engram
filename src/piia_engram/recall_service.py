@@ -24,6 +24,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from . import governance_runtime as _gov_rt
 from . import recall as _recall
 from . import version_chain as _vc
 
@@ -86,6 +87,7 @@ def gather_recall(
     token_budget: int = 2000,
     include_freshness: bool = True,
     collapse_versions: bool = True,
+    role_scoped_memory: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Assemble a recall payload from a live Engram instance.
@@ -159,6 +161,35 @@ def gather_recall(
                 if isinstance(item, dict) and item.get("id") in heads
             )
 
+    # --- optional role-scoped memory ------------------------------------
+    role_scope_meta: dict[str, Any] = {"enabled": False}
+    if (
+        role_scoped_memory
+        and getattr(eng, "root", None) is not None
+        and _gov_rt.governance_enabled()
+    ):
+        before = len(relevant) + len(query_knowledge)
+        buckets = _gov_rt.maybe_govern_buckets(
+            eng.root,
+            {"project_relevant": relevant, "query": query_knowledge},
+            tool="get_recall",
+            declared_task=query,
+        )
+        relevant = buckets.get("project_relevant", relevant)
+        query_knowledge = buckets.get("query", query_knowledge)
+        after = len(relevant) + len(query_knowledge)
+        perms = _gov_rt.describe_caller_permissions(eng.root)
+        role_scope_meta = {
+            "enabled": _gov_rt.governance_enabled(),
+            "filtered": max(0, before - after),
+            "max_sensitivity": perms.get("max_sensitivity"),
+            "staging_excluded": (
+                perms.get("permission_profile_vnext", {}).get("staging_excluded")
+                if isinstance(perms.get("permission_profile_vnext"), dict)
+                else False
+            ),
+        }
+
     governance = None
     if hasattr(eng, "root"):
         governance = {"trust_level": "private-self"}  # CLI runs as the owner
@@ -180,6 +211,13 @@ def gather_recall(
         "collapsed": collapsed_count,
         "heads_present": heads_present,
     }
+    usage = payload["meta"].setdefault("context_usage", {})
+    if isinstance(usage, dict):
+        usage["version_chain"] = {
+            "collapsed": collapsed_count,
+            "heads_present": heads_present,
+        }
+        usage["role_scope"] = role_scope_meta
     return payload
 
 
@@ -251,4 +289,17 @@ def render_recall_text(payload: dict[str, Any]) -> str:
         f"current versions/HEAD surfaced: {heads_present})"
     )
     lines.append(footer)
+    usage = meta.get("context_usage", {}) if isinstance(meta, dict) else {}
+    if isinstance(usage, dict):
+        knowledge_usage = usage.get("knowledge", {})
+        budget_usage = usage.get("budget", {})
+        if isinstance(knowledge_usage, dict) and isinstance(budget_usage, dict):
+            returned = knowledge_usage.get("returned", len(knowledge))
+            trimmed = knowledge_usage.get("trimmed_by_budget", excluded)
+            used = budget_usage.get("estimated_used_tokens", 0)
+            requested = budget_usage.get("requested_tokens", meta.get("token_budget", 0))
+            lines.append(
+                "  context usage: "
+                f"returned={returned}, trimmed={trimmed}, budget={used}/{requested}"
+            )
     return "\n".join(lines)

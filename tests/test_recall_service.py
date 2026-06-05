@@ -160,3 +160,86 @@ def test_render_text_smoke():
     assert "Recall digest" in text
     assert "tester" in text
     assert "a lesson" in text
+
+
+def test_render_text_includes_context_usage_footer():
+    eng = FakeEngram(
+        relevant=[{"id": f"L{i}", "summary": "x" * 200} for i in range(4)],
+    )
+    payload = rs.gather_recall(eng, token_budget=60, now=_now())
+    text = rs.render_recall_text(payload)
+
+    assert "context usage:" in text
+    assert "returned=" in text
+    assert "trimmed=" in text
+
+
+def test_role_scoped_memory_filters_owner_recall_when_governance_enabled(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "cli")
+    monkeypatch.setenv("ENGRAM_CALLER_ROLE", "reviewer")
+
+    eng = FakeEngram(
+        root=tmp_path,
+        relevant=[
+            {"id": "pub", "summary": "public ok", "sensitivity": "public"},
+            {"id": "work", "summary": "work ok", "sensitivity": "work"},
+            {"id": "secret", "summary": "secret hidden", "sensitivity": "secret"},
+        ],
+    )
+
+    payload = rs.gather_recall(
+        eng,
+        role_scoped_memory=True,
+        now=_now(),
+    )
+
+    assert [item["summary"] for item in payload["knowledge"]] == [
+        "public ok",
+        "work ok",
+    ]
+    usage = payload["meta"]["context_usage"]
+    assert usage["role_scope"]["enabled"] is True
+    assert usage["role_scope"]["filtered"] == 1
+    assert usage["role_scope"]["max_sensitivity"] == "work"
+    assert not any(item.get("governance_withheld") for item in payload["knowledge"])
+
+
+def test_role_scoped_memory_is_noop_when_governance_disabled(tmp_path, monkeypatch):
+    monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "cli")
+    monkeypatch.setenv("ENGRAM_CALLER_ROLE", "reviewer")
+    eng = FakeEngram(
+        root=tmp_path,
+        relevant=[
+            {"id": "pub", "summary": "public ok", "sensitivity": "public"},
+            {"id": "secret", "summary": "secret still visible", "sensitivity": "secret"},
+        ],
+    )
+
+    base = rs.gather_recall(eng, role_scoped_memory=False, now=_now())
+    scoped = rs.gather_recall(eng, role_scoped_memory=True, now=_now())
+
+    assert scoped == base
+    assert scoped["meta"]["context_usage"]["role_scope"]["enabled"] is False
+    assert not (tmp_path / "governance_ledger.jsonl").exists()
+
+
+def test_role_scoped_memory_disabled_writes_no_disclosure_receipt(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "cli")
+    monkeypatch.setenv("ENGRAM_CALLER_ROLE", "reviewer")
+    eng = FakeEngram(
+        root=tmp_path,
+        relevant=[{"id": "secret", "summary": "secret", "sensitivity": "secret"}],
+    )
+
+    payload = rs.gather_recall(eng, role_scoped_memory=False, now=_now())
+
+    assert payload["knowledge"][0]["summary"] == "secret"
+    assert payload["meta"]["context_usage"]["role_scope"]["enabled"] is False
+    assert not (tmp_path / "governance_ledger.jsonl").exists()

@@ -87,6 +87,10 @@ def _item_cost(view: dict[str, Any]) -> int:
     return max(1, len(json.dumps(view, ensure_ascii=False)) // _CHARS_PER_TOKEN)
 
 
+def _count_dicts(items: list[dict[str, Any]] | None) -> int:
+    return sum(1 for item in (items or []) if isinstance(item, dict))
+
+
 def merge_knowledge(
     relevant: list[dict[str, Any]] | None,
     query_knowledge: list[dict[str, Any]] | None = None,
@@ -152,6 +156,36 @@ def build_recall_payload(
         if trust is not None:
             gov_meta["trust_level"] = trust
 
+    context_usage = {
+        "sources": {
+            "project_relevant": {"loaded": _count_dicts(relevant_knowledge)},
+            "query": {"loaded": _count_dicts(query_knowledge)},
+        },
+        "knowledge": {
+            "merged": len(merged),
+            "returned": len(knowledge),
+            "trimmed_by_budget": excluded,
+        },
+        "budget": {
+            "requested_tokens": budget,
+            "estimated_used_tokens": spent,
+            "over_budget": spent > budget if budget else bool(spent),
+        },
+        "freshness": {
+            "attached": sum(
+                1 for item in knowledge if isinstance(item.get("freshness"), dict)
+            ),
+        },
+        "provenance": {
+            "with_source_agent": sum(
+                1
+                for item in knowledge
+                if isinstance(item.get("provenance"), dict)
+                and item["provenance"].get("source_agent")
+            ),
+        },
+    }
+
     return {
         "identity": dict(identity) if isinstance(identity, dict) else {},
         "recent_activity": dict(recent_activity)
@@ -163,5 +197,6 @@ def build_recall_payload(
             "query": query,
             "token_budget": budget,
             "governance": gov_meta,
+            "context_usage": context_usage,
         },
     }
