@@ -8,6 +8,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.51.0] - 2026-06-05
+
+### Added
+- **Recall Eval v1 baseline** - added a deterministic, synthetic,
+  public-safe recall benchmark that scores real `search_knowledge` results by
+  expected knowledge IDs without using live stores, network calls, or LLM
+  judges.
+- **Admission Guard v1** - added a read-only candidate-memory guard that
+  combines quality verdicts, duplicate detection, and obvious conflict routing
+  into metadata-only actions: `accept`, `stage`, `reject`, `duplicate`, and
+  `review_update`.
+- **Held-out Memory Eval Suite** - added separate held-out recall/admission
+  fixtures and `scripts/run_memory_evals.py` so memory quality can be checked
+  as a citable aggregate suite before release.
+
+### Fixed
+- **Admission conflict miss** - release-style phrases such as "without user
+  confirmation" now route to conflict/update review instead of being accepted
+  as a new durable lesson, while `without downtime` remains a non-conflict
+  deployment phrase.
+- **Eval CLI source drift** - recall/admission eval scripts now prioritize the
+  worktree `src/` path so direct CLI runs do not accidentally import an
+  installed older package.
+- **Release workflow guard coverage** - CI, publish workflow, and the release
+  orchestrator now include the memory eval suite gate, with a red-light test
+  proving the gate fails on degraded admission expectations.
+
+### Changed
+- **Public facts refreshed** - current local facts now report 2865 passed,
+  2 skipped, and 2867 collected tests.
+- **Ranking/search optimization deferred** - no recall ranking changes were
+  made because the held-out suite did not expose a measured recall failure.
+
 ## [3.50.0] - 2026-06-05
 
 ### Added

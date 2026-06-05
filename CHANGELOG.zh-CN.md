@@ -8,6 +8,33 @@
 
 ## [Unreleased]
 
+## [3.51.0] - 2026-06-05
+
+### 新增
+- **Recall Eval v1 基线**：新增确定性、合成、公开安全的 recall benchmark，
+  用真实 `search_knowledge` 结果和期望 knowledge ID 打分，不使用真实用户存储、
+  网络调用或 LLM judge。
+- **Admission Guard v1**：新增只读候选记忆入库闸，将质量判断、重复检测和明显冲突
+  路由合并成 metadata-only 动作：`accept`、`stage`、`reject`、`duplicate`、
+  `review_update`。
+- **Held-out Memory Eval Suite**：新增独立 held-out recall/admission fixture 和
+  `scripts/run_memory_evals.py`，让记忆质量在发布前可以用聚合指标复现和引用。
+
+### 修复
+- **Admission 冲突漏判**：`without user confirmation` 这类发布授权否定短语现在会
+  路由到冲突 / update review，不会直接作为新 lesson 接受；同时保留
+  `without downtime` 作为非冲突部署表达，避免误报。
+- **Eval CLI 源码漂移**：recall/admission eval 脚本现在优先加载当前工作树 `src/`，
+  避免直接 CLI 运行时误导入已安装的旧包。
+- **发布 workflow guard 覆盖**：CI、publish workflow 和 release orchestrator
+  都已接入 memory eval suite gate，并用红灯测试证明该 gate 遇到退化期望会失败。
+
+### 变更
+- **公开事实刷新**：当前本地事实更新为 2865 passed、2 skipped、
+  2867 collected。
+- **暂缓 ranking/search 优化**：held-out suite 未暴露真实 recall failure，
+  因此本轮没有改动 recall ranking/search。
+
 ## [3.50.0] - 2026-06-05
 
 ### 新增
