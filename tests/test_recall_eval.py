@@ -139,3 +139,33 @@ def test_eval_recall_json_cli(tmp_path: Path) -> None:
     assert payload["overall_passed"] is True
     assert payload["case_count"] >= 8
     assert "DATA FRAGMENTATION" not in result.stderr
+
+
+def test_eval_recall_default_cli_does_not_leave_repo_tmp() -> None:
+    script = Path("scripts") / "eval_recall.py"
+    repo_tmp = Path(__file__).resolve().parents[1] / ".tmp"
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    before = (
+        {path.relative_to(repo_tmp).as_posix() for path in repo_tmp.rglob("*")}
+        if repo_tmp.exists()
+        else None
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--fixture", str(FIXTURE), "--json"],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        encoding="utf-8",
+        env=env,
+        capture_output=True,
+        check=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["overall_passed"] is True
+    after = (
+        {path.relative_to(repo_tmp).as_posix() for path in repo_tmp.rglob("*")}
+        if repo_tmp.exists()
+        else None
+    )
+    assert after == before

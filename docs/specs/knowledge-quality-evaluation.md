@@ -105,6 +105,14 @@ keep vs reject split -> escalate to user with both rationales
   every other field. It only annotates — it never auto-promotes or rejects.
   Covered by `tests/test_quality_report.py`. An aggregate, metadata-only
   `quality_eval.build_quality_report` helper is also available for review tooling.
+- ✅ **Implemented** — `scripts/check_admission.py` provides a read-only
+  admission guard fixture runner. It combines the Layer-1 quality verdict with
+  duplicate detection and obvious conflict routing, returning metadata-only
+  actions: `accept`, `stage`, `reject`, `duplicate`, or `review_update`.
+  `review_update` means "route to explicit `update_knowledge` review" rather
+  than writing a conflicting new durable memory. Covered by
+  `tests/test_admission_guard.py` and the synthetic public-safe fixture
+  `tests/fixtures/admission_guard_v1.json`.
 - Optionally block one-click promotion of entries with hard reasons until edited.
   *(still future work — Layer 1 currently annotates only.)*
 - Keep the double-review as an explicit, user-invoked step — never automatic.

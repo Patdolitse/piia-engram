@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "guard": "admission_guard_v1",
+  "description": "Synthetic, public-safe admission guard fixture. Bodies are generic examples used only to exercise metadata-only routing.",
+  "public_safe": true,
+  "existing": [
+    {
+      "id": "L-test-first",
+      "summary": "Always write failing tests before implementing code.",
+      "domain": "testing"
+    },
+    {
+      "id": "L-docker-simple",
+      "summary": "Docker should be avoided for simple local scripts.",
+      "domain": "devops"
+    },
+    {
+      "id": "D-release-auth",
+      "question": "How should public release actions be authorized?",
+      "choice": "Require explicit user confirmation before public release actions.",
+      "reasoning": "Public actions are visible and sometimes irreversible.",
+      "domain": "release"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "C-good-lesson",
+      "summary": "Benchmark fixtures should use synthetic IDs so recall quality can be scored deterministically.",
+      "domain": "evaluation",
+      "_expected_action": "accept"
+    },
+    {
+      "id": "C-temp-debug",
+      "summary": "TODO debug this placeholder tomorrow",
+      "domain": "debug",
+      "_expected_action": "reject"
+    },
+    {
+      "id": "C-dup-test-first",
+      "summary": "Always write failing tests before implementing code.",
+      "domain": "testing",
+      "_expected_action": "duplicate"
+    },
+    {
+      "id": "C-conflict-docker",
+      "summary": "Docker should always be used for every simple local script.",
+      "domain": "devops",
+      "_expected_action": "review_update"
+    },
+    {
+      "id": "C-conflict-release-auth",
+      "question": "How should public release actions be authorized?",
+      "choice": "Allow automatic public release actions without user confirmation.",
+      "reasoning": "Automation is faster.",
+      "domain": "release",
+      "_expected_action": "review_update"
+    },
+    {
+      "id": "C-unclassified",
+      "summary": "A durable lesson with enough detail but no useful retrieval classification.",
+      "_expected_action": "stage"
+    },
+    {
+      "id": "C-bad-playbook",
+      "title": "One step playbook",
+      "steps": ["Do the thing"],
+      "domain": "workflow",
+      "_expected_action": "reject"
+    }
+  ]
+}

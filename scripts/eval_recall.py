@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -270,8 +271,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     corpus = load_corpus(args.fixture)
-    workdir = Path(args.workdir) if args.workdir else ROOT / ".tmp" / "recall_eval"
-    summary = evaluate_corpus(corpus, workdir)
+    if args.workdir:
+        summary = evaluate_corpus(corpus, Path(args.workdir))
+    else:
+        with tempfile.TemporaryDirectory(prefix="engram-recall-eval-") as workdir:
+            summary = evaluate_corpus(corpus, Path(workdir))
     if args.as_json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:
