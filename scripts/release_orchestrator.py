@@ -21,10 +21,10 @@ NEVER pushes, tags, uploads, or authenticates. With ``--probe`` it additionally
 reports local *presence* booleans (is ``gh`` on PATH? is a token env var set?) --
 booleans only; no secret value is ever read or printed.
 
-    python scripts/release_orchestrator.py             # human checklist
-    python scripts/release_orchestrator.py --json       # metadata-only JSON
-    python scripts/release_orchestrator.py --probe       # + local presence booleans
-    python scripts/release_orchestrator.py --probe --strict   # exit 1 if an auth gap is open
+    python scripts/release_orchestrator.py --mode prep
+    python scripts/release_orchestrator.py --mode publish-fast
+    python scripts/release_orchestrator.py --json
+    python scripts/release_orchestrator.py --probe --strict
 
 Exit codes:
 - 0  dry-run rendered (default), or --probe with no blocking auth gap
@@ -45,6 +45,10 @@ from pathlib import Path
 LOCAL = "local"
 AUTH = "auth"
 REMOTE = "remote"
+
+MODE_ALL = "all"
+MODE_PREP = "prep"
+MODE_PUBLISH_FAST = "publish-fast"
 
 # Auth kinds.
 NONE = "none"
@@ -91,10 +95,13 @@ def _step(
     }
 
 
-def build_checklist() -> list[dict]:
-    """The full, ordered release pipeline as metadata-only steps (pure)."""
+def _all_steps() -> list[dict]:
+    """The full release pipeline as metadata-only steps (pure)."""
     return [
         # ---- LOCAL: no auth, safe anytime ---------------------------------
+        _step("ci_pytest_entrypoint", LOCAL, "CI-like pytest import gate",
+              "python scripts/check_ci_pytest_entrypoint.py --discover-script-imports",
+              timeout_hint="~15-30 sec; catches tests that only pass with repo root on sys.path"),
         _step("tests", LOCAL, "Full test suite",
               "python -m pytest tests/ -q",
               timeout_hint="~2-3 min"),
@@ -167,7 +174,7 @@ def build_checklist() -> list[dict]:
               auth_required=True, auth_kind=DEVICE_FLOW, token_env="GITHUB_TOKEN",
               timeout_hint="fast if gh/git auth is live"),
         _step("gh_release", REMOTE, "Create GitHub Release (triggers publish.yml)",
-              "gh release create vX.Y.Z --title ... --notes ...",
+              "gh release create vX.Y.Z --title ... --notes-file <public-notes.md>",
               auth_required=True, auth_kind=DEVICE_FLOW, token_env="GITHUB_TOKEN",
               stall_risk="blocks on device-flow if gh auth is not live (see gh_auth)"),
         _step("pypi_publish", REMOTE, "PyPI publish (CI, OIDC trusted publishing)",
@@ -194,6 +201,37 @@ def build_checklist() -> list[dict]:
               timeout_hint="passive auto-detection can lag; if manual refresh is "
                            "needed, do it in a visible browser session"),
     ]
+
+
+_PUBLISH_FAST_STEP_IDS = {
+    "gh_auth",
+    "mcp_publisher_auth",
+    "mcp_version_match",
+    "git_push",
+    "gh_release",
+    "pypi_publish",
+    "mcp_publish",
+    "mcp_verify",
+    "glama_manual_auth",
+}
+
+
+def build_checklist(mode: str = MODE_ALL) -> list[dict]:
+    """Return the release checklist for ``mode``.
+
+    ``prep`` is the slow, local-readiness path. ``publish-fast`` is the hot
+    path after the user confirms release and prep evidence is already current.
+    Post-release bookkeeping (registry docs, Engram/Core notes) intentionally
+    stays out of ``publish-fast``.
+    """
+    steps = _all_steps()
+    if mode == MODE_ALL:
+        return steps
+    if mode == MODE_PREP:
+        return [s for s in steps if s["phase"] in (LOCAL, AUTH)]
+    if mode == MODE_PUBLISH_FAST:
+        return [s for s in steps if s["id"] in _PUBLISH_FAST_STEP_IDS]
+    raise ValueError(f"unknown release orchestrator mode: {mode}")
 
 
 # ---- Optional local presence probes (booleans only, never secret values) ----
@@ -234,7 +272,13 @@ def probe_presence(which=shutil.which, env=None) -> dict[str, bool]:
     }
 
 
-def build_report(*, probe: bool = False, which=shutil.which, env=None) -> dict:
+def build_report(
+    *,
+    mode: str = MODE_ALL,
+    probe: bool = False,
+    which=shutil.which,
+    env=None,
+) -> dict:
     """Assemble the metadata-only orchestration report.
 
     When ``probe`` is True, each step's ``probe`` key is resolved to a boolean
@@ -242,9 +286,10 @@ def build_report(*, probe: bool = False, which=shutil.which, env=None) -> dict:
     whose presence probe is False, PLUS the always-listed un-probeable gaps such
     as ``pypi_oidc`` flagged as ``human_verify``.
     """
-    steps = build_checklist()
+    steps = build_checklist(mode)
     report: dict = {
         "dry_run": True,
+        "mode": mode,
         "phases": [LOCAL, AUTH, REMOTE],
         "steps": steps,
         "counts": {
@@ -278,6 +323,7 @@ def _print_human(report: dict) -> None:
                    AUTH: "AUTH   (must be live BEFORE publish chain)",
                    REMOTE: "REMOTE (irreversible, user-gated)"}
     print("Release orchestrator -- DRY RUN (no push / no publish / no auth performed)")
+    print(f"mode={report.get('mode', MODE_ALL)}")
     print("=" * 72)
     presence = report.get("presence")
     for phase in report["phases"]:
@@ -319,6 +365,12 @@ def _print_human(report: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else "")
     ap.add_argument("--root", default=".", help="Repo root (default: cwd).")
+    ap.add_argument(
+        "--mode",
+        choices=[MODE_ALL, MODE_PREP, MODE_PUBLISH_FAST],
+        default=MODE_ALL,
+        help="Checklist mode: all, prep, or publish-fast.",
+    )
     ap.add_argument("--json", action="store_true", help="Metadata-only JSON output.")
     ap.add_argument("--probe", action="store_true",
                     help="Add local presence booleans (never reads secret values).")
@@ -332,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
-    report = build_report(probe=args.probe)
+    report = build_report(mode=args.mode, probe=args.probe)
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))

@@ -11,6 +11,8 @@ registry/Glama update. Those remain explicit, separately-gated maintainer steps
 ```bash
 engram release-check          # read-only readiness report (exit 1 if NOT ready)
 engram release-check --json   # machine-readable
+python scripts/release_orchestrator.py --mode prep
+python scripts/release_orchestrator.py --mode publish-fast
 ```
 
 `engram release-check` aggregates the checks below into a single status:
@@ -61,6 +63,9 @@ It fails closed (exit 1) with an actionable message for each gap.
 ## 1. Local check commands (run from repo root)
 
 ```bash
+# CI-like import gate: catches tests that only pass when repo root is on sys.path
+python scripts/check_ci_pytest_entrypoint.py --discover-script-imports
+
 # Full test suite (must be green before shipping)
 python -m pytest tests -q
 
@@ -98,6 +103,24 @@ still the preferred normal path.
 `PROJECT_REGISTRY.md` lives in the parent workspace, not inside this git repo.
 Update it after a successful push/release as a workspace synchronization step;
 do not treat it as an Engram repo commit blocker.
+
+## 2.5 Fast publish path after explicit release confirmation
+
+Once release-prep evidence is current and the maintainer has confirmed release,
+the hot path is intentionally short:
+
+```bash
+python scripts/release_orchestrator.py --mode publish-fast --probe
+git push origin main --tags
+gh release create vX.Y.Z --title "..." --notes-file <public-notes.md>
+# watch the release-triggered Publish to PyPI workflow
+python scripts/publish_mcp_registry.py .mcp/server.json
+python scripts/verify_mcp_registry_version.py --version X.Y.Z
+```
+
+Do **not** block the publish-complete report on workspace bookkeeping. After the
+channels are verified, update `PROJECT_REGISTRY.md`, Engram memories, and the
+private Core Self Optimization notes as post-release closeout.
 
 ## 3. Release notes are English-first
 

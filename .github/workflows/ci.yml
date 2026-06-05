@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: CI-like pytest entrypoint gate
+        run: python scripts/check_ci_pytest_entrypoint.py --discover-script-imports
+
       - name: Public fact sync gate
         run: python scripts/check_public_fact_sync.py
 
@@ -78,6 +81,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
+
+      - name: CI-like pytest entrypoint gate
+        run: python scripts/check_ci_pytest_entrypoint.py --discover-script-imports
 
       - name: Public fact sync gate
         run: python scripts/check_public_fact_sync.py

@@ -70,6 +70,11 @@ class TestChecklist:
     def test_export_redaction_and_claim_drift_are_local_gates(self, mod):
         steps = {s["id"]: s for s in mod.build_checklist()}
 
+        assert steps["ci_pytest_entrypoint"]["phase"] == mod.LOCAL
+        assert "check_ci_pytest_entrypoint.py --discover-script-imports" in (
+            steps["ci_pytest_entrypoint"]["command"]
+        )
+
         assert steps["claim_drift"]["phase"] == mod.LOCAL
         assert "check_public_claim_drift.py" in steps["claim_drift"]["command"]
 
@@ -113,11 +118,37 @@ class TestChecklist:
         assert "manual" in step["title"].lower()
         assert "Glama" in step["title"]
 
+    def test_github_release_uses_notes_file_not_inline_markdown(self, mod):
+        step = {s["id"]: s for s in mod.build_checklist()}["gh_release"]
+        assert "--notes-file" in step["command"]
+        assert "--notes ..." not in step["command"]
+
+    def test_prep_mode_excludes_remote_steps(self, mod):
+        steps = mod.build_checklist(mod.MODE_PREP)
+        assert steps
+        assert all(s["phase"] in (mod.LOCAL, mod.AUTH) for s in steps)
+        assert any(s["id"] == "ci_pytest_entrypoint" for s in steps)
+        assert not any(s["id"] == "gh_release" for s in steps)
+
+    def test_publish_fast_mode_is_short_hot_path(self, mod):
+        steps = mod.build_checklist(mod.MODE_PUBLISH_FAST)
+        ids = [s["id"] for s in steps]
+
+        assert "gh_auth" in ids
+        assert "gh_release" in ids
+        assert "pypi_publish" in ids
+        assert "mcp_publish" in ids
+        assert "mcp_verify" in ids
+        assert "tests" not in ids
+        assert "sanitize" not in ids
+        assert "artifact_scan" not in ids
+
 
 class TestReport:
     def test_report_counts(self, mod):
         rep = mod.build_report(probe=False)
         assert rep["dry_run"] is True
+        assert rep["mode"] == mod.MODE_ALL
         c = rep["counts"]
         assert c["total"] == len(rep["steps"])
         assert c["auth_required"] >= 1
@@ -192,11 +223,12 @@ class TestCli:
     def test_json_dry_run_exit_zero(self, mod, tmp_path, capsys, monkeypatch):
         (tmp_path / "pyproject.toml").write_text("[project]\nversion='9.9.9'\n",
                                                  encoding="utf-8")
-        rc = mod.main(["--root", str(tmp_path), "--json"])
+        rc = mod.main(["--root", str(tmp_path), "--mode", "publish-fast", "--json"])
         out = capsys.readouterr().out
         assert rc == 0
         data = json.loads(out)
         assert data["dry_run"] is True
+        assert data["mode"] == "publish-fast"
 
     def test_setup_error_without_pyproject(self, mod, tmp_path):
         rc = mod.main(["--root", str(tmp_path), "--json"])

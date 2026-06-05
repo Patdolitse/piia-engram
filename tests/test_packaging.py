@@ -240,6 +240,8 @@ def test_publish_workflow_release_trigger_and_trusted_publishing():
 def test_ci_workflow_runs_public_fact_sync_gate():
     """CI should catch README/version/tool/test drift before release prep."""
     content = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert "CI-like pytest entrypoint gate" in content
+    assert "python scripts/check_ci_pytest_entrypoint.py --discover-script-imports" in content
     assert "Public fact sync gate" in content
     assert "python scripts/check_public_fact_sync.py" in content
 
