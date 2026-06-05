@@ -233,6 +233,7 @@ _SAFE_ALLOWLIST = {
     # summary/title via the audit detail field) — now governed owner-only.
     "get_domains", "list_projects", "list_agent_sessions",
     "find_tool", "list_tools", "export_feedback_report", "doctor",
+    "list_pending_staging",  # staging ids/domains/priority only; no bodies
     "update_execution_step",  # counts/status only, no body
     "archive_playbook",  # id-only acknowledgement; write-gated separately
     # caller-supplied-content writes — echo only what the caller just passed in,

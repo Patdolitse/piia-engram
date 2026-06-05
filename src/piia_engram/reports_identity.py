@@ -95,7 +95,7 @@ class IdentityCardMixin:
             for name, info in top_domains:
                 count = info.get("project_count", 0)
                 unit = "个项目" if zh else "projects"
-                lines.append(f"- {name} ({count} {unit})")
+                lines.append(f"- {redact_export_text(name)} ({count} {unit})")
             remaining = len(domains) - len(top_domains)
             if remaining > 0:
                 lbl = f"及其他 {remaining} 个领域" if zh else f"and {remaining} more domains"

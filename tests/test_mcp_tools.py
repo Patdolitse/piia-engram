@@ -1140,6 +1140,46 @@ def test_mcp_search_knowledge_invalid_filters_json(isolated_engram: Engram):
     assert "filters_json 格式错误" in result
 
 
+def test_list_pending_staging_is_read_only_metadata_under_governance(
+    isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+):
+    secret = "ZZ_MCP_STAGING_QUEUE_SECRET"
+    isolated_engram.add_lesson({
+        "summary": f"staging lesson {secret}",
+        "domain": "release",
+        "tier": "staging",
+    })
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+
+    result = json.loads(_run(mcp_server.list_pending_staging(
+        filters_json='{"domain":"release"}',
+        limit=5,
+    )))
+
+    assert result["status"] == "listed"
+    assert result["counts"]["listed"] == 1
+    assert result["items"][0]["type"] == "lesson"
+    assert result["items"][0]["domain"] == "release"
+    assert secret not in json.dumps(result, ensure_ascii=False)
+
+
+def test_batch_review_staging_still_write_gated_for_external(
+    isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+):
+    lesson = isolated_engram.add_lesson("needs owner review", tier="staging")
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+
+    result = _run(mcp_server.batch_review_staging(
+        actions_json=json.dumps([{"id": lesson["id"], "action": "approve"}]),
+        dry_run=False,
+        confirm=True,
+    ))
+
+    assert "ENGRAM_GOVERNANCE_REFUSAL" in result
+
+
 def test_get_user_context_passes_token_budget(
     isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
 ):

@@ -829,6 +829,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "get_knowledge_inheritance": "read",
     "get_knowledge_overview": "read",
     "get_lessons": "read",
+    "list_pending_staging": "read",
     "get_permission_profile": "read",
     "get_playbook": "read",
     "list_playbooks_for_management": "read",
@@ -2995,6 +2996,42 @@ async def batch_review_staging(
     return _json(_gov_rt.maybe_govern_write_ack(
         _engram.root, result, tool="batch_review_staging",
     ))
+
+
+@mcp.tool()
+async def list_pending_staging(
+    filters_json: str = "{}",
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
+    """列出待审核 staging 候选（只读、metadata-only）。 / List pending staging candidates (read-only, metadata-only).
+
+    Purpose: use before review to inspect the staging queue without approving,
+    rejecting, or exposing draft bodies. Returns ids, types, domains, priority
+    scores and counts only; never stored summaries/details/reasoning.
+
+    Args:
+        filters_json: Optional JSON object, e.g. {"type":"decision","domain":"release"}.
+        limit: Max pending items to list.
+        offset: Pending-list offset.
+    """
+    try:
+        filters = json.loads(filters_json or "{}")
+    except json.JSONDecodeError:
+        return _json({"error": "filters_json must be a valid JSON object"})
+    if not isinstance(filters, dict):
+        return _json({"error": "filters_json must be a JSON object"})
+
+    from piia_engram.staging_review import list_pending_staging as _list_pending
+
+    result = _locked_engram_call(
+        _list_pending,
+        _engram,
+        filters=filters,
+        limit=limit,
+        offset=offset,
+    )
+    return _json(result)
 
 
 @mcp.tool()

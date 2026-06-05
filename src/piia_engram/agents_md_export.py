@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from .export_redaction import redact_export_text
 from .sensitivity import SENSITIVITY_ORDER, classify_item
 
 _DEFAULT_MAX_SENSITIVITY = "work"
@@ -104,7 +105,7 @@ def _render_lessons(lessons: list[dict[str, Any]]) -> list[str]:
         summary = _clean_one_line(item.get("summary"))
         if not summary:
             continue
-        domain = _clean_one_line(item.get("domain"), 60)
+        domain = _clean_one_line(redact_export_text(item.get("domain")), 60)
         suffix = f" _(domain: {domain})_" if domain else ""
         lines.append(f"- {summary}{suffix}")
     return lines

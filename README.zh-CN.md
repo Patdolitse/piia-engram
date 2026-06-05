@@ -443,9 +443,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | | v3.49.2 (2026-06-05) |
 |---|---|
 | 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
-| MCP 工具 | **17 个核心**（默认加载）+ **65 个高级**（`ENGRAM_TOOLS=all` 开启）|
+| MCP 工具 | **17 个核心**（默认加载）+ **66 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **2782** 个（单元 + 集成；2 个 skipped，共收集 2784）|
+| 测试通过 | **2830** 个（单元 + 集成；2 个 skipped，共收集 2832）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **3336** 行（facade + mixins 合计约 8159 行；v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -494,7 +494,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_resume_brief` | v3.30: 跨会话/跨工具恢复摘要 |
 | `doctor` | 记忆系统自诊断 |
 
-默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 65 个高级工具。
+默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 66 个高级工具。
 
 **启动同步：** Engram 会在 MCP server 启动时对账本地 AI 工具中的记忆/配置片段。默认改为后台执行，避免 stdio 客户端在 initialize 阶段被同步扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感测试臂中跳过启动同步。`ENGRAM_EPHEMERAL=1` 也会在容器/临时客户端中跳过启动同步和迁移工作。
 

@@ -5,12 +5,12 @@
   "local_dev_version": "3.49.2",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 2782,
+    "test_passed": 2830,
     "test_skipped": 2,
-    "test_collected": 2784,
-    "mcp_tools_total": 82,
+    "test_collected": 2832,
+    "mcp_tools_total": 83,
     "mcp_tools_core": 17,
-    "mcp_tools_advanced": 65,
+    "mcp_tools_advanced": 66,
     "telemetry_default": "off",
     "telemetry_remote_default": "off"
   },
@@ -52,26 +52,26 @@
     ],
     "required_substrings": [
       { "file": "README.md", "must_contain": [
-        "ships 82 MCP tools",
-        "all 82 tools",
+        "ships 83 MCP tools",
+        "all 83 tools",
         "17 **Tier-1 Core**",
-        "Tier-2 Advanced (65 tools",
+        "Tier-2 Advanced (66 tools",
         "**17 Core**",
-        "**65 Advanced**"
+        "**66 Advanced**"
       ] },
       { "file": "README.zh-CN.md", "must_contain": [
         "17 个核心",
-        "65 个高级"
+        "66 个高级"
       ] },
       { "file": "docs/architecture.md", "must_contain": [
-        "82 tools",
+        "83 tools",
         "17 Tier-1",
-        "65 Tier-2"
+        "66 Tier-2"
       ] },
       { "file": "glama.yaml", "must_contain": [
-        "82 MCP tools",
+        "83 MCP tools",
         "'core' (17 tools)",
-        "'all' (82 tools)"
+        "'all' (83 tools)"
       ] }
     ],
     "forbidden_in_current_state": [

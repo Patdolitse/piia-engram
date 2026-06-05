@@ -78,6 +78,7 @@ docs/governance.md
 docs/hybrid-search.md
 docs/listing-copy.md
 docs/public-facts.json
+docs/samples/export-redaction-clean-sample.md
 docs/integrations/client-continuity-evidence.md
 docs/integrations/hermes.md
 docs/runbooks/data-sovereignty-audit.md

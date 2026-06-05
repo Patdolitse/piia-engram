@@ -43,6 +43,9 @@ jobs:
       - name: Export redaction sample gate
         run: python scripts/check_export_redaction.py --strict docs/samples/export-redaction-clean-sample.md
 
+      - name: Generated export redaction gate
+        run: python scripts/check_generated_export_redaction.py
+
       - name: Run tests
         run: pytest tests/ -q
 
@@ -75,6 +78,9 @@ jobs:
 
       - name: Export redaction sample gate
         run: python scripts/check_export_redaction.py --strict docs/samples/export-redaction-clean-sample.md
+
+      - name: Generated export redaction gate
+        run: python scripts/check_generated_export_redaction.py
 
       - name: Run tests
         run: pytest tests/ -q

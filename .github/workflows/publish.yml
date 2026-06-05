@@ -52,6 +52,9 @@ jobs:
       - name: Export redaction sample gate
         run: python scripts/check_export_redaction.py --strict docs/samples/export-redaction-clean-sample.md
 
+      - name: Generated export redaction gate
+        run: python scripts/check_generated_export_redaction.py
+
       - name: Release gate (no publish without review evidence)
         run: python scripts/check_release_gate.py
 

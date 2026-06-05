@@ -128,9 +128,9 @@ def test_glama_metadata_tracks_current_public_version_and_tool_count():
     content = GLAMA_YAML.read_text(encoding="utf-8")
 
     assert f"version: {pyproject_version}" in content
-    assert "82 MCP tools" in content
+    assert "83 MCP tools" in content
     assert "'core' (17 tools)" in content
-    assert "'all' (82 tools)" in content
+    assert "'all' (83 tools)" in content
     assert "60 MCP tools" not in content
     assert "'core' (12 tools)" not in content
 
@@ -251,6 +251,8 @@ def test_ci_workflow_runs_claim_drift_and_export_redaction_gates():
     assert "python scripts/check_public_claim_drift.py" in content
     assert "Export redaction sample gate" in content
     assert "python scripts/check_export_redaction.py --strict" in content
+    assert "Generated export redaction gate" in content
+    assert "python scripts/check_generated_export_redaction.py" in content
 
 
 def test_publish_workflow_runs_claim_drift_and_export_redaction_gates():
@@ -260,6 +262,8 @@ def test_publish_workflow_runs_claim_drift_and_export_redaction_gates():
     assert "python scripts/check_public_claim_drift.py" in content
     assert "Export redaction sample gate" in content
     assert "python scripts/check_export_redaction.py --strict" in content
+    assert "Generated export redaction gate" in content
+    assert "python scripts/check_generated_export_redaction.py" in content
 
 
 def test_readme_uses_pypi_install_and_badge():
@@ -354,11 +358,11 @@ def test_source_and_user_facing_docs_are_utf8_without_bom():
 
 
 def test_architecture_documents_current_tool_split():
-    """Architecture docs should carry the same 82/17/65 tool split as README."""
+    """Architecture docs should carry the same 83/17/66 tool split as README."""
     content = ARCHITECTURE.read_text(encoding="utf-8")
-    assert re.search(r"\b82 tools\b", content)
+    assert re.search(r"\b83 tools\b", content)
     assert "17 Tier-1" in content
-    assert "65 Tier-2" in content
+    assert "66 Tier-2" in content
 
 
 def test_mcp_tools_default_to_core_tier(tmp_path: Path):

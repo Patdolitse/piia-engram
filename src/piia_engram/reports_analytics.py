@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from .export_redaction import redact_export_text
 from .storage import (
     MAX_KNOWLEDGE_ENTRIES,
     SCHEMA_VERSION,
@@ -480,9 +481,14 @@ class AnalyticsMixin:
         domains = sorted({l.get("domain") for l in active_lessons if l.get("domain")})
         stale = self.get_stale_knowledge(days=STALE_KNOWLEDGE_DAYS)
         title_by_id = {
-            **{lesson.get("id", ""): lesson.get("summary", "") for lesson in lessons},
             **{
-                decision.get("id", ""): self._entry_identity_text(decision, "decision")
+                lesson.get("id", ""): redact_export_text(lesson.get("summary", ""))
+                for lesson in lessons
+            },
+            **{
+                decision.get("id", ""): redact_export_text(
+                    self._entry_identity_text(decision, "decision")
+                )
                 for decision in decisions
             },
         }
@@ -502,7 +508,7 @@ class AnalyticsMixin:
             "## 概览",
             f"- 经验教训：{len(active_lessons)} 条（活跃）",
             f"- 关键决策：{len(active_decisions)} 条（活跃）",
-            f"- 覆盖领域：{', '.join(domains) if domains else '暂无'}",
+            f"- 覆盖领域：{', '.join(redact_export_text(d) for d in domains) if domains else '暂无'}",
             "",
             "## 经验教训",
             "",
@@ -516,12 +522,12 @@ class AnalyticsMixin:
                 lessons_by_domain.setdefault(_d, []).append(lesson)
         if lessons_by_domain:
             for domain in sorted(lessons_by_domain):
-                lines.append(f"### {domain}")
+                lines.append(f"### {redact_export_text(domain)}")
                 for lesson in lessons_by_domain[domain]:
-                    source = lesson.get("source_tool", "unknown")
+                    source = redact_export_text(lesson.get("source_tool", "unknown"))
                     access_count = lesson.get("access_count", 0)
-                    summary = lesson.get("summary", "")
-                    detail = lesson.get("detail", "")
+                    summary = redact_export_text(lesson.get("summary", ""))
+                    detail = redact_export_text(lesson.get("detail", ""))
                     body = f" — {detail}" if detail else ""
                     lines.append(
                         f"- **{summary}**{body} *(来源: {source}, 访问 {access_count} 次)*"
@@ -543,8 +549,12 @@ class AnalyticsMixin:
             for month in sorted(decisions_by_month, reverse=True):
                 lines.append(f"### {month}")
                 for decision in decisions_by_month[month]:
-                    title = self._entry_identity_text(decision, "decision")
-                    rationale = decision.get("reasoning") or decision.get("choice", "")
+                    title = redact_export_text(
+                        self._entry_identity_text(decision, "decision")
+                    )
+                    rationale = redact_export_text(
+                        decision.get("reasoning") or decision.get("choice", "")
+                    )
                     status = decision.get("status", "active")
                     lines.append(f"- **{title}** — {rationale} *(状态: {status})*")
                     related_line = related_title_line(decision)
@@ -559,7 +569,7 @@ class AnalyticsMixin:
         if stale_items:
             for item in stale_items:
                 lines.append(
-                    f"- **{item.get('title', '')}** — 最后访问: {item.get('last_reviewed', '')}"
+                    f"- **{redact_export_text(item.get('title', ''))}** — 最后访问: {item.get('last_reviewed', '')}"
                 )
         else:
             lines.append(f"暂无超过 {STALE_KNOWLEDGE_DAYS} 天未访问的活跃知识。")

@@ -78,6 +78,10 @@ class TestChecklist:
         assert "--strict" in steps["export_redaction"]["command"]
         assert steps["export_redaction"]["auth_required"] is False
 
+        assert steps["generated_export_redaction"]["phase"] == mod.LOCAL
+        assert "check_generated_export_redaction.py" in steps["generated_export_redaction"]["command"]
+        assert steps["generated_export_redaction"]["auth_required"] is False
+
     def test_remote_steps_are_described_not_executed(self, mod):
         # No step command should be auto-run; the orchestrator only renders text.
         remote = [s for s in mod.build_checklist() if s["phase"] == mod.REMOTE]

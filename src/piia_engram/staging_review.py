@@ -8,6 +8,21 @@ from typing import Any
 VALID_ACTIONS = {"approve", "reject", "archive"}
 
 
+def list_pending_staging(
+    eng,
+    *,
+    filters: dict[str, Any] | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List staging candidates as metadata only.
+
+    This is the read-only half of staging review: callers can inspect ids,
+    types, domains, and priority reasons without seeing draft bodies.
+    """
+    return _list_pending(eng, filters=filters, limit=limit, offset=offset)
+
+
 def batch_review_staging(
     eng,
     actions: list[dict[str, Any]] | None,
