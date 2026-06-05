@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .writeback_policy import check_writeback_allowed
 
 _TRUTHY = {"1", "true", "on", "yes"}
 _MAX_TEXT_CHARS = 20_000
@@ -20,7 +21,7 @@ _MAX_TRANSCRIPT_BYTES = 512_000
 
 
 def _enabled() -> bool:
-    return os.environ.get("ENGRAM_CURSOR_WRITEBACK", "").strip().lower() in _TRUTHY
+    return check_writeback_allowed("ENGRAM_CURSOR_WRITEBACK", staging_gate=True)
 
 
 def _coerce_text(value: Any) -> str:
@@ -89,34 +90,37 @@ def main() -> int:
     os.environ["ENGRAM_CURSOR_WRITEBACK_ACTIVE"] = "1"
 
     try:
-        raw = sys.stdin.read()
-        hook_input = json.loads(raw) if raw.strip() else {}
-    except (json.JSONDecodeError, OSError):
-        return 0
-    if not isinstance(hook_input, dict):
-        return 0
+        try:
+            raw = sys.stdin.read()
+            hook_input = json.loads(raw) if raw.strip() else {}
+        except (json.JSONDecodeError, OSError):
+            return 0
+        if not isinstance(hook_input, dict):
+            return 0
 
-    summary = _extract_summary(hook_input)
-    if not summary:
+        summary = _extract_summary(hook_input)
+        if not summary:
+            return 0
+
+        try:
+            from piia_engram.core import Engram
+
+            result = Engram().extract_session_insights(summary, source_tool="cursor")
+        except Exception:
+            return 0
+
+        if os.environ.get("ENGRAM_CURSOR_WRITEBACK_DEBUG", "").strip().lower() in _TRUTHY:
+            safe = {
+                "saved_lessons": result.get("saved_lessons", 0),
+                "saved_decisions": result.get("saved_decisions", 0),
+                "duplicates": result.get("duplicates", 0),
+                "skipped": result.get("skipped", 0),
+                "tier": "staging",
+            }
+            print(json.dumps(safe, ensure_ascii=False))
         return 0
-
-    try:
-        from piia_engram.core import Engram
-
-        result = Engram().extract_session_insights(summary, source_tool="cursor")
-    except Exception:
-        return 0
-
-    if os.environ.get("ENGRAM_CURSOR_WRITEBACK_DEBUG", "").strip().lower() in _TRUTHY:
-        safe = {
-            "saved_lessons": result.get("saved_lessons", 0),
-            "saved_decisions": result.get("saved_decisions", 0),
-            "duplicates": result.get("duplicates", 0),
-            "skipped": result.get("skipped", 0),
-            "tier": "staging",
-        }
-        print(json.dumps(safe, ensure_ascii=False))
-    return 0
+    finally:
+        os.environ.pop("ENGRAM_CURSOR_WRITEBACK_ACTIVE", None)
 
 
 if __name__ == "__main__":

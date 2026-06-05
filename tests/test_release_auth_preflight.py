@@ -11,6 +11,8 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import time
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -215,6 +217,58 @@ def test_warm_mcp_registry_auth_fails_when_publisher_login_fails(mod, tmp_path):
     )
     assert r["status"] == mod.FAIL
     assert SECRET not in json.dumps(r)
+
+
+def test_mcp_registry_jwt_age_warns_for_stale_cache(mod, tmp_path):
+    cache = tmp_path / "mcp-publisher-token.json"
+    cache.write_text("opaque-token-cache", encoding="utf-8")
+    stale = time.time() - (2 * 60 * 60)
+    os.utime(cache, (stale, stale))
+
+    r = mod.check_mcp_registry_jwt_age(
+        env={"MCP_PUBLISHER_TOKEN_CACHE": str(cache)},
+        now=time.time(),
+        max_age_minutes=60,
+    )
+
+    assert r["status"] == mod.WARN
+    assert "older than 60 minutes" in r["detail"]
+    assert str(cache) not in json.dumps(r)
+
+
+def test_mcp_registry_jwt_age_ok_for_fresh_cache(mod, tmp_path):
+    cache = tmp_path / "mcp-publisher-token.json"
+    cache.write_text("opaque-token-cache", encoding="utf-8")
+
+    r = mod.check_mcp_registry_jwt_age(
+        env={"MCP_PUBLISHER_TOKEN_CACHE": str(cache)},
+        now=time.time(),
+        max_age_minutes=60,
+    )
+
+    assert r["status"] == mod.OK
+    assert "fresh enough" in r["detail"]
+
+
+def test_run_preflight_can_include_jwt_age_warning(mod, tmp_path):
+    _write_pyproject(tmp_path, "3.47.0")
+    _write_server_json(tmp_path, "3.47.0")
+    cache = tmp_path / "mcp-publisher-token.json"
+    cache.write_text("opaque-token-cache", encoding="utf-8")
+    stale = time.time() - (2 * 60 * 60)
+    os.utime(cache, (stale, stale))
+
+    ok, results = mod.run_preflight(
+        tmp_path,
+        check_jwt_age=True,
+        which=_which_factory({"gh", "mcp-publisher"}),
+        run=_run_factory({"gh": 0, "mcp-publisher": 0, "twine": 0}),
+        env={"MCP_PUBLISHER_TOKEN_CACHE": str(cache)},
+    )
+
+    by = {r["name"]: r for r in results}
+    assert ok is True
+    assert by["mcp_registry_jwt_age"]["status"] == mod.WARN
 
 
 def test_twine_available_and_missing(mod):

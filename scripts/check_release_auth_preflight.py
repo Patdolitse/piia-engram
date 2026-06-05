@@ -43,6 +43,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Status constants for a single check result.
@@ -54,6 +55,13 @@ SKIP = "skip"
 DEFAULT_MCP_PUBLISHER_CANDIDATES = (
     r"E:\Temp\mcp-publisher.exe",
     r"E:\Temp\mcp-publisher-v1.7.9-windows-amd64\mcp-publisher.exe",
+)
+
+DEFAULT_MCP_TOKEN_CACHE_CANDIDATES = (
+    "~/.mcp-publisher/token.json",
+    "~/.mcp-publisher/credentials.json",
+    "~/.config/mcp-publisher/token.json",
+    "~/.config/mcp-publisher/credentials.json",
 )
 
 
@@ -188,6 +196,65 @@ def warm_mcp_registry_auth(which=shutil.which, run=_run, candidates=None) -> dic
     return _result(
         "mcp_registry_auth_warm", FAIL, True,
         "mcp-publisher GitHub token login failed.",
+    )
+
+
+def _resolve_mcp_token_cache(env=None, candidates=None) -> Path | None:
+    """Find a local MCP publisher token cache by path only; never read it."""
+    env = os.environ if env is None else env
+    explicit = str(env.get("MCP_PUBLISHER_TOKEN_CACHE", "")).strip()
+    if explicit:
+        path = Path(explicit).expanduser()
+        if path.is_file():
+            return path
+    for raw in candidates or DEFAULT_MCP_TOKEN_CACHE_CANDIDATES:
+        path = Path(raw).expanduser()
+        if path.is_file():
+            return path
+    appdata = str(env.get("APPDATA", "")).strip()
+    if appdata:
+        for rel in ("mcp-publisher\\token.json", "mcp-publisher\\credentials.json"):
+            path = Path(appdata) / rel
+            if path.is_file():
+                return path
+    return None
+
+
+def check_mcp_registry_jwt_age(
+    *,
+    env=None,
+    now: float | None = None,
+    max_age_minutes: int = 60,
+    candidates=None,
+) -> dict:
+    """Warn when the local MCP publisher auth cache looks stale.
+
+    This is intentionally advisory. The publisher token cache shape is not part
+    of a stable public API, so the check uses file mtime only and never reads,
+    logs, or prints the token/cache contents or absolute path.
+    """
+    path = _resolve_mcp_token_cache(env=env, candidates=candidates)
+    if path is None:
+        return _result(
+            "mcp_registry_jwt_age", WARN, False,
+            "MCP publisher token cache not found; run --warm-mcp before REMOTE steps.",
+        )
+    try:
+        age_minutes = int(((time.time() if now is None else now) - path.stat().st_mtime) / 60)
+    except OSError:
+        return _result(
+            "mcp_registry_jwt_age", WARN, False,
+            "MCP publisher token cache could not be inspected; run --warm-mcp.",
+        )
+    if age_minutes > max_age_minutes:
+        return _result(
+            "mcp_registry_jwt_age", WARN, False,
+            f"MCP publisher auth cache is older than {max_age_minutes} minutes; "
+            "run --warm-mcp before REMOTE steps.",
+        )
+    return _result(
+        "mcp_registry_jwt_age", OK, False,
+        "MCP publisher auth cache is fresh enough for preflight purposes.",
     )
 
 
@@ -338,6 +405,7 @@ def run_preflight(
     *,
     include_wrangler: bool = False,
     warm_mcp: bool = False,
+    check_jwt_age: bool = False,
     which=shutil.which,
     run=_run,
     env=None,
@@ -354,6 +422,8 @@ def run_preflight(
             run=run,
             candidates=mcp_publisher_candidates,
         ))
+    if check_jwt_age:
+        results.append(check_mcp_registry_jwt_age(env=env))
     results.extend(check_server_json(
         root,
         which=which,
@@ -400,6 +470,9 @@ def main(argv: list[str] | None = None) -> int:
                     help=("Refresh MCP Registry auth via 'gh auth token' + "
                           "'mcp-publisher login github -token <token>'. "
                           "No publish action; token value is never printed."))
+    ap.add_argument("--check-jwt-age", action="store_true",
+                    help=("Warn if the MCP publisher token cache appears older "
+                          "than 60 minutes. Path/content are never printed."))
     args = ap.parse_args(argv)
 
     root = Path(args.root).resolve()
@@ -412,6 +485,7 @@ def main(argv: list[str] | None = None) -> int:
         root,
         include_wrangler=args.include_wrangler,
         warm_mcp=args.warm_mcp,
+        check_jwt_age=args.check_jwt_age,
     )
     warns = [r for r in results if r["status"] == WARN]
     passed = required_ok and not (args.strict and warns)

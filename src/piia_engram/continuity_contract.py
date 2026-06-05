@@ -317,6 +317,42 @@ def validate_scenario(scenario: dict[str, Any]) -> list[str]:
     return issues
 
 
+def _iter_strings(value: Any, prefix: str = ""):
+    if isinstance(value, str):
+        yield prefix, value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            label = str(key)
+            child_prefix = f"{prefix}.{label}" if prefix else label
+            yield from _iter_strings(child, child_prefix)
+    elif isinstance(value, list):
+        for idx, child in enumerate(value):
+            child_prefix = f"{prefix}[{idx}]" if prefix else f"[{idx}]"
+            yield from _iter_strings(child, child_prefix)
+
+
+def validate_no_real_paths(scenarios: list[dict[str, Any]] | Any) -> list[str]:
+    """Return public-safety violations for scenario packs.
+
+    This is a static packaging guard for MCIC/continuity evidence. It scans only
+    scenario strings and reports private-looking paths, API keys, and emails.
+    It does not read the Engram store or any local files.
+    """
+    if not isinstance(scenarios, list):
+        return ["scenario pack is not a list"]
+
+    violations: list[str] = []
+    for idx, scenario in enumerate(scenarios):
+        if not isinstance(scenario, dict):
+            violations.append(f"scenario[{idx}] is not an object")
+            continue
+        sid = str(scenario.get("id") or f"scenario[{idx}]")
+        for field_path, text in _iter_strings(scenario):
+            if _PRIVATE_MARKERS.search(text):
+                violations.append(f"{sid}.{field_path}: private marker")
+    return violations
+
+
 # ---------------------------------------------------------------------------
 # A/B run validation
 # ---------------------------------------------------------------------------

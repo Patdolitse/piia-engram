@@ -28,6 +28,7 @@ import hashlib
 from typing import Any
 
 from .agents_md_export import build_agents_md_export, select_exportable
+from .continuity_contract import validate_no_real_paths
 from .sensitivity import classify_item
 
 _SENS_RANK = {"public": 0, "work": 1, "private": 2, "secret": 3}
@@ -194,6 +195,7 @@ def _parse_rule_list(text: str) -> list[dict[str, Any]]:
 
 def simulate_continuity_cycle(
     *,
+    scenarios: list[dict[str, Any]] | None = None,
     lessons: list[dict[str, Any]] | None = None,
     decisions: list[dict[str, Any]] | None = None,
     tool: str = "codex",
@@ -209,6 +211,13 @@ def simulate_continuity_cycle(
     are returned in the trace so a caller (or test) can assert they did NOT leak
     into the next-session export.
     """
+    if scenarios is not None:
+        violations = validate_no_real_paths(scenarios)
+        if violations:
+            raise ValueError(
+                "unsafe continuity scenario pack: " + "; ".join(violations[:3])
+            )
+
     lessons = lessons or []
     decisions = decisions or []
 

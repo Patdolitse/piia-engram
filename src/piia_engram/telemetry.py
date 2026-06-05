@@ -280,6 +280,8 @@ _VERSION_ADOPTION_VALUES = frozenset(
 _ACTIVATION_STATES = frozenset({"activated", "not_activated", "unknown"})
 _RETURNING_BUCKETS = frozenset({"new", "returning"})
 _ERROR_TRENDS = frozenset({"none", "first", "up", "down", "flat"})
+_USER_BUCKETS = frozenset({"none", "light", "moderate", "active", "unknown"})
+_ACTIVATION_DEPTHS = frozenset({"none", "basic", "intermediate", "advanced", "unknown"})
 
 
 def _version_key(value: Any) -> tuple[int, ...] | None:
@@ -377,7 +379,52 @@ def _tool_success_count(tool_calls: dict[str, dict[str, int]] | None, name: str)
         return 0
 
 
-def _compute_vnext_signals(tool_calls: dict[str, dict[str, int]] | None) -> dict[str, Any]:
+def _user_bucket(knowledge_counts: dict[str, int] | None) -> str:
+    """Coarse local-use intensity bucket derived from aggregate counts only."""
+    if not knowledge_counts:
+        return "unknown"
+    total = 0
+    for key in ("lessons", "decisions", "domains"):
+        try:
+            total += max(0, int(knowledge_counts.get(key, 0)))
+        except (TypeError, ValueError):
+            return "unknown"
+    if total == 0:
+        return "none"
+    if total < 10:
+        return "light"
+    if total < 40:
+        return "moderate"
+    return "active"
+
+
+def _activation_depth(tool_calls: dict[str, dict[str, int]] | None) -> str:
+    """Coarse depth bucket from the number of distinct tools used successfully."""
+    if not isinstance(tool_calls, dict) or not tool_calls:
+        return "unknown"
+    distinct_success = 0
+    for counts in tool_calls.values():
+        if not isinstance(counts, dict):
+            continue
+        try:
+            success = int(counts.get("success", 0))
+        except (TypeError, ValueError):
+            continue
+        if success > 0:
+            distinct_success += 1
+    if distinct_success == 0:
+        return "none"
+    if distinct_success < 3:
+        return "basic"
+    if distinct_success < 6:
+        return "intermediate"
+    return "advanced"
+
+
+def _compute_vnext_signals(
+    tool_calls: dict[str, dict[str, int]] | None,
+    knowledge_counts: dict[str, int] | None = None,
+) -> dict[str, Any]:
     """Compute opt-in vNext analysis signals from aggregate tool-call counts.
 
     The inputs are existing count buckets only. No arguments, content, paths, or
@@ -394,6 +441,8 @@ def _compute_vnext_signals(tool_calls: dict[str, dict[str, int]] | None) -> dict
     return {
         "recall_hit_rate": recall_hit_rate,
         "cross_tool_handoffs": min(resume_success, wrap_success),
+        "user_bucket": _user_bucket(knowledge_counts),
+        "activation_depth": _activation_depth(tool_calls),
     }
 
 
@@ -538,7 +587,7 @@ def build_payload(
         payload["knowledge_counts"] = knowledge_counts
 
     if include_vnext_signals:
-        payload["vnext_signals"] = _compute_vnext_signals(tool_calls)
+        payload["vnext_signals"] = _compute_vnext_signals(tool_calls, knowledge_counts)
 
     if not _validate_payload(payload):
         return None

@@ -31,6 +31,7 @@ authorized — this avoids stalling halfway through a release:
 python scripts/check_release_auth_preflight.py            # report + exit 1 if not ready
 python scripts/check_release_auth_preflight.py --json     # machine-readable
 python scripts/check_release_auth_preflight.py --strict   # warnings also block
+python scripts/check_release_auth_preflight.py --check-jwt-age # warn if MCP auth cache looks stale
 python scripts/check_release_auth_preflight.py --warm-mcp # refresh MCP Registry auth
 ```
 
@@ -46,6 +47,11 @@ publishing). Cloudflare/Wrangler is out of scope unless `--include-wrangler`.
 It never prints the token and it does **not** push, tag, upload, publish, or
 write a registry entry. Run it before remote release steps so a stale MCP
 Registry token fails early instead of blocking inside `mcp-publisher publish`.
+
+`--check-jwt-age` is the lightweight warning gate. It inspects only the token
+cache file timestamp (never the path, value, or contents) and warns when the
+cache looks older than the safe window. Treat that warning as a cue to run
+`--warm-mcp` before the remote publish chain.
 
 This check is **non-secret and publish-safe**: default mode never reads token
 values; `--warm-mcp` reads a GitHub CLI token only to refresh local

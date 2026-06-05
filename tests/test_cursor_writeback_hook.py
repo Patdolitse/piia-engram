@@ -60,6 +60,33 @@ def test_cursor_writeback_reentry_guard_does_not_write(tmp_path, monkeypatch):
     assert not (tmp_path / "knowledge" / "lessons.json").exists()
 
 
+def test_cursor_writeback_clears_reentry_guard_after_run(tmp_path, monkeypatch):
+    from piia_engram.core import Engram
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+    monkeypatch.setenv("ENGRAM_CURSOR_WRITEBACK", "1")
+    monkeypatch.delenv("ENGRAM_CURSOR_WRITEBACK_ACTIVE", raising=False)
+
+    assert _run_hook(monkeypatch, {
+        "summary": (
+            "Remember to keep release preflight auth checks advisory because "
+            "remote actions still need explicit maintainer confirmation."
+        )
+    }) == 0
+    assert "ENGRAM_CURSOR_WRITEBACK_ACTIVE" not in __import__("os").environ
+
+    assert _run_hook(monkeypatch, {
+        "summary": (
+            "Remember to keep continuity scenario packs synthetic because "
+            "real paths can leak into public benchmark evidence."
+        )
+    }) == 0
+
+    lessons = Engram().get_lessons(limit=None, _update_access=False)
+    assert len(lessons) == 2
+
+
 def test_cursor_writeback_reads_transcript_path(tmp_path, monkeypatch):
     from piia_engram.core import Engram
 

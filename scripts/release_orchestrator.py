@@ -170,10 +170,12 @@ def build_checklist() -> list[dict]:
               auth_required=True, auth_kind=DEVICE_FLOW, token_env=None,
               stall_risk="device-flow prompt if mcp_publisher_auth was skipped",
               timeout_hint="pre-authorize (mcp_publisher_auth) to avoid the stall"),
-        _step("glama", REMOTE, "Glama listing (automatic)",
-              "(none) Glama detects GitHub changes within ~24h",
+        _step("glama_manual_auth", REMOTE, "Glama manual/auth visibility",
+              "(manual) verify Glama listing after GitHub/PyPI/MCP publish",
               auth_required=False, blocking=False,
-              timeout_hint="passive; no action"),
+              stall_risk="high",
+              timeout_hint="passive auto-detection can lag; if manual refresh is "
+                           "needed, do it in a visible browser session"),
     ]
 
 

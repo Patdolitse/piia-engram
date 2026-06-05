@@ -17,6 +17,8 @@ from piia_engram.telemetry import (
     CONTRACT_VERSION,
     ToolCallTracker,
     _compute_vnext_signals,
+    _activation_depth,
+    _user_bucket,
     _validate_payload,
     build_payload,
     preview_payload,
@@ -143,16 +145,56 @@ class TestPrivacyShape:
 
 
 class TestVNextSignals:
+    @pytest.mark.parametrize("counts,expected", [
+        (None, "unknown"),
+        ({}, "unknown"),
+        ({"lessons": 0, "decisions": 0, "domains": 0}, "none"),
+        ({"lessons": 2, "decisions": 1, "domains": 0}, "light"),
+        ({"lessons": 12, "decisions": 4, "domains": 3}, "moderate"),
+        ({"lessons": 40, "decisions": 12, "domains": 7}, "active"),
+        ({"lessons": "not-a-number"}, "unknown"),
+    ])
+    def test_user_bucket_is_coarse_count_only(self, counts, expected):
+        assert _user_bucket(counts) == expected
+
+    @pytest.mark.parametrize("tool_calls,expected", [
+        (None, "unknown"),
+        ({}, "unknown"),
+        ({"get_user_context": {"success": 0, "error": 2}}, "none"),
+        ({"get_user_context": {"success": 1, "error": 0}}, "basic"),
+        ({
+            "get_user_context": {"success": 1, "error": 0},
+            "search_knowledge": {"success": 2, "error": 0},
+            "wrap_up_session": {"success": 1, "error": 0},
+        }, "intermediate"),
+        ({
+            "get_user_context": {"success": 1, "error": 0},
+            "search_knowledge": {"success": 1, "error": 0},
+            "wrap_up_session": {"success": 1, "error": 0},
+            "add_lesson": {"success": 1, "error": 0},
+            "add_decision": {"success": 1, "error": 0},
+            "get_project_context": {"success": 1, "error": 0},
+        }, "advanced"),
+    ])
+    def test_activation_depth_is_coarse_distinct_success_bucket(self, tool_calls, expected):
+        assert _activation_depth(tool_calls) == expected
+
     def test_vnext_signal_computation_from_aggregate_counts(self):
-        signals = _compute_vnext_signals({
-            "get_resume_brief": {"success": 4, "error": 1},
-            "get_resume_brief_nonempty": {"success": 3, "error": 0},
-            "wrap_up_session": {"success": 2, "error": 0},
-        })
+        signals = _compute_vnext_signals(
+            {
+                "get_resume_brief": {"success": 4, "error": 1},
+                "get_resume_brief_nonempty": {"success": 3, "error": 0},
+                "wrap_up_session": {"success": 2, "error": 0},
+                "add_lesson": {"success": 1, "error": 0},
+            },
+            {"lessons": 12, "decisions": 4, "domains": 3},
+        )
 
         assert signals == {
             "recall_hit_rate": 0.75,
             "cross_tool_handoffs": 2,
+            "user_bucket": "moderate",
+            "activation_depth": "intermediate",
         }
 
     def test_vnext_recall_hit_rate_unknown_without_nonempty_counter(self):
@@ -192,12 +234,15 @@ class TestVNextSignals:
                 "get_resume_brief_nonempty": {"success": 1, "error": 0},
                 "wrap_up_session": {"success": 1, "error": 0},
             },
+            knowledge_counts={"lessons": 2, "decisions": 1, "domains": 0},
             include_vnext_signals=True,
         )
 
         assert payload["vnext_signals"] == {
             "recall_hit_rate": 0.5,
             "cross_tool_handoffs": 1,
+            "user_bucket": "light",
+            "activation_depth": "intermediate",
         }
         assert _validate_payload(payload) is True
 

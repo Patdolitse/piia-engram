@@ -73,6 +73,14 @@ class TestChecklist:
         assert any(s["id"] == "mcp_publish" for s in remote)
         assert any(s["id"] == "gh_release" for s in remote)
 
+    def test_glama_step_is_manual_high_stall_visibility(self, mod):
+        step = {s["id"]: s for s in mod.build_checklist()}["glama_manual_auth"]
+        assert step["phase"] == mod.REMOTE
+        assert step["blocking"] is False
+        assert step["stall_risk"] == "high"
+        assert "manual" in step["title"].lower()
+        assert "Glama" in step["title"]
+
 
 class TestReport:
     def test_report_counts(self, mod):
