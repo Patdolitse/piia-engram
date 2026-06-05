@@ -1,0 +1,181 @@
+{
+  "schema": 1,
+  "benchmark": "recall_eval_v1",
+  "description": "Synthetic, public-safe offline recall eval seed. IDs are labels for deterministic scoring; bodies contain no user/private project data.",
+  "public_safe": true,
+  "thresholds": {
+    "min_mean_recall_at_k": 0.8,
+    "min_mean_mrr": 0.7,
+    "max_forbidden_leak_rate": 0.0,
+    "max_negative_false_positive_rate": 0.1
+  },
+  "stores": {
+    "seed": {
+      "lessons": [
+        {
+          "id": "L-release-verify",
+          "summary": "Release recovery should convert failures into executable guards before documentation.",
+          "detail": "When a publish step fails, add a tested script or CI gate so the failure cannot silently repeat.",
+          "domain": "release",
+          "source_tool": "codex"
+        },
+        {
+          "id": "L-python-venv",
+          "summary": "Python virtual environments prevent dependency conflicts in local test runs.",
+          "detail": "Use the project runtime rather than a global interpreter when running pytest.",
+          "domain": "python",
+          "source_tool": "claude_code"
+        },
+        {
+          "id": "L-cn-index",
+          "summary": "数据库索引优化可以显著提升查询性能",
+          "detail": "慢查询排查时先看索引和执行计划。",
+          "domain": "database",
+          "source_tool": "codex"
+        },
+        {
+          "id": "L-user-language",
+          "summary": "The user prefers Chinese for internal reports and planning summaries.",
+          "detail": "Public release notes may use English first, then Chinese.",
+          "domain": "identity",
+          "source_tool": "codex"
+        },
+        {
+          "id": "L-old-release-flow",
+          "summary": "Old release flow relied on manual reminders and should not be surfaced.",
+          "detail": "SYNTHETIC_SECRET_DO_NOT_LEAK old body marker.",
+          "domain": "release",
+          "status": "active",
+          "source_tool": "codex"
+        },
+        {
+          "id": "L-current-release-flow",
+          "summary": "Current release flow uses publish workflow order checks and registry retry wrappers.",
+          "detail": "The latest flow verifies dependency install order, PyPI fallback encoding, and MCP Registry pagination.",
+          "domain": "release",
+          "source_tool": "codex"
+        }
+      ],
+      "decisions": [
+        {
+          "id": "D-release-auth",
+          "question": "How should public release actions be authorized?",
+          "choice": "Push, tag, release, PyPI, MCP Registry, and public comments require explicit user confirmation.",
+          "reasoning": "These actions are public or irreversible, so local commit approval is not enough.",
+          "domain": "release",
+          "source_tool": "codex"
+        }
+      ],
+      "playbooks": [
+        {
+          "id": "PB-project-a-deploy",
+          "title": "Project A deployment checklist",
+          "triggers": ["deploy", "release"],
+          "steps": ["Run tests", "Build artifacts", "Publish after approval"],
+          "domain": "deployment",
+          "scope": "project",
+          "project_id": "project-a"
+        },
+        {
+          "id": "PB-project-b-deploy",
+          "title": "Project B deployment checklist",
+          "triggers": ["deploy", "release"],
+          "steps": ["Run smoke test", "Notify team"],
+          "domain": "deployment",
+          "scope": "project",
+          "project_id": "project-b"
+        }
+      ],
+      "relation_edges": [
+        {"src": "L-current-release-flow", "rel": "supersedes", "dst": "L-old-release-flow"}
+      ],
+      "projects": {
+        "project-a": {"folder": "E:/synthetic/project-a", "title": "Synthetic Project A"},
+        "project-b": {"folder": "E:/synthetic/project-b", "title": "Synthetic Project B"}
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "exact-lesson",
+      "scenario": "exact_lesson",
+      "store": "seed",
+      "query": "release executable guard",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-release-verify"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "paraphrase-alias",
+      "scenario": "paraphrase_alias",
+      "store": "seed",
+      "query": "py dependency conflict",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-python-venv"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "decision-rationale",
+      "scenario": "decision_rationale",
+      "store": "seed",
+      "query": "release authorization public actions",
+      "scope": "decisions",
+      "limit": 5,
+      "expected_ids": ["D-release-auth"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "identity-preference",
+      "scenario": "identity_preference",
+      "store": "seed",
+      "query": "Chinese internal reports planning summaries",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-user-language"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "chinese-query",
+      "scenario": "chinese_query",
+      "store": "seed",
+      "query": "数据库索引",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-cn-index"],
+      "forbidden_ids": []
+    },
+    {
+      "id": "negative-absent",
+      "scenario": "negative_absent",
+      "store": "seed",
+      "query": "neutrino origami",
+      "scope": "all",
+      "limit": 5,
+      "expected_ids": [],
+      "forbidden_ids": []
+    },
+    {
+      "id": "version-supersession",
+      "scenario": "version_supersession",
+      "store": "seed",
+      "query": "current release flow registry retry wrappers",
+      "scope": "lessons",
+      "limit": 5,
+      "expected_ids": ["L-current-release-flow"],
+      "forbidden_ids": ["L-old-release-flow"]
+    },
+    {
+      "id": "project-isolation",
+      "scenario": "project_isolation",
+      "store": "seed",
+      "query": "deployment checklist",
+      "scope": "playbooks",
+      "limit": 5,
+      "project_folder": "E:/synthetic/project-a",
+      "expected_ids": ["PB-project-a-deploy"],
+      "forbidden_ids": ["PB-project-b-deploy"]
+    }
+  ]
+}

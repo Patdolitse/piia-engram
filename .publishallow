@@ -69,6 +69,7 @@ README.zh-CN.md
 # NOTE: release-playbook.md is intentionally NOT here — it's an internal
 # ops runbook (reverse-disclosure risk) kept at docs/internal/ (gitignored).
 docs/architecture.md
+docs/benchmarks/recall-eval-v1.md
 docs/comparison.md
 docs/cross-tool-continuity-demo.md
 docs/cross-tool-guide.md
