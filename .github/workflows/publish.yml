@@ -43,6 +43,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install project dependencies for release gates
+        run: pip install -e .
+
       - name: Public fact sync gate
         run: python scripts/check_public_fact_sync.py
 
