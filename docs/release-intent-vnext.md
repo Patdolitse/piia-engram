@@ -9,6 +9,9 @@ and not approval to publish.
 - `8da40d5 feat(context-governance): add usage report and staged safety helpers`
 - `16e3bc5 docs(mcp): clarify tool tiers and owner-gated surfaces`
 - `965e643 feat(context-governance): add unified preview surface`
+- `5153726 feat(worker): reshape telemetry dashboard range views`
+- `9f067a6 fix(registry): add title field to server.json for subregistry display name`
+- `b5cfeca docs(continuity): add live cross-tool proof and repoint README CTA`
 
 ## Suggested release shape
 
@@ -22,6 +25,7 @@ Expected release themes:
 - Context governance proposals and recall usage reporting.
 - MCP tool-surface semantics and owner/export/admin wording hardening.
 - Unified owner-gated context governance preview surface.
+- Live cross-tool continuity proof and clearer external-listing metadata.
 
 ## Separate online dashboard lane
 
@@ -34,8 +38,22 @@ operations.
 Current local dashboard follow-up:
 
 - PyPI download and activity trend range selectors are present locally.
-- PyPI download display is being reshaped into a single-card KPI + trend layout.
+- PyPI download display has been reshaped into a single-card KPI + trend layout.
+- The dashboard update was deployed to Cloudflare Workers after owner confirmation.
+- Current deployed Worker version ID: `61579816-fcc0-4a7e-8492-14647ed4dfc0`.
 - Any `git push` or Wrangler deploy still requires owner confirmation.
+
+## External listing lane
+
+LobeHub currently renders stale/wrong header metadata for the public listing:
+
+- displayed title: `MCP Server Manifest Plugin`
+- displayed version: `3.47.0`
+- correct title/version: `piia-engram` / `3.51.2`
+
+Local metadata and official MCP Registry data have been checked. The owner has
+already requested help on Discord, so do not send duplicate public feedback
+unless explicitly asked.
 
 ## Publication gate
 
