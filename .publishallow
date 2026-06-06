@@ -74,6 +74,7 @@ docs/benchmarks/memory-eval-suite-v1.md
 docs/comparison.md
 docs/context-governance.md
 docs/cross-tool-continuity-demo.md
+docs/cross-tool-continuity-proof.md
 docs/cross-tool-guide.md
 docs/codex-claude-validation.md
 docs/cursor-plugin-validation.md

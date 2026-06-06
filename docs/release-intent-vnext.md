@@ -3,7 +3,10 @@
 This is a local planning note only. It is not a release announcement, not a tag,
 and not approval to publish.
 
-## Current local commits after v3.51.2
+## Product/release-candidate commits after v3.51.2
+
+This list intentionally excludes this planning note's own maintenance commit
+chain to avoid a self-referential release-intent loop.
 
 - `1effe5f fix: align CLI tool-count help text`
 - `8da40d5 feat(context-governance): add usage report and staged safety helpers`
