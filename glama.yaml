@@ -1,6 +1,6 @@
 metadata:
   name: piia-engram
-  description: "Personal intelligence identity layer — one memory across all AI tools. Local-first, user-governed, 83 MCP tools."
+  description: "Personal intelligence identity layer for MCP-compatible AI tools. Local-first, user-governed, 83 MCP tools."
   version: 3.51.2
   tags:
     - memory
@@ -47,7 +47,7 @@ spec:
       description: "Find knowledge items needing review"
     # Identity
     - name: get_identity_card
-      description: "Export markdown identity card for non-MCP tools"
+      description: "Owner-gated export of a markdown identity card for non-MCP tools"
     - name: update_identity
       description: "Update profile, preferences, or quality standards"
     # Project context
@@ -73,16 +73,16 @@ spec:
       description: "Create relationships between knowledge items"
     # Tools registry
     - name: register_tool
-      description: "Register a local tool/program in the tool graph"
+      description: "Optional local integration governed write: register a local tool/program in the tool graph"
     - name: find_tool
       description: "Search the tool registry by name or capability"
     # Review and reports
     - name: request_outline_review
-      description: "Generate interactive HTML knowledge review page"
+      description: "Owner-gated export of an interactive HTML knowledge review page"
     - name: apply_review
       description: "Execute review results — archive marked items"
     - name: export_feedback_report
-      description: "Generate anonymous usage metrics report"
+      description: "Internal/dogfood anonymous usage metrics report"
 
 documentation:
   quickStart: |

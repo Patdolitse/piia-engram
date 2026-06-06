@@ -159,6 +159,7 @@ def test_quickstart_first_value_stays_core_and_honest():
         "search_knowledge",
         "add_lesson",
         "doctor",
+        "owner-gated export surface",
     ]:
         assert phrase in doc
 
@@ -178,10 +179,66 @@ def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims(
     assert len(tools) == 83
     assert "17 core tools" in doc
     assert "66 advanced tools" in doc
-    assert "does not propose merging, renaming, hiding, or removing any tool" in doc
+    assert "Core is not read-only" in doc
+    assert "core but owner-gated" in doc
+    assert "Optional local / dogfood tools" in doc
+    assert "Internal maintenance / legacy tools" in doc
+    assert "Release posture by bucket" in doc
+    assert "Deprecated compatibility read" in doc
     assert "analysis only" in doc.lower()
     for name in sorted(tools):
         assert f"`{name}`" in doc, name
+
+
+def test_public_tool_surface_docs_label_owner_local_and_legacy_tools():
+    readme = _read("README.md")
+    readme_zh = _read("README.zh-CN.md")
+    analysis = _read("docs/tool-surface-analysis.md")
+    tools_ref = _read("skills/engram/references/tools.md")
+    glama = _read("glama.yaml")
+    architecture = _read("docs/architecture.md")
+
+    for phrase in [
+        'Core means "used in most sessions", not "read-only"',
+        "Owner-gated export: write and return a Markdown identity card",
+        "Optional local integration governed write: register",
+        "Deprecated compatibility read; prefer `get_preferences`",
+        "Owner maintenance: dry-run project/global/shared scope suggestions",
+        "Internal/dogfood",
+    ]:
+        assert phrase in readme
+
+    for phrase in [
+        "核心工具表示",
+        "不表示",
+        "只读安全集合",
+        "owner-gated 导出",
+        "可选本地集成",
+        "deprecated 兼容读取",
+    ]:
+        assert phrase in readme_zh
+
+    for phrase in [
+        "Core is not read-only",
+        "Owner/export",
+        "Optional local / dogfood tools",
+        "Internal maintenance / legacy tools",
+    ]:
+        assert phrase in analysis
+
+    for phrase in [
+        "high-frequency surface, not a read-only guarantee",
+        "owner-gated export/identity",
+        "optional local",
+        "owner/admin/export surfaces",
+        "read_web_content",
+    ]:
+        assert phrase in tools_ref
+
+    assert "Owner-gated export of a markdown identity card" in glama
+    assert "Optional local integration" in glama
+    assert "Tier-1 is a discoverability and context-budget tier" in architecture
+    assert "writes an owner-gated export file" in architecture
 
 
 def test_comparison_disambiguates_same_name_engram_without_overclaim():

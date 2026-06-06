@@ -2,7 +2,9 @@
 
 This lists **real** Engram MCP tools by intent. Use these names exactly; do not
 invent tool names. By default the server loads the Tier-1 core set; the rest
-become available when the server is launched with `ENGRAM_TOOLS=all`.
+become available when the server is launched with `ENGRAM_TOOLS=all`. Core is a
+high-frequency surface, not a read-only guarantee; owner/export/admin and write
+tools are still runtime-gated by Engram's governance classes.
 
 ## Tier-1 core (loaded by default)
 
@@ -11,7 +13,7 @@ become available when the server is launched with `ENGRAM_TOOLS=all`.
 - `get_user_context` — identity, preferences, and standards for a fresh start.
 - `get_relevant_knowledge` — let Engram surface knowledge relevant to the moment.
 - `search_knowledge` — search prior lessons, decisions, and notes by topic.
-- `get_identity_card` — the user's portable identity card (export/identity).
+- `get_identity_card` — the user's portable identity card (owner-gated export/identity).
 - `get_project_context` — context for the current project.
 - `get_recent_context` — recent activity across sessions.
 - `get_daily_log` — the day's activity log.
@@ -38,9 +40,14 @@ intent-grouped sample of real tools:
 - **Playbooks**: `get_playbook`, `update_playbook`, `prepare_playbook_execution`,
   `update_execution_step`, `get_execution_status`, `archive_playbook`.
 - **Identity / profile reads**: `get_profile`, `get_preferences`,
-  `get_work_style`, `get_quality_standards`, `get_trust_boundaries`.
-- **Tool graph**: `register_tool`, `find_tool`, `list_tools`.
-- **Export / import**: `export_engram`, `import_engram`, `export_knowledge_report`.
+  `get_work_style` (deprecated compatibility read; prefer `get_preferences`),
+  `get_quality_standards`, `get_trust_boundaries`.
+- **Tool graph**: `register_tool` (governed write), `find_tool`, `list_tools`
+  for optional local tool/program registry workflows.
+- **Export / import**: `export_engram`, `import_engram`, `export_knowledge_report`
+  are owner/admin/export surfaces; treat returned files as private.
+- **Optional local integrations**: `read_web_content` expects a local Reader API
+  service; it is not required for the default memory workflow.
 - **Audit / governance**: `get_audit_log`, `extract_session_insights`.
 - **Sessions**: `save_agent_context`, `list_agent_sessions`, `get_recent_context`.
 

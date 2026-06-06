@@ -2011,8 +2011,8 @@ def _run_seed_knowledge_onboarding(
                     _safe_print(f"  {line}")
                 print()
                 print("----------------------------------------")
-                print(_t("  Tip: AI tools can see this via get_identity_card.",
-                         "  Tip: AI tools can see this via get_identity_card."))
+                print(_t("  Tip: export this for non-MCP tools with get_identity_card.",
+                         "  Tip: export this for non-MCP tools with get_identity_card."))
                 print()
         except Exception:
             pass  # Non-critical — skip silently
@@ -5922,7 +5922,7 @@ def main() -> None:
             "  engram telemetry        Manage anonymous usage statistics\n"
             "  engram privacy          Show what data Engram stores\n\n"
             "Export & identity (run these as MCP tools in your AI client):\n"
-            "  get_identity_card       Portable Markdown identity card (paste into any chat)\n"
+            "  get_identity_card       Owner-gated Markdown identity card export\n"
             "  export_knowledge_report Readable Markdown report of active knowledge\n"
             "  export_engram           Full local JSON backup (treat as sensitive)\n\n"
             "Tool tiers:\n"

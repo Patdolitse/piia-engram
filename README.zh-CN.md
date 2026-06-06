@@ -489,6 +489,8 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ### Tier-1 核心工具（17 个 — 日常工作流）
 
+核心工具表示“日常高频入口”，不表示“只读安全集合”。其中部分工具会写入本地记忆或生成 owner-gated 导出文件；治理层仍会在运行时拦截非 owner 的写入、导出和授权变更。
+
 | 工具 | 功能 |
 |------|------|
 | `get_user_context` | **启动阶段** — 冷启动：加载身份 + 知识上下文（支持 `token_budget` 控制上下文大小） |
@@ -500,7 +502,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `search_knowledge` | **检索阶段** — 多词加权搜索经验、决策和操作手册（支持 `filters_json` 按领域/层级/日期过滤） |
 | `get_relevant_knowledge` | 按当前项目检索相关知识 |
 | `get_recall` | 一次返回结构化身份 + 最近活动 + 相关知识的 Recall 载荷 |
-| `get_identity_card` | 导出 Markdown 身份卡（给无 MCP 工具用） |
+| `get_identity_card` | owner-gated 导出：写出并返回 Markdown 身份卡（给无 MCP 工具用） |
 | `update_identity` | 更新身份画像、偏好或质量标准 |
 | `get_project_context` | 读取项目快照 |
 | `save_project_snapshot` | 保存项目状态 |
@@ -513,21 +515,23 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 **启动同步：** Engram 会在 MCP server 启动时对账本地 AI 工具中的记忆/配置片段。默认改为后台执行，避免 stdio 客户端在 initialize 阶段被同步扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感测试臂中跳过启动同步。`ENGRAM_EPHEMERAL=1` 也会在容器/临时客户端中跳过启动同步和迁移工作。
 
-### Tier-2 高级工具（65 个 — 知识管理、审查、导入导出）
+### Tier-2 高级工具（66 个 — 知识管理、审查、导入导出）
+
+高级工具包含可选本地集成、owner/admin 工具和维护工具。凡是会导出文件、导入整库、生成审查页面或修改调用方信任级别的工具，都应视为 owner/admin/export surface，而不是普通只读工具。
 
 <details>
 <summary>点击展开完整工具列表</summary>
 
 | 工具 | 功能 |
 |------|------|
-| `register_tool` | 登记本地工具、运行时或 CLI 到环境图谱 |
-| `find_tool` | 按名称查找已登记的工具 |
-| `list_tools` | 列出所有已登记工具（可按分类筛选） |
+| `register_tool` | 可选本地集成 governed write：登记本地工具、运行时或 CLI 到环境图谱 |
+| `find_tool` | 可选本地集成：按名称查找已登记的本地工具 |
+| `list_tools` | 可选本地集成：列出所有已登记工具（可按分类筛选） |
 | `save_agent_context` | 保存 AI 会话检查点（也会自动运行） |
 | `list_agent_sessions` | 浏览各工具的历史会话记录 |
 | `refresh_quick_context` | 刷新本地 `quick_context.md` 快照（离线/跨工具快速通路） |
 | `get_profile` | 读取身份画像（默认 safe 模式） |
-| `get_work_style` | 读取工作方式 |
+| `get_work_style` | deprecated 兼容读取；优先使用 `get_preferences` |
 | `get_preferences` | 读取沟通与工作流偏好 |
 | `get_trust_boundaries` | 读取信任边界 |
 | `get_quality_standards` | 读取质量标准 |
@@ -557,32 +561,32 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_related_knowledge` | 查询关联知识 |
 | `find_similar_knowledge` | 按内容查找相似知识 |
 | `suggest_merges` | 全库扫描近似重复，返回可执行的合并命令 |
-| `classify_legacy_playbooks` | 为旧 Playbook 生成项目/global/shared 分类 dry-run 建议 |
-| `apply_legacy_playbook_scope_suggestions` | 确认后应用高置信度旧 Playbook 分类建议 |
-| `rollback_playbook_scope_migration` | 回滚最近一次 Playbook 作用域迁移 |
-| `get_playbook_scope_review_queue` | 列出需要人工确认作用域的模糊 Playbook |
-| `resolve_playbook_scope_review` | 将一条 Playbook 作用域复核项接受为 global、project 或 shared |
+| `classify_legacy_playbooks` | owner 维护：为旧 Playbook 生成项目/global/shared 分类 dry-run 建议 |
+| `apply_legacy_playbook_scope_suggestions` | owner 维护：确认后应用高置信度旧 Playbook 分类建议 |
+| `rollback_playbook_scope_migration` | owner 维护：回滚最近一次 Playbook 作用域迁移 |
+| `get_playbook_scope_review_queue` | owner 维护：列出需要人工确认作用域的模糊 Playbook |
+| `resolve_playbook_scope_review` | owner 维护：将一条 Playbook 作用域复核项接受为 global、project 或 shared |
 | `list_playbooks_for_management` | 列出用于管理的 Playbook，包括归档/删除元数据 |
 | `delete_playbook` | 确认后软删除 Playbook |
 | `restore_playbook` | 恢复已归档或已删除的 Playbook |
 | `get_stale_knowledge` | 列出需要复习的过期知识 |
-| `export_knowledge_report` | 导出 Markdown 知识报告 |
-| `request_outline_review` | 生成交互式 HTML 知识审查页面 |
+| `export_knowledge_report` | owner-gated 导出：写出 Markdown 知识报告 |
+| `request_outline_review` | owner-gated 导出：生成本地交互式 HTML 知识审查页面 |
 | `apply_review` | 处理审查结果（晋升/归档暂存条目） |
-| `export_engram` | 导出完整备份 |
-| `import_engram` | 导入备份；先用 `dry_run=True` 做元数据级合并/冲突预览；CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
-| `export_engram_to_openclaw` | 导出 OpenClaw 格式 |
-| `import_engram_from_openclaw` | 导入 OpenClaw 格式 |
-| `read_web_content` | 读取网页内容（需 Reader 服务） |
+| `export_engram` | owner-gated 导出：写出完整备份 |
+| `import_engram` | owner/admin 导入：先用 `dry_run=True` 做元数据级合并/冲突预览；CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
+| `export_engram_to_openclaw` | owner-gated 导出：写出 OpenClaw 格式文件 |
+| `import_engram_from_openclaw` | owner/admin 导入：读取 OpenClaw 格式文件 |
+| `read_web_content` | 可选本地 Reader 集成：通过 Reader 服务读取用户提供的 URL |
 | `get_audit_log` | 查询审计日志 |
 | `add_relation` | 建立知识条目间的类型化有向关系（led_to / supersedes / implemented_by） |
 | `remove_relation` | 移除已建立的有向关系（`add_relation` 的撤销操作） |
 | `get_decision_thread` | 从一条决策出发，递归构建完整的决策链（拓扑排序） |
 | `get_decision_history` | 按问题文本查询决策修订历史（模糊匹配 + 时间线） |
 | `get_permission_profile` | 查看所有调用方的信任等级、自动分类规则和已撤销列表 |
-| `set_caller_trust` | 设置或修改某个调用方的信任等级 |
-| `revoke_caller` | 前向撤销某个调用方的未来访问权限 |
-| `export_feedback_report` | 导出用户反馈报告（Markdown 格式） |
+| `set_caller_trust` | owner/admin：设置或修改某个调用方的信任等级 |
+| `revoke_caller` | owner/admin：前向撤销某个调用方的未来访问权限 |
+| `export_feedback_report` | 内部/dogfood：导出用户反馈报告（Markdown 格式） |
 | `start_project` | 新项目启动（继承知识 + 建档） |
 
 </details>

@@ -415,7 +415,7 @@ def test_zh_readme_uses_pypi_install_and_current_tool_split():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "65 个" in content  # Tier-2 tool count
+    assert "66 个" in content  # Tier-2 tool count
     assert "17 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content

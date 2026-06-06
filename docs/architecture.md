@@ -209,7 +209,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 
 ## 5. The MCP surface
 
-`mcp_server.py` exposes 83 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions:
+`mcp_server.py` exposes 83 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions. Tier-1 is a discoverability and context-budget tier, not a read-only safety class: write, export, and owner/admin behavior is still governed by `TOOL_GOVERNANCE_CLASS`.
 
 | Tier-1 (default) | Why |
 |------------------|-----|
@@ -218,7 +218,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 | `memory_store` | Unified write endpoint for lessons, decisions, and playbooks |
 | `add_lesson`, `add_decision`, `add_playbook` | Capture knowledge |
 | `search_knowledge`, `get_relevant_knowledge`, `get_recall` | Retrieve knowledge and one-call recall bundles |
-| `get_identity_card`, `update_identity` | Identity reads/writes |
+| `get_identity_card`, `update_identity` | Identity export/write surfaces (`get_identity_card` writes an owner-gated export file) |
 | `get_project_context`, `save_project_snapshot` | Per-project state |
 | `get_recent_context`, `get_daily_log`, `get_resume_brief` | Recover recent cross-tool work |
 | `doctor` | Memory system self-diagnosis |

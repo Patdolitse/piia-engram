@@ -469,7 +469,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 83 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. To unlock all 83 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 83 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. To unlock all 83 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -498,7 +498,7 @@ piia-engram ships 83 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 | `search_knowledge` | **Retrieval** — Search lessons, decisions, and playbooks (supports `filters_json` for domain/tier/date filtering) |
 | `get_relevant_knowledge` | Find knowledge relevant to current project |
 | `get_recall` | Return one structured identity + recent activity + relevant knowledge recall payload |
-| `get_identity_card` | Export Markdown identity card for non-MCP tools |
+| `get_identity_card` | Owner-gated export: write and return a Markdown identity card for non-MCP tools |
 | `update_identity` | Update profile, preferences, or quality standards |
 | `get_project_context` | Read a saved project snapshot |
 | `save_project_snapshot` | Persist project state for future sessions |
@@ -509,19 +509,21 @@ piia-engram ships 83 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 
 ### Tier-2 Advanced (66 tools — knowledge management, review, governance, import/export)
 
+Advanced tools include optional local integrations, owner/admin surfaces, and maintenance helpers. Tools that export files, import whole stores, generate review pages, or mutate caller trust are owner/admin/export surfaces even when they are broadly useful product capabilities.
+
 <details>
 <summary>Click to expand full tool list</summary>
 
 | Tool | Purpose |
 |---|---|
-| `register_tool` | Register a local tool, runtime, or CLI to the environment map |
-| `find_tool` | Look up a registered tool by name |
-| `list_tools` | List all registered tools (optionally filter by category) |
+| `register_tool` | Optional local integration governed write: register a local tool, runtime, or CLI to the environment map |
+| `find_tool` | Optional local integration: look up a registered local tool by name |
+| `list_tools` | Optional local integration: list registered local tools (optionally filter by category) |
 | `save_agent_context` | Save AI session checkpoint (also runs automatically) |
 | `list_agent_sessions` | Browse saved session records across tools |
 | `refresh_quick_context` | Refresh local `quick_context.md` snapshot for offline/cross-tool use |
 | `get_profile` | Read user profile (safe=true by default) |
-| `get_work_style` | Read work style preferences |
+| `get_work_style` | Deprecated compatibility read; prefer `get_preferences` |
 | `get_preferences` | Read communication and workflow preferences |
 | `get_trust_boundaries` | Read data access boundaries |
 | `get_quality_standards` | Read quality expectations |
@@ -551,23 +553,23 @@ piia-engram ships 83 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 | `get_related_knowledge` | Follow links between knowledge items |
 | `find_similar_knowledge` | Find similar items by content |
 | `suggest_merges` | Scan for near-duplicates with actionable merge commands |
-| `classify_legacy_playbooks` | Dry-run project/global/shared scope suggestions for older Playbooks |
-| `apply_legacy_playbook_scope_suggestions` | Apply high-confidence legacy Playbook scope suggestions after confirmation |
-| `rollback_playbook_scope_migration` | Roll back the latest Playbook scope migration |
-| `get_playbook_scope_review_queue` | List ambiguous Playbooks that need manual scope review |
-| `resolve_playbook_scope_review` | Accept global, project, or shared scope for one Playbook review item |
+| `classify_legacy_playbooks` | Owner maintenance: dry-run project/global/shared scope suggestions for older Playbooks |
+| `apply_legacy_playbook_scope_suggestions` | Owner maintenance: apply high-confidence legacy Playbook scope suggestions after confirmation |
+| `rollback_playbook_scope_migration` | Owner maintenance: roll back the latest Playbook scope migration |
+| `get_playbook_scope_review_queue` | Owner maintenance: list ambiguous Playbooks that need manual scope review |
+| `resolve_playbook_scope_review` | Owner maintenance: accept global, project, or shared scope for one Playbook review item |
 | `list_playbooks_for_management` | List Playbooks for management, including archived/deleted metadata |
 | `delete_playbook` | Soft-delete a Playbook after confirmation |
 | `restore_playbook` | Restore an archived or deleted Playbook |
 | `get_stale_knowledge` | List items that need review |
-| `export_knowledge_report` | Export a readable Markdown knowledge report |
-| `request_outline_review` | Generate an interactive HTML review page |
+| `export_knowledge_report` | Owner-gated export: write a readable Markdown knowledge report |
+| `request_outline_review` | Owner-gated export: generate an interactive local HTML review page |
 | `apply_review` | Process review results (promote/archive staging items) |
-| `export_engram` | Export a full backup |
-| `import_engram` | Import a backup; use `dry_run=True` first for a metadata-only merge/conflict preview |
-| `export_engram_to_openclaw` | Export OpenClaw-compatible files |
-| `import_engram_from_openclaw` | Import OpenClaw-compatible files |
-| `read_web_content` | Read webpage via local Reader service |
+| `export_engram` | Owner-gated export: write a full backup |
+| `import_engram` | Owner/admin import: use `dry_run=True` first for a metadata-only merge/conflict preview |
+| `export_engram_to_openclaw` | Owner-gated export: write OpenClaw-compatible files |
+| `import_engram_from_openclaw` | Owner/admin import: read OpenClaw-compatible files |
+| `read_web_content` | Optional local Reader integration: fetch a user-provided URL through the Reader service |
 | `get_audit_log` | Get recent audit log entries |
 | `start_project` | Start a project with inherited knowledge |
 | `add_relation` | Create a typed, directed relation between knowledge items (decision threads) |
@@ -575,9 +577,9 @@ piia-engram ships 83 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 | `get_decision_thread` | Reconstruct how a decision evolved step by step |
 | `get_decision_history` | Query the full revision history of a decision by question text |
 | `get_permission_profile` | View all callers' trust levels and access boundaries |
-| `set_caller_trust` | Set or change a caller's trust level |
-| `revoke_caller` | Revoke a caller's future access (forward-only) |
-| `export_feedback_report` | Generate an anonymous beta feedback report |
+| `set_caller_trust` | Owner/admin: set or change a caller's trust level |
+| `revoke_caller` | Owner/admin: revoke a caller's future access (forward-only) |
+| `export_feedback_report` | Internal/dogfood: generate an anonymous beta feedback report |
 
 </details>
 

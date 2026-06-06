@@ -1151,6 +1151,8 @@ async def get_user_context(
 async def refresh_quick_context(level: str = "standard") -> str:
     """刷新本地 `quick_context.md` 快照（跨工具 / 离线场景的快速通路）。 / Refresh the local quick_context.md snapshot (cross-tool / offline fast path).
 
+    Owner/export surface: writes ~/.engram/quick_context.md and is refused for non-owner callers when governance is enabled.
+
     用途：把当前 Engram 状态固化为一份纯文本身份卡，写到 `~/.engram/quick_context.md`。任何 AI 工具（包括没接 Engram MCP 的）都可以直接 Read 这个文件作为冷启动上下文，无需 MCP 调用。
     Purpose: Persist the current Engram state as a plain-text identity card at `~/.engram/quick_context.md`. Any AI tool — even one without Engram MCP — can Read this file as cold-start context without an MCP round-trip.
 
@@ -1185,6 +1187,8 @@ async def refresh_quick_context(level: str = "standard") -> str:
 @mcp.tool()
 async def get_identity_card() -> str:
     """导出用户的可携带 AI 身份卡（Markdown 格式）。 / Export the user's portable AI identity card as Markdown.
+
+    Owner/export surface: writes exports/identity_card.md and is refused for non-owner callers when governance is enabled.
 
     用途：需要把用户身份、工作方式、质量标准、经验教训分享给其它 AI 工具时调用。
     Purpose: Call when another AI tool needs a self-contained summary of the user's identity, work style, quality standards, and lessons.
@@ -1231,6 +1235,8 @@ async def get_profile(safe: bool = True) -> str:
 @mcp.tool()
 async def get_work_style() -> str:
     """获取用户的工作偏好（工作模式、节奏、沟通风格）。 / Get the user's work style preferences: patterns, pace, and communication style.
+
+    Deprecated compatibility read: prefer get_preferences for new callers.
 
     用途：需要单独读取旧版 work_style 偏好时调用。
     Purpose: Call when you specifically need the legacy work_style preference object.
@@ -1643,6 +1649,8 @@ async def apply_legacy_playbook_scope_suggestions(
 ) -> str:
     """Apply high-confidence legacy Playbook project/global scope suggestions.
 
+    Owner/admin surface: reorganizes stored Playbook metadata and is refused for non-owner callers when governance is enabled.
+
     Default mode is preview-only. Actual writes require ``dry_run=False`` and
     ``confirm=True`` and are owner-only because this reorganizes stored
     Playbook metadata across the whole corpus.
@@ -1698,6 +1706,8 @@ async def rollback_playbook_scope_migration(
     confirm: bool = False,
 ) -> str:
     """Rollback the latest Playbook scope migration for selected Playbooks.
+
+    Owner/admin surface: rewrites Playbook scope metadata and is refused for non-owner callers when governance is enabled.
 
     Default mode is preview-only. Actual rollback requires ``dry_run=False``
     and ``confirm=True`` and is owner-only.
@@ -1776,7 +1786,10 @@ async def resolve_playbook_scope_review(
     dry_run: bool = True,
     confirm: bool = False,
 ) -> str:
-    """Resolve one Playbook scope review item: accept global/project/shared or skip."""
+    """Resolve one Playbook scope review item: accept global/project/shared or skip.
+
+    Owner/admin surface: mutates legacy Playbook review state and is refused for non-owner callers when governance is enabled.
+    """
     refusal = _gov_rt.maybe_refuse_owner_write(
         _engram.root, tool="resolve_playbook_scope_review"
     )
@@ -1857,6 +1870,8 @@ async def find_similar_knowledge(item_id: str, limit: int = 5) -> str:
 @mcp.tool()
 async def export_knowledge_report() -> str:
     """导出完整 Markdown 知识报告并返回内容。 / Export a full Markdown knowledge report and return its content.
+
+    Owner/export surface: writes an exports/knowledge_report_*.md file and is refused for non-owner callers when governance is enabled.
 
     用途：需要把当前知识库整理成人可读报告，用于审阅、归档或分享时调用。
     Purpose: Call when the knowledge base should be rendered into a readable report for review, archiving, or sharing.
@@ -2463,6 +2478,8 @@ async def prepare_playbook_execution(
     confirm_cross_project: bool = False,
 ) -> str:
     """准备 Playbook 逐步参考计划（参数替换 + 逐步状态跟踪）。 / Prepare a guided Playbook step plan with parameter substitution and per-step tracking.
+
+    Owner/export surface: writes a playbook execution plan file and is refused for non-owner callers when governance is enabled.
 
     用途："按上次流程来" — 调取已有 Playbook，替换参数后返回被动参考计划。AI 逐步确认执行，不自动运行。
     Purpose: "Use the previous procedure" — fetch a Playbook, substitute parameters, return a passive step reference. AI confirms each step; no auto-execution.
@@ -3092,6 +3109,8 @@ async def get_stale_knowledge(days: int = 30, limit: int = 20) -> str:
 async def request_outline_review(lang: str = "zh") -> str:
     """生成交互式知识审查 HTML 页面，用户可在浏览器中逐条保留或归档知识。 / Generate an interactive knowledge review HTML page where the user can retain or archive items.
 
+    Owner/export surface: writes an exports/review_*.html file and is refused for non-owner callers when governance is enabled.
+
     用途：用户说"帮我核对一下记忆"、"看看我的知识库"、"review my knowledge"时调用。
     Purpose: Call when the user wants to audit their knowledge base, e.g. "review my knowledge" or "check my memory".
 
@@ -3362,6 +3381,8 @@ async def get_permission_profile() -> str:
 async def set_caller_trust(agent_id: str, trust_level: str) -> str:
     """设置或修改某个调用者（AI 工具）的信任级别。 / Set or change a caller's (AI tool's) trust level.
 
+    Owner/admin surface: changes caller trust grants and is refused for non-owner callers when governance is enabled.
+
     用途：当你想提升或降低某个 AI 工具的访问权限时调用。例如：
     - 让 Cursor 能访问工作级数据：set_caller_trust("cursor", "trusted-local")
     - 将某个未知工具限制为只读公开：set_caller_trust("unknown-agent", "read-only-external")
@@ -3389,6 +3410,8 @@ async def set_caller_trust(agent_id: str, trust_level: str) -> str:
 @mcp.tool()
 async def revoke_caller(agent_id: str) -> str:
     """撤销某个调用者的未来访问权（前向撤销——已返回的上下文无法召回）。 / Revoke a caller's future access (forward-only — cannot recall context already returned).
+
+    Owner/admin surface: changes caller trust grants and is refused for non-owner callers when governance is enabled.
 
     用途：当你不再信任某个 AI 工具，或想阻止它继续读取你的 Engram 数据时调用。
     撤销后该调用者的所有后续读取请求都会被拒绝。重新授权需调用 set_caller_trust。
@@ -3552,6 +3575,8 @@ async def read_web_content(url: str) -> str:
 async def export_engram(output_path: Optional[str] = None) -> str:
     """导出整个 Engram 为单一备份文件。 / Export the entire Engram store as a single backup file.
 
+    Owner/export surface: writes a full-store backup file and is refused for non-owner callers when governance is enabled.
+
     用途：用于备份、迁移到另一台机器或跨设备同步。
     Purpose: Call for backup, migration to another machine, or cross-device sync.
 
@@ -3582,6 +3607,8 @@ async def export_engram(output_path: Optional[str] = None) -> str:
 async def import_engram(input_path: str, merge: bool = True, dry_run: bool = False) -> str:
     """从备份文件导入 Engram 数据。 / Import Engram data from a backup file.
 
+    Owner/admin surface: imports or overwrites local store data and is refused for non-owner callers when governance is enabled.
+
     用途：从备份恢复，或从另一台机器迁移数据。
     Purpose: Call to restore from backup or migrate data from another machine.
 
@@ -3607,6 +3634,8 @@ async def import_engram(input_path: str, merge: bool = True, dry_run: bool = Fal
 @mcp.tool()
 async def export_engram_to_openclaw(output_dir: str = "") -> str:
     """导出 Engram 为 OpenClaw 兼容格式（SOUL.md + MEMORY.md + USER.md）。 / Export Engram to the OpenClaw-compatible format: SOUL.md, MEMORY.md, and USER.md.
+
+    Owner/export surface: writes OpenClaw-compatible memory files and is refused for non-owner callers when governance is enabled.
 
     用途：需要把 Engram 数据交给 OpenClaw 或兼容工作流使用时调用。
     Purpose: Call when Engram data needs to be used by OpenClaw or compatible workflows.
@@ -3640,6 +3669,8 @@ async def import_engram_from_openclaw(
     user_path: str = "",
 ) -> str:
     """从 OpenClaw 格式导入数据到 Engram（SOUL.md、MEMORY.md、USER.md）。 / Import OpenClaw-format data into Engram from SOUL.md, MEMORY.md, and USER.md.
+
+    Owner/admin surface: imports external memory files into the local store and is refused for non-owner callers when governance is enabled.
 
     用途：需要把 OpenClaw 或兼容记忆文件迁移进 Engram 时调用。
     Purpose: Call when migrating OpenClaw or compatible memory files into Engram.

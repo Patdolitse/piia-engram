@@ -71,11 +71,15 @@ or lesson you already gave, instead of asking you to explain it again.
 | Job | Core tools |
 |---|---|
 | Startup and recovery | `get_user_context`, `get_recall`, `get_resume_brief`, `get_recent_context`, `get_daily_log` |
-| Read/search | `search_knowledge`, `get_relevant_knowledge`, `get_identity_card` |
+| Read/search | `search_knowledge`, `get_relevant_knowledge` |
 | Write/update | `memory_store`, `add_lesson`, `add_decision`, `add_playbook`, `update_identity` |
 | Project context | `get_project_context`, `save_project_snapshot` |
 | Session end | `wrap_up_session` |
 | Diagnostics | `doctor` |
+
+`get_identity_card` is also in the core tier because it is frequently needed for
+non-MCP handoffs, but it is an owner-gated export surface rather than a normal
+read/search tool.
 
 The advanced set exists for review, import/export, governance, migration, and
 management workflows. Most first-time users should leave it off until they need
