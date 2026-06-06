@@ -3,10 +3,15 @@
 This is a local planning note only. It is not a release announcement, not a tag,
 and not approval to publish.
 
+The local branch is ahead of the last published PyPI / MCP Registry release.
+That gap is expected between releases and does not mean these changes are
+publicly available yet.
+
 ## Product/release-candidate commits after v3.51.2
 
 This list intentionally excludes this planning note's own maintenance commit
-chain to avoid a self-referential release-intent loop.
+chain when it only refreshes release-intent wording. It includes local guard /
+evidence commits when they are part of the future release-readiness surface.
 
 - `1effe5f fix: align CLI tool-count help text`
 - `8da40d5 feat(context-governance): add usage report and staged safety helpers`
@@ -15,6 +20,8 @@ chain to avoid a self-referential release-intent loop.
 - `5153726 feat(worker): reshape telemetry dashboard range views`
 - `9f067a6 fix(registry): add title field to server.json for subregistry display name`
 - `b5cfeca docs(continuity): add live cross-tool proof and repoint README CTA`
+- `515aff6 feat(release): add local readiness aggregator`
+- `e243024 feat(release): add local readiness dossier package`
 
 ## Suggested release shape
 
@@ -29,6 +36,8 @@ Expected release themes:
 - MCP tool-surface semantics and owner/export/admin wording hardening.
 - Unified owner-gated context governance preview surface.
 - Live cross-tool continuity proof and clearer external-listing metadata.
+- Local pre-push / pre-release readiness aggregation, release dossier support,
+  context-governance eval scaffolding, and post-push closeout dry-run.
 
 ## Separate online dashboard lane
 
@@ -71,3 +80,11 @@ The following actions remain blocked until the owner explicitly confirms them:
 
 Before publication, refresh `docs/public-facts.json`, run full tests, update the
 project registry according to the post-push rule, and prepare release notes.
+
+Current local verification snapshot:
+
+- full pytest: `2970 passed, 2 skipped, 4 warnings`
+- collect-only: `2972 tests collected`
+- MCP tool count: `84 total / 17 core / 67 advanced`
+- staged publish allowlist: `417 tracked files covered by 90 patterns`
+- `check_pre_push_release_readiness.py --full-tests`: passed
