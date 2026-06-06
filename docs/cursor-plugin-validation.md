@@ -49,7 +49,7 @@ Expected: all pass. These verify:
 | 2.3 | **Skill path resolves** | Check whether the `engram` skill is loaded | Skill guidance is available. If NOT, this is the known `../skills/` seam (see below) |
 | 2.4 | Tier-1 tools visible | Inspect exposed tools | Core tools (`get_resume_brief`, `add_lesson`, `search_knowledge`, …) are listed |
 | 2.5 | `ENGRAM_TOOLS=all` | Add env to the server block, reload | Full tool set appears |
-| 2.6 | Read is safe | Call `get_user_context` / `get_resume_brief` | Returns local context; no network, no write |
+| 2.6 | Read/search boundary | Call `get_user_context` / `get_resume_brief` | Returns local context; no network; export and write tools remain gated separately |
 | 2.7 | Write is user-driven | Call `add_lesson` | Entry lands in the local store; nothing auto-promoted to verified |
 
 ## 3. Known seams to validate (documented in `.cursor-plugin/README.md`)
@@ -75,7 +75,7 @@ plugin_discovered (2.1):        pass/fail + note
 mcp_launches (2.2):             pass/fail + note
 skill_path_form_that_worked:    ../skills/  |  ./skills/  |  other
 tier1_tools_visible (2.4):      pass/fail
-read_safe (2.6):                pass/fail
+read_search_boundary (2.6):     pass/fail
 write_user_driven (2.7):        pass/fail
 blocking_issues:
 ```

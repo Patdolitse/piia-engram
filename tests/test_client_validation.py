@@ -44,6 +44,109 @@ def test_evidence_layout_matches_runbook_contract():
         assert required in layout
 
 
+def test_evidence_readiness_blocks_l4_without_cross_client_marker():
+    meta = cv.build_run_meta(
+        client_id="codex",
+        client_version="0.130.0",
+        surface="CLI",
+        model="gpt-5",
+        engram_mode="MCP read-only",
+        environment_arm="Default-user",
+        workspace_isolated=True,
+        home_isolated=True,
+        write_tools_allowed=False,
+        known_limitations=[],
+    )
+    readiness = cv.evidence_readiness(
+        {
+            "run_meta": meta,
+            "tool_locations": {"client_executable": "codex"},
+            "client_config_summary": True,
+            "prompts_recorded": True,
+            "raw_artifacts": True,
+            "parsed_artifacts": True,
+            "ab_control": True,
+            "signal_differential": 2,
+            "zero_pollution": {"clean": True},
+        },
+        target_level="L4",
+    )
+
+    assert readiness["allowed"] is False
+    assert readiness["highest_ready_level"] == "L3"
+    assert "cross_client_marker" in readiness["missing"]
+
+
+def test_evidence_readiness_blocks_l3_without_zero_pollution():
+    meta = cv.build_run_meta(
+        client_id="cursor",
+        client_version="1.0",
+        surface="IDE",
+        model="unknown",
+        engram_mode="MCP read-only",
+        environment_arm="Engram-isolated",
+        workspace_isolated=True,
+        home_isolated=True,
+        write_tools_allowed=False,
+        known_limitations=[],
+    )
+    readiness = cv.evidence_readiness(
+        {
+            "run_meta": meta,
+            "tool_locations": {"client_executable": "cursor"},
+            "client_config_summary": True,
+            "prompts_recorded": True,
+            "raw_artifacts": True,
+            "parsed_artifacts": True,
+            "ab_control": True,
+            "signal_differential": 1,
+        },
+        target_level="L3",
+    )
+
+    assert readiness["allowed"] is False
+    assert readiness["highest_ready_level"] == "L2"
+    assert "zero_pollution_clean" in readiness["missing"]
+
+
+def test_evidence_readiness_allows_complete_l2_pack():
+    meta = cv.build_run_meta(
+        client_id="claude-code",
+        client_version="1.0",
+        surface="CLI",
+        model="claude",
+        engram_mode="MCP read-only",
+        environment_arm="Default-user",
+        workspace_isolated=True,
+        home_isolated=True,
+        write_tools_allowed=False,
+        known_limitations=[],
+    )
+    readiness = cv.evidence_readiness(
+        {
+            "run_meta": meta,
+            "tool_locations": {"client_executable": "claude"},
+            "client_config_summary": True,
+            "prompts_recorded": True,
+            "raw_artifacts": True,
+            "parsed_artifacts": True,
+        },
+        target_level="L2",
+    )
+
+    assert readiness["allowed"] is True
+    assert readiness["highest_ready_level"] == "L2"
+    assert readiness["missing"] == []
+
+
+def test_evidence_requirements_are_monotonic():
+    previous: set[str] = set()
+    for level in ["L0", "L1", "L2", "L3", "L4", "L5"]:
+        current = set(cv.evidence_readiness({}, target_level=level)["required"])
+        assert previous.issubset(current)
+        previous = current
+
+
 def test_zero_pollution_report_passes_for_identical_snapshot(tmp_path: Path):
     target = tmp_path / "lessons.json"
     target.write_text('{"lessons": []}', encoding="utf-8")

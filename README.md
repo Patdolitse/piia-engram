@@ -55,7 +55,7 @@ Want proof? See the [live cross-tool continuity proof](docs/cross-tool-continuit
 pip install piia-engram && engram setup
 ```
 
-The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — in read-only mode, previews your identity card, and only writes external client config when you explicitly opt in. Restart your configured tool; the first conversation already knows you. ([full walkthrough ↓](#quick-start-30-seconds))
+The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — in read-only mode, previews your identity card, and only writes external client config when you explicitly opt in. Restart your configured tool; the first conversation can load your approved context through startup or search tools. ([full walkthrough ↓](#quick-start))
 
 ---
 
@@ -78,7 +78,7 @@ This happens because AI memory today is locked inside each platform. It belongs 
 
 | Without piia-engram | With piia-engram |
 |---|---|
-| New chat window = start from zero | Every conversation already knows you |
+| New chat window = start from zero | Configured conversations can load your approved context |
 | AI tool updates and your preferences vanish | Your identity lives on your machine, survives any update |
 | Switching tools loses accumulated context | Claude Code, Codex, and Cursor read the same memory |
 | Past mistakes get repeated | Lessons learned follow you across tools and sessions |
@@ -149,14 +149,14 @@ AI tools constantly search for local programs, runtimes, and CLIs. `register_too
 **Knowledge health and discovery**  
 `get_knowledge_overview` surfaces stale lessons (not reviewed in 30+ days), computes a 0–100 health score across four dimensions (freshness, quality, coverage, cleanliness), and flags gaps worth revisiting. `suggest_merges` scans your entire knowledge base for near-duplicates and returns actionable merge commands. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
 
-## Quick Start (30 seconds)
+## Quick Start
 
 ```bash
 pip install piia-engram
 engram setup
 ```
 
-New to piia-engram? See the fuller [first-value quickstart](docs/quickstart-first-value.md) for the install -> first memory -> fresh-session recall path using only the default 17 core tools. For proposal-only safe-context, replay, freshness/conflict, and evidence drafts, see [Context governance](docs/context-governance.md).
+New to piia-engram? See the fuller [first-value quickstart](docs/quickstart-first-value.md) for the install -> first memory -> fresh-session recall path using only the default 17 core tools. Host-specific setup cards are available for [Claude Code](docs/integrations/claude-code.md), [Codex](docs/integrations/codex.md), and [Cursor](docs/integrations/cursor.md). For proposal-only safe-context, replay, freshness/conflict, and evidence drafts, see [Context governance](docs/context-governance.md).
 
 The setup wizard will:
 1. Detect your Python environment
@@ -167,7 +167,7 @@ The setup wizard will:
 6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (cross-tool sync, anonymous statistics)
 7. **Preview your AI identity card** — immediate proof of value
 
-If the MCP client is already configured, restart your AI tool after setup. If it is not configured yet, add the MCP entry manually or run the explicit opt-in command below. The first connected conversation will call `get_user_context` automatically — your AI already knows you.
+If the MCP client is already configured, restart your AI tool after setup. If it is not configured yet, add the MCP entry manually or run the explicit opt-in command below. Many clients can call `get_user_context` at startup; when a host does not do that proactively, an explicit `search_knowledge` or `get_resume_brief` call is still the expected L2 path.
 
 To let Engram update Claude/Codex/Cursor/Zed MCP config files for you, run:
 
@@ -349,7 +349,7 @@ You  → "Help me refactor this auth module"
 # WITHOUT piia-engram: AI starts from scratch
 AI   → "What language? What framework? What's your testing preference?"
 
-# WITH piia-engram: AI already knows you
+# WITH piia-engram: AI can load your approved context
 AI   → "Based on your preference for pytest + 90% coverage, and your
         lesson about always separating auth middleware from business
         logic (from the March incident), here's my approach..."
@@ -469,7 +469,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 84 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. To unlock all 84 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 84 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 84 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -690,12 +690,14 @@ See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.m
 
 ## Supported Tools
 
-| Tool | Integration | Confidence |
+Evidence levels follow the [agent client validation runbook](docs/runbooks/agent-client-validation.md): L0/L1 means installed or wired, L2 means read/search behavior observed, L3 adds A/B behavior gain, L4 adds cross-client continuity, and L5 is public-safe reproducible evidence.
+
+| Tool | Integration | Evidence status |
 |---|---|---|
-| Claude Code | MCP over stdio | ✅ Verified |
-| Codex | MCP over stdio | ✅ Verified |
-| Cursor | MCP over stdio | ✅ Verified |
-| Claude Desktop | MCP over stdio | ✅ Verified |
+| Claude Code | MCP over stdio | L4 partial continuity proof (Claude Code -> Codex) |
+| Codex | MCP over stdio | L4 partial continuity proof (Claude Code -> Codex) |
+| Cursor | MCP over stdio | L2 setup/read-search evidence path |
+| Claude Desktop | MCP over stdio | L1/L2 setup path; client-specific evidence pending |
 | Windsurf | MCP over stdio | Expected to work |
 | GitHub Copilot | MCP over stdio | Expected to work |
 | Cline | MCP over stdio | Expected to work |
@@ -705,7 +707,7 @@ See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.m
 | Zed | MCP over stdio | Expected to work |
 | Trae | MCP over stdio | Expected to work |
 | Tencent CodeBuddy | MCP over stdio | Expected to work |
-| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | ✅ Verified |
+| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | L3 static file-bridge evidence; live agent pending |
 | ChatGPT / Gemini / Kimi | Markdown identity card fallback | 🔧 Usable |
 
 ## Comparison
@@ -730,10 +732,10 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 
 | | v3.51.2 (2026-06-06) |
 |---|---|
-| Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
+| Supported AI tools | **15** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **67 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **2970** (unit + integration; 2 skipped, 2972 collected) |
+| Tests passing | **2980** (unit + integration; 2 skipped, 2982 collected) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **3336** (facade + mixins total ~8159; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |

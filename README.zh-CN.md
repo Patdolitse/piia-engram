@@ -55,7 +55,7 @@
 pip install piia-engram && engram setup
 ```
 
-向导会以只读方式检测你的 AI 工具——Claude Code、Cursor、Codex、Claude Desktop——预览你的身份卡；只有在你显式选择时才会写入外部客户端配置。重启已配置的工具，第一次对话它就认识你。（完整步骤见下方"快速开始（30 秒）"）
+向导会以只读方式检测你的 AI 工具——Claude Code、Cursor、Codex、Claude Desktop——预览你的身份卡；只有在你显式选择时才会写入外部客户端配置。重启已配置的工具后，新对话可以通过启动或搜索工具加载你已确认的上下文。（完整步骤见下方"快速开始"）
 
 ---
 
@@ -75,7 +75,7 @@ piia-engram 为同时使用多个 AI 编程工具、厌倦重复自我介绍的�
 
 **如果你在 Claude Code、Codex、Cursor 之间切换** — 代码标准、架构决策、踩过的坑，每次都要重讲。piia-engram 让每个工具从同一个起点认识你。
 
-**如果你每周开 10+ 个 AI 对话框** — 每一个都从零开始。piia-engram 让每次对话从同一份已确认身份和知识上下文开始。
+**如果你每周开 10+ 个 AI 对话框** — 每一个都从零开始。piia-engram 让已配置的对话可以从同一份已确认身份和知识上下文开始。
 
 **如果你因为工具更新丢过偏好** — 你的身份存在自己电脑里，不在任何平台内部。更新、重置、迁移都不影响你的记忆。
 
@@ -121,7 +121,7 @@ AI 工具总是在找本地的程序、运行时和 CLI。`register_tool` 记录
 **知识健康与发现**  
 `get_knowledge_overview` 找出久未复查的知识（30 天以上），计算 0–100 健康度评分（新鲜度、质量、覆盖度、清洁度四个维度），提示哪些内容值得重新确认。`suggest_merges` 全库扫描近似重复条目，返回可直接执行的合并命令。`link_knowledge` 把相关教训和决策串联成可导航的知识网络。
 
-## 快速开始（30 秒）
+## 快速开始
 
 ```bash
 pip install piia-engram
@@ -429,7 +429,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 | 没有 piia-engram | 有 piia-engram |
 |------------|-----------|
-| 新对话 = 从零开始 | 每次对话都已经认识你 |
+| 新对话 = 从零开始 | 已配置的对话可加载已确认上下文 |
 | 工具一更新，偏好可能没了 | 身份存在你电脑里，任何更新都不影响 |
 | 换工具要重新自我介绍 | Claude Code、Codex、Cursor 共享同一套记忆 |
 | 踩过的坑下次还会踩 | 经验教训跨工具、跨会话持续有效 |
@@ -457,16 +457,18 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 | | v3.51.2 (2026-06-06) |
 |---|---|
-| 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
+| 支持 AI 工具 | **15** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
 | MCP 工具 | **17 个核心**（默认加载）+ **67 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **2970** 个（单元 + 集成；2 个 skipped，共收集 2972）|
+| 测试通过 | **2980** 个（单元 + 集成；2 个 skipped，共收集 2982）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **3336** 行（facade + mixins 合计约 8159 行；v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | 支持字段级 AES-256-GCM（可选）；本地文件默认是明文 JSON / Markdown |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
 | 默认网络调用 | 身份与知识工具默认 **0** —— 除可选的 `read_web_content` 外；远程 telemetry 与反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
+
+客户端专项 setup 卡： [Claude Code](docs/integrations/claude-code.md)、[Codex](docs/integrations/codex.md)、[Cursor](docs/integrations/cursor.md)。证据等级采用 [客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0/L1 表示安装或协议可达，L2 表示观察到读/搜索行为，L3 增加 A/B 行为收益，L4 增加跨客户端连续性，L5 表示可公开引用的可复现证据。
 
 ## 核心功能
 
@@ -672,12 +674,12 @@ piia-engram 的数据全部存储在本地 `~/.engram/`，使用 JSON/Markdown �
 
 ## 兼容的 AI 工具
 
-| 工具 | 接入方式 | 置信度 |
+| 工具 | 接入方式 | 证据状态 |
 |------|---------|--------|
-| Claude Code | MCP (stdio) | ✅ 已验证 |
-| Codex | MCP (stdio) | ✅ 已验证 |
-| Cursor | MCP (stdio) | ✅ 已验证 |
-| Claude Desktop | MCP (stdio) | ✅ 已验证 |
+| Claude Code | MCP (stdio) | L4 部分连续性证明（Claude Code -> Codex） |
+| Codex | MCP (stdio) | L4 部分连续性证明（Claude Code -> Codex） |
+| Cursor | MCP (stdio) | L2 setup / read-search 证据路径 |
+| Claude Desktop | MCP (stdio) | L1/L2 setup 路径，客户端专项证据待补 |
 | Windsurf | MCP (stdio) | 应兼容 |
 | GitHub Copilot | MCP (stdio) | 应兼容 |
 | Cline | MCP (stdio) | 应兼容 |
@@ -687,7 +689,7 @@ piia-engram 的数据全部存储在本地 `~/.engram/`，使用 JSON/Markdown �
 | Zed | MCP (stdio) | 应兼容 |
 | Trae | MCP (stdio) | 应兼容 |
 | 腾讯 CodeBuddy | MCP (stdio) | 应兼容 |
-| OpenClaw | SOUL.md/MEMORY.md 导入导出 | ✅ 已验证 |
+| OpenClaw | SOUL.md/MEMORY.md 导入导出 | L3 静态文件桥证据；live agent 待验证 |
 | ChatGPT / Kimi / Gemini | 粘贴身份卡 | 🔧 可用 |
 
 ## 诞生故事
@@ -741,7 +743,7 @@ piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代�
 pip install piia-engram
 engram setup
 ```
-安装向导会自动检测 AI 工具并配置 MCP。设置完成后重启 AI 工具，AI 会在每次新对话开始时调用 `get_user_context` 认识你。
+安装向导会自动检测 AI 工具；默认只读，不会改写外部客户端配置。设置完成后重启 AI 工具，许多客户端可以在新对话开始时调用 `get_user_context`；如果没有主动触发，显式调用 `search_knowledge` 或 `get_resume_brief` 仍然是正常的 L2 使用路径。
 
 **升级后 AI 工具显示"MCP server disconnected"，怎么解决？**
 在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令扫描所有已知 MCP 配置，移除旧版 server 条目并修复失效路径，一步完成。

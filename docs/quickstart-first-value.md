@@ -6,6 +6,10 @@ default **17 core tools**. You do not need the 67 advanced tools or
 
 This quickstart is for a local MCP-compatible coding tool such as Claude Code,
 Codex, Cursor, Windsurf, or Claude Desktop. Setup details can vary by MCP host.
+For host-specific setup, start with [Claude Code](integrations/claude-code.md),
+[Codex](integrations/codex.md), or [Cursor](integrations/cursor.md). For the
+tool tiers and owner-gated surfaces, keep the
+[operator MCP cheatsheet](operator-mcp-cheatsheet.md) nearby.
 
 ## 1. Install
 
@@ -99,6 +103,23 @@ ENGRAM_TOOLS=all
 Some advanced tools are owner/admin/export surfaces. Turning them on increases
 what the host can see in the tool list; it does not remove owner gates,
 governance checks, or the requirement to confirm public actions yourself.
+
+## If recall did not fire
+
+First confirm the client can see the MCP server: run `engram doctor`, restart
+the AI tool, and ask it to call `get_resume_brief` or `get_user_context`.
+
+If the tool is connected but the answer still ignores memory, make the recall
+explicit once:
+
+```text
+Use Engram to search for my saved preference about concise answers.
+```
+
+If explicit search works but proactive recall does not, treat the client as
+L2 read/search capable, not L3 or L4 behavior-verified. That is still useful
+first value; it just means public claims should stay below behavior-gain or
+cross-client continuity levels until a validation run proves more.
 
 ## Next steps
 

@@ -42,7 +42,9 @@ When the request is a normal coding task with no continuity or memory angle, do
    `get_user_context`.
 2. **During work** — when the user asks what was decided or learned, call
    `search_knowledge` (topic known) or `get_relevant_knowledge` (let Engram pick
-   what's relevant). Reading is always safe.
+   what's relevant). Normal read/search tools provide session context; export
+   surfaces such as `get_identity_card` are owner-gated and can write local
+   files.
 3. **Capturing durable knowledge** — the user, not the AI, owns what becomes
    permanent. When the user says to remember something, propose it and write it
    with `add_lesson` / `add_decision` / `add_playbook`. These are

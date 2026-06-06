@@ -37,5 +37,11 @@
     "local_tools_registry": "local path resolver; do not persist absolute paths into playbooks",
     "legacy_playbook_migration": "maintenance/dogfood surface, not first-run product story"
   },
+  "operator_notes": {
+    "core_is_not_read_only": "Core means high-frequency and context-budget friendly. Core includes local write tools and the owner-gated get_identity_card export surface.",
+    "all_tools_mode": "ENGRAM_TOOLS=all increases the visible tool list for advanced workflows; it does not bypass governance, owner gates, or public-action confirmation.",
+    "preview_tools": "Preview context-governance tools return proposal-only evidence and do not apply changes until separately promoted.",
+    "public_claims": "Client compatibility claims should use L0-L5 evidence labels from docs/runbooks/agent-client-validation.md."
+  },
   "publication_rule": "Do not rewrite public launch/listing copy from this taxonomy until owner confirms the release window and public guards are green."
 }

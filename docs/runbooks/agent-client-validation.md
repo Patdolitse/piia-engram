@@ -257,8 +257,11 @@ Public release summaries may be English-first bilingual, but must remain
 scrubbed and metadata-only.
 
 Before turning any run into a public claim, run the claim through
-`validate_public_claim(...)`. This is especially important for OpenClaw:
-current evidence supports **L3 static snapshot A/B** only, not live agent or
+`evidence_readiness(...)` and `validate_public_claim(...)`. The readiness check
+answers "which L-level does this evidence pack actually support"; the claim
+guard answers "is the wording allowed for that level and client". This is
+especially important for OpenClaw: current evidence supports **L3 static
+snapshot A/B** only, not live agent or
 live model continuity.
 
 ---

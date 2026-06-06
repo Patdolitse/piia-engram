@@ -2931,11 +2931,11 @@ class TestTelemetryCLIExtended:
 # ── Doctor --fix tests ─────────────────────────────────────────────
 
 
-class TestDoctorVerifiedCommunity:
+class TestDoctorEvidenceTrackedCommunity:
     """doctor 应区分已验证和社区级工具。"""
 
-    def test_verified_label_shown(self, tmp_path, monkeypatch, capsys):
-        """Verified tools should appear under 'Verified' section."""
+    def test_evidence_tracked_label_shown(self, tmp_path, monkeypatch, capsys):
+        """Evidence-tracked tools should appear under evidence-tracked section."""
         from piia_engram.setup_wizard import run_doctor, _find_python, _find_mcp_server
 
         python_path = _find_python()
@@ -2956,11 +2956,11 @@ class TestDoctorVerifiedCommunity:
 
         run_doctor(fix=False)
         out = capsys.readouterr().out
-        assert "Verified" in out
+        assert "Evidence-tracked setup paths" in out
         assert "Claude Code" in out
 
     def test_community_label_shown(self, tmp_path, monkeypatch, capsys):
-        """Community tools should appear under 'Community-supported' section."""
+        """Community tools should appear under expected/community section."""
         from piia_engram.setup_wizard import run_doctor
 
         config_dir = tmp_path / ".windsurf"
@@ -2979,7 +2979,7 @@ class TestDoctorVerifiedCommunity:
 
         run_doctor(fix=False)
         out = capsys.readouterr().out
-        assert "Community-supported" in out
+        assert "Expected/community setup paths" in out
         assert "Windsurf" in out
 
     def test_mixed_verified_and_community(self, tmp_path, monkeypatch, capsys):
@@ -3009,8 +3009,8 @@ class TestDoctorVerifiedCommunity:
 
         run_doctor(fix=False)
         out = capsys.readouterr().out
-        assert "Verified" in out
-        assert "Community-supported" in out
+        assert "Evidence-tracked setup paths" in out
+        assert "Expected/community setup paths" in out
         assert "Claude Code" in out
         assert "Windsurf" in out
 

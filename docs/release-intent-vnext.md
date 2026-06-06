@@ -83,8 +83,8 @@ project registry according to the post-push rule, and prepare release notes.
 
 Current local verification snapshot:
 
-- full pytest: `2970 passed, 2 skipped, 4 warnings`
-- collect-only: `2972 tests collected`
+- full pytest: `2980 passed, 2 skipped, 4 warnings`
+- collect-only: `2982 tests collected`
 - MCP tool count: `84 total / 17 core / 67 advanced`
-- staged publish allowlist: `417 tracked files covered by 90 patterns`
+- staged publish allowlist: `422 tracked files covered by 94 patterns`
 - `check_pre_push_release_readiness.py --full-tests`: passed

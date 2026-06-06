@@ -308,7 +308,7 @@ def _tool_configs() -> dict:
     - name: 工具显示名
     - config_paths: 配置文件路径列表
     - format: "json" | "toml"（默认 json）
-    - verified: True = 团队实测验证过, False = 社区级支持（路径来自官方文档，未实测）
+    - verified: True = evidence-tracked setup path, False = expected/community setup path
     - server_key: MCP servers 在配置中的顶层 key（默认 "mcpServers"）
     """
     home = Path.home()
@@ -2513,7 +2513,7 @@ def _detect_installed_tools() -> list[dict]:
     不仅检查配置文件是否存在，还检查工具本身是否安装（配置目录存在）。
     返回 [{tool_id, name, config_path, format, verified, status, config, servers}]。
     - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram)
-    - verified: True = 团队实测过, False = 社区级支持
+    - verified: True = evidence-tracked setup path, False = expected/community setup path
     """
     results = []
     for tool_id, cfg in _tool_configs().items():
@@ -3028,8 +3028,8 @@ def run_doctor(fix: bool = False) -> int:
 
     if not tools:
         print("  [!] No supported AI tools detected on this system.\n")
-        print("  Verified: Claude Code, Claude Desktop, Cursor, Codex")
-        print("  Community: Windsurf, Copilot, Cline, Roo Code, Amazon Q, Augment, Zed\n")
+        print("  Evidence-tracked setup paths: Claude Code, Claude Desktop, Cursor, Codex")
+        print("  Expected/community setup paths: Windsurf, Copilot, Cline, Roo Code, Amazon Q, Augment, Zed\n")
         return 0
 
     print(f"  Detected {len(tools)} AI tool(s):\n")
@@ -3040,7 +3040,7 @@ def run_doctor(fix: bool = False) -> int:
     unconfigured: list[dict] = []
 
     if verified_tools:
-        print("  Verified (team tested):")
+        print("  Evidence-tracked setup paths:")
         for t in verified_tools:
             if t["status"] == "configured":
                 _safe_print(f"    [ok] {t['name']} — Engram configured")
@@ -3052,7 +3052,7 @@ def run_doctor(fix: bool = False) -> int:
     if community_tools:
         if verified_tools:
             print()
-        print("  Community-supported (untested by our team):")
+        print("  Expected/community setup paths:")
         for t in community_tools:
             if t["status"] == "configured":
                 _safe_print(f"    [ok] {t['name']} — Engram configured")

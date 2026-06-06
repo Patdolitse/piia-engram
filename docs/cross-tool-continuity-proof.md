@@ -6,6 +6,16 @@ The code demo proves the loop with *simulated* clients against a synthetic store
 
 > A memory written by **Claude Code** was read back, unmodified and with its provenance intact, by **Codex** — in a fresh session, through the MCP protocol, with no cloud account and no sync service.
 
+## Claim card
+
+| Field | Value |
+|---|---|
+| Evidence level | L4 partial cross-client continuity |
+| Verified direction | Claude Code writes -> Codex cold-start reads |
+| Environment arm | Default-user |
+| Evidence type | Live client run, de-identified public summary |
+| Not proven | Cursor/Windsurf behavior, proactive recall, every MCP host, broad benchmark superiority, or L5 reproducibility |
+
 ## The setup
 
 | | Tool A | Tool B |

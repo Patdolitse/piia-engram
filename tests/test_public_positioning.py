@@ -187,6 +187,10 @@ def test_quickstart_first_value_stays_core_and_honest():
         "add_lesson",
         "doctor",
         "owner-gated export surface",
+        "If recall did not fire",
+        "L2 read/search capable",
+        "integrations/claude-code.md",
+        "operator-mcp-cheatsheet.md",
     ]:
         assert phrase in doc
 
@@ -195,8 +199,40 @@ def test_quickstart_first_value_stays_core_and_honest():
         "works with every AI tool",
         "verified immediately",
         "under 30 seconds",
+        "is L4 behavior-verified",
     ]:
         assert forbidden not in doc
+
+
+def test_supported_tools_table_uses_evidence_levels_not_bare_verified():
+    readme = _read("README.md")
+    readme_zh = _read("README.zh-CN.md")
+
+    assert "Evidence status" in readme
+    assert "L4 partial continuity proof" in readme
+    assert "L2 setup/read-search evidence path" in readme
+    assert "L3 static file-bridge evidence" in readme
+    assert "4 verified + 9 expected-to-work" not in readme
+    assert "| Claude Code | MCP over stdio | ✅ Verified |" not in readme
+    assert "| Cursor | MCP over stdio | ✅ Verified |" not in readme
+
+    assert "证据状态" in readme_zh
+    assert "L4 部分连续性证明" in readme_zh
+    assert "L3 静态文件桥证据" in readme_zh
+    assert "4 已验证 + 9 应兼容" not in readme_zh
+
+
+def test_operator_mcp_cheatsheet_matches_tool_surface_json():
+    doc = _read("docs/operator-mcp-cheatsheet.md")
+    surface = json.loads(_read("docs/mcp-tool-surface.json"))
+
+    assert surface["operator_notes"]["core_is_not_read_only"]
+    assert surface["operator_notes"]["all_tools_mode"]
+    assert "Core means high-frequency" in doc
+    assert "It does not mean read-only" in doc
+    assert "get_identity_card" in doc
+    assert "ENGRAM_TOOLS=all" in doc
+    assert "evidence_readiness" in doc
 
 
 def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims():

@@ -83,12 +83,16 @@ docs/governance.md
 docs/hybrid-search.md
 docs/listing-copy.md
 docs/mcp-tool-surface.json
+docs/operator-mcp-cheatsheet.md
 docs/quickstart-first-value.md
 docs/public-facts.json
 docs/release-intent-vnext.md
 docs/samples/export-redaction-clean-sample.md
 docs/tool-surface-analysis.md
 docs/integrations/client-continuity-evidence.md
+docs/integrations/claude-code.md
+docs/integrations/codex.md
+docs/integrations/cursor.md
 docs/integrations/hermes.md
 docs/runbooks/data-sovereignty-audit.md
 docs/runbooks/encoding-data-scan.md

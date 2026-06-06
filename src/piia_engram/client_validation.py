@@ -44,6 +44,15 @@ REQUIRED_RUN_META_KEYS = (
 
 _LEVEL_ORDER = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5}
 
+LEVEL_EVIDENCE_REQUIREMENTS: dict[str, tuple[str, ...]] = {
+    "L0": ("run_meta_complete", "tool_locations_recorded"),
+    "L1": ("client_config_summary", "prompts_recorded"),
+    "L2": ("raw_artifacts", "parsed_artifacts"),
+    "L3": ("ab_control", "signal_differential", "zero_pollution_clean"),
+    "L4": ("cross_client_marker",),
+    "L5": ("public_safe_summary", "claim_guard_passed"),
+}
+
 
 @dataclass(frozen=True)
 class FileSnapshot:
@@ -116,6 +125,78 @@ def build_run_meta(
 def missing_run_meta_keys(meta: dict[str, Any]) -> list[str]:
     """Return required run-meta keys absent from ``meta``."""
     return [key for key in REQUIRED_RUN_META_KEYS if key not in meta]
+
+
+def evidence_readiness(evidence: dict[str, Any], *, target_level: str = "L5") -> dict[str, Any]:
+    """Evaluate the highest public validation level supported by evidence.
+
+    The function is deliberately pure and metadata-only. Callers can pass a
+    small evidence summary assembled from a run directory, then gate public
+    wording before writing ``verified_level`` into reports or README copy.
+    """
+    target = (target_level or "").strip().upper()
+    if target not in _LEVEL_ORDER:
+        return {
+            "allowed": False,
+            "target_level": target,
+            "highest_ready_level": "",
+            "required": [],
+            "satisfied": [],
+            "missing": ["target_level must be one of L0-L5"],
+        }
+
+    required: list[str] = []
+    satisfied: list[str] = []
+    missing: list[str] = []
+    highest_ready_level = ""
+    cumulative_missing = False
+
+    for level, order in sorted(_LEVEL_ORDER.items(), key=lambda item: item[1]):
+        if order > _LEVEL_ORDER[target]:
+            continue
+        level_requirements = list(LEVEL_EVIDENCE_REQUIREMENTS[level])
+        required.extend(level_requirements)
+        level_missing: list[str] = []
+        for requirement in level_requirements:
+            if _evidence_requirement_met(evidence, requirement):
+                satisfied.append(requirement)
+            else:
+                missing.append(requirement)
+                level_missing.append(requirement)
+        if level_missing:
+            cumulative_missing = True
+        if not cumulative_missing:
+            highest_ready_level = level
+
+    return {
+        "allowed": not missing,
+        "target_level": target,
+        "highest_ready_level": highest_ready_level,
+        "required": required,
+        "satisfied": satisfied,
+        "missing": missing,
+    }
+
+
+def _evidence_requirement_met(evidence: dict[str, Any], requirement: str) -> bool:
+    if requirement in evidence:
+        value = evidence.get(requirement)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value > 0
+        return bool(value)
+
+    if requirement == "run_meta_complete":
+        meta = evidence.get("run_meta")
+        return isinstance(meta, dict) and not missing_run_meta_keys(meta)
+    if requirement == "tool_locations_recorded":
+        return bool(evidence.get("tool_locations"))
+    if requirement == "signal_differential":
+        return int(evidence.get("signal_differential", 0) or 0) > 0
+    if requirement == "zero_pollution_clean":
+        return bool(evidence.get("zero_pollution", {}).get("clean"))
+    if requirement == "claim_guard_passed":
+        return bool(evidence.get("claim_allowed")) or bool(evidence.get("claim_guard", {}).get("allowed"))
+    return False
 
 
 def build_tool_locations(
