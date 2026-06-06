@@ -136,6 +136,13 @@ Governance is a local-first policy boundary, not a hardened sandbox.
 - Use OS file permissions, disk encryption, and `ENGRAM_SECRET` for stronger
   local data protection.
 
+Context-governance preview tools follow the same boundary. The
+`preview_context_governance` MCP tool returns local proposals and drafts only:
+it does not publish, push, tag, upload, archive, merge, apply replay packets, or
+write registry entries. Promotion to a stable apply path would require a
+separate owner-gated design, undo/audit coverage, and release notes that keep
+the preview boundary explicit.
+
 ## Encryption And Search Interaction
 
 `ENGRAM_SECRET` encrypts corpus fields with `enc:v2c:` payloads when the secure

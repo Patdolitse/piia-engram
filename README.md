@@ -733,7 +733,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | Supported AI tools | **15** (4 verified + 9 expected-to-work + OpenClaw + ChatGPT fallback) |
 | MCP tools | **17 Core** (loaded by default) + **67 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **2953** (unit + integration; 2 skipped, 2955 collected) |
+| Tests passing | **2970** (unit + integration; 2 skipped, 2972 collected) |
 | Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
 | Lines in `core.py` | **3336** (facade + mixins total ~8159; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -796,7 +796,7 @@ Two tiers, designed so most users only see 17 tools:
 | Tier | Tools | What they do | Loaded by |
 |------|-------|-------------|-----------|
 | **Core** | 17 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
-| **Advanced** | 66 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
+| **Advanced** | 67 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
 
 Most users never need to enable Advanced tools — Core covers everyday use.
 

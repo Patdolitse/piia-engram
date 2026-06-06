@@ -85,6 +85,21 @@ The advanced set exists for review, import/export, governance, migration, and
 management workflows. Most first-time users should leave it off until they need
 those workflows.
 
+## When to enable all tools
+
+Leave the default core surface on for first value, daily recall, and normal
+session wrap-up. Enable all tools only when you intentionally need review
+queues, imports/exports, Playbook maintenance, local tool-registry management,
+or proposal-only context-governance previews:
+
+```bash
+ENGRAM_TOOLS=all
+```
+
+Some advanced tools are owner/admin/export surfaces. Turning them on increases
+what the host can see in the tool list; it does not remove owner gates,
+governance checks, or the requirement to confirm public actions yourself.
+
 ## Next steps
 
 - Read [Trust evidence](trust-evidence.md) to see how public claims are checked.

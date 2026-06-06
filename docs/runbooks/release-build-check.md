@@ -9,6 +9,8 @@ registry/Glama update. Those remain explicit, separately-gated maintainer steps
 ## 0. One-shot readiness snapshot
 
 ```bash
+python scripts/build_release_dossier.py
+python scripts/build_release_dossier.py --run-readiness
 python scripts/check_pre_push_release_readiness.py
 python scripts/check_pre_push_release_readiness.py --full-tests
 engram release-check          # read-only readiness report (exit 1 if NOT ready)
@@ -24,6 +26,10 @@ public-fact sync, trust-claim guard, public-claim drift, publish workflow
 ordering). `--full-tests` also runs `python -m pytest -q` for a release
 candidate. It performs no `git push`, tag, release, upload, registry write,
 deploy, or external listing refresh.
+
+`scripts/build_release_dossier.py` renders the local v.next dossier from git
+metadata, public facts, and MCP tool counts. `--run-readiness` embeds the same
+local readiness gate. It is a planning artifact only, not a release approval.
 
 `engram release-check` aggregates the checks below into a single status:
 required files present, English-first release notes, publish allowlist present,

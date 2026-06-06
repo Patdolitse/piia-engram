@@ -9,7 +9,7 @@ Source of truth:
 - `TOOL_GOVERNANCE_CLASS` for side-effect and governance class
 - `tests/snapshots/mcp_tool_schema.json` for the generated schema snapshot
 
-Current count: **84 MCP tools**. The default server loads **17 core tools** with `ENGRAM_TOOLS=core`; the other **67 advanced tools** are available with `ENGRAM_TOOLS=all`.
+Current count: **84 MCP tools**. The default server loads **17 core tools** with `ENGRAM_TOOLS=core`; the other **67 advanced tools** are available with `ENGRAM_TOOLS=all`. The machine-readable taxonomy snapshot is [`mcp-tool-surface.json`](mcp-tool-surface.json), and `tests/test_mcp_tool_surface_classification.py` verifies that it stays aligned with `scripts/count_mcp_tools.py --json`.
 
 ## Core is not read-only
 

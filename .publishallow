@@ -69,6 +69,7 @@ README.zh-CN.md
 # NOTE: release-playbook.md is intentionally NOT here — it's an internal
 # ops runbook (reverse-disclosure risk) kept at docs/internal/ (gitignored).
 docs/architecture.md
+docs/benchmarks/context-governance-eval-v1.md
 docs/benchmarks/recall-eval-v1.md
 docs/benchmarks/memory-eval-suite-v1.md
 docs/comparison.md
@@ -81,6 +82,7 @@ docs/cursor-plugin-validation.md
 docs/governance.md
 docs/hybrid-search.md
 docs/listing-copy.md
+docs/mcp-tool-surface.json
 docs/quickstart-first-value.md
 docs/public-facts.json
 docs/release-intent-vnext.md
@@ -94,6 +96,7 @@ docs/runbooks/agent-client-validation.md
 docs/runbooks/install-launch-truth-audit.md
 docs/runbooks/local-apply-paths.md
 docs/runbooks/memory-lifecycle.md
+docs/runbooks/post-push-closeout.md
 docs/runbooks/public-truth-sync.md
 docs/runbooks/release-build-check.md
 docs/runbooks/setup-upgrade-safety.md

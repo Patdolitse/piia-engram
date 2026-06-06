@@ -32,6 +32,10 @@ and the worker allowlists (`worker/src/index.js`), all pinned by the tests under
   public dashboard is a deliberate operator choice rather than a content leak.
   The closeout runbook documents setting the secret if a gated dashboard is
   wanted.
+- **Worker dashboard operations are a separate lane.** A Cloudflare Worker UI
+  change or health check is not a Python package release, PyPI upload, MCP
+  Registry publish, or consent change. Deploying or migrating the Worker remains
+  an explicit owner action.
 
 ## What is NEVER collected
 

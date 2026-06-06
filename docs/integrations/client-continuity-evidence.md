@@ -34,6 +34,22 @@ Avoid:
 - "Full context is shared automatically."
 - "Engram is a Hermes memory provider or OpenClaw plugin."
 
+## Evidence Pack Index
+
+Use this page as a public-safe index, not as a raw-log archive. Live validation
+runs should stay in isolated local folders until scrubbed.
+
+| Evidence class | Public-safe status | Validation boundary |
+|---|---|---|
+| Claude Code / Codex continuity | Public-safe summary only | Shows controlled cross-tool recall, not every MCP host. |
+| Cursor / Windsurf setup | Setup-card eligible | Do not claim verified continuity until an L-level run exists. |
+| Hermes CLI | L4 summary above | CLI bridge only. |
+| OpenClaw static bridge | L3 summary above | Static file bridge only. |
+| Raw logs / copied stores | Private | Never publish raw paths, markers, prompts, or local store contents. |
+
+Before citing a client as "verified", use the L-level claim boundaries in
+[`docs/runbooks/agent-client-validation.md`](../runbooks/agent-client-validation.md).
+
 ## 中文摘要
 
 Engram 的方向是继续做自己的本地优先、用户可治理的记忆核心，同时为外部客户端提供兼容桥接。Hermes 和 OpenClaw 是 Engram 的外部消费端，不是 Engram 的主线，也不会把 Engram 改造成它们的插件。

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "status": "taxonomy_snapshot",
+  "last_reviewed": "2026-06-06",
+  "source_of_truth": "scripts/count_mcp_tools.py --json",
+  "counts": {
+    "total": 84,
+    "core": 17,
+    "advanced": 67
+  },
+  "tiers": [
+    {
+      "name": "core",
+      "count": 17,
+      "loaded_by": "default",
+      "meaning": "high-frequency and context-budget friendly; not synonymous with read-only"
+    },
+    {
+      "name": "advanced_public",
+      "loaded_by": "ENGRAM_TOOLS=all",
+      "meaning": "general product capabilities for power users, review, merge, import/export, playbooks, and governance"
+    },
+    {
+      "name": "owner_internal_dogfood",
+      "loaded_by": "ENGRAM_TOOLS=all plus owner/admin/export gates where applicable",
+      "meaning": "local integrations, owner exports, legacy maintenance, full-library import/export, or dogfood surfaces"
+    },
+    {
+      "name": "preview_proposal_only",
+      "loaded_by": "ENGRAM_TOOLS=all",
+      "meaning": "proposal-only previews that do not apply changes or become stable APIs before promotion criteria are met"
+    }
+  ],
+  "notable_boundaries": {
+    "get_identity_card": "core but owner-gated export surface",
+    "preview_context_governance": "advanced owner-gated preview; proposal-only; not stable; not split into four public tools",
+    "local_tools_registry": "local path resolver; do not persist absolute paths into playbooks",
+    "legacy_playbook_migration": "maintenance/dogfood surface, not first-run product story"
+  },
+  "publication_rule": "Do not rewrite public launch/listing copy from this taxonomy until owner confirms the release window and public guards are green."
+}
