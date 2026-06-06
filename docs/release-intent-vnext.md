@@ -8,6 +8,7 @@ and not approval to publish.
 - `1effe5f fix: align CLI tool-count help text`
 - `8da40d5 feat(context-governance): add usage report and staged safety helpers`
 - `16e3bc5 docs(mcp): clarify tool tiers and owner-gated surfaces`
+- `965e643 feat(context-governance): add unified preview surface`
 
 ## Suggested release shape
 
@@ -20,6 +21,21 @@ Expected release themes:
 - Playbook/tool-registry and MCP tool-count cleanup carried over after v3.51.2.
 - Context governance proposals and recall usage reporting.
 - MCP tool-surface semantics and owner/export/admin wording hardening.
+- Unified owner-gated context governance preview surface.
+
+## Separate online dashboard lane
+
+The Cloudflare Worker telemetry dashboard is a separate operational surface
+from the Python/MCP package release train. Dashboard-only changes should stay in
+worker-scoped commits and should not be bundled into the PyPI / MCP Registry
+release story unless a release note explicitly needs to mention dashboard
+operations.
+
+Current local dashboard follow-up:
+
+- PyPI download and activity trend range selectors are present locally.
+- PyPI download display is being reshaped into a single-card KPI + trend layout.
+- Any `git push` or Wrangler deploy still requires owner confirmation.
 
 ## Publication gate
 

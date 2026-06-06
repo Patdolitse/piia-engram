@@ -459,11 +459,10 @@ async function getStatsData(env) {
     `).all();
   }
 
-  // 每日活跃（14天）
+  // 每日活跃（long window for dashboard range selectors）
   const daily = await env.DB.prepare(`
     SELECT date(received) AS day, COUNT(DISTINCT daily_id) AS users, COUNT(*) AS events
-    FROM events WHERE received >= datetime('now', '-14 days')
-    GROUP BY day ORDER BY day DESC
+    FROM events GROUP BY day ORDER BY day DESC LIMIT 400
   `).all();
 
   // 每月汇总
@@ -620,27 +619,120 @@ async function getStatsData(env) {
 
 // --- 仪表盘 HTML ---
 
-function renderDashboard(stats) {
+export function renderDashboard(stats) {
   const t = stats.totals;
   const uptime = t.first_event ? Math.ceil((new Date(t.last_event) - new Date(t.first_event)) / 86400000) || 1 : 0;
 
   // PyPI 下载统计
   const pypiDaily = stats.pypi?.daily || [];
   const pypiRecent = stats.pypi?.recent || {};
-  const lastDays = pypiDaily.slice(-14);
-  const maxDl = Math.max(...lastDays.map(d => d.downloads), 1);
-  const totalDl = lastDays.reduce((s, d) => s + d.downloads, 0);
-  const pypiBarChart = lastDays.length > 0 ? `
-    <div class="download-bar">
-      ${lastDays.map(d => {
-        const h = Math.max(2, (d.downloads / maxDl) * 70);
-        const label = d.date.slice(5); // MM-DD
-        return `<div class="bar-item"><div class="bar-val">${d.downloads}</div><div class="bar" style="height:${h}px"></div><div class="bar-label">${label}</div></div>`;
-      }).join('')}
-    </div>` : '<div class="empty">暂无下载数据</div>';
+  const rangeOptions = [
+    { key: '7d', label: '近 7 天', mode: 'day', days: 7, labelStep: 1 },
+    { key: '14d', label: '近 14 天', mode: 'day', days: 14, labelStep: 2 },
+    { key: '30d', label: '近 30 天', mode: 'day', days: 30, labelStep: 5 },
+    { key: 'month', label: '按月', mode: 'month' },
+    { key: 'quarter', label: '按季度', mode: 'quarter' },
+    { key: 'year', label: '按年', mode: 'year' },
+  ];
+  const defaultRange = '30d';
+  const todayMs = Date.now();
+  const dayMs = 86400000;
 
+  function cutoffDay(days) {
+    return new Date(todayMs - (days - 1) * dayMs).toISOString().slice(0, 10);
+  }
+
+  function bucketKey(dateText, mode) {
+    if (!dateText) return '-';
+    if (mode === 'month') return dateText.slice(0, 7);
+    if (mode === 'year') return dateText.slice(0, 4);
+    if (mode === 'quarter') {
+      const month = Number(dateText.slice(5, 7)) || 1;
+      return `${dateText.slice(0, 4)}-Q${Math.floor((month - 1) / 3) + 1}`;
+    }
+    return dateText.slice(0, 10);
+  }
+
+  function aggregateRange(rows, dateKey, valueKeys, option) {
+    const filtered = option.days
+      ? rows.filter(row => (row[dateKey] || '') >= cutoffDay(option.days))
+      : rows;
+    const grouped = {};
+    for (const row of filtered) {
+      const key = bucketKey(row[dateKey], option.mode);
+      if (!grouped[key]) {
+        grouped[key] = { label: key };
+        for (const valueKey of valueKeys) grouped[key][valueKey] = 0;
+      }
+      for (const valueKey of valueKeys) {
+        grouped[key][valueKey] += Number(row[valueKey] || 0);
+      }
+    }
+    return Object.values(grouped).sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  function renderDownloadRangeButtons() {
+    return `<div class="range-tabs">
+      <button type="button" class="range-tab" data-download-range="7d" onclick="setDownloadRange('7d')">近 7 天</button>
+      <button type="button" class="range-tab" data-download-range="14d" onclick="setDownloadRange('14d')">近 14 天</button>
+      <button type="button" class="range-tab active" data-download-range="30d" onclick="setDownloadRange('30d')">近 30 天</button>
+      <button type="button" class="range-tab" data-download-range="month" onclick="setDownloadRange('month')">按月</button>
+      <button type="button" class="range-tab" data-download-range="quarter" onclick="setDownloadRange('quarter')">按季度</button>
+      <button type="button" class="range-tab" data-download-range="year" onclick="setDownloadRange('year')">按年</button>
+    </div>`;
+  }
+
+  function renderActivityRangeButtons() {
+    return `<div class="range-tabs">
+      <button type="button" class="range-tab" data-activity-range="7d" onclick="setActivityRange('7d')">近 7 天</button>
+      <button type="button" class="range-tab" data-activity-range="14d" onclick="setActivityRange('14d')">近 14 天</button>
+      <button type="button" class="range-tab active" data-activity-range="30d" onclick="setActivityRange('30d')">近 30 天</button>
+      <button type="button" class="range-tab" data-activity-range="month" onclick="setActivityRange('month')">按月</button>
+      <button type="button" class="range-tab" data-activity-range="quarter" onclick="setActivityRange('quarter')">按季度</button>
+      <button type="button" class="range-tab" data-activity-range="year" onclick="setActivityRange('year')">按年</button>
+    </div>`;
+  }
+
+  function renderBars(rows, valueKey, emptyMessage, option = {}) {
+    if (!rows.length) return `<div class="empty">${emptyMessage}</div>`;
+    const maxValue = Math.max(...rows.map(row => Number(row[valueKey] || 0)), 1);
+    const labelStep = option.labelStep || 1;
+    const rowCount = rows.length;
+    return `<div class="bar-scroll"><div class="download-bar">${
+      rows.map((row, index) => {
+        const value = Number(row[valueKey] || 0);
+        const height = Math.max(2, (value / maxValue) * 70);
+        const showLabel = index === 0 || index === rowCount - 1 || index % labelStep === 0;
+        const title = `${row.label}: ${value.toLocaleString()}`;
+        return `<div class="bar-item" title="${title}" aria-label="${title}"><div class="bar" style="height:${height}px"></div><div class="bar-label">${showLabel ? row.label : ''}</div></div>`;
+      }).join('')
+    }</div></div><div class="bar-peak">峰值 ${maxValue.toLocaleString()}</div>`;
+  }
+
+  const downloadSource = pypiDaily
+    .map(row => ({ date: row.date, downloads: Number(row.downloads || 0) }))
+    .filter(row => row.date)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const downloadRangeRows = rangeOptions.map(option => {
+    const rows = aggregateRange(downloadSource, 'date', ['downloads'], option);
+    const total = rows.reduce((sum, row) => sum + row.downloads, 0);
+    const latest = rows.length ? rows[rows.length - 1] : null;
+    const avg = rows.length ? Math.round(total / rows.length) : 0;
+    return `<div class="range-panel ${option.key === defaultRange ? 'active' : ''}" data-download-panel="${option.key}" data-download-total="${total.toLocaleString()}">
+      ${renderBars(rows, 'downloads', '暂无下载数据', option)}
+      <div class="range-summary">
+        <span>总下载：<strong>${total.toLocaleString()}</strong></span>
+        <span>平均每档：<strong>${avg.toLocaleString()}</strong></span>
+        <span>最新：<strong>${latest ? latest.downloads.toLocaleString() : '-'}</strong>${latest ? ` (${latest.label})` : ''}</span>
+      </div>
+    </div>`;
+  }).join('');
+  const downloadRangeControls = renderDownloadRangeButtons();
   const weekDl = pypiRecent.last_week || 0;
   const monthDl = pypiRecent.last_month || 0;
+  const defaultDownloadRows = aggregateRange(downloadSource, 'date', ['downloads'], rangeOptions.find(option => option.key === defaultRange));
+  const defaultDownloadTotal = defaultDownloadRows.reduce((sum, row) => sum + row.downloads, 0);
+  const latestDownload = downloadSource.length ? downloadSource[downloadSource.length - 1] : null;
 
   // 概览指标卡
   const metricsHtml = `
@@ -686,10 +778,32 @@ function renderDashboard(stats) {
       </div>
     </div>`;
 
-  // 每日活跃表
-  const dailyRows = stats.daily_active.map(d => `
-    <tr><td>${d.day}</td><td>${d.users}</td><td>${d.events}</td></tr>
-  `).join('') || '<tr><td colspan="3" class="empty">暂无数据</td></tr>';
+  // 活跃趋势表
+  const activitySource = (stats.daily_active || [])
+    .map(row => ({
+      day: row.day,
+      users: Number(row.users || 0),
+      events: Number(row.events || 0),
+    }))
+    .filter(row => row.day)
+    .sort((a, b) => a.day.localeCompare(b.day));
+  const activityRangeRows = rangeOptions.map(option => {
+    const rows = aggregateRange(activitySource, 'day', ['users', 'events'], option);
+    const bodyRows = [...rows].reverse().map(row => `
+      <tr><td>${row.label}</td><td>${row.users.toLocaleString()}</td><td>${row.events.toLocaleString()}</td></tr>
+    `).join('') || '<tr><td colspan="3" class="empty">暂无数据</td></tr>';
+    const totalUsers = rows.reduce((sum, row) => sum + row.users, 0);
+    const totalEvents = rows.reduce((sum, row) => sum + row.events, 0);
+    return `<div class="range-panel ${option.key === defaultRange ? 'active' : ''}" data-activity-panel="${option.key}">
+      <table><thead><tr><th>时间档</th><th>匿名日 ID 次数</th><th>事件数</th></tr></thead><tbody>${bodyRows}</tbody></table>
+      <div class="range-summary">
+        <span>匿名日 ID 次数：<strong>${totalUsers.toLocaleString()}</strong></span>
+        <span>事件数：<strong>${totalEvents.toLocaleString()}</strong></span>
+        <span>档位：<strong>${rows.length.toLocaleString()}</strong></span>
+      </div>
+    </div>`;
+  }).join('');
+  const activityRangeControls = renderActivityRangeButtons();
 
   // 每月汇总表
   const monthlyRows = stats.monthly_summary.map(m => `
@@ -904,16 +1018,29 @@ function renderDashboard(stats) {
   .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
   .tab-content { display: none; }
   .tab-content.active { display: block; }
+  .range-tabs { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+  .range-tab { color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.8rem; cursor: pointer; transition: all 0.2s; }
+  .range-tab:hover { color: var(--text); border-color: var(--accent); }
+  .range-tab.active { color: var(--text); background: rgba(99, 102, 241, 0.16); border-color: var(--accent); }
+  .range-panel { display: none; }
+  .range-panel.active { display: block; }
+  .range-summary { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.8rem; }
+  .range-summary strong { color: var(--text); }
+  .pypi-card { margin-bottom: 1.5rem; }
+  .pypi-kpis { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 1rem; }
+  .pypi-kpis .metric { padding: 1rem; }
+  .pypi-kpis .value { font-size: 1.6rem; }
 
   .footer { text-align: center; margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.75rem; }
   .footer a { color: var(--accent); text-decoration: none; }
   .footer a:hover { text-decoration: underline; }
 
-  .download-bar { display: flex; align-items: flex-end; gap: 2px; height: 80px; padding: 0.5rem 0; }
-  .download-bar .bar-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .bar-scroll { overflow-x: auto; padding-bottom: 0.25rem; }
+  .download-bar { display: flex; align-items: flex-end; gap: 4px; min-width: max-content; height: 88px; padding: 0.5rem 0; }
+  .download-bar .bar-item { min-width: 28px; flex: 1 0 28px; display: flex; flex-direction: column; align-items: center; gap: 3px; }
   .download-bar .bar { background: linear-gradient(180deg, var(--accent), var(--accent2)); border-radius: 3px 3px 0 0; min-height: 2px; width: 100%; transition: height 0.3s; }
-  .download-bar .bar-label { font-size: 0.6rem; color: var(--muted); white-space: nowrap; }
-  .download-bar .bar-val { font-size: 0.65rem; color: var(--text); font-weight: 600; }
+  .download-bar .bar-label { min-height: 0.9rem; max-width: 54px; overflow: hidden; color: var(--muted); font-size: 0.6rem; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-peak { color: var(--muted); font-size: 0.7rem; text-align: right; margin-top: 0.25rem; }
 
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 0.5rem; animation: pulse 2s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
@@ -938,20 +1065,16 @@ function renderDashboard(stats) {
 
   <!-- PyPI 下载统计 -->
   <div class="section-title">&#128230; PyPI 下载统计</div>
-  <div class="grid">
-    <div class="card">
-      <h2>每日下载量 <small>（近 14 天，数据延迟 1-2 天）</small></h2>
-      ${pypiBarChart}
+  <div class="card pypi-card">
+    <div class="metrics pypi-kpis">
+      <div class="metric"><div class="value">${weekDl.toLocaleString()}</div><div class="label">近 7 天下载（PyPI API）</div></div>
+      <div class="metric"><div class="value">${monthDl.toLocaleString()}</div><div class="label">近 30 天下载（PyPI API）</div></div>
+      <div class="metric"><div class="value">${latestDownload ? latestDownload.downloads.toLocaleString() : '-'}</div><div class="label">最新日下载（${latestDownload ? latestDownload.date : '-'}）</div></div>
+      <div class="metric"><div class="value" id="download-current-total">${defaultDownloadTotal.toLocaleString()}</div><div class="label">当前区间总下载</div></div>
     </div>
-    <div class="card">
-      <h2>下载汇总</h2>
-      <div style="padding:0.5rem 0">
-        <div class="period-row"><span class="period-val">${totalDl.toLocaleString()}</span><span class="period-unit">近 14 天总下载</span></div>
-        <div class="period-row"><span class="period-val">${weekDl.toLocaleString()}</span><span class="period-unit">近 7 天下载</span></div>
-        <div class="period-row"><span class="period-val">${monthDl.toLocaleString()}</span><span class="period-unit">近 30 天下载</span></div>
-        <div class="period-row"><span class="period-val">${lastDays.length > 0 ? lastDays[lastDays.length-1].downloads.toLocaleString() : '-'}</span><span class="period-unit">最新日下载 (${lastDays.length > 0 ? lastDays[lastDays.length-1].date : '-'})</span></div>
-      </div>
-    </div>
+    <h2>下载趋势 <small>（默认近 30 天，可切换区间，PyPI 数据延迟 1-2 天）</small></h2>
+    ${downloadRangeControls}
+    ${downloadRangeRows}
   </div>
 
   <!-- 时段对比 -->
@@ -978,8 +1101,9 @@ function renderDashboard(stats) {
   <div class="section-title">&#128200; 活跃趋势</div>
   <div class="grid">
     <div class="card">
-      <h2>每日活跃 <small>（近 14 天）</small></h2>
-      <table><thead><tr><th>日期</th><th>匿名日 ID</th><th>事件数</th></tr></thead><tbody>${dailyRows}</tbody></table>
+      <h2>活跃趋势 <small>（可切换区间）</small></h2>
+      ${activityRangeControls}
+      ${activityRangeRows}
     </div>
     <div class="card">
       <h2>每月汇总</h2>
@@ -1056,6 +1180,21 @@ function renderDashboard(stats) {
     el.classList.add('active');
     document.getElementById(id).classList.add('active');
   }
+  function setRange(kind, key) {
+    document.querySelectorAll('[data-' + kind + '-range]').forEach(button => {
+      button.classList.toggle('active', button.getAttribute('data-' + kind + '-range') === key);
+    });
+    document.querySelectorAll('[data-' + kind + '-panel]').forEach(panel => {
+      panel.classList.toggle('active', panel.getAttribute('data-' + kind + '-panel') === key);
+    });
+  }
+  function setDownloadRange(key) {
+    setRange('download', key);
+    const panel = document.querySelector('[data-download-panel="' + key + '"]');
+    const total = document.getElementById('download-current-total');
+    if (panel && total) total.textContent = panel.getAttribute('data-download-total') || '-';
+  }
+  function setActivityRange(key) { setRange('activity', key); }
   </script>
 </body>
 </html>`;

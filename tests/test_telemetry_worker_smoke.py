@@ -106,6 +106,45 @@ def test_dashboard_has_v1_1_tiles_and_anonymous_wording():
     assert ok, problems
 
 
+def test_dashboard_pypi_downloads_have_range_selector():
+    source = _source()
+    for key in ("7d", "14d", "30d", "month", "quarter", "year"):
+        assert f'data-download-range="{key}"' in source
+    assert "downloadRangeRows" in source
+    assert "setDownloadRange" in source
+
+
+def test_dashboard_pypi_downloads_use_single_card_kpi_layout():
+    source = _source()
+    assert "pypi-card" in source
+    assert "pypi-kpis" in source
+    assert "download-current-total" in source
+    assert "data-download-total" in source
+    assert "当前区间总下载" in source
+    assert "近 7 天下载（PyPI API）" in source
+    assert "近 30 天下载（PyPI API）" in source
+    assert "兼容口径" not in source
+
+
+def test_dashboard_pypi_chart_uses_sparse_scrollable_labels():
+    source = _source()
+    assert "bar-scroll" in source
+    assert "bar-peak" in source
+    assert "labelStep" in source
+    assert "showLabel" in source
+    assert "title=\"${title}\"" in source
+    assert "aria-label=\"${title}\"" in source
+    assert "bar-val" not in source
+
+
+def test_dashboard_activity_trends_have_range_selector():
+    source = _source()
+    for key in ("7d", "14d", "30d", "month", "quarter", "year"):
+        assert f'data-activity-range="{key}"' in source
+    assert "activityRangeRows" in source
+    assert "setActivityRange" in source
+
+
 def test_dashboard_v1_1_section_gated_on_migration():
     source = _source()
     # The v1.1 tiles only render real numbers once the migration is applied;
