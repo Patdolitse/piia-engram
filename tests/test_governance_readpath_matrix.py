@@ -190,6 +190,9 @@ _MATRIX = [
     ("get_resume_brief", "get_resume_brief", "resume brief\n" + SECRET, {}, "withhold"),
     ("get_recall", "get_relevant_lessons", [_pub(), _sec()],
      {"project_folder": "/x"}, "withhold"),
+    ("preview_context_governance", "get_relevant_lessons", [_pub(), _sec()],
+     {"mode": "safe_context",
+      "payload_json": '{"knowledge": [{"summary": "' + SECRET + '"}]}'}, "withhold"),
     ("get_daily_log", "get_daily_log", "daily log\n" + SECRET,
      {"project_folder": "/x"}, "withhold"),
     # audit.log entries carry the first 100 chars of a written lesson summary /
@@ -604,6 +607,12 @@ _SIDE_EFFECT_HARNESS = [
     ("get_resume_brief", lambda ids: {}),
     ("get_recall", lambda ids: {"project_folder": str(ids["_root"]),
                                 "query": "secret lesson choice"}),
+    ("preview_context_governance", lambda ids: {
+        "mode": "safe_context",
+        "payload_json": '{"knowledge": [{"summary": "'
+                        + SECRET
+                        + '"}]}',
+    }),
     ("get_daily_log", lambda ids: {"project_folder": str(ids["_root"])}),
     ("get_audit_log", lambda ids: {}),
     # ── export / file-writer tools ──

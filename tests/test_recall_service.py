@@ -227,6 +227,48 @@ def test_role_scoped_memory_is_noop_when_governance_disabled(tmp_path, monkeypat
     assert not (tmp_path / "governance_ledger.jsonl").exists()
 
 
+def test_same_store_role_scope_changes_only_when_governance_enabled(
+    tmp_path, monkeypatch
+):
+    eng = FakeEngram(
+        root=tmp_path,
+        relevant=[
+            {"id": "pub", "summary": "public remains", "sensitivity": "public"},
+            {"id": "work", "summary": "work remains", "sensitivity": "work"},
+            {"id": "secret", "summary": "secret filtered", "sensitivity": "secret"},
+        ],
+    )
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "cli")
+    monkeypatch.setenv("ENGRAM_CALLER_ROLE", "reviewer")
+
+    monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+    governance_off = rs.gather_recall(
+        eng,
+        role_scoped_memory=True,
+        now=_now(),
+    )
+
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    governance_on = rs.gather_recall(
+        eng,
+        role_scoped_memory=True,
+        now=_now(),
+    )
+
+    assert [item["summary"] for item in governance_off["knowledge"]] == [
+        "public remains",
+        "work remains",
+        "secret filtered",
+    ]
+    assert [item["summary"] for item in governance_on["knowledge"]] == [
+        "public remains",
+        "work remains",
+    ]
+    assert governance_off["meta"]["context_usage"]["role_scope"]["enabled"] is False
+    assert governance_on["meta"]["context_usage"]["role_scope"]["enabled"] is True
+    assert governance_on["meta"]["context_usage"]["role_scope"]["filtered"] == 1
+
+
 def test_role_scoped_memory_disabled_writes_no_disclosure_receipt(
     tmp_path, monkeypatch
 ):

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "src/piia_engram/mcp_server.py",
-  "tool_count": 83,
+  "tool_count": 84,
   "tools": {
     "add_decision": {
       "params": [
@@ -1343,6 +1343,32 @@
           "annotation": "bool",
           "required": false,
           "default": false,
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
+    "preview_context_governance": {
+      "params": [
+        {
+          "name": "mode",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "payload_json",
+          "annotation": "str",
+          "required": false,
+          "default": "{}",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "options_json",
+          "annotation": "str",
+          "required": false,
+          "default": "{}",
           "kind": "positional_or_keyword"
         }
       ],

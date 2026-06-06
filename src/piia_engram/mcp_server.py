@@ -154,6 +154,10 @@ try:
     from . import recall_service as _recall_service  # noqa: E402
 except ImportError:
     import recall_service as _recall_service  # noqa: E402
+try:
+    from . import context_governance as _context_governance  # noqa: E402
+except ImportError:
+    import context_governance as _context_governance  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -831,6 +835,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "get_lessons": "read",
     "list_pending_staging": "read",
     "get_permission_profile": "read",
+    "preview_context_governance": "read",
     "get_playbook": "read",
     "list_playbooks_for_management": "read",
     "get_playbooks": "read",
@@ -4555,6 +4560,66 @@ async def get_recall(
         _track("get_recall", success=False)
         return _json({"error": f"recall failed: {_safe_err(exc)}"})
     return _json(payload)
+
+
+@mcp.tool()
+async def preview_context_governance(
+    mode: str,
+    payload_json: str = "{}",
+    options_json: str = "{}",
+) -> str:
+    """Build a local context-governance preview; proposal-only, no apply.
+
+    Owner-gated aggregate read surface: when governance is enabled, non-owner
+    callers are refused before any store-backed mode can gather knowledge.
+
+    Modes:
+    - safe_context: redact/trim a supplied payload, or gather recall if payload is empty.
+    - freshness_conflicts: scan local lessons/decisions and return metadata-only review proposals.
+    - replay_packet: build a redacted context-compression replay packet from supplied summary.
+    - external_evidence: render a local Markdown evidence draft from supplied evidence rows.
+
+    Args:
+        mode: One of safe_context, freshness_conflicts, replay_packet, external_evidence.
+        payload_json: Optional JSON object. For external_evidence, use {"evidence": [...]}.
+        options_json: Optional JSON object for mode-specific options such as max_chars, lockdown, compact_summary, title, project_folder, query, limit, or token_budget.
+    """
+    try:
+        is_owner = _gov_rt.caller_is_owner(_engram.root)
+    except Exception:
+        is_owner = False
+    if not is_owner:
+        return _gov_rt.maybe_govern_owner_only(
+            _engram.root,
+            "",
+            tool="preview_context_governance",
+        )
+
+    def _parse_object(raw: str, field: str) -> dict:
+        if not raw or raw == "{}":
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field} must be a valid JSON object: {exc.msg}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{field} must be a JSON object")
+        return parsed
+
+    try:
+        payload = _parse_object(payload_json, "payload_json")
+        options = _parse_object(options_json, "options_json")
+        result = _context_governance.build_context_governance_preview(
+            mode,
+            engram=_engram,
+            payload=payload,
+            options=options,
+        )
+        _track("preview_context_governance", success=True)
+    except Exception as exc:
+        _track("preview_context_governance", success=False)
+        return _json({"error": f"context governance preview failed: {_safe_err(exc)}"})
+    return _json(result)
 
 
 @mcp.tool()

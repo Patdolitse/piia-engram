@@ -1389,6 +1389,86 @@ class TestRecallWrapper:
         )
 
 
+class TestContextGovernancePreviewWrapper:
+    def test_mcp_preview_context_governance_returns_safe_context_proposal(
+        self, isolated_engram: Engram
+    ):
+        result = json.loads(_run(mcp_server.preview_context_governance(
+            mode="safe_context",
+            payload_json=(
+                '{"knowledge": [{"summary": '
+                '"api key sk-test_1234567890abcdef1234567890abcdef"}]}'
+            ),
+            options_json='{"max_chars": 2000}',
+        )))
+
+        assert result["mode"] == "safe_context"
+        assert result["applied"] is False
+        assert result["invariant"] == "context_governance_preview_only"
+        assert "sk-test_" not in repr(result)
+        assert result["proposal"]["meta"]["safe_context"]["mode"] == "safe"
+
+    def test_mcp_preview_context_governance_refuses_non_owner_before_gather(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("preview should refuse before building proposal")
+
+        monkeypatch.setattr(
+            mcp_server._context_governance,
+            "build_context_governance_preview",
+            _boom,
+        )
+
+        result = _run(mcp_server.preview_context_governance(
+            mode="freshness_conflicts",
+        ))
+
+        assert "private-self only" in result
+        assert "preview should refuse" not in result
+
+    def test_mcp_preview_context_governance_other_modes_and_errors(
+        self, isolated_engram: Engram
+    ):
+        isolated_engram.add_lesson({
+            "summary": "Prefer local previews before publishing.",
+            "domain": "governance",
+        })
+        freshness = json.loads(_run(mcp_server.preview_context_governance(
+            mode="freshness_conflicts",
+        )))
+        replay = json.loads(_run(mcp_server.preview_context_governance(
+            mode="replay_packet",
+            payload_json='{"compact_summary": "resume from local draft"}',
+        )))
+        evidence = json.loads(_run(mcp_server.preview_context_governance(
+            mode="external_evidence",
+            payload_json=(
+                '{"evidence": [{"label": "PyPI", "status": "verified", '
+                '"checked_at": "2026-06-06", "url": "https://example.test"}]}'
+            ),
+        )))
+        unknown = json.loads(_run(mcp_server.preview_context_governance(
+            mode="nope",
+        )))
+        bad_json = json.loads(_run(mcp_server.preview_context_governance(
+            mode="safe_context",
+            payload_json="[1, 2]",
+        )))
+
+        assert freshness["mode"] == "freshness_conflicts"
+        assert freshness["proposal"]["invariant"] == "proposal_only_metadata"
+        assert replay["mode"] == "replay_packet"
+        assert replay["proposal"]["applied"] is False
+        assert evidence["mode"] == "external_evidence"
+        assert "LOCAL DRAFT" in evidence["proposal"]["draft"]
+        assert unknown["error"] == "unknown_mode"
+        assert "context governance preview failed" in bad_json["error"]
+
+
 class TestDoctorUncleanExitWarn:
     def test_doctor_surfaces_unclean_exit_warn(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """M11-2: When session_state.json shows an unclean prior exit,

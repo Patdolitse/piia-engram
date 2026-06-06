@@ -47,6 +47,28 @@ def _trim_payload(payload: dict[str, Any], max_chars: int) -> tuple[dict[str, An
     return out, trimmed or _json_size(out) > max_chars
 
 
+def _enforce_payload_budget(payload: dict[str, Any], max_chars: int) -> tuple[dict[str, Any], bool]:
+    """Best-effort final budget pass after metadata has been attached."""
+    if _json_size(payload) <= max_chars:
+        return payload, False
+    out = dict(payload)
+    trimmed = False
+    knowledge = out.get("knowledge")
+    if isinstance(knowledge, list):
+        kept = list(knowledge)
+        while kept and _json_size(out) > max_chars:
+            kept.pop()
+            out["knowledge"] = kept
+            trimmed = True
+    for key in ("recent_activity", "identity"):
+        if _json_size(out) <= max_chars:
+            break
+        if key in out:
+            out[key] = {}
+            trimmed = True
+    return out, trimmed or _json_size(out) > max_chars
+
+
 def build_safe_context(
     payload: dict[str, Any],
     *,
@@ -79,4 +101,15 @@ def build_safe_context(
         "trimmed": bool(trimmed),
     }
     trimmed_payload["meta"] = meta
+    trimmed_payload, final_trimmed = _enforce_payload_budget(
+        trimmed_payload,
+        max(0, int(max_chars)),
+    )
+    if final_trimmed:
+        meta = dict(trimmed_payload.get("meta", {})) if isinstance(trimmed_payload.get("meta"), dict) else {}
+        safe_meta = dict(meta.get("safe_context", {})) if isinstance(meta.get("safe_context"), dict) else {}
+        safe_meta["trimmed"] = True
+        safe_meta["estimated_chars"] = _json_size(trimmed_payload)
+        meta["safe_context"] = safe_meta
+        trimmed_payload["meta"] = meta
     return trimmed_payload

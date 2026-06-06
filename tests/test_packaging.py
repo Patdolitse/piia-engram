@@ -128,9 +128,9 @@ def test_glama_metadata_tracks_current_public_version_and_tool_count():
     content = GLAMA_YAML.read_text(encoding="utf-8")
 
     assert f"version: {pyproject_version}" in content
-    assert "83 MCP tools" in content
+    assert "84 MCP tools" in content
     assert "'core' (17 tools)" in content
-    assert "'all' (83 tools)" in content
+    assert "'all' (84 tools)" in content
     assert "60 MCP tools" not in content
     assert "'core' (12 tools)" not in content
 
@@ -342,6 +342,7 @@ def test_mcp_tool_count_and_merge_tool():
     # surfaces here before users notice in a release.
     assert "get_resume_brief" in tools
     assert "get_daily_log" in tools
+    assert "preview_context_governance" in tools
     assert "get_safe_profile" not in tools
     assert "update_lesson" not in tools
     assert "update_decision" not in tools
@@ -366,18 +367,18 @@ def test_source_and_user_facing_docs_are_utf8_without_bom():
 
 
 def test_architecture_documents_current_tool_split():
-    """Architecture docs should carry the same 83/17/66 tool split as README."""
+    """Architecture docs should carry the same 84/17/67 tool split as README."""
     content = ARCHITECTURE.read_text(encoding="utf-8")
-    assert re.search(r"\b83 tools\b", content)
+    assert re.search(r"\b84 tools\b", content)
     assert "17 Tier-1" in content
-    assert "66 Tier-2" in content
+    assert "67 Tier-2" in content
 
 
 def test_cli_help_documents_current_tool_split():
-    """CLI help text should not drift from the public 83/17 tool split."""
+    """CLI help text should not drift from the public 84/17 tool split."""
     content = SETUP_WIZARD.read_text(encoding="utf-8")
     assert "17 核心工具 / core MCP tools" in content
-    assert "unlock all 83 tools" in content
+    assert "unlock all 84 tools" in content
     assert "unlock all 82 tools" not in content
 
 
@@ -415,7 +416,7 @@ def test_zh_readme_uses_pypi_install_and_current_tool_split():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "66 个" in content  # Tier-2 tool count
+    assert "67 个" in content  # Tier-2 tool count
     assert "17 个" in content  # Tier-1 tool count
     assert "`bulk_add_knowledge`" in content
     assert "`update_knowledge`" in content

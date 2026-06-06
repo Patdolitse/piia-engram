@@ -111,6 +111,7 @@ def test_new_public_docs_are_publish_allowlisted():
     for path in [
         "docs/trust.md",
         "docs/trust-evidence.md",
+        "docs/context-governance.md",
         "docs/quickstart-first-value.md",
         "docs/tool-surface-analysis.md",
         "docs/listing-copy.md",
@@ -141,6 +142,32 @@ def test_public_evidence_doc_is_outsider_legible_and_bounded():
         "beats Mem0",
         "outperforms Letta",
         "proves live model compliance",
+    ]:
+        assert forbidden not in doc
+
+
+def test_context_governance_doc_is_proposal_only_and_bounded():
+    doc = _read("docs/context-governance.md")
+
+    for phrase in [
+        "local proposal",
+        "do not publish",
+        "preview_context_governance",
+        "applied: false",
+        "context_governance_preview_only",
+        "safe_context",
+        "freshness_conflicts",
+        "replay_packet",
+        "external_evidence",
+        "owner confirmation",
+    ]:
+        assert phrase in doc
+
+    for forbidden in [
+        "automatically publish",
+        "automatically archive",
+        "release approval",
+        "pushes to GitHub",
     ]:
         assert forbidden not in doc
 
@@ -176,9 +203,9 @@ def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims(
     doc = _read("docs/tool-surface-analysis.md")
     tools = _mcp_tool_names()
 
-    assert len(tools) == 83
+    assert len(tools) == 84
     assert "17 core tools" in doc
-    assert "66 advanced tools" in doc
+    assert "67 advanced tools" in doc
     assert "Core is not read-only" in doc
     assert "core but owner-gated" in doc
     assert "Optional local / dogfood tools" in doc
@@ -204,6 +231,7 @@ def test_public_tool_surface_docs_label_owner_local_and_legacy_tools():
         "Optional local integration governed write: register",
         "Deprecated compatibility read; prefer `get_preferences`",
         "Owner maintenance: dry-run project/global/shared scope suggestions",
+        "Advanced owner-gated preview: build safe-context",
         "Internal/dogfood",
     ]:
         assert phrase in readme
@@ -223,6 +251,7 @@ def test_public_tool_surface_docs_label_owner_local_and_legacy_tools():
         "Owner/export",
         "Optional local / dogfood tools",
         "Internal maintenance / legacy tools",
+        "preview_context_governance",
     ]:
         assert phrase in analysis
 
@@ -232,6 +261,7 @@ def test_public_tool_surface_docs_label_owner_local_and_legacy_tools():
         "optional local",
         "owner/admin/export surfaces",
         "read_web_content",
+        "preview_context_governance",
     ]:
         assert phrase in tools_ref
 

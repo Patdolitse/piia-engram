@@ -9,7 +9,7 @@ Source of truth:
 - `TOOL_GOVERNANCE_CLASS` for side-effect and governance class
 - `tests/snapshots/mcp_tool_schema.json` for the generated schema snapshot
 
-Current count: **83 MCP tools**. The default server loads **17 core tools** with `ENGRAM_TOOLS=core`; the other **66 advanced tools** are available with `ENGRAM_TOOLS=all`.
+Current count: **84 MCP tools**. The default server loads **17 core tools** with `ENGRAM_TOOLS=core`; the other **67 advanced tools** are available with `ENGRAM_TOOLS=all`.
 
 ## Core is not read-only
 
@@ -17,7 +17,7 @@ The core tier means "common in daily sessions", not "safe/read-only". Some core 
 
 | Governance class | Count | Meaning |
 |---|---:|---|
-| `read` | 41 | Reads or reports metadata without ordinary store mutation. |
+| `read` | 42 | Reads or reports metadata without ordinary store mutation. |
 | `governed_write` | 28 | Mutates ordinary knowledge/project/session data through the write gate. |
 | `owner_only_write` | 7 | Changes trust grants or imports/migrates whole-store state. |
 | `export_owner_only` | 7 | Writes full-knowledge exports or local files and requires owner-level export permission. |
@@ -28,7 +28,7 @@ The core tier means "common in daily sessions", not "safe/read-only". Some core 
 
 | Posture | Count | Meaning |
 |---|---:|---|
-| General publishable | 72 | Broad Engram product capability. Many belong in advanced/admin docs rather than first-run docs. |
+| General publishable | 73 | Broad Engram product capability. Many belong in advanced/admin docs rather than first-run docs. |
 | Optional local / dogfood in current form | 5 | Useful, but depends on local paths, an optional local Reader, or beta-maintainer workflow. |
 | Internal maintenance / legacy | 6 | Keep available for owner maintenance, but do not present as ordinary public user tools. |
 
@@ -83,6 +83,7 @@ These are publishable as general Engram capabilities, assuming their existing go
 - `set_caller_trust` (owner/admin)
 - `revoke_caller` (owner/admin)
 - `get_audit_log`
+- `preview_context_governance` (advanced owner-gated proposal surface)
 
 `get_work_style` is not listed here as a primary public capability because it is marked as `Deprecated compatibility read`; prefer `get_preferences`.
 

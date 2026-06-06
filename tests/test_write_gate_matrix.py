@@ -592,6 +592,11 @@ def _read_tool_kwargs(tool_name: str, ids: dict[str, str]) -> dict:
             "limit": 5,
             "token_budget": 500,
         },
+        "preview_context_governance": {
+            "mode": "safe_context",
+            "payload_json": '{"knowledge": [{"summary": "public"}]}',
+            "options_json": '{"max_chars": 500}',
+        },
         "get_related_knowledge": {"item_id": ids["lesson_id"]},
         "get_relevant_knowledge": {"project_folder": ids["project_folder"], "limit": 5},
         "get_resume_brief": {"project_folder": ids["project_folder"], "token_budget": 500},

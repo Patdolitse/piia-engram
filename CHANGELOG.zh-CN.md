@@ -8,6 +8,30 @@
 
 ## [Unreleased]
 
+### 新增
+- **Context Governance 提案型能力**：新增本地 proposal-only 的上下文治理辅助能力，
+  覆盖 context usage report、role-scoped recall、Safe Context / Lockdown
+  转换、freshness / conflict 提案、上下文压缩 replay packet，以及外部证据页面草稿。
+  这些能力不会发布、push、tag、修改已存知识，也不会自动执行归档决策。
+- **Context Governance 预览入口**：新增 advanced MCP 工具
+  `preview_context_governance`，作为 safe-context、freshness/conflict、replay
+  和 evidence 提案的统一 owner-gated 预览入口。
+
+### 变更
+- **MCP 工具面语义收口**：在公开文档、技能引用、Glama 元数据、CLI help 和 MCP
+  docstring 中统一说明：Tier-1 / core 表示“高频入口、节省上下文预算”，不等于
+  “只读安全集合”。owner export、owner/admin、可选本地集成、internal/dogfood
+  和 legacy maintenance 工具面现在都有明确标注。
+
+### 修复
+- **CLI 工具数量文案**：将 CLI help 对齐到当前 84 个 MCP tools、17 core / 67
+  advanced 的真实拆分。
+- **工具面漂移保护**：新增测试锁定 owner/export 与 owner/admin schema 标记、
+  `get_identity_card` 的 core-but-export 分类、本地工具图谱分类，以及 legacy
+  Playbook 维护工具分类。
+- **公开事实刷新**：当前本地事实更新为 2953 passed、2 skipped、2955 collected，
+  MCP 工具数为 84 个（17 core / 67 advanced）。
+
 ## [3.51.2] - 2026-06-06
 
 ### 变更

@@ -46,6 +46,9 @@ intent-grouped sample of real tools:
   for optional local tool/program registry workflows.
 - **Export / import**: `export_engram`, `import_engram`, `export_knowledge_report`
   are owner/admin/export surfaces; treat returned files as private.
+- **Context governance**: `preview_context_governance` is an advanced,
+  owner-gated preview surface for safe-context, freshness/conflict, replay, and
+  evidence proposals. It does not apply changes or publish drafts.
 - **Optional local integrations**: `read_web_content` expects a local Reader API
   service; it is not required for the default memory workflow.
 - **Audit / governance**: `get_audit_log`, `extract_session_insights`.

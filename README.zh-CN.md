@@ -128,7 +128,7 @@ pip install piia-engram
 engram setup
 ```
 
-第一次使用？可以先看更完整的 [first-value quickstart](docs/quickstart-first-value.md)，按默认 17 个核心工具完成 install -> first memory -> fresh-session recall 这条最短路径。
+第一次使用？可以先看更完整的 [first-value quickstart](docs/quickstart-first-value.md)，按默认 17 个核心工具完成 install -> first memory -> fresh-session recall 这条最短路径。Safe Context、replay、freshness/conflict 和 evidence draft 这类 proposal-only 能力见 [Context governance](docs/context-governance.md)。
 
 默认安装只会选择 Engram 独立数据目录并只读检测外部 AI 工具配置；如需让 Engram 自动写入 Claude/Codex/Cursor/Zed 等客户端 MCP 配置，请显式运行 `engram setup --apply-external-config`，写入前会在所选 Engram 数据目录下创建备份。
 
@@ -458,9 +458,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | | v3.51.2 (2026-06-06) |
 |---|---|
 | 支持 AI 工具 | **15** 个（4 已验证 + 9 应兼容 + OpenClaw + ChatGPT 回退）|
-| MCP 工具 | **17 个核心**（默认加载）+ **66 个高级**（`ENGRAM_TOOLS=all` 开启）|
+| MCP 工具 | **17 个核心**（默认加载）+ **67 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **2906** 个（单元 + 集成；2 个 skipped，共收集 2908）|
+| 测试通过 | **2953** 个（单元 + 集成；2 个 skipped，共收集 2955）|
 | 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
 | `core.py` 行数 | **3336** 行（facade + mixins 合计约 8159 行；v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -511,11 +511,11 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_resume_brief` | v3.30: 跨会话/跨工具恢复摘要 |
 | `doctor` | 记忆系统自诊断 |
 
-默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 66 个高级工具。
+默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 67 个高级工具。
 
 **启动同步：** Engram 会在 MCP server 启动时对账本地 AI 工具中的记忆/配置片段。默认改为后台执行，避免 stdio 客户端在 initialize 阶段被同步扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感测试臂中跳过启动同步。`ENGRAM_EPHEMERAL=1` 也会在容器/临时客户端中跳过启动同步和迁移工作。
 
-### Tier-2 高级工具（66 个 — 知识管理、审查、导入导出）
+### Tier-2 高级工具（67 个 — 知识管理、审查、导入导出）
 
 高级工具包含可选本地集成、owner/admin 工具和维护工具。凡是会导出文件、导入整库、生成审查页面或修改调用方信任级别的工具，都应视为 owner/admin/export surface，而不是普通只读工具。
 
@@ -535,6 +535,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_preferences` | 读取沟通与工作流偏好 |
 | `get_trust_boundaries` | 读取信任边界 |
 | `get_quality_standards` | 读取质量标准 |
+| `preview_context_governance` | advanced owner-gated 预览：生成 safe-context、freshness/conflict、replay 或 evidence 提案，不自动应用 |
 | `get_playbooks` | 列出已保存的操作手册 |
 | `get_playbook` | 获取单条操作手册的完整内容 |
 | `get_recent_playbooks` | 按最近使用时间列出操作手册 |
@@ -716,7 +717,7 @@ piia-engram。运行 `pip install piia-engram && engram setup`，两个工具就
 piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。已配置的 MCP 兼容编程工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）可以读取同一份已批准上下文，让新对话和换工具从同一份用户自有记忆开始。
 
 **piia-engram 和官方 MCP memory server 有什么区别？**
-官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 83 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望已配置的 MCP 兼容编程工具从同一份已批准的编码偏好和过往经验开始，用 piia-engram。
+官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 84 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望已配置的 MCP 兼容编程工具从同一份已批准的编码偏好和过往经验开始，用 piia-engram。
 
 **piia-engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
 那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。piia-engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
@@ -754,7 +755,7 @@ engram setup
 | 层级 | 工具数 | 功能 | 加载方式 |
 |------|--------|------|----------|
 | **核心** | 17 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
-| **高级** | 66 | 知识审查、合并、健康评分、工具图谱、导入导出、审计 | `ENGRAM_TOOLS=all` |
+| **高级** | 67 | 知识审查、合并、健康评分、工具图谱、上下文治理预览、导入导出、审计 | `ENGRAM_TOOLS=all` |
 
 大多数用户无需开启高级工具 —— 核心工具覆盖日常使用。
 

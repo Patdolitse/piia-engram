@@ -20,7 +20,7 @@ It complements the user-facing [README](../README.md) (which answers *"what does
                          │ HTTP/SSE  (self-hosted shared instance)
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  mcp_server.py — exposes 83 tools (Tier-1 by default, opt-in rest)  │
+│  mcp_server.py — exposes 84 tools (Tier-1 by default, opt-in rest)  │
 └────────────────────────┬────────────────────────────────────────────┘
                          │ Python method calls on a single shared
                          │ ``Engram`` instance
@@ -46,7 +46,7 @@ Three layers:
 2. **Domain** (`Engram` class + mixins) — the data model and the rules over it. No I/O of its own beyond the `_read_json` / `_write_json` primitives in `storage.py`.
 3. **Storage** — flat JSON files under `~/.engram/`. Atomic writes via temp-file + rename, cross-process locks via `portalocker`.
 
-MCP tool tiering is intentionally conservative: the server defines 83 tools total, with 17 Tier-1 core tools loaded by default and 66 Tier-2 advanced tools behind `ENGRAM_TOOLS=all`.
+MCP tool tiering is intentionally conservative: the server defines 84 tools total, with 17 Tier-1 core tools loaded by default and 67 Tier-2 advanced tools behind `ENGRAM_TOOLS=all`.
 
 The whole thing fits in your laptop's RAM (typical user has < 1 MB on disk) and starts in under 100 ms.
 
@@ -209,7 +209,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 
 ## 5. The MCP surface
 
-`mcp_server.py` exposes 83 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions. Tier-1 is a discoverability and context-budget tier, not a read-only safety class: write, export, and owner/admin behavior is still governed by `TOOL_GOVERNANCE_CLASS`.
+`mcp_server.py` exposes 84 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions. Tier-1 is a discoverability and context-budget tier, not a read-only safety class: write, export, and owner/admin behavior is still governed by `TOOL_GOVERNANCE_CLASS`.
 
 | Tier-1 (default) | Why |
 |------------------|-----|
@@ -223,7 +223,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 | `get_recent_context`, `get_daily_log`, `get_resume_brief` | Recover recent cross-tool work |
 | `doctor` | Memory system self-diagnosis |
 
-Set `ENGRAM_TOOLS=all` to expose the full 83 tools (review, health, link/unlink, OpenClaw bridge, bulk operations, etc.) for power users.
+Set `ENGRAM_TOOLS=all` to expose the full 84 tools (review, health, link/unlink, context-governance previews, OpenClaw bridge, bulk operations, etc.) for power users.
 
 ### Transport modes
 

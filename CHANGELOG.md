@@ -8,6 +8,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Added
+- **Context governance proposal helpers** - added local, proposal-only context
+  governance helpers for context usage reporting, role-scoped recall, safe
+  context / lockdown transforms, freshness and conflict proposals, compression
+  replay packets, and external evidence page drafts. These helpers do not
+  publish, push, tag, mutate stored knowledge, or apply archival decisions.
+- **Context governance preview surface** - added the advanced
+  `preview_context_governance` MCP tool as a single owner-gated preview entry
+  for safe-context, freshness/conflict, replay, and evidence proposals.
+
+### Changed
+- **MCP tool-surface semantics** - clarified across public docs, skill
+  references, Glama metadata, CLI help, and MCP docstrings that Tier-1 / core
+  means "high-frequency and context-budget friendly", not "read-only". Owner
+  export, owner/admin, optional local, internal/dogfood, and legacy maintenance
+  surfaces are now labelled explicitly.
+
+### Fixed
+- **CLI tool-count copy** - aligned CLI help with the current 84 total MCP
+  tools and the 17 core / 67 advanced split.
+- **Tool-surface drift guards** - added tests that pin owner/export and
+  owner/admin schema markers, `get_identity_card` as a core-but-export surface,
+  local tool registry classifications, and legacy Playbook maintenance tools.
+- **Public facts refreshed** - current local facts now report 2953 passed,
+  2 skipped, 2955 collected tests, and 84 total MCP tools
+  (17 core / 67 advanced).
+
 ## [3.51.2] - 2026-06-06
 
 ### Changed
