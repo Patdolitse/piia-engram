@@ -9,11 +9,21 @@ registry/Glama update. Those remain explicit, separately-gated maintainer steps
 ## 0. One-shot readiness snapshot
 
 ```bash
+python scripts/check_pre_push_release_readiness.py
+python scripts/check_pre_push_release_readiness.py --full-tests
 engram release-check          # read-only readiness report (exit 1 if NOT ready)
 engram release-check --json   # machine-readable
 python scripts/release_orchestrator.py --mode prep
 python scripts/release_orchestrator.py --mode publish-fast
 ```
+
+`scripts/check_pre_push_release_readiness.py` is the first local gate before
+asking the maintainer to approve any public action. Default mode runs only
+local file / git-index read checks (tool-count smoke, publish allowlist,
+public-fact sync, trust-claim guard, public-claim drift, publish workflow
+ordering). `--full-tests` also runs `python -m pytest -q` for a release
+candidate. It performs no `git push`, tag, release, upload, registry write,
+deploy, or external listing refresh.
 
 `engram release-check` aggregates the checks below into a single status:
 required files present, English-first release notes, publish allowlist present,
