@@ -129,6 +129,13 @@ docs/telemetry-privacy.md
 docs/trust.md
 docs/trust-evidence.md
 
+# Product Hunt launch gallery (public marketing screenshots + thumbnail)
+docs/assets/ph/shot1-empty-store.png
+docs/assets/ph/shot2-staging.png
+docs/assets/ph/shot3-codex-reads.png
+docs/assets/ph/shot4-verified.png
+docs/assets/ph/thumbnail-240x240.png
+
 # Agent ecosystem entrypoints (public, reviewed; no private workflow content)
 skills/engram/**
 
