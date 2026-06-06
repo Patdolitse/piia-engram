@@ -1,5 +1,7 @@
 # Cross-tool continuity demo
 
+> Looking for the live version with real tools? See the [cross-tool continuity proof](cross-tool-continuity-proof.md), where a memory written by Claude Code is read back by Codex. This page is the **reproducible, one-command** version that simulates the clients so anyone can run it.
+
 This demo shows the core piia-engram promise without using a real Claude, Codex, Cursor, or Windsurf login:
 
 > One local identity layer can be written by one AI coding tool and read by another.

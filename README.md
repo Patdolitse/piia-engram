@@ -45,7 +45,7 @@
 - **User approval:** AI suggestions land in review before becoming verified memory.
 - **Documented boundaries:** see [Trust model](docs/trust.md), [Privacy](PRIVACY.md), and [Security](SECURITY.md).
 
-Want a safe public walkthrough? See the [cross-tool continuity demo](docs/cross-tool-continuity-demo.md).
+Want proof? See the [live cross-tool continuity proof](docs/cross-tool-continuity-proof.md) — a memory written by Claude Code, read back by Codex through one local store — or the one-command [reproducible code demo](docs/cross-tool-continuity-demo.md).
 
 ---
 
