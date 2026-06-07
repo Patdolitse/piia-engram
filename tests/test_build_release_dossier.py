@@ -51,7 +51,7 @@ def test_build_dossier_is_local_and_read_only(monkeypatch, tmp_path):
         if cmd[:2] == ["git", "log"]:
             return 0, "abc1234 feat: local work", ""
         if cmd[-1] == "--json":
-            return 0, '{"total": 84, "core": 17, "advanced": 67}', ""
+            return 0, '{"total": 87, "core": 17, "advanced": 70}', ""
         return 1, "", "unexpected"
 
     monkeypatch.setattr(mod, "_run", fake_run)
@@ -60,7 +60,7 @@ def test_build_dossier_is_local_and_read_only(monkeypatch, tmp_path):
     assert dossier["read_only"] is True
     assert dossier["public_actions_performed"] == []
     assert dossier["git"]["head"] == "abc1234"
-    assert dossier["mcp_tool_counts"] == {"total": 84, "core": 17, "advanced": 67}
+    assert dossier["mcp_tool_counts"] == {"total": 87, "core": 17, "advanced": 70}
     assert "owner confirmation" in dossier["publication_boundary"]
 
 
@@ -74,12 +74,12 @@ def test_render_markdown_keeps_public_actions_blocked(tmp_path):
             "local_commits_after_latest_tag": ["abc1234 feat: local work"],
         },
         "public_facts": {"facts": {"test_passed": 12, "test_skipped": 1, "test_collected": 13}},
-        "mcp_tool_counts": {"total": 84, "core": 17, "advanced": 67},
+        "mcp_tool_counts": {"total": 87, "core": 17, "advanced": 70},
     }
 
     text = mod.render_markdown(dossier)
 
     assert "Local planning artifact only" in text
-    assert "MCP tools: 84 total / 17 core / 67 advanced" in text
+    assert "MCP tools: 87 total / 17 core / 70 advanced" in text
     assert "git push" in text
     assert "MCP Registry publish" in text

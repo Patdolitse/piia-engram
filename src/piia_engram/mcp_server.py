@@ -804,6 +804,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "apply_review": "governed_write",
     "update_identity": "governed_write",
     "save_project_snapshot": "governed_write",
+    "save_user_portrait": "governed_write",
     "start_project": "governed_write",
     "save_agent_context": "governed_write",
     "register_tool": "governed_write",
@@ -852,6 +853,8 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "get_stale_knowledge": "read",
     "get_trust_boundaries": "read",
     "get_user_context": "read",
+    "get_user_portrait": "read",
+    "compare_user_portraits": "read",
     "get_work_style": "read",
     "list_agent_sessions": "read",
     "list_projects": "read",
@@ -3526,6 +3529,84 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
     _locked_engram_call(_engram.save_project_snapshot, project_folder, data)
     _track("save_project_snapshot", success=True)
     return f"项目快照已保存: {project_folder}"
+
+
+# ===========================================================================
+# USER PORTRAIT TOOLS (3)
+# ===========================================================================
+
+
+@mcp.tool()
+async def get_user_portrait() -> str:
+    """生成精简版用户写照：身份 + 积累统计（只读，不写盘）。 / Build a lean user portrait: identity + accumulation stats (read-only, no write).
+
+    用途：一次拿到用户的角色/语言/技术水平 + 经验/决策/领域/项目/工具的聚合计数与主要领域，
+    用于跨工具自我介绍或仪表盘。不含任何经验/决策原文，故体积小、隐私安全。
+    Purpose: get the user's role/language/technical level plus aggregate counts
+    (lessons/decisions/domains/projects/tools) and top domains in one call —
+    for cross-tool self-introduction or a dashboard. Contains NO raw
+    lesson/decision text, so it stays small and privacy-safe.
+    """
+    portrait = _engram.build_user_portrait()
+    portrait = _gov_rt.maybe_govern_owner_only(
+        _engram.root, portrait, tool="get_user_portrait"
+    )
+    _track("get_user_portrait", success=True)
+    return _json(portrait)
+
+
+@mcp.tool()
+async def save_user_portrait() -> str:
+    """保存一份带时间戳的用户写照快照（写操作）。 / Save a timestamped user-portrait snapshot (write operation).
+
+    用途：把当前的精简写照存为版本化快照（<engram>/portraits/<时间戳>.json），
+    供日后做成长对比。只保留最近若干份，旧的自动清理。
+    Purpose: persist the current lean portrait as a versioned snapshot
+    (<engram>/portraits/<timestamp>.json) so growth can be compared over time.
+    Only the most recent snapshots are kept; older ones are pruned.
+    """
+    refusal = _gov_rt.maybe_refuse_write(_engram.root, tool="save_user_portrait")
+    if refusal is not None:
+        return refusal
+
+    saved = _locked_engram_call(_engram.save_user_portrait, None)
+    saved = _gov_rt.maybe_govern_owner_only(
+        _engram.root, saved, tool="save_user_portrait"
+    )
+    _track("save_user_portrait", success=True)
+    return _json(saved)
+
+
+@mcp.tool()
+async def compare_user_portraits() -> str:
+    """对比最近两份写照快照，给出成长增量（只读）。 / Compare the two most recent portrait snapshots and report the growth delta (read-only).
+
+    用途：展示自上一份快照以来的变化——计数增减、新增领域/工具、身份字段变化。
+    若不足两份快照，返回当前写照并提示尚无可对比基线。
+    Purpose: show what changed since the previous snapshot — count deltas,
+    newly added domains/tools, identity-field changes. If fewer than two
+    snapshots exist, returns the current portrait and notes there is no
+    baseline to compare against yet.
+    """
+    previous = _engram.get_previous_portrait()
+    latest = _engram.get_latest_portrait()
+    if latest is None:
+        # No stored snapshots at all — build a fresh (unsaved) one to show.
+        latest = _engram.build_user_portrait()
+    if previous is None:
+        payload = {
+            "growth": None,
+            "note_zh": "尚无可对比的历史快照，先运行 save_user_portrait 建立基线。",
+            "note_en": "No prior snapshot to compare; run save_user_portrait first to establish a baseline.",
+            "latest": latest,
+        }
+    else:
+        payload = {"growth": _engram.compare_user_portraits(previous, latest)}
+    payload = _gov_rt.maybe_govern_owner_only(
+        _engram.root, payload, tool="compare_user_portraits"
+    )
+    _track("compare_user_portraits", success=True)
+    return _json(payload)
 
 
 # ===========================================================================

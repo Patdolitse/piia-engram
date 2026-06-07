@@ -202,6 +202,22 @@ _MATRIX = [
     # The fake is unused: get_audit_log reads root/audit.log, which the harness
     # writes in _patch_tool_method.
     ("get_audit_log", "_unused_audit_method", {"_": SECRET}, {}, "withhold"),
+    # ---- user portrait (3): lean identity+stats aggregate / versioned snapshot
+    #      / growth diff. All three flow through maybe_govern_owner_only; the
+    #      portrait dict carries identity fields (e.g. role) at the user's own
+    #      sensitivity, so it's a private-self-only aggregate like the rest of
+    #      this block. save_user_portrait is ALSO pre-write gated (governed_write
+    #      in mcp_server), which is what refuses the non-owner before the lambda
+    #      below would run; on the OFF path it passes through carrying the secret.
+    ("get_user_portrait", "build_user_portrait",
+     {"identity": {"role": SECRET}, "stats": {}}, {}, "withhold"),
+    ("save_user_portrait", "save_user_portrait",
+     {"_path": "/x", "identity": {"role": SECRET}, "stats": {}}, {}, "withhold"),
+    # compare reads get_latest_portrait (patched → fake carrying SECRET); on the
+    # empty gov store get_previous_portrait()→None, so the tool returns
+    # {growth: None, note_*, latest: <fake>} — SECRET rides in "latest".
+    ("compare_user_portraits", "get_latest_portrait",
+     {"identity": {"role": SECRET}, "stats": {}}, {}, "withhold"),
 ]
 
 # The set the leak matrix actually exercises — used by the coverage backstop.
@@ -615,6 +631,10 @@ _SIDE_EFFECT_HARNESS = [
     }),
     ("get_daily_log", lambda ids: {"project_folder": str(ids["_root"])}),
     ("get_audit_log", lambda ids: {}),
+    # ── user portrait (3) ──
+    ("get_user_portrait", lambda ids: {}),
+    ("save_user_portrait", lambda ids: {}),
+    ("compare_user_portraits", lambda ids: {}),
     # ── export / file-writer tools ──
     ("refresh_quick_context", lambda ids: {"level": "standard"}),
     ("get_identity_card", lambda ids: {}),

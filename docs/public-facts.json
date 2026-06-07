@@ -8,9 +8,9 @@
     "test_passed": 2980,
     "test_skipped": 2,
     "test_collected": 2982,
-    "mcp_tools_total": 84,
+    "mcp_tools_total": 87,
     "mcp_tools_core": 17,
-    "mcp_tools_advanced": 67,
+    "mcp_tools_advanced": 70,
     "telemetry_default": "off",
     "telemetry_remote_default": "off"
   },
@@ -52,26 +52,26 @@
     ],
     "required_substrings": [
       { "file": "README.md", "must_contain": [
-        "ships 84 MCP tools",
-        "all 84 tools",
+        "ships 87 MCP tools",
+        "all 87 tools",
         "17 **Tier-1 Core**",
-        "Tier-2 Advanced (67 tools",
+        "Tier-2 Advanced (70 tools",
         "**17 Core**",
-        "**67 Advanced**"
+        "**70 Advanced**"
       ] },
       { "file": "README.zh-CN.md", "must_contain": [
         "17 个核心",
-        "67 个高级"
+        "70 个高级"
       ] },
       { "file": "docs/architecture.md", "must_contain": [
-        "84 tools",
+        "87 tools",
         "17 Tier-1",
-        "67 Tier-2"
+        "70 Tier-2"
       ] },
       { "file": "glama.yaml", "must_contain": [
-        "84 MCP tools",
+        "87 MCP tools",
         "'core' (17 tools)",
-        "'all' (84 tools)"
+        "'all' (87 tools)"
       ] }
     ],
     "forbidden_in_current_state": [

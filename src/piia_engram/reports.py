@@ -14,7 +14,10 @@ from .reports_rarity import RarityMixin
 from .reports_review import ReviewMixin
 from .reports_identity import IdentityCardMixin
 from .reports_analytics import AnalyticsMixin
+from .reports_portrait import PortraitMixin
 
 
-class ReportsMixin(RarityMixin, ReviewMixin, IdentityCardMixin, AnalyticsMixin):
-    """Reports, reviews, identity card, stats."""
+class ReportsMixin(
+    RarityMixin, ReviewMixin, IdentityCardMixin, AnalyticsMixin, PortraitMixin
+):
+    """Reports, reviews, identity card, portrait, stats."""

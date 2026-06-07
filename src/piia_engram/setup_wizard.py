@@ -5096,6 +5096,70 @@ def _run_recall(args: list[str]) -> int:
     return 0
 
 
+def _run_portrait(args: list[str]) -> int:
+    """Build, store, and compare a lean user portrait (engram portrait).
+
+    Local + owner-run. Composes ``build_user_portrait`` (identity + aggregate
+    stats, no raw knowledge text), persists a timestamped snapshot under
+    ``<engram>/portraits/``, and — if an earlier snapshot exists — prints the
+    growth delta since the previous one. ``--no-save`` builds without writing,
+    ``--list`` shows stored snapshots, ``--json`` emits raw structures.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram portrait            Build + save a snapshot, show growth since last\n"
+            "  engram portrait --no-save  Build + show without writing a snapshot\n"
+            "  engram portrait --list     List stored snapshots (newest first)\n"
+            "  engram portrait --json     Emit raw JSON instead of Markdown\n"
+        )
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    want_json = "--json" in args
+
+    if "--list" in args:
+        items = eng.list_user_portraits()
+        if want_json:
+            print(json.dumps(items, ensure_ascii=False, indent=2))
+        elif not items:
+            print("(no portraits stored yet / 尚无已保存的写照)")
+        else:
+            for it in items:
+                stats = it.get("stats", {})
+                print(
+                    f"- {it.get('generated_at', '')}  "
+                    f"lessons={stats.get('lesson_count', 0)} "
+                    f"decisions={stats.get('decision_count', 0)} "
+                    f"domains={stats.get('domain_count', 0)}"
+                )
+        return 0
+
+    # Capture the prior snapshot BEFORE writing the new one (growth baseline).
+    previous = eng.get_latest_portrait()
+    portrait = eng.build_user_portrait()
+    if "--no-save" not in args:
+        eng.save_user_portrait(portrait)
+
+    if want_json:
+        out: dict = {"portrait": portrait}
+        if previous:
+            out["growth"] = eng.compare_user_portraits(previous, portrait)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+
+    print(eng.render_user_portrait(portrait), end="")
+    if previous:
+        diff = eng.compare_user_portraits(previous, portrait)
+        print()
+        print(eng.render_portrait_growth(diff), end="")
+    return 0
+
+
 def _run_telemetry_validate(args: list[str]) -> int:
     """Validate telemetry payload/schema/migration consistency (read-only, no network).
 
@@ -6016,6 +6080,8 @@ def main() -> None:
         sys.exit(_run_export_agents_md(args[1:]))
     elif args[0] == "recall":
         sys.exit(_run_recall(args[1:]))
+    elif args[0] == "portrait":
+        sys.exit(_run_portrait(args[1:]))
     elif args[0] == "lifecycle":
         sys.exit(_run_lifecycle(args[1:]))
     elif args[0] == "merge":
@@ -6075,6 +6141,7 @@ def main() -> None:
             "  engram import <backup.json>  Metadata-only import preview (--apply --yes to write)\n"
             "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"
+            "  engram portrait         Lean user portrait snapshot + growth since last (--list/--no-save/--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
             "  engram integrity        Read-only integrity scan + self-heal proposals\n"
             "  engram dashboard        Non-technical owner control view (--html/--json)\n"
@@ -6095,7 +6162,7 @@ def main() -> None:
             "  export_engram           Full local JSON backup (treat as sensitive)\n\n"
             "Tool tiers:\n"
             "  Default: 17 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 84 tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 87 tools.\n"
         )
         sys.exit(0)
 

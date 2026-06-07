@@ -239,9 +239,9 @@ def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims(
     doc = _read("docs/tool-surface-analysis.md")
     tools = _mcp_tool_names()
 
-    assert len(tools) == 84
+    assert len(tools) == 87
     assert "17 core tools" in doc
-    assert "67 advanced tools" in doc
+    assert "70 advanced tools" in doc
     assert "Core is not read-only" in doc
     assert "core but owner-gated" in doc
     assert "Optional local / dogfood tools" in doc

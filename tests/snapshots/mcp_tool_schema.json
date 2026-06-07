@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "src/piia_engram/mcp_server.py",
-  "tool_count": 84,
+  "tool_count": 87,
   "tools": {
     "add_decision": {
       "params": [
@@ -448,6 +448,10 @@
           "kind": "positional_or_keyword"
         }
       ],
+      "returns": "str"
+    },
+    "compare_user_portraits": {
+      "params": [],
       "returns": "str"
     },
     "delete_playbook": {
@@ -1068,6 +1072,10 @@
       ],
       "returns": "str"
     },
+    "get_user_portrait": {
+      "params": [],
+      "returns": "str"
+    },
     "get_work_style": {
       "params": [],
       "returns": "str"
@@ -1684,6 +1692,10 @@
           "kind": "positional_or_keyword"
         }
       ],
+      "returns": "str"
+    },
+    "save_user_portrait": {
+      "params": [],
       "returns": "str"
     },
     "search_knowledge": {

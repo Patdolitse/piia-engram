@@ -1,7 +1,7 @@
 # Quickstart: first value in about 5 minutes
 
 Goal: save one useful lesson and recall it in a fresh AI session using the
-default **17 core tools**. You do not need the 67 advanced tools or
+default **17 core tools**. You do not need the 70 advanced tools or
 `ENGRAM_TOOLS=all` for this path; the default is `ENGRAM_TOOLS=core`.
 
 This quickstart is for a local MCP-compatible coding tool such as Claude Code,
