@@ -138,6 +138,28 @@ _PROJECT_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# 单个规则文件最多读取的行数。够覆盖绝大多数 CLAUDE.md / AGENTS.md 全文，
+# 同时给超大文件设一个安全上限，避免把巨型文档整体灌进来。
+# 可用环境变量 ENGRAM_MAX_RULE_LINES 覆盖（极少数超大规则仓库场景）。
+_MAX_RULE_LINES = 1500
+
+# 单条分组 lesson 的 detail 字符上限。1500 行规则在极端情况下可能很大，
+# 给个防御性上限，避免单条 lesson 撑爆 lessons.json（历史上有过损坏问题）。
+_MAX_DETAIL_CHARS = 20000
+
+
+def _max_rule_lines() -> int:
+    """规则文件读取行数上限，支持 ENGRAM_MAX_RULE_LINES 覆盖，回退默认值。"""
+    raw = os.environ.get("ENGRAM_MAX_RULE_LINES", "")
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return _MAX_RULE_LINES
+
 
 def _scan_rule_files(cwd: Path | None = None) -> list[dict]:
     """扫描全局和项目级规则文件，返回 [{path, scope, lines}]。
@@ -192,7 +214,7 @@ def _read_rule_file(path: Path, scope: str) -> dict | None:
     except (OSError, PermissionError):
         return None
 
-    lines = text.splitlines()[:200]  # 最多 200 行
+    lines = text.splitlines()[:_max_rule_lines()]  # 读全文，超大文件设安全上限
     content_lines = [l for l in lines if l.strip() and not l.strip().startswith("#")]
     if len(content_lines) < 2:
         return None  # 太少，跳过
@@ -236,65 +258,165 @@ def _classify_line(line: str, scope: str) -> str:
     return "user" if scope == "global" else "project"
 
 
+def _src_label(path) -> str:
+    """规则文件的来源标签：父目录名/文件名，避免存绝对路径，也便于区分同名文件。
+
+    根目录文件（如 /CLAUDE.md）的 parent.name 为空，用 "." 兜底，
+    避免生成形如 "/CLAUDE.md" 的伪绝对路径标签。
+    """
+    try:
+        parent_name = path.parent.name or "."
+        return f"{parent_name}/{path.name}"
+    except AttributeError:
+        return str(path)
+
+
+def _build_grouped_detail(sections: dict[str, list[str]]) -> str:
+    """把 {来源标签: [规则行]} 渲染成按来源分节的 markdown detail。
+
+    对极端超长内容做防御性截断，避免单条 lesson 撑爆 lessons.json。
+    截断在「行边界」进行（而非任意字符位置），保证不会把某条规则切成半行、
+    也不会在 markdown 列表项中间断开。注意 Python 字符串切片按 Unicode 码点
+    计数，本身不会切坏多字节字符，这里在行边界截断是为了语义完整。
+    """
+    parts: list[str] = []
+    for label, rules in sections.items():
+        parts.append(f"## {label}")
+        parts.extend(f"- {r}" for r in rules)
+        parts.append("")
+    detail = "\n".join(parts).strip()
+    if len(detail) > _MAX_DETAIL_CHARS:
+        # 在不超过上限的前提下，回退到最后一个换行边界，避免切半行规则
+        clipped = detail[:_MAX_DETAIL_CHARS]
+        last_nl = clipped.rfind("\n")
+        if last_nl > 0:
+            clipped = clipped[:last_nl]
+        detail = clipped.rstrip() + "\n\n…(truncated)"
+    return detail
+
+
+def _upsert_grouped_lesson(engram, summary: str, domain: str, detail: str) -> int:
+    """以 upsert 方式写入一条「setup 导入」分组 lesson。
+
+    为什么不直接 add_lesson：add_lesson 自带基于 *summary* 的相似度去重，
+    而分组 lesson 用的是固定模板 summary。第二次 `engram setup` 时新内容会
+    被判为与上次完全重复而被丢弃 → 规则更新永远无法落地（真 bug）。
+    因此这里按 source_tool=engram_setup + domain 找已存在的导入 lesson：
+    有就 update_lesson 刷新第一条（canonical）的 summary/detail（绕开 summary
+    去重、反映最新规则），没有才 add_lesson 新增。
+
+    迁移兼容：早期版本逐行导入会在同一 domain 留下多条 engram_setup lesson。
+    本函数更新 canonical 那条后，会把同 domain 其余 engram_setup 碎片标记为
+    outdated（status != "active" → 后续 get_lessons 不再返回），避免新旧并存
+    造成的陈旧碎片污染。归档而非删除，保留可审计的历史。
+
+    Returns: 1 表示已落地一条分组 lesson。
+    """
+    try:
+        existing = engram.get_lessons(
+            domain=domain,
+            source_tool="engram_setup",
+            limit=None,
+            _update_access=False,   # 只查不计访问
+            _migrate_fields=False,  # 只读，不回写旧知识文件
+        )
+    except Exception:
+        existing = []
+
+    existing_ids = [les["id"] for les in existing if les.get("id")]
+
+    if existing_ids:
+        canonical_id, *stragglers = existing_ids
+        engram.update_lesson(canonical_id, {"summary": summary, "detail": detail})
+        # 归档同 domain 残留的旧逐行导入碎片，避免新旧并存
+        for straggler_id in stragglers:
+            try:
+                engram.update_lesson(straggler_id, {"status": "outdated"})
+            except Exception:
+                pass
+    else:
+        engram.add_lesson(
+            summary,
+            domain=domain,
+            detail=detail,
+            source_tool="engram_setup",
+        )
+    return 1
+
+
 def _import_with_split(
     rule_files: list[dict],
     engram,
 ) -> dict:
     """将扫描到的规则文件按分流规则导入 Engram。
 
-    Returns: {user_count, project_count, skipped, files}
+    去碎片化：不再逐行存 lesson（那会制造大量低质量碎片），而是把所有
+    user 类规则汇成 *一条* user_preference lesson、所有 project 类规则汇成
+    *一条* project_rules lesson，detail 里按来源文件分节保留 provenance。
+    语言偏好仍单独提取写入 profile。
+
+    Returns: {user_count, project_count, skipped, files,
+              user_lessons, project_lessons}
     """
-    user_rules: list[str] = []
-    project_rules: list[str] = []
+    user_sections: dict[str, list[str]] = {}
+    project_sections: dict[str, list[str]] = {}
     skipped = 0
+    user_count = 0
+    project_count = 0
+    prefs_update: dict = {}
 
     for rf in rule_files:
         scope = rf["scope"]
+        label = _src_label(rf["path"])
         for line in rf["lines"]:
             category = _classify_line(line, scope)
+            stripped = line.strip()
             if category == "user":
-                user_rules.append(line.strip())
+                user_sections.setdefault(label, []).append(stripped)
+                user_count += 1
+                # 语言偏好 → profile（不影响其进入分组 lesson）
+                lower = stripped.lower()
+                if "中文" in stripped:
+                    prefs_update["language"] = "中文"
+                elif "english" in lower:
+                    prefs_update["language"] = "English"
             elif category == "project":
-                project_rules.append(line.strip())
+                project_sections.setdefault(label, []).append(stripped)
+                project_count += 1
             else:
                 skipped += 1
 
-    # 写入用户偏好
-    if user_rules:
-        # 提取特定偏好
-        prefs_update: dict = {}
-        remaining_user: list[str] = []
+    if prefs_update:
+        engram.update_profile(prefs_update)
 
-        for rule in user_rules:
-            rule_lower = rule.lower()
-            if any(kw in rule_lower for kw in ["语言", "language", "中文", "english", "沟通"]):
-                # 语言偏好 → profile
-                if "中文" in rule:
-                    prefs_update["language"] = "中文"
-                elif "english" in rule_lower:
-                    prefs_update["language"] = "English"
-                remaining_user.append(rule)
-            elif any(kw in rule_lower for kw in ["角色", "role", "我是", "i am"]):
-                remaining_user.append(rule)
-            else:
-                remaining_user.append(rule)
+    user_lessons = 0
+    project_lessons = 0
 
-        if prefs_update:
-            engram.update_profile(prefs_update)
+    if user_sections:
+        user_lessons = _upsert_grouped_lesson(
+            engram,
+            _t("用户身份与偏好（Engram 从规则文件导入）",
+               "User identity & preferences (imported by Engram from rule files)"),
+            "user_preference",
+            _build_grouped_detail(user_sections),
+        )
 
-        # 剩余用户规则存为 lesson（domain=user_preference）
-        for rule in remaining_user:
-            engram.add_lesson(rule, domain="user_preference", source_tool="engram_setup")
-
-    # 写入项目规则
-    for rule in project_rules:
-        engram.add_lesson(rule, domain="project_rules", source_tool="engram_setup")
+    if project_sections:
+        project_lessons = _upsert_grouped_lesson(
+            engram,
+            _t("项目规则（Engram 从规则文件导入）",
+               "Project rules (imported by Engram from rule files)"),
+            "project_rules",
+            _build_grouped_detail(project_sections),
+        )
 
     return {
-        "user_count": len(user_rules),
-        "project_count": len(project_rules),
+        "user_count": user_count,
+        "project_count": project_count,
         "skipped": skipped,
         "files": [str(rf["path"]) for rf in rule_files],
+        "user_lessons": user_lessons,
+        "project_lessons": project_lessons,
     }
 
 # ---------------------------------------------------------------------------
@@ -1954,8 +2076,20 @@ def _run_seed_knowledge_onboarding(
                  f"    Skipped:       {skip_preview}"))
 
         import_result = _import_with_split(rule_files, engram)
-        print(_t(f"\n  ✅ 已导入: {import_result['user_count']} 条身份 + {import_result['project_count']} 条项目规则",
-                 f"\n  ✅ Imported: {import_result['user_count']} identity + {import_result['project_count']} project rules"))
+        rule_total = import_result["user_count"] + import_result["project_count"]
+        grouped_lessons = import_result["user_lessons"] + import_result["project_lessons"]
+        print(_t(f"\n  ✅ 已读取: {import_result['user_count']} 条身份规则 + {import_result['project_count']} 条项目规则",
+                 f"\n  ✅ Read: {import_result['user_count']} identity + {import_result['project_count']} project rules"))
+        if grouped_lessons > 0:
+            # 关键：N 条规则去碎片化后归整为 grouped_lessons 条记忆，不是丢了规则——
+            # 规则按来源文件分节保留在这几条记忆的 detail 里（极长文件可能截断）。
+            print(_t(f"  📦 已归整为 {grouped_lessons} 条记忆（{rule_total} 条规则去碎片化合并，按来源文件分节保留出处）。",
+                     f"  📦 Consolidated into {grouped_lessons} memory entr{'y' if grouped_lessons == 1 else 'ies'} "
+                     f"({rule_total} rules merged, kept under their source-file sections)."))
+            print(_t("  🔒 提示：规则原文已存入本地记忆。若文件含密钥/令牌/隐私，请运行 'engram review' 删除。",
+                     "  🔒 Note: rule text is stored verbatim in local memory. If files contain secrets/tokens/private info, run 'engram review' to remove."))
+            print(_t("  ✍️  导入内容仅作起点 — 如需纠正或删除，运行 'engram review' 复核。",
+                     "  ✍️  Imports are just a starting point — run 'engram review' to correct or remove anything."))
     else:
         print(_t("  未发现规则文件（CLAUDE.md / .cursorrules 等）。",
                  "  No rule files found (CLAUDE.md / .cursorrules etc.)."))
@@ -3182,6 +3316,40 @@ def _run_functional_checks(*, fix: bool = False) -> int:
             print("    [--] Identity empty — run 'engram setup' to create your profile")
     except Exception as exc:
         print(f"    [!!] Profile read failed: {exc}")
+        problems += 1
+
+    # 3.5 setup 导入的规则可见性（让用户知道安装时导入了多少、去哪复核）
+    try:
+        # _update_access/_migrate_fields=False：doctor 读取知识库时一律只读，
+        # 不计访问、不回写迁移旧知识文件（与 fix/非 fix 模式无关——这是统计读，
+        # 不该有任何写副作用）。
+        imported = eng.get_lessons(
+            source_tool="engram_setup",
+            limit=None,
+            _update_access=False,
+            _migrate_fields=False,
+        )
+        if imported:
+            user_n = sum(
+                1 for l in imported
+                if "user_preference" in {
+                    d.strip() for d in (l.get("domain") or "").split(",") if d.strip()
+                }
+            )
+            project_n = sum(
+                1 for l in imported
+                if "project_rules" in {
+                    d.strip() for d in (l.get("domain") or "").split(",") if d.strip()
+                }
+            )
+            print(
+                f"    [ok] {len(imported)} rule import(s) from setup "
+                f"({user_n} user / {project_n} project) — run 'engram review' to refine"
+            )
+        else:
+            print("    [--] No setup rule imports found — run 'engram setup' to ingest CLAUDE.md / AGENTS.md")
+    except Exception as exc:
+        print(f"    [!!] Imported-rules check failed: {exc}")
         problems += 1
 
     # 4. quick_context.md 可用性 + 过期检测

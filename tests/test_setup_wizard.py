@@ -1119,8 +1119,27 @@ def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
     lessons = engram.get_lessons(limit=None, _update_access=False)
 
     assert summary["imported_files"] == [str(tmp_path / "CLAUDE.md")]
-    assert any("remember to run tests" in lesson["summary"] for lesson in lessons)
-    assert any("decided to keep project memory" in lesson["summary"] for lesson in lessons)
+
+    # ── A2 去碎片化的强校验（不只是"文本出现在某处"）──────────────
+    setup_lessons = engram.get_lessons(
+        source_tool="engram_setup", limit=None, _update_access=False
+    )
+    assert setup_lessons, "规则应被导入并标记 source_tool=engram_setup"
+    # 1) 归到分组 domain，而不是旧的逐行 "setup" 碎片
+    for les in setup_lessons:
+        assert les.get("domain") in {"user_preference", "project_rules"}, (
+            f"导入 lesson 落到了意外的 domain: {les.get('domain')!r}"
+        )
+        # 2) 原始规则行不应被直接当作 summary（那正是旧的逐行碎片行为）
+        assert les.get("summary") not in (
+            "remember to run tests before claiming completion",
+            "decided to keep project memory local first",
+        ), "规则行不应成为 lesson summary —— 说明仍在逐行碎片化"
+    # 3) provenance：原文按来源文件分节保留在 detail 里
+    detail_blob = "\n".join(les.get("detail", "") for les in setup_lessons)
+    assert f"## {tmp_path.name}/CLAUDE.md" in detail_blob, "detail 应保留来源文件分节标题"
+    assert "remember to run tests" in detail_blob
+    assert "decided to keep project memory" in detail_blob
 
 
 def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch, capsys):
@@ -3285,6 +3304,218 @@ class TestImportWithSplit:
         profile = engram.get_profile()
         assert profile.get("language") == "English"
 
+    def test_user_lines_grouped_into_one_lesson(self, tmp_path):
+        """A2: 多条 user 规则应汇成 *一条* user_preference lesson，而非逐行碎片。"""
+        from piia_engram.core import Engram
+        engram = Engram(root=tmp_path)
+
+        rule_files = [{
+            "path": tmp_path / "CLAUDE.md",
+            "scope": "global",
+            "lines": [
+                "I prefer concise answers in all conversations",
+                "Always communicate using my preferred style",
+                "My role is a non-technical founder learning to build",
+            ],
+        }]
+        result = _import_with_split(rule_files, engram)
+
+        assert result["user_lessons"] == 1
+        assert result["user_count"] == 3  # 行计数契约保留
+        lessons = engram.get_lessons(domain="user_preference", _update_access=False)
+        assert len(lessons) == 1
+
+    def test_project_lines_grouped_into_one_lesson(self, tmp_path):
+        """A2: 多条 project 规则应汇成 *一条* project_rules lesson。"""
+        from piia_engram.core import Engram
+        engram = Engram(root=tmp_path)
+
+        rule_files = [{
+            "path": tmp_path / ".cursorrules",
+            "scope": "project",
+            "lines": [
+                "Run the test suite before every commit to this repo",
+                "Keep the build green; do not merge failing pipelines",
+            ],
+        }]
+        result = _import_with_split(rule_files, engram)
+
+        assert result["project_lessons"] == 1
+        lessons = engram.get_lessons(domain="project_rules", _update_access=False)
+        assert len(lessons) == 1
+
+    def test_provenance_kept_in_detail(self, tmp_path):
+        """A2: detail 应按来源文件分节（## 标签）保留出处，且用相对标签不存绝对路径。"""
+        from piia_engram.core import Engram
+        engram = Engram(root=tmp_path)
+
+        rule_files = [{
+            "path": tmp_path / "CLAUDE.md",
+            "scope": "global",
+            "lines": [
+                "I prefer concise answers in all conversations",
+                "Always communicate using my preferred style",
+            ],
+        }]
+        _import_with_split(rule_files, engram)
+
+        lessons = engram.get_lessons(domain="user_preference", _update_access=False)
+        detail = lessons[0].get("detail", "")
+        # 分节标题在（父目录名/文件名）
+        assert f"## {tmp_path.name}/CLAUDE.md" in detail
+        # 规则正文进入 detail
+        assert "I prefer concise answers" in detail
+        # 不应泄漏绝对路径
+        assert str(tmp_path) + "/CLAUDE.md" not in detail
+
+    def test_imported_lessons_tagged_with_setup_source(self, tmp_path):
+        """A3: 导入的 lesson 应带 source_tool=engram_setup，doctor 才能统计/引导复核。"""
+        from piia_engram.core import Engram
+        engram = Engram(root=tmp_path)
+
+        rule_files = [{
+            "path": tmp_path / "CLAUDE.md",
+            "scope": "global",
+            "lines": [
+                "I prefer concise answers in all conversations",
+                "My role is a non-technical founder learning to build",
+            ],
+        }]
+        _import_with_split(rule_files, engram)
+
+        tagged = engram.get_lessons(
+            source_tool="engram_setup", limit=None, _update_access=False
+        )
+        assert len(tagged) >= 1
+
+    def test_multiple_files_merge_into_one_lesson_with_sections(self, tmp_path):
+        """A2: 同类(user)多个来源文件应合并为 *一条* lesson，detail 各自分节。
+
+        同时覆盖「同名文件不同目录」的边界：父目录名用于区分，两个分节都要在。
+        """
+        from piia_engram.core import Engram
+        engram = Engram(root=tmp_path)
+
+        dir_a = tmp_path / "projA"
+        dir_b = tmp_path / "projB"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        rule_files = [
+            {"path": dir_a / "CLAUDE.md", "scope": "global",
+             "lines": ["I prefer concise answers in all conversations",
+                       "Explain trade-offs before deciding anything"]},
+            {"path": dir_b / "CLAUDE.md", "scope": "global",
+             "lines": ["I am a non-technical founder learning to build",
+                       "Use plain language and avoid heavy jargon"]},
+        ]
+        result = _import_with_split(rule_files, engram)
+
+        assert result["user_lessons"] == 1          # 合并成一条
+        assert result["user_count"] == 4            # 行计数契约：4 行
+        lessons = engram.get_lessons(domain="user_preference", _update_access=False)
+        assert len(lessons) == 1
+        detail = lessons[0].get("detail", "")
+        # 同名文件不同目录 → 用父目录名区分，两个分节都要在
+        assert "## projA/CLAUDE.md" in detail
+        assert "## projB/CLAUDE.md" in detail
+        assert "Explain trade-offs before deciding" in detail
+        assert "Use plain language and avoid heavy jargon" in detail
+
+    def test_reimport_refreshes_lesson_not_dropped_by_dedup(self, tmp_path):
+        """#1 真 bug 防回归：第二次 setup 应 upsert 刷新同一条，而非被去重丢弃。
+
+        分组 lesson 用固定模板 summary；add_lesson 的 summary 相似度去重会把第二
+        次导入判为重复 → 规则更新无法落地。upsert 修复后：仍是一条，detail 反映新内容。
+        """
+        from piia_engram.core import Engram
+        engram = Engram(root=tmp_path)
+
+        v1 = [{
+            "path": tmp_path / "CLAUDE.md", "scope": "global",
+            "lines": ["I prefer very concise answers always",
+                      "My role is a non-technical founder"],
+        }]
+        _import_with_split(v1, engram)
+        first = engram.get_lessons(domain="user_preference", _update_access=False)
+        assert len(first) == 1
+        assert "always cite the source files" not in first[0].get("detail", "")
+
+        # 用户更新了规则文件后重新跑 setup
+        v2 = [{
+            "path": tmp_path / "CLAUDE.md", "scope": "global",
+            "lines": ["I prefer very concise answers always",
+                      "My role is a non-technical founder",
+                      "New rule: always cite the source files"],
+        }]
+        result2 = _import_with_split(v2, engram)
+
+        assert result2["user_lessons"] == 1
+        lessons = engram.get_lessons(domain="user_preference", _update_access=False)
+        # 关键：仍是一条 —— 既没被去重丢弃，也没新增重复条
+        assert len(lessons) == 1
+        # 关键：detail 反映了第二次的新增规则（证明是刷新而非丢弃）
+        assert "New rule: always cite the source files" in lessons[0].get("detail", "")
+
+    def test_reimport_archives_legacy_line_by_line_fragments(self, tmp_path):
+        """M1 迁移防回归：早期逐行导入留下的多条 engram_setup 碎片，
+
+        重新跑 setup 后应只剩一条 active（canonical 被刷新），其余碎片被归档
+        （status != active → get_lessons 不再返回），避免新旧并存污染。
+        """
+        from piia_engram.core import Engram
+        engram = Engram(root=tmp_path)
+
+        # 模拟旧版逐行导入：同 domain 下多条 engram_setup lesson（不同 summary 才不会被去重）
+        engram.add_lesson("Old fragment one about concise answers",
+                          domain="user_preference", detail="frag1",
+                          source_tool="engram_setup")
+        engram.add_lesson("Old fragment two about plain language",
+                          domain="user_preference", detail="frag2",
+                          source_tool="engram_setup")
+        engram.add_lesson("Old fragment three about founder role",
+                          domain="user_preference", detail="frag3",
+                          source_tool="engram_setup")
+        before = engram.get_lessons(domain="user_preference",
+                                    source_tool="engram_setup",
+                                    limit=None, _update_access=False)
+        assert len(before) == 3  # 旧碎片确实并存
+
+        # 重新跑 setup（升级后的合并导入）
+        rule_files = [{
+            "path": tmp_path / "CLAUDE.md", "scope": "global",
+            "lines": ["I prefer very concise answers always",
+                      "Use plain language and avoid jargon"],
+        }]
+        result = _import_with_split(rule_files, engram)
+
+        assert result["user_lessons"] == 1
+        active = engram.get_lessons(domain="user_preference",
+                                    source_tool="engram_setup",
+                                    limit=None, _update_access=False)
+        # 关键：碎片被归整为一条 active，其余旧碎片已归档不再返回
+        assert len(active) == 1
+        # 关键：canonical 那条被刷新成最新合并内容（不再是旧 frag1 文本）
+        assert "Use plain language and avoid jargon" in active[0].get("detail", "")
+
+    def test_detail_truncation_happens_at_line_boundary(self, tmp_path):
+        """M2：detail 超过上限时在行边界截断，不把某条规则切成半行。"""
+        from piia_engram.setup_wizard import _build_grouped_detail, _MAX_DETAIL_CHARS
+
+        # 造一批等长规则行，总长远超上限，强制触发截断
+        rule = "x" * 80
+        n = (_MAX_DETAIL_CHARS // 81) + 50  # 每行约 "- " + 80 + "\n"
+        sections = {"dir/CLAUDE.md": [rule for _ in range(n)]}
+        detail = _build_grouped_detail(sections)
+
+        assert detail.endswith("…(truncated)")
+        body = detail[: -len("\n\n…(truncated)")]
+        # 关键：截断后正文每一行要么是分节标题，要么是完整的 "- <80个x>"，
+        # 不能出现被切半的残缺行
+        for line in body.splitlines():
+            if line.startswith("## "):
+                continue
+            assert line == f"- {rule}", f"出现被截断的半行规则: {line!r}"
+
 
 class TestReadRuleFile:
     """_read_rule_file 边缘情况。"""
@@ -3303,6 +3534,43 @@ class TestReadRuleFile:
         path = tmp_path / "rules.md"
         path.write_text("# Only a header\n", encoding="utf-8")
         assert _read_rule_file(path, "global") is None
+
+    def test_reads_beyond_200_lines(self, tmp_path, monkeypatch):
+        """A1: 不再卡在旧的 200 行硬上限，应读到全文（覆盖典型 CLAUDE.md 全长）。"""
+        # 清掉可能由外部 env 注入的上限覆盖，保证测试断言绑定的是代码常量
+        monkeypatch.delenv("ENGRAM_MAX_RULE_LINES", raising=False)
+        from piia_engram.setup_wizard import _MAX_RULE_LINES
+
+        _OLD_CAP = 200
+        # 取一个明显超过旧 200 行上限、又在新上限以内的行数；
+        # 绑定常量，若将来 _MAX_RULE_LINES 被调到 ≤200 这条会立刻报警。
+        assert _MAX_RULE_LINES > _OLD_CAP, "新上限不应回退到旧的 200 行硬上限"
+        n = min(400, _MAX_RULE_LINES)
+        lines = [f"rule line number {i}" for i in range(n)]
+        path = tmp_path / "rules.md"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = _read_rule_file(path, "global")
+        assert result is not None
+        # 旧实现 splitlines()[:200] 会丢掉第 200 行之后的内容
+        assert f"rule line number {_OLD_CAP + 50}" in result["lines"]
+        assert f"rule line number {n - 1}" in result["lines"]
+        assert len(result["lines"]) == n
+
+    def test_caps_at_max_rule_lines(self, tmp_path, monkeypatch):
+        """A1: 超大文件仍设安全上限 _MAX_RULE_LINES，避免整本灌入。"""
+        # 清掉可能由外部 env 注入的上限覆盖，保证断言绑定代码常量而非运行环境
+        monkeypatch.delenv("ENGRAM_MAX_RULE_LINES", raising=False)
+        from piia_engram.setup_wizard import _MAX_RULE_LINES
+
+        total = _MAX_RULE_LINES + 500
+        lines = [f"rule line number {i}" for i in range(total)]
+        path = tmp_path / "rules.md"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = _read_rule_file(path, "global")
+        assert result is not None
+        assert len(result["lines"]) == _MAX_RULE_LINES
 
 
 class TestReadMcpConfig:
