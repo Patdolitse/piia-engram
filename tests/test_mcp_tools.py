@@ -49,6 +49,8 @@ def isolated_engram(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engram:
     # Disable heartbeat for test tracker to avoid daemon thread noise.
     monkeypatch.setenv("ENGRAM_HEARTBEAT_INTERVAL", "0")
     monkeypatch.setattr(mcp_server, "_session", mcp_server._SessionTracker())
+    # Prevent auto-bootstrap from scanning the real home dir in tests.
+    (tmp_path / ".bootstrap_done").write_text("1", encoding="utf-8")
     return engram
 
 

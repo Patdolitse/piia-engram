@@ -1116,6 +1116,28 @@ async def get_user_context(
         logger.warning("generate_context failed: %s", exc)
         return f"Engram 上下文加载失败: {_safe_err(exc)}"
     if not context:
+        # Auto-bootstrap: if discoverable rule files exist (CLAUDE.md, AGENTS.md,
+        # .cursorrules), import them now so the user gets "it already knows me"
+        # without needing to run `engram setup` first.
+        from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
+
+        if needs_bootstrap(_engram):
+            boot = run_bootstrap(_engram)
+            if boot.get("user_rules_imported") or boot.get("project_rules_imported"):
+                # Re-generate context with the freshly imported data.
+                try:
+                    context = _engram.generate_context(
+                        project_folder, level=level, max_tokens=token_budget,
+                    )
+                except Exception:
+                    pass
+                if context:
+                    n = boot["user_rules_imported"] + boot["project_rules_imported"]
+                    return (
+                        f"[首次连接自动导入 {n} 条规则 from "
+                        f"CLAUDE.md/AGENTS.md]\n\n{context}"
+                    )
+
         return (
             "Engram 为空——这是新用户。请帮助他们建立身份：\n"
             "1. 问用户的角色（开发者/PM/学生等）→ 调用 update_identity(field='profile', updates_json='{\"role\":\"...\"}')\n"
@@ -4549,6 +4571,12 @@ async def get_resume_brief(
         token_budget: 输出 token 软上限（默认 2000，约 8000 字符）。 /
             Soft cap for output tokens (default 2000 ≈ 8000 chars).
     """
+    # Auto-bootstrap on first ever call when store is empty.
+    from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
+
+    if needs_bootstrap(_engram):
+        run_bootstrap(_engram)
+
     brief = _engram.get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
