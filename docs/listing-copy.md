@@ -38,7 +38,7 @@ piia-engram gives AI coding tools a shared, user-owned identity layer. Instead o
 
 piia-engram is a local-first personal AI identity and memory layer for developers who use more than one AI coding tool. Native memories in Claude Code, Codex, Cursor, and Windsurf are useful, but they are usually scoped to one product or workspace. piia-engram keeps the stable parts of you above those tools: your communication preferences, coding standards, lessons learned, key decisions, playbooks, and project snapshots.
 
-All core identity and knowledge data lives on your machine under `~/.engram/` as JSON/Markdown files. AI tools can propose new lessons or decisions, but durable memory follows a staging-to-verified workflow so the user remains in control. The project is MCP-native, Apache 2.0, and designed to complement AGENTS.md, CLAUDE.md, editor rules, and agent memory systems such as Mem0, Zep, and Letta.
+All core identity and knowledge data lives on your machine under `~/.engram/` as JSON/Markdown files. AI tools can propose new lessons or decisions, but durable memory follows a staging-to-verified workflow so the user remains in control. The project is MCP-native, AGPL-3.0, and designed to complement AGENTS.md, CLAUDE.md, editor rules, and agent memory systems such as Mem0, Zep, and Letta.
 
 Use piia-engram when you want Claude Code, Codex, Cursor, Windsurf, Claude Desktop, or another MCP client to begin from the same approved understanding of who you are and how you work.
 

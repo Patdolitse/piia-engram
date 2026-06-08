@@ -1,7 +1,7 @@
 ---
 name: engram
 description: Local-first personal AI identity and memory layer for MCP-compatible coding tools (Claude Code, Codex, Cursor, and others). Use this skill when the user wants to continue from a previous session ("continue from last session", "pick up where we left off"), recall a past decision ("what did we decide", "what was our reasoning"), persist something durable ("remember this", "save a lesson", "save a decision", "save a playbook"), search prior knowledge ("search what we know about X", "have we hit this before"), export their identity or context ("export my identity card", "give me my context"), or maintain local-first cross-tool identity and memory that the user owns and approves. Engram stores user-approved lessons, decisions, playbooks, and project context as local JSON; the AI suggests, the user decides what becomes permanent.
-license: Apache-2.0
+license: AGPL-3.0-or-later
 ---
 
 # Engram

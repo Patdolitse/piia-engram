@@ -15,7 +15,7 @@
 
 [ENGLISH](README.md) | [中文](README.zh-CN.md)
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
@@ -722,7 +722,7 @@ Evidence levels follow the [agent client validation runbook](docs/runbooks/agent
 | Knowledge tiers (user gate) | ✅ staging → verified | ❌ | ❌ | ❌ | ❌ |
 | Conflict detection | ✅ | ❌ | ❌ | ❌ | ❌ |
 | MCP-native | ✅ | n/a | n/a | ⚠ third-party | ⚠ third-party |
-| Price | Free, Apache 2.0 | Subscription-bundled | Free | Free / Cloud tiers | Free / Cloud tiers |
+| Price | Free, AGPL-3.0 | Subscription-bundled | Free | Free / Cloud tiers | Free / Cloud tiers |
 
 📊 **For the full side-by-side**, including when to choose a competitor over piia-engram, see [`docs/comparison.md`](docs/comparison.md).
 
@@ -803,7 +803,7 @@ Two tiers, designed so most users only see 17 tools:
 Most users never need to enable Advanced tools — Core covers everyday use.
 
 **Is piia-engram free?**
-Yes. Free and open source under the Apache 2.0 license. No subscription, no cloud tiers, no vendor lock-in.
+Yes. Free and open source under the AGPL-3.0 license. No subscription, no cloud tiers, no vendor lock-in.
 
 ## Limitations
 
@@ -902,4 +902,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[Apache 2.0](LICENSE). piia-engram is free software. Your memory belongs to you.
+[AGPL-3.0](LICENSE). piia-engram is free software. Your memory belongs to you.

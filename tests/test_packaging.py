@@ -164,7 +164,7 @@ def test_has_classifiers():
     classifiers = data["project"].get("classifiers", [])
     assert len(classifiers) > 0
     assert any("Python" in classifier for classifier in classifiers)
-    assert data["project"]["license"] == "Apache-2.0"
+    assert data["project"]["license"] == "AGPL-3.0-or-later"
 
 
 def test_dev_dependency_has_tomli_for_python310():

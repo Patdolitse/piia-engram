@@ -124,7 +124,7 @@ Automated promotional issues, repeated grading notifications, and unsolicited ba
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [GNU AGPL v3.0](LICENSE).
 
 ## Code of Conduct
 

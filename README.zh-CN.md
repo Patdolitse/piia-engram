@@ -15,7 +15,7 @@
 
 [中文](README.zh-CN.md) | [ENGLISH](README.md)
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
@@ -447,7 +447,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | 知识分层（用户审核）| ✅ staging → verified | ❌ | ❌ | ❌ | ❌ |
 | 冲突检测 | ✅ | ❌ | ❌ | ❌ | ❌ |
 | MCP 原生 | ✅ | n/a | n/a | ⚠ 第三方 | ⚠ 第三方 |
-| 价格 | 免费 Apache 2.0 | 含在订阅 | 免费 | 免费 / 云端付费 | 免费 / 云端付费 |
+| 价格 | 免费 AGPL-3.0 | 含在订阅 | 免费 | 免费 / 云端付费 | 免费 / 云端付费 |
 
 📊 **完整对比**（含「什么场景应该选别家」），见 [`docs/comparison.md`](docs/comparison.md)。
 
@@ -762,7 +762,7 @@ engram setup
 大多数用户无需开启高级工具 —— 核心工具覆盖日常使用。
 
 **piia-engram 免费吗？**
-是的。Apache 2.0 开源，完全免费。无订阅，无云端计费，无厂商锁定。
+是的。AGPL-3.0 开源，完全免费。无订阅，无云端计费，无厂商锁定。
 
 ## 局限性说明
 
@@ -857,4 +857,4 @@ engram privacy          # 查看 piia-engram 存了什么数据、存在哪里
 
 ## License
 
-[Apache 2.0](LICENSE) — piia-engram 是自由软件，记忆属于你。
+[AGPL-3.0](LICENSE) — piia-engram 是自由软件，记忆属于你。

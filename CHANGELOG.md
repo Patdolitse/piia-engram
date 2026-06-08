@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Changed
+- **License changed from Apache-2.0 to AGPL-3.0-or-later.** The open-source
+  core remains free software you can use, modify, and self-host. Network or
+  hosted redistribution must make the corresponding source available under the
+  same license (AGPL §13). Releases up to and including 3.52.0 remain under
+  Apache-2.0; this change applies to subsequent versions.
+
 ## [3.52.0] - 2026-06-08
 
 ### Added

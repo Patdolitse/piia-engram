@@ -184,7 +184,7 @@ def slide_2_features() -> None:
     feature_card(img, 910, "03", "你说了算", "AI 想记的东西先进待审区，你确认才生效")
 
     draw = ImageDraw.Draw(img)
-    draw_centered(draw, 1280, "开源 · Apache 2.0 · MCP 协议", font("zh_regular", 32), COLORS["muted"])
+    draw_centered(draw, 1280, "开源 · AGPL-3.0 · MCP 协议", font("zh_regular", 32), COLORS["muted"])
 
     save(img, "slide_2_features.png")
 
