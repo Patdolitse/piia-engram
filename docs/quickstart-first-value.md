@@ -1,5 +1,7 @@
 # Quickstart: first value in about 5 minutes
 
+> 中文版：[快速上手：约 5 分钟拿到第一个价值](quickstart-first-value.zh-CN.md)
+
 Goal: save one useful lesson and recall it in a fresh AI session using the
 default **17 core tools**. You do not need the 70 advanced tools or
 `ENGRAM_TOOLS=all` for this path; the default is `ENGRAM_TOOLS=core`.
@@ -11,20 +13,26 @@ For host-specific setup, start with [Claude Code](integrations/claude-code.md),
 tool tiers and owner-gated surfaces, keep the
 [operator MCP cheatsheet](operator-mcp-cheatsheet.md) nearby.
 
-## 1. Install
+## 1. Install and connect
 
 ```bash
 pip install piia-engram
 engram setup
 ```
 
-Setup detects local AI tool configuration in read-only mode. It prints guidance
-by default and does not modify external client config files unless you choose
-the explicit opt-in path:
+`engram setup` detects your AI clients (Claude Code, Cursor, Claude Desktop,
+Codex, …), shows you the exact config files it will touch, and asks for a
+one-keystroke confirm before writing the MCP connection (every write is
+backed up first). Choosing "No" leaves all external configs untouched. For
+non-interactive/CI runs, `engram setup --apply-external-config` skips the
+prompt and writes directly.
 
-```bash
-engram setup --apply-external-config
-```
+Then **auto-bootstrap** does the rest: the first time your AI tool calls Engram
+(via `get_user_context` or `get_resume_brief`), it scans your existing rule
+files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, etc.) in read-only mode and
+imports your preferences and project rules automatically — no separate import
+step. So the connect-once step above is all you do; the "it already knows me"
+moment happens on the next session by itself.
 
 Identity and knowledge tools use local files. No cloud account is required.
 
@@ -54,7 +62,15 @@ The AI can call one of the core write tools:
 - `add_playbook`
 - `update_identity`
 
-New AI-suggested knowledge starts as `staging`; it is verified only after you approve. That review step is intentional: durable memory is a user-owned asset, not an agent scratchpad.
+New AI-suggested knowledge is classified by a risk gate:
+
+- **Low / medium risk** (most preferences, lessons, project rules): auto-verified
+  immediately — usable in the next session with no manual approval step.
+- **High risk** (credential values, executable commands, permission overrides):
+  routed to `staging` for owner review before it becomes active.
+
+This balance keeps the first-value path frictionless while protecting sensitive
+content. You can review pending items anytime via `list_pending_staging`.
 
 ## 4. Recall it in a new session
 

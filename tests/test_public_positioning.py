@@ -180,8 +180,13 @@ def test_quickstart_first_value_stays_core_and_honest():
         "17 core tools",
         "ENGRAM_TOOLS=core",
         "ENGRAM_TOOLS=all",
+        # Honest risk-gated approval model: low/medium auto-verify, high-risk
+        # still routed to staging for owner review (the gate must stay visible).
+        "risk gate",
+        "auto-verified",
+        "High risk",
         "staging",
-        "verified only after you approve",
+        "list_pending_staging",
         "get_user_context",
         "search_knowledge",
         "add_lesson",
@@ -197,7 +202,6 @@ def test_quickstart_first_value_stays_core_and_honest():
     for forbidden in [
         "every MCP client",
         "works with every AI tool",
-        "verified immediately",
         "under 30 seconds",
         "is L4 behavior-verified",
     ]:
@@ -359,19 +363,23 @@ def test_setup_file_safety_docs_are_explicit_about_external_config_boundary():
     english = _read("README.md") + "\n" + _read("SECURITY.md") + "\n" + _read("docs/trust.md")
     chinese = _read("README.zh-CN.md")
 
-    assert "external client configs stay read-only by default" in english
+    # Consent-then-write default: setup confirms before writing external config,
+    # declining leaves it untouched, and every write is backed up. The CI flag
+    # only skips the prompt — it is not the only way writes happen.
+    assert "confirms before writing external client configs" in english
     assert "engram setup --apply-external-config" in english
-    assert "External config writes are explicit opt-in" in english
-    assert "What Engram does not write by default" in english
+    assert "declining the prompt leaves every external config untouched" in english
+    assert "backed up" in english
+    assert "What Engram does not write" in english
     assert "auto-configures **Trae**" not in english
     assert "auto-configures **Tencent CodeBuddy**" not in english
     assert "configures them, and previews your identity card" not in english
     assert "完成配置并预览你的身份卡" not in chinese
     assert "发现并配置你的 AI 工具" not in chinese
     assert "会自动配置 **Trae**" not in chinese
-    assert "默认不会改写这些文件" in chinese
+    assert "一键确认" in chinese
     assert "engram setup --apply-external-config" in chinese
-    assert "写入前会先" in chinese
+    assert "创建备份" in chinese
 
 
 def test_cross_tool_demo_doc_uses_public_safe_paths():

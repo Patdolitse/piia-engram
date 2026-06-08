@@ -55,7 +55,7 @@
 pip install piia-engram && engram setup
 ```
 
-向导会以只读方式检测你的 AI 工具——Claude Code、Cursor、Codex、Claude Desktop——预览你的身份卡；只有在你显式选择时才会写入外部客户端配置。重启已配置的工具后，新对话可以通过启动或搜索工具加载你已确认的上下文。（完整步骤见下方"快速开始"）
+向导会自动检测你的 AI 工具——Claude Code、Cursor、Codex、Claude Desktop——列出将要修改的配置文件并请你一键确认后才写入 MCP 连接（每次写入前都会备份；选择"否"则一字不改），随后预览你的身份卡。重启已配置的工具后，新对话可以通过启动或搜索工具加载你已确认的上下文。（完整步骤见下方"快速开始"）
 
 ---
 
@@ -128,13 +128,13 @@ pip install piia-engram
 engram setup
 ```
 
-第一次使用？可以先看更完整的 [first-value quickstart](docs/quickstart-first-value.md)，按默认 17 个核心工具完成 install -> first memory -> fresh-session recall 这条最短路径。Safe Context、replay、freshness/conflict 和 evidence draft 这类 proposal-only 能力见 [Context governance](docs/context-governance.md)。
+第一次使用？可以先看更完整的 [首个价值快速上手](docs/quickstart-first-value.zh-CN.md)，按默认 17 个核心工具完成 install -> first memory -> fresh-session recall 这条最短路径。Safe Context、replay、freshness/conflict 和 evidence draft 这类 proposal-only 能力见 [Context governance](docs/context-governance.md)。
 
-默认安装只会选择 Engram 独立数据目录并只读检测外部 AI 工具配置；如需让 Engram 自动写入 Claude/Codex/Cursor/Zed 等客户端 MCP 配置，请显式运行 `engram setup --apply-external-config`，写入前会在所选 Engram 数据目录下创建备份。
+默认安装会选择 Engram 独立数据目录，检测到外部 AI 工具后**列出将要修改的具体配置文件路径并请你一键确认**，确认后才写入 Claude/Codex/Cursor/Zed 等客户端的 MCP 配置；选择"否"则一字不改，写入前都会在所选 Engram 数据目录下创建备份。非交互/CI 场景可用 `engram setup --apply-external-config` 跳过确认直接写入。
 
 安装向导会自动完成：
 1. 检测 Python 环境
-2. 只读发现你的 AI 工具（Claude Code、Cursor、Claude Desktop、Codex），如需自动写入配置需显式选择
+2. 检测你的 AI 工具（Claude Code、Cursor、Claude Desktop、Codex），列出将要修改的配置文件并请你一键确认后才写入（写入前备份；选择"否"则一字不改）
 3. **注入 AI 指令**到每个工具的原生配置（`CLAUDE.md`、`.cursorrules`、`AGENTS.md`），确保 AI 主动调用 Engram
 4. 引导你录入种子知识（角色、技术栈、语言）
 5. 智能导入你已有的 `CLAUDE.md` / `.cursorrules` 规则文件
@@ -337,7 +337,7 @@ claude mcp add piia-engram -- piia-engram-mcp
 <details>
 <summary><strong>国产 AI IDE —— Trae / CodeBuddy / 通义灵码 / 文心快码 / Qoder</strong></summary>
 
-`engram setup` 会只读检测 **Trae**（`~/.trae/mcp.json`）和**腾讯 CodeBuddy**（`~/.codebuddy/mcp.json`），默认不会改写这些文件。如果你希望 Engram 自动写入这些标准 `mcpServers` 配置，请显式运行 `engram setup --apply-external-config`；写入前会先在你选择的 Engram 数据目录下创建备份。
+`engram setup` 检测到 **Trae**（`~/.trae/mcp.json`）和**腾讯 CodeBuddy**（`~/.codebuddy/mcp.json`）后，会列出这些文件并请你一键确认，确认后才写入标准 `mcpServers` 配置；选择"否"则不会改写这些文件。非交互/CI 场景可用 `engram setup --apply-external-config` 跳过确认；写入前都会先在你选择的 Engram 数据目录下创建备份。
 
 **通义灵码、文心快码（Comate）、Qoder** 的 MCP 走应用内的 MCP 面板（或项目级配置）管理，向导无法替你写入。打开工具的 MCP 设置，粘贴：
 ```json
@@ -743,7 +743,7 @@ piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代�
 pip install piia-engram
 engram setup
 ```
-安装向导会自动检测 AI 工具；默认只读，不会改写外部客户端配置。设置完成后重启 AI 工具，许多客户端可以在新对话开始时调用 `get_user_context`；如果没有主动触发，显式调用 `search_knowledge` 或 `get_resume_brief` 仍然是正常的 L2 使用路径。
+安装向导会自动检测 AI 工具，列出将要修改的配置文件并请你一键确认后才写入（选择"否"则不改写任何外部客户端配置，写入前都会备份）。设置完成后重启 AI 工具，许多客户端可以在新对话开始时调用 `get_user_context`；如果没有主动触发，显式调用 `search_knowledge` 或 `get_resume_brief` 仍然是正常的 L2 使用路径。
 
 **升级后 AI 工具显示"MCP server disconnected"，怎么解决？**
 在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令扫描所有已知 MCP 配置，移除旧版 server 条目并修复失效路径，一步完成。

@@ -55,7 +55,7 @@ Want proof? See the [live cross-tool continuity proof](docs/cross-tool-continuit
 pip install piia-engram && engram setup
 ```
 
-The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — in read-only mode, previews your identity card, and only writes external client config when you explicitly opt in. Restart your configured tool; the first conversation can load your approved context through startup or search tools. ([full walkthrough ↓](#quick-start))
+The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — lists the exact config files it will touch, and writes the MCP connection after a one-keystroke confirm (every write is backed up first; decline and nothing changes). It previews your identity card, then you restart your configured tool; the first conversation can load your approved context through startup or search tools. ([full walkthrough ↓](#quick-start))
 
 ---
 
@@ -161,21 +161,21 @@ New to piia-engram? See the fuller [first-value quickstart](docs/quickstart-firs
 The setup wizard will:
 1. Detect your Python environment
 2. Let you choose the Engram data folder (`~/.engram`, another drive, or a custom path)
-3. Detect your AI tools in read-only mode without changing their external config files
+3. Detect your AI tools, list the exact config files it will touch, and write the MCP connection after a one-keystroke confirm (backed up first; decline leaves them untouched)
 4. Walk you through seed knowledge (role, tech stack, language)
 5. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
 6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (cross-tool sync, anonymous statistics)
 7. **Preview your AI identity card** — immediate proof of value
 
-If the MCP client is already configured, restart your AI tool after setup. If it is not configured yet, add the MCP entry manually or run the explicit opt-in command below. Many clients can call `get_user_context` at startup; when a host does not do that proactively, an explicit `search_knowledge` or `get_resume_brief` call is still the expected L2 path.
+After setup writes the MCP connection (you confirm at the prompt first), restart your AI tool. Many clients can call `get_user_context` at startup; when a host does not do that proactively, an explicit `search_knowledge` or `get_resume_brief` call is still the expected L2 path.
 
-To let Engram update Claude/Codex/Cursor/Zed MCP config files for you, run:
+For non-interactive or CI runs, skip the confirmation prompt and write directly:
 
 ```bash
 engram setup --apply-external-config
 ```
 
-External config writes are explicit opt-in and create backups under the selected Engram data folder.
+Either way, every external config write is backed up under the selected Engram data folder, and declining the prompt leaves every external config untouched.
 
 Check health anytime:
 ```bash
@@ -230,9 +230,9 @@ Release evidence index: [`release-evidence/README.md`](release-evidence/README.m
 <summary><strong>Claude Code</strong></summary>
 
 ```bash
-# Guided setup; external client configs stay read-only by default
+# Guided setup; confirms before writing external client configs (backed up first)
 engram setup
-# Explicit opt-in if you want Engram to write the client config with backups
+# Skip the confirmation prompt for non-interactive/CI runs
 engram setup --apply-external-config
 # Or manual:
 claude mcp add piia-engram -- piia-engram-mcp
@@ -866,8 +866,8 @@ honest boundaries, and ledger commands.
 ## CLI Commands
 
 ```bash
-engram setup            # Interactive install wizard (external configs stay read-only)
-engram setup --apply-external-config  # Auto-configure AI client MCP files with backups
+engram setup            # Interactive install wizard (confirms before writing client configs)
+engram setup --apply-external-config  # Skip the confirm prompt (non-interactive/CI); writes with backups
 piia-engram doctor           # Check config health (all AI tools)
 piia-engram status           # Redacted install + memory health summary
 piia-engram status --html    # Write a local redacted status page

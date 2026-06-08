@@ -48,35 +48,43 @@ See [PRIVACY.md](../PRIVACY.md) for the full data-flow description.
 
 ## File-safety and upgrade boundaries
 
-Engram separates its own data folder from external tool configuration.
+Engram separates its own data folder from external tool configuration, and treats external client config as a confirm-before-write surface.
 
-What Engram may write by default:
+What Engram writes to its own data folder:
 
 - Files inside the selected Engram data folder, such as identity JSON, knowledge JSON, playbooks, local status reports, setup reports, and Engram-owned backups.
 - Project instruction snippets only through explicit setup/doctor actions that are documented in the local diagnostic output.
 
-What Engram does not write by default:
+How Engram writes external client config:
 
-- Claude, Codex, Cursor, Zed, Trae, CodeBuddy, or other external MCP client config files.
+- `engram setup` lists the exact external MCP client config files it will touch and asks for a one-keystroke confirm before writing the connection. Declining leaves every external config untouched. `engram setup --apply-external-config` skips the prompt for non-interactive/CI runs.
+- Every external write — whether from the interactive confirm, the `--apply-external-config` flag, or an approved repair path — goes through the central file-safety layer:
+  - the previous external config is backed up under `<engram-root>/backups/file_safety/external/`;
+  - a metadata-only `file_safety_ledger.jsonl` entry is appended under the Engram root;
+  - ledger paths are redacted or hashed instead of storing raw external absolute paths;
+  - existing custom `ENGRAM_DIR` values in legacy client configs are preserved unless you explicitly choose a new data folder.
+
+What Engram does not write:
+
 - User project documents outside the Engram data folder.
 - Arbitrary files outside the selected Engram root.
+- Raw external absolute paths into the ledger (they are redacted or hashed instead).
 
-External client config writes are explicit opt-in. If you run `engram setup --apply-external-config` or an approved repair path that updates a client config, Engram writes through the central file-safety layer:
+For existing users, the upgrade boundary stays conservative: startup migration only logs guidance inside the Engram root and leaves old external client configs byte-for-byte unchanged. To update those configs, run the setup or doctor repair command from a terminal you control (it confirms before writing, or uses the explicit flag).
 
-- the previous external config is backed up under `<engram-root>/backups/file_safety/external/`;
-- a metadata-only `file_safety_ledger.jsonl` entry is appended under the Engram root;
-- ledger paths are redacted or hashed instead of storing raw external absolute paths;
-- existing custom `ENGRAM_DIR` values in legacy client configs are preserved unless you explicitly choose a new data folder.
+## AI suggests; you review what matters
 
-For existing users, the upgrade boundary is conservative: startup migration logs guidance inside the Engram root and leaves old external client configs byte-for-byte unchanged. To update those configs, run the explicit setup or doctor repair command from a terminal you control.
+Engram is designed around a risk-gated staging-to-verified workflow.
 
-## AI suggests; you approve
+AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`, or `extract_session_insights`. New suggestions are classified by risk before they become active:
 
-Engram is designed around a staging-to-verified workflow.
+- **Low / medium risk** (most preferences, lessons, project rules) is auto-verified for next-session use, so the everyday path stays low-friction.
+- **High risk** (credential values, executable commands, permission or MCP-config changes) is routed to staging for your review before it becomes active.
+- Unsupervised background writeback paths force staging regardless of risk, and LLM-extracted suggestions cannot self-label themselves as verified.
 
-AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`, or `extract_session_insights`. Those suggestions are useful, but they should not be treated as fresh user approval. Engram keeps proposed knowledge reviewable so you can approve, edit, archive, or reject it. For backward compatibility, lessons and decisions in staging may also be promoted by the existing access-based promotion path after repeated use; playbook review remains explicit before trusted use.
+You can review, edit, archive, or reject staged knowledge anytime via `list_pending_staging`; playbook review remains explicit before trusted use. Cold-start `get_resume_brief` surfaces the pending-review count (including high-risk items) so nothing sensitive slips in silently.
 
-This is different from agent-owned memory systems where the agent continuously rewrites its own long-term memory. Engram treats durable memory as a user-owned asset.
+This is different from agent-owned memory systems where the agent continuously rewrites its own long-term memory. Engram treats durable memory as a user-owned asset and keeps the sensitive writes behind your review.
 
 Playbooks follow the same trust boundary. Engram normalizes Playbooks into a versioned structural contract and can track execution outcomes, but it does not silently execute workflows. Host AI tools receive Playbooks as passive references, walk through steps in their own runtime, and can report step status back so the result is visible as `pending`, `partial`, `succeeded`, or `failed`.
 
