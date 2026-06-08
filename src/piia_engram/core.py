@@ -732,11 +732,13 @@ class Engram(
         """Risk-tiered write gate for a NEW entry (call once, after _ensure_fields).
 
         Realizes the cold-start -> approve -> resume policy: low/medium-risk
-        knowledge is auto-absorbed straight to ``verified`` (with a post-hoc
-        audit entry), while high-risk knowledge (credentials / shell commands /
-        MCP config / permission rules, i.e. risk_level == "high") is held in
-        ``staging`` for explicit owner approval. The auditable moat is
-        preserved: the returned note is logged for every write.
+        knowledge is auto-absorbed straight to ``verified`` by default (with a
+        post-hoc audit entry), while high-risk knowledge (credentials / shell
+        commands / MCP config / permission rules, i.e. risk_level == "high") is
+        held in ``staging`` for explicit owner approval. Opt-in
+        ``ENGRAM_APPROVAL=strict`` sends otherwise auto-absorbed new entries to
+        ``staging`` too. The auditable moat is preserved: the returned note is
+        logged for every write.
 
         If the caller explicitly pinned a ``tier`` (a deliberate seed or a test
         fixture), that intent is honored and the gate is skipped.
@@ -753,6 +755,12 @@ class Engram(
             "deprecated",
         }:
             return f"preserved (state={entry.get('memory_state', 'rejected')})"
+        if os.environ.get("ENGRAM_APPROVAL", "").strip().lower() == "strict":
+            entry["tier"] = "staging"
+            entry["memory_state"] = "staging"
+            entry["approval_status"] = "pending"
+            entry["approval_required"] = True
+            return "strict-mode->staging (ENGRAM_APPROVAL=strict)"
         if entry.get("risk_level") == "high":
             entry["tier"] = "staging"
             entry["memory_state"] = "staging"
