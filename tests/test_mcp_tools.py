@@ -1336,6 +1336,24 @@ def test_get_user_context_appends_user_prompt(isolated_engram: Engram):
     assert "如何优化启动速度？" in result
 
 
+def test_get_user_context_truncates_user_prompt_to_token_budget(
+    isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
+):
+    """user_prompt 过长且设置 token_budget 时应裁剪追加内容。"""
+    monkeypatch.setattr(
+        isolated_engram,
+        "generate_context",
+        lambda project_folder=None, level="standard", max_tokens=None: "context-body-" * 3,
+    )
+    prompt = "这是一个很长的问题" * 30
+
+    result = _run(mcp_server.get_user_context(token_budget=25, user_prompt=prompt))
+
+    assert "## 当前用户提问" in result
+    assert prompt not in result
+    assert "…" in result
+
+
 def test_get_user_context_no_user_prompt_omits_section(isolated_engram: Engram):
     """MCP get_user_context 不传 user_prompt 时不应有「当前用户提问」section。"""
     isolated_engram.update_profile({"role": "developer"})
