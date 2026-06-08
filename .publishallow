@@ -136,6 +136,21 @@ docs/assets/ph/shot2-staging.png
 docs/assets/ph/shot3-codex-reads.png
 docs/assets/ph/shot4-verified.png
 docs/assets/ph/thumbnail-240x240.png
+docs/assets/ph/avatar-800x800.png
+docs/assets/ph/avatar-github-500.png
+docs/assets/ph/avatar-x-400.png
+docs/assets/ph/avatar-youtube-800.png
+docs/assets/ph/avatar-v2-800x800.png
+docs/assets/ph/avatar-v2-github-500.png
+docs/assets/ph/avatar-v2-x-400.png
+docs/assets/ph/avatar-v2-youtube-800.png
+docs/assets/ph/channel-banner-2048x1152.png
+docs/assets/ph/channel-banner-bg-only-2048x1152.png
+docs/assets/ph/channel-banner-v2-2048x1152.png
+docs/assets/ph/thumb-concept-A-amnesia.png
+docs/assets/ph/thumb-concept-B-startover.png
+docs/assets/ph/thumb-concept-C-samebrain.png
+docs/assets/ph/thumbnail-youtube-1280x720.png
 
 # Agent ecosystem entrypoints (public, reviewed; no private workflow content)
 skills/engram/**
