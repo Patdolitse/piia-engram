@@ -1,27 +1,23 @@
-"""Multi-writer local concurrency stress harness — honest, bounded, offline.
+"""Multi-writer local concurrency stress harness - honest, bounded, offline.
 
 WHY: Engram is a *local* store that several tools (Claude Code, Codex, Cursor)
 may write to at overlapping times. Two distinct safety questions matter:
 
-1. **Integrity / no corruption** — can a concurrent writer ever leave a knowledge
+1. **Integrity / no corruption** - can a concurrent writer ever leave a knowledge
    file half-written or non-JSON? The storage layer answers this with
    ``tempfile`` + ``os.fsync`` + ``os.replace`` (atomic rename) under a
    per-directory ``portalocker`` lock, so the on-disk file is always either the
    old or a new *complete* document. This harness verifies that contract holds
    under contention.
 
-2. **No lost writes** — if two writers race, does every write survive? This is
-   only guaranteed for the read-modify-write path that holds the lock ACROSS the
-   read (``storage._update_json``, used by the governance stores). The knowledge
-   add-path (``add_lesson`` / ``add_decision``) reads OUTSIDE the lock and then
-   atomically writes, so two in-process racers can read the same list and one
-   can clobber the other — a *lost update*, never a *corruption*.
+2. **No lost writes** - if two writers race, does every accepted write survive?
+   Both governance stores and knowledge add-paths now use the read-modify-write
+   path that holds the lock ACROSS the read (``storage._update_json``), so the
+   harness asserts no lost updates for both surfaces.
 
-This module reports both honestly. It NEVER claims lost-update safety for the
-knowledge path; it measures the surviving-write count and surfaces it. For the
-governance path it asserts (via the caller's tests) the supported no-lost-update
-contract. Everything runs in a caller-provided temp ``root`` — it never touches a
-real store — and the returned report is metadata-only (counts, booleans, error
+This module reports both honestly. Everything runs in a caller-provided temp
+``root`` - it never touches a real store - and the returned report is
+metadata-only (counts, booleans, error
 categories), safe to embed in a committable evidence file.
 """
 
@@ -68,27 +64,29 @@ def run_knowledge_multiwriter_stress(
     *,
     writers: int = 8,
     per_writer: int = 6,
+    entry_type: str = "lesson",
 ) -> dict[str, Any]:
     """Stress the knowledge add-path with ``writers`` concurrent threads.
 
     Each thread uses its OWN ``Engram`` instance pointed at the same ``root`` and
-    adds ``per_writer`` lessons with globally-unique summaries (so the dedup
+    adds ``per_writer`` entries with globally-unique identities (so the dedup
     layer can never mask a write). Returns a metadata-only report::
 
         {"path": "knowledge",
          "intended_writes": int,
-         "json_valid": bool,        # integrity contract — must be True
-         "persisted": int,          # surviving entries (<= intended)
-         "lost_updates": int,       # intended - persisted (honest; may be > 0)
+         "json_valid": bool,        # integrity contract - must be True
+         "persisted": int,          # surviving entries (must equal intended)
+         "lost_updates": int,       # intended - persisted (must be 0)
          "errors": {category: count},
          "integrity_ok": bool,      # json_valid AND every entry well-formed
-         "no_lost_updates": bool}   # persisted == intended (NOT guaranteed here)
+         "no_lost_updates": bool}   # persisted == intended
 
-    Bounded and deterministic in shape (no sleeps); the lost-update COUNT is
-    timing-dependent by nature, which is exactly why the harness reports it
-    instead of asserting it is zero.
+    Bounded and deterministic in shape (no sleeps). Callers assert that the
+    locked knowledge path preserves every accepted write.
     """
     root = Path(root)
+    if entry_type not in {"lesson", "decision"}:
+        raise ValueError("entry_type must be 'lesson' or 'decision'")
     intended = writers * per_writer
     errors: dict[str, int] = {}
     err_lock = threading.Lock()
@@ -103,12 +101,23 @@ def run_knowledge_multiwriter_stress(
             pass
         for i in range(per_writer):
             try:
-                eng.add_lesson({
-                    "summary": f"writer {wid} unique lesson {i} token-{wid}-{i}",
-                    "domain": f"d{wid}",
-                    "tier": "verified",
-                    "status": "active",
-                })
+                identity = f"kstressw{wid}i{i}token{wid:02d}{i:02d}"
+                if entry_type == "decision":
+                    eng.add_decision({
+                        "question": identity,
+                        "choice": f"choice-{wid}-{i}",
+                        "reasoning": "concurrency stress",
+                        "domain": f"d{wid}",
+                        "tier": "verified",
+                        "status": "active",
+                    })
+                else:
+                    eng.add_lesson({
+                        "summary": identity,
+                        "domain": f"d{wid}",
+                        "tier": "verified",
+                        "status": "active",
+                    })
             except Exception as exc:  # noqa: BLE001 — categorize, never crash harness
                 cat = _classify_error(exc)
                 with err_lock:
@@ -120,7 +129,8 @@ def run_knowledge_multiwriter_stress(
     for t in threads:
         t.join(timeout=30)
 
-    path = root / "knowledge" / "lessons.json"
+    filename = "decisions.json" if entry_type == "decision" else "lessons.json"
+    path = root / "knowledge" / filename
     json_valid, persisted = _read_raw_list(path)
 
     # Integrity: every surviving entry must be a well-formed dict with a summary.
@@ -128,8 +138,9 @@ def run_knowledge_multiwriter_stress(
     if json_valid and path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            identity_field = "question" if entry_type == "decision" else "summary"
             integrity_ok = all(
-                isinstance(e, dict) and isinstance(e.get("summary", ""), str)
+                isinstance(e, dict) and isinstance(e.get(identity_field, ""), str)
                 for e in data
             )
         except (json.JSONDecodeError, OSError):
@@ -138,6 +149,7 @@ def run_knowledge_multiwriter_stress(
     lost = max(0, intended - persisted)
     return {
         "path": "knowledge",
+        "entry_type": entry_type,
         "intended_writes": intended,
         "json_valid": json_valid,
         "persisted": persisted,
@@ -223,8 +235,7 @@ def run_full_report(
     per_writer: int = 6,
 ) -> dict[str, Any]:
     """Run both stress paths under separate subdirectories and roll up an honest,
-    metadata-only verdict. ``knowledge_lost_update_possible`` is stated as a known
-    architectural property, NOT a bug to hide."""
+    metadata-only verdict."""
     root = Path(root)
     k = run_knowledge_multiwriter_stress(
         root / "kstore", writers=writers, per_writer=per_writer
@@ -241,8 +252,6 @@ def run_full_report(
             # Always-true contracts the suite asserts:
             "no_corruption": k["integrity_ok"] and g["integrity_ok"],
             "governance_no_lost_updates": g["no_lost_updates"],
-            # Honest characterization (NOT asserted to be zero):
-            "knowledge_lost_update_possible": True,
-            "knowledge_lost_updates_observed": k["lost_updates"],
+            "knowledge_no_lost_updates": k["no_lost_updates"],
         },
     }

@@ -1,17 +1,15 @@
-"""Stage 3 item D — multi-writer local concurrency safety stress.
+"""Stage 3 item D - multi-writer local concurrency safety stress.
 
-The supported safety contract is asserted; the unsupported one is characterized
-honestly, never overclaimed:
+The supported safety contracts are asserted:
 
-* **Integrity / no corruption** — under concurrent writers the knowledge file is
-  always valid JSON with well-formed entries (atomic temp+rename under a lock).
+* **Integrity / no corruption** - under concurrent writers the knowledge file is
+  always valid JSON with well-formed entries. ASSERTED.
+* **Governance no-lost-update** - the ``_update_json`` path (holds the lock
+  across read -> mutate -> write) loses no accepted edge under contention.
   ASSERTED.
-* **Governance no-lost-update** — the ``_update_json`` path (holds the lock
-  across read→mutate→write) loses no accepted edge under contention. ASSERTED.
-* **Knowledge no-lost-update** — the ``add_lesson`` path reads outside the lock,
-  so a race CAN drop a write. NOT asserted to be zero; the harness only verifies
-  the survivors are well-formed and at least one write landed, and that any drop
-  is a clean lost-update (count consistent), never corruption.
+* **Knowledge no-lost-update** - ``add_lesson`` / ``add_decision`` now use the
+  same lock-across-read update model, so every accepted knowledge write must
+  survive under contention. ASSERTED.
 
 Bounded (small thread counts, no sleeps), CI-friendly on Windows, temp-isolated.
 """
@@ -34,11 +32,10 @@ class TestKnowledgeStress:
         # Integrity contract — ALWAYS holds.
         assert rep["json_valid"] is True
         assert rep["integrity_ok"] is True
-        # At least one write must survive; survivors bounded by intent.
-        assert 1 <= rep["persisted"] <= rep["intended_writes"]
-        # Lost-update accounting is consistent (honest, may be > 0).
-        assert rep["lost_updates"] == rep["intended_writes"] - rep["persisted"]
-        assert rep["lost_updates"] >= 0
+        # The supported knowledge contract: every accepted write survived.
+        assert rep["no_lost_updates"] is True
+        assert rep["persisted"] == rep["intended_writes"]
+        assert rep["lost_updates"] == 0
 
     def test_report_is_metadata_only(self, tmp_path: Path):
         rep = ch.run_knowledge_multiwriter_stress(tmp_path / "k", writers=4, per_writer=4)
@@ -47,6 +44,20 @@ class TestKnowledgeStress:
                             "lost_updates", "errors", "integrity_ok", "no_lost_updates"}
         for v in rep.values():
             assert isinstance(v, (str, int, bool, dict))
+
+    def test_decision_writes_lose_nothing(self, tmp_path: Path,
+                                          monkeypatch: pytest.MonkeyPatch):
+        root = tmp_path / "dstore"
+        monkeypatch.setenv("ENGRAM_DIR", str(root))
+        rep = ch.run_knowledge_multiwriter_stress(
+            root, writers=8, per_writer=6, entry_type="decision"
+        )
+        assert rep["entry_type"] == "decision"
+        assert rep["json_valid"] is True
+        assert rep["integrity_ok"] is True
+        assert rep["no_lost_updates"] is True
+        assert rep["persisted"] == rep["intended_writes"]
+        assert rep["lost_updates"] == 0
 
     def test_single_writer_loses_nothing(self, tmp_path: Path,
                                          monkeypatch: pytest.MonkeyPatch):
@@ -81,9 +92,7 @@ class TestFullReport:
         # Always-true contracts.
         assert inv["no_corruption"] is True
         assert inv["governance_no_lost_updates"] is True
-        # Honest characterization is present and not silently dropped.
-        assert inv["knowledge_lost_update_possible"] is True
-        assert inv["knowledge_lost_updates_observed"] >= 0
+        assert inv["knowledge_no_lost_updates"] is True
         assert rep["writers"] == 6 and rep["per_writer"] == 5
 
     def test_harness_does_not_touch_real_store(self, tmp_path: Path,

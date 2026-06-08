@@ -54,6 +54,7 @@ from .storage import (  # noqa: F401 — re-exports
     _parse_iso,
     _project_id,
     _read_json,
+    _update_json,
     _write_json,
     DataCorruptionError,
 )
@@ -889,6 +890,40 @@ class Engram(
                     for e in ensured]
         return ensured
 
+    def _entries_for_locked_mutation(self, entries: Any, entry_type: str) -> list[dict]:
+        """Normalize raw stored entries for a locked read-modify-write mutation."""
+        if not isinstance(entries, list):
+            return []
+
+        normalized: list[dict] = []
+        for entry in entries:
+            item = self._ensure_fields(entry, entry_type)
+            if self._corpus_key:
+                item = self._crypto.decrypt_entry(item, self._corpus_key, entry_type)
+                item = self._ensure_fields(item, entry_type)
+            normalized.append(item)
+        return normalized
+
+    def _entries_for_storage(self, entries: list[dict], entry_type: str) -> list[dict]:
+        """Prepare normalized in-memory entries for at-rest JSON storage."""
+        if not self._corpus_key:
+            return entries
+        return [
+            self._crypto.encrypt_entry(entry, self._corpus_key, entry_type)
+            for entry in entries
+        ]
+
+    def _update_entries(self, path: Path, entry_type: str, mutator) -> None:
+        """Apply ``mutator`` to a knowledge list under the storage write lock."""
+        def _locked(current: Any) -> list[dict]:
+            entries = self._entries_for_locked_mutation(current, entry_type)
+            updated = mutator(entries)
+            if updated is None:
+                updated = entries
+            return self._entries_for_storage(updated, entry_type)
+
+        _update_json(path, _locked, default=[])
+
     def add_lesson(
         self,
         lesson: dict | str,
@@ -904,7 +939,6 @@ class Engram(
         add_lesson("summary", "domain", source_tool="codex").
         """
         path = self._knowledge_dir / "lessons.json"
-        lessons = self._read_entries(path, "lesson")
 
         tier_explicit = ("tier" in lesson) if isinstance(lesson, dict) else False
         tier_explicit = tier_explicit or ("tier" in extra)
@@ -931,66 +965,76 @@ class Engram(
         new_lesson = self._ensure_fields(new_lesson, "lesson")
         _gate_note = self._apply_write_risk_gate(new_lesson, tier_explicit=tier_explicit)
 
-        # Three-tier dedup: exact duplicate / semantically related / pass
-        best_sim = 0.0
-        best_match = None
-        for existing in lessons:
-            existing = self._ensure_fields(existing, "lesson")
-            if existing.get("status") != "active":
-                continue
-            sim = self._bigram_similarity(
-                new_lesson.get("summary", ""),
-                existing.get("summary", ""),
-            )
-            if sim > best_sim:
-                best_sim = sim
-                best_match = existing
+        result_box: dict[str, dict] = {}
 
-        if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
-            # Check for supplement markers — demote to related if new text
-            # signals extension/supplement rather than true duplication
-            new_summary_lower = new_lesson.get("summary", "").lower()
-            existing_summary_lower = (best_match.get("summary") or "").lower()
-            has_supplement_signal = any(
-                marker in new_summary_lower and marker not in existing_summary_lower
-                for marker in _SUPPLEMENT_MARKERS
-            )
-            if not has_supplement_signal:
-                # Tier 1: exact duplicate — reject
-                return {
-                    "status": "duplicate",
-                    "similarity": round(best_sim, 2),
-                    "existing_id": best_match.get("id"),
-                    "existing_summary": best_match.get("summary"),
-                    "message": f"与现有教训相似度 {best_sim:.0%}，未重复添加",
-                }
-            # Supplement signal detected — fall through to related tier
+        def _mutate_lessons(lessons: list[dict]) -> list[dict]:
+            # Three-tier dedup: exact duplicate / semantically related / pass
+            best_sim = 0.0
+            best_match = None
+            for existing in lessons:
+                existing = self._ensure_fields(existing, "lesson")
+                if existing.get("status") != "active":
+                    continue
+                sim = self._bigram_similarity(
+                    new_lesson.get("summary", ""),
+                    existing.get("summary", ""),
+                )
+                if sim > best_sim:
+                    best_sim = sim
+                    best_match = existing
 
-        if best_sim >= SIMILARITY_THRESHOLD and best_match:
-            # Tier 2: semantically related — add but link
-            new_id = new_lesson.get("id", "")
-            existing_id = best_match.get("id", "")
-            # Guard against self-reference
-            if existing_id and existing_id != new_id and existing_id not in new_lesson.get("related_ids", []):
-                new_lesson.setdefault("related_ids", []).append(existing_id)
-            if new_id and new_id != existing_id and new_id not in best_match.get("related_ids", []):
-                best_match.setdefault("related_ids", []).append(new_id)
-            new_lesson["_dedup_note"] = f"related to {existing_id} (sim={best_sim:.0%})"
+            if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
+                # Check for supplement markers — demote to related if new text
+                # signals extension/supplement rather than true duplication
+                new_summary_lower = new_lesson.get("summary", "").lower()
+                existing_summary_lower = (best_match.get("summary") or "").lower()
+                has_supplement_signal = any(
+                    marker in new_summary_lower and marker not in existing_summary_lower
+                    for marker in _SUPPLEMENT_MARKERS
+                )
+                if not has_supplement_signal:
+                    # Tier 1: exact duplicate — reject
+                    result_box["result"] = {
+                        "status": "duplicate",
+                        "similarity": round(best_sim, 2),
+                        "existing_id": best_match.get("id"),
+                        "existing_summary": best_match.get("summary"),
+                        "message": f"与现有教训相似度 {best_sim:.0%}，未重复添加",
+                    }
+                    return lessons
+                # Supplement signal detected — fall through to related tier
 
-        lessons.append(new_lesson)
-        if len(lessons) > MAX_KNOWLEDGE_ENTRIES:
-            # Evict staging items first, then oldest; never drop verified
-            staging = [l for l in lessons if l.get("tier") == "staging"]
-            verified = [l for l in lessons if l.get("tier") != "staging"]
-            overflow = len(lessons) - MAX_KNOWLEDGE_ENTRIES
-            if len(staging) >= overflow:
-                staging = staging[overflow:]  # drop oldest staging
-            else:
-                remaining = overflow - len(staging)
-                staging = []
-                verified = verified[remaining:]  # drop oldest verified as last resort
-            lessons = verified + staging
-        self._write_entries(path, lessons, "lesson")
+            if best_sim >= SIMILARITY_THRESHOLD and best_match:
+                # Tier 2: semantically related — add but link
+                new_id = new_lesson.get("id", "")
+                existing_id = best_match.get("id", "")
+                # Guard against self-reference
+                if existing_id and existing_id != new_id and existing_id not in new_lesson.get("related_ids", []):
+                    new_lesson.setdefault("related_ids", []).append(existing_id)
+                if new_id and new_id != existing_id and new_id not in best_match.get("related_ids", []):
+                    best_match.setdefault("related_ids", []).append(new_id)
+                new_lesson["_dedup_note"] = f"related to {existing_id} (sim={best_sim:.0%})"
+
+            lessons.append(new_lesson)
+            if len(lessons) > MAX_KNOWLEDGE_ENTRIES:
+                # Evict staging items first, then oldest; never drop verified
+                staging = [l for l in lessons if l.get("tier") == "staging"]
+                verified = [l for l in lessons if l.get("tier") != "staging"]
+                overflow = len(lessons) - MAX_KNOWLEDGE_ENTRIES
+                if len(staging) >= overflow:
+                    staging = staging[overflow:]  # drop oldest staging
+                else:
+                    remaining = overflow - len(staging)
+                    staging = []
+                    verified = verified[remaining:]  # drop oldest verified as last resort
+                lessons = verified + staging
+            result_box["result"] = new_lesson
+            return lessons
+
+        self._update_entries(path, "lesson", _mutate_lessons)
+        result = result_box["result"]
+        if result.get("status") == "duplicate":
+            return result
 
         summary = new_lesson.get("summary", "")
         self._audit.log(
@@ -1029,10 +1073,19 @@ class Engram(
         result = result[-limit:] if limit is not None else result
         if _update_access and result:
             now = _now_iso()
+            selected_ids = {lesson.get("id") for lesson in result if lesson.get("id")}
             for lesson in result:
                 lesson["last_reviewed"] = now
                 lesson["access_count"] = lesson.get("access_count", 0) + 1
-            self._write_entries(path, lessons, "lesson")
+
+            def _bump_access(entries: list[dict]) -> list[dict]:
+                for entry in entries:
+                    if entry.get("id") in selected_ids:
+                        entry["last_reviewed"] = now
+                        entry["access_count"] = entry.get("access_count", 0) + 1
+                return entries
+
+            self._update_entries(path, "lesson", _bump_access)
         self._audit.log("read", "knowledge/lessons", detail=f"returned {len(result)} items")
         return result
 
@@ -1046,12 +1099,15 @@ class Engram(
         recorded in the audit log so the transition is traceable.
         """
         path = self._knowledge_dir / "lessons.json"
-        lessons = self._read_entries(path, "lesson")
         updates = self._repair_incoming_text(dict(updates))
         allowed_fields = {"summary", "detail", "domain", "status", "tier"}
         valid_tiers = {"staging", "verified", "archived"}
-        for lesson in lessons:
-            if lesson.get("id") == lesson_id:
+        result_box: dict[str, Any] = {}
+
+        def _mutate_lessons(lessons: list[dict]) -> list[dict]:
+            for lesson in lessons:
+                if lesson.get("id") != lesson_id:
+                    continue
                 old_tier = lesson.get("tier")
                 tier_changed = False
                 new_tier = None
@@ -1060,27 +1116,36 @@ class Engram(
                         continue
                     if key == "tier":
                         if value not in valid_tiers:
-                            return {
+                            result_box["result"] = {
                                 "error": (
                                     f"Invalid tier {value!r}; "
                                     f"must be one of {sorted(valid_tiers)}"
                                 )
                             }
+                            return lessons
                         if value != old_tier:
                             tier_changed = True
                             new_tier = value
                     lesson[key] = value
                 lesson["last_updated"] = _now_iso()
                 lesson = self._ensure_fields(lesson, "lesson")
-                self._write_entries(path, lessons, "lesson")
-                if tier_changed:
-                    self._audit.log(
-                        "write",
-                        "knowledge/tier_change",
-                        detail=f"lesson {lesson_id}: {old_tier} -> {new_tier}",
-                    )
-                return lesson
-        return {"error": f"Lesson not found: {lesson_id}"}
+                result_box["result"] = lesson
+                result_box["tier_changed"] = tier_changed
+                result_box["old_tier"] = old_tier
+                result_box["new_tier"] = new_tier
+                return lessons
+            result_box["result"] = {"error": f"Lesson not found: {lesson_id}"}
+            return lessons
+
+        self._update_entries(path, "lesson", _mutate_lessons)
+        result = result_box["result"]
+        if result_box.get("tier_changed"):
+            self._audit.log(
+                "write",
+                "knowledge/tier_change",
+                detail=f"lesson {lesson_id}: {result_box.get('old_tier')} -> {result_box.get('new_tier')}",
+            )
+        return result
 
     def archive_lesson(self, lesson_id: str) -> dict:
         """Mark a lesson as outdated without deleting it."""
@@ -1102,7 +1167,6 @@ class Engram(
         add_decision("question", "choice", "reasoning").
         """
         path = self._knowledge_dir / "decisions.json"
-        decisions = self._read_entries(path, "decision")
 
         tier_explicit = ("tier" in decision) if isinstance(decision, dict) else False
         tier_explicit = tier_explicit or ("tier" in extra)
@@ -1134,77 +1198,89 @@ class Engram(
         _gate_note = self._apply_write_risk_gate(new_decision, tier_explicit=tier_explicit)
 
         new_title = self._entry_identity_text(new_decision, "decision")
-        # Three-tier dedup for decisions.
-        # >= (not strict >) so that when multiple entries share the same
-        # similarity (e.g. same question text, sim=1.0), the LAST entry
-        # (most recent by list position) wins. This is correct for both
-        # dedup (compare against the latest) and auto-supersedes (chain
-        # should target the most recent predecessor, not an older one).
-        best_sim = 0.0
-        best_match = None
-        for existing in decisions:
-            existing = self._ensure_fields(existing, "decision")
-            if existing.get("status") != "active":
-                continue
-            sim = self._bigram_similarity(
-                new_title,
-                self._entry_identity_text(existing, "decision"),
-            )
-            if sim >= best_sim:
-                best_sim = sim
-                best_match = existing
+        result_box: dict[str, dict] = {}
+        supersedes_box: dict[str, str | None] = {}
 
-        # Track whether the new decision should auto-supersede the best match.
-        # Set when same question + different choice (a decision revision).
-        _auto_supersedes_target: str | None = None
+        def _mutate_decisions(decisions: list[dict]) -> list[dict]:
+            # Three-tier dedup for decisions.
+            # >= (not strict >) so that when multiple entries share the same
+            # similarity (e.g. same question text, sim=1.0), the LAST entry
+            # (most recent by list position) wins. This is correct for both
+            # dedup (compare against the latest) and auto-supersedes (chain
+            # should target the most recent predecessor, not an older one).
+            best_sim = 0.0
+            best_match = None
+            for existing in decisions:
+                existing = self._ensure_fields(existing, "decision")
+                if existing.get("status") != "active":
+                    continue
+                sim = self._bigram_similarity(
+                    new_title,
+                    self._entry_identity_text(existing, "decision"),
+                )
+                if sim >= best_sim:
+                    best_sim = sim
+                    best_match = existing
 
-        if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
-            # For decisions: different choice on same question = conflict, not duplicate
-            new_choice = (new_decision.get("choice") or "").strip().lower()
-            existing_choice = (best_match.get("choice") or "").strip().lower()
-            choices_differ = new_choice and existing_choice and new_choice != existing_choice
-            new_title_lower = new_title.lower()
-            existing_title_lower = self._entry_identity_text(best_match, "decision").lower()
-            has_supplement = any(
-                m in new_title_lower and m not in existing_title_lower
-                for m in _SUPPLEMENT_MARKERS
-            )
-            if not choices_differ and not has_supplement:
-                return {
-                    "status": "duplicate",
-                    "similarity": round(best_sim, 2),
-                    "existing_id": best_match.get("id"),
-                    "existing_title": self._entry_identity_text(best_match, "decision"),
-                    "message": f"与现有决策相似度 {best_sim:.0%}，未重复添加",
-                }
-            # Different choice or supplement — fall through to related tier.
-            # Same question + different choice → the new decision supersedes the old.
-            if choices_differ:
-                _auto_supersedes_target = best_match.get("id")
+            # Track whether the new decision should auto-supersede the best match.
+            # Set when same question + different choice (a decision revision).
+            auto_supersedes_target: str | None = None
 
-        if best_sim >= SIMILARITY_THRESHOLD and best_match:
-            new_id = new_decision.get("id", "")
-            existing_id = best_match.get("id", "")
-            # Guard against self-reference
-            if existing_id and existing_id != new_id and existing_id not in new_decision.get("related_ids", []):
-                new_decision.setdefault("related_ids", []).append(existing_id)
-            if new_id and new_id != existing_id and new_id not in best_match.get("related_ids", []):
-                best_match.setdefault("related_ids", []).append(new_id)
-            new_decision["_dedup_note"] = f"related to {existing_id} (sim={best_sim:.0%})"
+            if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
+                # For decisions: different choice on same question = conflict, not duplicate
+                new_choice = (new_decision.get("choice") or "").strip().lower()
+                existing_choice = (best_match.get("choice") or "").strip().lower()
+                choices_differ = new_choice and existing_choice and new_choice != existing_choice
+                new_title_lower = new_title.lower()
+                existing_title_lower = self._entry_identity_text(best_match, "decision").lower()
+                has_supplement = any(
+                    m in new_title_lower and m not in existing_title_lower
+                    for m in _SUPPLEMENT_MARKERS
+                )
+                if not choices_differ and not has_supplement:
+                    result_box["result"] = {
+                        "status": "duplicate",
+                        "similarity": round(best_sim, 2),
+                        "existing_id": best_match.get("id"),
+                        "existing_title": self._entry_identity_text(best_match, "decision"),
+                        "message": f"与现有决策相似度 {best_sim:.0%}，未重复添加",
+                    }
+                    return decisions
+                # Different choice or supplement — fall through to related tier.
+                # Same question + different choice → the new decision supersedes the old.
+                if choices_differ:
+                    auto_supersedes_target = best_match.get("id")
 
-        decisions.append(new_decision)
-        if len(decisions) > MAX_KNOWLEDGE_ENTRIES:
-            staging = [d for d in decisions if d.get("tier") == "staging"]
-            verified = [d for d in decisions if d.get("tier") != "staging"]
-            overflow = len(decisions) - MAX_KNOWLEDGE_ENTRIES
-            if len(staging) >= overflow:
-                staging = staging[overflow:]
-            else:
-                remaining = overflow - len(staging)
-                staging = []
-                verified = verified[remaining:]
-            decisions = verified + staging
-        self._write_entries(path, decisions, "decision")
+            if best_sim >= SIMILARITY_THRESHOLD and best_match:
+                new_id = new_decision.get("id", "")
+                existing_id = best_match.get("id", "")
+                # Guard against self-reference
+                if existing_id and existing_id != new_id and existing_id not in new_decision.get("related_ids", []):
+                    new_decision.setdefault("related_ids", []).append(existing_id)
+                if new_id and new_id != existing_id and new_id not in best_match.get("related_ids", []):
+                    best_match.setdefault("related_ids", []).append(new_id)
+                new_decision["_dedup_note"] = f"related to {existing_id} (sim={best_sim:.0%})"
+
+            decisions.append(new_decision)
+            if len(decisions) > MAX_KNOWLEDGE_ENTRIES:
+                staging = [d for d in decisions if d.get("tier") == "staging"]
+                verified = [d for d in decisions if d.get("tier") != "staging"]
+                overflow = len(decisions) - MAX_KNOWLEDGE_ENTRIES
+                if len(staging) >= overflow:
+                    staging = staging[overflow:]
+                else:
+                    remaining = overflow - len(staging)
+                    staging = []
+                    verified = verified[remaining:]
+                decisions = verified + staging
+            result_box["result"] = new_decision
+            supersedes_box["target"] = auto_supersedes_target
+            return decisions
+
+        self._update_entries(path, "decision", _mutate_decisions)
+        result = result_box["result"]
+        if result.get("status") == "duplicate":
+            return result
         title = new_decision.get("question", "") or new_decision.get("title", "")
         self._audit.log(
             "write", "knowledge/decisions",
@@ -1216,7 +1292,7 @@ class Engram(
         # Priority: (1) explicit ``supersedes`` field in the input,
         #           (2) auto-detected same-question conflict (different choice).
         # Best-effort: a failed edge write must NEVER block the decision write.
-        supersedes_id = new_decision.get("supersedes") or _auto_supersedes_target
+        supersedes_id = new_decision.get("supersedes") or supersedes_box.get("target")
         if supersedes_id:
             try:
                 self.add_relation(
@@ -1256,10 +1332,19 @@ class Engram(
         result = result[-limit:] if limit is not None else result
         if _update_access and result:
             now = _now_iso()
+            selected_ids = {decision.get("id") for decision in result if decision.get("id")}
             for decision in result:
                 decision["last_reviewed"] = now
                 decision["access_count"] = decision.get("access_count", 0) + 1
-            self._write_entries(path, decisions, "decision")
+
+            def _bump_access(entries: list[dict]) -> list[dict]:
+                for entry in entries:
+                    if entry.get("id") in selected_ids:
+                        entry["last_reviewed"] = now
+                        entry["access_count"] = entry.get("access_count", 0) + 1
+                return entries
+
+            self._update_entries(path, "decision", _bump_access)
         self._audit.log("read", "knowledge/decisions", detail=f"returned {len(result)} items")
         return result
 
@@ -1270,7 +1355,6 @@ class Engram(
         as :meth:`update_lesson`.
         """
         path = self._knowledge_dir / "decisions.json"
-        decisions = self._read_entries(path, "decision")
         updates = self._repair_incoming_text(dict(updates))
         allowed_fields = {
             "title",
@@ -1284,8 +1368,12 @@ class Engram(
             "tier",
         }
         valid_tiers = {"staging", "verified", "archived"}
-        for decision in decisions:
-            if decision.get("id") == decision_id:
+        result_box: dict[str, Any] = {}
+
+        def _mutate_decisions(decisions: list[dict]) -> list[dict]:
+            for decision in decisions:
+                if decision.get("id") != decision_id:
+                    continue
                 old_tier = decision.get("tier")
                 tier_changed = False
                 new_tier = None
@@ -1294,27 +1382,36 @@ class Engram(
                         continue
                     if key == "tier":
                         if value not in valid_tiers:
-                            return {
+                            result_box["result"] = {
                                 "error": (
                                     f"Invalid tier {value!r}; "
                                     f"must be one of {sorted(valid_tiers)}"
                                 )
                             }
+                            return decisions
                         if value != old_tier:
                             tier_changed = True
                             new_tier = value
                     decision[key] = value
                 decision["last_updated"] = _now_iso()
                 decision = self._ensure_fields(decision, "decision")
-                self._write_entries(path, decisions, "decision")
-                if tier_changed:
-                    self._audit.log(
-                        "write",
-                        "knowledge/tier_change",
-                        detail=f"decision {decision_id}: {old_tier} -> {new_tier}",
-                    )
-                return decision
-        return {"error": f"Decision not found: {decision_id}"}
+                result_box["result"] = decision
+                result_box["tier_changed"] = tier_changed
+                result_box["old_tier"] = old_tier
+                result_box["new_tier"] = new_tier
+                return decisions
+            result_box["result"] = {"error": f"Decision not found: {decision_id}"}
+            return decisions
+
+        self._update_entries(path, "decision", _mutate_decisions)
+        result = result_box["result"]
+        if result_box.get("tier_changed"):
+            self._audit.log(
+                "write",
+                "knowledge/tier_change",
+                detail=f"decision {decision_id}: {result_box.get('old_tier')} -> {result_box.get('new_tier')}",
+            )
+        return result
 
     def archive_decision(self, decision_id: str) -> dict:
         """Mark a decision as outdated without deleting it."""
@@ -1346,6 +1443,38 @@ class Engram(
                         e["title"], self._corpus_key)
         _write_json(self._playbooks_dir / "_index.json", entries)
 
+    def _playbook_index_for_locked_mutation(self, entries: Any) -> list[dict]:
+        if not isinstance(entries, list):
+            return []
+        result: list[dict] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            item = dict(entry)
+            if self._corpus_key and "title" in item and isinstance(item["title"], str):
+                item["title"] = self._crypto.corpus_decrypt(item["title"], self._corpus_key)
+            result.append(item)
+        return result
+
+    def _playbook_index_for_storage(self, entries: list[dict]) -> list[dict]:
+        if not self._corpus_key:
+            return entries
+        result = [dict(entry) for entry in entries]
+        for entry in result:
+            if "title" in entry and isinstance(entry["title"], str):
+                entry["title"] = self._crypto.corpus_encrypt(entry["title"], self._corpus_key)
+        return result
+
+    def _update_playbook_index(self, mutator) -> None:
+        def _locked(current: Any) -> list[dict]:
+            index = self._playbook_index_for_locked_mutation(current)
+            updated = mutator(index)
+            if updated is None:
+                updated = index
+            return self._playbook_index_for_storage(updated)
+
+        _update_json(self._playbooks_dir / "_index.json", _locked, default=[])
+
     def _read_playbook_by_id(self, playbook_id: str) -> dict | None:
         """Read a single playbook file by ID (with corpus decryption)."""
         path = self._playbooks_dir / f"{playbook_id}.json"
@@ -1355,6 +1484,36 @@ class Engram(
         if pb:
             pb = self._ensure_playbook_fields(pb)
         return pb
+
+    def _playbook_for_storage(self, playbook: dict) -> dict:
+        if self._corpus_key:
+            return self._crypto.encrypt_entry(playbook, self._corpus_key, "playbook")
+        return playbook
+
+    def _update_playbook_file_by_id(self, playbook_id: str, mutator) -> dict | None:
+        """Apply ``mutator`` to one playbook file under that file's write lock."""
+        path = self._playbooks_dir / f"{playbook_id}.json"
+        if not path.exists():
+            return None
+
+        result_box: dict[str, dict | None] = {}
+
+        def _locked(current: Any) -> dict:
+            if not isinstance(current, dict):
+                result_box["result"] = None
+                return {}
+            playbook = current
+            if self._corpus_key:
+                playbook = self._crypto.decrypt_entry(playbook, self._corpus_key, "playbook")
+            playbook = self._ensure_playbook_fields(playbook)
+            updated = mutator(playbook)
+            if updated is None:
+                updated = playbook
+            result_box["result"] = updated
+            return self._playbook_for_storage(updated)
+
+        _update_json(path, _locked, default={})
+        return result_box.get("result")
 
     @staticmethod
     def _extract_parameters(playbook: dict) -> list[str]:
@@ -1779,13 +1938,7 @@ class Engram(
                     "message": f"与现有 Playbook 相似度 {sim:.0%}，未重复添加",
                 }
 
-        # Write individual playbook file
-        pb_path = self._playbooks_dir / f"{new_pb['id']}.json"
-        self._write_playbook_file(pb_path, new_pb)
-
-        # Update index
-        index.append(self._playbook_index_entry(new_pb))
-        self._write_playbook_index(index)
+        self._write_playbook_and_index(new_pb)
 
         self._audit.log("write", "playbooks", detail=new_title[:100])
         if new_pb.get("domain"):
@@ -2109,15 +2262,18 @@ class Engram(
             raise ValueError("missing playbook id")
         self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
 
-        index = self._read_playbook_index()
         idx_entry = self._playbook_index_entry(pb)
-        for i, entry in enumerate(index):
-            if entry.get("id") == playbook_id:
-                index[i] = idx_entry
-                break
-        else:
-            index.append(idx_entry)
-        self._write_playbook_index(index)
+
+        def _upsert(index: list[dict]) -> list[dict]:
+            for i, entry in enumerate(index):
+                if entry.get("id") == playbook_id:
+                    index[i] = idx_entry
+                    break
+            else:
+                index.append(idx_entry)
+            return index
+
+        self._update_playbook_index(_upsert)
 
     @staticmethod
     def _scope_impact_summary(
@@ -2509,20 +2665,7 @@ class Engram(
         pb["last_updated"] = _now_iso()
         pb["version"] = pb.get("version", 1) + 1
         pb = self._ensure_playbook_fields(pb)
-        self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
-
-        # Update index entry
-        index = self._read_playbook_index()
-        idx_entry = self._playbook_index_entry(pb)
-        updated = False
-        for i, entry in enumerate(index):
-            if entry.get("id") == playbook_id:
-                index[i] = idx_entry
-                updated = True
-                break
-        if not updated:
-            index.append(idx_entry)
-        self._write_playbook_index(index)
+        self._write_playbook_and_index(pb)
 
         self._audit.log("write", "playbooks", detail=f"updated {playbook_id}")
         return pb
@@ -3349,39 +3492,52 @@ class Engram(
         ts = now or _now_iso()
         for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
             path = self._knowledge_dir / fname
-            entries = self._read_entries(path, kind)
-            for entry in entries:
-                if entry.get("id") != item_id:
-                    continue
-                current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
-                if current == "verified":
-                    return {
-                        "id": item_id, "type": kind, "changed": False,
-                        "from_tier": current, "to_tier": current,
-                        "error": "protected_verified",
+            result_box: dict[str, Any] = {}
+
+            def _mutate_entries(entries: list[dict]) -> list[dict]:
+                for entry in entries:
+                    if entry.get("id") != item_id:
+                        continue
+                    current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
+                    if current == "verified":
+                        result_box["result"] = {
+                            "id": item_id, "type": kind, "changed": False,
+                            "from_tier": current, "to_tier": current,
+                            "error": "protected_verified",
+                        }
+                        return entries
+                    if current == "archived":
+                        result_box["result"] = {
+                            "id": item_id, "type": kind, "changed": False,
+                            "from_tier": "archived", "to_tier": "archived",
+                            "archived_at": entry.get("archived_at"),
+                        }
+                        return entries
+                    entry["archived_from_tier"] = current
+                    entry["tier"] = "archived"
+                    entry["archived_at"] = ts
+                    entry["last_updated"] = ts
+                    self._ensure_fields(entry, kind)
+                    result_box["result"] = {
+                        "id": item_id, "type": kind, "changed": True,
+                        "from_tier": current, "to_tier": "archived",
+                        "archived_at": ts,
                     }
-                if current == "archived":
-                    return {
-                        "id": item_id, "type": kind, "changed": False,
-                        "from_tier": "archived", "to_tier": "archived",
-                        "archived_at": entry.get("archived_at"),
-                    }
-                entry["archived_from_tier"] = current
-                entry["tier"] = "archived"
-                entry["archived_at"] = ts
-                entry["last_updated"] = ts
-                self._ensure_fields(entry, kind)
-                self._write_entries(path, entries, kind)
+                    return entries
+                result_box["result"] = None
+                return entries
+
+            self._update_entries(path, kind, _mutate_entries)
+            result = result_box.get("result")
+            if result is None:
+                continue
+            if result.get("changed"):
                 self._audit.log(
                     "write",
                     "knowledge/lifecycle_archive",
-                    detail=f"{kind} {item_id}: {current or 'none'} -> archived",
+                    detail=f"{kind} {item_id}: {result.get('from_tier') or 'none'} -> archived",
                 )
-                return {
-                    "id": item_id, "type": kind, "changed": True,
-                    "from_tier": current, "to_tier": "archived",
-                    "archived_at": ts,
-                }
+            return result
         return {"error": f"Item not found: {item_id}"}
 
     def restore_lifecycle_archive(
@@ -3400,46 +3556,63 @@ class Engram(
         ts = now or _now_iso()
         for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
             path = self._knowledge_dir / fname
-            entries = self._read_entries(path, kind)
-            for entry in entries:
-                if entry.get("id") != item_id:
-                    continue
-                current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
-                if current != "archived":
-                    return {
-                        "id": item_id, "type": kind, "changed": False,
-                        "from_tier": current, "to_tier": current,
+            result_box: dict[str, Any] = {}
+
+            def _mutate_entries(entries: list[dict]) -> list[dict]:
+                for entry in entries:
+                    if entry.get("id") != item_id:
+                        continue
+                    current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
+                    if current != "archived":
+                        result_box["result"] = {
+                            "id": item_id, "type": kind, "changed": False,
+                            "from_tier": current, "to_tier": current,
+                        }
+                        return entries
+                    prior = entry.get("archived_from_tier")
+                    to_tier = prior if prior in {"staging", "verified"} else "staging"
+                    entry["tier"] = to_tier
+                    entry.pop("archived_at", None)
+                    entry.pop("archived_from_tier", None)
+                    entry["last_updated"] = ts
+                    self._ensure_fields(entry, kind)
+                    result_box["result"] = {
+                        "id": item_id, "type": kind, "changed": True,
+                        "from_tier": "archived", "to_tier": to_tier,
                     }
-                prior = entry.get("archived_from_tier")
-                to_tier = prior if prior in {"staging", "verified"} else "staging"
-                entry["tier"] = to_tier
-                entry.pop("archived_at", None)
-                entry.pop("archived_from_tier", None)
-                entry["last_updated"] = ts
-                self._ensure_fields(entry, kind)
-                self._write_entries(path, entries, kind)
+                    return entries
+                result_box["result"] = None
+                return entries
+
+            self._update_entries(path, kind, _mutate_entries)
+            result = result_box.get("result")
+            if result is None:
+                continue
+            if result.get("changed"):
                 self._audit.log(
                     "write",
                     "knowledge/lifecycle_restore",
-                    detail=f"{kind} {item_id}: archived -> {to_tier}",
+                    detail=f"{kind} {item_id}: archived -> {result.get('to_tier')}",
                 )
-                return {
-                    "id": item_id, "type": kind, "changed": True,
-                    "from_tier": "archived", "to_tier": to_tier,
-                }
+            return result
         return {"error": f"Item not found: {item_id}"}
 
     def review_knowledge(self, knowledge_id: str) -> dict:
         """Mark a lesson, decision, or playbook as reviewed without changing its content."""
-        lessons, decisions, playbooks = self._read_link_collections()
-        item_type, item = self._find_item_in_collections(knowledge_id, lessons, decisions, playbooks)
-        if item is None or item_type is None:
+        item_type, item = self._find_item_by_id(knowledge_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {knowledge_id}"}
 
-        item["last_reviewed"] = _now_iso()
-        item["access_count"] = item.get("access_count", 0) + 1
-        modified_pbs = [item] if item_type == "playbook" else None
-        self._write_link_collections(lessons, decisions, modified_pbs)
+        now = _now_iso()
+
+        def _mark_reviewed(entry: dict) -> dict:
+            entry["last_reviewed"] = now
+            entry["access_count"] = entry.get("access_count", 0) + 1
+            return entry
+
+        item = self._update_knowledge_item(item_type, knowledge_id, _mark_reviewed)
+        if item is None:
+            return {"error": f"Item not found: {knowledge_id}"}
         self._audit.log("write", "knowledge/review", detail=knowledge_id)
         return item
 
@@ -3474,28 +3647,56 @@ class Engram(
 
         primary_related.discard(primary_id)
         primary_related.discard(secondary_id)
-        primary["related_ids"] = sorted(primary_related)
+        merged_primary_related = sorted(primary_related)
 
-        # Preserve bidirectional link semantics for migrated related items.
+        related_types: dict[str, str] = {}
         for related_id in secondary_related:
             if related_id in (primary_id, secondary_id):
                 continue
-            _, related_item = self._find_item_in_collections(related_id, lessons, decisions, playbooks)
-            if related_item is None:
+            related_type, related_item = self._find_item_in_collections(
+                related_id, lessons, decisions, playbooks
+            )
+            if related_item is None or related_type is None:
                 continue
-            related_ids = set(related_item.get("related_ids", []))
-            related_ids.discard(secondary_id)
-            related_ids.discard(related_id)
-            related_ids.add(primary_id)
-            related_item["related_ids"] = sorted(related_ids)
+            related_types[related_id] = related_type
 
-        secondary["status"] = "outdated"
-        secondary["merged_into"] = primary_id
-        secondary["last_updated"] = _now_iso()
-        # Write back any playbooks that were involved in the merge
-        involved_ids = {primary_id, secondary_id} | set(secondary_related)
-        modified_pbs = [pb for pb in playbooks if pb.get("id") in involved_ids]
-        self._write_link_collections(lessons, decisions, modified_pbs or None)
+        def _merge_primary(entry: dict) -> dict:
+            current_related = set(entry.get("related_ids", []))
+            current_related.update(merged_primary_related)
+            current_related.discard(primary_id)
+            current_related.discard(secondary_id)
+            entry["related_ids"] = sorted(current_related)
+            return entry
+
+        updated_primary = self._update_knowledge_item(primary_type, primary_id, _merge_primary)
+        if updated_primary is None:
+            return {"error": f"Primary item not found: {primary_id}"}
+
+        # Preserve bidirectional link semantics for migrated related items.
+        for related_id, related_type in related_types.items():
+            def _retarget_related(entry: dict, *, _related_id: str = related_id) -> dict:
+                related_ids = set(entry.get("related_ids", []))
+                related_ids.discard(secondary_id)
+                related_ids.discard(_related_id)
+                related_ids.add(primary_id)
+                entry["related_ids"] = sorted(related_ids)
+                return entry
+
+            self._update_knowledge_item(related_type, related_id, _retarget_related)
+
+        ts = _now_iso()
+
+        def _archive_secondary(entry: dict) -> dict:
+            entry["status"] = "outdated"
+            entry["merged_into"] = primary_id
+            entry["last_updated"] = ts
+            return entry
+
+        updated_secondary = self._update_knowledge_item(
+            secondary_type, secondary_id, _archive_secondary
+        )
+        if updated_secondary is None:
+            return {"error": f"Secondary item not found: {secondary_id}"}
         self._audit.log(
             "write",
             "knowledge/merge",
@@ -3508,8 +3709,8 @@ class Engram(
             "secondary_id": secondary_id,
             "secondary_archived": True,
             "related_ids_transferred": len(transferred),
-            "primary_title": self._knowledge_title(primary_type, primary),
-            "secondary_title": self._knowledge_title(secondary_type, secondary),
+            "primary_title": self._knowledge_title(primary_type, updated_primary),
+            "secondary_title": self._knowledge_title(secondary_type, updated_secondary),
         }
 
     def _read_link_collections(self) -> tuple[list[dict], list[dict], list[dict]]:
@@ -3517,22 +3718,6 @@ class Engram(
         decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
         playbooks = self._export_playbooks()
         return lessons, decisions, playbooks
-
-    def _write_link_collections(
-        self,
-        lessons: list[dict],
-        decisions: list[dict],
-        playbooks: list[dict] | None = None,
-    ) -> None:
-        # Each write is individually atomic, but the writes together are not.
-        # A crash between them could leave a one-sided link. Acceptable for local single-user use.
-        self._write_entries(self._knowledge_dir / "lessons.json", lessons, "lesson")
-        self._write_entries(self._knowledge_dir / "decisions.json", decisions, "decision")
-        if playbooks is not None:
-            for pb in playbooks:
-                pb_id = pb.get("id")
-                if pb_id:
-                    self._write_playbook_file(self._playbooks_dir / f"{pb_id}.json", pb)
 
     def _find_item_in_collections(
         self,
@@ -3564,6 +3749,33 @@ class Engram(
             if tool.get("id") == item_id:
                 return "tool", tool
         return None, None
+
+    def _update_knowledge_item(self, item_type: str, item_id: str, mutator) -> dict | None:
+        """Update one lesson, decision, or playbook without stale whole-list writes."""
+        if item_type == "playbook":
+            return self._update_playbook_file_by_id(item_id, mutator)
+        if item_type not in {"lesson", "decision"}:
+            return None
+
+        filename = "lessons.json" if item_type == "lesson" else "decisions.json"
+        path = self._knowledge_dir / filename
+        result_box: dict[str, dict | None] = {}
+
+        def _mutate(entries: list[dict]) -> list[dict]:
+            for idx, entry in enumerate(entries):
+                if entry.get("id") != item_id:
+                    continue
+                updated = mutator(entry)
+                if updated is None:
+                    updated = entry
+                entries[idx] = updated
+                result_box["result"] = updated
+                return entries
+            result_box["result"] = None
+            return entries
+
+        self._update_entries(path, item_type, _mutate)
+        return result_box.get("result")
 
     def _knowledge_title(self, item_type: str | None, item: dict | None) -> str:
         if not item:
@@ -3602,24 +3814,29 @@ class Engram(
 
     def link_knowledge(self, id_a: str, id_b: str) -> dict:
         """Create a bidirectional link between two knowledge items (lessons, decisions, or playbooks)."""
-        lessons, decisions, playbooks = self._read_link_collections()
-        type_a, item_a = self._find_item_in_collections(id_a, lessons, decisions, playbooks)
-        type_b, item_b = self._find_item_in_collections(id_b, lessons, decisions, playbooks)
+        type_a, item_a = self._find_item_by_id(id_a)
+        type_b, item_b = self._find_item_by_id(id_b)
 
-        if item_a is None:
+        if item_a is None or type_a not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {id_a}"}
-        if item_b is None:
+        if item_b is None or type_b not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {id_b}"}
 
-        if id_b not in item_a["related_ids"]:
-            item_a["related_ids"].append(id_b)
-        if id_a not in item_b["related_ids"]:
-            item_b["related_ids"].append(id_a)
+        def _add_related(target_id: str):
+            def _mutate(entry: dict) -> dict:
+                related_ids = list(entry.get("related_ids") or [])
+                if target_id not in related_ids:
+                    related_ids.append(target_id)
+                entry["related_ids"] = related_ids
+                return entry
+            return _mutate
 
-        # Only write back playbooks that were modified
-        modified_pbs = [pb for pb in playbooks
-                        if pb.get("id") in (id_a, id_b)]
-        self._write_link_collections(lessons, decisions, modified_pbs or None)
+        updated_a = self._update_knowledge_item(type_a, id_a, _add_related(id_b))
+        updated_b = self._update_knowledge_item(type_b, id_b, _add_related(id_a))
+        if updated_a is None:
+            return {"error": f"Item not found: {id_a}"}
+        if updated_b is None:
+            return {"error": f"Item not found: {id_b}"}
 
         title_a = self._knowledge_title(type_a, item_a)
         title_b = self._knowledge_title(type_b, item_b)
@@ -3627,21 +3844,29 @@ class Engram(
 
     def unlink_knowledge(self, id_a: str, id_b: str) -> dict:
         """Remove the bidirectional link between two knowledge items."""
-        lessons, decisions, playbooks = self._read_link_collections()
-        type_a, item_a = self._find_item_in_collections(id_a, lessons, decisions, playbooks)
-        type_b, item_b = self._find_item_in_collections(id_b, lessons, decisions, playbooks)
+        type_a, item_a = self._find_item_by_id(id_a)
+        type_b, item_b = self._find_item_by_id(id_b)
 
-        if item_a is None:
+        if item_a is None or type_a not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {id_a}"}
-        if item_b is None:
+        if item_b is None or type_b not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {id_b}"}
 
-        item_a["related_ids"] = [item_id for item_id in item_a["related_ids"] if item_id != id_b]
-        item_b["related_ids"] = [item_id for item_id in item_b["related_ids"] if item_id != id_a]
+        def _remove_related(target_id: str):
+            def _mutate(entry: dict) -> dict:
+                entry["related_ids"] = [
+                    item_id for item_id in (entry.get("related_ids") or [])
+                    if item_id != target_id
+                ]
+                return entry
+            return _mutate
 
-        modified_pbs = [pb for pb in playbooks
-                        if pb.get("id") in (id_a, id_b)]
-        self._write_link_collections(lessons, decisions, modified_pbs or None)
+        updated_a = self._update_knowledge_item(type_a, id_a, _remove_related(id_b))
+        updated_b = self._update_knowledge_item(type_b, id_b, _remove_related(id_a))
+        if updated_a is None:
+            return {"error": f"Item not found: {id_a}"}
+        if updated_b is None:
+            return {"error": f"Item not found: {id_b}"}
 
         title_a = self._knowledge_title(type_a, item_a)
         title_b = self._knowledge_title(type_b, item_b)
