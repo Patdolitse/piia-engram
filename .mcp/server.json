@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Patdolitse/piia-engram",
   "title": "piia-engram",
-  "description": "Local-first AI identity for MCP coding tools. User-approved lessons, decisions, and context.",
+  "description": "Local-first AI identity for MCP coding tools. Lessons, decisions, and context you control.",
   "repository": {
     "url": "https://github.com/Patdolitse/piia-engram",
     "source": "github"
   },
-  "version": "3.52.0",
+  "version": "3.53.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "piia-engram",
-      "version": "3.52.0",
+      "version": "3.53.0",
       "transport": {
         "type": "stdio"
       }

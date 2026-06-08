@@ -2,13 +2,13 @@
 
 This page is a **factual** comparison of where Engram sits in the AI-memory space. It is **not** a marketing pitch — we link to each project's own docs and call out where they're stronger than us.
 
-> Last reviewed: 2026-05-31. We re-check this each minor release. If you spot an inaccuracy, please open an issue.
+> Last reviewed: 2026-06-08. We re-check this each minor release. If you spot an inaccuracy, please open an issue.
 
 ---
 
 ## The space, in one sentence
 
-A common approach to "AI memory" is to store **what the agent did**. Engram takes the other angle: it stores **who the user is** — identity, preferences, quality standards, and lessons that survive across every tool the user ever uses. AI proposes knowledge; you approve what becomes permanent.
+A common approach to "AI memory" is to store **what the agent did**. Engram takes the other angle: it stores **who the user is** — identity, preferences, quality standards, and lessons that survive across every tool the user ever uses. AI proposes knowledge; high-risk items are staged for your review, and everything stays visible, editable, and reversible.
 
 If you only need a single agent to remember its own conversations, you don't need Engram. If you want your identity to follow you from Claude Code to Cursor to Codex without re-training each one, Engram is built for that.
 
@@ -60,7 +60,7 @@ Tools that store the **user's** identity, preferences, and accumulated knowledge
 
 | Project | Stars | Storage | Governance | Unique angle |
 |---|---|---|---|---|
-| **piia-engram** | (this project) | Local JSON | **staging → verified** (user approves) | Identity layer: lessons, decisions, playbooks |
+| **piia-engram** | (this project) | Local JSON | **risk-gated staging → verified** (high-risk needs approval; all reversible) | Identity layer: lessons, decisions, playbooks |
 | [OpenMemory](https://mem0.ai/openmemory) | Mem0 ecosystem | Local-first MCP memory | Memory controls in app | Cross-client memory layer for coding agents |
 | [Gentleman Engram](https://github.com/Gentleman-Programming/engram) | 3.7k | SQLite + FTS5 | None | Go single binary, 8+ tools |
 | [mcp-memory-service](https://github.com/doobidoo/mcp-memory-service) | 1.8k | SQLite / vector / KG | Weak | 14+ client support |
@@ -70,7 +70,7 @@ Tools that store the **user's** identity, preferences, and accumulated knowledge
 
 *\* monorepo star count; individual memory server is one of many packages*
 
-**This is where piia-engram lives.** Among the projects we've surveyed, piia-engram makes **staging → verified** the central data model across tools — knowledge proposed by the AI lands in a review tier and only becomes permanent after the user approves it. OpenMemory is the closest direct product comparison for a local-first MCP memory layer; piia-engram's narrower angle is the user-owned identity layer: preferences, standards, lessons, decisions, and playbooks that remain portable across tools.
+**This is where piia-engram lives.** Among the projects we've surveyed, piia-engram makes a **risk-gated staging → verified** model the central data model across tools: low/medium-risk knowledge is auto-verified with an audit entry, while high-risk items (and unsupervised background or LLM-extracted writes) land in a review tier for your approval. Everything stays visible, editable, and reversible, and a future opt-in strict mode can route *all* writes to review. OpenMemory is the closest direct product comparison for a local-first MCP memory layer; piia-engram's narrower angle is the user-owned identity layer: preferences, standards, lessons, decisions, and playbooks that remain portable across tools.
 
 **Naming note:** [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram) is an unrelated project. It is a single Go binary with SQLite + FTS5, MCP/HTTP/CLI/TUI surfaces, and a different product shape. piia-engram is the Python package on PyPI and the user-owned identity layer described here; the two projects are not affiliated.
 
@@ -153,7 +153,7 @@ We believe in honest positioning. Here's where other tools beat us today:
 
 - **No vector embeddings.** We use character n-gram + alias tokenization for similarity. This is fast, deterministic, works offline, and handles CJK well. It's tuned for a personal-identity store, not a large document corpus — see [Scale & retention](#scale--retention) for the sizing detail.
 - **No cloud storage in core.** There is no Engram Cloud and no managed identity or knowledge store. **Usage statistics are off by default** — users must explicitly opt in during `engram setup` or with `engram telemetry on`. Local telemetry writes anonymous aggregated counts (tool names + call counts, knowledge totals, Engram version) to `~/.engram/telemetry.log` and makes no network requests by itself. Remote telemetry (`engram telemetry remote on`) and weekly feedback (`engram telemetry feedback on`) are separate explicit opt-ins and send only count-only / metadata-only payloads. Identity content, prompts, project paths, file paths, credentials, free-text content, error text, stack traces, and stable cross-day user IDs are not collected. The optional `read_web_content` tool makes outbound HTTP only when explicitly invoked for a URL. MCP transport itself is stdio or self-hosted HTTP.
-- **No automatic "agent self-edits the memory."** The agent can call `add_lesson` / `add_decision` / `extract_session_insights`, but new items land in the `staging` tier. They only become `verified` when the user explicitly promotes them via the review page. This is a deliberate choice against the failure mode where an agent hallucinates a "remembered fact."
+- **No silent, unauditable memory writes.** The agent can call `add_lesson` / `add_decision` / `extract_session_insights`, and every write passes through a risk gate: low/medium-risk items are auto-verified with an audit entry, while high-risk items are held in `staging` for your approval. Unsupervised background writeback and LLM-extracted suggestions are forced to `staging` regardless of risk and cannot self-label as `verified`. Everything is visible, editable, and reversible from the review page, and an opt-in strict mode can route *all* writes to review. This guards against the failure mode where an agent hallucinates a "remembered fact."
 - **No team / multi-user model.** Engram is one person × many tools. If you need many people × many tools, you want something else.
 
 ---

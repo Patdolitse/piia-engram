@@ -6,9 +6,22 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
-## [Unreleased]
+## [3.53.0] - 2026-06-08
+
+### 新增
+- **诚实头对头对比文**（`docs/honest-comparison.md` + `.zh-CN.md`）——中英双语叙事版
+  对比 vs mem0、Basic Memory、ByteRover。每条竞品声明标日期、脚注竞品自己的公开文档
+  （快照 2026-06-08）。含"对方赢在哪"、"我们更弱的地方"和诚实选型指南。
+  为 `docs/comparison.md` 的配套深度版。
 
 ### 变更
+- **定位重写（README 第一屏）**——以治理开头（"看得见、可改可删、可覆盖"），连续性退为
+  底座。诚实纠偏：从所有公开文案、元数据、守卫测试中移除过度承诺用语（"只记你确认过的"
+  "记什么由你说了算"等）。
+- **已发布元数据诚实纠偏**——`.mcp/server.json`、`pyproject.toml`、
+  `.claude-plugin/plugin.json`、`.cursor-plugin/plugin.json` 描述改为诚实能力框架
+  （"AI 建议；高风险先等你审查；全部可见可逆"）。
+- **守卫测试反转**——`test_public_positioning.py` 现断言诚实措辞，禁止过度承诺短语。
 - **许可证从 Apache-2.0 变更为 AGPL-3.0-or-later。** 开源核心仍是可自由使用、
   修改、自部署的自由软件；联网或托管形式的再分发须以相同许可证开放对应源代码
   （AGPL 第 13 条）。3.52.0 及更早版本仍为 Apache-2.0，本变更自后续版本起生效。

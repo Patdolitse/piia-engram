@@ -6,9 +6,27 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.53.0] - 2026-06-08
+
+### Added
+- **Honest head-to-head comparison** (`docs/honest-comparison.md` + `.zh-CN.md`)
+  — bilingual narrative comparison vs mem0, Basic Memory, and ByteRover.
+  Every competitor claim is dated and footnoted to their own public docs
+  (snapshot 2026-06-08). Includes "Where they win," "Where we are weaker,"
+  and an honest decision guide. Companion to `docs/comparison.md`.
 
 ### Changed
+- **Positioning rewrite (README first screen)** — lead with governance
+  ("see, edit, and override"), not just continuity. Cross-tool portability
+  moves to supporting pillar. Honesty-corrected: removed overclaim phrases
+  ("asks before it remembers," "only what you approve") from all public copy,
+  metadata, and guard tests.
+- **Published metadata honesty correction** — `.mcp/server.json`,
+  `pyproject.toml`, `.claude-plugin/plugin.json`, `.cursor-plugin/plugin.json`
+  descriptions rewritten to the honest capability frame ("AI proposes;
+  high-risk items wait for your review; everything visible and reversible").
+- **Guard test reversal** — `test_public_positioning.py` now asserts the
+  honest wording and bans the overclaim phrases.
 - **License changed from Apache-2.0 to AGPL-3.0-or-later.** The open-source
   core remains free software you can use, modify, and self-host. Network or
   hosted redistribution must make the corresponding source available under the

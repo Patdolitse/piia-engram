@@ -5,11 +5,11 @@
 
 # piia-engram
 
-### Local identity and memory for MCP-compatible coding tools.
+### Local-first AI memory you can see, edit, and override.
 
-### AI suggests lessons and decisions. You approve what becomes durable.
+### Your identity and standards — portable across every MCP coding tool.
 
-**Tell AI once how you work. piia-engram stores your identity, standards, lessons, decisions, and project context as local files you own. Claude Code, Codex, Cursor, Windsurf, and MCP-compatible tools can start from the same approved context. No cloud account, no vendor lock-in, no hidden memory you cannot inspect.**
+**Tell AI once how you work. piia-engram stores your identity, standards, lessons, decisions, and project context as local files you own. Claude Code, Codex, Cursor, Windsurf, and MCP-compatible tools can start from the same approved context. AI proposes; high-risk items wait for your review, and everything stays visible and reversible. No cloud account, no vendor lock-in, no hidden memory you cannot inspect.**
 
 `cross-tool memory` | `local-first` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `MCP`
 

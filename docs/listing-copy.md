@@ -10,7 +10,7 @@ One line:
 
 Expanded:
 
-> piia-engram keeps approved preferences, lessons, decisions, playbooks, and project context portable across MCP-compatible coding tools. It stores data locally, requires no cloud account, and keeps AI-suggested memories reviewable before they become durable.
+> piia-engram keeps your preferences, lessons, decisions, playbooks, and project context portable across MCP-compatible coding tools. It stores data locally, requires no cloud account, and keeps every memory visible, editable, and reversible. AI proposes; high-risk items are staged for your review before they are trusted.
 
 Do not position piia-engram as:
 
@@ -18,27 +18,28 @@ Do not position piia-engram as:
 - a replacement for AGENTS.md, CLAUDE.md, or editor rules;
 - a general vector database;
 - a team knowledge base;
-- a promise that unsupported tools will remember everything automatically.
+- a promise that unsupported tools will remember everything automatically;
+- a claim that *every* memory is user-approved before it is stored. The default is risk-gated: low/medium-risk knowledge is auto-verified, while high-risk items (and unsupervised background or LLM-extracted writes) are staged for review. A future opt-in strict mode can route all writes to review.
 
 ## English copy
 
 ### One-line description
 
-Local-first personal AI identity and memory for MCP-compatible coding tools, with user-approved lessons, decisions, and project context.
+Local-first personal AI identity and memory for MCP-compatible coding tools — lessons, decisions, and project context you can see, edit, and override.
 
 ### Short listing
 
-piia-engram is a local-first personal AI identity layer for MCP-compatible coding tools. It stores your preferences, quality standards, lessons, decisions, playbooks, and project snapshots as user-owned local files. AI tools can propose knowledge, but durable memory stays reviewable and user-approved.
+piia-engram is a local-first personal AI identity layer for MCP-compatible coding tools. It stores your preferences, quality standards, lessons, decisions, playbooks, and project snapshots as user-owned local files. AI tools propose knowledge; high-risk items are staged for your review, and every memory stays visible, editable, and reversible.
 
 ### Medium listing
 
-piia-engram gives AI coding tools a shared, user-owned identity layer. Instead of re-explaining your preferences, quality bar, past lessons, and project decisions in every new chat, store them once as local JSON/Markdown under `~/.engram/`. Claude Code, Codex, Cursor, Windsurf, Claude Desktop, and other MCP-compatible tools can start from the same approved context. New AI suggestions go to review before becoming verified memory. No cloud account is required.
+piia-engram gives AI coding tools a shared, user-owned identity layer. Instead of re-explaining your preferences, quality bar, past lessons, and project decisions in every new chat, store them once as local JSON/Markdown under `~/.engram/`. Claude Code, Codex, Cursor, Windsurf, Claude Desktop, and other MCP-compatible tools can start from the same approved context. AI proposes new knowledge; high-risk items wait for your review, and everything stays visible and reversible. No cloud account is required.
 
 ### Long listing
 
 piia-engram is a local-first personal AI identity and memory layer for developers who use more than one AI coding tool. Native memories in Claude Code, Codex, Cursor, and Windsurf are useful, but they are usually scoped to one product or workspace. piia-engram keeps the stable parts of you above those tools: your communication preferences, coding standards, lessons learned, key decisions, playbooks, and project snapshots.
 
-All core identity and knowledge data lives on your machine under `~/.engram/` as JSON/Markdown files. AI tools can propose new lessons or decisions, but durable memory follows a staging-to-verified workflow so the user remains in control. The project is MCP-native, AGPL-3.0, and designed to complement AGENTS.md, CLAUDE.md, editor rules, and agent memory systems such as Mem0, Zep, and Letta.
+All core identity and knowledge data lives on your machine under `~/.engram/` as JSON/Markdown files. AI tools can propose new lessons or decisions; high-risk items follow a staging-to-verified workflow that waits for your review, and every memory stays visible, editable, and reversible, so the user remains in control. The project is MCP-native, AGPL-3.0, and designed to complement AGENTS.md, CLAUDE.md, editor rules, and agent memory systems such as Mem0, Zep, and Letta.
 
 Use piia-engram when you want Claude Code, Codex, Cursor, Windsurf, Claude Desktop, or another MCP client to begin from the same approved understanding of who you are and how you work.
 
@@ -46,7 +47,7 @@ Use piia-engram when you want Claude Code, Codex, Cursor, Windsurf, Claude Deskt
 
 ### 短描述
 
-piia-engram 是本地优先的个人 AI 身份层，让你的偏好、经验、决策和项目上下文在 Claude Code、Codex、Cursor、Windsurf 以及 MCP 工具之间延续。AI 可以建议记忆，只有你确认后才成为长期事实。
+piia-engram 是本地优先的个人 AI 身份层，让你的偏好、经验、决策和项目上下文在 Claude Code、Codex、Cursor、Windsurf 以及 MCP 工具之间延续。AI 建议记忆，高风险的先等你审查，全部看得见、可改可删、可回退。
 
 ### 中描述
 
@@ -60,7 +61,7 @@ Use the project description from `pyproject.toml` for the metadata line. The lon
 
 Recommended metadata description:
 
-> Local-first personal AI identity and memory for MCP-compatible coding tools, with user-approved lessons, decisions, playbooks, and project context.
+> Local-first personal AI identity and memory for MCP-compatible coding tools — lessons, decisions, playbooks, and project context you can see, edit, and override.
 
 ### MCP Registry
 
@@ -68,7 +69,7 @@ The registry description should be short and literal. Avoid slogans that imply u
 
 Recommended `.mcp/server.json` description (the MCP Registry currently requires this field to be 100 characters or fewer):
 
-> Local-first AI identity for MCP coding tools. User-approved lessons, decisions, and context.
+> Local-first AI identity for MCP coding tools. Lessons, decisions, and context you control.
 
 ### mcpservers.org
 
@@ -76,7 +77,7 @@ Use the short listing plus three trust bullets:
 
 - Local files under `~/.engram/`.
 - No cloud account required.
-- AI suggestions stay reviewable before becoming verified memory.
+- High-risk items are staged for your review; every memory stays visible and reversible.
 
 ### GitHub release notes
 
@@ -114,7 +115,7 @@ Suggested keywords:
 - Codex
 - Cursor
 - Windsurf
-- user-approved memory
+- user-controlled memory
 - developer preferences
 - lessons learned
 - decisions

@@ -73,6 +73,8 @@ docs/benchmarks/context-governance-eval-v1.md
 docs/benchmarks/recall-eval-v1.md
 docs/benchmarks/memory-eval-suite-v1.md
 docs/comparison.md
+docs/honest-comparison.md
+docs/honest-comparison.zh-CN.md
 docs/context-governance.md
 docs/cross-tool-continuity-demo.md
 docs/cross-tool-continuity-proof.md

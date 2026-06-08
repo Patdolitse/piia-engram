@@ -44,7 +44,11 @@ def test_mcp_registry_description_stays_within_limit():
 
     assert len(server["description"]) <= 100
     assert "every AI tool" not in server["description"].lower()
-    assert "User-approved" in server["description"]
+    # Honest risk-gated model: the store is user-controllable (see/edit/override,
+    # high-risk gated), NOT a blanket "user-approved" claim. Guard the honest
+    # wording and forbid the overclaim from creeping back into published metadata.
+    assert "you control" in server["description"]
+    assert "User-approved" not in server["description"]
 
 
 def test_pyproject_description_uses_current_positioning():
@@ -55,6 +59,8 @@ def test_pyproject_description_uses_current_positioning():
     assert "MCP-compatible coding tools" in desc
     assert "One memory" not in desc
     assert "every AI tool" not in desc.lower()
+    # Risk-gated, not blanket-approved: do not reintroduce "user-approved".
+    assert "user-approved" not in desc.lower()
 
 
 def test_public_package_metadata_uses_current_version():
@@ -100,6 +106,19 @@ def test_public_positioning_docs_do_not_reintroduce_overclaims():
         "完整上下文",
         "唯一审批",
         "绝对安全",
+        # Honest risk-gated model: low/medium auto-verify, only high-risk is
+        # staged for review. Do not reintroduce a blanket "you approve
+        # everything" claim — it contradicts docs/trust.md §"AI suggests;
+        # you review what matters" and the _apply_write_risk_gate behavior.
+        "asks before it remembers",
+        "只记你确认过的",
+        "记什么由你说了算",
+        # Blanket "everything becomes durable only after you approve" overclaims
+        # that used to live in comparison.md / metadata. The real model is
+        # risk-gated (low/medium auto-verify), so these must not return.
+        "you approve what becomes permanent",
+        "only becomes permanent after the user approves",
+        "you decide what becomes permanent",
     ]
     for phrase in forbidden:
         assert phrase not in text
