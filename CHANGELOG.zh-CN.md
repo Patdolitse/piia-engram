@@ -8,7 +8,20 @@
 
 ## [Unreleased]
 
+## [3.52.0] - 2026-06-08
+
 ### 新增
+- **新写入按风险分级的审批门（N3）**：新写入的经验/决策会先做风险评估。低/中风险
+  条目自动吸收为 `verified`（approved，写审计），下次会话立即可用；只有高风险条目
+  （凭证、shell 命令、权限规则、MCP 配置）才进 staging 待人工审。无人监督的回写钩子
+  （如 Cursor）无论如何强制 staging，LLM 自动提取的条目不能自标 `verified`，
+  调用方显式 pin 的 tier 会被尊重。`get_resume_brief` 在 handoff 顶部浮现
+  `pending_review` 计数（含高风险条数）。
+- **空库首次连接自动引导（auto-bootstrap）**：对空库的首次 `get_user_context` /
+  `get_resume_brief` 会只读扫描已有规则文件（CLAUDE.md / AGENTS.md / .cursorrules）
+  并导入，省掉一步手动设置。通过 `.bootstrap_done` 哨兵保证最多执行一次。
+- **setup 语言选择**：`engram setup` 现在以数字选项的 中文 / English 语言选择开场，
+  向导全程渲染双语文案，不跟随系统 locale。
 - **Context Governance 提案型能力**：新增本地 proposal-only 的上下文治理辅助能力，
   覆盖 context usage report、role-scoped recall、Safe Context / Lockdown
   转换、freshness / conflict 提案、上下文压缩 replay packet，以及外部证据页面草稿。
@@ -18,19 +31,23 @@
   和 evidence 提案的统一 owner-gated 预览入口。
 
 ### 变更
+- **setup 外部配置默认改为"确认后写入"**：`engram setup` 现在会检测受支持的客户端、
+  列出将要修改的具体配置文件路径，并仅在一次按键确认后才写入 MCP 连接（每次写前先备份）。
+  选"否"则一字不改。`--apply-external-config` 保留为跳过确认的非交互 / CI 路径。
+- **公开信任叙事对齐新行为**：README（中英）、SECURITY、trust 文档和双语 quickstart
+  现在如实描述"确认后写入"的外部配置流程与按风险分级的审批模型，同时保留真正成立的
+  保证（写前备份、拒绝=零改动、ledger 路径脱敏、高风险仍需人工批准）。
 - **MCP 工具面语义收口**：在公开文档、技能引用、Glama 元数据、CLI help 和 MCP
-  docstring 中统一说明：Tier-1 / core 表示“高频入口、节省上下文预算”，不等于
-  “只读安全集合”。owner export、owner/admin、可选本地集成、internal/dogfood
+  docstring 中统一说明：Tier-1 / core 表示"高频入口、节省上下文预算"，不等于
+  "只读安全集合"。owner export、owner/admin、可选本地集成、internal/dogfood
   和 legacy maintenance 工具面现在都有明确标注。
 
 ### 修复
-- **CLI 工具数量文案**：将 CLI help 对齐到当前 84 个 MCP tools、17 core / 67
-  advanced 的真实拆分。
 - **工具面漂移保护**：新增测试锁定 owner/export 与 owner/admin schema 标记、
   `get_identity_card` 的 core-but-export 分类、本地工具图谱分类，以及 legacy
   Playbook 维护工具分类。
-- **公开事实刷新**：当前本地事实更新为 2953 passed、2 skipped、2955 collected，
-  MCP 工具数为 84 个（17 core / 67 advanced）。
+- **公开事实刷新**：当前本地事实更新为 3045 passed、2 skipped、3047 collected，
+  MCP 工具数为 87 个（17 core / 70 advanced）。
 
 ## [3.51.2] - 2026-06-06
 

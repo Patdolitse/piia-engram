@@ -8,7 +8,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [3.52.0] - 2026-06-08
+
 ### Added
+- **Risk-tiered write gate for new knowledge (N3)** - new lessons and decisions
+  are now assessed for risk on write. Low/medium-risk entries are auto-absorbed
+  as `verified` (approved, audit-logged) so they are available to the next
+  session immediately; only high-risk entries (credentials, shell commands,
+  permission rules, MCP config) go to staging for human review. Unsupervised
+  writeback hooks (e.g. Cursor) force staging regardless, LLM-extracted entries
+  cannot self-label `verified`, and an explicitly pinned tier is honored.
+  `get_resume_brief` surfaces a `pending_review` count (including high-risk) at
+  the top of the handoff.
+- **Auto-bootstrap on first empty-store connection** - the first
+  `get_user_context` / `get_resume_brief` against an empty store reads existing
+  rule files (CLAUDE.md / AGENTS.md / .cursorrules) read-only and imports them,
+  removing a manual setup step. Runs at most once via a `.bootstrap_done`
+  sentinel.
+- **Setup language picker** - `engram setup` now starts with a numbered
+  中文 / English language choice; the wizard renders bilingual strings for the
+  whole flow, independent of system locale.
 - **Context governance proposal helpers** - added local, proposal-only context
   governance helpers for context usage reporting, role-scoped recall, safe
   context / lockdown transforms, freshness and conflict proposals, compression
@@ -19,6 +38,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
   for safe-context, freshness/conflict, replay, and evidence proposals.
 
 ### Changed
+- **Setup external-config default is consent-then-write** - `engram setup` now
+  detects supported clients, lists the exact config file paths it will modify,
+  and writes the MCP connection only after a one-keystroke confirmation (each
+  write is backed up first). Choosing "no" changes nothing.
+  `--apply-external-config` is retained as the non-interactive / CI path that
+  skips the prompt.
+- **Public trust narrative aligned with new behavior** - README (EN/zh),
+  SECURITY, trust docs, and the bilingual quickstart now describe consent-then-
+  write external config and the risk-tiered approval model honestly, while
+  retaining the genuine guarantees (backup-before-write, decline = zero changes,
+  ledger path redaction, high-risk still needs human approval).
 - **MCP tool-surface semantics** - clarified across public docs, skill
   references, Glama metadata, CLI help, and MCP docstrings that Tier-1 / core
   means "high-frequency and context-budget friendly", not "read-only". Owner
@@ -26,14 +56,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
   surfaces are now labelled explicitly.
 
 ### Fixed
-- **CLI tool-count copy** - aligned CLI help with the current 84 total MCP
-  tools and the 17 core / 67 advanced split.
 - **Tool-surface drift guards** - added tests that pin owner/export and
   owner/admin schema markers, `get_identity_card` as a core-but-export surface,
   local tool registry classifications, and legacy Playbook maintenance tools.
-- **Public facts refreshed** - current local facts now report 2953 passed,
-  2 skipped, 2955 collected tests, and 84 total MCP tools
-  (17 core / 67 advanced).
+- **Public facts refreshed** - current local facts now report 3045 passed,
+  2 skipped, 3047 collected tests, and 87 total MCP tools
+  (17 core / 70 advanced).
 
 ## [3.51.2] - 2026-06-06
 
