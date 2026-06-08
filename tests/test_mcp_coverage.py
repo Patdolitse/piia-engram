@@ -532,8 +532,12 @@ class TestMemoryStore:
         parsed = json.loads(result2)
         assert parsed.get("status") == "duplicate"
 
-    def test_mcp_extract_session_insights_persists_staging_tier(self, eng: Engram):
-        """MCP wrapper extract_session_insights 落库的知识也应为 staging。"""
+    def test_mcp_extract_session_insights_low_risk_absorbs_to_verified(self, eng: Engram):
+        """MCP wrapper extract_session_insights 是有人在场的主路径，走风险门：
+
+        低风险内容直接吸收为 verified（不再按来源强制 staging）。无人监督的
+        后台回写钩子才用 force_staging 强制进 staging。
+        """
         result = _run(mcp_server.extract_session_insights(
             summary="我们决定使用 Redis 做缓存层，因为延迟最低。",
             source_tool="test",
@@ -544,7 +548,8 @@ class TestMemoryStore:
         decisions = eng.get_decisions(limit=50)
         found = [d for d in decisions if "Redis" in d.get("title", "")]
         assert found
-        assert found[0].get("tier") == "staging"
+        assert found[0].get("risk_level") == "low"
+        assert found[0].get("tier") == "verified"
 
 
 # ---------------------------------------------------------------------------

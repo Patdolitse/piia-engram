@@ -407,7 +407,7 @@ class ContextMixin:
                     "choice": "",
                     "domain": item_domain,
                     "source_tool": source_tool,
-                    "tier": "staging",
+                    # tier decided by risk gate: low/medium auto-absorb, high->staging
                     "extraction": _make_extraction_metadata(
                         "notes", line, trigger_reason, source_tool, 0.75, quality,
                     ),
@@ -435,7 +435,7 @@ class ContextMixin:
                     "summary": line,
                     "domain": item_domain,
                     "source_tool": source_tool,
-                    "tier": "staging",
+                    # tier decided by risk gate: low/medium auto-absorb, high->staging
                     "extraction": _make_extraction_metadata(
                         "notes", line, trigger_reason, source_tool, 0.75, quality,
                     ),
@@ -476,8 +476,16 @@ class ContextMixin:
         self,
         summary: str,
         source_tool: str = "",
+        force_staging: bool = False,
     ) -> dict:
-        """Extract lessons and decisions from a free-form session summary."""
+        """Extract lessons and decisions from a free-form session summary.
+
+        By default the risk-based write gate decides each item's tier
+        (low/medium auto-absorb to verified, high -> staging). Set
+        ``force_staging=True`` for fully-unsupervised background capture paths
+        (e.g. the opt-in cross-tool writeback hooks) where every captured item
+        should land in staging for explicit owner review regardless of risk.
+        """
         if not summary or not summary.strip():
             return {
                 "saved_lessons": 0,
@@ -545,16 +553,19 @@ class ContextMixin:
 
             item_domain = self._infer_domain(sentence)
             if is_decision:
-                result = self.add_decision({
+                _payload = {
                     "title": sentence,
                     "choice": "",
                     "domain": item_domain,
                     "source_tool": source_tool,
-                    "tier": "staging",
+                    # tier decided by risk gate: low/medium auto-absorb, high->staging
                     "extraction": _make_extraction_metadata(
                         "session_insights", sentence, trigger_reason, source_tool, 0.75, quality,
                     ),
-                })
+                }
+                if force_staging:
+                    _payload["tier"] = "staging"
+                result = self.add_decision(_payload)
                 if result.get("status") == "duplicate":
                     duplicates += 1
                     results.append({
@@ -573,15 +584,18 @@ class ContextMixin:
                         "domain": item_domain,
                     })
             else:
-                result = self.add_lesson({
+                _payload = {
                     "summary": sentence,
                     "domain": item_domain,
                     "source_tool": source_tool,
-                    "tier": "staging",
+                    # tier decided by risk gate: low/medium auto-absorb, high->staging
                     "extraction": _make_extraction_metadata(
                         "session_insights", sentence, trigger_reason, source_tool, 0.75, quality,
                     ),
-                })
+                }
+                if force_staging:
+                    _payload["tier"] = "staging"
+                result = self.add_lesson(_payload)
                 if result.get("status") == "duplicate":
                     duplicates += 1
                     results.append({
@@ -1483,9 +1497,14 @@ def ingest_extraction(engram: "Engram", extracted: dict,
                 _record_rejected_quality(rejected_quality, quality)
                 continue
             lesson = dict(l)
+            # LLM extraction cannot self-certify trust: strip any tier / state
+            # fields it tried to set so the risk-based write gate is the sole
+            # authority (low/medium auto-absorb to verified, high -> staging).
+            for _untrusted in ("tier", "memory_state", "approval_status", "approval_required"):
+                lesson.pop(_untrusted, None)
             lesson["source_project"] = project_folder
             lesson["source_session"] = session_id
-            lesson["tier"] = "staging"
+            # tier decided by risk gate: low/medium auto-absorb, high->staging
             lesson["extraction"] = _make_extraction_metadata(
                 "llm",
                 str(lesson.get("summary", "")),
@@ -1518,9 +1537,14 @@ def ingest_extraction(engram: "Engram", extracted: dict,
                 _record_rejected_quality(rejected_quality, quality)
                 continue
             decision = dict(d)
+            # LLM extraction cannot self-certify trust: strip any tier / state
+            # fields it tried to set so the risk-based write gate is the sole
+            # authority (low/medium auto-absorb to verified, high -> staging).
+            for _untrusted in ("tier", "memory_state", "approval_status", "approval_required"):
+                decision.pop(_untrusted, None)
             decision["source_project"] = project_folder
             decision["source_session"] = session_id
-            decision["tier"] = "staging"
+            # tier decided by risk gate: low/medium auto-absorb, high->staging
             decision["extraction"] = _make_extraction_metadata(
                 "llm",
                 str(decision.get("question", "")),

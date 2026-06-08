@@ -714,6 +714,41 @@ class ContextStoreMixin:
                         )
         except Exception:
             pass
+        # Cold-start pending-review awareness: under the risk-based write gate,
+        # low/medium-risk memories auto-absorb into verified, while high-risk
+        # ones land in staging awaiting approval. Surface that backlog up front
+        # so the next AI knows there is something to review (and how much of it
+        # is high-risk) without having to call list_pending_staging itself.
+        # Render-only and guarded — never changes what is stored or selected.
+        try:
+            pending_total = 0
+            pending_high = 0
+            for getter in ("get_lessons", "get_decisions"):
+                if not hasattr(self, getter):
+                    continue
+                rows = getattr(self, getter)(
+                    limit=None,
+                    _update_access=False,
+                    _migrate_fields=False,
+                ) or []
+                for item in rows:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("status") != "active":
+                        continue
+                    if item.get("tier") != "staging":
+                        continue
+                    pending_total += 1
+                    if item.get("risk_level") == "high":
+                        pending_high += 1
+            if pending_total > 0:
+                note = f"- **pending_review**: {pending_total} 条待审记忆"
+                if pending_high > 0:
+                    note += f"（含 {pending_high} 条高风险）"
+                note += "，用 list_pending_staging 查看、batch_review_staging 处理"
+                handoff_lines.append(note)
+        except Exception:
+            pass
         sections.insert(0, ("handoff", "\n".join(handoff_lines)))
 
         # ---- Assemble with token budget --------------------------------

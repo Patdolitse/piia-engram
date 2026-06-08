@@ -19,12 +19,19 @@ def _knowledge_counts(engram: Engram) -> tuple[int, int]:
 
 
 def _assert_auto_metadata(engram: Engram) -> None:
-    for item in engram.get_lessons(limit=None, _update_access=False):
-        assert item["tier"] == "staging"
-        assert item["extraction"]["quality_score"] >= 0.55
-        assert item["extraction"]["quality_signals"]
-    for item in engram.get_decisions(limit=None, _update_access=False):
-        assert item["tier"] == "staging"
+    items = (
+        engram.get_lessons(limit=None, _update_access=False)
+        + engram.get_decisions(limit=None, _update_access=False)
+    )
+    for item in items:
+        # Risk-based write gate: high-risk content is review-gated to staging,
+        # everything else auto-absorbs to verified. Tier must track risk level.
+        if item.get("risk_level") == "high":
+            assert item["tier"] == "staging"
+            assert item["approval_status"] == "pending"
+        else:
+            assert item["tier"] == "verified"
+            assert item["approval_status"] == "approved"
         assert item["extraction"]["quality_score"] >= 0.55
         assert item["extraction"]["quality_signals"]
 
@@ -284,7 +291,8 @@ def test_metric_backed_operational_findings_are_kept(tmp_path: Path):
 
     assert result["saved_lessons"] == 1
     lessons = eng.get_lessons(limit=None, _update_access=False)
-    assert lessons[0]["tier"] == "staging"
+    # Low-risk operational finding auto-absorbs to verified under the risk gate.
+    assert lessons[0]["tier"] == "verified"
     signals = lessons[0]["extraction"]["quality_signals"]
     assert "measured_outcome" in signals
     assert "evidence_or_outcome" in signals

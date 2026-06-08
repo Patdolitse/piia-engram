@@ -105,7 +105,9 @@ def main() -> int:
         try:
             from piia_engram.core import Engram
 
-            result = Engram().extract_session_insights(summary, source_tool="cursor")
+            result = Engram().extract_session_insights(
+                summary, source_tool="cursor", force_staging=True
+            )
         except Exception:
             return 0
 

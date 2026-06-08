@@ -17,10 +17,15 @@ def test_hermes_handoff_payload_schema_and_counts(tmp_path: Path) -> None:
         "technical_level": "learning with AI",
     })
     eng.add_lesson({"summary": "verified lesson can be counted", "domain": "workflow"})
+    # Explicit tier=verified is a deliberate seed: the fixture mentions
+    # "approval" (a permission-rule risk flag), which the risk gate would
+    # otherwise route to staging. Pinning verified keeps this an active
+    # decision so the handoff payload has something to surface.
     eng.add_decision({
         "question": "Which release boundary?",
         "choice": "Explicit approval before public actions.",
         "reasoning": "Reasoning stays out of Hermes handoff payload.",
+        "tier": "verified",
     })
 
     payload = hermes_handoff_payload(eng)
@@ -53,10 +58,15 @@ def test_hermes_handoff_payload_redacts_paths_and_reasoning(tmp_path: Path) -> N
         "description": f"Use {secret_path}",
     })
     eng.add_lesson({"summary": f"lesson with {secret_path}", "domain": "private"})
+    # Explicit tier=verified is a deliberate seed: the path contains "secret"
+    # (a credential risk flag), which the risk gate would otherwise route to
+    # staging. Pinning verified keeps the decision active so this test can
+    # assert the handoff payload still redacts the raw path and reasoning.
     eng.add_decision({
         "question": f"Where is the private plan? {secret_path}",
         "choice": "Do not expose raw paths.",
         "reasoning": f"Reasoning mentions {secret_path}",
+        "tier": "verified",
     })
 
     payload = hermes_handoff_payload(eng)

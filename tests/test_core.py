@@ -93,11 +93,14 @@ def test_lesson_gets_trust_mode_metadata(tmp_path: Path):
         "source_tool": "codex",
     })
 
-    assert lesson["memory_state"] == "verified"
-    assert lesson["approval_status"] == "approved"
+    # High-risk content (MCP config + command + external URL) is review-gated:
+    # the risk-based write gate routes it to staging for explicit approval.
+    assert lesson["risk_level"] == "high"
+    assert lesson["memory_state"] == "staging"
+    assert lesson["approval_status"] == "pending"
+    assert lesson["tier"] == "staging"
     assert lesson["provenance"]["source_tool"] == "codex"
     assert lesson["provenance"]["entry_type"] == "lesson"
-    assert lesson["risk_level"] in {"medium", "high"}
     assert "external_url" in lesson["risk_flags"]
     assert "mcp_config" in lesson["risk_flags"]
     assert "command" in lesson["risk_flags"]
@@ -1101,8 +1104,14 @@ def test_ingest_notes_basic(tmp_path: Path):
     assert result["parsed"] == 3
 
 
-def test_ingest_notes_auto_candidates_default_to_staging_with_metadata(tmp_path: Path):
-    """Free-form parsed knowledge is auto-extracted, so it must stay review-gated."""
+def test_ingest_notes_low_risk_auto_candidates_absorb_to_verified(tmp_path: Path):
+    """Low-risk free-form parsed knowledge auto-absorbs to verified.
+
+    Under the risk-based write gate, auto-extracted items are no longer forced
+    to staging by source; only high-risk content (credentials / commands / MCP
+    config / permission rules) is review-gated. Plain low-risk notes flow
+    straight to verified so the store does not sit empty waiting for approval.
+    """
     engram = make_engram(tmp_path)
 
     result = engram.ingest_notes(
@@ -1120,8 +1129,8 @@ def test_ingest_notes_auto_candidates_default_to_staging_with_metadata(tmp_path:
     lesson = next(l for l in lessons if "pytest fixtures" in l.get("summary", ""))
     decision = next(d for d in decisions if "uv" in d.get("question", d.get("title", "")))
 
-    assert lesson["tier"] == "staging"
-    assert decision["tier"] == "staging"
+    assert lesson["tier"] == "verified"
+    assert decision["tier"] == "verified"
     assert lesson["extraction"]["method"] == "notes"
     assert decision["extraction"]["method"] == "notes"
     assert lesson["extraction"]["evidence_span"].startswith("learned that")
@@ -2475,21 +2484,27 @@ def test_ingest_extraction_applies_lessons_and_decisions(tmp_path: Path):
     assert any("测试框架" in d.get("question", d.get("title", "")) for d in decisions)
 
 
-def test_ingest_extraction_forces_auto_items_to_staging_with_metadata(tmp_path: Path):
-    """LLM extraction cannot self-certify knowledge as verified."""
+def test_ingest_extraction_cannot_self_certify_high_risk_as_verified(tmp_path: Path):
+    """LLM extraction cannot self-certify knowledge as verified.
+
+    The LLM-supplied ``tier`` is stripped before the risk-based write gate
+    runs, so a high-risk item the LLM marked ``verified`` is still routed to
+    staging for explicit approval. (Low-risk items legitimately auto-absorb to
+    verified — that is covered separately; this test guards the bypass vector.)
+    """
     engram = make_engram(tmp_path)
     extracted = {
         "lessons": [
             {
-                "summary": "never deploy without a rollback rehearsal",
+                "summary": "rotate the production api_key by running the deploy command",
                 "domain": "release",
                 "tier": "verified",
             },
         ],
         "decisions": [
             {
-                "question": "Which release gate should we use?",
-                "choice": "rollback rehearsal",
+                "question": "Where should the deploy bot read its server_key?",
+                "choice": "paste the api_key and run command: curl the prod endpoint",
                 "tier": "verified",
             },
         ],
@@ -2499,15 +2514,20 @@ def test_ingest_extraction_forces_auto_items_to_staging_with_metadata(tmp_path: 
 
     lesson = next(
         l for l in engram.get_lessons(limit=None, _update_access=False)
-        if "rollback rehearsal" in l.get("summary", "")
+        if "api_key" in l.get("summary", "")
     )
     decision = next(
         d for d in engram.get_decisions(limit=None, _update_access=False)
-        if "release gate" in d.get("question", "")
+        if "server_key" in d.get("question", "")
     )
 
+    # LLM said "verified" but the gate overrides high-risk content -> staging.
+    assert lesson["risk_level"] == "high"
+    assert decision["risk_level"] == "high"
     assert lesson["tier"] == "staging"
     assert decision["tier"] == "staging"
+    assert lesson["approval_status"] == "pending"
+    assert decision["approval_status"] == "pending"
     assert lesson["source_project"] == str(tmp_path)
     assert lesson["source_session"] == "session-123"
     assert lesson["extraction"]["method"] == "llm"
@@ -6807,8 +6827,8 @@ def test_playbook_auto_extract_kill_switch(tmp_path: Path):
 # ── Provider 兼容层测试 ─────────────────────────────────────────────────
 
 
-def test_extract_session_insights_saves_lesson_as_staging(tmp_path: Path):
-    """自动提取的 lesson 应默认 tier=staging，不直接进 verified。"""
+def test_extract_session_insights_low_risk_lesson_absorbs_to_verified(tmp_path: Path):
+    """低风险自动提取的 lesson 由风险门直接吸收为 verified（不再按来源强制 staging）。"""
     engram = make_engram(tmp_path)
     summary = "注意：部署前必须检查环境变量是否齐全，否则会启动失败。"
     engram.extract_session_insights(summary, source_tool="test")
@@ -6816,11 +6836,12 @@ def test_extract_session_insights_saves_lesson_as_staging(tmp_path: Path):
     lessons = engram.get_lessons(limit=50)
     found = [l for l in lessons if "环境变量" in l.get("summary", "")]
     assert found, "lesson should be extracted"
-    assert found[0].get("tier") == "staging"
+    assert found[0].get("risk_level") == "low"
+    assert found[0].get("tier") == "verified"
 
 
-def test_extract_session_insights_saves_decision_as_staging(tmp_path: Path):
-    """自动提取的 decision 应默认 tier=staging，不直接进 verified。"""
+def test_extract_session_insights_low_risk_decision_absorbs_to_verified(tmp_path: Path):
+    """低风险自动提取的 decision 由风险门直接吸收为 verified（不再按来源强制 staging）。"""
     engram = make_engram(tmp_path)
     summary = "我们决定采用 SQLite 作为本地搜索索引，因为零依赖。"
     engram.extract_session_insights(summary, source_tool="test")
@@ -6828,7 +6849,8 @@ def test_extract_session_insights_saves_decision_as_staging(tmp_path: Path):
     decisions = engram.get_decisions(limit=50)
     found = [d for d in decisions if "SQLite" in d.get("title", "")]
     assert found, "decision should be extracted"
-    assert found[0].get("tier") == "staging"
+    assert found[0].get("risk_level") == "low"
+    assert found[0].get("tier") == "verified"
 
 
 def test_search_knowledge_filters_by_domain(tmp_path: Path):

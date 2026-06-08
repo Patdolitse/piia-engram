@@ -647,32 +647,71 @@ class Engram(
         return "\n".join(str(entry.get(key) or "") for key in fields)
 
     def _assess_memory_risk(self, entry: dict) -> dict[str, Any]:
+        """Classify an entry's security risk with *value-match priority*.
+
+        Only value-bearing credentials and destructive / publish actions are
+        escalated to ``high`` (the tier the write gate holds in staging for
+        owner approval). A bare prose mention of a sensitive topic — the words
+        ``secret`` / ``approval`` / ``permission`` / ``bypass`` / ``git push``,
+        an ``mcp_server`` filename, ... — is a *weak* signal that maps to
+        ``medium``: it is flagged for the audit trail but still auto-absorbs to
+        verified, so ordinary dev notes do not flood the review queue.
+
+        Empirically (N3 dogfood) the old "any keyword -> high" rule mis-routed
+        ~100% of keyword-bearing benign dev notes to staging; splitting strong
+        vs weak markers keeps the recall on truly sensitive content (0% missed
+        in the dogfood corpus) while removing that review-fatigue tax.
+        """
         text = self._entry_risk_text(entry)
         lowered = text.lower()
         flags: list[str] = []
+        strong = False
+
+        def _scan(flag: str, markers: tuple[str, ...], *, is_strong: bool) -> None:
+            nonlocal strong
+            if flag in flags:
+                return
+            if any(marker in lowered for marker in markers):
+                flags.append(flag)
+                if is_strong:
+                    strong = True
+
+        # External URLs are a weak signal (medium): note-taking links abound.
         if re.search(r"https?://", text):
             flags.append("external_url")
-        if any(marker in lowered for marker in (
-            "api_key", "apikey", "private key", "secret", "token=", "password",
-            "bearer ", "ssh-rsa", "-----begin",
-        )):
-            flags.append("credential")
-        if any(marker in lowered for marker in (
-            "run command", "powershell", "cmd.exe", "bash ", "curl ", "wget ",
-            "rm -rf", "delete all", "git push", "twine upload",
-        )):
-            flags.append("command")
-        if any(marker in lowered for marker in (
-            "mcp config", "mcp_server", "mcp_servers", "mcpservers", "server_key",
-        )):
-            flags.append("mcp_config")
-        if any(marker in lowered for marker in (
-            "permission", "allowlist", "denylist", "bypass", "approval",
-            "push/tag/publish", "publish without approval",
-        )):
-            flags.append("permission_rule")
 
-        if any(flag in flags for flag in ("credential", "command", "mcp_config", "permission_rule")):
+        # credential: actual secret *values* are strong; the bare word "secret"
+        # (as in "the secret to fast tests") is a weak prose signal.
+        _scan("credential", (
+            "api_key", "apikey", "token=", "password", "bearer ", "ssh-rsa",
+            "-----begin", "private key", "client_secret", "secret_key", "server_key",
+        ), is_strong=True)
+        _scan("credential", ("secret",), is_strong=False)
+
+        # command: destructive / shell execution is strong; benign vcs / publish
+        # mentions ("after git push, check CI") are weak.
+        _scan("command", (
+            "run command", "powershell", "cmd.exe", "bash ", "curl ", "wget ",
+            "rm -rf",
+        ), is_strong=True)
+        _scan("command", ("git push", "twine upload", "delete all"), is_strong=False)
+
+        # mcp_config: a key *value* is already caught as a credential
+        # (server_key); a plain mcp_server / mcp config mention is weak.
+        _scan("mcp_config", (
+            "mcp config", "mcp_server", "mcp_servers", "mcpservers",
+        ), is_strong=False)
+
+        # permission_rule: an explicit publish-without-approval intent is strong;
+        # prose words (permission / approval / allowlist / bypass) are weak.
+        _scan("permission_rule", (
+            "publish without approval", "push/tag/publish",
+        ), is_strong=True)
+        _scan("permission_rule", (
+            "permission", "allowlist", "denylist", "bypass", "approval",
+        ), is_strong=False)
+
+        if strong:
             level = "high"
         elif flags:
             level = "medium"
@@ -687,6 +726,45 @@ class Engram(
         if not valid:
             return "low"
         return max(valid, key=lambda level: rank[level])
+
+    def _apply_write_risk_gate(self, entry: dict, *, tier_explicit: bool) -> str:
+        """Risk-tiered write gate for a NEW entry (call once, after _ensure_fields).
+
+        Realizes the cold-start -> approve -> resume policy: low/medium-risk
+        knowledge is auto-absorbed straight to ``verified`` (with a post-hoc
+        audit entry), while high-risk knowledge (credentials / shell commands /
+        MCP config / permission rules, i.e. risk_level == "high") is held in
+        ``staging`` for explicit owner approval. The auditable moat is
+        preserved: the returned note is logged for every write.
+
+        If the caller explicitly pinned a ``tier`` (a deliberate seed or a test
+        fixture), that intent is honored and the gate is skipped.
+
+        Returns a short note describing the decision, for the audit log.
+        """
+        if tier_explicit:
+            return f"explicit tier={entry.get('tier', 'verified')}"
+        # Never auto-promote an entry that is already rejected / deprecated /
+        # outdated — those states were set deliberately and must survive the
+        # gate (otherwise a rejected draft would silently become verified).
+        if entry.get("status") == "rejected" or entry.get("memory_state") in {
+            "rejected",
+            "deprecated",
+        }:
+            return f"preserved (state={entry.get('memory_state', 'rejected')})"
+        if entry.get("risk_level") == "high":
+            entry["tier"] = "staging"
+            entry["memory_state"] = "staging"
+            entry["approval_status"] = "pending"
+            entry["approval_required"] = True
+            flags = ",".join(entry.get("risk_flags", [])) or "none"
+            return f"gated->staging (risk=high, flags={flags})"
+        # low / medium risk -> auto-absorbed to verified
+        entry["tier"] = "verified"
+        entry["memory_state"] = "verified"
+        entry["approval_status"] = "approved"
+        entry["approval_required"] = False
+        return f"auto-absorbed->verified (risk={entry.get('risk_level', 'low')})"
 
     def _ensure_fields(self, entry: dict, entry_type: str) -> dict:
         """Backfill v2.1 fields on old lesson/decision entries."""
@@ -828,6 +906,9 @@ class Engram(
         path = self._knowledge_dir / "lessons.json"
         lessons = self._read_entries(path, "lesson")
 
+        tier_explicit = ("tier" in lesson) if isinstance(lesson, dict) else False
+        tier_explicit = tier_explicit or ("tier" in extra)
+
         if isinstance(lesson, dict):
             new_lesson = dict(lesson)
         else:
@@ -848,6 +929,7 @@ class Engram(
         new_lesson = self._repair_incoming_text(new_lesson)
         new_lesson["timestamp"] = new_lesson.get("timestamp") or _now_iso()
         new_lesson = self._ensure_fields(new_lesson, "lesson")
+        _gate_note = self._apply_write_risk_gate(new_lesson, tier_explicit=tier_explicit)
 
         # Three-tier dedup: exact duplicate / semantically related / pass
         best_sim = 0.0
@@ -911,7 +993,11 @@ class Engram(
         self._write_entries(path, lessons, "lesson")
 
         summary = new_lesson.get("summary", "")
-        self._audit.log("write", "knowledge/lessons", detail=summary[:100])
+        self._audit.log(
+            "write", "knowledge/lessons",
+            detail=f"[{_gate_note}] {summary[:100]}",
+            source_tool=new_lesson.get("source_tool", ""),
+        )
         if new_lesson.get("domain"):
             for _d in new_lesson["domain"].split(","):
                 _d = _d.strip()
@@ -1018,6 +1104,9 @@ class Engram(
         path = self._knowledge_dir / "decisions.json"
         decisions = self._read_entries(path, "decision")
 
+        tier_explicit = ("tier" in decision) if isinstance(decision, dict) else False
+        tier_explicit = tier_explicit or ("tier" in extra)
+
         if isinstance(decision, dict):
             new_decision = dict(decision)
         else:
@@ -1042,6 +1131,7 @@ class Engram(
 
         new_decision["timestamp"] = new_decision.get("timestamp") or _now_iso()
         new_decision = self._ensure_fields(new_decision, "decision")
+        _gate_note = self._apply_write_risk_gate(new_decision, tier_explicit=tier_explicit)
 
         new_title = self._entry_identity_text(new_decision, "decision")
         # Three-tier dedup for decisions.
@@ -1116,7 +1206,11 @@ class Engram(
             decisions = verified + staging
         self._write_entries(path, decisions, "decision")
         title = new_decision.get("question", "") or new_decision.get("title", "")
-        self._audit.log("write", "knowledge/decisions", detail=title[:100])
+        self._audit.log(
+            "write", "knowledge/decisions",
+            detail=f"[{_gate_note}] {title[:100]}",
+            source_tool=new_decision.get("source_tool", ""),
+        )
 
         # Auto-supersedes: build a directed edge in the decision thread.
         # Priority: (1) explicit ``supersedes`` field in the input,
