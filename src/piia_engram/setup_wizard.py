@@ -2337,17 +2337,119 @@ def _run_privacy_defaults(data_dir: str) -> None:
 # 向导主流程
 # ---------------------------------------------------------------------------
 
+def _apply_external_configs(
+    tools: list[dict],
+    python_path: str,
+    mcp_server_path: str,
+    selected_data_dir: str,
+) -> tuple[list[str], list[str]]:
+    """Write MCP config + inject instruction snippets/hooks for each detected
+    tool. Returns ``(success_names, failed_names)``.
+
+    The caller owns the user-consent decision (interactive confirm or the
+    ``--apply-external-config`` flag); this function assumes the write is
+    authorized and always passes ``authorized_external_write=True``. Every
+    write goes through the backup-protected ``_write_*`` helpers.
+    """
+    success: list[str] = []
+    failed: list[str] = []
+    configured_tool_ids: list[str] = []
+    for tool in tools:
+        try:
+            _write_tool_mcp_config(
+                tool,
+                python_path,
+                mcp_server_path,
+                selected_data_dir,
+                file_safety_root=selected_data_dir,
+                authorized_external_write=True,
+            )
+            success.append(tool["name"])
+            configured_tool_ids.append(tool["id"])
+        except Exception as exc:
+            failed.append(f"{tool['name']} ({exc})")
+    for name in success:
+        print(_t(f"  ✅ {name} 已配置", f"  ✅ {name} configured"))
+    for name in failed:
+        print(_t(f"  ❌ {name} 配置失败", f"  ❌ {name} failed"))
+
+    # Inject instruction snippets into each tool's native instruction file
+    # so AI proactively calls Engram (not relying solely on MCP instructions)
+    injected = []
+    for tool_id in configured_tool_ids:
+        result = _inject_instruction_snippet(
+            tool_id,
+            _lang,
+            file_safety_root=selected_data_dir,
+            authorized_external_write=True,
+        )
+        if result:
+            injected.append(result)
+    if injected:
+        print()
+        print(_t("  📝 已注入 AI 指令（确保 AI 主动调用 Engram）：",
+                 "  📝 Injected AI instructions (ensures AI calls Engram proactively):"))
+        for path in injected:
+            print(f"    {path}")
+
+    # Register Claude Code Stop hook for session auto-save
+    if "claude_code" in configured_tool_ids:
+        hook_result = _inject_claude_code_hook(
+            python_path,
+            file_safety_root=selected_data_dir,
+            authorized_external_write=True,
+        )
+        if hook_result:
+            print(_t(f"  🔗 已注册 Claude Code 会话结束 Hook：{hook_result}",
+                     f"  🔗 Registered Claude Code Stop hook: {hook_result}"))
+        # v3.30 mechanism (4): PreCompact hook with MIN_TURNS=5 — fires
+        # before Claude Code auto-compacts the transcript, so long
+        # sessions don't lose pre-compact state.
+        pre_result = _inject_claude_code_precompact_hook(
+            python_path,
+            file_safety_root=selected_data_dir,
+            authorized_external_write=True,
+        )
+        if pre_result:
+            print(_t(f"  🔗 已注册 PreCompact 兜底 Hook（v3.30）",
+                     f"  🔗 Registered PreCompact safety-net hook (v3.30)"))
+        # v3.30 mechanism (6): SessionStart auto-inject resume brief.
+        ss_result = _inject_claude_code_sessionstart_hook(
+            python_path,
+            file_safety_root=selected_data_dir,
+            authorized_external_write=True,
+        )
+        if ss_result:
+            print(_t(f"  🔗 已注册 SessionStart 接续简报 Hook（v3.30）",
+                     f"  🔗 Registered SessionStart resume-brief hook (v3.30)"))
+        # v3.30 R4: PostCompact hook — absorb compact summary into daily log.
+        pc_result = _inject_claude_code_postcompact_hook(
+            python_path,
+            file_safety_root=selected_data_dir,
+            authorized_external_write=True,
+        )
+        if pc_result:
+            print(_t(f"  🔗 已注册 PostCompact 摘要吸收 Hook（v3.30）",
+                     f"  🔗 Registered PostCompact summary-absorb hook (v3.30)"))
+
+    return success, failed
+
+
 def run_setup(advanced: bool = False, apply_external_config: bool = False) -> None:
     """交互式安装向导主流程。
 
-    Streamlined flow: auto-detect tools and initialize Engram. External AI
-    client config files are read-only by default; automatic mutation requires
-    ``apply_external_config=True`` or the CLI flag ``--apply-external-config``.
+    Streamlined flow: auto-detect tools and initialize Engram. When AI clients
+    are detected, setup lists the exact config files it will touch and asks for
+    a one-keystroke confirm before writing (every write is backup-protected).
+    Choosing "No" keeps all external config files unchanged. Passing
+    ``apply_external_config=True`` (CLI flag ``--apply-external-config``) skips
+    the prompt and writes directly — useful for non-interactive/CI runs.
 
     Args:
         advanced: If True, show full interactive privacy preferences.
-        apply_external_config: If True, mutate detected AI client configs with
-            backup protection. If False, only detect and print guidance.
+        apply_external_config: If True, skip the consent prompt and mutate
+            detected AI client configs directly (still backup-protected). If
+            False, ask the user first; on "No" nothing external is changed.
     """
     global _lang
     _configure_utf8_stdio()
@@ -2389,114 +2491,61 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
     print(_t(f"  ✅ 数据目录: {selected_data_dir}",
              f"  ✅ Data dir: {selected_data_dir}"))
 
-    # 工具检测 — 默认只读；显式授权时才自动配置外部客户端文件。
+    # 工具检测 — 默认交互确认后写入；--apply-external-config 跳过确认直写。
     tools = _detect_tools()
     success: list[str] = []
     failed: list[str] = []
+    external_config_written = False
     if not tools:
         print(_t("  ⚠️  未检测到 AI 工具（Claude Code / Cursor / Claude Desktop）",
                  "  ⚠️  No AI tools detected (Claude Code / Cursor / Claude Desktop)"))
         print(_t("  安装后重新运行 'engram setup' 即可。\n",
                  "  Re-run 'engram setup' after installing.\n"))
-    elif not apply_external_config:
-        detected_names = ", ".join(tool["name"] for tool in tools)
-        print(_t(
-            f"  🔎 已检测到 AI 工具（只读检查）：{detected_names}",
-            f"  🔎 Detected AI tools (read-only check): {detected_names}",
-        ))
-        print(_t(
-            "  ℹ️  默认不会更改 Claude/Codex/Zed/Cursor 等外部配置文件。",
-            "  ℹ️  By default, setup does not modify external Claude/Codex/Zed/Cursor config files.",
-        ))
-        print(_t(
-            "      如需自动配置并创建备份，请运行：engram setup --apply-external-config",
-            "      To auto-configure with backups, run: engram setup --apply-external-config",
-        ))
     else:
-        configured_tool_ids = []
-        for tool in tools:
-            try:
-                _write_tool_mcp_config(
-                    tool,
-                    python_path,
-                    mcp_server_path,
-                    selected_data_dir,
-                    file_safety_root=selected_data_dir,
-                    authorized_external_write=True,
-                )
-                success.append(tool["name"])
-                configured_tool_ids.append(tool["id"])
-            except Exception as exc:
-                failed.append(f"{tool['name']} ({exc})")
-        for name in success:
-            print(_t(f"  ✅ {name} 已配置", f"  ✅ {name} configured"))
-        for name in failed:
-            print(_t(f"  ❌ {name} 配置失败", f"  ❌ {name} failed"))
-
-        # Inject instruction snippets into each tool's native instruction file
-        # so AI proactively calls Engram (not relying solely on MCP instructions)
-        injected = []
-        for tool_id in configured_tool_ids:
-            result = _inject_instruction_snippet(
-                tool_id,
-                _lang,
-                file_safety_root=selected_data_dir,
-                authorized_external_write=True,
+        detected_names = ", ".join(tool["name"] for tool in tools)
+        should_write = apply_external_config
+        if not apply_external_config:
+            # 默认路径：列出工具与将写入的文件，征得同意后写入（写前自动备份）。
+            print(_t(
+                f"  🔎 已检测到 AI 工具：{detected_names}",
+                f"  🔎 Detected AI tools: {detected_names}",
+            ))
+            print(_t(
+                "  即将把 Engram 写入以下客户端的 MCP 配置（写入前自动备份）：",
+                "  Engram will be added to these clients' MCP config (auto-backed-up first):",
+            ))
+            for tool in tools:
+                print(f"      - {tool['config_path']}")
+            ans = _prompt(_t(
+                "  自动写入以上配置？ 1=是，自动配置（推荐）  2=否，仅只读检查",
+                "  Write these configs now? 1=Yes, auto-configure (recommended)  2=No, read-only",
+            ), "1")
+            should_write = ans.strip() != "2"
+        if should_write:
+            success, failed = _apply_external_configs(
+                tools, python_path, mcp_server_path, selected_data_dir,
             )
-            if result:
-                injected.append(result)
-        if injected:
-            print()
-            print(_t("  📝 已注入 AI 指令（确保 AI 主动调用 Engram）：",
-                     "  📝 Injected AI instructions (ensures AI calls Engram proactively):"))
-            for path in injected:
-                print(f"    {path}")
-
-        # Register Claude Code Stop hook for session auto-save
-        if "claude_code" in configured_tool_ids:
-            hook_result = _inject_claude_code_hook(
-                python_path,
-                file_safety_root=selected_data_dir,
-                authorized_external_write=True,
-            )
-            if hook_result:
-                print(_t(f"  🔗 已注册 Claude Code 会话结束 Hook：{hook_result}",
-                         f"  🔗 Registered Claude Code Stop hook: {hook_result}"))
-            # v3.30 mechanism (4): PreCompact hook with MIN_TURNS=5 — fires
-            # before Claude Code auto-compacts the transcript, so long
-            # sessions don't lose pre-compact state.
-            pre_result = _inject_claude_code_precompact_hook(
-                python_path,
-                file_safety_root=selected_data_dir,
-                authorized_external_write=True,
-            )
-            if pre_result:
-                print(_t(f"  🔗 已注册 PreCompact 兜底 Hook（v3.30）",
-                         f"  🔗 Registered PreCompact safety-net hook (v3.30)"))
-            # v3.30 mechanism (6): SessionStart auto-inject resume brief.
-            ss_result = _inject_claude_code_sessionstart_hook(
-                python_path,
-                file_safety_root=selected_data_dir,
-                authorized_external_write=True,
-            )
-            if ss_result:
-                print(_t(f"  🔗 已注册 SessionStart 接续简报 Hook（v3.30）",
-                         f"  🔗 Registered SessionStart resume-brief hook (v3.30)"))
-            # v3.30 R4: PostCompact hook — absorb compact summary into daily log.
-            pc_result = _inject_claude_code_postcompact_hook(
-                python_path,
-                file_safety_root=selected_data_dir,
-                authorized_external_write=True,
-            )
-            if pc_result:
-                print(_t(f"  🔗 已注册 PostCompact 摘要吸收 Hook（v3.30）",
-                         f"  🔗 Registered PostCompact summary-absorb hook (v3.30)"))
+            external_config_written = True
+            if failed:
+                print(_t(
+                    "  ℹ️  部分客户端写入失败，可稍后重试或手动添加 MCP 配置。",
+                    "  ℹ️  Some clients failed; retry later or add the MCP config manually.",
+                ))
+        else:
+            print(_t(
+                "  ℹ️  已跳过写入，未更改任何外部配置文件。",
+                "  ℹ️  Skipped — no external config files were changed.",
+            ))
+            print(_t(
+                "      之后想自动配置可运行：engram setup --apply-external-config",
+                "      To auto-configure later, run: engram setup --apply-external-config",
+            ))
     print()
 
     # Step 2 — 录入身份信息
     _run_seed_knowledge_onboarding(
         selected_data_dir,
-        external_config_applied=apply_external_config,
+        external_config_applied=external_config_written,
     )
 
     # Step 3 — 隐私偏好
@@ -2508,7 +2557,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
     # 完成
     print(_t("  重启你的 AI 工具即可使用：",
              "  Setup next step:"))
-    if apply_external_config:
+    if external_config_written:
         _print_restart_hints()
     else:
         print("  External AI tool configs are unchanged.")
@@ -2527,7 +2576,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
         tools,
         success,
         failed,
-        external_config_mode="apply" if apply_external_config else "read_only",
+        external_config_mode="apply" if external_config_written else "read_only",
     )
 
 

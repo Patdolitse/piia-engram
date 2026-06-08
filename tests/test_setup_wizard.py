@@ -2268,10 +2268,10 @@ class TestRunSetup:
         )
         assert report["external_config_mode"] == "apply"
 
-    def test_wizard_default_does_not_mutate_external_client_configs(
+    def test_wizard_decline_consent_does_not_mutate_external_client_configs(
         self, tmp_path, monkeypatch, capsys
     ):
-        """Default setup is read-only for external AI client configs."""
+        """When the user declines the write-consent prompt, setup is read-only."""
         from piia_engram.setup_wizard import run_setup
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
@@ -2320,6 +2320,7 @@ class TestRunSetup:
         answers = iter([
             "2",   # language: English
             "",    # data dir: default from ENGRAM_DIR
+            "2",   # external config consent: No (read-only)
             "",    # seed: role
             "",    # seed: tech_stack
             "",    # seed: language
@@ -2351,7 +2352,7 @@ class TestRunSetup:
         run_setup()
 
         out = capsys.readouterr().out
-        assert "read-only" in out
+        assert "no external config files were changed" in out.lower()
         assert "apply-external-config" in out
         assert "External AI tool configs are unchanged" in out
         assert "Restart your AI tool to get started" not in out
@@ -2368,6 +2369,97 @@ class TestRunSetup:
         assert report["tools_configured"] == []
         assert report["tools_failed"] == []
         assert report["external_config_mode"] == "read_only"
+
+    def test_wizard_default_writes_after_consent(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Default setup (no flag) writes external configs once the user
+        confirms the consent prompt — the one-keystroke activation path."""
+        from piia_engram.setup_wizard import run_setup
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+        monkeypatch.setattr("piia_engram.setup_wizard._scan_rule_files", lambda cwd=None: [])
+
+        claude_config = tmp_path / ".claude" / ".mcp.json"
+        claude_config.parent.mkdir()
+        claude_original = json.dumps({
+            "mcpServers": {
+                "existing": {"command": "node", "args": ["server.js"]}
+            }
+        }, ensure_ascii=False, indent=2) + "\n"
+        claude_config.write_text(claude_original, encoding="utf-8")
+
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_instruction_snippet",
+            lambda *args, **kwargs: calls.append(("snippet", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_hook",
+            lambda *args, **kwargs: calls.append(("stop", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_precompact_hook",
+            lambda *args, **kwargs: calls.append(("pre", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_sessionstart_hook",
+            lambda *args, **kwargs: calls.append(("start", args, kwargs)),
+        )
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._inject_claude_code_postcompact_hook",
+            lambda *args, **kwargs: calls.append(("post", args, kwargs)),
+        )
+
+        answers = iter([
+            "2",   # language: English
+            "",    # data dir: default from ENGRAM_DIR
+            "1",   # external config consent: Yes, auto-configure
+            "",    # seed: role
+            "",    # seed: tech_stack
+            "",    # seed: language
+            "",    # seed: no lessons
+            "",    # privacy: reconcile
+            "",    # privacy: telemetry
+        ])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._detect_tools",
+            lambda: [
+                {
+                    "id": "claude_code",
+                    "name": "Claude Code",
+                    "config_path": claude_config,
+                },
+            ],
+        )
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
+
+        run_setup()
+
+        out = capsys.readouterr().out
+        # The consent prompt and the file list must be shown.
+        assert "Detected AI tools" in out
+        assert str(claude_config) in out
+        # Config was actually written (engram server now present, existing kept).
+        config = json.loads(claude_config.read_text(encoding="utf-8"))
+        assert "engram" in config["mcpServers"]
+        assert "existing" in config["mcpServers"]
+        # Instruction snippet + hooks were injected for claude_code.
+        assert any(c[0] == "snippet" for c in calls)
+        assert any(c[0] == "stop" for c in calls)
+        # Report records an applied external config.
+        report_lines = (tmp_path / "engram-root" / "setup_report.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        report = json.loads(report_lines[-1])
+        assert report["external_config_mode"] == "apply"
+        assert "Claude Code" in report["tools_configured"]
 
     def test_wizard_failed_config_write_does_not_inject_or_report_configured(
         self, tmp_path, monkeypatch, capsys
