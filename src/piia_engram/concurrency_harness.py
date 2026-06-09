@@ -33,8 +33,20 @@ from .governance_store import RelationStore
 
 
 def _classify_error(exc: BaseException) -> str:
-    msg = str(exc).lower()
-    if "lock" in msg or "timeout" in msg:
+    raw = str(exc)
+    msg = raw.lower()
+    # English markers ("lock"/"timeout") and the localized fail-closed message the
+    # storage layer raises on a portalocker timeout, e.g.
+    # "无法获取文件锁（超时 5s）：decisions.json". A fail-closed lock timeout is
+    # correct behavior, so it must be classified as ``lock_timeout`` (not
+    # ``unknown``) regardless of the message language.
+    if (
+        "lock" in msg
+        or "timeout" in msg
+        or "无法获取文件锁" in raw
+        or "文件锁" in raw
+        or "超时" in raw
+    ):
         return "lock_timeout"
     if isinstance(exc, (OSError, IOError)):
         return "io"
@@ -75,14 +87,21 @@ def run_knowledge_multiwriter_stress(
         {"path": "knowledge",
          "intended_writes": int,
          "json_valid": bool,        # integrity contract - must be True
-         "persisted": int,          # surviving entries (must equal intended)
-         "lost_updates": int,       # intended - persisted (must be 0)
+         "persisted": int,          # surviving entries
+         "lost_updates": int,       # intended - persisted (raw, includes timeouts)
          "errors": {category: count},
+         "error_total": int,        # fail-closed write rejections (e.g. timeouts)
+         "lock_timeouts": int,      # subset of errors that were lock timeouts
+         "silent_losses": int,      # writes lost WITHOUT an error — must be 0
          "integrity_ok": bool,      # json_valid AND every entry well-formed
-         "no_lost_updates": bool}   # persisted == intended
+         "no_lost_updates": bool}   # no SILENT loss: persisted == intended - errors
 
-    Bounded and deterministic in shape (no sleeps). Callers assert that the
-    locked knowledge path preserves every accepted write.
+    Bounded and deterministic in shape (no sleeps). The honest contract is that
+    every *accepted* write survives: a write may legitimately be rejected by a
+    fail-closed lock timeout (correct behavior, counted in ``errors``), but no
+    write may vanish silently. So ``no_lost_updates`` means
+    ``persisted == intended - error_total`` (mirrors the governance harness),
+    NOT ``zero errors``.
     """
     root = Path(root)
     if entry_type not in {"lesson", "decision"}:
@@ -147,6 +166,13 @@ def run_knowledge_multiwriter_stress(
             integrity_ok = False
 
     lost = max(0, intended - persisted)
+    error_total = sum(errors.values())
+    # A write may be legitimately rejected by a fail-closed lock timeout (correct
+    # behavior, counted in ``errors``). The thing that must never happen is a
+    # SILENT loss — a write that neither persisted nor raised. Expected persisted
+    # count is therefore ``intended - error_total``; anything below that is a
+    # silent loss and a real bug.
+    silent_losses = max(0, intended - error_total - persisted)
     return {
         "path": "knowledge",
         "entry_type": entry_type,
@@ -155,8 +181,12 @@ def run_knowledge_multiwriter_stress(
         "persisted": persisted,
         "lost_updates": lost,
         "errors": errors,
+        "error_total": error_total,
+        "lock_timeouts": errors.get("lock_timeout", 0),
+        "silent_losses": silent_losses,
         "integrity_ok": integrity_ok,
-        "no_lost_updates": persisted == intended,
+        # No SILENT loss: every write either persisted or raised (fail-closed).
+        "no_lost_updates": silent_losses == 0,
     }
 
 

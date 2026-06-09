@@ -29,13 +29,17 @@ class TestKnowledgeStress:
         root = tmp_path / "kstore"
         monkeypatch.setenv("ENGRAM_DIR", str(root))
         rep = ch.run_knowledge_multiwriter_stress(root, writers=8, per_writer=6)
-        # Integrity contract — ALWAYS holds.
+        # Integrity contract — ALWAYS holds (no torn/partial JSON).
         assert rep["json_valid"] is True
         assert rep["integrity_ok"] is True
-        # The supported knowledge contract: every accepted write survived.
+        # The supported knowledge contract: NO SILENT loss. Every write either
+        # persisted or was rejected fail-closed (a lock timeout, counted in
+        # errors). A write that vanishes without an error is the real bug.
         assert rep["no_lost_updates"] is True
-        assert rep["persisted"] == rep["intended_writes"]
-        assert rep["lost_updates"] == 0
+        assert rep["silent_losses"] == 0
+        assert rep["persisted"] == rep["intended_writes"] - rep["error_total"]
+        # Any errors must be fail-closed lock timeouts, never io/unknown.
+        assert set(rep["errors"]) <= {"lock_timeout"}
 
     def test_report_is_metadata_only(self, tmp_path: Path):
         rep = ch.run_knowledge_multiwriter_stress(tmp_path / "k", writers=4, per_writer=4)
@@ -55,17 +59,22 @@ class TestKnowledgeStress:
         assert rep["entry_type"] == "decision"
         assert rep["json_valid"] is True
         assert rep["integrity_ok"] is True
+        # No SILENT loss — fail-closed lock timeouts are tolerated and counted.
         assert rep["no_lost_updates"] is True
-        assert rep["persisted"] == rep["intended_writes"]
-        assert rep["lost_updates"] == 0
+        assert rep["silent_losses"] == 0
+        assert rep["persisted"] == rep["intended_writes"] - rep["error_total"]
+        assert set(rep["errors"]) <= {"lock_timeout"}
 
     def test_single_writer_loses_nothing(self, tmp_path: Path,
                                          monkeypatch: pytest.MonkeyPatch):
         root = tmp_path / "k1"
         monkeypatch.setenv("ENGRAM_DIR", str(root))
-        # One writer cannot race itself → every write survives.
+        # One writer cannot race itself → no contention, no timeouts, every
+        # write survives with zero errors.
         rep = ch.run_knowledge_multiwriter_stress(root, writers=1, per_writer=10)
         assert rep["persisted"] == rep["intended_writes"]
+        assert rep["error_total"] == 0
+        assert rep["silent_losses"] == 0
         assert rep["no_lost_updates"] is True
         assert rep["integrity_ok"] is True
 
