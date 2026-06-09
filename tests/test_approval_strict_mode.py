@@ -43,9 +43,13 @@ def test_strict_low_risk_decision_goes_to_staging(
     assert decision["approval_required"] is True
 
 
-def test_strict_preserves_explicit_tier_and_rejected_state(
+def test_strict_gates_explicit_tier_but_preserves_rejected_state(
     eng: Engram, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Strict mode is an un-bypassable owner gate: even a caller-pinned
+    # tier="verified" (the kind a caller could smuggle through content_json)
+    # must be sent to staging. A deliberately rejected state is still
+    # preserved (negative states are never bumped, even into staging).
     monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
 
     explicit = eng.add_lesson(
@@ -55,11 +59,24 @@ def test_strict_preserves_explicit_tier_and_rejected_state(
         {"summary": "rejected draft stays rejected", "status": "rejected"}
     )
 
-    assert explicit["tier"] == "verified"
-    assert explicit["memory_state"] == "verified"
+    assert explicit["tier"] == "staging"
+    assert explicit["memory_state"] == "staging"
+    assert explicit["approval_status"] == "pending"
+    assert explicit["approval_required"] is True
     assert rejected["status"] == "rejected"
     assert rejected["memory_state"] == "rejected"
     assert rejected["approval_status"] == "rejected"
+
+
+def test_default_mode_still_honors_explicit_tier(eng: Engram) -> None:
+    # Outside strict mode, a deliberately caller-pinned tier remains an
+    # escape hatch for seeds / imports / fixtures.
+    explicit = eng.add_lesson(
+        {"summary": "explicit verified seed outside strict", "tier": "verified"}
+    )
+
+    assert explicit["tier"] == "verified"
+    assert explicit["memory_state"] == "verified"
 
 
 def test_default_mode_keeps_risk_based_gate(eng: Engram) -> None:

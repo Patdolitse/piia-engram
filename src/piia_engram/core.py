@@ -741,26 +741,37 @@ class Engram(
         logged for every write.
 
         If the caller explicitly pinned a ``tier`` (a deliberate seed or a test
-        fixture), that intent is honored and the gate is skipped.
+        fixture), that intent is honored and the gate is skipped — *except*
+        under ``ENGRAM_APPROVAL=strict``, which gates every new write
+        regardless of any caller-supplied tier, so a strict owner cannot be
+        bypassed by a tier smuggled through ``content_json``.
 
         Returns a short note describing the decision, for the audit log.
         """
-        if tier_explicit:
-            return f"explicit tier={entry.get('tier', 'verified')}"
         # Never auto-promote an entry that is already rejected / deprecated /
         # outdated — those states were set deliberately and must survive the
         # gate (otherwise a rejected draft would silently become verified).
+        # This runs before everything else, including strict mode, so a
+        # deliberate negative state is never bumped into staging either.
         if entry.get("status") == "rejected" or entry.get("memory_state") in {
             "rejected",
             "deprecated",
         }:
             return f"preserved (state={entry.get('memory_state', 'rejected')})"
+        # Strict mode gates EVERY new write — including a caller-pinned tier.
+        # This must run *before* honoring an explicit tier: otherwise a caller
+        # (or content injected into ``content_json``) could smuggle
+        # tier="verified" and silently bypass the owner's strict gate.
         if os.environ.get("ENGRAM_APPROVAL", "").strip().lower() == "strict":
             entry["tier"] = "staging"
             entry["memory_state"] = "staging"
             entry["approval_status"] = "pending"
             entry["approval_required"] = True
             return "strict-mode->staging (ENGRAM_APPROVAL=strict)"
+        # Outside strict mode, a deliberately caller-pinned tier (a seed, an
+        # import, or a test fixture) is honored and the risk gate is skipped.
+        if tier_explicit:
+            return f"explicit tier={entry.get('tier', 'verified')}"
         if entry.get("risk_level") == "high":
             entry["tier"] = "staging"
             entry["memory_state"] = "staging"
@@ -897,6 +908,28 @@ class Engram(
             return [self._crypto.decrypt_entry(e, self._corpus_key, entry_type)
                     for e in ensured]
         return ensured
+
+    def _display_sanitize(self, entries: list[dict], entry_type: str) -> list[dict]:
+        """Return display-safe copies of decrypted entries.
+
+        Replaces any content field that still carries an ``enc:`` prefix (i.e.
+        decryption silently failed) with a clear placeholder, so raw ciphertext
+        is never handed to the model as if it were plaintext. No-op when corpus
+        encryption is disabled.
+
+        MUST only be applied to results returned for display/query — never to
+        values headed for at-rest storage. Write-back paths keep using the raw
+        decrypt output so recoverable ciphertext is preserved on failure.
+        """
+        if not self._corpus_key:
+            return entries
+        return [self._crypto.sanitize_failed_decryption(e, entry_type) for e in entries]
+
+    def _display_sanitize_one(self, entry: dict, entry_type: str) -> dict:
+        """Single-entry variant of :meth:`_display_sanitize`."""
+        if not self._corpus_key:
+            return entry
+        return self._crypto.sanitize_failed_decryption(entry, entry_type)
 
     def _entries_for_locked_mutation(self, entries: Any, entry_type: str) -> list[dict]:
         """Normalize raw stored entries for a locked read-modify-write mutation."""
@@ -1095,6 +1128,11 @@ class Engram(
 
             self._update_entries(path, "lesson", _bump_access)
         self._audit.log("read", "knowledge/lessons", detail=f"returned {len(result)} items")
+        if _update_access:
+            # Model-facing read: never surface raw ciphertext as content.
+            # (Export/internal callers pass _update_access=False and keep the
+            # recoverable ciphertext untouched.)
+            result = self._display_sanitize(result, "lesson")
         return result
 
     def update_lesson(self, lesson_id: str, updates: dict) -> dict:
@@ -1354,6 +1392,9 @@ class Engram(
 
             self._update_entries(path, "decision", _bump_access)
         self._audit.log("read", "knowledge/decisions", detail=f"returned {len(result)} items")
+        if _update_access:
+            # Model-facing read: never surface raw ciphertext as content.
+            result = self._display_sanitize(result, "decision")
         return result
 
     def update_decision(self, decision_id: str, updates: dict) -> dict:
@@ -2081,6 +2122,11 @@ class Engram(
                 self._write_playbook_file(self._playbooks_dir / f"{pb['id']}.json", pb)
 
         self._audit.log("read", "playbooks", detail=f"returned {len(result)} items")
+        if _update_access:
+            # Model-facing read: write-back above used the raw (still-encrypted)
+            # objects; sanitize only the returned copies so leaked ciphertext is
+            # never surfaced as content.
+            result = self._display_sanitize(result, "playbook")
         return result
 
     def get_playbook(
@@ -2113,6 +2159,10 @@ class Engram(
             pb["last_reviewed"] = _now_iso()
             pb["access_count"] = pb.get("access_count", 0) + 1
             self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
+            # Write-back above used the raw (still-encrypted) object; from here
+            # on operate on a display-safe copy so leaked ciphertext is never
+            # surfaced as content.
+            pb = self._display_sanitize_one(pb, "playbook")
 
         # Always include dynamic parameters extraction
         pb["parameters"] = self._extract_parameters(pb)
@@ -3795,6 +3845,11 @@ class Engram(
         return item.get("summary", "")
 
     def _knowledge_view(self, item_type: str, item: dict) -> dict:
+        # Display-only view: substitute a placeholder for any content field
+        # whose decryption silently failed, so raw ciphertext is never surfaced
+        # as content. Operates on a sanitized copy; the source object (and any
+        # write-back of it) is untouched.
+        item = self._display_sanitize_one(item, item_type)
         if item_type == "decision":
             return {
                 "id": item.get("id", ""),

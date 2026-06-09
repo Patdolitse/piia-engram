@@ -741,6 +741,13 @@ class RetrievalMixin:
                     candidates.append(pb)
             results["playbooks"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
 
+        # Model-facing read: the ranked views are fresh copies (never written
+        # back), so substitute a placeholder for any content field whose
+        # decryption silently failed instead of surfacing raw ciphertext.
+        if self._corpus_key:
+            results["lessons"] = self._display_sanitize(results["lessons"], "lesson")
+            results["decisions"] = self._display_sanitize(results["decisions"], "decision")
+            results["playbooks"] = self._display_sanitize(results["playbooks"], "playbook")
         return results
 
     def _rank_scope(self, candidates: list[dict], terms: list[str], query: str,
@@ -863,7 +870,11 @@ class RetrievalMixin:
         n_other = limit - n_relevant - n_universal
 
         result = relevant[:n_relevant] + universal[:n_universal] + other[:n_other]
-        return result[:limit]
+        # Display-only result (never written back); ensure no leaked ciphertext
+        # is surfaced even on the non-owner path where get_lessons was called
+        # with _update_access=False and therefore did not sanitize. Idempotent
+        # if get_lessons already sanitized (placeholder has no enc: prefix).
+        return self._display_sanitize(result[:limit], "lesson")
 
     def get_knowledge_inheritance(
         self,

@@ -48,6 +48,16 @@ ENC_PREFIXES = (ENC_PREFIX_V2C, ENC_PREFIX_V2, ENC_PREFIX_V1)
 PBKDF2_ITERATIONS_V1 = 100_000   # legacy, decrypt-only
 PBKDF2_ITERATIONS_V2 = 600_000   # OWASP 2023+ recommended floor
 
+# Shown to the model/agent in place of a content field whose decryption failed
+# (wrong/missing ENGRAM_SECRET or corrupted payload). NEVER persist this value:
+# it is one-way and would overwrite the recoverable ciphertext on disk. It is
+# only ever substituted into a display copy, after the write-back has used the
+# raw (still-encrypted) value. See ``sanitize_failed_decryption``.
+DECRYPT_FAILED_PLACEHOLDER = (
+    "[内容已加密，本次无法解密——请检查 ENGRAM_SECRET 是否正确 / "
+    "encrypted content unavailable: decryption failed, check ENGRAM_SECRET]"
+)
+
 # Try importing cryptography (optional dependency)
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -344,6 +354,64 @@ class EncryptionEngine:
                 result.append(d)
             elif isinstance(item, str):
                 result.append(self.corpus_decrypt(item, key, strict=strict))
+            else:
+                result.append(item)
+        return result
+
+    # ------------------------------------------------------------------
+    # Display-safety: never surface raw ciphertext as if it were content
+    # ------------------------------------------------------------------
+
+    def sanitize_failed_decryption(self, entry: dict, entry_type: str) -> dict:
+        """Return a display-safe copy of an already-decrypted entry.
+
+        Any content field (or compound sub-field) that *still* carries an
+        ``enc:`` prefix means decryption silently failed (wrong/missing key or
+        corrupted payload) and the raw ciphertext leaked through. For display we
+        replace it with :data:`DECRYPT_FAILED_PLACEHOLDER` so the model never
+        treats ciphertext as plaintext.
+
+        SAFETY: this is one-way and MUST only ever be applied to a copy that is
+        returned to the caller for display — never to a value that will be
+        written back to disk. The on-disk write paths keep using the raw
+        decrypt output (ciphertext preserved on failure, idempotently
+        re-encrypted), so the recoverable ciphertext is never destroyed.
+        """
+        if not isinstance(entry, dict):
+            return entry
+        fields = CORPUS_CONTENT_FIELDS.get(entry_type, frozenset())
+        compound = CORPUS_COMPOUND_FIELDS.get(entry_type, {})
+        if not fields and not compound:
+            return entry
+        result = dict(entry)
+        for field in fields:
+            value = result.get(field)
+            if isinstance(value, str) and _starts_with_enc_prefix(value):
+                result[field] = DECRYPT_FAILED_PLACEHOLDER
+        for field, sub_keys in compound.items():
+            if field in result and isinstance(result[field], list):
+                result[field] = self._sanitize_compound(result[field], sub_keys)
+        return result
+
+    def _sanitize_compound(self, items: list,
+                           sub_keys: frozenset[str] | None) -> list:
+        """Display-sanitize a compound list, mirroring ``_decrypt_compound``."""
+        result = []
+        for item in items:
+            if sub_keys is None:
+                if isinstance(item, str) and _starts_with_enc_prefix(item):
+                    result.append(DECRYPT_FAILED_PLACEHOLDER)
+                else:
+                    result.append(item)
+            elif isinstance(item, dict):
+                d = dict(item)
+                for k in sub_keys:
+                    v = d.get(k)
+                    if isinstance(v, str) and _starts_with_enc_prefix(v):
+                        d[k] = DECRYPT_FAILED_PLACEHOLDER
+                result.append(d)
+            elif isinstance(item, str) and _starts_with_enc_prefix(item):
+                result.append(DECRYPT_FAILED_PLACEHOLDER)
             else:
                 result.append(item)
         return result
