@@ -11,7 +11,9 @@
 
 **Tell AI once how you work. piia-engram stores your identity, standards, lessons, decisions, and project context as local files you own. Claude Code, Codex, Cursor, Windsurf, and MCP-compatible tools can start from the same approved context. AI proposes; high-risk items wait for your review, and everything stays visible and reversible. No cloud account, no vendor lock-in, no hidden memory you cannot inspect.**
 
-`cross-tool memory` | `local-first` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `MCP`
+`cross-tool memory` | `local-first` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `Hermes` | `OpenClaw` | `MCP`
+
+**Your AI memory, continuous across tools — local-first, with source provenance and per-caller governance.**
 
 [ENGLISH](README.md) | [中文](README.zh-CN.md)
 
@@ -56,6 +58,31 @@ pip install piia-engram && engram setup
 ```
 
 The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — lists the exact config files it will touch, and writes the MCP connection after a one-keystroke confirm (every write is backed up first; decline and nothing changes). It previews your identity card, then you restart your configured tool; the first conversation can load your approved context through startup or search tools. ([full walkthrough ↓](#quick-start))
+
+---
+
+## Supported Tools
+
+Evidence levels follow the [agent client validation runbook](docs/runbooks/agent-client-validation.md): L0 = untested, L1 = installed, L2 = read/search observed, L3 = static file bridge, L4 = cross-client continuity.
+
+| Tool | Integration | Evidence status |
+|---|---|---|
+| Claude Code | MCP over stdio | L4 partial continuity proof (Claude Code -> Codex) |
+| Codex | MCP over stdio | L4 partial continuity proof (Claude Code -> Codex) |
+| Cursor | MCP over stdio | L2 setup/read-search evidence path |
+| Claude Desktop | MCP over stdio | L1/L2 setup path; client-specific evidence pending |
+| Hermes | MCP over stdio | L2 end-to-end verified (hermes-agent 0.15.2, 2026-06-03) |
+| Windsurf | MCP over stdio | Expected to work |
+| GitHub Copilot | MCP over stdio | Expected to work |
+| Cline | MCP over stdio | Expected to work |
+| Roo Code | MCP over stdio | Expected to work |
+| Amazon Q | MCP over stdio | Expected to work |
+| Augment | MCP over stdio | Expected to work |
+| Zed | MCP over stdio | Expected to work |
+| Trae | MCP over stdio | Expected to work |
+| Tencent CodeBuddy | MCP over stdio | Expected to work |
+| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | L3 static file-bridge evidence |
+| ChatGPT / Gemini / Kimi | Markdown identity card fallback | Usable |
 
 ---
 
@@ -218,11 +245,9 @@ piia-engram treats trust claims as release artifacts, not marketing copy:
 | Claim | Public evidence | What it proves | Boundary |
 |---|---|---|---|
 | Memory retrieval stays measurable | [`docs/trust-evidence.md`](docs/trust-evidence.md), [`docs/benchmarks/memory-eval-suite-v1.md`](docs/benchmarks/memory-eval-suite-v1.md), `python scripts/run_memory_evals.py` | Recall/admission fixtures pass deterministic, knowledge-ID-scored checks with no LLM judge | Synthetic regression floor, not a broad live-agent benchmark |
-| Public numbers do not drift silently | `python scripts/check_public_fact_sync.py` and `python scripts/check_public_claim_drift.py` | README / registry / architecture facts match `docs/public-facts.json` | Historical CHANGELOG and `release-evidence/` keep old release facts |
+| Public numbers do not drift silently | `python scripts/check_public_fact_sync.py` and `python scripts/check_public_claim_drift.py` | README / registry / architecture facts match `docs/public-facts.json` | Historical CHANGELOG keeps old release facts |
 | Security and privacy wording stays consistent | `python scripts/check_public_trust_claims.py` | Network, telemetry, endpoint, plaintext, and optional-encryption statements stay aligned across public docs | Prose consistency guard, not a third-party security audit |
-| Releases cannot skip evidence | [`release-evidence/README.md`](release-evidence/README.md), `python scripts/check_release_gate.py` | Each release records tests, sanitize, allowlist, package, artifact scan, eval, and review markers | Evidence files are factual summaries, not private review logs |
-
-Release evidence index: [`release-evidence/README.md`](release-evidence/README.md). Each tagged release records a matching `release-evidence/v<version>.md` file.
+| Releases cannot skip evidence | `python scripts/check_release_gate.py` | Each release records tests, sanitize, allowlist, package, artifact scan, eval, and review markers | Evidence records are maintainer-internal |
 
 ### Configure for Your AI Tool
 
@@ -688,28 +713,6 @@ only when the owner explicitly runs
 never backs up, modifies, or deletes files in your project folders.
 See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.md).
 
-## Supported Tools
-
-Evidence levels follow the [agent client validation runbook](docs/runbooks/agent-client-validation.md): L0/L1 means installed or wired, L2 means read/search behavior observed, L3 adds A/B behavior gain, L4 adds cross-client continuity, and L5 is public-safe reproducible evidence.
-
-| Tool | Integration | Evidence status |
-|---|---|---|
-| Claude Code | MCP over stdio | L4 partial continuity proof (Claude Code -> Codex) |
-| Codex | MCP over stdio | L4 partial continuity proof (Claude Code -> Codex) |
-| Cursor | MCP over stdio | L2 setup/read-search evidence path |
-| Claude Desktop | MCP over stdio | L1/L2 setup path; client-specific evidence pending |
-| Windsurf | MCP over stdio | Expected to work |
-| GitHub Copilot | MCP over stdio | Expected to work |
-| Cline | MCP over stdio | Expected to work |
-| Roo Code | MCP over stdio | Expected to work |
-| Amazon Q | MCP over stdio | Expected to work |
-| Augment | MCP over stdio | Expected to work |
-| Zed | MCP over stdio | Expected to work |
-| Trae | MCP over stdio | Expected to work |
-| Tencent CodeBuddy | MCP over stdio | Expected to work |
-| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | L3 static file-bridge evidence; live agent pending |
-| ChatGPT / Gemini / Kimi | Markdown identity card fallback | 🔧 Usable |
-
 ## Comparison
 
 | Feature | piia-engram | Claude Memory | Manual `CLAUDE.md` | Mem0 | Letta (MemGPT) |
@@ -732,7 +735,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 
 | | v3.51.2 (2026-06-06) |
 |---|---|
-| Supported AI tools | **15** (evidence level varies by client; see Supported Tools and the validation runbook) |
+| Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **70 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
 | Tests passing | **3045** (unit + integration; 2 skipped, 3047 collected) |

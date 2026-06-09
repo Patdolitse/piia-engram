@@ -106,6 +106,21 @@ docs/vision.md
 # blanket rule but kept for documentation of intent.)
 experiments/
 
+# Internal docs (not for public repo)
+docs/codex-claude-validation.md
+docs/release-intent-vnext.md
+docs/listing-copy.md
+docs/superpowers/
+docs/runbooks/release-build-check.md
+docs/runbooks/telemetry-contract-remote-closeout.md
+docs/runbooks/telemetry-contract-v1-remote-closeout.md
+docs/runbooks/telemetry-contract-v1_1-remote-closeout.md
+docs/runbooks/post-push-closeout.md
+docs/runbooks/public-truth-sync.md
+docs/runbooks/install-launch-truth-audit.md
+docs/runbooks/local-apply-paths.md
+release-evidence/
+
 # Internal / strategic documents
 docs/design/
 docs/telemetry_roadmap.md

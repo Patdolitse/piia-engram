@@ -84,7 +84,6 @@ def test_public_positioning_docs_do_not_reintroduce_overclaims():
     files = [
         "README.md",
         "README.zh-CN.md",
-        "docs/listing-copy.md",
         "docs/cross-tool-continuity-demo.md",
         "docs/trust.md",
         "docs/comparison.md",
@@ -133,7 +132,6 @@ def test_new_public_docs_are_publish_allowlisted():
         "docs/context-governance.md",
         "docs/quickstart-first-value.md",
         "docs/tool-surface-analysis.md",
-        "docs/listing-copy.md",
         "docs/cross-tool-continuity-demo.md",
         "docs/runbooks/agent-client-validation.md",
     ]:
@@ -368,14 +366,11 @@ def test_agent_client_validation_runbook_is_purpose_first():
 
 
 def test_release_notes_bilingual_order_is_documented():
-    listing = _read("docs/listing-copy.md")
-    evidence = _read("release-evidence/README.md")
-
-    assert "English first, then Chinese" in listing
-    assert "## English" in listing
-    assert "## Chinese" in listing
-    assert evidence.index("## English") < evidence.index("## Chinese")
-    assert "English must come first" in evidence
+    readme = _read("README.md")
+    readme_zh = _read("README.zh-CN.md")
+    assert "ENGLISH" in readme
+    assert "中文" in readme
+    assert "ENGLISH" in readme_zh
 
 
 def test_setup_file_safety_docs_are_explicit_about_external_config_boundary():

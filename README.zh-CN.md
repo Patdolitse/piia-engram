@@ -11,7 +11,9 @@
 
 **只告诉 AI 一次你是谁、怎么工作、什么算好。piia-engram 把你的身份、标准、经验教训、关键决策和项目上下文保存为你本机上的文件。Claude Code、Codex、Cursor、Windsurf 以及 MCP 工具可以从同一份已确认上下文开始工作。AI 建议经验和决策，高风险的先等你审查，全部看得见、可回退。无云账号，无厂商锁定，没有你看不见的黑箱记忆。**
 
-`跨工具记忆` · `本地优先` · `Claude Code` · `Codex` · `Cursor` · `Windsurf` · `MCP`
+`跨工具记忆` · `本地优先` · `Claude Code` · `Codex` · `Cursor` · `Windsurf` · `Hermes` · `OpenClaw` · `MCP`
+
+**你的 AI 记忆，换工具也不断——存在本地，记得住谁写的、谁能读。**
 
 [中文](README.zh-CN.md) | [ENGLISH](README.md)
 
@@ -56,6 +58,31 @@ pip install piia-engram && engram setup
 ```
 
 向导会自动检测你的 AI 工具——Claude Code、Cursor、Codex、Claude Desktop——列出将要修改的配置文件并请你一键确认后才写入 MCP 连接（每次写入前都会备份；选择"否"则一字不改），随后预览你的身份卡。重启已配置的工具后，新对话可以通过启动或搜索工具加载你已确认的上下文。（完整步骤见下方"快速开始"）
+
+---
+
+## 兼容的 AI 工具
+
+证据等级遵循 [agent 客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0 = 未测试，L1 = 已安装，L2 = 读取/搜索已观察，L3 = 静态文件桥，L4 = 跨客户端连续性。
+
+| 工具 | 接入方式 | 证据状态 |
+|------|---------|--------|
+| Claude Code | MCP (stdio) | L4 部分连续性证明（Claude Code -> Codex） |
+| Codex | MCP (stdio) | L4 部分连续性证明（Claude Code -> Codex） |
+| Cursor | MCP (stdio) | L2 setup / read-search 证据路径 |
+| Claude Desktop | MCP (stdio) | L1/L2 setup 路径，客户端专项证据待补 |
+| Hermes | MCP (stdio) | L2 端到端验证（hermes-agent 0.15.2，2026-06-03） |
+| Windsurf | MCP (stdio) | 应兼容 |
+| GitHub Copilot | MCP (stdio) | 应兼容 |
+| Cline | MCP (stdio) | 应兼容 |
+| Roo Code | MCP (stdio) | 应兼容 |
+| Amazon Q | MCP (stdio) | 应兼容 |
+| Augment | MCP (stdio) | 应兼容 |
+| Zed | MCP (stdio) | 应兼容 |
+| Trae | MCP (stdio) | 应兼容 |
+| 腾讯 CodeBuddy | MCP (stdio) | 应兼容 |
+| OpenClaw | SOUL.md/MEMORY.md 导入导出 | L3 静态文件桥证据 |
+| ChatGPT / Kimi / Gemini | 粘贴身份卡 | 可用 |
 
 ---
 
@@ -180,11 +207,9 @@ piia-engram 把可信声明当作发布证据，而不是营销文案：
 | 声明 | 公开证据 | 证明什么 | 边界 |
 |---|---|---|---|
 | 记忆检索质量可衡量 | [`docs/trust-evidence.md`](docs/trust-evidence.md), [`docs/benchmarks/memory-eval-suite-v1.md`](docs/benchmarks/memory-eval-suite-v1.md), `python scripts/run_memory_evals.py` | Recall/admission fixtures 通过确定性、按知识 ID 打分的检查，不依赖 LLM judge | 合成回归底线，不是广泛 live-agent benchmark |
-| 公开数字不会静默漂移 | `python scripts/check_public_fact_sync.py` 和 `python scripts/check_public_claim_drift.py` | README / registry / architecture 的公开事实与 `docs/public-facts.json` 一致 | CHANGELOG 和 `release-evidence/` 保留历史版本事实 |
+| 公开数字不会静默漂移 | `python scripts/check_public_fact_sync.py` 和 `python scripts/check_public_claim_drift.py` | README / registry / architecture 的公开事实与 `docs/public-facts.json` 一致 | CHANGELOG 保留历史版本事实 |
 | 安全与隐私措辞保持一致 | `python scripts/check_public_trust_claims.py` | 网络、telemetry、endpoint、默认明文、可选加密等声明在公开文档中一致 | 文案一致性闸，不等同第三方安全审计 |
-| 发布不能跳过证据 | [`release-evidence/README.md`](release-evidence/README.md), `python scripts/check_release_gate.py` | 每个版本记录测试、脱敏、allowlist、构建、产物扫描、eval 和复核标记 | evidence 文件是事实摘要，不放内部评审日志 |
-
-发布证据索引：[`release-evidence/README.md`](release-evidence/README.md)。每个 tagged release 都记录对应的 `release-evidence/v<version>.md` 文件。
+| 发布不能跳过证据 | `python scripts/check_release_gate.py` | 每个版本记录测试、脱敏、allowlist、构建、产物扫描、eval 和复核标记 | evidence 记录为维护者内部文件 |
 
 ### 效果预览
 
@@ -457,7 +482,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 | | v3.51.2 (2026-06-06) |
 |---|---|
-| 支持 AI 工具 | **15** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
+| 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
 | MCP 工具 | **17 个核心**（默认加载）+ **70 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
 | 测试通过 | **3045** 个（单元 + 集成；2 个 skipped，共收集 3047）|
@@ -671,26 +696,6 @@ piia-engram 的数据全部存储在本地 `~/.engram/`，使用 JSON/Markdown �
 ```
 
 所有文件都可以直接打开、编辑、备份、迁移。记忆是你的资产，不是平台的数据。
-
-## 兼容的 AI 工具
-
-| 工具 | 接入方式 | 证据状态 |
-|------|---------|--------|
-| Claude Code | MCP (stdio) | L4 部分连续性证明（Claude Code -> Codex） |
-| Codex | MCP (stdio) | L4 部分连续性证明（Claude Code -> Codex） |
-| Cursor | MCP (stdio) | L2 setup / read-search 证据路径 |
-| Claude Desktop | MCP (stdio) | L1/L2 setup 路径，客户端专项证据待补 |
-| Windsurf | MCP (stdio) | 应兼容 |
-| GitHub Copilot | MCP (stdio) | 应兼容 |
-| Cline | MCP (stdio) | 应兼容 |
-| Roo Code | MCP (stdio) | 应兼容 |
-| Amazon Q | MCP (stdio) | 应兼容 |
-| Augment | MCP (stdio) | 应兼容 |
-| Zed | MCP (stdio) | 应兼容 |
-| Trae | MCP (stdio) | 应兼容 |
-| 腾讯 CodeBuddy | MCP (stdio) | 应兼容 |
-| OpenClaw | SOUL.md/MEMORY.md 导入导出 | L3 静态文件桥证据；live agent 待验证 |
-| ChatGPT / Kimi / Gemini | 粘贴身份卡 | 🔧 可用 |
 
 ## 诞生故事
 

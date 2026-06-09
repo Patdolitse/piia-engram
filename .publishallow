@@ -27,8 +27,8 @@ tests/**
 # ── Public helper scripts (sanitize check, hook installer, etc.) ─────
 scripts/**
 
-# ── Release-gate evidence (tracked so CI can enforce it) ─────────────
-release-evidence/**
+# ── Release-gate evidence (moved to .gitignore; no longer public) ────
+# release-evidence/** is now gitignored — removed from allowlist
 
 # ── CI / automation ─────────────────────────────────────────────────
 .github/**
@@ -79,17 +79,14 @@ docs/context-governance.md
 docs/cross-tool-continuity-demo.md
 docs/cross-tool-continuity-proof.md
 docs/cross-tool-guide.md
-docs/codex-claude-validation.md
 docs/cursor-plugin-validation.md
 docs/governance.md
 docs/hybrid-search.md
-docs/listing-copy.md
 docs/mcp-tool-surface.json
 docs/operator-mcp-cheatsheet.md
 docs/quickstart-first-value.md
 docs/quickstart-first-value.zh-CN.md
 docs/public-facts.json
-docs/release-intent-vnext.md
 docs/samples/export-redaction-clean-sample.md
 docs/tool-surface-analysis.md
 docs/integrations/client-continuity-evidence.md
@@ -100,16 +97,8 @@ docs/integrations/hermes.md
 docs/runbooks/data-sovereignty-audit.md
 docs/runbooks/encoding-data-scan.md
 docs/runbooks/agent-client-validation.md
-docs/runbooks/install-launch-truth-audit.md
-docs/runbooks/local-apply-paths.md
 docs/runbooks/memory-lifecycle.md
-docs/runbooks/post-push-closeout.md
-docs/runbooks/public-truth-sync.md
-docs/runbooks/release-build-check.md
 docs/runbooks/setup-upgrade-safety.md
-docs/runbooks/telemetry-contract-remote-closeout.md
-docs/runbooks/telemetry-contract-v1-remote-closeout.md
-docs/runbooks/telemetry-contract-v1_1-remote-closeout.md
 docs/specs/agents-md-export-contract.md
 docs/specs/cursor-stop-hook-governed-writeback-design.md
 docs/specs/knowledge-quality-evaluation.md
@@ -119,15 +108,6 @@ docs/specs/openclaw-live-agent-plan.md
 docs/specs/permission-profile-vnext-design.md
 docs/specs/provenance-freshness-contract-v1.md
 docs/specs/recall-surface-v1.md
-docs/superpowers/plans/2026-05-30-gui-entry-doctor-probe.md
-docs/superpowers/plans/2026-05-30-v340-first-run-confidence.md
-docs/superpowers/plans/2026-05-31-trust-resume-portability-foundation.md
-docs/superpowers/plans/2026-05-31-v342-install-gui-entry-validation.md
-docs/superpowers/plans/2026-06-04-v3483-import-candidate.md
-docs/superpowers/plans/2026-06-04-client-validation-harness.md
-docs/superpowers/plans/2026-06-06-context-governance-productization.md
-docs/superpowers/specs/2026-05-30-gui-entry-doctor-probe-design.md
-docs/superpowers/specs/2026-05-30-v340-first-run-confidence-design.md
 docs/telemetry-privacy.md
 docs/trust.md
 docs/trust-evidence.md

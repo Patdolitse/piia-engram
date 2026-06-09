@@ -56,17 +56,6 @@ For retrieval quality benchmarks (requires test data setup):
 python experiments/benchmarks/run_benchmarks.py
 ```
 
-## AI-Assisted Review Loop
-
-Maintainer-led AI work should use a two-agent loop when both tools are available:
-
-1. **Codex implements first**: inspect the repo, make the scoped change, add or update tests, run local verification, and prepare the release or review evidence.
-2. **Claude independently reviews**: run Claude Code from a written task package, with review/test/report permissions only by default. Claude should not push, tag, release, merge, or make public GitHub comments without maintainer approval.
-3. **Codex reconciles the result**: read Claude's report, classify findings, apply any required fixes, rerun verification, and update release evidence only when the independent review explicitly passes.
-4. **Remote actions stay gated**: GitHub push, release, merge, tag, registry publish, PyPI publish, and public issue/PR replies require explicit maintainer confirmation even when both AI agents agree.
-
-Security-sensitive, release, encoding, privacy, governance, permission, encryption, telemetry, and persistence changes should keep the Claude review report in `release-evidence/` or the project audit results folder and reference it from the release evidence file.
-
 ## Code Guidelines
 
 - **Python 3.10+** — use type hints where they add clarity
