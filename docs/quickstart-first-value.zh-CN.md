@@ -126,6 +126,8 @@ L3 或 L4 行为已验证能力。这仍然是有用的第一个价值；只是�
 
 ## 下一步
 
+- 读完整的 [用户指南](user-guide.zh-CN.md)：安装 → 首个价值 → 跨工具续接 →
+  治理/审批 → 隐私/数据主权 → 常见问题。
 - 读 [信任证据](trust-evidence.md)，了解公开宣称是如何被检验的。
 - 读 [信任模型](trust.md)，了解数据边界和不该存什么。
 - 运行 `python demos/cross_tool_continuity_demo.py --json`，得到一份合成的

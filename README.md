@@ -156,7 +156,7 @@ pip install piia-engram
 engram setup
 ```
 
-New to piia-engram? See the fuller [first-value quickstart](docs/quickstart-first-value.md) for the install -> first memory -> fresh-session recall path using only the default 17 core tools. Host-specific setup cards are available for [Claude Code](docs/integrations/claude-code.md), [Codex](docs/integrations/codex.md), and [Cursor](docs/integrations/cursor.md). For proposal-only safe-context, replay, freshness/conflict, and evidence drafts, see [Context governance](docs/context-governance.md).
+New to piia-engram? See the fuller [first-value quickstart](docs/quickstart-first-value.md) for the install -> first memory -> fresh-session recall path using only the default 17 core tools, or the complete [User Guide](docs/user-guide.md) covering install -> first value -> cross-tool continuity -> governance -> privacy -> FAQ. Host-specific setup cards are available for [Claude Code](docs/integrations/claude-code.md), [Codex](docs/integrations/codex.md), and [Cursor](docs/integrations/cursor.md). For proposal-only safe-context, replay, freshness/conflict, and evidence drafts, see [Context governance](docs/context-governance.md).
 
 The setup wizard will:
 1. Detect your Python environment

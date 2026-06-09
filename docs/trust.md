@@ -34,7 +34,7 @@ By default:
 - Telemetry is off.
 - Local telemetry, when enabled, writes a local log first; remote telemetry and weekly feedback reports require separate explicit opt-in.
 - Knowledge content, prompts, AI responses, file paths, email addresses, and IP addresses are not collected by telemetry.
-- New AI-suggested knowledge is staged for review before becoming verified memory.
+- High-risk AI-suggested knowledge (credentials, executable commands, permission or MCP-config changes) is staged for your review before becoming verified, and unsupervised background writeback is always staged. Low/medium-risk items are auto-verified unless you set `ENGRAM_APPROVAL=strict`, which stages every write. See the risk-gated workflow below.
 - `engram setup` does not modify external MCP client config files. It detects them and prints guidance unless you explicitly run `engram setup --apply-external-config`.
 
 Optional features can have different behavior:

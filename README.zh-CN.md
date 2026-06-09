@@ -128,7 +128,7 @@ pip install piia-engram
 engram setup
 ```
 
-第一次使用？可以先看更完整的 [首个价值快速上手](docs/quickstart-first-value.zh-CN.md)，按默认 17 个核心工具完成 install -> first memory -> fresh-session recall 这条最短路径。Safe Context、replay、freshness/conflict 和 evidence draft 这类 proposal-only 能力见 [Context governance](docs/context-governance.md)。
+第一次使用？可以先看更完整的 [首个价值快速上手](docs/quickstart-first-value.zh-CN.md)，按默认 17 个核心工具完成 install -> first memory -> fresh-session recall 这条最短路径；或看完整的 [用户指南](docs/user-guide.zh-CN.md)，覆盖 安装 -> 首个价值 -> 跨工具续接 -> 治理/审批 -> 隐私/数据主权 -> 常见问题。Safe Context、replay、freshness/conflict 和 evidence draft 这类 proposal-only 能力见 [Context governance](docs/context-governance.md)。
 
 默认安装会选择 Engram 独立数据目录，检测到外部 AI 工具后**列出将要修改的具体配置文件路径并请你一键确认**，确认后才写入 Claude/Codex/Cursor/Zed 等客户端的 MCP 配置；选择"否"则一字不改，写入前都会在所选 Engram 数据目录下创建备份。非交互/CI 场景可用 `engram setup --apply-external-config` 跳过确认直接写入。
 

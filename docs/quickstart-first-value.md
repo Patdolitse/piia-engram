@@ -139,6 +139,8 @@ cross-client continuity levels until a validation run proves more.
 
 ## Next steps
 
+- Read the full [User Guide](user-guide.md) for the complete walkthrough:
+  install → first value → cross-tool continuity → governance → privacy → FAQ.
 - Read [Trust evidence](trust-evidence.md) to see how public claims are checked.
 - Read [Trust model](trust.md) for data boundaries and what not to store.
 - Run `python demos/cross_tool_continuity_demo.py --json` for a synthetic
