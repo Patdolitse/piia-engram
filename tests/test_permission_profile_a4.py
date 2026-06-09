@@ -5,9 +5,9 @@ a pre-execution refusal guard into every MCP write tool.  When governance is
 ON and the caller's write policy is ``"no"`` (read-only-external), the tool
 returns a refusal string without touching the knowledge base.
 
-Callers with ``"verified"`` (private-self) or ``"proposed_only"``
-(trusted-local) are allowed through — ``proposed_only`` enforcement is a
-future increment.
+Callers with ``"verified"`` (private-self) or ``"direct_write"``
+(trusted-local) are allowed through; high-blast operations are owner-gated
+separately.
 """
 
 import asyncio
@@ -73,7 +73,7 @@ class TestMaybeRefuseWrite:
         assert result is None
 
     def test_trusted_local_allows_write(self, tmp_path, monkeypatch):
-        """trusted-local (proposed_only) is allowed for now."""
+        """trusted-local (direct_write) is allowed."""
         monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
         monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "claude_code")
         from piia_engram import governance_runtime as grt
@@ -207,7 +207,7 @@ class TestWriteToolsAllowOwner:
 
 
 class TestWriteToolsAllowTrustedLocal:
-    """trusted-local should be allowed to write (proposed_only not enforced yet)."""
+    """trusted-local should be allowed to write (direct_write)."""
 
     def test_add_lesson_trusted_local_allowed(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")

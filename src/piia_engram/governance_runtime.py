@@ -732,14 +732,6 @@ _WRITE_REFUSAL_NO = _refusal(
     " (write policy: no). The knowledge base is read-only for this caller."
 )
 
-_WRITE_REFUSAL_PROPOSED = _refusal(
-    "【治理层】当前信任档仅允许提议写入，不允许直接写入（write policy: proposed_only）。"
-    "请通知 knowledge-base 所有者手动完成此写入。"
-    " / Governance: the current trust level allows proposed writes only,"
-    " not direct writes (write policy: proposed_only)."
-    " Please notify the knowledge-base owner to complete this write manually."
-)
-
 
 def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
                        client_type: str | None = None,
@@ -756,8 +748,12 @@ def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
 
     Write policy mapping:
     - ``"verified"`` (private-self): proceed — return None
-    - ``"proposed_only"`` (trusted-local): refuse with proposal hint
+    - ``"direct_write"`` (trusted-local): proceed — return None
     - ``"no"`` (read-only-external): refuse outright
+
+    High-blast operations (grant changes, whole-store imports, file exports)
+    are gated separately by :func:`maybe_refuse_owner_write` /
+    :func:`maybe_refuse_export`, which permit ONLY ``private-self``.
     """
     if not governance_enabled():
         return None
@@ -778,10 +774,11 @@ def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
         )
         return _WRITE_REFUSAL_NO
 
-    if write_policy in ("verified", "proposed_only"):
-        # "verified" = owner, "proposed_only" = trusted-local agent.
-        # Both are allowed to write for now; a future increment will add
-        # a proper proposal/approval workflow for "proposed_only".
+    if write_policy in ("verified", "direct_write"):
+        # "verified" = owner, "direct_write" = trusted-local agent.
+        # Both write directly; high-blast ops are owner-gated separately
+        # (maybe_refuse_owner_write). A future opt-in approval workflow
+        # may route "direct_write" through staging.
         return None
 
     _finalize_receipt(
@@ -834,7 +831,7 @@ def maybe_refuse_owner_write(root, *, tool: str, agent_id: str = "",
     imports/overwrites (``import_engram`` / ``import_engram_from_openclaw``).
 
     Unlike :func:`maybe_refuse_write` (which permits ``verified`` and
-    ``proposed_only``), this gate permits ONLY the un-revoked ``private-self``
+    ``direct_write``), this gate permits ONLY the un-revoked ``private-self``
     owner. It MUST be called BEFORE the side effect so a non-owner never mutates
     the grant store — closing the self-escalation path where a low-trust caller
     sets its own ``agent_id`` to ``private-self`` and then reads secret content.

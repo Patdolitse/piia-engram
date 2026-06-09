@@ -55,14 +55,14 @@ def _sens_rank(value: str) -> int:
 # Trust levels (3 presets — auto-assigned, no user config in v1)
 # ---------------------------------------------------------------------------
 
-# write: "no" | "proposed_only" | "verified"
+# write: "no" | "direct_write" | "verified"
 TRUST_LEVELS: dict[str, dict[str, Any]] = {
     # The user themselves (CLI / doctor / self queries): can see everything,
     # but access is still recorded.
     "private-self": {"max_sensitivity": "secret", "read": True, "write": "verified"},
     # Primary local coding agents (Claude Code / Codex / Cursor / Windsurf):
-    # read public + work, NEVER private/secret; may *propose* write-backs.
-    "trusted-local": {"max_sensitivity": "work", "read": True, "write": "proposed_only"},
+    # read public + work, NEVER private/secret; write directly up to 'work'.
+    "trusted-local": {"max_sensitivity": "work", "read": True, "write": "direct_write"},
     # Unknown / transient / web agents: read-only, public only.
     "read-only-external": {"max_sensitivity": "public", "read": True, "write": "no"},
 }

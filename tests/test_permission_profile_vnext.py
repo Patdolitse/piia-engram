@@ -23,7 +23,7 @@ from piia_engram.permission_profile_vnext import (
 )
 
 _SENS = governance.SENSITIVITY_ORDER
-_WRITE_RANK = {"no": 0, "proposed_only": 1, "verified": 2}
+_WRITE_RANK = {"no": 0, "direct_write": 1, "verified": 2}
 
 ALL_TRUST = list(governance.TRUST_LEVELS)
 ALL_ROLES = [""] + list(ROLE_PROFILES) + ["bogus-role"]

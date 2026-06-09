@@ -753,7 +753,7 @@ TIER1_TOOLS = frozenset({
 #   "read"              — no store mutation; read-path governance (if any) is
 #                         handled by the a0/a1-a3 read gates, not here.
 #   "governed_write"    — mutates the knowledge store; gated by
-#                         ``maybe_refuse_write`` (verified + proposed_only may
+#                         ``maybe_refuse_write`` (verified + direct_write may
 #                         write; read-only-external is refused).
 #   "owner_only_write"  — mutates the GRANT STORE itself or imports/overwrites
 #                         the whole store; gated by ``maybe_refuse_owner_write``

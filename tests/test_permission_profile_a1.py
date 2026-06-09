@@ -79,7 +79,7 @@ class TestDescribeCallerPermissions:
         assert result["governance_enabled"] is True
         assert result["trust_level"] == "trusted-local"
         assert result["max_sensitivity"] == "work"
-        assert result["write_policy"] == "proposed_only"
+        assert result["write_policy"] == "direct_write"
 
     def test_vnext_context_narrows_described_profile(self, tmp_path, monkeypatch):
         """Phase 2: role/stage/depth must narrow the live described profile."""
@@ -96,7 +96,7 @@ class TestDescribeCallerPermissions:
         assert result["trust_level"] == "private-self"
         assert result["trust_max_sensitivity"] == "secret"
         assert result["max_sensitivity"] == "public"
-        assert result["write_policy"] == "proposed_only"
+        assert result["write_policy"] == "direct_write"
         assert result["permission_profile_vnext"]["caller_role"] == "assistant"
         assert result["permission_profile_vnext"]["workflow_stage"] == "review"
         assert result["permission_profile_vnext"]["caller_depth"] == 1
@@ -170,7 +170,7 @@ class TestFormatPermissionsSection:
             "agent_id": "claude_code",
             "trust_level": "trusted-local",
             "max_sensitivity": "work",
-            "write_policy": "proposed_only",
+            "write_policy": "direct_write",
             "revoked": False,
             "note": "Items above 'work' sensitivity are filtered.",
         })
@@ -179,7 +179,7 @@ class TestFormatPermissionsSection:
         assert "`claude_code`" in section
         assert "`trusted-local`" in section
         assert "`work`" in section
-        assert "proposed_only" in section
+        assert "direct_write" in section
 
     def test_revoked_warning(self):
         from piia_engram.mcp_server import _format_permissions_section
