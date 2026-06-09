@@ -37,14 +37,14 @@ _LADDER = [name for name, _ in sorted(SENSITIVITY_ORDER.items(), key=lambda kv: 
 _MIN_SENS = _LADDER[0]  # "public"
 
 # Write policies ordered least → most permissive (restrictiveness rank).
-_WRITE_RANK = {"no": 0, "proposed_only": 1, "verified": 2}
+_WRITE_RANK = {"no": 0, "direct_write": 1, "verified": 2}
 _RANK_WRITE = {v: k for k, v in _WRITE_RANK.items()}
 
 
 # Role table — each role narrows (never widens) the trust ceiling/write.
 ROLE_PROFILES: dict[str, dict[str, str]] = {
     "owner": {"max_sensitivity": "secret", "write": "verified"},
-    "assistant": {"max_sensitivity": "work", "write": "proposed_only"},
+    "assistant": {"max_sensitivity": "work", "write": "direct_write"},
     "reviewer": {"max_sensitivity": "work", "write": "no"},
     "automation": {"max_sensitivity": "public", "write": "no"},
 }
