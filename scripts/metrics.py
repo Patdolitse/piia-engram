@@ -22,18 +22,40 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Windows 控制台 UTF-8
-if sys.platform == "win32":
-    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-    try:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+def _configure_console_utf8() -> None:
+    """在 Windows 控制台启用 UTF-8 输出。
+
+    放在函数里而非模块顶层：避免 import 时产生副作用（替换 sys.stdout 会破坏
+    pytest 的输出捕获）。只有作为脚本运行时 main() 才调用。
+    """
+    if sys.platform == "win32":
+        os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+        try:
+            sys.stdout = io.TextIOWrapper(
+                sys.stdout.buffer, encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 
 REPO = "Patdolitse/piia-engram"
 PYPI_PACKAGE = "piia-engram"
-ENGRAM_DIR = Path.home() / ".engram"
-LOG_FILE = ENGRAM_DIR / "metrics_log.jsonl"
+
+# 牵引力硬闸门 #78：进入 M1 的前提（开源核心地基与之并行，互不阻塞）。
+STAR_GATE = 500            # GitHub stars
+PYPI_WEEKLY_GATE = 1000    # PyPI 周下载
+
+
+def engram_dir() -> Path:
+    """解析 Engram 数据目录，尊重 ENGRAM_DIR 环境变量（便于隔离测试）。"""
+    custom = os.environ.get("ENGRAM_DIR", "").strip()
+    if custom:
+        return Path(custom).expanduser()
+    return Path.home() / ".engram"
+
+
+def log_file() -> Path:
+    """指标历史 JSONL 日志路径（随 ENGRAM_DIR 变化）。"""
+    return engram_dir() / "metrics_log.jsonl"
 
 
 # ── GitHub API (via gh CLI) ──────────────────────────────────────────
@@ -118,8 +140,8 @@ def fetch_local_signals() -> dict:
     """收集本地使用指标（隐私安全，不出本机）。"""
     signals: dict = {}
 
-    engram_dir = ENGRAM_DIR
-    if not engram_dir.exists():
+    root = engram_dir()
+    if not root.exists():
         signals["installed"] = False
         return signals
 
@@ -131,7 +153,7 @@ def fetch_local_signals() -> dict:
         ("decisions_count", "decisions.json"),
         ("domains_count", "domains.json"),
     ]:
-        p = engram_dir / filename
+        p = root / filename
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
@@ -143,14 +165,14 @@ def fetch_local_signals() -> dict:
                 pass
 
     # quick_context 新鲜度
-    qc = engram_dir / "quick_context.md"
+    qc = root / "quick_context.md"
     if qc.exists():
         import time
         age_days = (time.time() - qc.stat().st_mtime) / 86400
         signals["quick_context_age_days"] = round(age_days, 1)
 
     # 已配置工具数（通过 identity.json）
-    identity = engram_dir / "identity.json"
+    identity = root / "identity.json"
     if identity.exists():
         try:
             data = json.loads(identity.read_text(encoding="utf-8"))
@@ -221,26 +243,29 @@ def display_metrics(gh: dict, pypi: dict, local: dict) -> None:
 
 def append_log(gh: dict, pypi: dict, local: dict) -> None:
     """追加一行到 JSONL 日志。"""
-    ENGRAM_DIR.mkdir(parents=True, exist_ok=True)
+    root = engram_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    path = log_file()
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "github": gh,
         "pypi": pypi,
         "local": local,
     }
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
+    with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    print(f"  Logged to {LOG_FILE}")
+    print(f"  Logged to {path}")
 
 
 def show_dashboard() -> None:
     """展示历史趋势。"""
-    if not LOG_FILE.exists():
+    path = log_file()
+    if not path.exists():
         print("  没有历史日志。先运行: python scripts/metrics.py --log")
         return
 
     entries = []
-    for line in LOG_FILE.read_text(encoding="utf-8").strip().split("\n"):
+    for line in path.read_text(encoding="utf-8").strip().split("\n"):
         if line.strip():
             entries.append(json.loads(line))
 
@@ -274,16 +299,203 @@ def show_dashboard() -> None:
     print(f"\n{'='*60}\n")
 
 
+# ── 周报（牵引力闸门追踪） ───────────────────────────────────────────
+
+def _parse_ts(entry: dict) -> datetime | None:
+    """解析一条日志的 timestamp（ISO 8601），失败返回 None。"""
+    try:
+        return datetime.fromisoformat(entry["timestamp"])
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def load_log_entries() -> list[dict]:
+    """读取并按时间排序历史日志条目（无日志返回空列表）。"""
+    path = log_file()
+    if not path.exists():
+        return []
+    entries: list[dict] = []
+    for line in path.read_text(encoding="utf-8").strip().split("\n"):
+        if line.strip():
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    entries.sort(key=lambda e: e.get("timestamp", ""))
+    return entries
+
+
+def _baseline_entry(entries: list[dict], ref_dt: datetime, target_days: int = 7) -> dict | None:
+    """返回最接近 ref_dt 之前 target_days 天的历史条目（严格早于 ref_dt）。"""
+    target = target_days * 86400
+    best: dict | None = None
+    best_diff: float | None = None
+    for e in entries:
+        ts = _parse_ts(e)
+        if ts is None:
+            continue
+        delta = (ref_dt - ts).total_seconds()
+        if delta < 60:  # 忽略「就是现在」或未来的条目
+            continue
+        diff = abs(delta - target)
+        if best_diff is None or diff < best_diff:
+            best, best_diff = e, diff
+    return best
+
+
+def _delta(current, previous):
+    """两个数值的差；任一缺失返回 None。"""
+    if isinstance(current, (int, float)) and isinstance(previous, (int, float)):
+        return current - previous
+    return None
+
+
+def _gap(current, gate: int):
+    """距离闸门门槛还差多少（已达标为 0）；current 缺失返回 None。"""
+    if isinstance(current, (int, float)):
+        return max(0, gate - current)
+    return None
+
+
+def build_weekly_digest(gh: dict, pypi: dict) -> dict:
+    """构造牵引力周报数据结构（week-over-week + 距 #78 闸门差距）。
+
+    current 取自本次实时抓取（gh/pypi），baseline 取自本地日志中最接近
+    7 天前的一条。纯计算、不发网络请求，便于隔离测试。
+    """
+    now = datetime.now(timezone.utc)
+    entries = load_log_entries()
+    baseline = _baseline_entry(entries, now, target_days=7)
+
+    cur_stars = gh.get("stars")
+    cur_pypi_wk = pypi.get("pypi_downloads_last_week")
+
+    base_stars = baseline.get("github", {}).get("stars") if baseline else None
+    base_pypi_wk = baseline.get("pypi", {}).get("pypi_downloads_last_week") if baseline else None
+
+    base_ts = _parse_ts(baseline) if baseline else None
+    window_days = round((now - base_ts).total_seconds() / 86400, 1) if base_ts else None
+
+    stars_gap = _gap(cur_stars, STAR_GATE)
+    pypi_gap = _gap(cur_pypi_wk, PYPI_WEEKLY_GATE)
+    gate_met = (
+        isinstance(cur_stars, (int, float)) and cur_stars >= STAR_GATE
+        and isinstance(cur_pypi_wk, (int, float)) and cur_pypi_wk >= PYPI_WEEKLY_GATE
+    )
+
+    return {
+        "generated_at": now.isoformat(),
+        "window": {
+            "latest": now.isoformat(),
+            "baseline": base_ts.isoformat() if base_ts else None,
+            "days": window_days,
+            "has_baseline": baseline is not None,
+        },
+        "stars": {
+            "current": cur_stars,
+            "previous": base_stars,
+            "delta": _delta(cur_stars, base_stars),
+        },
+        "pypi_weekly": {
+            "current": cur_pypi_wk,
+            "previous": base_pypi_wk,
+            "delta": _delta(cur_pypi_wk, base_pypi_wk),
+        },
+        "gate_78": {
+            "star_gate": STAR_GATE,
+            "pypi_weekly_gate": PYPI_WEEKLY_GATE,
+            "stars_gap": stars_gap,
+            "pypi_weekly_gap": pypi_gap,
+            "met": gate_met,
+        },
+    }
+
+
+def _fmt_delta(d) -> str:
+    if d is None:
+        return "(无基线)"
+    if d > 0:
+        return f"+{d}"
+    return str(d)
+
+
+def render_weekly_digest(digest: dict) -> None:
+    """终端友好渲染周报。"""
+    print(f"\n{'='*56}")
+    print(f"  piia-engram Weekly Traction Digest")
+    print(f"  {digest['generated_at'][:16].replace('T', ' ')} UTC")
+    print(f"{'='*56}")
+
+    win = digest["window"]
+    if win["has_baseline"]:
+        print(f"\n  对比窗口: 约 {win['days']} 天 (baseline {win['baseline'][:10]} → 今天)")
+    else:
+        print("\n  对比窗口: 无历史基线 (先跑 `--log` 累积，下周即可显示环比)")
+
+    stars = digest["stars"]
+    pypi = digest["pypi_weekly"]
+    print(f"\n  指标            当前        环比")
+    print(f"  {'─'*44}")
+    print(f"  GitHub stars    {str(stars['current']):<10s}  {_fmt_delta(stars['delta'])}")
+    print(f"  PyPI 周下载     {str(pypi['current']):<10s}  {_fmt_delta(pypi['delta'])}")
+
+    gate = digest["gate_78"]
+    print(f"\n  硬闸门 #78 (进入 M1 的前提)")
+    print(f"  {'─'*44}")
+    star_gap = gate["stars_gap"]
+    pypi_gap = gate["pypi_weekly_gap"]
+    star_state = "达标" if star_gap == 0 else (f"还差 {star_gap}" if star_gap is not None else "?")
+    pypi_state = "达标" if pypi_gap == 0 else (f"还差 {pypi_gap}" if pypi_gap is not None else "?")
+    print(f"  Stars ≥ {gate['star_gate']:<6d}   {str(stars['current']):>6s} / {gate['star_gate']}   {star_state}")
+    print(f"  周下载 ≥ {gate['pypi_weekly_gate']:<5d}  {str(pypi['current']):>6s} / {gate['pypi_weekly_gate']}   {pypi_state}")
+    print(f"\n  闸门状态: {'✅ 已达标，可进 M1' if gate['met'] else '⛔ 未达标，M1 工程投入保持冻结'}")
+    print(f"\n{'='*56}\n")
+
+
+def weekly_report(gh: dict, pypi: dict, as_json: bool = False) -> dict:
+    """生成并输出周报，返回 digest 数据结构。"""
+    digest = build_weekly_digest(gh, pypi)
+    if as_json:
+        print(json.dumps(digest, ensure_ascii=False, indent=2))
+    else:
+        render_weekly_digest(digest)
+    return digest
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="piia-engram 分发监测")
+    _configure_console_utf8()
+    parser = argparse.ArgumentParser(
+        description="piia-engram 分发监测",
+        epilog=(
+            "周报调度建议（不自动创建任何计划任务）：\n"
+            "  Windows 任务计划程序 / cron 每周一次运行：\n"
+            "    python scripts/metrics.py --log         # 先写一条数据点\n"
+            "    python scripts/metrics.py --weekly      # 再输出环比 + 闸门差距\n"
+            "  环境变量 ENGRAM_DIR 可重定向数据目录（测试隔离用）。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--log", action="store_true", help="追加到本地日志")
     parser.add_argument("--dashboard", action="store_true", help="展示历史趋势")
+    parser.add_argument("--weekly", action="store_true",
+                        help="输出牵引力周报（环比 + 距 #78 闸门差距）")
+    parser.add_argument("--json", action="store_true",
+                        help="以 JSON 输出（当前仅 --weekly 支持）")
     args = parser.parse_args()
 
     if args.dashboard:
         show_dashboard()
+        return
+
+    if args.weekly:
+        gh = fetch_github_stats()
+        pypi = fetch_pypi_stats()
+        if args.log:
+            local = fetch_local_signals()
+            append_log(gh, pypi, local)
+        weekly_report(gh, pypi, as_json=args.json)
         return
 
     print("  Fetching metrics...")
