@@ -3,7 +3,7 @@
 
 <img src="assets/social_preview.png" alt="piia-engram — persistent AI memory across tools" width="640">
 
-# piia-engram
+# Piia Engram
 
 ### Local-first AI memory you can see, edit, and override.
 

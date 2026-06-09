@@ -3,7 +3,7 @@
 
 <img src="assets/social_preview_zh.png" alt="piia-engram — 跨工具持久 AI 记忆" width="640">
 
-# piia-engram
+# Piia Engram
 
 ### 别再对每个 AI 工具重复介绍自己
 
