@@ -33,10 +33,10 @@ level.
 | Trust level | Typical client types | Read ceiling | Write policy |
 |---|---|---|---|
 | `private-self` | `self`, `cli`, `engram`, `doctor` | `secret` | `verified` |
-| `trusted-local` | `claude_code`, `claude-code`, `codex`, `cursor`, `windsurf`, `gemini_cli`, `gemini-cli` | `work` | `proposed_only` |
+| `trusted-local` | `claude_code`, `claude-code`, `codex`, `cursor`, `windsurf`, `gemini_cli`, `gemini-cli` | `work` | `proposed_only` † |
 | `read-only-external` | unknown, empty, web or transient callers | `public` | `no` |
 
-Important current-state note: `proposed_only` is a policy label today, not a
+† Important current-state note: `proposed_only` is a policy label today, not a
 full staging workflow for direct MCP writes. Ordinary knowledge-store writes
 from `trusted-local` are still allowed by `maybe_refuse_write()`. High-blast
 operations such as grant changes, whole-store imports, import dry-runs that read

@@ -42,7 +42,7 @@
 
 - **No cloud account:** install with `pip`, keep the core store on your machine.
 - **Local files:** identity and knowledge live under `~/.engram/` as JSON/Markdown.
-- **User approval:** AI suggestions land in review before becoming verified memory.
+- **User approval:** AI writes locally; high-risk items (credentials, shell commands, MCP config, permission rules) wait for your review, while low/medium writes are auto-absorbed but fully auditable and reversible. Set `ENGRAM_APPROVAL=strict` to gate every write.
 - **Documented boundaries:** see [Trust model](docs/trust.md), [Privacy](PRIVACY.md), and [Security](SECURITY.md).
 
 Want proof? See the [live cross-tool continuity proof](docs/cross-tool-continuity-proof.md) — a memory written by Claude Code, read back by Codex through one local store — or the one-command [reproducible code demo](docs/cross-tool-continuity-demo.md).
@@ -719,7 +719,7 @@ Evidence levels follow the [agent client validation runbook](docs/runbooks/agent
 | Storage | Local JSON in `~/.engram/` | Cloud | Local | Vector DB + Mem0 Cloud | Postgres or Letta Cloud |
 | Local-first by default | ✅ | ❌ | ✅ | ⚠ Cloud is the default | ⚠ Cloud is the default |
 | Encryption at rest | ✅ AES-256-GCM, PBKDF2 600k (opt-in) | depends on Cloud | ❌ plain Markdown | depends on store config | depends on Postgres config |
-| Knowledge tiers (user gate) | ✅ staging → verified | ❌ | ❌ | ❌ | ❌ |
+| Knowledge tiers | ✅ high-risk staged; strict-mode gates all | ❌ | ❌ | ❌ | ❌ |
 | Conflict detection | ✅ | ❌ | ❌ | ❌ | ❌ |
 | MCP-native | ✅ | n/a | n/a | ⚠ third-party | ⚠ third-party |
 | Price | Free, AGPL-3.0 | Subscription-bundled | Free | Free / Cloud tiers | Free / Cloud tiers |

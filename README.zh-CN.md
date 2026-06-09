@@ -36,13 +36,13 @@
 
 > **TL;DR：** piia-engram 是本地优先的个人 AI 身份层。它让多个 AI 编程工具从同一份"你"开始工作：你的偏好、质量标准、经验、决策和项目上下文。它不是 agent memory 数据库，而是用户拥有、可审查、可迁移的上层身份资产。
 
-**为什么不用工具自带记忆就够了？** Claude Code、Codex、Cursor、Windsurf 都在加入自己的记忆和规则。这些能力有用，但通常只属于某一个工具或工作区。piia-engram 位于它们之上：一份你拥有的本地身份层，AI 建议的知识先进入审核，再由你确认是否成为长期事实，并可以跨工具延续。
+**为什么不用工具自带记忆就够了？** Claude Code、Codex、Cursor、Windsurf 都在加入自己的记忆和规则。这些能力有用，但通常只属于某一个工具或工作区。piia-engram 位于它们之上：一份你拥有的本地身份层——本地文件归你所有，AI 建议的知识你可随时查看与否决，高风险条目留待你审核，上下文可以跨工具延续。
 
 **信任模型四句话：**
 
 - **无云账号：** `pip` 安装，核心数据留在你的机器上。
 - **本地文件：** 身份与知识保存在 `~/.engram/` 下的 JSON/Markdown 文件中。
-- **用户确认：** AI 建议先进入审核区，确认后才成为已验证记忆。
+- **用户确认：** AI 在本地写入；高风险条目（凭据、shell 命令、MCP 配置、权限规则）会留待你审核，低/中风险自动吸收但全程可审计、可回退。设 `ENGRAM_APPROVAL=strict` 可让所有写入都先送审。
 - **边界公开：** 见 [信任模型](docs/trust.md)、[隐私说明](PRIVACY.md) 和 [安全说明](SECURITY.md)。
 
 想看安全的公开演示？见 [跨工具接续 Demo](docs/cross-tool-continuity-demo.md)。
@@ -444,7 +444,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | 存储位置 | 本地 JSON (`~/.engram/`) | 云端 | 本地 | 向量库 + Mem0 Cloud | Postgres 或 Letta Cloud |
 | 默认本地优先 | ✅ | ❌ | ✅ | ⚠ Cloud 是默认路径 | ⚠ Cloud 是默认路径 |
 | 静态加密 | ✅ AES-256-GCM, PBKDF2 600k（可选）| 视云端策略 | ❌ 明文 Markdown | 视存储后端配置 | 视 Postgres 配置 |
-| 知识分层（用户审核）| ✅ staging → verified | ❌ | ❌ | ❌ | ❌ |
+| 知识分层 | ✅ 高风险送审；strict 模式全量送审 | ❌ | ❌ | ❌ | ❌ |
 | 冲突检测 | ✅ | ❌ | ❌ | ❌ | ❌ |
 | MCP 原生 | ✅ | n/a | n/a | ⚠ 第三方 | ⚠ 第三方 |
 | 价格 | 免费 AGPL-3.0 | 含在订阅 | 免费 | 免费 / 云端付费 | 免费 / 云端付费 |
