@@ -37,9 +37,13 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-# Phase 2 remote endpoint (Cloudflare Worker)
-_DEFAULT_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/events"
-_DEFAULT_FEEDBACK_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/feedback"
+# Phase 2 remote endpoint.
+# No personal/built-in default: the open-source core ships with NO hardcoded
+# telemetry destination. Operators who want remote telemetry must opt in by
+# setting ENGRAM_TELEMETRY_URL / ENGRAM_FEEDBACK_URL explicitly. When unset,
+# remote send is a no-op (local-only mode), regardless of opt-in flags.
+_DEFAULT_ENDPOINT = ""
+_DEFAULT_FEEDBACK_ENDPOINT = ""
 _REMOTE_TIMEOUT = 3  # seconds — fail fast, never block MCP tools
 _FEEDBACK_INTERVAL_DAYS = 7  # send feedback at most once per week
 
@@ -689,6 +693,10 @@ def _send_remote(payload: dict[str, Any]) -> bool:
         return False
     try:
         endpoint = get_endpoint()
+        if not endpoint:
+            # No endpoint configured (no built-in default; ENGRAM_TELEMETRY_URL
+            # unset). Local-only mode: nothing to send, never a network call.
+            return False
         data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         req = Request(
             endpoint,
@@ -881,6 +889,10 @@ def send_feedback(report: dict[str, Any]) -> bool:
         report["daily_id"] = _daily_id(local_uuid)
 
         endpoint = os.environ.get("ENGRAM_FEEDBACK_URL", "").strip() or _DEFAULT_FEEDBACK_ENDPOINT
+        if not endpoint:
+            # No feedback endpoint configured (no built-in default;
+            # ENGRAM_FEEDBACK_URL unset). Local-only mode: never a network call.
+            return False
         data = json.dumps(report, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         req = Request(
             endpoint,

@@ -181,7 +181,7 @@ def _telemetry_endpoints(root: Path) -> dict[str, str]:
         ("_DEFAULT_ENDPOINT", "telemetry"),
         ("_DEFAULT_FEEDBACK_ENDPOINT", "feedback"),
     ):
-        m = re.search(rf'{name}\s*=\s*"([^"]+)"', text)
+        m = re.search(rf'{name}\s*=\s*"([^"]*)"', text)
         if not m:
             raise SetupError(f"{name} not found in src/piia_engram/telemetry.py")
         found[key] = m.group(1)
@@ -225,6 +225,11 @@ def scan(root: Path | str = ".") -> dict:
 
     security = texts["SECURITY.md"]
     for endpoint_name, endpoint in endpoints.items():
+        # Empty default = no built-in telemetry destination shipped in the
+        # open-source core (operators opt in via ENGRAM_TELEMETRY_URL /
+        # ENGRAM_FEEDBACK_URL). Nothing concrete to drift-check against.
+        if not endpoint:
+            continue
         if endpoint not in security:
             problems.append({
                 "file": "SECURITY.md",

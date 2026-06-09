@@ -36,8 +36,8 @@ def _write_minimal_trust_surface(root: Path) -> None:
         root,
         "src/piia_engram/telemetry.py",
         '''
-_DEFAULT_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/events"
-_DEFAULT_FEEDBACK_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/feedback"
+_DEFAULT_ENDPOINT = "https://telemetry.example.test/v1/events"
+_DEFAULT_FEEDBACK_ENDPOINT = "https://telemetry.example.test/v1/feedback"
 ''',
     )
     _write(
@@ -57,8 +57,8 @@ _DEFAULT_FEEDBACK_ENDPOINT = "https://engram-telemetry.pp3x325.workers.dev/v1/fe
         root,
         "SECURITY.md",
         "Telemetry is off by default. Remote telemetry is a separate opt-in. "
-        "https://engram-telemetry.pp3x325.workers.dev/v1/events "
-        "https://engram-telemetry.pp3x325.workers.dev/v1/feedback "
+        "https://telemetry.example.test/v1/events "
+        "https://telemetry.example.test/v1/feedback "
         "Never collected: identity content, prompts, file paths. "
         "Optional web reads only fetch URLs you explicitly provide. "
         "Optional field-level encryption requires piia-engram[secure] and ENGRAM_SECRET.\n",
@@ -146,7 +146,7 @@ def test_endpoint_drift_fails_against_telemetry_source(guard, tmp_path: Path):
         "SECURITY.md",
         "Telemetry is off by default. Remote telemetry is a separate opt-in. "
         "https://example.invalid/v1/events "
-        "https://engram-telemetry.pp3x325.workers.dev/v1/feedback "
+        "https://telemetry.example.test/v1/feedback "
         "Never collected: identity content, prompts, file paths. "
         "Optional web reads only fetch URLs you explicitly provide. "
         "Optional field-level encryption requires piia-engram[secure] and ENGRAM_SECRET.\n",
@@ -156,3 +156,37 @@ def test_endpoint_drift_fails_against_telemetry_source(guard, tmp_path: Path):
 
     assert result["ok"] is False
     assert any(p["kind"] == "endpoint_drift" and p["endpoint"] == "telemetry" for p in result["problems"])
+
+
+def test_empty_default_endpoints_produce_no_drift(guard, tmp_path: Path):
+    """No built-in telemetry endpoint (empty defaults) => nothing to drift-check.
+
+    The open-source core ships with empty `_DEFAULT_ENDPOINT` /
+    `_DEFAULT_FEEDBACK_ENDPOINT` (operators opt in via env vars). The guard must
+    parse the empty constants without error and must NOT demand that SECURITY.md
+    document any concrete URL.
+    """
+    _write_minimal_trust_surface(tmp_path)
+    _write(
+        tmp_path,
+        "src/piia_engram/telemetry.py",
+        '''
+_DEFAULT_ENDPOINT = ""
+_DEFAULT_FEEDBACK_ENDPOINT = ""
+''',
+    )
+    # SECURITY.md here documents no URL at all — must still pass.
+    _write(
+        tmp_path,
+        "SECURITY.md",
+        "Telemetry is off by default. Remote telemetry is a separate opt-in "
+        "configured via ENGRAM_TELEMETRY_URL; the core ships with no built-in endpoint. "
+        "Never collected: identity content, prompts, file paths. "
+        "Optional web reads only fetch URLs you explicitly provide. "
+        "Optional field-level encryption requires piia-engram[secure] and ENGRAM_SECRET.\n",
+    )
+
+    result = guard.scan(tmp_path)
+
+    assert result["ok"] is True, result["problems"]
+    assert not any(p["kind"] == "endpoint_drift" for p in result["problems"])

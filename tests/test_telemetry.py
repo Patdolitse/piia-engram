@@ -384,9 +384,15 @@ class TestRemoteConfig:
         monkeypatch.setenv("ENGRAM_TELEMETRY_URL", "https://custom.example.com/events")
         assert get_endpoint() == "https://custom.example.com/events"
 
-    def test_default_endpoint(self):
-        assert "engram-telemetry" in get_endpoint()
-        assert get_endpoint().startswith("https://")
+    def test_default_endpoint_is_empty(self, monkeypatch):
+        """The open-source core ships with NO built-in telemetry endpoint.
+
+        Without an explicit ENGRAM_TELEMETRY_URL, get_endpoint() returns "" so
+        remote send is a no-op (local-only). No personal handle / default
+        destination is baked into the package.
+        """
+        monkeypatch.delenv("ENGRAM_TELEMETRY_URL", raising=False)
+        assert get_endpoint() == ""
 
 
 # ---------------------------------------------------------------------------

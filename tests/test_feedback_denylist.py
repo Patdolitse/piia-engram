@@ -188,10 +188,16 @@ class _SpyURLOpen:
 @pytest.fixture
 def feedback_send_env(monkeypatch):
     """Enable feedback + stub config persistence, so only the guard / network
-    decide the outcome."""
+    decide the outcome.
+
+    An explicit ENGRAM_FEEDBACK_URL is set so the (now-default-empty) endpoint
+    no-op guard does not short-circuit before the send boundary — these tests
+    deliberately exercise the validation/network boundary, not the empty-endpoint
+    path (covered in test_telemetry_endpoint_decouple.py)."""
     monkeypatch.setattr(telemetry, "is_feedback_enabled", lambda: True)
     monkeypatch.setattr(telemetry, "_load_config", lambda: {"local_uuid": "uuid-abc"})
     monkeypatch.setattr(telemetry, "_save_config", lambda cfg: None)
+    monkeypatch.setenv("ENGRAM_FEEDBACK_URL", "https://feedback.example.test/v1/feedback")
 
 
 def test_bad_report_rejected_before_network(feedback_send_env, monkeypatch):
