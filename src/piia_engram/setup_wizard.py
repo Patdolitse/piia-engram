@@ -560,7 +560,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
         "snippet_zh": (
             "\n{marker}\n"
             "## Engram 记忆层\n\n"
-            "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
+            "本机已安装 Piia Engram（MCP 记忆层）。\n\n"
             "- **会话开始**：调用 `get_resume_brief` 接续上一轮工作（跨会话/跨工具连续性）\n"
             "- **对话开头（首次/新项目）**：调用 `get_user_context` 了解用户身份和偏好\n"
             "- **学到经验/踩坑**：调用 `add_lesson` 存入\n"
@@ -572,7 +572,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
         "snippet_en": (
             "\n{marker}\n"
             "## Engram Memory Layer\n\n"
-            "PIIA Engram (MCP memory layer) is installed on this machine.\n\n"
+            "Piia Engram (MCP memory layer) is installed on this machine.\n\n"
             "- **Session start**: call `get_resume_brief` to resume from the last session (cross-session / cross-tool continuity)\n"
             "- **Conversation start (first time / new project)**: call `get_user_context` to learn user identity and preferences\n"
             "- **Lessons learned**: call `add_lesson` to save\n"
@@ -590,7 +590,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "globs:\n"
             "alwaysApply: true\n"
             "---\n\n"
-            "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
+            "本机已安装 Piia Engram（MCP 记忆层）。\n\n"
             "- 会话开始调用 `get_resume_brief` 接续上一轮工作（跨工具连续性的关键）\n"
             "- 首次对话或新项目调用 `get_user_context` 了解用户\n"
             "- 学到经验时调用 `add_lesson`\n"
@@ -604,7 +604,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "globs:\n"
             "alwaysApply: true\n"
             "---\n\n"
-            "PIIA Engram (MCP memory layer) is installed.\n\n"
+            "Piia Engram (MCP memory layer) is installed.\n\n"
             "- Session start: call `get_resume_brief` to resume the previous session (key to cross-tool continuity)\n"
             "- First conversation or new project: call `get_user_context` to learn user\n"
             "- Lessons learned: call `add_lesson`\n"
@@ -618,7 +618,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
         "snippet_zh": (
             "\n{marker}\n"
             "## Engram 记忆层\n\n"
-            "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
+            "本机已安装 Piia Engram（MCP 记忆层）。\n\n"
             "- 会话开始：调用 `get_resume_brief` 接续上一轮工作（跨工具连续性）\n"
             "- 首次/新项目：调用 `get_user_context` 了解用户身份和偏好\n"
             "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
@@ -629,7 +629,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
         "snippet_en": (
             "\n{marker}\n"
             "## Engram Memory Layer\n\n"
-            "PIIA Engram (MCP memory layer) is installed.\n\n"
+            "Piia Engram (MCP memory layer) is installed.\n\n"
             "- Session start: call `get_resume_brief` to resume the previous session (cross-tool continuity)\n"
             "- First time / new project: call `get_user_context` to learn user identity and preferences\n"
             "- Lessons learned: call `add_lesson`\n"
@@ -647,7 +647,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
         "snippet_zh": (
             "\n{marker}\n"
             "## Engram 记忆层\n\n"
-            "本机已安装 PIIA Engram（MCP 记忆层）。\n\n"
+            "本机已安装 Piia Engram（MCP 记忆层）。\n\n"
             "- 会话开始：调用 `get_resume_brief` 接续上一轮工作（跨工具连续性）\n"
             "- 首次/新项目：调用 `get_user_context` 了解用户身份和偏好\n"
             "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
@@ -659,7 +659,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
         "snippet_en": (
             "\n{marker}\n"
             "## Engram Memory Layer\n\n"
-            "PIIA Engram (MCP memory layer) is installed on this machine.\n\n"
+            "Piia Engram (MCP memory layer) is installed on this machine.\n\n"
             "- Session start: call `get_resume_brief` to resume the previous session (cross-tool continuity)\n"
             "- First time / new project: call `get_user_context` to learn user identity and preferences\n"
             "- Lessons learned: call `add_lesson`\n"
@@ -2464,7 +2464,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
     print()
 
     print("========================================")
-    print(_t("  PIIA Engram 安装向导", "  PIIA Engram Setup Wizard"))
+    print(_t("  Piia Engram 安装向导", "  Piia Engram Setup Wizard"))
     print("========================================\n")
 
     # Step 1 — 自动检测环境
@@ -4585,7 +4585,7 @@ def run_feedback(*, dry_run: bool = False) -> None:
     _configure_utf8_stdio()
 
     print("\n  ========================================")
-    print("  PIIA Engram 内测反馈报告 / Beta Feedback Report")
+    print("  Piia Engram 内测反馈报告 / Beta Feedback Report")
     print("  ========================================\n")
 
     report = _build_feedback_report()

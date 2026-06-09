@@ -2140,7 +2140,7 @@ class TestRunSetup:
         run_setup()
 
         out = capsys.readouterr().out
-        assert "PIIA Engram" in out
+        assert "Piia Engram" in out
         assert "Step 1/3" in out
         assert "TestTool" in out
 
@@ -4221,7 +4221,7 @@ class TestInstructionInjection:
         target.write_text(
             "# My rules\n\n"
             f"{_INSTRUCTION_MARKER}\n"
-            "PIIA Engram test snippet\n"
+            "Piia Engram test snippet\n"
             f"{_INSTRUCTION_MARKER_END}\n\n"
             "Keep these.\n",
             encoding="utf-8",
@@ -4271,7 +4271,7 @@ class TestInstructionInjection:
         target.write_text(
             "# My rules\n\n"
             f"{_INSTRUCTION_MARKER}\n"
-            "PIIA Engram test snippet\n"
+            "Piia Engram test snippet\n"
             f"{_INSTRUCTION_MARKER_END}\n\n"
             "Keep these.\n",
             encoding="utf-8",
@@ -4390,7 +4390,7 @@ class TestInstructionInjection:
         target.write_text(
             "# My rules\n\n"
             f"{_INSTRUCTION_MARKER}\n"
-            "PIIA Engram test snippet\n"
+            "Piia Engram test snippet\n"
             f"{_INSTRUCTION_MARKER_END}\n\n"
             "Keep these.\n",
             encoding="utf-8",
