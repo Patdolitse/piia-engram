@@ -6,6 +6,35 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.54.0] - 2026-06-10
+
+### Added
+- **Cursor session hooks** — automatic resume-brief injection on `sessionStart`
+  and context-only save on `stop`. Adapted to Cursor's real protocol (env-var
+  transport via `CURSOR_TRANSCRIPT_PATH` / `CURSOR_PROJECT_DIR`; empty stdin).
+  Rich transcript extraction with role-prefixed conversation, tail-read for
+  oversized files, per-conversation UUID debounce, and graceful degradation to
+  minimal daily checkpoints. 36 new tests.
+- **Playbook trigger matching on cold start** — `get_user_context` now surfaces
+  relevant playbooks when the user's prompt matches trigger keywords, without
+  requiring manual lookup.
+- **Post-push GitHub status probe** (`scripts/post_push_closeout.py`) — read-only
+  `--github-status` mode that checks CI / release state after push without
+  triggering any action.
+
+### Fixed
+- **P0 security: tier-smuggle escape closed** — MCP entry layer now strips
+  caller-supplied trust fields (`tier`, `approval_status`); trust docs aligned.
+- **Concurrency stress test honesty** — Windows lock-timeout flake rewritten
+  to "no silent loss" contract instead of false-passing on timeout.
+- **Display-safe decryption failure** — when `ENGRAM_SECRET` is wrong or missing,
+  read path returns a user-visible placeholder instead of raising.
+
+### Changed
+- **Public content boundary enforced** — 55 internal-only files (release evidence,
+  runbooks, plans, design docs) removed from git tracking and gitignored.
+- **`proposed_only` write policy renamed to `direct_write`** for honest labeling.
+
 ## [3.53.0] - 2026-06-08
 
 ### Added

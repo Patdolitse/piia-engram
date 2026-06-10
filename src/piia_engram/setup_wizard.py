@@ -848,7 +848,7 @@ def _quote_for_shell(value: str) -> str:
         return '""'
     # Fast path: no quoting needed — works in ALL shells including
     # PowerShell.  Covers the common case of paths without spaces
-    # (e.g. "E:/codex-runtimes/.../python.exe").
+    # (e.g. "/usr/bin/python3" or "C:/Python312/python.exe").
     _SHELL_SENSITIVE = set(' \t"&|<>()^!%')
     if not any(c in _SHELL_SENSITIVE for c in value):
         return value

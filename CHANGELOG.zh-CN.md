@@ -6,6 +6,30 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.54.0] - 2026-06-10
+
+### 新增
+- **Cursor 会话 hooks**——`sessionStart` 时自动注入续接摘要，`stop` 时自动保存会话上下文。
+  适配 Cursor 真实协议（环境变量传输 `CURSOR_TRANSCRIPT_PATH` / `CURSOR_PROJECT_DIR`；
+  stdin 为空）。带角色前缀的富转录提取、超长文件尾部读取、按会话 UUID 防抖、优雅降级到
+  每日最小检查点。36 个新测试。
+- **冷启动 Playbook 触发匹配**——`get_user_context` 现在在用户提示词命中触发关键词时
+  自动浮现相关 playbook，无需手动查找。
+- **推送后 GitHub 状态探针**（`scripts/post_push_closeout.py`）——只读
+  `--github-status` 模式，push 后检查 CI / 发布状态但不触发任何操作。
+
+### 修复
+- **P0 安全：信任字段夹带漏洞关闭**——MCP 入口层现在剥离调用方自带的 `tier`、
+  `approval_status` 字段；信任文档对齐。
+- **并发压力测试诚实化**——Windows 锁超时偶发误判改为"无静默丢失"契约。
+- **解密失败显示安全**——`ENGRAM_SECRET` 错误或缺失时，读取路径返回用户可见占位符
+  而非抛异常。
+
+### 变更
+- **公开内容边界强制执行**——55 个内部文件（发布证据、runbook、计划、设计文档）
+  从 git 跟踪移除并 gitignore。
+- **`proposed_only` 写策略改名为 `direct_write`**，标签诚实化。
+
 ## [3.53.0] - 2026-06-08
 
 ### 新增
