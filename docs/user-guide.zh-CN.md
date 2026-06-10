@@ -196,6 +196,10 @@ API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经
   编码健康、健康分）。它是本地诊断——分享前先审。
 - **保持整洁：** 知识按类型衰减（偏好约 90 天、调试技巧约 15 天），每类都有
   上限，库不会无限膨胀。`doctor` 标出过期项时及时归档或更新。
+- **可选——升级检索：** 默认关键词检索开箱即用。如果需要跨语言召回（用英文
+  查询找到中文笔记），开启混合检索：`pip install "piia-engram[vector]"` 加
+  `ENGRAM_SEARCH=hybrid`，或在 `engram setup` 向导里一键开启。
+  详见 [hybrid-search.zh-CN.md](hybrid-search.zh-CN.md)。
 
 ---
 

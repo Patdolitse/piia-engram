@@ -34,6 +34,7 @@ import sys
 from datetime import datetime
 
 from . import _cursor_payload as payload
+from ._log import log_failure
 
 _ACTIVE_ENV = "ENGRAM_CURSOR_SAVE_ACTIVE"
 _MAX_CONTENT_CHARS = 4000
@@ -113,12 +114,14 @@ def main() -> int:
                 session_id=save_session_id,
                 project_folder=project_folder,
             )
-        except Exception:
+        except Exception as exc:
+            log_failure("cursor_save_on_stop", "save_agent_context failed", exc)
             return 0
 
         payload.mark_saved(debounce_key)
         return 0
-    except Exception:
+    except Exception as exc:
+        log_failure("cursor_save_on_stop", "hook failed", exc)
         return 0
     finally:
         os.environ.pop(_ACTIVE_ENV, None)

@@ -148,6 +148,9 @@ AI 工具总是在找本地的程序、运行时和 CLI。`register_tool` 记录
 **知识健康与发现**  
 `get_knowledge_overview` 找出久未复查的知识（30 天以上），计算 0–100 健康度评分（新鲜度、质量、覆盖度、清洁度四个维度），提示哪些内容值得重新确认。`suggest_merges` 全库扫描近似重复条目，返回可直接执行的合并命令。`link_knowledge` 把相关教训和决策串联成可导航的知识网络。
 
+**混合检索（可选，默认关闭）**  
+默认关键词检索行为完全不变。按需开启混合检索——FTS5 全文检索 + 语义向量层——获得跨语言召回能力（例如用英文查询找到中文笔记）：`pip install "piia-engram[vector]"` 并设置 `ENGRAM_SEARCH=hybrid`，或在 `engram setup` 向导里一键开启。索引是可重建的 SQLite 文件，JSON 存储始终是唯一数据源。详见 [docs/hybrid-search.zh-CN.md](docs/hybrid-search.zh-CN.md)。
+
 ## 快速开始
 
 ```bash

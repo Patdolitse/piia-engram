@@ -27,6 +27,8 @@ import os
 import sys
 from pathlib import Path
 
+from ._log import log_failure
+
 
 def _apply_argv_env(argv: list[str]) -> None:
     """Promote ``--env KEY=VAL`` argv pairs into ``os.environ``."""
@@ -149,9 +151,10 @@ def main() -> None:
         # extract_session_insights here would double-write the staging
         # tier — see hooks audit decision for v3.31.
 
-    except Exception:
-        # Hooks must never block Claude Code.
-        pass
+    except Exception as exc:
+        # Hooks must never block Claude Code — but failures must not be
+        # invisible either: leave a breadcrumb in hooks.log.
+        log_failure("auto_absorb_compact", "daily log append failed", exc)
 
 
 if __name__ == "__main__":

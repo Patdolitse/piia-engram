@@ -176,6 +176,9 @@ AI tools constantly search for local programs, runtimes, and CLIs. `register_too
 **Knowledge health and discovery**  
 `get_knowledge_overview` surfaces stale lessons (not reviewed in 30+ days), computes a 0–100 health score across four dimensions (freshness, quality, coverage, cleanliness), and flags gaps worth revisiting. `suggest_merges` scans your entire knowledge base for near-duplicates and returns actionable merge commands. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
 
+**Hybrid search (optional, off by default)**  
+The default keyword search stays unchanged. Opt in to hybrid retrieval — FTS5 full-text plus a semantic vector layer — for cross-lingual recall, e.g. an English query finding a Chinese note: `pip install "piia-engram[vector]"` and set `ENGRAM_SEARCH=hybrid`, or let `engram setup` enable it with one keystroke. The index is a rebuildable SQLite file; your JSON store remains the single source of truth. See [docs/hybrid-search.md](docs/hybrid-search.md).
+
 ## Quick Start
 
 ```bash

@@ -26,6 +26,7 @@ import os
 import sys
 
 from . import _cursor_payload as payload
+from ._log import log_failure
 
 _ACTIVE_ENV = "ENGRAM_CURSOR_INJECT_ACTIVE"
 _TOKEN_BUDGET = 1500
@@ -60,7 +61,8 @@ def main() -> int:
                 token_budget=_TOKEN_BUDGET,
             )
             markdown = str(brief.get("markdown", "") or "")
-        except Exception:
+        except Exception as exc:
+            log_failure("cursor_inject_resume_brief", "get_resume_brief failed", exc)
             return _passthrough()
 
         if not markdown.strip():
@@ -80,7 +82,8 @@ def main() -> int:
         # codepage; JSON consumers decode them losslessly.
         print(json.dumps(output, ensure_ascii=True))
         return 0
-    except Exception:
+    except Exception as exc:
+        log_failure("cursor_inject_resume_brief", "hook failed", exc)
         return _passthrough()
     finally:
         os.environ.pop(_ACTIVE_ENV, None)

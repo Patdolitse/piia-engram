@@ -22,6 +22,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
   previously enabled `ENGRAM_SEARCH` from client configs. Hybrid stays
   opt-in/off by default.
 
+### Fixed
+- **Hook failures are no longer silent** — the Claude Code and Cursor hooks
+  (save-on-stop, compact absorb, resume-brief inject, writeback) still never
+  block the host tool, but a swallowed failure now leaves a one-line
+  breadcrumb in `<ENGRAM_DIR>/logs/hooks.log` (size-capped), matching the
+  watcher's existing `watcher.log` observability.
+
+### Documentation
+- Hybrid search is now discoverable from the README and user guide
+  (`pip install "piia-engram[vector]"` + `ENGRAM_SEARCH=hybrid`), with a new
+  Chinese translation of the hybrid-search guide.
+- `docs/architecture.md` caught up with v3.55: new "capture channels" section
+  documenting the `hooks/` and `watcher/` subpackages and their contracts,
+  module map updated for the v3.55 monolith split
+  (`knowledge_ops` / `playbooks` / `tools_registry` / `doctor` /
+  `cli_commands` / `search_index`).
+
 ### Changed
 - **Incremental watcher capture** — watcher checkpoints now carry only the
   conversation turns appended since the last successful save (per-file byte

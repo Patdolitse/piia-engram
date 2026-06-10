@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from ._log import log_failure
 from .writeback_policy import check_writeback_allowed
 
 _TRUTHY = {"1", "true", "on", "yes"}
@@ -108,7 +109,8 @@ def main() -> int:
             result = Engram().extract_session_insights(
                 summary, source_tool="cursor", force_staging=True
             )
-        except Exception:
+        except Exception as exc:
+            log_failure("cursor_writeback", "extract_session_insights failed", exc)
             return 0
 
         if os.environ.get("ENGRAM_CURSOR_WRITEBACK_DEBUG", "").strip().lower() in _TRUTHY:

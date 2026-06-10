@@ -226,6 +226,11 @@ Full data-flow detail is in [Trust model](trust.md) and
 - **Keep it tidy:** knowledge decays by type (preferences last ~90 days, debug
   tips ~15), and each type is capped so the store does not grow without limit.
   Archive or update stale entries when `doctor` flags them.
+- **Optional — upgrade search:** the default keyword search works out of the
+  box. If you want cross-lingual recall (an English query finding a Chinese
+  note), enable hybrid search: `pip install "piia-engram[vector]"` plus
+  `ENGRAM_SEARCH=hybrid`, or take the one-keystroke step in `engram setup`.
+  See [hybrid-search.md](hybrid-search.md).
 
 ---
 

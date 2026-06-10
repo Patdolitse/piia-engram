@@ -22,6 +22,8 @@ import json
 import os
 import sys
 
+from ._log import log_failure
+
 
 def _apply_argv_env(argv: list[str]) -> None:
     """Promote ``--env KEY=VAL`` argv pairs into ``os.environ``."""
@@ -66,7 +68,8 @@ def main() -> None:
             token_budget=1500,
         )
         markdown = brief.get("markdown", "")
-    except Exception:
+    except Exception as exc:
+        log_failure("auto_inject_resume_brief", "get_resume_brief failed", exc)
         print(json.dumps({"continue": True}))
         return
 

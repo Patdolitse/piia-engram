@@ -3,6 +3,8 @@
 > Status: opt-in, off by default. The default search behavior is unchanged
 > (keyword). Turn this on only if you want it.
 
+[中文版](hybrid-search.zh-CN.md)
+
 ## What it is
 
 Engram's default search is a keyword scorer (character n-grams + alias

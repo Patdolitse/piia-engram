@@ -19,6 +19,21 @@
   构建索引。重跑 setup 不再静默丢失客户端配置里已启用的 `ENGRAM_SEARCH`。
   hybrid 仍为默认关闭、自愿开启。
 
+### 修复
+- **Hook 失败不再静默**——Claude Code 和 Cursor 各 hook（停止保存、压缩吸收、
+  续接简报注入、写回）依旧绝不阻塞宿主工具，但被吞掉的失败现在会在
+  `<ENGRAM_DIR>/logs/hooks.log` 留下一行痕迹（有大小上限），与 Watcher 已有的
+  `watcher.log` 可观测性对齐。
+
+### 文档
+- 混合检索现在可以从 README 和用户指南发现
+  （`pip install "piia-engram[vector]"` + `ENGRAM_SEARCH=hybrid`），并新增
+  混合检索指南的中文版。
+- `docs/architecture.md` 追平 v3.55：新增"捕获通道"章节，记录 `hooks/` 与
+  `watcher/` 两个子包及其契约；模块表更新到 v3.55 巨石拆分后的形态
+  （`knowledge_ops` / `playbooks` / `tools_registry` / `doctor` /
+  `cli_commands` / `search_index`）。
+
 ### 变更
 - **Watcher 增量捕获**——Watcher 的检查点现在只携带上次成功保存之后新增的
   对话轮次（状态文件按文件记录字节 offset），不再每次重发整个转录的重叠

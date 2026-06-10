@@ -18,6 +18,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from ._log import log_failure
+
 
 def _apply_argv_env(argv: list[str]) -> None:
     """Promote ``--env KEY=VAL`` argv pairs into ``os.environ``.
@@ -179,8 +181,8 @@ def main() -> None:
                     project_folder=cwd or "",
                     source_tool="claude_code",
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                log_failure("auto_save_on_stop", "wrap_up_session failed", exc)
 
         if cwd:
             _root = Path(cwd)
@@ -227,9 +229,10 @@ def main() -> None:
                 if snap:
                     snap["last_auto_snapshot"] = datetime.now().isoformat()
                     engram.save_project_snapshot(cwd, snap)
-    except Exception:
-        # Hooks must never block Claude Code.
-        pass
+    except Exception as exc:
+        # Hooks must never block Claude Code — but failures must not be
+        # invisible either: leave a breadcrumb in hooks.log.
+        log_failure("auto_save_on_stop", "session save failed", exc)
 
 
 if __name__ == "__main__":
