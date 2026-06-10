@@ -6169,6 +6169,10 @@ def main() -> None:
         sys.exit(run_audit(_governance_root()))
     elif args[0] == "verify-ledger":
         sys.exit(run_verify_ledger(_governance_root()))
+    elif args[0] == "watcher":
+        from piia_engram.watcher.install import run_watcher_cli
+
+        sys.exit(run_watcher_cli(args[1:]))
     else:
         print(
             "Engram CLI\n\n"
@@ -6209,6 +6213,8 @@ def main() -> None:
             "  engram revoke <agent>   Revoke an agent (future disclosure only)\n"
             "  engram audit            Show recent disclosure receipts + ledger check\n"
             "  engram verify-ledger    Verify the governance ledger hash chain\n"
+            "  engram watcher install  Auto-capture sessions from hook-less AI tools (per-user autostart)\n"
+            "  engram watcher status   Show watcher install + last-scan status\n"
             "  engram stats            Show project growth metrics\n"
             "  engram stats --log      Append stats snapshot to local log\n"
             "  engram telemetry        Manage anonymous usage statistics\n"

@@ -316,3 +316,124 @@ def test_cli_adapter_filter(fake_engram, capsys):
 
     assert main(["--once", "--adapters", "codex"]) == 0
     assert json.loads(capsys.readouterr().out.strip())["errors"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Autostart install (engram watcher install/uninstall/status)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def install_env(monkeypatch, tmp_path: Path):
+    """Force the win32 code path with APPDATA isolated and shortcuts stubbed."""
+    import sys as _sys
+
+    from piia_engram.watcher import install as winstall
+
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setattr(_sys, "platform", "win32")
+    shortcuts: list[tuple] = []
+    monkeypatch.setattr(
+        winstall, "_create_shortcut", lambda *a, **kw: shortcuts.append(a)
+    )
+    return SimpleNamespace(mod=winstall, shortcuts=shortcuts)
+
+
+def test_launcher_source_bakes_paths_and_interval():
+    from piia_engram.watcher import install as winstall
+
+    src = winstall.build_launcher_source(45.0)
+    assert "ENGRAM_DIR" in src
+    assert repr(str(winstall.engram_dir())) in src  # repr-escaped in source
+    assert "'--interval', '45'" in src
+    assert "piia_engram.watcher.__main__" in src
+    compile(src, "<launcher>", "exec")  # must be valid python
+
+
+def test_install_writes_launcher_and_shortcut(install_env, capsys):
+    assert install_env.mod.install(60.0) == 0
+    launcher = install_env.mod.launcher_path()
+    assert launcher.exists()
+    assert "Auto-generated" in launcher.read_text(encoding="utf-8")
+    assert len(install_env.shortcuts) == 1
+    assert install_env.shortcuts[0][0] == install_env.mod.shortcut_path()
+    assert "installed" in capsys.readouterr().out
+
+
+def test_install_shortcut_failure_keeps_launcher_and_fails(
+    install_env, monkeypatch, capsys
+):
+    def _boom(*_a, **_kw):
+        raise OSError("no powershell")
+
+    monkeypatch.setattr(install_env.mod, "_create_shortcut", _boom)
+    assert install_env.mod.install(60.0) == 1
+    assert install_env.mod.launcher_path().exists()
+    assert "failed" in capsys.readouterr().out
+
+
+def test_uninstall_removes_only_install_artifacts(install_env, capsys):
+    install_env.mod.install(60.0)
+    # Simulate the shortcut existing on disk (creation is stubbed).
+    lnk = install_env.mod.shortcut_path()
+    lnk.parent.mkdir(parents=True, exist_ok=True)
+    lnk.write_text("stub", encoding="utf-8")
+    state = core._state_dir() / "watcher_state.json"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text("{}", encoding="utf-8")
+
+    assert install_env.mod.uninstall() == 0
+    assert not lnk.exists()
+    assert not install_env.mod.launcher_path().exists()
+    assert state.exists()  # state/logs are never deleted
+    assert "removed" in capsys.readouterr().out
+
+
+def test_uninstall_when_nothing_installed(install_env, capsys):
+    assert install_env.mod.uninstall() == 0
+    assert "nothing to remove" in capsys.readouterr().out
+
+
+def test_status_reports_install_and_scan_state(install_env, capsys):
+    assert install_env.mod.status() == 0
+    out = capsys.readouterr().out
+    assert "autostart shortcut: no" in out
+    assert "never" in out
+
+    install_env.mod.install(60.0)
+    state = core._state_dir() / "watcher_state.json"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text("{}", encoding="utf-8")
+    capsys.readouterr()
+    assert install_env.mod.status() == 0
+    out = capsys.readouterr().out
+    assert "launcher          : yes" in out
+    assert "last scan         : 2" in out  # ISO year prefix
+
+
+def test_install_posix_prints_guidance_writes_nothing(monkeypatch, capsys):
+    import sys as _sys
+
+    from piia_engram.watcher import install as winstall
+
+    monkeypatch.setattr(_sys, "platform", "linux")
+    assert winstall.install(60.0) == 0
+    assert not winstall.launcher_path().exists()
+    assert "cron" in capsys.readouterr().out
+
+
+def test_watcher_cli_routing(install_env, capsys):
+    assert install_env.mod.run_watcher_cli([]) == 2
+    assert install_env.mod.run_watcher_cli(["bogus"]) == 2
+    capsys.readouterr()
+    assert install_env.mod.run_watcher_cli(["status"]) == 0
+    assert install_env.mod.run_watcher_cli(["install", "--interval", "bad"]) == 2
+    capsys.readouterr()
+    assert install_env.mod.run_watcher_cli(["install", "--interval", "30"]) == 0
+    assert "30s" in capsys.readouterr().out
+
+
+def test_watcher_cli_once_routes_to_scanner(install_env, fake_engram, capsys):
+    assert install_env.mod.run_watcher_cli(["once"]) == 0
+    out = json.loads(capsys.readouterr().out.strip())
+    assert "discovered" in out
