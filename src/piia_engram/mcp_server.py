@@ -1862,7 +1862,14 @@ async def resolve_playbook_scope_review(
     dry_run: bool = True,
     confirm: bool = False,
 ) -> str:
-    """Resolve one Playbook scope review item: accept global/project/shared or skip.
+    """Resolve one Playbook scope review item.
+
+    Actions (exact values): 'accept_global', 'accept_project', 'accept_shared', 'skip'.
+    - accept_project requires project_folder (single folder path; a single-item
+      project_folders_json is also accepted).
+    - accept_shared requires project_folders_json (JSON array of folder paths;
+      project_folder alone is also accepted as one entry).
+    Mutations require dry_run=False AND confirm=True; default is a dry-run preview.
 
     Owner/admin surface: mutates legacy Playbook review state and is refused for non-owner callers when governance is enabled.
     """
@@ -3145,6 +3152,10 @@ async def list_pending_staging(
     Purpose: use before review to inspect the staging queue without approving,
     rejecting, or exposing draft bodies. Returns ids, types, domains, priority
     scores and counts only; never stored summaries/details/reasoning.
+
+    Cross-queue visibility: the response also includes ``other_queues`` —
+    counts for other pending review backlogs (e.g. playbook scope review),
+    so an empty staging queue never hides pending work elsewhere.
 
     Args:
         filters_json: Optional JSON object, e.g. {"type":"decision","domain":"release"}.

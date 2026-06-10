@@ -1296,6 +1296,29 @@ def test_list_pending_staging_is_read_only_metadata_under_governance(
     assert secret not in json.dumps(result, ensure_ascii=False)
 
 
+def test_list_pending_staging_surfaces_other_review_queues(
+    isolated_engram: Engram,
+):
+    """An empty staging queue must not hide pending playbook scope reviews."""
+    isolated_engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = json.loads(_run(mcp_server.list_pending_staging()))
+
+    assert result["counts"]["total_pending"] == 0
+    other = result["other_queues"]["playbook_scope_review"]
+    assert other["pending"] == 1
+    assert "resolve_playbook_scope_review" in other["hint"]
+
+
+def test_list_pending_staging_other_queues_empty_when_nothing_pending(
+    isolated_engram: Engram,
+):
+    """No pending backlogs anywhere → other_queues stays an empty dict."""
+    result = json.loads(_run(mcp_server.list_pending_staging()))
+
+    assert result["other_queues"] == {}
+
+
 def test_batch_review_staging_still_write_gated_for_external(
     isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
 ):

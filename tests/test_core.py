@@ -6322,6 +6322,109 @@ def test_resolve_playbook_scope_review_accept_shared_requires_folders(
     assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "global"
 
 
+def test_resolve_playbook_scope_review_folder_errors_include_hint(tmp_path: Path):
+    """Missing-folder errors should teach the caller the correct parameter."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    project_err = engram.resolve_playbook_scope_review(
+        pb["id"], action="accept_project", dry_run=False, confirm=True,
+    )
+    shared_err = engram.resolve_playbook_scope_review(
+        pb["id"], action="accept_shared", dry_run=False, confirm=True,
+    )
+
+    assert "project_folder" in project_err["hint"]
+    assert "project_folders" in shared_err["hint"]
+
+
+def test_resolve_playbook_scope_review_accept_project_tolerates_single_folders_list(
+    tmp_path: Path,
+):
+    """accept_project should accept a single-item project_folders list as alias."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_project",
+        project_folders=[project],
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["updated"]["to_scope"]["project_folder"] == project
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "project"
+    assert stored["scope"]["project_folder"] == project
+
+
+def test_resolve_playbook_scope_review_accept_project_rejects_ambiguous_folders_list(
+    tmp_path: Path,
+):
+    """A multi-item folders list is ambiguous for accept_project — still an error."""
+    engram = make_engram(tmp_path)
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_project",
+        project_folders=[str(tmp_path / "a"), str(tmp_path / "b")],
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["error"] == "project_folder_required"
+    assert engram.get_playbook(pb["id"], _update_access=False)["scope"]["type"] == "global"
+
+
+def test_resolve_playbook_scope_review_accept_shared_tolerates_single_folder(
+    tmp_path: Path,
+):
+    """accept_shared should accept project_folder alone as a one-entry list."""
+    engram = make_engram(tmp_path)
+    project = str(tmp_path / "engram")
+    pb = engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
+
+    result = engram.resolve_playbook_scope_review(
+        pb["id"],
+        action="accept_shared",
+        project_folder=project,
+        dry_run=False,
+        confirm=True,
+    )
+
+    assert result["updated"]["to_scope"]["type"] == "shared"
+    stored = engram.get_playbook(pb["id"], _update_access=False)
+    assert stored["scope"]["type"] == "shared"
+
+
+def test_get_playbook_scope_review_queue_items_include_summary(tmp_path: Path):
+    """Queue items should carry a short preview so reviewers can judge scope
+    without fetching every playbook body."""
+    engram = make_engram(tmp_path)
+    engram.add_playbook({
+        "title": "Daily cleanup",
+        "triggers": ["notes"],
+        "description": "Tidy the inbox and archive stale notes every morning.",
+    })
+    engram.add_playbook({
+        "title": "Steps only flow",
+        "triggers": ["misc"],
+        "steps": [
+            {"order": 1, "action": "build", "detail": ""},
+            {"order": 2, "action": "test", "detail": ""},
+        ],
+    })
+
+    queue = engram.get_playbook_scope_review_queue()
+
+    by_title = {item["title"]: item for item in queue["items"]}
+    assert by_title["Daily cleanup"]["summary"].startswith("Tidy the inbox")
+    assert by_title["Steps only flow"]["summary"] == "build → test"
+
+
 def test_resolve_playbook_scope_review_false_dry_run_without_confirm_previews(
     tmp_path: Path,
 ):

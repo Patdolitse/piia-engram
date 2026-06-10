@@ -206,6 +206,7 @@ def _list_pending(
             candidates.append(_pending_item(item_type, item))
 
     total_pending = len(candidates)
+    other_queues = _other_pending_queues(eng)
     filtered = [
         item for item in candidates
         if (not type_filter or item["type"] == type_filter)
@@ -234,8 +235,33 @@ def _list_pending(
             "listed": len(page),
             "filtered_out": total_pending - len(filtered),
         },
+        "other_queues": other_queues,
         "items": page,
     }
+
+
+def _other_pending_queues(eng) -> dict[str, Any]:
+    """Surface other review backlogs so 'staging is empty' never hides
+    pending work that lives in a different queue (cross-queue visibility).
+
+    Read-only and fail-soft: any error returns an empty dict.
+    """
+    queues: dict[str, Any] = {}
+    try:
+        review_queue = eng.get_playbook_scope_review_queue()
+        pending = int(review_queue.get("total") or 0)
+        if pending:
+            queues["playbook_scope_review"] = {
+                "pending": pending,
+                "hint": (
+                    "Legacy playbooks awaiting scope review. Use "
+                    "get_playbook_scope_review_queue to list and "
+                    "resolve_playbook_scope_review to resolve."
+                ),
+            }
+    except Exception:  # noqa: BLE001 — visibility must never break listing
+        pass
+    return queues
 
 
 def _pending_item(item_type: str, item: dict[str, Any]) -> dict[str, Any]:

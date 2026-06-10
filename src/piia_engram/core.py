@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -2602,6 +2603,34 @@ class Engram(
             ),
         }
 
+    @staticmethod
+    def _playbook_review_summary(pb: dict, max_chars: int = 160) -> str:
+        """Short metadata preview so reviewers can judge scope without
+        fetching the full playbook body for every queue item."""
+        summary = str(pb.get("description") or "").strip()
+        if not summary:
+            steps = pb.get("steps") or []
+            if isinstance(steps, list):
+                parts = [
+                    str(s.get("action") or "").strip()
+                    for s in steps if isinstance(s, dict)
+                ]
+                summary = " → ".join(p for p in parts if p)
+        if not summary:
+            raw = pb.get("steps_json")
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    arr = json.loads(raw)
+                    if isinstance(arr, list) and arr:
+                        summary = str(arr[0]).strip()
+                except (ValueError, TypeError):
+                    pass
+        if not summary:
+            summary = str(pb.get("domain") or "").strip()
+        if len(summary) > max_chars:
+            summary = summary[: max_chars - 1] + "…"
+        return summary
+
     def get_playbook_scope_review_queue(
         self,
         project_folders: list[str] | None = None,
@@ -2630,6 +2659,7 @@ class Engram(
             item = dict(suggestion)
             item["scope_review_status"] = review_status
             item["scope_review_history"] = list(pb.get("scope_review_history") or [])
+            item["summary"] = self._playbook_review_summary(pb)
             items.append(item)
 
         if limit is not None:
@@ -2662,10 +2692,27 @@ class Engram(
                     "skip",
                 ],
             }
+        # Tolerant aliasing: callers often mix up the singular/plural folder
+        # parameters. When intent is unambiguous, accept either spelling.
         if action == "accept_project" and not project_folder:
-            return {"error": "project_folder_required"}
+            folders = [f for f in (project_folders or []) if str(f).strip()]
+            if len(folders) == 1:
+                project_folder = folders[0]
+        if action == "accept_shared" and not project_folders and project_folder:
+            project_folders = [project_folder]
+
+        if action == "accept_project" and not project_folder:
+            return {
+                "error": "project_folder_required",
+                "hint": "accept_project needs project_folder='<folder path>' "
+                        "(a single-item project_folders list is also accepted)",
+            }
         if action == "accept_shared" and not project_folders:
-            return {"error": "project_folders_required"}
+            return {
+                "error": "project_folders_required",
+                "hint": "accept_shared needs project_folders=['<folder>', ...] "
+                        "(project_folder alone is also accepted as one entry)",
+            }
 
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
