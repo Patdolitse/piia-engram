@@ -27,8 +27,10 @@ tests/**
 # ── Public helper scripts (sanitize check, hook installer, etc.) ─────
 scripts/**
 
-# ── Release-gate evidence (moved to .gitignore; no longer public) ────
-# release-evidence/** is now gitignored — removed from allowlist
+# ── Release-gate evidence (marker-only declarations; CI-enforced) ────
+# Only pass/n-a marker lines are public. Detailed notes (test counts,
+# scan results, review records) stay local via .gitignore.
+release-evidence/v*.md
 
 # ── CI / automation ─────────────────────────────────────────────────
 .github/**

@@ -119,7 +119,11 @@ docs/runbooks/post-push-closeout.md
 docs/runbooks/public-truth-sync.md
 docs/runbooks/install-launch-truth-audit.md
 docs/runbooks/local-apply-paths.md
-release-evidence/
+# release-evidence/ is tracked again (marker-only files; CI release gate
+# requires release-evidence/v<version>.md on a fresh checkout). Detailed
+# evidence notes stay local-only:
+release-evidence/*-notes.md
+release-evidence/README.md
 
 # Internal / strategic documents
 docs/design/

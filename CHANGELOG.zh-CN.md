@@ -6,6 +6,25 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [3.55.0] - 2026-06-10
+
+### 新增
+- **通用会话 Watcher**（`piia_engram.watcher`）——后台轮询器，为不支持 hooks 的
+  AI 工具自动捕获会话到 Engram contexts。内置 Codex 适配器（解析 rollout JSONL
+  转录）。水位线增量扫描、按文件防抖、首跑不回灌历史、只写 contexts（绝不触碰
+  知识库）。
+- **一键自启安装**——`engram watcher install` 在 Windows 上配置按用户登录自启
+  （启动文件夹快捷方式 + 无控制台启动器；无需管理员权限）。配套子命令：
+  `start`、`status`、`uninstall`、`once`。非 Windows 平台输出 cron/systemd 指引。
+- **历史召回触发规则**——四个支持工具的指令片段现在会告诉模型：用户问起历史
+  对话时调用 `get_recent_context`。
+
+### 修复
+- **PyPI 发布门禁解堵**——v3.54.0 的 PyPI 发布被拦截：公开边界清理移除了
+  `release-evidence/` 跟踪，而 CI 发布门禁仍依赖它。证据文件以"纯标记声明"
+  形式重新跟踪（不含内部测试数或扫描明细）；详细记录留在本地。v3.54.0 从未
+  发布到 PyPI，其变更随本版本一起发布。
+
 ## [3.54.0] - 2026-06-10
 
 ### 新增

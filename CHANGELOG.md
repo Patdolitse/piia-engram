@@ -6,6 +6,30 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.55.0] - 2026-06-10
+
+### Added
+- **Universal session watcher** (`piia_engram.watcher`) — background poller that
+  auto-captures AI tool sessions into Engram contexts for tools without hook
+  support. Ships with a Codex adapter (parses rollout JSONL transcripts).
+  Watermark-based incremental scanning, per-file debounce, no backfill on first
+  run, contexts-only writes (never touches the knowledge store).
+- **One-command autostart install** — `engram watcher install` sets up per-user
+  logon autostart on Windows (Startup-folder shortcut + console-less launcher;
+  no admin rights needed). Companion subcommands: `start`, `status`,
+  `uninstall`, `once`. Non-Windows platforms get cron/systemd guidance.
+- **History-recall trigger rule** — instruction snippets for all four supported
+  tools now tell the model to call `get_recent_context` when the user asks
+  about past conversations.
+
+### Fixed
+- **PyPI release gate unblocked** — v3.54.0's PyPI publish was blocked because
+  the public-content-boundary cleanup removed `release-evidence/` from tracking
+  while the CI release gate still required it. Evidence files are tracked again
+  as marker-only declarations (no internal test counts or scan details);
+  detailed notes stay local. v3.54.0 was never published to PyPI; its changes
+  ship in this release.
+
 ## [3.54.0] - 2026-06-10
 
 ### Added
