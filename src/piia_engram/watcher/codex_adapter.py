@@ -28,14 +28,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
+from ._segments import read_segment
+
 TOOL_NAME = "codex"
 
 #: Override for the sessions root (tests, exotic layouts).
 ENV_SESSIONS_ROOT = "ENGRAM_WATCH_CODEX_SESSIONS"
-
-#: Cap on how much of a large transcript is read (tail wins — conclusions
-#: beat openings; same rationale as the Cursor hook transcript reader).
-_MAX_TRANSCRIPT_BYTES = 512_000
 
 
 def sessions_root() -> Path:
@@ -78,34 +76,52 @@ def discover(since_days: int = 3) -> Iterator[Path]:
                 yield entry
 
 
-def _read_tail(path: Path) -> str:
-    """Read the transcript, keeping only the tail of oversized files."""
+def _strip_extended_prefix(cwd: str) -> str:
+    # Desktop writes extended-length paths (\\?\E:\...); strip the prefix so
+    # context files carry the human-readable form.
+    return cwd.strip().removeprefix("\\\\?\\")
+
+
+def _read_head_meta(path: Path) -> tuple[str, str]:
+    """Re-read ``(session_id, cwd)`` from the first transcript line.
+
+    Incremental segments start mid-file, past the ``session_meta`` head line;
+    without this re-read their checkpoints would fall back to the filename
+    stem and split one conversation across two context files.
+    """
     try:
-        size = path.stat().st_size
-        if size > _MAX_TRANSCRIPT_BYTES:
-            with open(path, "rb") as handle:
-                handle.seek(size - _MAX_TRANSCRIPT_BYTES)
-                raw = handle.read().decode("utf-8", errors="replace")
-            # First line is likely cut mid-JSON; drop it.
-            return raw.split("\n", 1)[-1]
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
+        with open(path, "rb") as handle:
+            first = handle.readline(65_536).decode("utf-8", errors="replace")
+        entry = json.loads(first)
+        payload = entry.get("payload")
+        if entry.get("type") != "session_meta" or not isinstance(payload, dict):
+            return "", ""
+        sid = payload.get("id")
+        cwd = payload.get("cwd")
+        return (
+            sid.strip() if isinstance(sid, str) else "",
+            _strip_extended_prefix(cwd) if isinstance(cwd, str) else "",
+        )
+    except (OSError, json.JSONDecodeError, ValueError, AttributeError):
+        return "", ""
 
 
-def parse(path: Path, max_chars: int = 4000) -> dict[str, str]:
-    """Turn one rollout file into a checkpoint payload.
+def parse(path: Path, max_chars: int = 4000, start_offset: int = 0) -> dict:
+    """Turn one rollout file (or its new tail) into a checkpoint payload.
 
-    Returns ``{"session_id", "project_folder", "summary"}`` (any field may be
-    empty). ``session_id`` falls back to the filename stem so a transcript
-    whose ``session_meta`` line was truncated away still maps to a stable
-    per-conversation context file.
+    Returns ``{"session_id", "project_folder", "summary", "end_offset"}``.
+    With ``start_offset > 0`` only lines appended since that byte position
+    are summarized (incremental capture); ``end_offset`` is where the next
+    scan should resume. ``session_id`` falls back to the filename stem so a
+    transcript whose ``session_meta`` line was truncated away still maps to
+    a stable per-conversation context file.
     """
     session_id = ""
     project_folder = ""
     lines: list[str] = []
+    text, end_offset = read_segment(path, start_offset)
 
-    for raw_line in _read_tail(path).splitlines():
+    for raw_line in text.splitlines():
         stripped = raw_line.strip()
         if not stripped:
             continue
@@ -125,9 +141,7 @@ def parse(path: Path, max_chars: int = 4000) -> dict[str, str]:
                 session_id = sid.strip()
             cwd = payload.get("cwd")
             if isinstance(cwd, str) and cwd.strip():
-                # Desktop writes extended-length paths (\\?\E:\...); strip the
-                # prefix so context files carry the human-readable form.
-                project_folder = cwd.strip().removeprefix("\\\\?\\")
+                project_folder = _strip_extended_prefix(cwd)
         elif etype == "event_msg":
             ptype = payload.get("type")
             message = payload.get("message")
@@ -138,10 +152,15 @@ def parse(path: Path, max_chars: int = 4000) -> dict[str, str]:
             elif ptype == "agent_message":
                 lines.append(f"[assistant] {message.strip()}")
 
+    if start_offset > 0 and not (session_id and project_folder):
+        head_sid, head_cwd = _read_head_meta(path)
+        session_id = session_id or head_sid
+        project_folder = project_folder or head_cwd
     if not session_id:
         session_id = path.stem
     return {
         "session_id": session_id,
         "project_folder": project_folder,
         "summary": "\n".join(lines)[-max_chars:],
+        "end_offset": end_offset,
     }

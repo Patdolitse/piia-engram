@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 ## [Unreleased]
 
 ### Added
+- **Claude Code watcher adapter** — the universal watcher can now capture
+  Claude Code sessions from on-disk transcripts (`~/.claude/projects/`).
+  The adapter automatically yields when the Engram Stop hook is already
+  wired in the Claude settings, so hook users never get duplicate captures;
+  it acts as the fallback for setups without the hook.
 - **Enhanced search in setup** — `engram setup` now offers an optional
   one-keystroke step to enable hybrid search (keyword + full-text + semantic
   vectors): offers the `[vector]` dependency install, persists
@@ -18,6 +23,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
   opt-in/off by default.
 
 ### Changed
+- **Incremental watcher capture** — watcher checkpoints now carry only the
+  conversation turns appended since the last successful save (per-file byte
+  offset in the watcher state), instead of re-sending an overlapping tail of
+  the whole transcript on every save. Long-running sessions no longer pile up
+  duplicated content in their context logs. Existing watcher state migrates
+  automatically; a rewritten/rotated transcript is detected and re-read from
+  the start, and a half-written trailing line is never consumed.
 - **Internal restructuring (no API change)** — the three largest modules were
   split for maintainability: `core.py` into `playbooks.py` /
   `tools_registry.py` / `knowledge_ops.py` mixins, `setup_wizard.py` into

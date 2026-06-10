@@ -9,6 +9,10 @@
 ## [Unreleased]
 
 ### 新增
+- **Claude Code Watcher 适配器**——通用 Watcher 现在可以从磁盘转录
+  （`~/.claude/projects/`）捕获 Claude Code 会话。当 Claude 设置中已接线
+  Engram Stop hook 时适配器自动让位，hook 用户绝不会被重复捕获；它只作为
+  未接 hook 环境的兜底通道。
 - **setup 内置增强检索开关**——`engram setup` 新增可选步骤，一键启用 hybrid
   检索（关键词 + 全文 + 语义向量）：提供 `[vector]` 依赖安装选项，把
   `ENGRAM_SEARCH=hybrid` 写入已检测 AI 客户端的 MCP 配置，并在 setup 收尾
@@ -16,6 +20,10 @@
   hybrid 仍为默认关闭、自愿开启。
 
 ### 变更
+- **Watcher 增量捕获**——Watcher 的检查点现在只携带上次成功保存之后新增的
+  对话轮次（状态文件按文件记录字节 offset），不再每次重发整个转录的重叠
+  尾部。长会话的 context 日志不再堆积重复内容。已有 Watcher 状态自动迁移；
+  转录被重写/轮转时检测到并从头重读；写到一半的末行绝不消费（等写完整再收）。
 - **内部结构重组（API 无变化）**——三个最大的模块按职责拆分以提升可维护性：
   `core.py` 拆出 `playbooks.py` / `tools_registry.py` / `knowledge_ops.py`
   mixin；`setup_wizard.py` 拆出 `doctor.py` / `cli_commands.py`；

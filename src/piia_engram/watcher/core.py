@@ -4,9 +4,13 @@ One scan (:func:`scan_once`):
 
 1. each adapter discovers recent transcript files (read-only);
 2. files whose ``(mtime, size)`` watermark is unchanged are skipped;
-3. changed files are parsed into a summary and appended to the Engram
-   ``contexts/`` session log via ``save_agent_context`` (never the knowledge
-   store), debounced per session;
+3. changed files are parsed *incrementally* — each state entry carries an
+   ``offset`` (byte position already captured) so only newly appended turns
+   are summarized and appended to the Engram ``contexts/`` session log via
+   ``save_agent_context`` (never the knowledge store), debounced per
+   session. Legacy entries without an ``offset`` migrate from their last
+   recorded ``size`` (that content was already captured as a tail save);
+   a shrunken file (rewrite/rotation) resets to a full re-read;
 4. *optionally* (off by default, ``ENGRAM_WATCHER_WRITEBACK=1``) the same
    summary is distilled into knowledge **proposals** via
    ``extract_session_insights(force_staging=True)`` — every item lands in
@@ -41,7 +45,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from . import codex_adapter
+from . import claude_code_adapter, codex_adapter
 
 _STATE_FILE = "watcher_state.json"
 _LOG_FILE = "watcher.log"
@@ -52,10 +56,18 @@ _SINCE_DAYS_ENV = "ENGRAM_WATCHER_SINCE_DAYS"
 WRITEBACK_ENV = "ENGRAM_WATCHER_WRITEBACK"
 
 #: Adapter registry: name -> (discover, parse). New tools plug in here.
+#: Contract: ``discover(since_days) -> Iterable[Path]`` and
+#: ``parse(path, max_chars, start_offset=0) -> dict`` returning at least
+#: ``summary``; adapters that also return an integer ``end_offset`` get
+#: incremental capture (only bytes past the stored offset are re-read).
 ADAPTERS: dict[str, dict[str, Callable[..., Any]]] = {
     codex_adapter.TOOL_NAME: {
         "discover": codex_adapter.discover,
         "parse": codex_adapter.parse,
+    },
+    claude_code_adapter.TOOL_NAME: {
+        "discover": claude_code_adapter.discover,
+        "parse": claude_code_adapter.parse,
     },
 }
 
@@ -137,6 +149,26 @@ def _fingerprint(path: Path) -> tuple[float, int] | None:
         return (stat.st_mtime, stat.st_size)
     except OSError:
         return None
+
+
+def _capture_offset(entry: dict[str, Any], size: int) -> int:
+    """Byte position up to which this file's content was already captured.
+
+    Legacy entries (pre-incremental) carry no ``offset``; their last recorded
+    ``size`` stands in — everything up to it went out in a tail save. An
+    offset past the current size means the file shrank (rewrite/rotation):
+    reset to ``0`` and re-read.
+    """
+    raw = entry.get("offset")
+    if not isinstance(raw, (int, float)):
+        raw = entry.get("size")
+    try:
+        offset = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    if offset < 0 or offset > size:
+        return 0
+    return offset
 
 
 def writeback_enabled() -> bool:
@@ -243,26 +275,37 @@ def scan_once(
                 counters["skipped"] += 1
                 continue
             if baseline and not entry:
-                tool_state[key] = {"mtime": fp[0], "size": fp[1]}
+                # Baseline = "captured up to here": offset starts at EOF so
+                # only future appends are saved (no historical backfill).
+                tool_state[key] = {"mtime": fp[0], "size": fp[1], "offset": fp[1]}
                 counters["baselined"] += 1
                 continue
             if _recently_saved(entry, debounce):
                 counters["skipped"] += 1
                 continue
 
+            offset = _capture_offset(entry, fp[1])
             try:
-                parsed = adapter["parse"](path, _MAX_CONTENT_CHARS)
+                parsed = adapter["parse"](path, _MAX_CONTENT_CHARS, start_offset=offset)
             except Exception as exc:  # noqa: BLE001
                 _log(f"{name}: parse failed for {path.name}: {exc!r}")
                 counters["errors"] += 1
                 continue
 
+            new_entry: dict[str, Any] = {"mtime": fp[0], "size": fp[1]}
+            end_offset = parsed.get("end_offset")
+            if isinstance(end_offset, int):
+                new_entry["offset"] = end_offset
+
             summary = parsed.get("summary", "")
             if not summary.strip():
-                # Transcript exists but carries no conversation yet (e.g.
-                # only meta/system lines). Advance the watermark so it is
-                # re-checked only after it grows.
-                tool_state[key] = {"mtime": fp[0], "size": fp[1]}
+                # The new bytes carry no conversation (meta/system lines, or
+                # a still-unterminated trailing line). Advance the watermark
+                # so the file is re-checked only after it grows; keep the
+                # save timestamp so the debounce history survives.
+                if isinstance(entry.get("saved_at"), str):
+                    new_entry["saved_at"] = entry["saved_at"]
+                tool_state[key] = new_entry
                 counters["skipped"] += 1
                 continue
 
@@ -286,11 +329,8 @@ def scan_once(
                 counters["errors"] += 1
                 continue  # watermark NOT advanced -> retried next scan
 
-            tool_state[key] = {
-                "mtime": fp[0],
-                "size": fp[1],
-                "saved_at": datetime.now().isoformat(timespec="seconds"),
-            }
+            new_entry["saved_at"] = datetime.now().isoformat(timespec="seconds")
+            tool_state[key] = new_entry
             counters["saved"] += 1
             # Optional staging-only distillation — after the checkpoint save
             # succeeded and the watermark advanced. Never affects the loop.

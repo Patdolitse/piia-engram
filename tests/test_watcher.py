@@ -16,13 +16,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from piia_engram.watcher import codex_adapter, core
+from piia_engram.watcher import claude_code_adapter, codex_adapter, core
 
 
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-state"))
     monkeypatch.setenv(codex_adapter.ENV_SESSIONS_ROOT, str(tmp_path / "codex-sessions"))
+    monkeypatch.setenv(claude_code_adapter.ENV_PROJECTS_ROOT, str(tmp_path / "claude-projects"))
+    monkeypatch.setenv(claude_code_adapter.ENV_SETTINGS_FILE, str(tmp_path / "claude-settings.json"))
     monkeypatch.delenv("ENGRAM_WATCHER_DEBOUNCE", raising=False)
     monkeypatch.delenv("ENGRAM_WATCHER_SINCE_DAYS", raising=False)
     monkeypatch.delenv("ENGRAM_WATCHER_WRITEBACK", raising=False)
@@ -93,6 +95,18 @@ def _write_rollout(
     lines.extend(extra_lines or [])
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def _append_turn(path: Path, role: str, message: str) -> None:
+    ptype = "user_message" if role == "user" else "agent_message"
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {"timestamp": "t", "type": "event_msg", "payload": {"type": ptype, "message": message}},
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +324,208 @@ def test_never_touches_knowledge_store(fake_engram):
     finally:
         core_mod.Engram = original  # type: ignore[misc]
     assert seen == ["save_agent_context"]
+
+
+# ---------------------------------------------------------------------------
+# incremental capture (per-file byte offset)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_incremental_resumes_at_end_offset(tmp_path):
+    day = _day_dir(codex_adapter.sessions_root())
+    path = _write_rollout(day, turns=[("user", "alpha")])
+    first = codex_adapter.parse(path)
+    assert "[user] alpha" in first["summary"]
+    assert first["end_offset"] == path.stat().st_size
+    _append_turn(path, "assistant", "beta")
+    second = codex_adapter.parse(path, start_offset=first["end_offset"])
+    assert second["summary"] == "[assistant] beta"
+    # Head meta re-read: the mid-file segment has no session_meta line, yet
+    # the checkpoint must map to the same conversation.
+    assert second["session_id"] == first["session_id"]
+    assert second["project_folder"] == first["project_folder"]
+
+
+def test_incremental_save_sends_only_new_turns(fake_engram, monkeypatch):
+    monkeypatch.setenv("ENGRAM_WATCHER_DEBOUNCE", "0")
+    day = _day_dir(codex_adapter.sessions_root())
+    path = _write_rollout(day, turns=[("user", "turn-one")])
+    core.scan_once(["codex"], baseline_existing=False)
+    assert "turn-one" in fake_engram.calls[0]["content"]
+    _append_turn(path, "assistant", "turn-two")
+    core.scan_once(["codex"], baseline_existing=False)
+    assert len(fake_engram.calls) == 2
+    second = fake_engram.calls[1]
+    assert "turn-two" in second["content"]
+    assert "turn-one" not in second["content"]  # no duplicated content
+    assert second["session_id"] == fake_engram.calls[0]["session_id"]
+
+
+def test_legacy_state_without_offset_migrates_from_size(fake_engram, monkeypatch):
+    """Pre-incremental state entries carry no offset; their last recorded
+    size stands in, so the upgrade never re-sends already-captured turns."""
+    monkeypatch.setenv("ENGRAM_WATCHER_DEBOUNCE", "0")
+    day = _day_dir(codex_adapter.sessions_root())
+    path = _write_rollout(day, turns=[("user", "old-turn")])
+    stat = path.stat()
+    state_file = core._state_dir() / "watcher_state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(
+        json.dumps(
+            {"codex": {str(path): {"mtime": stat.st_mtime, "size": stat.st_size, "saved_at": "2000-01-01T00:00:00"}}}
+        ),
+        encoding="utf-8",
+    )
+    _append_turn(path, "assistant", "fresh-turn")
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 1
+    assert "fresh-turn" in fake_engram.calls[0]["content"]
+    assert "old-turn" not in fake_engram.calls[0]["content"]
+
+
+def test_shrunken_file_resets_offset_and_reparses(fake_engram, monkeypatch):
+    monkeypatch.setenv("ENGRAM_WATCHER_DEBOUNCE", "0")
+    day = _day_dir(codex_adapter.sessions_root())
+    _write_rollout(day, turns=[("user", "a much longer original conversation that pads the file")])
+    core.scan_once(["codex"], baseline_existing=False)
+    _write_rollout(day, turns=[("user", "rewritten")])  # same filename, smaller
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 1
+    assert "rewritten" in fake_engram.calls[-1]["content"]
+
+
+def test_partial_trailing_line_waits_for_completion(fake_engram, monkeypatch):
+    """A writer mid-append must neither corrupt a checkpoint nor lose the
+    line: the offset stops before the unterminated tail and resumes there."""
+    monkeypatch.setenv("ENGRAM_WATCHER_DEBOUNCE", "0")
+    day = _day_dir(codex_adapter.sessions_root())
+    path = _write_rollout(day, turns=[("user", "first")])
+    core.scan_once(["codex"], baseline_existing=False)
+    line = json.dumps(
+        {"timestamp": "t", "type": "event_msg", "payload": {"type": "agent_message", "message": "second"}}
+    )
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(line[:20])  # writer crashed/paused mid-line
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 0
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(line[20:] + "\n")
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 1
+    assert "second" in fake_engram.calls[-1]["content"]
+    assert len(fake_engram.calls) == 2  # the fragment never went out alone
+
+
+# ---------------------------------------------------------------------------
+# claude_code adapter
+# ---------------------------------------------------------------------------
+
+_CC_SESSION = "11112222-3333-4444-5555-666677778888"
+
+
+def _cc_line(ltype: str, content, **extra) -> str:
+    return json.dumps(
+        {
+            "type": ltype,
+            "sessionId": _CC_SESSION,
+            "cwd": "E:\\My Project",
+            "message": {"role": ltype, "content": content},
+            **extra,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _write_claude_transcript(lines: list[str], *, session: str = _CC_SESSION, project: str = "E--My-Project") -> Path:
+    directory = claude_code_adapter.projects_root() / project
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{session}.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_claude_discover_yields_recent_transcripts_only(tmp_path):
+    import os as _os
+
+    recent = _write_claude_transcript([_cc_line("user", "hi")])
+    (recent.parent / "notes.txt").write_text("x", encoding="utf-8")
+    old = _write_claude_transcript(
+        [_cc_line("user", "ancient")], session="00000000-0000-0000-0000-000000000000"
+    )
+    ten_days = (datetime.now() - timedelta(days=10)).timestamp()
+    _os.utime(old, (ten_days, ten_days))
+    assert list(claude_code_adapter.discover(since_days=3)) == [recent]
+
+
+def test_claude_discover_yields_to_wired_stop_hook(tmp_path):
+    _write_claude_transcript([_cc_line("user", "hi")])
+    settings = Path(claude_code_adapter._settings_files()[0])
+    settings.write_text(
+        json.dumps({"hooks": {"Stop": [{"hooks": [{"command": "python -m piia_engram.hooks.auto_save_on_stop"}]}]}}),
+        encoding="utf-8",
+    )
+    assert claude_code_adapter.hook_wired() is True
+    assert list(claude_code_adapter.discover()) == []
+
+
+def test_claude_parse_extracts_conversation_and_filters_noise(tmp_path):
+    path = _write_claude_transcript(
+        [
+            _cc_line("user", "今天做什么"),
+            _cc_line("assistant", [
+                {"type": "thinking", "thinking": "secret reasoning"},
+                {"type": "text", "text": "继续 B4"},
+                {"type": "tool_use", "name": "Bash", "input": {}},
+            ]),
+            _cc_line("user", [{"type": "tool_result", "tool_use_id": "t1", "content": "tool output"}]),
+            _cc_line("user", "<command-name>/model</command-name>"),
+            _cc_line("user", "<local-command-stdout>Set model</local-command-stdout>"),
+            _cc_line("user", "meta noise", isMeta=True),
+            _cc_line("user", "sidechain noise", isSidechain=True),
+            json.dumps({"type": "queue-operation", "operation": "enqueue"}),
+            "not-json",
+        ]
+    )
+    parsed = claude_code_adapter.parse(path)
+    assert parsed["session_id"] == _CC_SESSION
+    assert parsed["project_folder"] == "E:\\My Project"
+    assert "[user] 今天做什么" in parsed["summary"]
+    assert "[assistant] 继续 B4" in parsed["summary"]
+    for noise in ("secret reasoning", "tool output", "<command-name>", "<local-command-stdout>", "meta noise", "sidechain noise"):
+        assert noise not in parsed["summary"]
+
+
+def test_claude_parse_incremental_segment_is_self_describing(tmp_path):
+    path = _write_claude_transcript([_cc_line("user", "alpha")])
+    first = claude_code_adapter.parse(path)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(_cc_line("assistant", [{"type": "text", "text": "beta"}]) + "\n")
+    second = claude_code_adapter.parse(path, start_offset=first["end_offset"])
+    assert second["summary"] == "[assistant] beta"
+    assert second["session_id"] == _CC_SESSION
+    assert second["project_folder"] == "E:\\My Project"
+
+
+def test_claude_scan_saves_to_contexts(fake_engram):
+    _write_claude_transcript(
+        [_cc_line("user", "hello"), _cc_line("assistant", [{"type": "text", "text": "world"}])]
+    )
+    counters = core.scan_once(["claude_code"], baseline_existing=False)
+    assert counters["saved"] == 1
+    call = fake_engram.calls[0]
+    assert call["tool"] == "claude_code"
+    assert call["session_id"] == _CC_SESSION
+    assert "[user] hello" in call["content"]
+    assert "[assistant] world" in call["content"]
+
+
+def test_claude_scan_is_noop_when_hook_wired(fake_engram):
+    _write_claude_transcript([_cc_line("user", "hello")])
+    settings = Path(claude_code_adapter._settings_files()[0])
+    settings.write_text(json.dumps({"hooks": {"Stop": "piia_engram.hooks.auto_save_on_stop"}}), encoding="utf-8")
+    counters = core.scan_once(["claude_code"], baseline_existing=False)
+    assert counters["discovered"] == 0
+    assert fake_engram.calls == []
 
 
 # ---------------------------------------------------------------------------
