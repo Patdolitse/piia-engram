@@ -5,32 +5,31 @@
 
 # Piia Engram
 
-### 别再对每个 AI 工具重复介绍自己
+### 别再对每个 AI 工具重复介绍自己——本地优先的 AI 记忆，看得见、可改可删。
 
-### piia-engram 记住你是谁——全本地，看得见、可改可删
+只告诉 AI 一次你是谁、怎么工作、什么算好。
+Claude Code、Codex、Cursor、Windsurf 等 MCP 兼容工具可以从同一份已确认上下文开始——文件存在你本机，无云账号，没有你看不见的黑箱记忆。
 
-**只告诉 AI 一次你是谁、怎么工作、什么算好。piia-engram 把你的身份、标准、经验教训、关键决策和项目上下文保存为你本机上的文件。Claude Code、Codex、Cursor、Windsurf 以及 MCP 工具可以从同一份已确认上下文开始工作。AI 建议经验和决策，高风险的先等你审查，全部看得见、可回退。无云账号，无厂商锁定，没有你看不见的黑箱记忆。**
-
-`跨工具记忆` · `本地优先` · `Claude Code` · `Codex` · `Cursor` · `Windsurf` · `Hermes` · `OpenClaw` · `MCP`
-
-**你的 AI 记忆，换工具也不断——存在本地，记得住谁写的、谁能读。**
+[安装](#安装) · [效果预览](#效果预览) · [兼容工具](#兼容的-ai-工具) · [核心功能](#核心功能) · [常见问题](#常见问题-faq)
 
 [中文](README.zh-CN.md) | [ENGLISH](README.md)
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
-[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
 [![Downloads](https://img.shields.io/pypi/dm/piia-engram)](https://pypi.org/project/piia-engram/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 
 **被收录于：**
 [![Official MCP Registry](https://img.shields.io/badge/listed_in-MCP_Registry-green?logo=modelcontextprotocol)](https://registry.modelcontextprotocol.io)
-[![awesome-mcp-servers](https://img.shields.io/badge/listed_in-awesome--mcp--servers-orange?logo=awesome-lists)](https://github.com/punkpeye/awesome-mcp-servers)
-[![awesome-agents](https://img.shields.io/badge/listed_in-awesome--agents-orange?logo=awesome-lists)](https://github.com/kyrolabs/awesome-agents)
 [![Awesome-MCP-ZH](https://img.shields.io/badge/listed_in-Awesome--MCP--ZH-orange?logo=awesome-lists)](https://github.com/yzfly/Awesome-MCP-ZH)
+[![ModelScope](https://img.shields.io/badge/listed_in-ModelScope-blue)](https://www.modelscope.cn/mcp/servers/Patdolitse/piia-engram)
+[![awesome-mcp-servers](https://img.shields.io/badge/listed_in-awesome--mcp--servers-orange?logo=awesome-lists)](https://github.com/punkpeye/awesome-mcp-servers)
 
 [![piia-engram MCP server](https://glama.ai/mcp/servers/@Patdolitse/piia-engram/badge)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
 [![piia-engram on LobeHub](https://lobehub.com/badge/mcp/patdolitse-piia-engram)](https://lobehub.com/zh/mcp/patdolitse-piia-engram)
+
+还收录于：[awesome-agents](https://github.com/kyrolabs/awesome-agents) · [mcpservers.org](https://mcpservers.org/servers/patdolitse/piia-engram) · [Cursor Directory](https://cursor.directory/plugins/piia-engram)
 
 </div>
 
@@ -48,6 +47,19 @@
 - **边界公开：** 见 [信任模型](docs/trust.md)、[隐私说明](PRIVACY.md) 和 [安全说明](SECURITY.md)。
 
 想看安全的公开演示？见 [跨工具接续 Demo](docs/cross-tool-continuity-demo.md)。
+
+## 效果预览
+
+```
+你   → "帮我重构这个认证模块"
+
+# 没有 piia-engram：AI 从零开始
+AI   → "你用什么语言？什么框架？测试偏好是什么？"
+
+# 有 piia-engram：AI 已经认识你
+AI   → "根据你偏好 pytest + 90% 覆盖率的标准，以及你 3 月那次事故
+        后总结的'认证中间件必须和业务逻辑分离'的经验，我的方案是..."
+```
 
 ---
 
@@ -84,6 +96,25 @@ pip install piia-engram && engram setup
 | OpenClaw | SOUL.md/MEMORY.md 导入导出 | L3 静态文件桥证据 |
 | ChatGPT / Kimi / Gemini | 粘贴身份卡 | 可用 |
 
+## 量化数据
+
+下列数字每个 minor release 都会刷新：
+
+| | v3.56.0 (2026-06-11) |
+|---|---|
+| 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
+| MCP 工具 | **17 个核心**（默认加载）+ **70 个高级**（`ENGRAM_TOOLS=all` 开启）|
+| 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
+| 测试通过 | **3270** 个（单元 + 集成；2 个 skipped，共收集 3272）|
+| 代码覆盖率 | **86%** 总体 |
+| `core.py` 行数 | **1573** 行（facade，领域逻辑已拆分为专责 mixin —— 见 [架构文档](docs/architecture.md)）|
+| PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
+| 加密 | 支持字段级 AES-256-GCM（可选）；本地文件默认是明文 JSON / Markdown |
+| 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
+| 默认网络调用 | 身份与知识工具默认 **0** —— 除可选的 `read_web_content` 外；远程 telemetry 与反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
+
+客户端专项 setup 卡： [Claude Code](docs/integrations/claude-code.md)、[Codex](docs/integrations/codex.md)、[Cursor](docs/integrations/cursor.md)。证据等级采用 [客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0/L1 表示安装或协议可达，L2 表示观察到读/搜索行为，L3 增加 A/B 行为收益，L4 增加跨客户端连续性，L5 表示可公开引用的可复现证据。
+
 ---
 
 **每次换工具或开新对话，AI 就忘了你是谁。** piia-engram 解决的是跨工具接续问题。
@@ -95,6 +126,16 @@ pip install piia-engram && engram setup
 **piia-engram 给你一层跨工具的个人身份，存在你自己的电脑上。** 你告诉它一次你是谁、你怎么工作、你学到了什么。之后不管你开多少个新对话、用哪个 MCP 工具、工具怎么更新，它们都可以读取同一份已确认上下文。
 
 > **piia-engram 不是 Agent 记忆数据库。** Mem0、Zep、Letta 等工具存的是任务上下文和会话历史。piia-engram 存的是**你这个人**——你的身份、偏好、经验教训和关键决策。这是不同的一层：不是"这次任务做了什么"，而是"所有任务背后的人是谁"。
+
+## 它解决什么
+
+| 没有 piia-engram | 有 piia-engram |
+|------------|-----------|
+| 新对话 = 从零开始 | 已配置的对话可加载已确认上下文 |
+| 工具一更新，偏好可能没了 | 身份存在你电脑里，任何更新都不影响 |
+| 换工具要重新自我介绍 | Claude Code、Codex、Cursor 共享同一套记忆 |
+| 踩过的坑下次还会踩 | 经验教训跨工具、跨会话持续有效 |
+| 记忆锁死在某个平台 | JSON 文件存本地，可读可编辑可迁移 |
 
 ## 谁在用 piia-engram
 
@@ -214,18 +255,7 @@ piia-engram 把可信声明当作发布证据，而不是营销文案：
 | 安全与隐私措辞保持一致 | `python scripts/check_public_trust_claims.py` | 网络、telemetry、endpoint、默认明文、可选加密等声明在公开文档中一致 | 文案一致性闸，不等同第三方安全审计 |
 | 发布不能跳过证据 | `python scripts/check_release_gate.py` | 每个版本记录测试、脱敏、allowlist、构建、产物扫描、eval 和复核标记 | evidence 记录为维护者内部文件 |
 
-### 效果预览
-
-```
-你   → "帮我重构这个认证模块"
-
-# 没有 piia-engram：AI 从零开始
-AI   → "你用什么语言？什么框架？测试偏好是什么？"
-
-# 有 piia-engram：AI 已经认识你
-AI   → "根据你偏好 pytest + 90% 覆盖率的标准，以及你 3 月那次事故
-        后总结的'认证中间件必须和业务逻辑分离'的经验，我的方案是..."
-```
+### 验证安装
 
 setup 完成后，运行 `engram doctor` 验证一切就绪：
 
@@ -453,51 +483,6 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 - 设置 `ENGRAM_CORS_ORIGINS` 限制跨域访问（如 `https://your-domain.com`）。
 - 数据始终在你自己的服务器上，不经过任何第三方云。
 
-## 它解决什么
-
-| 没有 piia-engram | 有 piia-engram |
-|------------|-----------|
-| 新对话 = 从零开始 | 已配置的对话可加载已确认上下文 |
-| 工具一更新，偏好可能没了 | 身份存在你电脑里，任何更新都不影响 |
-| 换工具要重新自我介绍 | Claude Code、Codex、Cursor 共享同一套记忆 |
-| 踩过的坑下次还会踩 | 经验教训跨工具、跨会话持续有效 |
-| 记忆锁死在某个平台 | JSON 文件存本地，可读可编辑可迁移 |
-
-## 对比
-
-| 特性 | piia-engram | Claude Memory | 手动 CLAUDE.md | Mem0 | Letta (MemGPT) |
-|------|--------|--------------|----------------|------|----------------|
-| 主要定位 | 跨工具的用户身份 | 单对话记忆 | 单项目笔记 | Agent 向量记忆 | Agent 自编辑记忆 |
-| 跨工具协作 | ✅ MCP 原生（17 个核心工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
-| 存储位置 | 本地 JSON (`~/.engram/`) | 云端 | 本地 | 向量库 + Mem0 Cloud | Postgres 或 Letta Cloud |
-| 默认本地优先 | ✅ | ❌ | ✅ | ⚠ Cloud 是默认路径 | ⚠ Cloud 是默认路径 |
-| 静态加密 | ✅ AES-256-GCM, PBKDF2 600k（可选）| 视云端策略 | ❌ 明文 Markdown | 视存储后端配置 | 视 Postgres 配置 |
-| 知识分层 | ✅ 高风险送审；strict 模式全量送审 | ❌ | ❌ | ❌ | ❌ |
-| 冲突检测 | ✅ | ❌ | ❌ | ❌ | ❌ |
-| MCP 原生 | ✅ | n/a | n/a | ⚠ 第三方 | ⚠ 第三方 |
-| 价格 | 免费 AGPL-3.0 | 含在订阅 | 免费 | 免费 / 云端付费 | 免费 / 云端付费 |
-
-📊 **完整对比**（含「什么场景应该选别家」），见 [`docs/comparison.md`](docs/comparison.md)。
-
-## 量化数据
-
-下列数字每个 minor release 都会刷新：
-
-| | v3.51.2 (2026-06-06) |
-|---|---|
-| 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
-| MCP 工具 | **17 个核心**（默认加载）+ **70 个高级**（`ENGRAM_TOOLS=all` 开启）|
-| 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **3045** 个（单元 + 集成；2 个 skipped，共收集 3047）|
-| 代码覆盖率 | **96%** 总体；mcp_server 99%、setup_wizard 93%、storage 100%、core 95% |
-| `core.py` 行数 | **3336** 行（facade + mixins 合计约 8159 行；v3.14.1 前是 4277 行 — 见 [架构文档](docs/architecture.md)）|
-| PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
-| 加密 | 支持字段级 AES-256-GCM（可选）；本地文件默认是明文 JSON / Markdown |
-| 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
-| 默认网络调用 | 身份与知识工具默认 **0** —— 除可选的 `read_web_content` 外；远程 telemetry 与反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
-
-客户端专项 setup 卡： [Claude Code](docs/integrations/claude-code.md)、[Codex](docs/integrations/codex.md)、[Cursor](docs/integrations/cursor.md)。证据等级采用 [客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0/L1 表示安装或协议可达，L2 表示观察到读/搜索行为，L3 增加 A/B 行为收益，L4 增加跨客户端连续性，L5 表示可公开引用的可复现证据。
-
 ## 核心功能
 
 | 功能 | 说明 |
@@ -699,6 +684,22 @@ piia-engram 的数据全部存储在本地 `~/.engram/`，使用 JSON/Markdown �
 ```
 
 所有文件都可以直接打开、编辑、备份、迁移。记忆是你的资产，不是平台的数据。
+
+## 对比
+
+| 特性 | piia-engram | Claude Memory | 手动 CLAUDE.md | Mem0 | Letta (MemGPT) |
+|------|--------|--------------|----------------|------|----------------|
+| 主要定位 | 跨工具的用户身份 | 单对话记忆 | 单项目笔记 | Agent 向量记忆 | Agent 自编辑记忆 |
+| 跨工具协作 | ✅ MCP 原生（17 个核心工具）| ❌ 仅 Claude | ❌ 单工具 | ⚠ 需逐工具接入 | ⚠ 需逐工具接入 |
+| 存储位置 | 本地 JSON (`~/.engram/`) | 云端 | 本地 | 向量库 + Mem0 Cloud | Postgres 或 Letta Cloud |
+| 默认本地优先 | ✅ | ❌ | ✅ | ⚠ Cloud 是默认路径 | ⚠ Cloud 是默认路径 |
+| 静态加密 | ✅ AES-256-GCM, PBKDF2 600k（可选）| 视云端策略 | ❌ 明文 Markdown | 视存储后端配置 | 视 Postgres 配置 |
+| 知识分层 | ✅ 高风险送审；strict 模式全量送审 | ❌ | ❌ | ❌ | ❌ |
+| 冲突检测 | ✅ | ❌ | ❌ | ❌ | ❌ |
+| MCP 原生 | ✅ | n/a | n/a | ⚠ 第三方 | ⚠ 第三方 |
+| 价格 | 免费 AGPL-3.0 | 含在订阅 | 免费 | 免费 / 云端付费 | 免费 / 云端付费 |
+
+📊 **完整对比**（含「什么场景应该选别家」），见 [`docs/comparison.md`](docs/comparison.md)。
 
 ## 诞生故事
 

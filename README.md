@@ -5,32 +5,28 @@
 
 # Piia Engram
 
-### Local-first AI memory you can see, edit, and override.
+### Local-first AI memory you can see, edit, and override — portable across your MCP coding tools.
 
-### Your identity and standards — portable across every MCP coding tool.
+Tell AI once who you are, how you work, and what "good" means.
+Claude Code, Codex, Cursor, Windsurf, and other MCP-compatible tools can start from the same approved context — local files you own, no cloud account, no hidden memory you cannot inspect.
 
-**Tell AI once how you work. piia-engram stores your identity, standards, lessons, decisions, and project context as local files you own. Claude Code, Codex, Cursor, Windsurf, and MCP-compatible tools can start from the same approved context. AI proposes; high-risk items wait for your review, and everything stays visible and reversible. No cloud account, no vendor lock-in, no hidden memory you cannot inspect.**
-
-`cross-tool memory` | `local-first` | `Claude Code` | `Codex` | `Cursor` | `Windsurf` | `Hermes` | `OpenClaw` | `MCP`
-
-**Your AI memory, continuous across tools — local-first, with source provenance and per-caller governance.**
+[Install](#install) · [See It in Action](#see-it-in-action) · [Supported Tools](#supported-tools) · [MCP Tools](#mcp-tools) · [FAQ](#faq)
 
 [ENGLISH](README.md) | [中文](README.zh-CN.md)
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
-[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/piia-engram)](https://pypi.org/project/piia-engram/)
 [![Downloads](https://img.shields.io/pypi/dm/piia-engram)](https://pypi.org/project/piia-engram/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 
 **Listed in:**
 [![Official MCP Registry](https://img.shields.io/badge/listed_in-MCP_Registry-green?logo=modelcontextprotocol)](https://registry.modelcontextprotocol.io)
 [![awesome-mcp-servers](https://img.shields.io/badge/listed_in-awesome--mcp--servers-orange?logo=awesome-lists)](https://github.com/punkpeye/awesome-mcp-servers)
-[![awesome-agents](https://img.shields.io/badge/listed_in-awesome--agents-orange?logo=awesome-lists)](https://github.com/kyrolabs/awesome-agents)
-[![Awesome-MCP-ZH](https://img.shields.io/badge/listed_in-Awesome--MCP--ZH-orange?logo=awesome-lists)](https://github.com/yzfly/Awesome-MCP-ZH)
-
 [![piia-engram MCP server](https://glama.ai/mcp/servers/@Patdolitse/piia-engram/badge)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
 [![piia-engram on LobeHub](https://lobehub.com/badge/mcp/patdolitse-piia-engram)](https://lobehub.com/mcp/patdolitse-piia-engram)
+
+Also listed in: [awesome-agents](https://github.com/kyrolabs/awesome-agents) · [Awesome-MCP-ZH](https://github.com/yzfly/Awesome-MCP-ZH) · [mcpservers.org](https://mcpservers.org/servers/patdolitse/piia-engram) · [Cursor Directory](https://cursor.directory/plugins/piia-engram) · [ModelScope](https://www.modelscope.cn/mcp/servers/Patdolitse/piia-engram)
 
 </div>
 
@@ -48,6 +44,20 @@
 - **Documented boundaries:** see [Trust model](docs/trust.md), [Privacy](PRIVACY.md), and [Security](SECURITY.md).
 
 Want proof? See the [live cross-tool continuity proof](docs/cross-tool-continuity-proof.md) — a memory written by Claude Code, read back by Codex through one local store — or the one-command [reproducible code demo](docs/cross-tool-continuity-demo.md).
+
+## See It in Action
+
+```
+You  → "Help me refactor this auth module"
+
+# WITHOUT piia-engram: AI starts from scratch
+AI   → "What language? What framework? What's your testing preference?"
+
+# WITH piia-engram: AI can load your approved context
+AI   → "Based on your preference for pytest + 90% coverage, and your
+        lesson about always separating auth middleware from business
+        logic (from the March incident), here's my approach..."
+```
 
 ---
 
@@ -83,6 +93,23 @@ Evidence levels follow the [agent client validation runbook](docs/runbooks/agent
 | Tencent CodeBuddy | MCP over stdio | Expected to work |
 | OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | L3 static file-bridge evidence |
 | ChatGPT / Gemini / Kimi | Markdown identity card fallback | Usable |
+
+## By the numbers
+
+These are factual claims about piia-engram itself, refreshed each minor release.
+
+| | v3.56.0 (2026-06-11) |
+|---|---|
+| Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
+| MCP tools | **17 Core** (loaded by default) + **70 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
+| Knowledge types | **3** (lessons, decisions, playbooks) |
+| Tests passing | **3270** (unit + integration; 2 skipped, 3272 collected) |
+| Code coverage | **86%** total |
+| Lines in `core.py` | **1573** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
+| PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
+| Encryption | Optional field-level AES-256-GCM for supported profile fields; local files are plaintext JSON/Markdown by default |
+| Cold-start time | < 100 ms typical (local JSON, no network) |
+| Network calls by default | **0** for identity and knowledge tools — except optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
 
 ---
 
@@ -369,19 +396,7 @@ Zero-install alternative (no prior `pip install` needed) — set `"command": "uv
 
 </details>
 
-### See It in Action
-
-```
-You  → "Help me refactor this auth module"
-
-# WITHOUT piia-engram: AI starts from scratch
-AI   → "What language? What framework? What's your testing preference?"
-
-# WITH piia-engram: AI can load your approved context
-AI   → "Based on your preference for pytest + 90% coverage, and your
-        lesson about always separating auth middleware from business
-        logic (from the March incident), here's my approach..."
-```
+### Verify your setup
 
 After setup, run `engram doctor` to verify everything is connected:
 
@@ -731,23 +746,6 @@ See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.m
 | Price | Free, AGPL-3.0 | Subscription-bundled | Free | Free / Cloud tiers | Free / Cloud tiers |
 
 📊 **For the full side-by-side**, including when to choose a competitor over piia-engram, see [`docs/comparison.md`](docs/comparison.md).
-
-## By the numbers
-
-These are factual claims about piia-engram itself, refreshed each minor release.
-
-| | v3.51.2 (2026-06-06) |
-|---|---|
-| Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
-| MCP tools | **17 Core** (loaded by default) + **70 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
-| Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3045** (unit + integration; 2 skipped, 3047 collected) |
-| Code coverage | **96%** total; mcp_server 99%, setup_wizard 93%, storage 100%, core 95% |
-| Lines in `core.py` | **3336** (facade + mixins total ~8159; down from 4277 monolith pre-v3.14.1 — see [architecture.md](docs/architecture.md)) |
-| PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
-| Encryption | Optional field-level AES-256-GCM for supported profile fields; local files are plaintext JSON/Markdown by default |
-| Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls by default | **0** for identity and knowledge tools — except optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
 
 ## Built With
 
