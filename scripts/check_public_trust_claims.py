@@ -146,6 +146,42 @@ REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
         "remote_optin",
         _rx(r"remote telemetry and weekly feedback reports require separate explicit opt-in"),
     ),
+    # Audit log is a LOCAL file that is ON BY DEFAULT (opt out with
+    # ENGRAM_AUDIT=0). This is unrelated to network telemetry. These claims
+    # lock the default-on behaviour so docs can't silently drift back to the
+    # old "opt-in / off by default" wording.
+    RequiredClaim(
+        "README.md",
+        "audit_default_on",
+        _rx(r"audit log[^\n]{0,30}on by default"),
+    ),
+    RequiredClaim(
+        "README.zh-CN.md",
+        "audit_default_on",
+        re.compile(r"审计.{0,6}默认开启", re.DOTALL),
+    ),
+    RequiredClaim(
+        "SECURITY.md",
+        "audit_default_on",
+        _rx(r"Audit logging \(on by default\)"),
+    ),
+    # Audit log is plain JSON-lines, NOT the hash-chained ledger (that is the
+    # separate governance disclosure ledger). Locks the T3 correction.
+    RequiredClaim(
+        "SECURITY.md",
+        "audit_plain_jsonl",
+        _rx(r"audit\.log[^\n]{0,40}plain JSON-lines"),
+    ),
+    RequiredClaim(
+        "PRIVACY.md",
+        "audit_default_on",
+        _rx(r"audit logging is[^\n]{0,12}on by default"),
+    ),
+    RequiredClaim(
+        "docs/trust.md",
+        "audit_default_on",
+        _rx(r"audit logging is on by default"),
+    ),
 )
 
 
@@ -159,6 +195,10 @@ FORBIDDEN_CLAIMS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("whole_store_encrypted", _rx(r"\b(?:all data|everything|whole store|the whole store)\b[^\n.]{0,120}\bencrypted\b")),
     ("zh_absolute_no_network", re.compile(r"永远不会发出任何网络请求|完全不会发出网络请求")),
     ("zh_encrypted_default", re.compile(r"默认加密|默认已加密")),
+    # Audit log is on by default now; catch any regression to opt-in wording.
+    ("audit_off_default", _rx(r"audit log(?:ging)?[^\n]{0,40}off by default")),
+    ("audit_optin_label", _rx(r"Audit logging \(opt-in\)")),
+    ("zh_audit_off_default", re.compile(r"审计[^\n]{0,20}默认关闭", re.DOTALL)),
 )
 
 _NEGATION_CONTEXT = re.compile(

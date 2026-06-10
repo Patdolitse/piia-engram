@@ -38,7 +38,7 @@ Engram is designed with security in mind:
 - **Setup file safety** — `engram setup` lists the exact external MCP client config files it will touch and asks for a one-keystroke confirm before writing the MCP connection; declining leaves every external config untouched. `--apply-external-config` skips the prompt for non-interactive/CI runs. Either way, writes create backups plus a metadata-only file-safety ledger under the selected Engram data folder.
 - **HTML escaping** — All user-controlled data in generated HTML (review page) is escaped to prevent XSS.
 - **No eval / no exec** — No dynamic code execution from user data.
-- **Audit logging (opt-in)** — When `ENGRAM_AUDIT=1`, all read/write operations are logged locally to a tamper-evident, hash-chained ledger for traceability. Off by default.
+- **Audit logging (on by default)** — All read/write operations are recorded locally to `~/.engram/audit.log`, a plain JSON-lines file for traceability. On by default; opt out with `ENGRAM_AUDIT=0`. It is a local file only and is never sent anywhere. This is distinct from the optional governance *disclosure ledger* (`ENGRAM_GOVERNANCE=1`), which is the SHA-256 hash-chained log.
 
 ## Scope
 

@@ -28,6 +28,7 @@ from .storage import (
     PLAYBOOK_TRIGGERS,
     STALE_KNOWLEDGE_DAYS,
     _now_iso,
+    strip_untrusted_trust_fields,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type hints
@@ -1500,8 +1501,7 @@ def ingest_extraction(engram: "Engram", extracted: dict,
             # LLM extraction cannot self-certify trust: strip any tier / state
             # fields it tried to set so the risk-based write gate is the sole
             # authority (low/medium auto-absorb to verified, high -> staging).
-            for _untrusted in ("tier", "memory_state", "approval_status", "approval_required"):
-                lesson.pop(_untrusted, None)
+            strip_untrusted_trust_fields(lesson)
             lesson["source_project"] = project_folder
             lesson["source_session"] = session_id
             # tier decided by risk gate: low/medium auto-absorb, high->staging
@@ -1540,8 +1540,7 @@ def ingest_extraction(engram: "Engram", extracted: dict,
             # LLM extraction cannot self-certify trust: strip any tier / state
             # fields it tried to set so the risk-based write gate is the sole
             # authority (low/medium auto-absorb to verified, high -> staging).
-            for _untrusted in ("tier", "memory_state", "approval_status", "approval_required"):
-                decision.pop(_untrusted, None)
+            strip_untrusted_trust_fields(decision)
             decision["source_project"] = project_folder
             decision["source_session"] = session_id
             # tier decided by risk gate: low/medium auto-absorb, high->staging

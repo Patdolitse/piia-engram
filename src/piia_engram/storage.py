@@ -55,6 +55,20 @@ STALE_DECAY_MULTIPLIERS: dict[str, float] = {
 MAX_KNOWLEDGE_ENTRIES = 200        # cap per knowledge type (lessons / decisions)
 MEMORY_STATES = frozenset({"staging", "verified", "rejected", "deprecated"})
 MEMORY_RISK_LEVELS = frozenset({"low", "medium", "high"})
+# Trust/approval fields that are the *output* of the owner's risk-based write
+# gate, never an untrusted caller's *input*. An agent-facing MCP payload that
+# tries to set these (e.g. tier="verified" smuggled through content_json /
+# items_json) must have them stripped at the boundary so the gate stays the
+# sole authority over tier — otherwise high-risk content could self-certify
+# past the staging gate. Internal callers (seeds / imports / fixtures) still
+# legitimately pin a tier; that escape hatch lives in core, not at the MCP
+# entry, so stripping here does not touch it.
+UNTRUSTED_TRUST_FIELDS: tuple[str, ...] = (
+    "tier",
+    "memory_state",
+    "approval_status",
+    "approval_required",
+)
 CONFLICT_Q_THRESHOLD = 0.25   # question similarity for potential decision conflict
 CONFLICT_C_CEILING = 0.80     # choice similarity ceiling — above means same choice, not conflict
 
@@ -192,6 +206,27 @@ _ALIAS_LOOKUP: dict[str, str] = {}
 for _canonical, _aliases in _TERM_ALIASES.items():
     for _alias in _aliases:
         _ALIAS_LOOKUP[_alias] = _canonical
+
+
+def strip_untrusted_trust_fields(payload: Any) -> Any:
+    """Strip caller-supplied trust/approval fields from an agent payload.
+
+    The risk-based write gate is the sole authority over ``tier`` and the
+    approval state. An untrusted agent must not be able to pre-set those
+    fields (e.g. ``tier="verified"``) and thereby bypass the high-risk
+    staging gate. Call this at the agent-facing MCP boundary on any
+    JSON-decoded payload before handing it to ``add_lesson`` /
+    ``add_decision`` / ``bulk_add_knowledge``.
+
+    Mutates ``payload`` in place when it is a dict (popping every field in
+    :data:`UNTRUSTED_TRUST_FIELDS`) and returns it; leaves non-dict payloads
+    untouched. Internal callers (seeds / imports / fixtures) bypass this and
+    keep their legitimate ``tier`` escape hatch, which lives in core.
+    """
+    if isinstance(payload, dict):
+        for _field in UNTRUSTED_TRUST_FIELDS:
+            payload.pop(_field, None)
+    return payload
 
 
 # ---------------------------------------------------------------------------

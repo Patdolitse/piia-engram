@@ -22,7 +22,7 @@ src/piia_engram/
     hooks/             # Claude Code lifecycle hooks (Stop/PreCompact/PostCompact/SessionStart)
     crypto.py          # AES-256-GCM encryption for sensitive profile fields
     telemetry.py       # Opt-in anonymous usage statistics (local log first; remote/feedback are separate opt-ins)
-tests/                 # 2700+ tests across all modules
+tests/                 # 3,000+ tests across all modules
 experiments/
     benchmarks/      # Retrieval/injection quality benchmarks
 ```
@@ -49,7 +49,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **2700+ tests passing, 0 failures**. All PRs must maintain a passing suite.
+Current baseline: **3,000+ tests passing, 0 failures**. All PRs must maintain a passing suite.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash

@@ -817,7 +817,7 @@ piia-engram is functional and actively used, but some things it intentionally do
 | **File safety** | Atomic JSON writes with a shared portalocker file lock | Broader stress testing |
 | **Access control** | `restricted_fields` filters profile output. Optional agent governance (`ENGRAM_GOVERNANCE=1`) adds trust-level read/write gates, owner-only export/import controls, and a hash-chained disclosure ledger. See [docs/governance.md](docs/governance.md). | Stronger caller identity binding requires MCP/client support |
 | **Encryption** | Optional field-level AES-256-GCM encryption via `ENGRAM_SECRET` env var. Install `pip install piia-engram[secure]`. | Full-disk encryption for all files (v4.0) |
-| **Audit logging** | Optional access audit log via `ENGRAM_AUDIT=1` env var. Logs to `~/.engram/audit.log`. | Per-caller audit (blocked by MCP spec) |
+| **Audit logging** | Local access audit log **on by default** at `~/.engram/audit.log`; opt out with `ENGRAM_AUDIT=0`. Local file only — never sent anywhere. | Per-caller audit (blocked by MCP spec) |
 | **Caller identity** | MCP protocol doesn't pass tool identity | Blocked by MCP spec |
 | **Concurrent writes** | Protected by file lock + atomic replace for piia-engram JSON writes | Network-filesystem edge cases not guaranteed |
 
@@ -841,15 +841,15 @@ export ENGRAM_SECRET="your-strong-passphrase"
 
 Encrypted fields are stored as `enc:v2:...` in JSON files; legacy `enc:v1:...` values still decrypt. Without `ENGRAM_SECRET`, piia-engram works normally with plaintext (backward compatible).
 
-### Audit logging (optional)
+### Audit logging (on by default)
 
-Track all read/write operations:
+A local audit log records all read/write operations to `~/.engram/audit.log` in JSON-lines format. It is a **local file only — never sent anywhere**. Query it with the `get_audit_log` tool or `grep`.
+
+To opt out:
 
 ```bash
-export ENGRAM_AUDIT=1
+export ENGRAM_AUDIT=0
 ```
-
-Logs are written to `~/.engram/audit.log` in JSON-lines format. Query with `get_audit_log` tool or `grep`.
 
 ### Agent governance (advanced, optional)
 

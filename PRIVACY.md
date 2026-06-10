@@ -29,9 +29,9 @@ Default implementation: local files only. Telemetry is off by default; when enab
 
 | Data | Location | Purpose |
 |------|----------|---------|
-| Your profile (name, role, preferences) | `~/.engram/identity.json` | AI tools know who you are |
-| Lessons learned | `~/.engram/lessons.json` | AI tools remember your experience |
-| Key decisions | `~/.engram/decisions.json` | AI tools understand your reasoning |
+| Your profile (name, role, preferences) | `~/.engram/identity/profile.json` | AI tools know who you are |
+| Lessons learned | `~/.engram/knowledge/lessons.json` | AI tools remember your experience |
+| Key decisions | `~/.engram/knowledge/decisions.json` | AI tools understand your reasoning |
 | Playbooks | `~/.engram/playbooks/{id}.json` + `~/.engram/playbooks/_index.json` | Reusable multi-step procedures |
 | Project snapshots | `~/.engram/projects/` | Per-project context |
 | Session history | `~/.engram/contexts/{tool}/` | Cross-session continuity |
@@ -118,7 +118,7 @@ export ENGRAM_SECRET="your-strong-passphrase"
 - All data is readable by any process with file-system access to `~/.engram/`
 - `restricted_fields` filters sensitive profile fields from cold-start context
 - Optional agent governance (`ENGRAM_GOVERNANCE=1`) adds self-reported caller trust levels and disclosure receipts; it is not a hardened sandbox or cryptographic caller identity
-- Optional audit logging (`ENGRAM_AUDIT=1`) tracks all read/write operations to `~/.engram/audit.log`
+- Local audit logging is **on by default** — all read/write operations are recorded to `~/.engram/audit.log` (a local file, never sent anywhere); opt out with `ENGRAM_AUDIT=0`
 
 **Recommendation:** Do not store passwords, API keys, or client PII in piia-engram. It is designed for personal AI context, not secrets management.
 

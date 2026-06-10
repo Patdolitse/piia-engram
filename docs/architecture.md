@@ -83,7 +83,7 @@ After the v3.14.1 refactor and v3.16.0 reports split, the package is split into 
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (local log first; remote send and weekly feedback are separate, independent opt-ins, count-only/metadata-only), payload validation, HMAC daily ID, preview/status CLI support |
 | [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~1723 | `engram setup` + `piia-engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
-| [`audit.py`](../src/piia_engram/audit.py) | ~54 | `AuditLogger` — opt-in audit trail (`ENGRAM_AUDIT=1`) to `~/.engram/audit.log` |
+| [`audit.py`](../src/piia_engram/audit.py) | ~54 | `AuditLogger` — default-on local audit trail to `~/.engram/audit.log` (opt out with `ENGRAM_AUDIT=0`) |
 | [`stats.py`](../src/piia_engram/stats.py) | ~157 | `piia-engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
 
 ### Why this shape?
@@ -172,7 +172,7 @@ Everything lives under `~/.engram/` (override with `ENGRAM_DIR` env var; legacy 
 ```
 ~/.engram/
 ├── schema_version.json     {"schema_version": "2.0", "created_at": "..."}
-├── audit.log               JSON-lines, only written when ENGRAM_AUDIT=1
+├── audit.log               JSON-lines, on by default (opt out with ENGRAM_AUDIT=0)
 ├── identity/
 │   ├── profile.json         role, language, technical_level, description, ...
 │   ├── preferences.json     work_patterns, communication, tool_preferences
@@ -203,7 +203,7 @@ If `ENGRAM_SECRET` is set but the `cryptography` package isn't installed, piia-e
 
 ### Concurrent writes
 
-Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `portalocker` file lock on `<dir>/.piia-engram-write.lock` serializes writes from multiple piia-engram processes (typical when multiple AI tools have a stdio MCP each).
+Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `portalocker` file lock on `<dir>/.engram-write.lock` serializes writes from multiple piia-engram processes (typical when multiple AI tools have a stdio MCP each).
 
 ---
 

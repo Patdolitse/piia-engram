@@ -35,7 +35,7 @@ By default:
 - Local telemetry, when enabled, writes a local log first; remote telemetry and weekly feedback reports require separate explicit opt-in.
 - Knowledge content, prompts, AI responses, file paths, email addresses, and IP addresses are not collected by telemetry.
 - High-risk AI-suggested knowledge (credentials, executable commands, permission or MCP-config changes) is staged for your review before becoming verified, and unsupervised background writeback is always staged. Low/medium-risk items are auto-verified unless you set `ENGRAM_APPROVAL=strict`, which stages every write. See the risk-gated workflow below.
-- `engram setup` does not modify external MCP client config files. It detects them and prints guidance unless you explicitly run `engram setup --apply-external-config`.
+- `engram setup` lists the external MCP client config files it would touch and asks for a one-keystroke confirm before writing; declining leaves every external config untouched. `engram setup --apply-external-config` skips the prompt for non-interactive/CI runs.
 
 Optional features can have different behavior:
 
@@ -138,7 +138,7 @@ Do not publish private diagnostic outputs without reviewing and sanitizing them 
 
 ## MCP security boundaries
 
-MCP gives AI tools a way to call local capabilities. That is powerful, so Engram treats trust as a product feature: local files, minimal default tools, user-reviewed memory, optional audit logs, and documented limits.
+MCP gives AI tools a way to call local capabilities. That is powerful, so Engram treats trust as a product feature: local files, minimal default tools, user-reviewed memory, a default-on local audit log, and documented limits.
 
 Important boundaries:
 
@@ -176,7 +176,7 @@ You can inspect and control your data:
 - Archive or update stale knowledge.
 - Turn telemetry off with `engram telemetry off`.
 - Inspect telemetry payloads with `engram telemetry preview`.
-- Enable optional audit logging with `ENGRAM_AUDIT=1`.
+- Local audit logging is on by default; opt out with `ENGRAM_AUDIT=0`.
 - Enable optional field encryption for supported fields with `piia-engram[secure]` and `ENGRAM_SECRET`.
 
 ## Known limitations

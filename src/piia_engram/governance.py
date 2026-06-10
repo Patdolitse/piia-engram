@@ -13,10 +13,12 @@ DESIGN NOTES / honest boundaries (see design doc §1.a):
   default to the most restrictive tier here.
 - **Revocation is forward-only.** It stops *future* disclosure; it cannot
   recall context already returned to a model.
-- This module is standalone and NOT yet wired into ``search_knowledge`` /
-  ``get_*`` — that cutover is the next increment, kept separate so the live
-  read path is untouched while this is validated (self-review + Codex +
-  enforcement adversarial tests).
+- This module is the pure, file-backed policy core (classification, the
+  sensitivity gate, disclosure receipt, ledger). The live read-path cutover
+  lives in ``governance_runtime.py`` and stays OFF unless ``ENGRAM_GOVERNANCE``
+  is set, so by default the read path is byte-identical to pre-governance
+  Engram. Keeping policy here and wiring there lets this module stay pure and
+  fully testable without standing up the MCP server.
 
 Scope of THIS scaffold: trust-level classification, the sensitivity gate,
 the disclosure receipt, and an append-only hash-chained ledger — all pure /

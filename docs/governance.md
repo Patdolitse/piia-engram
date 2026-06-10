@@ -120,10 +120,11 @@ If the ledger tail is corrupt, append refuses rather than extending a broken
 chain. Read filtering itself remains the hard guarantee: a failed ledger append
 must not cause a secret item to be returned.
 
-This ledger is separate from the optional operational access log controlled by
-`ENGRAM_AUDIT=1`, which writes `~/.engram/audit.log`. The audit log can contain
-operation details such as write summaries, so `get_audit_log` is treated as an
-owner-only aggregate surface under governance.
+This ledger is separate from the local operational access log, which is on by
+default and writes `~/.engram/audit.log` (opt out with `ENGRAM_AUDIT=0`). That
+audit log is a plain JSON-lines file — not the hash-chained ledger — and can
+contain operation details such as write summaries, so `get_audit_log` is treated
+as an owner-only aggregate surface under governance.
 
 ## Security Boundaries
 

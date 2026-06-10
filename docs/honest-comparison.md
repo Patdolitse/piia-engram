@@ -39,8 +39,8 @@ feature bolted on top:
    history is preserved (you can see *why* you changed your mind, not just the current answer).
 3. **Field-level encryption at rest.** Sensitive fields (e.g. email, phone) are AES-256-GCM
    encrypted on disk.
-4. **Everything is visible, editable, reversible, and auditable** — and a planned opt-in strict mode
-   (`ENGRAM_APPROVAL=strict`, roadmap) can route *all* writes through review for users who want the
+4. **Everything is visible, editable, reversible, and auditable** — and an opt-in strict mode
+   (`ENGRAM_APPROVAL=strict`) routes *all* writes through staging review for users who want the
    maximum-control posture by default.
 
 > **Honesty note (load-bearing):** our default is **not** "nothing is stored until you approve it."

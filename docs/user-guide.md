@@ -178,8 +178,9 @@ playbooks, project snapshots, recent contexts, and daily logs.
   feedback reports (`engram telemetry feedback on`) are **separate explicit
   opt-ins**. Knowledge content, prompts, AI responses, file paths, emails, and
   IP addresses are never collected.
-- Audit logging is **off**; enable it with `ENGRAM_AUDIT=1` to write a
-  tamper-evident, hash-chained local ledger.
+- Audit logging is **on by default**; it records read/write operations to a
+  local `~/.engram/audit.log` (plain JSON-lines, never sent anywhere). Opt out
+  with `ENGRAM_AUDIT=0`.
 - The per-caller governance layer is **off**; enable it with
   `ENGRAM_GOVERNANCE=1`.
 - `engram setup` does not modify external client configs without your confirm

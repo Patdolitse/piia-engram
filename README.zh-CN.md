@@ -778,7 +778,7 @@ piia-engram 可以正常使用，但以下功能目前尚未实现：
 | **文件安全** | JSON 写入使用 portalocker 文件锁 + 原子替换 | 后续补充更大并发压力测试 |
 | **访问控制** | `restricted_fields` 会从 `get_user_context` 和 `get_profile(safe=true)` 中过滤画像字段 | MCP 不传调用方身份，暂不做复杂 ACL |
 | **加密** | 可选字段级 AES-256-GCM 加密，通过 `ENGRAM_SECRET` 环境变量启用。安装 `pip install piia-engram[secure]`。 | 全盘加密（v4.0）|
-| **审计日志** | 可选访问审计，通过 `ENGRAM_AUDIT=1` 环境变量启用。日志写入 `~/.engram/audit.log`。 | 按调用方审计（受 MCP 规范限制）|
+| **审计日志** | 本地访问审计**默认开启**，日志写入 `~/.engram/audit.log`；可用 `ENGRAM_AUDIT=0` 关闭。纯本地文件，绝不外传。 | 按调用方审计（受 MCP 规范限制）|
 | **调用方身份** | MCP 协议不传递工具身份 | 受 MCP 规范限制 |
 | **并发写保护** | piia-engram JSON 写入已通过文件锁和原子替换保护 | 网络文件系统等边界场景不保证 |
 
@@ -802,15 +802,15 @@ export ENGRAM_SECRET="选一个强口令"
 
 加密后的字段以 `enc:v2:...` 格式存储在 JSON 文件中；旧版 `enc:v1:...` 值仍可解密。不设置 `ENGRAM_SECRET` 时，piia-engram 照常以明文工作（向后兼容）。
 
-### 审计日志（可选）
+### 审计日志（默认开启）
 
-记录所有读写操作：
+本地审计日志默认记录所有读写操作到 `~/.engram/audit.log`（JSON-lines 格式）。这是**纯本地文件，绝不外传**。可通过 `get_audit_log` 工具或 `grep` 查询。
+
+如需关闭：
 
 ```bash
-export ENGRAM_AUDIT=1
+export ENGRAM_AUDIT=0
 ```
-
-日志以 JSON-lines 格式写入 `~/.engram/audit.log`。可通过 `get_audit_log` 工具或 `grep` 查询。
 
 ### Agent 治理（高级，可选）
 

@@ -143,9 +143,19 @@ if str(_TOOLS_DIR) not in sys.path:
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 try:
-    from .core import Engram, export_to_openclaw, import_from_openclaw  # noqa: E402
+    from .core import (  # noqa: E402
+        Engram,
+        export_to_openclaw,
+        import_from_openclaw,
+        strip_untrusted_trust_fields,
+    )
 except ImportError:
-    from core import Engram, export_to_openclaw, import_from_openclaw  # noqa: E402
+    from core import (  # noqa: E402
+        Engram,
+        export_to_openclaw,
+        import_from_openclaw,
+        strip_untrusted_trust_fields,
+    )
 try:
     from . import governance_runtime as _gov_rt  # noqa: E402
 except ImportError:
@@ -1965,6 +1975,11 @@ async def memory_store(
     if not isinstance(content, dict):
         return "content_json 应为 JSON 对象（{}），不能是数组或标量"
 
+    # An agent cannot self-certify trust: strip any tier/approval fields it
+    # smuggled through content_json so the risk-based write gate is the sole
+    # authority over tier (high-risk content -> staging, not verified).
+    strip_untrusted_trust_fields(content)
+
     if source_tool:
         content["source_tool"] = source_tool
 
@@ -2873,6 +2888,11 @@ async def bulk_add_knowledge(items_json: str, item_type: str = "lesson", source_
         return _json({"error": "items_json must be a valid JSON array"})
     if not isinstance(items, list):
         return _json({"error": "items_json must be a JSON array"})
+    # An agent cannot self-certify trust: strip any tier/approval fields each
+    # item smuggled through items_json so the risk-based write gate stays the
+    # sole authority over tier (high-risk items -> staging, not verified).
+    for _item in items:
+        strip_untrusted_trust_fields(_item)
     return _json(_locked_engram_call(
         _engram.bulk_add_knowledge,
         items,
@@ -3811,8 +3831,8 @@ async def get_audit_log(limit: int = 50) -> str:
     用途：需要查看 Engram 最近的读写操作、排查行为或核对记录时调用。
     Purpose: Call when inspecting recent Engram reads/writes, debugging behavior, or auditing activity.
 
-    注意：只有启用 ENGRAM_AUDIT=1 后才会有审计日志。最多返回 200 条。
-    Note: Audit entries exist only when ENGRAM_AUDIT=1 has been enabled. Max 200 entries.
+    注意：审计日志默认开启；用 ENGRAM_AUDIT=0 可关闭。最多返回 200 条。
+    Note: Audit logging is on by default (opt out with ENGRAM_AUDIT=0). Max 200 entries.
 
     Args:
         limit: 最多返回多少条（默认 50，上限 200，按最近优先）。 / Maximum entries to return (default 50, max 200, most recent first).
@@ -3821,7 +3841,7 @@ async def get_audit_log(limit: int = 50) -> str:
     limit = max(1, min(limit, _MAX_AUDIT_ENTRIES))
     log_path = _engram.root / "audit.log"
     if not log_path.is_file():
-        return _json({"entries": [], "total": 0, "message": "Audit logging not enabled. Set ENGRAM_AUDIT=1."})
+        return _json({"entries": [], "total": 0, "message": "No audit entries yet. Audit logging is on by default; opt out with ENGRAM_AUDIT=0."})
 
     # Tail-read: only load enough bytes from the end to cover *limit* entries,
     # avoiding reading potentially large log files entirely into memory.

@@ -45,13 +45,14 @@ _DEFAULT_FEEDBACK_ENDPOINT = "https://telemetry.example.test/v1/feedback"
         "README.md",
         "Network calls by default: 0 for identity and knowledge tools; "
         "remote telemetry and feedback require separate explicit opt-in. "
-        "All data lives in local plain JSON files by default.\n",
+        "All data lives in local plain JSON files by default. "
+        "Local access audit log on by default at ~/.engram/audit.log; opt out with ENGRAM_AUDIT=0.\n",
     )
     _write(
         root,
         "README.zh-CN.md",
         "身份与知识工具默认 0 次网络请求；远程 telemetry 和每周反馈报告必须单独显式开启。"
-        "默认以本地明文 JSON 文件存储。\n",
+        "默认以本地明文 JSON 文件存储。本地访问审计默认开启。\n",
     )
     _write(
         root,
@@ -61,14 +62,17 @@ _DEFAULT_FEEDBACK_ENDPOINT = "https://telemetry.example.test/v1/feedback"
         "https://telemetry.example.test/v1/feedback "
         "Never collected: identity content, prompts, file paths. "
         "Optional web reads only fetch URLs you explicitly provide. "
-        "Optional field-level encryption requires piia-engram[secure] and ENGRAM_SECRET.\n",
+        "Optional field-level encryption requires piia-engram[secure] and ENGRAM_SECRET. "
+        "Audit logging (on by default): operations recorded to ~/.engram/audit.log, "
+        "a plain JSON-lines file; opt out with ENGRAM_AUDIT=0.\n",
     )
     _write(
         root,
         "PRIVACY.md",
         "Your identity, preferences, lessons, and decisions are stored as plain JSON files. "
         "Telemetry is off by default. Remote telemetry and weekly feedback reports are separate opt-ins. "
-        "Without ENGRAM_SECRET, piia-engram works normally with plaintext.\n",
+        "Without ENGRAM_SECRET, piia-engram works normally with plaintext. "
+        "Local audit logging is on by default; opt out with ENGRAM_AUDIT=0.\n",
     )
     _write(
         root,
@@ -80,7 +84,8 @@ _DEFAULT_FEEDBACK_ENDPOINT = "https://telemetry.example.test/v1/feedback"
         root,
         "docs/trust.md",
         "The files are plain JSON or Markdown unless you explicitly enable optional field-level encryption. "
-        "Remote telemetry and weekly feedback reports require separate explicit opt-in.\n",
+        "Remote telemetry and weekly feedback reports require separate explicit opt-in. "
+        "Local audit logging is on by default; opt out with ENGRAM_AUDIT=0.\n",
     )
 
 
@@ -116,7 +121,8 @@ def test_negated_default_and_encryption_clarifications_do_not_false_positive(gua
         "remote telemetry and feedback require separate explicit opt-in. "
         "All data lives in local plain JSON files by default. "
         "Remote telemetry is never enabled by default. "
-        "Not all data is encrypted at rest; only supported fields are encrypted when configured.\n",
+        "Not all data is encrypted at rest; only supported fields are encrypted when configured. "
+        "Local access audit log on by default at ~/.engram/audit.log; opt out with ENGRAM_AUDIT=0.\n",
     )
 
     result = guard.scan(tmp_path)
@@ -183,7 +189,9 @@ _DEFAULT_FEEDBACK_ENDPOINT = ""
         "configured via ENGRAM_TELEMETRY_URL; the core ships with no built-in endpoint. "
         "Never collected: identity content, prompts, file paths. "
         "Optional web reads only fetch URLs you explicitly provide. "
-        "Optional field-level encryption requires piia-engram[secure] and ENGRAM_SECRET.\n",
+        "Optional field-level encryption requires piia-engram[secure] and ENGRAM_SECRET. "
+        "Audit logging (on by default): operations recorded to ~/.engram/audit.log, "
+        "a plain JSON-lines file; opt out with ENGRAM_AUDIT=0.\n",
     )
 
     result = guard.scan(tmp_path)

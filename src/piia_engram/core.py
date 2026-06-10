@@ -35,6 +35,7 @@ from .storage import (  # noqa: F401 — re-exports
     _SUPPLEMENT_MARKERS,
     STALE_KNOWLEDGE_DAYS,
     TOOL_CATEGORIES,
+    UNTRUSTED_TRUST_FIELDS,
     _AFFIRMATION_MARKERS,
     _ALIAS_LOOKUP,
     _ALLOWED_PLAYBOOK_UPDATE_FIELDS,
@@ -57,6 +58,7 @@ from .storage import (  # noqa: F401 — re-exports
     _update_json,
     _write_json,
     DataCorruptionError,
+    strip_untrusted_trust_fields,
 )
 from .retrieval import RetrievalMixin
 from .context import ContextMixin
@@ -146,9 +148,26 @@ class Engram(
                 # fail-closed condition above.
                 pass
 
-        # Audit logger (disabled unless ENGRAM_AUDIT=1/true/yes)
+        # Audit logger: a local, tamper-evident audit.log is ON BY DEFAULT so
+        # every identity/knowledge write leaves a trail the owner can inspect.
+        # This is a *local file only* — never network/telemetry; telemetry
+        # remains opt-in / off by default and is unrelated to this trail.
+        # Opt out explicitly with ENGRAM_AUDIT=0/false/no/off. Under
+        # ENGRAM_TEST=1 audit defaults OFF (suite isolation, same carve-out as
+        # data-fragmentation detection below) so the test suite doesn't litter
+        # every temp root with an audit.log; tests that need it set
+        # ENGRAM_AUDIT=1 explicitly.
         from piia_engram.audit import AuditLogger
-        audit_enabled = os.environ.get("ENGRAM_AUDIT", "").strip().lower() in ("1", "true", "yes")
+        _audit_env = os.environ.get("ENGRAM_AUDIT", "").strip().lower()
+        if _audit_env in ("1", "true", "yes", "on"):
+            audit_enabled = True
+        elif _audit_env in ("0", "false", "no", "off"):
+            audit_enabled = False
+        else:
+            _audit_in_test = os.environ.get("ENGRAM_TEST", "").strip().lower() in (
+                "1", "true", "yes",
+            )
+            audit_enabled = not _audit_in_test
         self._audit = AuditLogger(
             log_path=self.root / "audit.log" if audit_enabled else None,
             enabled=audit_enabled,
