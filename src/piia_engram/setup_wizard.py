@@ -3704,6 +3704,28 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] Encoding health check failed: {exc}")
         problems += 1
 
+    # ── Version freshness (read-only PyPI check; never affects exit code) ──
+    try:
+        from piia_engram import __version__
+        from piia_engram.update_check import check_for_update, is_disabled
+
+        print()
+        if is_disabled():
+            _safe_print(
+                f"    [--] Version: {__version__} (update check disabled)"
+            )
+        else:
+            latest = check_for_update(__version__, force=True)
+            if latest:
+                _safe_print(
+                    f"    [!] Version: {__version__} — newer release {latest} "
+                    "available; upgrade: pip install -U piia-engram"
+                )
+            else:
+                _safe_print(f"    [ok] Version: {__version__} (up to date)")
+    except Exception as exc:
+        _safe_print(f"    [--] Version check skipped: {exc}")
+
     print()
     return problems
 
@@ -6091,6 +6113,16 @@ def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
     args = sys.argv[1:]
+    # Non-intrusive update reminder (stderr only, opt-out, 24h-cached, fail-silent).
+    # `doctor` prints its own richer version line, so skip the generic notice there
+    # to avoid a double-print. Never reached by the separate MCP-server entry point.
+    if not (args and args[0] == "doctor"):
+        try:
+            from piia_engram.update_check import maybe_print_update_notice
+
+            maybe_print_update_notice()
+        except Exception:
+            pass
     if not args or args[0] == "setup":
         run_setup(
             advanced="--advanced" in args,
