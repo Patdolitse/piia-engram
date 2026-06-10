@@ -566,6 +566,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- **学到经验/踩坑**：调用 `add_lesson` 存入\n"
             "- **做出决策**：调用 `add_decision` 记录选择和理由\n"
             "- **对话结束**：调用 `wrap_up_session` 保存上下文\n"
+            "- **用户问起历史对话**（“我刚才/之前问过什么”、“上次聊到哪”）：调用 `get_recent_context` 查找\n"
             "- **搜索历史知识**：调用 `search_knowledge`\n"
             "{marker_end}\n"
         ),
@@ -578,6 +579,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- **Lessons learned**: call `add_lesson` to save\n"
             "- **Decisions made**: call `add_decision` to record choice and reasoning\n"
             "- **End of conversation**: call `wrap_up_session` to save context\n"
+            "- **User asks about past conversations** (\"what did I just ask\", \"where did we leave off\"): call `get_recent_context`\n"
             "- **Search past knowledge**: call `search_knowledge`\n"
             "{marker_end}\n"
         ),
@@ -596,6 +598,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 学到经验时调用 `add_lesson`\n"
             "- 做决策时调用 `add_decision`\n"
             "- 对话结束调用 `wrap_up_session`\n"
+            "- 用户问起历史对话（“我刚才/之前问过什么”）调用 `get_recent_context`\n"
             "- 搜索知识用 `search_knowledge`\n"
         ),
         "snippet_en": (
@@ -610,6 +613,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Lessons learned: call `add_lesson`\n"
             "- Decisions made: call `add_decision`\n"
             "- End of conversation: call `wrap_up_session`\n"
+            "- User asks about past conversations (\"what did I just ask\"): call `get_recent_context`\n"
             "- Search knowledge: call `search_knowledge`\n"
         ),
     },
@@ -624,6 +628,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
             "- 做出决策：调用 `add_decision` 记录\n"
             "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
+            "- 用户问起历史对话（“我刚才/之前问过什么”、“上次聊到哪”）：调用 `get_recent_context` 查找\n"
             "{marker_end}\n"
         ),
         "snippet_en": (
@@ -635,6 +640,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Lessons learned: call `add_lesson`\n"
             "- Decisions made: call `add_decision`\n"
             "- Task end: call `wrap_up_session` to save context\n"
+            "- User asks about past conversations (\"what did I just ask\", \"where did we leave off\"): call `get_recent_context`\n"
             "{marker_end}\n"
         ),
     },
@@ -653,6 +659,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
             "- 做出决策：调用 `add_decision` 记录\n"
             "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
+            "- 用户问起历史对话（“我刚才/之前问过什么”）：调用 `get_recent_context` 查找\n"
             "- 搜索历史知识：调用 `search_knowledge`\n"
             "{marker_end}\n"
         ),
@@ -665,6 +672,7 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Lessons learned: call `add_lesson`\n"
             "- Decisions made: call `add_decision`\n"
             "- Task end: call `wrap_up_session` to save context\n"
+            "- User asks about past conversations (\"what did I just ask\"): call `get_recent_context`\n"
             "- Search past knowledge: call `search_knowledge`\n"
             "{marker_end}\n"
         ),
