@@ -6,6 +6,15 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 新增
+- **setup 内置增强检索开关**——`engram setup` 新增可选步骤，一键启用 hybrid
+  检索（关键词 + 全文 + 语义向量）：提供 `[vector]` 依赖安装选项，把
+  `ENGRAM_SEARCH=hybrid` 写入已检测 AI 客户端的 MCP 配置，并在 setup 收尾
+  构建索引。重跑 setup 不再静默丢失客户端配置里已启用的 `ENGRAM_SEARCH`。
+  hybrid 仍为默认关闭、自愿开启。
+
 ## [3.55.0] - 2026-06-10
 
 ### 新增

@@ -26,6 +26,11 @@ small/clean stores, so the gain is marginal.
 
 ## Enable
 
+Easiest path: `engram setup` offers an optional **Enhanced search** step —
+one keystroke enables hybrid, offers the `[vector]` install, writes
+`ENGRAM_SEARCH=hybrid` into your AI clients' MCP configs, and builds the
+index. Manual path:
+
 ```bash
 # 1. install the semantic layer (sqlite-vec + FastEmbed)
 pip install "piia-engram[vector]"

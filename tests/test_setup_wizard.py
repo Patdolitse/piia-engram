@@ -2141,6 +2141,7 @@ class TestRunSetup:
         answers = iter([
             "1",   # language: zh
             "",    # data dir: default
+            "2",   # enhanced search: not now
             "y",   # configure tools: yes
             "",    # seed: role
             "",    # seed: tech_stack
@@ -2200,6 +2201,7 @@ class TestRunSetup:
         answers = iter([
             "2",   # language: English
             "",    # data dir: default from ENGRAM_DIR
+            "2",   # enhanced search: not now
             "",    # seed: role
             "",    # seed: tech_stack
             "",    # seed: language
@@ -2265,6 +2267,7 @@ class TestRunSetup:
             "2",                 # language: English
             "c",                 # data dir: custom path
             str(custom_root),    # custom Engram root
+            "2",                 # enhanced search: not now
             "",                  # seed: role
             "",                  # seed: tech_stack
             "",                  # seed: language
@@ -2349,6 +2352,7 @@ class TestRunSetup:
         answers = iter([
             "2",   # language: English
             "",    # data dir: default from ENGRAM_DIR
+            "2",   # enhanced search: not now
             "2",   # external config consent: No (read-only)
             "",    # seed: role
             "",    # seed: tech_stack
@@ -2447,6 +2451,7 @@ class TestRunSetup:
         answers = iter([
             "2",   # language: English
             "",    # data dir: default from ENGRAM_DIR
+            "2",   # enhanced search: not now
             "1",   # external config consent: Yes, auto-configure
             "",    # seed: role
             "",    # seed: tech_stack
@@ -2532,6 +2537,7 @@ class TestRunSetup:
         answers = iter([
             "2",   # language: English
             "",    # data dir: default from ENGRAM_DIR
+            "2",   # enhanced search: not now
             "",    # seed: role
             "",    # seed: tech_stack
             "",    # seed: language
@@ -2606,6 +2612,7 @@ class TestRunSetup:
         answers = iter([
             "2",   # language: English
             "",    # data dir: default
+            "2",   # enhanced search: not now
             "",    # seed: role
             "",    # seed: tech_stack
             "",    # seed: language
@@ -2641,6 +2648,7 @@ class TestRunSetup:
         answers = iter([
             "1",         # language: zh
             custom_dir,  # custom data dir
+            "2",         # enhanced search: not now
             "",          # seed: role
             "",          # seed: tech_stack
             "",          # seed: language
@@ -2657,6 +2665,198 @@ class TestRunSetup:
 
         out = capsys.readouterr().out
         assert custom_dir in out
+
+
+# ── Enhanced search (hybrid) setup offer ───────────────────────────
+
+
+class TestHybridSearchOffer:
+    def test_wizard_hybrid_optin_writes_env_and_builds_index(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Opting in must persist ENGRAM_SEARCH=hybrid into JSON + TOML client
+        configs and build the search index at the end of setup."""
+        from piia_engram.setup_wizard import run_setup
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+        monkeypatch.setenv("ENGRAM_SEARCH", "keyword")  # registers env restore
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+        monkeypatch.setattr("piia_engram.setup_wizard._scan_rule_files", lambda cwd=None: [])
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_instruction_snippet", lambda *_a, **_k: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_hook", lambda *_a, **_k: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_precompact_hook", lambda *_a, **_k: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_sessionstart_hook", lambda *_a, **_k: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_postcompact_hook", lambda *_a, **_k: None)
+        # Deterministic regardless of whether fastembed is installed locally.
+        monkeypatch.setattr("piia_engram.setup_wizard._vector_deps_available", lambda: True)
+
+        claude_config = tmp_path / ".claude" / ".mcp.json"
+        claude_config.parent.mkdir()
+        claude_config.write_text('{"mcpServers": {}}\n', encoding="utf-8")
+        codex_config = tmp_path / ".codex" / "config.toml"
+        codex_config.parent.mkdir()
+        codex_config.write_text('[settings]\napproval_policy = "never"\n', encoding="utf-8")
+
+        answers = iter([
+            "2",   # language: English
+            "",    # data dir: default from ENGRAM_DIR
+            "1",   # enhanced search: enable
+            "",    # seed: role
+            "",    # seed: tech_stack
+            "",    # seed: language
+            "",    # seed: no lessons
+            "",    # privacy: reconcile
+            "",    # privacy: telemetry
+        ])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._detect_tools",
+            lambda: [
+                {"id": "claude_code", "name": "Claude Code", "config_path": claude_config},
+                {"id": "codex", "name": "Codex", "config_path": codex_config,
+                 "format": "toml", "server_key": "mcp_servers"},
+            ],
+        )
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
+
+        run_setup(apply_external_config=True)
+
+        config = json.loads(claude_config.read_text(encoding="utf-8"))
+        assert config["mcpServers"]["engram"]["env"]["ENGRAM_SEARCH"] == "hybrid"
+        assert 'ENGRAM_SEARCH = "hybrid"' in codex_config.read_text(encoding="utf-8")
+        out = capsys.readouterr().out
+        assert "Enhanced search enabled" in out
+        assert "Search index built" in out
+
+    def test_wizard_hybrid_skip_leaves_configs_clean(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """The default (not now) must not write ENGRAM_SEARCH anywhere."""
+        from piia_engram.setup_wizard import run_setup
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+        monkeypatch.delenv("ENGRAM_SEARCH", raising=False)
+        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+        monkeypatch.setattr("piia_engram.setup_wizard.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+        monkeypatch.setattr("piia_engram.setup_wizard._scan_rule_files", lambda cwd=None: [])
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_instruction_snippet", lambda *_a, **_k: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_hook", lambda *_a, **_k: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_precompact_hook", lambda *_a, **_k: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_sessionstart_hook", lambda *_a, **_k: None)
+        monkeypatch.setattr("piia_engram.setup_wizard._inject_claude_code_postcompact_hook", lambda *_a, **_k: None)
+
+        claude_config = tmp_path / ".claude" / ".mcp.json"
+        claude_config.parent.mkdir()
+        claude_config.write_text('{"mcpServers": {}}\n', encoding="utf-8")
+
+        answers = iter([
+            "2",   # language: English
+            "",    # data dir: default from ENGRAM_DIR
+            "",    # enhanced search: default (not now)
+            "",    # seed: role
+            "",    # seed: tech_stack
+            "",    # seed: language
+            "",    # seed: no lessons
+            "",    # privacy: reconcile
+            "",    # privacy: telemetry
+        ])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard._detect_tools",
+            lambda: [{"id": "claude_code", "name": "Claude Code", "config_path": claude_config}],
+        )
+        monkeypatch.setattr("piia_engram.setup_wizard._find_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr("piia_engram.setup_wizard._find_mcp_server", lambda: "/path/to/mcp_server.py")
+
+        run_setup(apply_external_config=True)
+
+        config = json.loads(claude_config.read_text(encoding="utf-8"))
+        assert "ENGRAM_SEARCH" not in config["mcpServers"]["engram"]["env"]
+        assert os.environ.get("ENGRAM_SEARCH") is None
+
+    def test_rerun_setup_preserves_existing_engram_search(self, tmp_path):
+        """Re-running setup must not silently disable previously enabled
+        hybrid search (the env block is rebuilt from scratch on rewrite)."""
+        from piia_engram.setup_wizard import _write_mcp_config, _write_mcp_config_toml
+
+        config_path = tmp_path / ".mcp.json"
+        _write_mcp_config(
+            config_path, "/usr/bin/python3", "/path/to/mcp_server.py",
+            data_dir=str(tmp_path), file_safety_root=tmp_path,
+            authorized_external_write=True,
+            extra_env={"ENGRAM_SEARCH": "hybrid"},
+        )
+        # Rewrite without extra_env (a later plain re-run of setup).
+        _write_mcp_config(
+            config_path, "/usr/bin/python3", "/path/to/mcp_server.py",
+            data_dir=str(tmp_path), file_safety_root=tmp_path,
+            authorized_external_write=True,
+        )
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        assert config["mcpServers"]["engram"]["env"]["ENGRAM_SEARCH"] == "hybrid"
+
+        toml_path = tmp_path / "config.toml"
+        _write_mcp_config_toml(
+            toml_path, "/usr/bin/python3", "/path/to/mcp_server.py",
+            data_dir=str(tmp_path), file_safety_root=tmp_path,
+            authorized_external_write=True,
+            extra_env={"ENGRAM_SEARCH": "hybrid"},
+        )
+        _write_mcp_config_toml(
+            toml_path, "/usr/bin/python3", "/path/to/mcp_server.py",
+            data_dir=str(tmp_path), file_safety_root=tmp_path,
+            authorized_external_write=True,
+        )
+        assert 'ENGRAM_SEARCH = "hybrid"' in toml_path.read_text(encoding="utf-8")
+
+    def test_offer_installs_vector_deps_on_consent(self, monkeypatch, capsys):
+        """Enable + install consent must invoke pip against the wizard's
+        chosen Python; pip success is reported as installed."""
+        from piia_engram.setup_wizard import _run_hybrid_search_offer
+
+        monkeypatch.setattr("piia_engram.i18n._runtime_lang", "en")
+        monkeypatch.setenv("ENGRAM_SEARCH", "keyword")  # registers env restore
+        monkeypatch.setattr("piia_engram.setup_wizard._vector_deps_available", lambda: False)
+        calls: list[list[str]] = []
+
+        def fake_call(cmd, *args, **kwargs):
+            calls.append(list(cmd))
+            return 0
+
+        monkeypatch.setattr("piia_engram.setup_wizard.subprocess.call", fake_call)
+        answers = iter(["1", "1"])  # enable, install now
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+
+        assert _run_hybrid_search_offer("/opt/py/python") is True
+        assert os.environ["ENGRAM_SEARCH"] == "hybrid"
+        assert calls == [["/opt/py/python", "-m", "pip", "install", "piia-engram[vector]"]]
+        out = capsys.readouterr().out
+        assert "Vector dependencies installed" in out
+
+    def test_offer_skip_install_still_enables_hybrid(self, monkeypatch, capsys):
+        """Declining the dep install must still enable hybrid (keyword+FTS)."""
+        from piia_engram.setup_wizard import _run_hybrid_search_offer
+
+        monkeypatch.setattr("piia_engram.i18n._runtime_lang", "en")
+        monkeypatch.setenv("ENGRAM_SEARCH", "keyword")
+        monkeypatch.setattr("piia_engram.setup_wizard._vector_deps_available", lambda: False)
+        monkeypatch.setattr(
+            "piia_engram.setup_wizard.subprocess.call",
+            lambda *_a, **_k: pytest.fail("pip must not run when install is declined"),
+        )
+        answers = iter(["1", "2"])  # enable, skip install
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers, ""))
+
+        assert _run_hybrid_search_offer("/opt/py/python") is True
+        assert os.environ["ENGRAM_SEARCH"] == "hybrid"
+        out = capsys.readouterr().out
+        assert "Enhanced search enabled" in out
 
 
 # ── main() CLI entry tests ─────────────────────────────────────────

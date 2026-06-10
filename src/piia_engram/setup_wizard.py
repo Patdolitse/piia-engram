@@ -1483,6 +1483,7 @@ def _write_mcp_config(
     server_key: str = "mcpServers",
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
     """将 engram 写入指定工具的 MCP 配置（合并，不覆盖其他工具的配置）。
     同时自动清理已知的旧版 server 名称（piia-pkc 等）。
@@ -1531,6 +1532,11 @@ def _write_mcp_config(
     if preserved_data_dir:
         env["ENGRAM_DIR"] = str(preserved_data_dir)
 
+    # 重跑 setup 不得静默关闭用户已启用的增强检索（env 块整体重建会丢键）。
+    preserved_search = (extra_env or {}).get("ENGRAM_SEARCH") or existing_env.get("ENGRAM_SEARCH")
+    if preserved_search:
+        env["ENGRAM_SEARCH"] = str(preserved_search)
+
     entry: dict = {
         "command": python_path,
         "args": ["-m", "piia_engram.mcp_server"],
@@ -1554,6 +1560,7 @@ def _write_mcp_config_toml(
     data_dir: str | None = None,
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
     """修复 TOML 格式配置文件中的 engram MCP 条目（如 Codex config.toml）。
 
@@ -1598,6 +1605,10 @@ def _write_mcp_config_toml(
     preserved_data_dir = data_dir or existing_env.get("ENGRAM_DIR")
     if preserved_data_dir:
         engram_block.append(f'ENGRAM_DIR = {toml_string(str(preserved_data_dir))}')
+    # 重跑 setup 不得静默关闭用户已启用的增强检索（env 段整体重建会丢键）。
+    preserved_search = (extra_env or {}).get("ENGRAM_SEARCH") or existing_env.get("ENGRAM_SEARCH")
+    if preserved_search:
+        engram_block.append(f'ENGRAM_SEARCH = {toml_string(str(preserved_search))}')
 
     inserted = False
     i = 0
@@ -1649,6 +1660,7 @@ def _write_tool_mcp_config(
     data_dir: str | None = None,
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
     """Write an MCP config using the target client's declared format."""
     if tool.get("format", "json") == "toml":
@@ -1659,6 +1671,7 @@ def _write_tool_mcp_config(
             data_dir,
             file_safety_root=file_safety_root,
             authorized_external_write=authorized_external_write,
+            extra_env=extra_env,
         )
         return
     _write_mcp_config(
@@ -1669,6 +1682,7 @@ def _write_tool_mcp_config(
         server_key=tool.get("server_key", "mcpServers"),
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
+        extra_env=extra_env,
     )
 
 
@@ -2345,11 +2359,89 @@ def _run_privacy_defaults(data_dir: str) -> None:
 # 向导主流程
 # ---------------------------------------------------------------------------
 
+def _vector_deps_available() -> bool:
+    """语义向量层可选依赖（piia-engram[vector]）是否已安装。"""
+    try:
+        import fastembed  # noqa: F401
+        import sqlite_vec  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _run_hybrid_search_offer(python_path: str) -> bool:
+    """可选步骤：一键启用增强检索（hybrid）。返回是否启用。
+
+    启用时设置本进程 ENGRAM_SEARCH=hybrid（让 setup 期间的 Engram 调用与
+    收尾 reindex 走 hybrid 路径）；持久化由调用方把它写进各客户端 MCP
+    配置的 env 块完成。缺少向量依赖时 hybrid 自动降级为关键词+全文，
+    依赖安装是可选的。
+    """
+    print(_t("可选 — 增强检索（hybrid：关键词 + 全文 + 语义向量）",
+             "Optional — Enhanced search (hybrid: keyword + full-text + semantic vectors)"))
+    print(_t("    跨语言召回更好：中文存的知识，英文搜索也能命中。随时可还原为默认检索。",
+             "    Better cross-lingual recall (store in one language, find in another). Reversible anytime."))
+    ans = _prompt(_t("  启用增强检索？ 1=启用  2=暂不（默认）",
+                     "  Enable enhanced search? 1=Yes  2=Not now (default)"), "2")
+    if ans.strip() != "1":
+        print(_t("  ℹ️  保持默认关键词检索。以后可设 ENGRAM_SEARCH=hybrid 并运行 'engram reindex' 开启（见 docs/hybrid-search.md）。",
+                 "  ℹ️  Keeping default keyword search. Enable later via ENGRAM_SEARCH=hybrid + 'engram reindex' (see docs/hybrid-search.md)."))
+        return False
+
+    os.environ["ENGRAM_SEARCH"] = "hybrid"
+    if not _vector_deps_available():
+        ins = _prompt(_t(
+            "  语义向量依赖未安装。 1=现在安装（pip install 'piia-engram[vector]'）  2=跳过（先用关键词+全文）",
+            "  Vector deps not installed. 1=Install now (pip install 'piia-engram[vector]')  2=Skip (keyword + full-text for now)",
+        ), "1")
+        if ins.strip() == "1":
+            print(_t("  ⏳ 正在安装（首次会下载向量模型依赖，可能需要几分钟）…",
+                     "  ⏳ Installing (first run downloads vector model deps; may take a few minutes)…"))
+            try:
+                rc = subprocess.call(
+                    [python_path, "-m", "pip", "install", "piia-engram[vector]"]
+                )
+            except OSError as exc:
+                rc = 1
+                _safe_print(f"  ⚠️  pip launch failed: {exc}")
+            if rc == 0:
+                print(_t("  ✅ 语义向量依赖已安装", "  ✅ Vector dependencies installed"))
+            else:
+                print(_t("  ⚠️  安装未完成 — 增强检索仍可用（关键词+全文）。稍后可重试：pip install 'piia-engram[vector]'",
+                         "  ⚠️  Install incomplete — enhanced search still works (keyword + full-text). Retry later: pip install 'piia-engram[vector]'"))
+        else:
+            print(_t("  ℹ️  已跳过 — 增强检索先以关键词+全文运行；装上 'piia-engram[vector]' 后自动升级为语义检索。",
+                     "  ℹ️  Skipped — enhanced search runs as keyword + full-text; installs of 'piia-engram[vector]' upgrade it automatically."))
+    print(_t("  ✅ 增强检索已启用", "  ✅ Enhanced search enabled"))
+    return True
+
+
+def _run_hybrid_reindex() -> None:
+    """Setup 收尾：为已启用的增强检索构建持久化索引（含种子知识）。"""
+    try:
+        eng = _get_engram_class()()
+        result = eng.rebuild_index()
+    except Exception as exc:
+        _safe_print(_t(f"  ⚠️  索引构建失败（不影响使用，检索会自动重建）：{exc}",
+                       f"  ⚠️  Index build failed (search auto-rebuilds later): {exc}"))
+        return
+    if result.get("skipped") == "corpus_encrypted":
+        print(_t("  ℹ️  已启用库加密 — 不落盘明文索引，检索回退为关键词模式。",
+                 "  ℹ️  Corpus encryption enabled — no plaintext index on disk; search falls back to keyword mode."))
+        return
+    vec = result.get("vector_enabled")
+    print(_t(
+        f"  ✅ 检索索引已构建（{result.get('indexed', 0)} 条；语义向量层：{'开' if vec else '关'}）",
+        f"  ✅ Search index built ({result.get('indexed', 0)} entries; vector layer: {'on' if vec else 'off'})",
+    ))
+
+
 def _apply_external_configs(
     tools: list[dict],
     python_path: str,
     mcp_server_path: str,
     selected_data_dir: str,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Write MCP config + inject instruction snippets/hooks for each detected
     tool. Returns ``(success_names, failed_names)``.
@@ -2371,6 +2463,7 @@ def _apply_external_configs(
                 selected_data_dir,
                 file_safety_root=selected_data_dir,
                 authorized_external_write=True,
+                extra_env=extra_env,
             )
             success.append(tool["name"])
             configured_tool_ids.append(tool["id"])
@@ -2499,6 +2592,12 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
     print(_t(f"  ✅ 数据目录: {selected_data_dir}",
              f"  ✅ Data dir: {selected_data_dir}"))
 
+    # 可选 — 增强检索（一键开 hybrid；选择需在写客户端配置前定下来）
+    print()
+    hybrid_enabled = _run_hybrid_search_offer(python_path)
+    extra_env = {"ENGRAM_SEARCH": "hybrid"} if hybrid_enabled else None
+    print()
+
     # 工具检测 — 默认交互确认后写入；--apply-external-config 跳过确认直写。
     tools = _detect_tools()
     success: list[str] = []
@@ -2532,6 +2631,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
         if should_write:
             success, failed = _apply_external_configs(
                 tools, python_path, mcp_server_path, selected_data_dir,
+                extra_env=extra_env,
             )
             external_config_written = True
             if failed:
@@ -2561,6 +2661,18 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
         _run_privacy_preferences(selected_data_dir)
     else:
         _run_privacy_defaults(selected_data_dir)
+
+    # 增强检索收尾：等种子知识录入后再建索引，索引才包含初始知识
+    if hybrid_enabled:
+        _run_hybrid_reindex()
+        if not external_config_written:
+            print(_t(
+                "  ⚠️  本次未写入客户端配置 — 要让 AI 工具用上增强检索，请在各工具 MCP 配置的 env 里加 ENGRAM_SEARCH=hybrid，"
+                "或运行 engram setup --apply-external-config",
+                "  ⚠️  Client configs were not written — to use enhanced search in your AI tools, add ENGRAM_SEARCH=hybrid "
+                "to each tool's MCP config env, or run: engram setup --apply-external-config",
+            ))
+        print()
 
     # 完成
     print(_t("  重启你的 AI 工具即可使用：",

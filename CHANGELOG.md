@@ -6,6 +6,17 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Enhanced search in setup** — `engram setup` now offers an optional
+  one-keystroke step to enable hybrid search (keyword + full-text + semantic
+  vectors): offers the `[vector]` dependency install, persists
+  `ENGRAM_SEARCH=hybrid` into detected AI clients' MCP configs, and builds the
+  index at the end of setup. Re-running setup no longer silently drops a
+  previously enabled `ENGRAM_SEARCH` from client configs. Hybrid stays
+  opt-in/off by default.
+
 ## [3.55.0] - 2026-06-10
 
 ### Added
