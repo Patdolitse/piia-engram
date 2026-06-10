@@ -1066,6 +1066,10 @@ if _HAS_STARLETTE:
 # READ TOOLS (19)
 # ===========================================================================
 
+# Cold-start playbook trigger matching scans at most this many playbooks
+# (newest index entries first) so a large library can't slow down startup.
+_PLAYBOOK_MATCH_SCAN_LIMIT = 200
+
 
 @mcp.tool()
 async def get_user_context(
@@ -1098,8 +1102,11 @@ async def get_user_context(
         level: "quick" | "standard" | "full"，默认 "standard"。 / Tier — defaults to "standard".
         token_budget: 上下文 token 预算（可选）。设定后按优先级裁剪 section，低优先级 section 先丢弃。不设则返回全量。
             Optional token budget. When set, sections are included by priority until budget is exhausted.
-        user_prompt: 用户当前提问（可选）。传入后 Engram 可据此优化上下文相关性（未来增强）。
-            Optional current user prompt. Passed through for future context-relevance optimization.
+        user_prompt: 用户当前提问（可选）。传入后会追加到上下文末尾，并与已存 Playbook 的
+            triggers 关键词匹配，命中时浮现「相关 Playbook」小节（标题 + ID；用 get_playbook 查看完整步骤）。
+            Optional current user prompt. Appended to the context and matched against stored
+            playbook trigger keywords; hits surface a "Matched Playbooks" section (title + id;
+            call get_playbook for the full steps).
     """
     if project_folder:
         _session.detect_project(project_folder)
@@ -1172,6 +1179,35 @@ async def get_user_context(
                 else:
                     suffix = ""
         context += suffix
+
+        # "Playbook finds you": match the prompt against stored playbook
+        # triggers so relevant playbooks surface on the first message instead
+        # of waiting for the AI to remember get_playbooks. Best-effort — a
+        # matching failure must never break cold start. Reads use
+        # _update_access=False: surfacing is not usage, so access stats and
+        # last_reviewed stay untouched.
+        try:
+            from piia_engram.playbook_match import (
+                match_playbooks,
+                render_matched_section,
+            )
+
+            candidates = _engram.get_playbooks(
+                limit=_PLAYBOOK_MATCH_SCAN_LIMIT,
+                project_folder=project_folder or _session.project_folder or None,
+                _update_access=False,
+            )
+            matches = match_playbooks(user_prompt, candidates, limit=2)
+            section = render_matched_section(matches, lang=_user_lang())
+            # Lowest-priority section: drop it entirely rather than crowd out
+            # identity/prompt content when a token budget is set.
+            if section and (
+                token_budget is None
+                or (len(context) + len(section)) // 3 <= token_budget
+            ):
+                context += section
+        except Exception as exc:
+            logger.warning("playbook trigger matching failed: %s", exc)
 
     # a1: embed caller permissions so the AI tool knows its trust boundary
     # from the first message. The section is appended BEFORE the governance

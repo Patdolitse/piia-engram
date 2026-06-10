@@ -1362,6 +1362,110 @@ def test_get_user_context_no_user_prompt_omits_section(isolated_engram: Engram):
 
 
 # ---------------------------------------------------------------------------
+# Cold-start playbook trigger matching ("playbook finds you")
+# ---------------------------------------------------------------------------
+
+
+class TestGetUserContextPlaybookMatching:
+    # The heading is unique to the trigger-matching section — the baseline
+    # cold-start context has its own "最近操作手册" section that also lists
+    # playbook titles, so assertions must key on THIS heading, not titles.
+    _SECTION = "相关 Playbook（与当前提问匹配）"
+
+    @pytest.fixture(autouse=True)
+    def _pin_lang_zh(self, monkeypatch: pytest.MonkeyPatch):
+        """Pin the runtime language so the section heading is deterministic
+        regardless of the developer's real ~/.engram profile."""
+        from piia_engram import i18n
+
+        monkeypatch.setattr(i18n, "_runtime_lang", "zh")
+
+    @staticmethod
+    def _seed(engram: Engram) -> str:
+        engram.update_profile({"role": "developer"})
+        result = engram.add_playbook({
+            "title": "MCP Registry 发布流程",
+            "triggers": ["发布", "registry"],
+            "steps": [
+                {"order": 1, "action": "build", "detail": "python -m build"},
+                {"order": 2, "action": "publish", "detail": "twine upload"},
+            ],
+        })
+        return result.get("id", "")
+
+    def test_prompt_hitting_trigger_surfaces_playbook_section(
+        self, isolated_engram: Engram,
+    ):
+        """user_prompt 命中 trigger 时，冷启动上下文应浮现 Playbook 指针。"""
+        pb_id = self._seed(isolated_engram)
+        result = _run(mcp_server.get_user_context(
+            user_prompt="帮我把新版本发布到 registry",
+        ))
+        assert self._SECTION in result
+        assert "MCP Registry 发布流程" in result
+        assert pb_id in result
+        assert "get_playbook" in result
+
+    def test_prompt_without_trigger_hit_omits_section(
+        self, isolated_engram: Engram,
+    ):
+        """无 trigger 命中时不应有匹配小节（精确优先）。"""
+        self._seed(isolated_engram)
+        result = _run(mcp_server.get_user_context(
+            user_prompt="解释一下这段排序算法的复杂度",
+        ))
+        assert self._SECTION not in result
+
+    def test_no_user_prompt_skips_matching_entirely(
+        self, isolated_engram: Engram,
+    ):
+        """不传 user_prompt 时完全不做匹配，也不浮现匹配小节。"""
+        self._seed(isolated_engram)
+        result = _run(mcp_server.get_user_context())
+        assert self._SECTION not in result
+
+    def test_tight_token_budget_drops_playbook_section(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """token_budget 不够时匹配小节应整体丢弃（最低优先级）。"""
+        self._seed(isolated_engram)
+        monkeypatch.setattr(
+            isolated_engram,
+            "generate_context",
+            lambda project_folder=None, level="standard", max_tokens=None: "ctx-" * 20,
+        )
+        result = _run(mcp_server.get_user_context(
+            token_budget=30, user_prompt="发布到 registry",
+        ))
+        assert self._SECTION not in result
+
+    def test_surfacing_does_not_bump_access_stats(
+        self, isolated_engram: Engram,
+    ):
+        """冷启动浮现不算使用——access_count / last_reviewed 不应被改动。"""
+        pb_id = self._seed(isolated_engram)
+        before = isolated_engram.get_playbook(pb_id, _update_access=False)
+        _run(mcp_server.get_user_context(user_prompt="发布到 registry"))
+        after = isolated_engram.get_playbook(pb_id, _update_access=False)
+        assert after.get("access_count", 0) == before.get("access_count", 0)
+        assert after.get("last_reviewed") == before.get("last_reviewed")
+
+    def test_matching_failure_does_not_break_cold_start(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """匹配链路抛异常时，冷启动上下文必须照常返回。"""
+        self._seed(isolated_engram)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("playbook store unavailable")
+
+        monkeypatch.setattr(isolated_engram, "get_playbooks", boom)
+        result = _run(mcp_server.get_user_context(user_prompt="发布到 registry"))
+        assert "## 当前用户提问" in result
+        assert "发布到 registry" in result
+
+
+# ---------------------------------------------------------------------------
 # M11: MCP wrapper + doctor WARN coverage (Codex review)
 # ---------------------------------------------------------------------------
 
