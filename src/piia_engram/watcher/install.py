@@ -207,6 +207,13 @@ def status() -> int:
         print(f"  last scan         : {stamp.isoformat(timespec='seconds')}")
     else:
         print("  last scan         : never (no state file yet)")
+    try:
+        from .core import WRITEBACK_ENV, writeback_enabled
+
+        wb = "on (staging-only)" if writeback_enabled() else "off (default)"
+        print(f"  knowledge writeback: {wb} — toggle via {WRITEBACK_ENV}=1")
+    except Exception:
+        pass
     if log_file.exists():
         try:
             lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()

@@ -7,7 +7,14 @@ One scan (:func:`scan_once`):
 3. changed files are parsed into a summary and appended to the Engram
    ``contexts/`` session log via ``save_agent_context`` (never the knowledge
    store), debounced per session;
-4. the watermark state is persisted to ``<ENGRAM_DIR>/logs/watcher_state.json``.
+4. *optionally* (off by default, ``ENGRAM_WATCHER_WRITEBACK=1``) the same
+   summary is distilled into knowledge **proposals** via
+   ``extract_session_insights(force_staging=True)`` — every item lands in
+   staging for explicit owner review, never directly in verified knowledge.
+   This mirrors the Cursor writeback precedent (``ENGRAM_CURSOR_WRITEBACK``)
+   and keeps the "watcher writes contexts, not knowledge" boundary intact
+   unless the owner explicitly opts in;
+5. the watermark state is persisted to ``<ENGRAM_DIR>/logs/watcher_state.json``.
 
 First-run baseline: when a file is already present *before* the watcher has
 any state for it and its mtime predates the first scan, it is baselined
@@ -41,6 +48,8 @@ _LOG_FILE = "watcher.log"
 _MAX_CONTENT_CHARS = 4000
 _DEBOUNCE_ENV = "ENGRAM_WATCHER_DEBOUNCE"
 _SINCE_DAYS_ENV = "ENGRAM_WATCHER_SINCE_DAYS"
+#: Opt-in gate for staging-only knowledge distillation (off by default).
+WRITEBACK_ENV = "ENGRAM_WATCHER_WRITEBACK"
 
 #: Adapter registry: name -> (discover, parse). New tools plug in here.
 ADAPTERS: dict[str, dict[str, Callable[..., Any]]] = {
@@ -130,6 +139,50 @@ def _fingerprint(path: Path) -> tuple[float, int] | None:
         return None
 
 
+def writeback_enabled() -> bool:
+    """True when the owner has explicitly opted in to staging-only writeback."""
+    try:
+        from piia_engram.hooks.writeback_policy import check_writeback_allowed
+
+        return check_writeback_allowed(WRITEBACK_ENV, staging_gate=True)
+    except Exception:
+        return False
+
+
+def _maybe_writeback(tool: str, summary: str) -> int:
+    """Distill a saved checkpoint into staging knowledge proposals (opt-in).
+
+    Off by default. When ``ENGRAM_WATCHER_WRITEBACK=1`` every extracted item
+    is forced into staging for explicit owner review (``force_staging=True``)
+    — the watcher never writes verified knowledge directly. Failures are
+    logged and swallowed: distillation must never break the capture loop or
+    block the watermark advance (the checkpoint save already succeeded).
+
+    Returns the number of items staged (0 when disabled or on error).
+    """
+    try:
+        if not writeback_enabled():
+            return 0
+        from piia_engram.core import Engram
+
+        result = Engram().extract_session_insights(
+            summary, source_tool=tool, force_staging=True
+        )
+        staged = int(result.get("saved_lessons", 0) or 0) + int(
+            result.get("saved_decisions", 0) or 0
+        )
+        if staged:
+            _log(
+                f"{tool}: writeback staged {staged} item(s) for review "
+                f"(duplicates={result.get('duplicates', 0)}, "
+                f"skipped={result.get('skipped', 0)})"
+            )
+        return staged
+    except Exception as exc:  # noqa: BLE001 - fail-soft loop contract
+        _log(f"{tool}: writeback failed (non-fatal): {exc!r}")
+        return 0
+
+
 def scan_once(
     adapters: Iterable[str] | None = None,
     *,
@@ -142,7 +195,14 @@ def scan_once(
     before (true first run). Pass ``False`` to force-save unseen files (used
     by tests and by an explicit one-shot capture).
     """
-    counters = {"discovered": 0, "saved": 0, "skipped": 0, "baselined": 0, "errors": 0}
+    counters = {
+        "discovered": 0,
+        "saved": 0,
+        "skipped": 0,
+        "baselined": 0,
+        "errors": 0,
+        "writeback_items": 0,
+    }
     state = _load_state()
     debounce = _debounce_minutes()
     names = list(adapters) if adapters is not None else list(ADAPTERS)
@@ -232,6 +292,9 @@ def scan_once(
                 "saved_at": datetime.now().isoformat(timespec="seconds"),
             }
             counters["saved"] += 1
+            # Optional staging-only distillation — after the checkpoint save
+            # succeeded and the watermark advanced. Never affects the loop.
+            counters["writeback_items"] += _maybe_writeback(name, summary)
 
         # Prune state entries for files outside the discovery window so the
         # state file does not grow unboundedly across months of sessions.

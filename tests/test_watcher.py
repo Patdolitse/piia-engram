@@ -25,15 +25,25 @@ def _isolated_env(monkeypatch, tmp_path: Path):
     monkeypatch.setenv(codex_adapter.ENV_SESSIONS_ROOT, str(tmp_path / "codex-sessions"))
     monkeypatch.delenv("ENGRAM_WATCHER_DEBOUNCE", raising=False)
     monkeypatch.delenv("ENGRAM_WATCHER_SINCE_DAYS", raising=False)
+    monkeypatch.delenv("ENGRAM_WATCHER_WRITEBACK", raising=False)
+    monkeypatch.delenv("ENGRAM_WATCHER_WRITEBACK_ACTIVE", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
 
 
 @pytest.fixture()
 def fake_engram(monkeypatch):
     calls: list[dict] = []
+    extract_calls: list[dict] = []
 
     class FakeEngram:
         raise_on_save = False
+        raise_on_extract = False
+        extract_result = {
+            "saved_lessons": 1,
+            "saved_decisions": 0,
+            "duplicates": 0,
+            "skipped": 0,
+        }
 
         def save_agent_context(self, **kwargs):
             calls.append(kwargs)
@@ -41,8 +51,14 @@ def fake_engram(monkeypatch):
                 raise RuntimeError("boom")
             return {"ok": True}
 
+        def extract_session_insights(self, summary, **kwargs):
+            extract_calls.append({"summary": summary, **kwargs})
+            if FakeEngram.raise_on_extract:
+                raise RuntimeError("extract boom")
+            return dict(FakeEngram.extract_result)
+
     monkeypatch.setattr("piia_engram.core.Engram", FakeEngram)
-    return SimpleNamespace(cls=FakeEngram, calls=calls)
+    return SimpleNamespace(cls=FakeEngram, calls=calls, extract_calls=extract_calls)
 
 
 def _day_dir(root: Path, when: datetime | None = None) -> Path:
@@ -297,6 +313,79 @@ def test_never_touches_knowledge_store(fake_engram):
 
 
 # ---------------------------------------------------------------------------
+# opt-in staging-only knowledge writeback (ENGRAM_WATCHER_WRITEBACK)
+# ---------------------------------------------------------------------------
+
+
+def test_writeback_off_by_default(fake_engram):
+    """Default contract: contexts-only — no insight extraction whatsoever."""
+    day = _day_dir(codex_adapter.sessions_root())
+    _write_rollout(day, turns=[("user", "hello"), ("assistant", "world")])
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 1
+    assert counters["writeback_items"] == 0
+    assert fake_engram.extract_calls == []
+
+
+def test_writeback_opt_in_forces_staging(fake_engram, monkeypatch):
+    monkeypatch.setenv("ENGRAM_WATCHER_WRITEBACK", "1")
+    day = _day_dir(codex_adapter.sessions_root())
+    _write_rollout(day, turns=[("user", "hello"), ("assistant", "world")])
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 1
+    assert counters["writeback_items"] == 1
+    assert len(fake_engram.extract_calls) == 1
+    call = fake_engram.extract_calls[0]
+    assert call["force_staging"] is True  # never verified-direct
+    assert call["source_tool"] == "codex"
+    assert "hello" in call["summary"]
+
+
+def test_writeback_failure_never_breaks_loop(fake_engram, monkeypatch):
+    monkeypatch.setenv("ENGRAM_WATCHER_WRITEBACK", "1")
+    fake_engram.cls.raise_on_extract = True
+    day = _day_dir(codex_adapter.sessions_root())
+    _write_rollout(day, turns=[("user", "hello")])
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    fake_engram.cls.raise_on_extract = False
+    # The checkpoint save succeeded and the watermark advanced; the
+    # distillation failure is logged, not counted as a loop error.
+    assert counters["saved"] == 1
+    assert counters["writeback_items"] == 0
+    assert counters["errors"] == 0
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["skipped"] >= 1  # watermark advanced despite failure
+
+
+def test_writeback_recursion_guard_blocks(fake_engram, monkeypatch):
+    monkeypatch.setenv("ENGRAM_WATCHER_WRITEBACK", "1")
+    monkeypatch.setenv("ENGRAM_WATCHER_WRITEBACK_ACTIVE", "1")
+    day = _day_dir(codex_adapter.sessions_root())
+    _write_rollout(day, turns=[("user", "hello")])
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 1
+    assert counters["writeback_items"] == 0
+    assert fake_engram.extract_calls == []
+
+
+@pytest.mark.parametrize("value", ["0", "false", "off", "", "maybe"])
+def test_writeback_non_truthy_values_stay_off(fake_engram, monkeypatch, value):
+    monkeypatch.setenv("ENGRAM_WATCHER_WRITEBACK", value)
+    assert core.writeback_enabled() is False
+
+
+def test_status_reports_writeback_toggle(install_env, monkeypatch, capsys):
+    assert install_env.mod.status() == 0
+    out = capsys.readouterr().out
+    assert "knowledge writeback: off (default)" in out
+    assert "ENGRAM_WATCHER_WRITEBACK=1" in out
+
+    monkeypatch.setenv("ENGRAM_WATCHER_WRITEBACK", "1")
+    assert install_env.mod.status() == 0
+    assert "knowledge writeback: on (staging-only)" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -308,7 +397,14 @@ def test_cli_once_runs_and_prints_counters(fake_engram, capsys):
     _write_rollout(day, turns=[("user", "hello")])
     assert main(["--once"]) == 0
     out = json.loads(capsys.readouterr().out.strip())
-    assert set(out) == {"discovered", "saved", "skipped", "baselined", "errors"}
+    assert set(out) == {
+        "discovered",
+        "saved",
+        "skipped",
+        "baselined",
+        "errors",
+        "writeback_items",
+    }
 
 
 def test_cli_adapter_filter(fake_engram, capsys):
