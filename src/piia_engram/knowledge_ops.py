@@ -1,0 +1,472 @@
+"""Cross-type knowledge operations: update/archive/lifecycle/merge/link (KnowledgeOpsMixin)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .storage import _now_iso
+
+
+class KnowledgeOpsMixin:
+    """Operations that span lessons, decisions, and playbooks."""
+
+    # ------------------------------------------------------------------
+    # Knowledge update / archive / lifecycle / merge / linking
+    # ------------------------------------------------------------------
+
+    def update_knowledge(self, item_id: str, updates: dict) -> dict:
+        """Update a lesson, decision, or playbook by ID (auto-detects type)."""
+        item_type, _ = self._find_item_by_id(item_id)
+        if item_type is None:
+            return {"error": f"Item not found: {item_id}"}
+        if item_type == "lesson":
+            return self.update_lesson(item_id, updates)
+        if item_type == "playbook":
+            return self.update_playbook(item_id, updates)
+        return self.update_decision(item_id, updates)
+
+    def archive_knowledge(self, item_id: str) -> dict:
+        """Archive a lesson, decision, or playbook by ID (auto-detects type)."""
+        item_type, _ = self._find_item_by_id(item_id)
+        if item_type is None:
+            return {"error": f"Item not found: {item_id}"}
+        if item_type == "lesson":
+            return self.archive_lesson(item_id)
+        if item_type == "playbook":
+            return self.archive_playbook(item_id)
+        return self.archive_decision(item_id)
+
+    def soft_archive_knowledge_tier(
+        self,
+        item_id: str,
+        *,
+        now: str | None = None,
+    ) -> dict:
+        """Reversibly soft-archive a lesson/decision into the ``archived`` tier.
+
+        This is the tier-transition primitive behind the owner-confirmed
+        lifecycle archive apply path. It sets ``tier="archived"`` plus an
+        ``archived_at`` timestamp and records the prior tier in
+        ``archived_from_tier`` so the move can be undone. It never deletes and
+        never changes ``status``.
+
+        Fail-closed protections:
+        - a ``verified`` entry is refused (``error="protected_verified"``);
+        - an entry already in the ``archived`` tier is an idempotent no-op
+          (``changed=False``), leaving its existing ``archived_at`` intact.
+
+        Returns a metadata-only dict ``{id, type, changed, from_tier, to_tier,
+        archived_at}`` (no bodies), or ``{"error": ...}`` if not found.
+        """
+        ts = now or _now_iso()
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            path = self._knowledge_dir / fname
+            result_box: dict[str, Any] = {}
+
+            def _mutate_entries(entries: list[dict]) -> list[dict]:
+                for entry in entries:
+                    if entry.get("id") != item_id:
+                        continue
+                    current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
+                    if current == "verified":
+                        result_box["result"] = {
+                            "id": item_id, "type": kind, "changed": False,
+                            "from_tier": current, "to_tier": current,
+                            "error": "protected_verified",
+                        }
+                        return entries
+                    if current == "archived":
+                        result_box["result"] = {
+                            "id": item_id, "type": kind, "changed": False,
+                            "from_tier": "archived", "to_tier": "archived",
+                            "archived_at": entry.get("archived_at"),
+                        }
+                        return entries
+                    entry["archived_from_tier"] = current
+                    entry["tier"] = "archived"
+                    entry["archived_at"] = ts
+                    entry["last_updated"] = ts
+                    self._ensure_fields(entry, kind)
+                    result_box["result"] = {
+                        "id": item_id, "type": kind, "changed": True,
+                        "from_tier": current, "to_tier": "archived",
+                        "archived_at": ts,
+                    }
+                    return entries
+                result_box["result"] = None
+                return entries
+
+            self._update_entries(path, kind, _mutate_entries)
+            result = result_box.get("result")
+            if result is None:
+                continue
+            if result.get("changed"):
+                self._audit.log(
+                    "write",
+                    "knowledge/lifecycle_archive",
+                    detail=f"{kind} {item_id}: {result.get('from_tier') or 'none'} -> archived",
+                )
+            return result
+        return {"error": f"Item not found: {item_id}"}
+
+    def restore_lifecycle_archive(
+        self,
+        item_id: str,
+        *,
+        now: str | None = None,
+    ) -> dict:
+        """Undo a lifecycle soft archive: move an ``archived`` entry back.
+
+        Restores the entry to its recorded prior tier (``archived_from_tier``,
+        falling back to ``staging``) and clears the archive markers. A
+        non-archived entry is an idempotent no-op (``changed=False``). Returns a
+        metadata-only dict, or ``{"error": ...}`` if not found.
+        """
+        ts = now or _now_iso()
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            path = self._knowledge_dir / fname
+            result_box: dict[str, Any] = {}
+
+            def _mutate_entries(entries: list[dict]) -> list[dict]:
+                for entry in entries:
+                    if entry.get("id") != item_id:
+                        continue
+                    current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
+                    if current != "archived":
+                        result_box["result"] = {
+                            "id": item_id, "type": kind, "changed": False,
+                            "from_tier": current, "to_tier": current,
+                        }
+                        return entries
+                    prior = entry.get("archived_from_tier")
+                    to_tier = prior if prior in {"staging", "verified"} else "staging"
+                    entry["tier"] = to_tier
+                    entry.pop("archived_at", None)
+                    entry.pop("archived_from_tier", None)
+                    entry["last_updated"] = ts
+                    self._ensure_fields(entry, kind)
+                    result_box["result"] = {
+                        "id": item_id, "type": kind, "changed": True,
+                        "from_tier": "archived", "to_tier": to_tier,
+                    }
+                    return entries
+                result_box["result"] = None
+                return entries
+
+            self._update_entries(path, kind, _mutate_entries)
+            result = result_box.get("result")
+            if result is None:
+                continue
+            if result.get("changed"):
+                self._audit.log(
+                    "write",
+                    "knowledge/lifecycle_restore",
+                    detail=f"{kind} {item_id}: archived -> {result.get('to_tier')}",
+                )
+            return result
+        return {"error": f"Item not found: {item_id}"}
+
+    def review_knowledge(self, knowledge_id: str) -> dict:
+        """Mark a lesson, decision, or playbook as reviewed without changing its content."""
+        item_type, item = self._find_item_by_id(knowledge_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {knowledge_id}"}
+
+        now = _now_iso()
+
+        def _mark_reviewed(entry: dict) -> dict:
+            entry["last_reviewed"] = now
+            entry["access_count"] = entry.get("access_count", 0) + 1
+            return entry
+
+        item = self._update_knowledge_item(item_type, knowledge_id, _mark_reviewed)
+        if item is None:
+            return {"error": f"Item not found: {knowledge_id}"}
+        self._audit.log("write", "knowledge/review", detail=knowledge_id)
+        return item
+
+    def merge_knowledge(self, primary_id: str, secondary_id: str) -> dict:
+        """Merge secondary into primary, then archive the secondary item."""
+        if primary_id == secondary_id:
+            return {"error": "Cannot merge an item with itself"}
+
+        lessons, decisions, playbooks = self._read_link_collections()
+        primary_type, primary = self._find_item_in_collections(primary_id, lessons, decisions, playbooks)
+        secondary_type, secondary = self._find_item_in_collections(secondary_id, lessons, decisions, playbooks)
+
+        if primary is None:
+            return {"error": f"Primary item not found: {primary_id}"}
+        if secondary is None:
+            return {"error": f"Secondary item not found: {secondary_id}"}
+        if primary.get("status") != "active":
+            return {"error": f"Primary item is not active (status={primary.get('status')})"}
+        if secondary.get("status") != "active":
+            return {"error": f"Secondary item is not active (status={secondary.get('status')})"}
+
+        primary_related = set(primary.get("related_ids", []))
+        transferred = []
+        secondary_related = list(secondary.get("related_ids", []))
+
+        for related_id in secondary_related:
+            if related_id in (primary_id, secondary_id):
+                continue
+            if related_id not in primary_related:
+                primary_related.add(related_id)
+                transferred.append(related_id)
+
+        primary_related.discard(primary_id)
+        primary_related.discard(secondary_id)
+        merged_primary_related = sorted(primary_related)
+
+        related_types: dict[str, str] = {}
+        for related_id in secondary_related:
+            if related_id in (primary_id, secondary_id):
+                continue
+            related_type, related_item = self._find_item_in_collections(
+                related_id, lessons, decisions, playbooks
+            )
+            if related_item is None or related_type is None:
+                continue
+            related_types[related_id] = related_type
+
+        def _merge_primary(entry: dict) -> dict:
+            current_related = set(entry.get("related_ids", []))
+            current_related.update(merged_primary_related)
+            current_related.discard(primary_id)
+            current_related.discard(secondary_id)
+            entry["related_ids"] = sorted(current_related)
+            return entry
+
+        updated_primary = self._update_knowledge_item(primary_type, primary_id, _merge_primary)
+        if updated_primary is None:
+            return {"error": f"Primary item not found: {primary_id}"}
+
+        # Preserve bidirectional link semantics for migrated related items.
+        for related_id, related_type in related_types.items():
+            def _retarget_related(entry: dict, *, _related_id: str = related_id) -> dict:
+                related_ids = set(entry.get("related_ids", []))
+                related_ids.discard(secondary_id)
+                related_ids.discard(_related_id)
+                related_ids.add(primary_id)
+                entry["related_ids"] = sorted(related_ids)
+                return entry
+
+            self._update_knowledge_item(related_type, related_id, _retarget_related)
+
+        ts = _now_iso()
+
+        def _archive_secondary(entry: dict) -> dict:
+            entry["status"] = "outdated"
+            entry["merged_into"] = primary_id
+            entry["last_updated"] = ts
+            return entry
+
+        updated_secondary = self._update_knowledge_item(
+            secondary_type, secondary_id, _archive_secondary
+        )
+        if updated_secondary is None:
+            return {"error": f"Secondary item not found: {secondary_id}"}
+        self._audit.log(
+            "write",
+            "knowledge/merge",
+            detail=f"{secondary_type}:{secondary_id} -> {primary_type}:{primary_id}",
+        )
+
+        return {
+            "success": True,
+            "primary_id": primary_id,
+            "secondary_id": secondary_id,
+            "secondary_archived": True,
+            "related_ids_transferred": len(transferred),
+            "primary_title": self._knowledge_title(primary_type, updated_primary),
+            "secondary_title": self._knowledge_title(secondary_type, updated_secondary),
+        }
+
+    def _read_link_collections(self) -> tuple[list[dict], list[dict], list[dict]]:
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+        playbooks = self._export_playbooks()
+        return lessons, decisions, playbooks
+
+    def _find_item_in_collections(
+        self,
+        item_id: str,
+        lessons: list[dict],
+        decisions: list[dict],
+        playbooks: list[dict] | None = None,
+    ) -> tuple[str | None, dict | None]:
+        for item in lessons:
+            if item.get("id") == item_id:
+                return "lesson", item
+        for item in decisions:
+            if item.get("id") == item_id:
+                return "decision", item
+        if playbooks is not None:
+            for item in playbooks:
+                if item.get("id") == item_id:
+                    return "playbook", item
+        return None, None
+
+    def _find_item_by_id(self, item_id: str) -> tuple[str | None, dict | None]:
+        """Find a lesson, decision, playbook, or tool by id without updating access metadata."""
+        lessons, decisions, playbooks = self._read_link_collections()
+        item_type, item = self._find_item_in_collections(item_id, lessons, decisions, playbooks)
+        if item_type is not None:
+            return item_type, item
+        # Fall through to tools registry
+        for tool in self._read_tools():
+            if tool.get("id") == item_id:
+                return "tool", tool
+        return None, None
+
+    def _update_knowledge_item(self, item_type: str, item_id: str, mutator) -> dict | None:
+        """Update one lesson, decision, or playbook without stale whole-list writes."""
+        if item_type == "playbook":
+            return self._update_playbook_file_by_id(item_id, mutator)
+        if item_type not in {"lesson", "decision"}:
+            return None
+
+        filename = "lessons.json" if item_type == "lesson" else "decisions.json"
+        path = self._knowledge_dir / filename
+        result_box: dict[str, dict | None] = {}
+
+        def _mutate(entries: list[dict]) -> list[dict]:
+            for idx, entry in enumerate(entries):
+                if entry.get("id") != item_id:
+                    continue
+                updated = mutator(entry)
+                if updated is None:
+                    updated = entry
+                entries[idx] = updated
+                result_box["result"] = updated
+                return entries
+            result_box["result"] = None
+            return entries
+
+        self._update_entries(path, item_type, _mutate)
+        return result_box.get("result")
+
+    def _knowledge_title(self, item_type: str | None, item: dict | None) -> str:
+        if not item:
+            return ""
+        if item_type == "decision":
+            return self._entry_identity_text(item, "decision")
+        if item_type == "playbook":
+            return item.get("title", "")
+        return item.get("summary", "")
+
+    def _knowledge_view(self, item_type: str, item: dict) -> dict:
+        # Display-only view: substitute a placeholder for any content field
+        # whose decryption silently failed, so raw ciphertext is never surfaced
+        # as content. Operates on a sanitized copy; the source object (and any
+        # write-back of it) is untouched.
+        item = self._display_sanitize_one(item, item_type)
+        if item_type == "decision":
+            return {
+                "id": item.get("id", ""),
+                "type": "decision",
+                "title": self._entry_identity_text(item, "decision"),
+                "choice": item.get("choice", ""),
+                "rationale": item.get("reasoning", ""),
+            }
+        if item_type == "playbook":
+            return {
+                "id": item.get("id", ""),
+                "type": "playbook",
+                "title": item.get("title", ""),
+                "triggers": item.get("triggers", []),
+                "description": item.get("description", ""),
+                "domain": item.get("domain", ""),
+            }
+        return {
+            "id": item.get("id", ""),
+            "type": "lesson",
+            "title": item.get("summary", ""),
+            "content": item.get("detail") or item.get("summary", ""),
+            "domain": item.get("domain", ""),
+        }
+
+    def link_knowledge(self, id_a: str, id_b: str) -> dict:
+        """Create a bidirectional link between two knowledge items (lessons, decisions, or playbooks)."""
+        type_a, item_a = self._find_item_by_id(id_a)
+        type_b, item_b = self._find_item_by_id(id_b)
+
+        if item_a is None or type_a not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {id_a}"}
+        if item_b is None or type_b not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {id_b}"}
+
+        def _add_related(target_id: str):
+            def _mutate(entry: dict) -> dict:
+                related_ids = list(entry.get("related_ids") or [])
+                if target_id not in related_ids:
+                    related_ids.append(target_id)
+                entry["related_ids"] = related_ids
+                return entry
+            return _mutate
+
+        updated_a = self._update_knowledge_item(type_a, id_a, _add_related(id_b))
+        updated_b = self._update_knowledge_item(type_b, id_b, _add_related(id_a))
+        if updated_a is None:
+            return {"error": f"Item not found: {id_a}"}
+        if updated_b is None:
+            return {"error": f"Item not found: {id_b}"}
+
+        title_a = self._knowledge_title(type_a, item_a)
+        title_b = self._knowledge_title(type_b, item_b)
+        return {"success": True, "message": f"Linked: {title_a} ↔ {title_b}"}
+
+    def unlink_knowledge(self, id_a: str, id_b: str) -> dict:
+        """Remove the bidirectional link between two knowledge items."""
+        type_a, item_a = self._find_item_by_id(id_a)
+        type_b, item_b = self._find_item_by_id(id_b)
+
+        if item_a is None or type_a not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {id_a}"}
+        if item_b is None or type_b not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {id_b}"}
+
+        def _remove_related(target_id: str):
+            def _mutate(entry: dict) -> dict:
+                entry["related_ids"] = [
+                    item_id for item_id in (entry.get("related_ids") or [])
+                    if item_id != target_id
+                ]
+                return entry
+            return _mutate
+
+        updated_a = self._update_knowledge_item(type_a, id_a, _remove_related(id_b))
+        updated_b = self._update_knowledge_item(type_b, id_b, _remove_related(id_a))
+        if updated_a is None:
+            return {"error": f"Item not found: {id_a}"}
+        if updated_b is None:
+            return {"error": f"Item not found: {id_b}"}
+
+        title_a = self._knowledge_title(type_a, item_a)
+        title_b = self._knowledge_title(type_b, item_b)
+        return {"success": True, "message": f"Unlinked: {title_a} ↔ {title_b}"}
+
+    def get_related_knowledge(self, item_id: str) -> dict:
+        """Return all knowledge items linked to a lesson, decision, or playbook id."""
+        lessons, decisions, playbooks = self._read_link_collections()
+        item_type, item = self._find_item_in_collections(item_id, lessons, decisions, playbooks)
+        if item is None or item_type is None:
+            return {"error": f"Item not found: {item_id}"}
+
+        related = []
+        for related_id in item.get("related_ids", []):
+            related_type, related_item = self._find_item_in_collections(
+                related_id,
+                lessons,
+                decisions,
+                playbooks,
+            )
+            if related_item is not None and related_type is not None:
+                related.append(self._knowledge_view(related_type, related_item))
+
+        return {
+            "source": self._knowledge_view(item_type, item),
+            "related": related,
+            "total": len(related),
+        }
+
