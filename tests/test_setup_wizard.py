@@ -1432,6 +1432,35 @@ def test_doctor_reports_encoding_mojibake(tmp_path: Path, monkeypatch, capsys):
     assert "repairable mojibake" in out
 
 
+def test_doctor_reports_search_mode_keyword_hint(tmp_path: Path, monkeypatch, capsys):
+    """Default keyword mode: doctor surfaces the hybrid upgrade hint."""
+    from piia_engram.setup_wizard import _run_functional_checks
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+    monkeypatch.delenv("ENGRAM_SEARCH", raising=False)
+
+    _run_functional_checks(fix=False)
+
+    out = capsys.readouterr().out
+    assert "Search mode: keyword" in out
+    assert "ENGRAM_SEARCH=hybrid" in out
+
+
+def test_doctor_reports_search_mode_hybrid(tmp_path: Path, monkeypatch, capsys):
+    """Hybrid mode: doctor reports it (ok when vector deps import, [!] otherwise)."""
+    from piia_engram.setup_wizard import _run_functional_checks
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+    monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+
+    _run_functional_checks(fix=False)
+
+    out = capsys.readouterr().out
+    assert "Search mode: hybrid" in out
+
+
 def test_doctor_non_fix_does_not_backfill_legacy_knowledge(tmp_path: Path, monkeypatch):
     """doctor without --fix should not rewrite old knowledge files."""
     from piia_engram.setup_wizard import _run_functional_checks

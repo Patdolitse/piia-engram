@@ -3704,6 +3704,34 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] Encoding health check failed: {exc}")
         problems += 1
 
+    # ── Search mode (informational; never affects exit code) ──────────────
+    try:
+        print()
+        mode = os.environ.get("ENGRAM_SEARCH", "keyword").strip().lower()
+        if mode == "hybrid":
+            try:
+                import fastembed  # noqa: F401
+                import sqlite_vec  # noqa: F401
+
+                _safe_print(
+                    "    [ok] Search mode: hybrid (keyword + FTS + semantic vector)"
+                )
+            except ImportError:
+                _safe_print(
+                    "    [!] Search mode: hybrid requested but vector deps missing "
+                    "— falls back to keyword+FTS only. "
+                    "Install: pip install 'piia-engram[vector]'"
+                )
+        else:
+            _safe_print(
+                "    [--] Search mode: keyword (default). Better cross-lingual "
+                "recall available: pip install 'piia-engram[vector]' then set "
+                "ENGRAM_SEARCH=hybrid and run 'engram reindex' "
+                "(see docs/hybrid-search.md)"
+            )
+    except Exception as exc:
+        _safe_print(f"    [--] Search mode check skipped: {exc}")
+
     # ── Version freshness (read-only PyPI check; never affects exit code) ──
     try:
         from piia_engram import __version__
