@@ -6,7 +6,7 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
-## [Unreleased]
+## [3.56.0] - 2026-06-11
 
 ### 新增
 - **Claude Code Watcher 适配器**——通用 Watcher 现在可以从磁盘转录

@@ -6,7 +6,7 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.56.0] - 2026-06-11
 
 ### Added
 - **Claude Code watcher adapter** — the universal watcher can now capture
