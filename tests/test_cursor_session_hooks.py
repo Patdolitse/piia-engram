@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +32,10 @@ def _isolated_env(monkeypatch, tmp_path: Path):
         "ENGRAM_CURSOR_SAVE_DEBOUNCE",
         "ENGRAM_CURSOR_INJECT_ACTIVE",
         "ENGRAM_CURSOR_SAVE_ACTIVE",
+        # Real Cursor sets these; clear them so tests stay deterministic even
+        # when pytest itself runs inside a Cursor terminal.
+        "CURSOR_TRANSCRIPT_PATH",
+        "CURSOR_PROJECT_DIR",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(sys, "argv", ["cursor-hook-test"])
@@ -151,6 +156,83 @@ def test_extract_session_id_candidates():
     assert payload_mod.extract_session_id({}) == ""
 
 
+# ---------------------------------------------------------------------------
+# real Cursor protocol: data via env vars (probed 2026-06-10)
+# ---------------------------------------------------------------------------
+
+
+def _write_cursor_transcript(tmp_path: Path) -> Path:
+    """A transcript in the real Cursor agent-transcripts JSONL shape."""
+    folder = tmp_path / "agent-transcripts" / "113d0ca6-b5d5-4547-b631-e91ce154fdc7"
+    folder.mkdir(parents=True)
+    transcript = folder / "113d0ca6-b5d5-4547-b631-e91ce154fdc7.jsonl"
+    lines = [
+        json.dumps(
+            {
+                "role": "user",
+                "message": {"content": [{"type": "text", "text": "帮我验收 hooks"}]},
+            },
+            ensure_ascii=False,
+        ),
+        json.dumps(
+            {
+                "role": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "四项检查完成"},
+                        {"type": "tool_use", "name": "Read", "input": {"path": "x"}},
+                    ]
+                },
+            },
+            ensure_ascii=False,
+        ),
+    ]
+    transcript.write_text("\n".join(lines), encoding="utf-8")
+    return transcript
+
+
+def test_extract_project_folder_env_fallback(monkeypatch):
+    monkeypatch.setenv("CURSOR_PROJECT_DIR", "E:/from-env")
+    assert payload_mod.extract_project_folder({}) == "E:/from-env"
+    # An explicit payload field still wins over the environment.
+    assert payload_mod.extract_project_folder({"cwd": "E:/from-payload"}) == "E:/from-payload"
+
+
+def test_extract_session_id_env_transcript_stem(monkeypatch, tmp_path: Path):
+    transcript = _write_cursor_transcript(tmp_path)
+    monkeypatch.setenv("CURSOR_TRANSCRIPT_PATH", str(transcript))
+    assert (
+        payload_mod.extract_session_id({})
+        == "113d0ca6-b5d5-4547-b631-e91ce154fdc7"
+    )
+    assert payload_mod.extract_session_id({"conversation_id": "c-9"}) == "c-9"
+
+
+def test_extract_summary_env_transcript_real_cursor_shape(monkeypatch, tmp_path: Path):
+    transcript = _write_cursor_transcript(tmp_path)
+    monkeypatch.setenv("CURSOR_TRANSCRIPT_PATH", str(transcript))
+
+    out = payload_mod.extract_summary({}, 4000)
+
+    assert "[user] 帮我验收 hooks" in out
+    assert "[assistant] 四项检查完成" in out
+    assert "tool_use" not in out  # tool blocks carry no text and are skipped
+
+
+def test_transcript_tail_read_when_oversized(monkeypatch, tmp_path: Path):
+    transcript = tmp_path / "big.jsonl"
+    head = json.dumps({"role": "user", "text": "OLD-HEAD"})
+    tail = json.dumps({"role": "assistant", "text": "NEW-TAIL"})
+    filler = "\n".join(json.dumps({"text": f"mid-{i}"}) for i in range(30))
+    transcript.write_text(f"{head}\n{filler}\n{tail}\n", encoding="utf-8")
+
+    monkeypatch.setattr(payload_mod, "_MAX_TRANSCRIPT_BYTES", 200)
+
+    out = payload_mod._summary_from_transcript(str(transcript), 4000)
+    assert "NEW-TAIL" in out  # tail survives
+    assert "OLD-HEAD" not in out  # head beyond the window is dropped
+
+
 def test_recently_saved_and_mark_saved_roundtrip():
     assert payload_mod.recently_saved("k1", 10) is False  # nothing recorded yet
     payload_mod.mark_saved("k1")
@@ -182,6 +264,26 @@ def test_debug_log_only_when_enabled(monkeypatch):
     assert record["event"] == "stop"
     assert sorted(record["keys"]) == ["n", "obj", "summary"]
     assert len(record["previews"]["summary"]) <= 200  # preview is capped
+
+
+def test_debug_log_probes_argv_cwd_and_env_names_without_values(monkeypatch):
+    """Probe v2: empty-stdin sessions need argv/cwd/env-name evidence —
+    env *values* must never reach the log (they can carry secrets)."""
+    monkeypatch.setenv("ENGRAM_HOOK_DEBUG", "1")
+    monkeypatch.setenv("CURSOR_FAKE_PROBE", "SECRETVALUE123")
+    monkeypatch.setattr(sys, "argv", ["hook", "--event", "stop", "--env", "A=1"])
+
+    payload_mod.debug_log("stop", {})
+
+    raw = (payload_mod.state_dir() / "cursor_hooks_debug.log").read_text(
+        encoding="utf-8"
+    ).splitlines()[0]
+    record = json.loads(raw)
+    assert record["argv"] == ["--event", "stop", "--env", "A=1"]
+    assert record["cwd"]  # process cwd captured
+    assert "CURSOR_FAKE_PROBE" in record["env_keys"]
+    assert not any(k.startswith("ENGRAM_") for k in record["env_keys"])
+    assert "SECRETVALUE123" not in raw  # names only, never values
 
 
 # ---------------------------------------------------------------------------
@@ -276,11 +378,66 @@ def test_save_happy_path(monkeypatch, fake_engram):
     assert (payload_mod.state_dir() / "cursor_save_state.json").exists()
 
 
-def test_save_empty_payload_skips(monkeypatch, fake_engram):
+def test_save_empty_payload_writes_minimal_checkpoint(monkeypatch, fake_engram):
+    """Real Cursor sends empty stdin → degrade to a minimal checkpoint, not a skip."""
     _stdin(monkeypatch, {})
 
     assert save_mod.main() == 0
-    assert fake_engram.calls == []
+
+    saves = _calls(fake_engram, "save_agent_context")
+    assert len(saves) == 1
+    save = saves[0]
+    assert save["tool"] == "cursor"
+    assert "最小检查点" in save["content"]
+    assert "hook 进程 cwd:" in save["content"]
+    # Minimal checkpoints share one per-day session file (hook-YYYY-MM-DD).
+    assert re.fullmatch(r"hook-\d{4}-\d{2}-\d{2}", save["session_id"])
+
+
+def test_save_empty_payload_is_debounced(monkeypatch, fake_engram):
+    for _ in range(2):
+        _stdin(monkeypatch, {})
+        save_mod.main()
+
+    assert len(_calls(fake_engram, "save_agent_context")) == 1  # second debounced
+
+
+def test_save_empty_payload_session_end_bypasses_debounce(monkeypatch, fake_engram):
+    _stdin(monkeypatch, {})
+    save_mod.main()  # stop → minimal save, debounce timestamp recorded
+
+    monkeypatch.setattr(sys, "argv", ["cursor-hook-test", "--event", "sessionEnd"])
+    _stdin(monkeypatch, {})
+    save_mod.main()  # final save must not be dropped
+
+    saves = _calls(fake_engram, "save_agent_context")
+    assert len(saves) == 2
+    assert "sessionEnd" in saves[1]["content"]
+
+
+def test_save_real_cursor_protocol_env_only(monkeypatch, tmp_path: Path, fake_engram):
+    """The probed real protocol: empty stdin, everything via env vars →
+    rich checkpoint (transcript tail), per-conversation session id, workspace
+    folder — and the debounce keyed by the real conversation id."""
+    transcript = _write_cursor_transcript(tmp_path)
+    monkeypatch.setenv("CURSOR_TRANSCRIPT_PATH", str(transcript))
+    monkeypatch.setenv("CURSOR_PROJECT_DIR", "E:/real/workspace")
+
+    _stdin(monkeypatch, {})
+    assert save_mod.main() == 0
+
+    saves = _calls(fake_engram, "save_agent_context")
+    assert len(saves) == 1
+    save = saves[0]
+    assert save["session_id"] == "113d0ca6-b5d5-4547-b631-e91ce154fdc7"
+    assert save["project_folder"] == "E:/real/workspace"
+    assert "[user] 帮我验收 hooks" in save["content"]
+    assert "工作目录: E:/real/workspace" in save["content"]
+    assert "最小检查点" not in save["content"]  # rich path, not degraded
+
+    _stdin(monkeypatch, {})
+    save_mod.main()  # same conversation within the window → debounced
+    assert len(_calls(fake_engram, "save_agent_context")) == 1
 
 
 def test_save_engram_failure_is_silent(monkeypatch, fake_engram):

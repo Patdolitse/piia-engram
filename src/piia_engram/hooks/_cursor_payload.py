@@ -49,6 +49,14 @@ _SESSION_KEYS = (
 #: Candidate payload keys carrying summary-ish text, in priority order.
 _SUMMARY_KEYS = ("summary", "session_summary", "text", "content")
 
+#: Real Cursor protocol (probed 2026-06-10, Cursor ~1.x on Windows): hooks get
+#: an *empty* stdin payload; session data travels via environment variables.
+#: ``CURSOR_TRANSCRIPT_PATH`` points at ``agent-transcripts/<uuid>/<uuid>.jsonl``
+#: (Claude-API-style ``{"role": ..., "message": {"content": [blocks]}}`` lines)
+#: and ``CURSOR_PROJECT_DIR`` carries the workspace folder.
+_ENV_TRANSCRIPT = "CURSOR_TRANSCRIPT_PATH"
+_ENV_PROJECT = "CURSOR_PROJECT_DIR"
+
 
 def apply_argv_env(argv: list[str]) -> None:
     """Promote ``--env KEY=VAL`` argv pairs into ``os.environ``.
@@ -131,9 +139,18 @@ def _summary_from_transcript(path: str, max_chars: int) -> str:
         return ""
     p = Path(path)
     try:
-        if not p.is_file() or p.stat().st_size > _MAX_TRANSCRIPT_BYTES:
+        if not p.is_file():
             return ""
-        raw = p.read_text(encoding="utf-8", errors="replace")
+        size = p.stat().st_size
+        if size > _MAX_TRANSCRIPT_BYTES:
+            # Long sessions are the most valuable ones — read the tail instead
+            # of bailing out. Drop the first (likely partial) line.
+            with open(p, "rb") as handle:
+                handle.seek(size - _MAX_TRANSCRIPT_BYTES)
+                raw = handle.read().decode("utf-8", errors="replace")
+            raw = raw.split("\n", 1)[-1]
+        else:
+            raw = p.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
     lines: list[str] = []
@@ -156,21 +173,33 @@ def _summary_from_transcript(path: str, max_chars: int) -> str:
             or ""
         )
         if text:
-            lines.append(text)
+            role = entry.get("role")
+            if isinstance(role, str) and role.strip():
+                lines.append(f"[{role.strip()}] {text}")
+            else:
+                lines.append(text)
     return "\n".join(lines)[-max_chars:]
 
 
 def extract_summary(hook_input: dict[str, Any], max_chars: int) -> str:
     """Summary text by field priority; transcript file as last resort.
 
-    Keeps the *tail* when truncating — session conclusions beat openings.
+    Transcript sources, in order: an explicit ``transcript_path`` payload
+    field, then the ``CURSOR_TRANSCRIPT_PATH`` environment variable (the real
+    Cursor protocol — stdin payloads arrive empty). Keeps the *tail* when
+    truncating — session conclusions beat openings.
     """
     for key in _SUMMARY_KEYS:
         text = coerce_text(hook_input.get(key))
         if text.strip():
             return text.strip()[-max_chars:]
-    return _summary_from_transcript(
+    from_payload = _summary_from_transcript(
         str(hook_input.get("transcript_path") or ""), max_chars
+    )
+    if from_payload:
+        return from_payload
+    return _summary_from_transcript(
+        os.environ.get(_ENV_TRANSCRIPT, "").strip(), max_chars
     )
 
 
@@ -190,16 +219,28 @@ def extract_project_folder(hook_input: dict[str, Any]) -> str:
         val = hook_input.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()
-    return ""
+    return os.environ.get(_ENV_PROJECT, "").strip()
 
 
 def extract_session_id(hook_input: dict[str, Any]) -> str:
+    """Session id from any known payload key; transcript filename as fallback.
+
+    Cursor names its transcript ``agent-transcripts/<uuid>/<uuid>.jsonl``, so
+    the file stem is a stable per-conversation identifier — it keys the save
+    debounce per real session and appends checkpoints of one conversation to
+    one context file.
+    """
     for key in _SESSION_KEYS:
         val = hook_input.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()
         if isinstance(val, (int, float)):
             return str(val)
+    transcript = os.environ.get(_ENV_TRANSCRIPT, "").strip()
+    if transcript:
+        stem = Path(transcript).stem.strip()
+        if stem:
+            return stem
     return ""
 
 
@@ -213,11 +254,46 @@ def debug_enabled() -> bool:
     return os.environ.get("ENGRAM_HOOK_DEBUG", "").strip().lower() in _TRUTHY
 
 
+#: Substrings (uppercased) marking env-var *names* plausibly set by the hook
+#: caller. Probe v2 evidence: Cursor passes an empty stdin payload on
+#: sessionStart/stop, so the protocol data — if any — must travel via argv,
+#: the process cwd, or environment variables instead.
+_PROBE_ENV_MARKERS = (
+    "CURSOR",
+    "COMPOSER",
+    "ANYSPHERE",
+    "CHAT",
+    "CONVERSATION",
+    "WORKSPACE",
+    "HOOK",
+    "SESSION",
+)
+
+
+def _probe_env_keys() -> list[str]:
+    """Env-var *names* (never values) that look caller-injected.
+
+    Values stay out of the log by design: environment blocks routinely carry
+    secrets (API keys, tokens), and a shape probe only needs names.
+    """
+    keys: list[str] = []
+    for name in os.environ:
+        upper = name.upper()
+        if upper.startswith("ENGRAM_"):
+            continue
+        if any(marker in upper for marker in _PROBE_ENV_MARKERS):
+            keys.append(name)
+    return sorted(keys)
+
+
 def debug_log(event: str, hook_input: dict[str, Any]) -> None:
     """Append one JSON line describing the payload *shape* (opt-in, local only).
 
-    Records top-level keys and short value previews so a single real session
-    is enough to confirm Cursor's actual field names. Never raises.
+    Records stdin top-level keys plus short value previews, and — since the
+    first real session showed Cursor sends an empty stdin payload — also the
+    hook's argv, process cwd, and caller-ish env-var names, so one more real
+    session can reveal where (if anywhere) Cursor actually puts session data.
+    Never raises.
     """
     if not debug_enabled():
         return
@@ -231,11 +307,18 @@ def debug_log(event: str, hook_input: dict[str, Any]) -> None:
                     previews[key] = json.dumps(value, ensure_ascii=True)[:_PREVIEW_CHARS]
                 except (TypeError, ValueError):
                     previews[key] = repr(value)[:_PREVIEW_CHARS]
+        try:
+            cwd = os.getcwd()
+        except OSError:
+            cwd = ""
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "event": event,
             "keys": sorted(hook_input.keys()),
             "previews": previews,
+            "argv": [str(a)[:_PREVIEW_CHARS] for a in sys.argv[1:]],
+            "cwd": cwd,
+            "env_keys": _probe_env_keys(),
         }
         directory = state_dir()
         directory.mkdir(parents=True, exist_ok=True)
