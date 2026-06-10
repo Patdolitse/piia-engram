@@ -1,0 +1,2395 @@
+"""engram CLI subcommands (sessions/review/telemetry/backup/…).
+
+Split out of setup_wizard.py. Helpers that tests monkeypatch on
+``piia_engram.setup_wizard`` are accessed late-bound via ``W.<name>`` so
+existing patches keep intercepting.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import platform
+import re
+from pathlib import Path
+
+from . import setup_wizard as W
+
+def _format_session_size(size_bytes: int) -> str:
+    """Human-readable byte count for the small sessions table."""
+    try:
+        size = int(size_bytes)
+    except (TypeError, ValueError):
+        size = 0
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KiB"
+    return f"{size / (1024 * 1024):.1f} MiB"
+
+
+def _parse_sessions_limit(raw: str | None, *, default: int = 20) -> int:
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(value, 200))
+
+
+_SESSION_SCAN_LIMIT = 100_000
+
+
+def _run_continuity_checks(eng) -> int:
+    """Doctor section for cross-tool session continuity.
+
+    This is intentionally informational for the empty-state case: a clean
+    fresh install may have no saved sessions yet, so that must not make doctor
+    exit nonzero.
+    """
+    print()
+    W._safe_print("  -- Continuity --\n")
+    problems = 0
+
+    try:
+        all_sessions = eng.list_agent_sessions(limit=_SESSION_SCAN_LIMIT)
+        recent = all_sessions[:1]
+    except Exception as exc:
+        print(f"    [!!] Agent session listing failed: {exc}")
+        return 1
+
+    if not recent:
+        print("    [--] No saved agent sessions yet")
+        print("         Run an AI session, then wrap up or stop the tool to create one.")
+    else:
+        latest = recent[0]
+        tools = sorted({str(s.get("tool", "")) for s in all_sessions if s.get("tool")})
+        W._safe_print(
+            "    [ok] Agent sessions: "
+            f"{len(all_sessions)} saved across {len(tools)} tool(s); "
+            f"latest {latest.get('tool', '?')}/{latest.get('session_id', '?')} "
+            f"at {latest.get('modified_at', '?')}"
+        )
+
+    try:
+        brief = eng.get_resume_brief(token_budget=400)
+        included = brief.get("sections_included", []) if isinstance(brief, dict) else []
+        print(f"    [ok] Resume brief builds ({len(included)} section(s))")
+    except Exception as exc:
+        print(f"    [!!] Resume brief failed: {exc}")
+        problems += 1
+
+    return problems
+
+
+def _print_sessions_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram sessions [--tool TOOL] [--limit N]\n"
+        "  engram sessions show <session_id> [--tool TOOL]\n"
+    )
+
+
+def run_sessions(argv: list[str] | None = None) -> int:
+    """List or show saved cross-tool agent sessions."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_sessions_usage()
+        return 0
+
+    from piia_engram.core import Engram  # local import keeps setup startup light
+
+    eng = Engram()
+
+    if args and args[0] == "show":
+        if len(args) < 2:
+            _print_sessions_usage()
+            return 2
+        session_id = args[1]
+        tool = ""
+        i = 2
+        while i < len(args):
+            if args[i] == "--tool" and i + 1 < len(args):
+                tool = args[i + 1]
+                i += 2
+            else:
+                print(f"Unknown sessions option: {args[i]}")
+                _print_sessions_usage()
+                return 2
+
+        metadata = eng.list_agent_sessions(tool=tool, limit=_SESSION_SCAN_LIMIT)
+        match = next((s for s in metadata if s.get("session_id") == session_id), None)
+        if match is None:
+            print(f"Session not found: {session_id}")
+            return 1
+
+        session_path = eng.root / "contexts" / str(match.get("tool", "")) / f"{session_id}.md"
+        try:
+            content = session_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"Session not readable: {session_id} ({exc})")
+            return 1
+
+        W._safe_print(f"# Session {match.get('tool', '?')}/{session_id}")
+        W._safe_print(f"Modified: {match.get('modified_at', '?')}\n")
+        W._safe_print(content)
+        return 0
+
+    tool = ""
+    limit = 20
+    i = 0
+    while i < len(args):
+        if args[i] == "--tool" and i + 1 < len(args):
+            tool = args[i + 1]
+            i += 2
+        elif args[i] == "--limit" and i + 1 < len(args):
+            limit = _parse_sessions_limit(args[i + 1])
+            i += 2
+        else:
+            print(f"Unknown sessions option: {args[i]}")
+            _print_sessions_usage()
+            return 2
+
+    sessions = eng.list_agent_sessions(tool=tool, limit=limit)
+    if not sessions:
+        if tool:
+            print(f"No saved agent sessions found for tool: {tool}")
+        else:
+            print("No saved agent sessions yet.")
+        print("Run an AI session, then wrap up or stop the tool to create one.")
+        return 0
+
+    title = f"Recent agent sessions ({len(sessions)})"
+    if tool:
+        title += f" for {tool}"
+    print(title)
+    print("modified_at           tool          session_id                 size")
+    print("-------------------   -----------   ------------------------   --------")
+    for s in sessions:
+        W._safe_print(
+            f"{s.get('modified_at', '?'):<21} "
+            f"{s.get('tool', '?'):<13} "
+            f"{s.get('session_id', '?'):<26} "
+            f"{_format_session_size(s.get('size_bytes', 0))}"
+        )
+    print("\nUse 'engram sessions show <session_id>' to print a session.")
+    return 0
+
+
+def _print_review_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram review [--limit N] [--sort recent|quality|quality-desc] [--low-quality]\n"
+        "  engram review show <id>\n"
+        "  engram review approve <id> --yes\n"
+        "  engram review archive <id> --yes\n"
+    )
+
+
+def _review_title(item_type: str, item: dict) -> str:
+    if item_type == "decision":
+        title = item.get("question") or item.get("title") or ""
+        choice = item.get("choice") or ""
+        return f"{title} -> {choice}" if choice else str(title)
+    return str(item.get("summary") or item.get("title") or "")
+
+
+def _review_quality_summary(item: dict) -> str:
+    extraction = item.get("extraction")
+    if not isinstance(extraction, dict) or not extraction:
+        return "-"
+    parts: list[str] = []
+    score = extraction.get("quality_score")
+    if isinstance(score, (int, float)):
+        parts.append(f"q={score:.2f}")
+    method = str(extraction.get("method") or "").strip()
+    if method:
+        parts.append(_truncate_review_text(method, 16))
+    return " ".join(parts) if parts else "-"
+
+
+def _review_quality_score(item: dict) -> float | None:
+    extraction = item.get("extraction")
+    if not isinstance(extraction, dict):
+        return None
+    score = extraction.get("quality_score")
+    if isinstance(score, (int, float)):
+        return float(score)
+    return None
+
+
+def _clean_review_inline(value: object) -> str:
+    text = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", str(value or ""))
+    return " ".join(text.split())
+
+
+def _truncate_review_text(value: str, limit: int = 180) -> str:
+    text = _clean_review_inline(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _print_review_quality_detail(item: dict) -> None:
+    extraction = item.get("extraction")
+    if not isinstance(extraction, dict) or not extraction:
+        return
+    method = str(extraction.get("method") or "").strip()
+    source_tool = str(extraction.get("source_tool") or "").strip()
+    source = _truncate_review_text(method, 48) if method else "unknown"
+    if source_tool:
+        source = f"{source} via {_truncate_review_text(source_tool, 48)}"
+    W._safe_print(f"source: {source}")
+
+    quality_parts: list[str] = []
+    score = extraction.get("quality_score")
+    if isinstance(score, (int, float)):
+        quality_parts.append(f"q={score:.2f}")
+    signals = extraction.get("quality_signals")
+    if isinstance(signals, list) and signals:
+        quality_parts.append("signals=" + ",".join(_truncate_review_text(s, 32) for s in signals[:6]))
+    flags = extraction.get("quality_flags")
+    if isinstance(flags, list) and flags:
+        quality_parts.append("flags=" + ",".join(_truncate_review_text(f, 32) for f in flags[:6]))
+    if quality_parts:
+        W._safe_print("quality: " + "; ".join(quality_parts))
+
+    evidence = str(extraction.get("evidence_span") or "").strip()
+    if evidence:
+        W._safe_print(f"evidence: {_truncate_review_text(evidence)}")
+
+
+def _review_items(
+    eng,
+    *,
+    limit: int = 20,
+    sort: str = "recent",
+    low_quality_only: bool = False,
+) -> list[dict]:
+    """Return staging lessons/decisions for the terminal review queue.
+
+    The explicit ``_update_access=False`` is part of the contract: listing the
+    queue must not mutate access counters or timestamps.
+    """
+    rows: list[dict] = []
+    for item in eng.get_lessons(limit=None, _update_access=False):
+        if item.get("tier") == "staging":
+            rows.append({"type": "lesson", "item": item})
+    for item in eng.get_decisions(limit=None, _update_access=False):
+        if item.get("tier") == "staging":
+            rows.append({"type": "decision", "item": item})
+
+    if low_quality_only:
+        rows = [
+            row for row in rows
+            if (score := _review_quality_score(row.get("item") or {})) is None or score < 0.70
+        ]
+
+    def sort_key(row: dict) -> str:
+        item = row.get("item") or {}
+        return str(item.get("timestamp") or item.get("created_at") or item.get("id") or "")
+
+    def quality_sort_key(row: dict, missing_score: float) -> tuple[float, str]:
+        score = _review_quality_score(row.get("item") or {})
+        return (score if score is not None else missing_score, sort_key(row))
+
+    if sort == "quality":
+        rows.sort(key=lambda row: quality_sort_key(row, 99.0))
+    elif sort == "quality-desc":
+        rows.sort(key=lambda row: quality_sort_key(row, -1.0), reverse=True)
+    else:
+        rows.sort(key=sort_key, reverse=True)
+    return rows[:limit]
+
+
+def _print_review_list(rows: list[dict]) -> None:
+    if not rows:
+        print("No staging knowledge needs review.")
+        return
+    print(f"Staging knowledge review queue ({len(rows)})")
+    print("type       id                         domain        quality          title")
+    print("---------  -------------------------  ------------  ---------------  ------------------------------")
+    for row in rows:
+        item_type = row["type"]
+        item = row["item"]
+        title = _review_title(item_type, item)
+        if len(title) > 70:
+            title = title[:67] + "..."
+        quality = _review_quality_summary(item)
+        W._safe_print(
+            f"{item_type:<9}  "
+            f"{str(item.get('id', '?')):<25}  "
+            f"{str(item.get('domain', ''))[:12]:<12}  "
+            f"{quality:<15}  "
+            f"{title}"
+        )
+    print("\nUse 'engram review show <id>' to inspect one item.")
+    print("Use 'engram review approve <id> --yes' or 'engram review archive <id> --yes'.")
+
+
+def _print_review_item(item_type: str, item: dict) -> None:
+    print(f"type: {item_type}")
+    print(f"id: {item.get('id', '')}")
+    print(f"tier: {item.get('tier', '')}")
+    print(f"status: {item.get('status', '')}")
+    if item.get("domain"):
+        print(f"domain: {item.get('domain')}")
+    if item_type == "decision":
+        W._safe_print(f"question: {item.get('question') or item.get('title') or ''}")
+        W._safe_print(f"choice: {item.get('choice', '')}")
+        if item.get("reasoning"):
+            W._safe_print(f"reasoning: {item.get('reasoning')}")
+    else:
+        W._safe_print(f"summary: {item.get('summary') or item.get('title') or ''}")
+        if item.get("detail"):
+            W._safe_print(f"detail: {item.get('detail')}")
+    _print_review_quality_detail(item)
+
+
+def _require_yes(args: list[str], action: str) -> bool:
+    if "--yes" in args:
+        return True
+    print(f"Refusing to {action} without explicit --yes.")
+    return False
+
+
+def _print_playbook_usage() -> None:
+    print(
+        "Engram Playbook CLI\n\n"
+        "Usage:\n"
+        "  engram playbook install <builtin-name> [--yes] [--project <folder>]\n\n"
+        "Default is dry-run. Pass --yes to write a built-in Playbook."
+    )
+
+
+def _arg_value(args: list[str], *names: str) -> str:
+    for name in names:
+        if name in args:
+            idx = args.index(name)
+            if idx + 1 >= len(args):
+                return ""
+            return args[idx + 1]
+    return ""
+
+
+def run_playbook(argv: list[str] | None = None) -> int:
+    """Local CLI for installing built-in Playbook templates."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if not args or args[0] in ("-h", "--help"):
+        _print_playbook_usage()
+        return 0
+    if args[0] != "install" or len(args) < 2:
+        _print_playbook_usage()
+        return 2
+
+    project_folder = _arg_value(args, "--project", "--project-folder")
+    if ("--project" in args or "--project-folder" in args) and not project_folder:
+        print("--project requires a folder path")
+        return 2
+
+    Engram = W._get_engram_class()
+    eng = Engram()
+    confirm = "--yes" in args
+    result = eng.install_builtin_playbook(
+        args[1],
+        project_folder=project_folder or None,
+        dry_run=not confirm,
+        confirm=confirm,
+    )
+    W._safe_print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 1 if result.get("error") else 0
+
+
+def run_review(argv: list[str] | None = None) -> int:
+    """Terminal review queue for staging lessons and decisions."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_review_usage()
+        return 0
+
+    from piia_engram.core import Engram
+
+    eng = Engram()
+
+    if args and args[0] == "show":
+        if len(args) < 2:
+            _print_review_usage()
+            return 2
+        item_type, item = eng._find_item_by_id(args[1])
+        if item is None or item_type not in {"lesson", "decision"}:
+            print(f"Review item not found: {args[1]}")
+            return 1
+        _print_review_item(item_type, item)
+        return 0
+
+    if args and args[0] == "approve":
+        if len(args) < 2:
+            _print_review_usage()
+            return 2
+        item_id = args[1]
+        if not _require_yes(args[2:], "approve review item"):
+            return 2
+        item_type, item = eng._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision"}:
+            print(f"Review item not found: {item_id}")
+            return 1
+        if item.get("tier") != "staging":
+            print(f"Review item is not staging: {item_id}")
+            return 1
+        result = eng.promote_knowledge(item_id)
+        if result.get("status") != "promoted":
+            print(f"Review item could not be promoted: {item_id}")
+            return 1
+        print(f"Promoted review item: {item_id}")
+        return 0
+
+    if args and args[0] == "archive":
+        if len(args) < 2:
+            _print_review_usage()
+            return 2
+        item_id = args[1]
+        if not _require_yes(args[2:], "archive review item"):
+            return 2
+        item_type, item = eng._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision"}:
+            print(f"Review item not found: {item_id}")
+            return 1
+        result = eng.archive_knowledge(item_id)
+        if result.get("error"):
+            print(result["error"])
+            return 1
+        print(f"Archived review item: {item_id}")
+        return 0
+
+    limit = 20
+    sort = "recent"
+    low_quality_only = False
+    i = 0
+    while i < len(args):
+        if args[i] == "--limit" and i + 1 < len(args):
+            limit = _parse_sessions_limit(args[i + 1])
+            i += 2
+        elif args[i] == "--sort" and i + 1 < len(args):
+            sort = args[i + 1]
+            if sort not in {"recent", "quality", "quality-desc"}:
+                print(f"Invalid review sort: {sort}")
+                _print_review_usage()
+                return 2
+            i += 2
+        elif args[i] == "--low-quality":
+            low_quality_only = True
+            i += 1
+        else:
+            print(f"Unknown review option: {args[i]}")
+            _print_review_usage()
+            return 2
+
+    _print_review_list(_review_items(
+        eng, limit=limit, sort=sort, low_quality_only=low_quality_only,
+    ))
+    return 0
+
+
+def _run_telemetry_cli(sub_args: list[str]) -> None:
+    """Handle `engram telemetry <subcommand>`."""
+    from piia_engram.telemetry import (
+        get_status, is_enabled, preview_payload, set_enabled,
+        set_remote_enabled,
+    )
+
+    sub = sub_args[0] if sub_args else "status"
+
+    if sub == "status":
+        status = get_status()
+        state = "ON" if status["enabled"] else "OFF"
+        remote_state = "ON" if status.get("remote_enabled") else "OFF"
+        print(f"\n  Anonymous usage statistics: {state}")
+        print(f"  Remote sending: {remote_state}")
+        print(f"  Phase: {status['phase']}")
+        print(f"  Config: {status['config_path']}")
+        print(f"  Log: {status['log_path']}")
+        if status["enabled"]:
+            print(f"  Opted in: {status['opted_in_at']}")
+        if status.get("remote_enabled"):
+            print(f"  Remote opted in: {status.get('remote_opted_in_at', '(unknown)')}")
+            print(f"  Endpoint: {status.get('endpoint', '(unknown)')}")
+        print()
+
+    elif sub == "preview":
+        print("\n  Next payload (if enabled):\n")
+        print(preview_payload())
+        print()
+
+    elif sub in ("off", "disable"):
+        set_enabled(False)
+        set_remote_enabled(False)
+        print("\n  ✅ Anonymous usage statistics disabled (local + remote).")
+        print("  No data will be logged or sent.\n")
+
+    elif sub in ("on", "enable"):
+        set_enabled(True)
+        print("\n  ✅ Anonymous usage statistics enabled.")
+        print("  Run 'engram telemetry preview' to see what will be logged.")
+        print("  Run 'engram telemetry remote on' to also enable remote sending.\n")
+
+    elif sub == "remote":
+        remote_sub = sub_args[1] if len(sub_args) > 1 else "status"
+        if remote_sub in ("on", "enable"):
+            if not is_enabled():
+                set_enabled(True)
+                print("\n  ✅ Local statistics also enabled (required for remote).")
+            set_remote_enabled(True)
+            print("  ✅ Remote anonymous statistics enabled.")
+            print("  Data will be sent via HTTPS to Cloudflare Worker.\n")
+        elif remote_sub in ("off", "disable"):
+            set_remote_enabled(False)
+            print("\n  ✅ Remote sending disabled. Local logging continues if enabled.\n")
+        else:
+            status = get_status()
+            remote_state = "ON" if status.get("remote_enabled") else "OFF"
+            print(f"\n  Remote sending: {remote_state}")
+            if status.get("remote_enabled"):
+                print(f"  Endpoint: {status.get('endpoint', '(unknown)')}")
+            print()
+
+    elif sub == "feedback":
+        from piia_engram.telemetry import is_feedback_enabled, set_feedback_enabled
+        fb_sub = sub_args[1] if len(sub_args) > 1 else "status"
+        if fb_sub in ("on", "enable"):
+            if not is_enabled():
+                set_enabled(True)
+                print("\n  ✅ Local statistics also enabled (required for feedback).")
+            set_remote_enabled(True)
+            set_feedback_enabled(True)
+            print("  ✅ Weekly anonymous feedback reports enabled.")
+            print("  Reports are sent automatically during wrap_up_session.\n")
+        elif fb_sub in ("off", "disable"):
+            set_feedback_enabled(False)
+            print("\n  ✅ Feedback reports disabled. Other telemetry settings unchanged.\n")
+        else:
+            fb_state = "ON" if is_feedback_enabled() else "OFF"
+            print(f"\n  Weekly feedback reports: {fb_state}")
+            print("  Toggle: engram telemetry feedback on/off\n")
+
+    elif sub == "--show-payload":
+        print("\n  Next payload (if enabled):\n")
+        print(preview_payload())
+        print()
+
+    else:
+        print(
+            "\nUsage:\n"
+            "  engram telemetry status         Show current status\n"
+            "  engram telemetry preview        Show what data will be logged\n"
+            "  engram telemetry on             Enable anonymous usage statistics\n"
+            "  engram telemetry off            Disable anonymous usage statistics\n"
+            "  engram telemetry remote on      Enable remote sending (Phase 2)\n"
+            "  engram telemetry remote off     Disable remote sending\n"
+            "  engram telemetry feedback on    Enable weekly feedback reports\n"
+            "  engram telemetry feedback off   Disable weekly feedback reports\n"
+        )
+
+
+def _run_privacy_report() -> None:
+    """Handle `engram privacy` — show what data Engram stores and where."""
+    import os as _os
+    data_dir = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+
+    print("\n========================================")
+    print("  Engram Privacy Report")
+    print("========================================\n")
+
+    # 1. Data directory
+    print(f"  [DIR] Data directory: {data_dir}")
+    if data_dir.exists():
+        files = list(data_dir.iterdir())
+        total_size = sum(f.stat().st_size for f in files if f.is_file())
+        print(f"        Files: {len([f for f in files if f.is_file()])}")
+        print(f"        Total size: {total_size / 1024:.1f} KB")
+    else:
+        print("        (not created yet)")
+    print()
+
+    # 2. Identity data
+    identity_file = data_dir / "identity.json"
+    print("  [ID]  Identity data:")
+    if identity_file.is_file():
+        size = identity_file.stat().st_size
+        print(f"        {identity_file} ({size / 1024:.1f} KB)")
+        print("        Contains: profile, preferences, work_style, quality_standards, trust_boundaries")
+        try:
+            raw = identity_file.read_text(encoding="utf-8")
+            encrypted_count = raw.count("enc:v")
+            if encrypted_count > 0:
+                print(f"        [ENCRYPTED] {encrypted_count} fields encrypted")
+            else:
+                print("        [PLAIN] No encrypted fields (set ENGRAM_KEY to enable)")
+        except Exception:
+            pass
+    else:
+        print("        (not created yet)")
+    print()
+
+    # 3. Knowledge base
+    knowledge_file = data_dir / "knowledge.json"
+    print("  [KB]  Knowledge base:")
+    if knowledge_file.is_file():
+        size = knowledge_file.stat().st_size
+        print(f"        {knowledge_file} ({size / 1024:.1f} KB)")
+        try:
+            import json as _j
+            kdata = _j.loads(knowledge_file.read_text(encoding="utf-8"))
+            lessons = kdata.get("lessons", [])
+            decisions = kdata.get("decisions", [])
+            print(f"        Lessons: {len(lessons)}")
+            print(f"        Decisions: {len(decisions)}")
+        except Exception:
+            pass
+    else:
+        print("        (not created yet)")
+    print()
+
+    # 4. Telemetry
+    print("  [STAT] Anonymous usage statistics:")
+    try:
+        from piia_engram.telemetry import get_status
+        status = get_status()
+        state = "ON" if status["enabled"] else "OFF"
+        remote_state = "ON" if status.get("remote_enabled") else "OFF"
+        print(f"        Local: {state}")
+        print(f"        Remote: {remote_state}")
+        print(f"        Phase: {status['phase']}")
+        print(f"        Config: {status['config_path']}")
+        log_path = Path(status["log_path"])
+        if log_path.is_file():
+            log_size = log_path.stat().st_size
+            log_lines = len(log_path.read_text(encoding="utf-8").strip().splitlines())
+            print(f"        Log: {log_path} ({log_size / 1024:.1f} KB, {log_lines} entries)")
+        else:
+            print("        Log: (no entries yet)")
+        print("        Collected: tool names + counts, knowledge totals, version, daily anonymous ID")
+        print("        NOT collected: text content, prompts, file paths, PII, IP")
+        if status.get("remote_enabled"):
+            print(f"        Endpoint: {status.get('endpoint', '(unknown)')}")
+        print("        Optional: telemetry Phase 2 (remote to Cloudflare Worker, requires re-consent)")
+    except ImportError:
+        print("        (telemetry module not available)")
+    print()
+
+    # 5. Reconcile
+    print("  [SYNC] Cross-tool sync:")
+    try:
+        from piia_engram.reconcile import ReconcileMixin
+        authorized = ReconcileMixin._reconcile_authorized()
+        print(f"        Status: {'ON' if authorized else 'OFF'}")
+        print("        Scans: ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules, etc.")
+        print("        Control: ENGRAM_RECONCILE=0 to disable")
+    except ImportError:
+        print("        (reconcile module not available)")
+    print()
+
+    # 6. Network
+    print("  [NET]  Network requests:")
+    print("        Core Engram: ZERO network requests (local files only)")
+    print("        Optional: read_web_content (user-initiated only, via local Reader service)")
+    print("        Optional: telemetry Phase 2 (NOT implemented, requires re-consent)")
+    print()
+
+    # 7. How to delete
+    print("  [DEL]  Delete all data:")
+    print(f"        rm -rf {data_dir}")
+    print("        (This removes ALL Engram data permanently)")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# engram feedback — 内测反馈报告
+# ---------------------------------------------------------------------------
+
+
+def _build_feedback_report(data_dir: str | None = None) -> dict:
+    """Build an anonymous usage/governance report from local Engram data.
+
+    Reads knowledge files and computes governance metrics without any
+    network calls. No lesson/decision content is included — only counts,
+    distributions, and timing statistics.
+
+    Returns a dict suitable for JSON export.
+    """
+    from datetime import datetime, timezone
+
+    root = Path(data_dir) if data_dir else Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    knowledge_dir = root / "knowledge"
+    playbooks_dir = root / "playbooks"
+    contexts_dir = root / "contexts"
+
+    report: dict = {
+        "report_type": "engram_beta_feedback",
+        "report_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Version
+    try:
+        from importlib.metadata import version as _pkg_version
+        report["engram_version"] = _pkg_version("piia-engram")
+    except Exception:
+        report["engram_version"] = "unknown"
+
+    report["os"] = platform.system()
+    report["python"] = platform.python_version()
+
+    # Lessons
+    lessons_path = knowledge_dir / "lessons.json"
+    lessons: list[dict] = []
+    if lessons_path.is_file():
+        try:
+            lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    staging_lessons = [l for l in lessons if l.get("tier") == "staging"]
+    verified_lessons = [l for l in lessons if l.get("tier") != "staging"]
+
+    # Decisions
+    decisions_path = knowledge_dir / "decisions.json"
+    decisions: list[dict] = []
+    if decisions_path.is_file():
+        try:
+            decisions = json.loads(decisions_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    staging_decisions = [d for d in decisions if d.get("tier") == "staging"]
+    verified_decisions = [d for d in decisions if d.get("tier") != "staging"]
+
+    # Playbooks
+    playbooks_index = playbooks_dir / "_index.json"
+    playbooks: list[dict] = []
+    if playbooks_index.is_file():
+        try:
+            playbooks = json.loads(playbooks_index.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    staging_playbooks = [p for p in playbooks if p.get("tier") == "staging"]
+    verified_playbooks = [p for p in playbooks if p.get("tier") != "staging"]
+
+    total_staging = len(staging_lessons) + len(staging_decisions) + len(staging_playbooks)
+    total_verified = len(verified_lessons) + len(verified_decisions) + len(verified_playbooks)
+    total = total_staging + total_verified
+
+    report["knowledge"] = {
+        "total": total,
+        "staging": total_staging,
+        "verified": total_verified,
+        "promotion_rate": round(total_verified / total, 2) if total > 0 else None,
+        "lessons": {"staging": len(staging_lessons), "verified": len(verified_lessons)},
+        "decisions": {"staging": len(staging_decisions), "verified": len(verified_decisions)},
+        "playbooks": {"staging": len(staging_playbooks), "verified": len(verified_playbooks)},
+    }
+
+    # Domain distribution (top 10, no content)
+    domain_counts: dict[str, int] = {}
+    for item in lessons + decisions:
+        domain = item.get("domain", "")
+        if domain:
+            for d in domain.split(","):
+                d = d.strip()
+                if d:
+                    domain_counts[d] = domain_counts.get(d, 0) + 1
+    top_domains = sorted(domain_counts.items(), key=lambda x: -x[1])[:10]
+    report["top_domains"] = {k: v for k, v in top_domains}
+
+    # Source tool distribution
+    tool_counts: dict[str, int] = {}
+    for item in lessons + decisions:
+        src = item.get("source_tool", "unknown")
+        tool_counts[src] = tool_counts.get(src, 0) + 1
+    report["source_tools"] = tool_counts
+
+    # Timing: days since first knowledge, avg staging age
+    now = datetime.now(timezone.utc)
+    all_items = lessons + decisions + playbooks
+    created_dates: list[datetime] = []
+    staging_ages: list[float] = []
+    for item in all_items:
+        ts = item.get("created_at", "")
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            # Ensure timezone-aware for comparison
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            created_dates.append(dt)
+            if item.get("tier") == "staging":
+                staging_ages.append((now - dt).total_seconds() / 86400)
+        except Exception:
+            pass
+
+    if created_dates:
+        report["first_knowledge_date"] = min(created_dates).strftime("%Y-%m-%d")
+        report["days_with_knowledge"] = (now - min(created_dates)).days
+    report["avg_staging_age_days"] = round(sum(staging_ages) / len(staging_ages), 1) if staging_ages else None
+
+    # Session contexts count
+    session_count = 0
+    if contexts_dir.is_dir():
+        try:
+            session_count = sum(1 for f in contexts_dir.iterdir() if f.suffix == ".json")
+        except Exception:
+            pass
+    report["session_count"] = session_count
+
+    # MCP tool call log (from telemetry.log if exists)
+    telemetry_log = root / "telemetry.log"
+    tool_call_totals: dict[str, int] = {}
+    if telemetry_log.is_file():
+        try:
+            for line in telemetry_log.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                    for tool_name, counts in entry.get("tool_calls", {}).items():
+                        if isinstance(counts, dict):
+                            n = counts.get("success", 0) + counts.get("error", 0)
+                        else:
+                            n = int(counts)
+                        tool_call_totals[tool_name] = tool_call_totals.get(tool_name, 0) + n
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    if tool_call_totals:
+        top_tools = sorted(tool_call_totals.items(), key=lambda x: -x[1])[:15]
+        report["top_mcp_tools"] = {k: v for k, v in top_tools}
+
+    # Configured AI tools (from setup_report)
+    setup_report = root / "setup_report.jsonl"
+    if setup_report.is_file():
+        try:
+            lines = setup_report.read_text(encoding="utf-8").strip().split("\n")
+            if lines:
+                last = json.loads(lines[-1])
+                report["configured_tools"] = last.get("tools_configured", [])
+        except Exception:
+            pass
+
+    # Beta event tracking aggregate
+    try:
+        from piia_engram.beta_tracker import aggregate_events
+        beta = aggregate_events()
+        if beta:
+            report["beta_events"] = beta
+    except Exception:
+        pass
+
+    return report
+
+
+def run_feedback(*, dry_run: bool = False) -> None:
+    """Generate and display an anonymous beta feedback report.
+
+    The report contains only counts and distributions — no knowledge content,
+    no file paths, no personal information. Users can copy-paste it.
+
+    Args:
+        dry_run: If True, show the exact payload that would be sent but do not send.
+    """
+    W._configure_utf8_stdio()
+
+    print("\n  ========================================")
+    print("  Piia Engram 内测反馈报告 / Beta Feedback Report")
+    print("  ========================================\n")
+
+    report = _build_feedback_report()
+
+    # Pretty print
+    k = report.get("knowledge", {})
+    print(f"  Engram 版本: {report.get('engram_version', '?')}")
+    print(f"  OS: {report.get('os', '?')} | Python: {report.get('python', '?')}")
+    print(f"  使用天数: {report.get('days_with_knowledge', '?')} 天")
+    print(f"  会话数: {report.get('session_count', 0)}")
+    print()
+
+    print("  ── 知识治理 ──")
+    print(f"  总知识数: {k.get('total', 0)} (staging: {k.get('staging', 0)}, verified: {k.get('verified', 0)})")
+    pr = k.get("promotion_rate")
+    if pr is not None:
+        print(f"  确认率 (promotion rate): {pr:.0%}")
+    avg_age = report.get("avg_staging_age_days")
+    if avg_age is not None:
+        print(f"  Staging 平均滞留: {avg_age} 天")
+    print(f"    Lessons:   staging={k.get('lessons', {}).get('staging', 0)}, verified={k.get('lessons', {}).get('verified', 0)}")
+    print(f"    Decisions: staging={k.get('decisions', {}).get('staging', 0)}, verified={k.get('decisions', {}).get('verified', 0)}")
+    print(f"    Playbooks: staging={k.get('playbooks', {}).get('staging', 0)}, verified={k.get('playbooks', {}).get('verified', 0)}")
+    print()
+
+    if report.get("top_domains"):
+        print("  ── 领域分布 ──")
+        for d, c in report["top_domains"].items():
+            print(f"    {d}: {c}")
+        print()
+
+    if report.get("source_tools"):
+        print("  ── 来源工具 ──")
+        for t, c in report["source_tools"].items():
+            print(f"    {t}: {c}")
+        print()
+
+    if report.get("configured_tools"):
+        print(f"  ── 已配置工具 ──")
+        print(f"    {', '.join(report['configured_tools'])}")
+        print()
+
+    beta = report.get("beta_events", {})
+    if beta:
+        print("  ── 行为埋点 ──")
+        print(f"  总事件数: {beta.get('total_events', 0)}")
+        if beta.get("tracking_days"):
+            print(f"  追踪天数: {beta['tracking_days']} 天")
+        ec = beta.get("event_counts", {})
+        if ec:
+            for ev_name, ev_count in sorted(ec.items(), key=lambda x: -x[1]):
+                print(f"    {ev_name}: {ev_count}")
+        prom = beta.get("promotions", {})
+        if prom:
+            print(f"  晋升总数: {prom.get('total', 0)}")
+            for m, c in prom.get("methods", {}).items():
+                print(f"    方式 {m}: {c}")
+        cs = beta.get("cold_starts", {})
+        if cs:
+            print(f"  冷启动级别: {cs}")
+        rec = beta.get("reconcile", {})
+        if rec:
+            print(f"  跨工具同步: {rec.get('sync_count', 0)} 次, 导入 {rec.get('total_imported', 0)} 条")
+        print()
+
+    # --dry-run: show exactly what would be sent, then stop
+    if dry_run:
+        print("  ── Dry-run: 以下是将要发送的完整 payload ──")
+        print("  (实际运行时不会发送，仅展示)\n")
+        preview = report.copy()
+        try:
+            from piia_engram.telemetry import _daily_id, _load_config
+            cfg = _load_config()
+            local_uuid = cfg.get("local_uuid", "")
+            if local_uuid:
+                preview["daily_id"] = _daily_id(local_uuid)
+            else:
+                preview["daily_id"] = "<would be generated at send time>"
+        except Exception:
+            preview["daily_id"] = "<would be generated at send time>"
+        preview_json = json.dumps(preview, ensure_ascii=False, indent=2)
+        print(f"  ```json\n{preview_json}\n  ```\n")
+        print("  此 payload 只包含计数和分布，不含任何知识内容或个人信息。")
+        print("  确认无误后，运行 engram feedback（不加 --dry-run）即可发送。")
+        return
+
+    # Auto-send if feedback reporting is opted in
+    try:
+        from piia_engram.telemetry import is_feedback_enabled, send_feedback
+        if is_feedback_enabled():
+            print("  ── 自动上报 ──")
+            ok = send_feedback(report)
+            if ok:
+                print("  ✅ 反馈已匿名发送到 Engram 开发团队。")
+                print("     关闭自动上报: engram telemetry feedback off\n")
+            else:
+                print("  ⚠️  自动上报失败（网络问题？），报告仅保留在本地。\n")
+        else:
+            print("  ── 自动上报未开启 ──")
+            print("  开启后每周自动发送: engram telemetry feedback on\n")
+    except Exception:
+        pass
+
+    # JSON for copy-paste
+    report_json = json.dumps(report, ensure_ascii=False, indent=2)
+    print("  ── 可复制 JSON（备用，粘贴到反馈帖即可）──")
+    print(f"  ```json\n{report_json}\n  ```")
+    print()
+    print("  此报告不含任何知识内容、文件路径或个人信息。")
+    print("  This report contains no knowledge content, file paths, or personal info.\n")
+
+
+def _run_reindex() -> None:
+    """Rebuild the v4.0 hybrid search index from the JSON knowledge store."""
+    from piia_engram.core import Engram
+
+    eng = Engram()
+    result = eng.rebuild_index()
+    # Corpus encryption refuses to persist a plaintext index. Say so explicitly
+    # instead of the misleading "[ok] reindexed 0 entries" (Codex a5 round-3 O3).
+    if result.get("skipped") == "corpus_encrypted":
+        tail = " (existing plaintext index purged)" if result.get("purged") else ""
+        print("[ok] corpus encryption enabled; persistent search index "
+              f"skipped{tail}.")
+        return
+    vec = "on" if result.get("vector_enabled") else "off (install piia-engram[vector] for semantic search)"
+    print(f"[ok] reindexed {result.get('indexed', 0)} entries — vector layer: {vec}")
+
+
+def _run_repair_encoding(args: list[str]) -> int:
+    """Scan or repair high-confidence mojibake in the active Engram root."""
+    from piia_engram.core import Engram
+    from piia_engram.encoding_repair import (
+        repair_engram_root,
+        scan_engram_root,
+        summarize_findings,
+    )
+
+    apply = "--apply" in args or "--fix" in args
+    no_backup = "--no-backup" in args
+    summary_only = "--summary" in args
+    eng = Engram()
+
+    if summary_only and not apply:
+        report = scan_engram_root(eng.root)
+        summary = summarize_findings(report)
+        # Metadata-only output: counts and generic reason codes, never bodies
+        # or paths — safe to paste into an audit/report.
+        print("Encoding scan summary (metadata-only, no bodies/paths):")
+        print(f"  files_with_findings: {summary['files_with_findings']}")
+        print(f"  repairable: {summary['repairable_count']}  "
+              f"suspect: {summary['suspect_count']}  "
+              f"total: {summary['total_findings']}")
+        if summary["reasons"]:
+            print("  reasons:")
+            for reason, count in summary["reasons"].items():
+                print(f"    {reason}: {count}")
+        return 0 if summary["suspect_count"] == 0 else 1
+
+    if apply:
+        if no_backup:
+            print(
+                "[!!] Encoding repair: --no-backup disables automatic backup; "
+                "use only if you already have a separate backup."
+            )
+        report = repair_engram_root(eng.root, apply=True, backup=not no_backup)
+        if not report.findings:
+            print("[ok] Encoding repair: no mojibake detected.")
+            return 0
+        if report.repairable_count:
+            print(
+                "[fixed] Encoding repair: repaired "
+                f"{report.repairable_count} field(s) in {len(report.changed_files)} file(s)."
+            )
+            if report.backup_dir is not None:
+                print(f"        Backup: {report.backup_dir}")
+        if report.suspect_count:
+            print(f"[!!] {report.suspect_count} suspect field(s) need manual review.")
+            return 1
+        return 0
+
+    report = scan_engram_root(eng.root)
+    if not report.findings:
+        print("[ok] Encoding repair dry-run: no mojibake detected.")
+        print(
+            "     This confirms stored Engram data is clean. If text still looks "
+            "garbled in a terminal, check display encoding instead."
+        )
+        print("     PowerShell tip: use Get-Content -Encoding utf8 for UTF-8 files.")
+        return 0
+
+    print(
+        "[!!] Encoding repair dry-run: found "
+        f"{report.repairable_count} repairable mojibake field(s) "
+        f"and {report.suspect_count} suspect field(s)."
+    )
+    for finding in report.findings[:20]:
+        print(f"  - {finding.relative_path}:{finding.json_path} ({finding.reason})")
+    print("Run 'engram repair-encoding --apply' to repair with a backup.")
+    return 1
+
+
+def _run_recover_json(args: list[str]) -> int:
+    """Dry-run recovery scan for JSON files backed up as ``*.corrupt``."""
+    import os as _os
+    from piia_engram.recovery import (
+        analyze_json_recovery_candidates,
+        analyze_recovery_retention_plan,
+        write_recovery_candidate,
+    )
+
+    if not args or args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram recover-json lessons\n"
+            "  engram recover-json lessons --write-candidate PATH\n"
+        )
+        return 0
+
+    dataset = args[0]
+    output_path = None
+    if "--write-candidate" in args:
+        idx = args.index("--write-candidate")
+        if idx + 1 >= len(args):
+            print("ERROR: --write-candidate requires a destination path")
+            return 2
+        output_path = args[idx + 1]
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    report = analyze_json_recovery_candidates(root, dataset=dataset)
+    active = report.get("active") or {}
+    best = report.get("best_candidate")
+
+    print(f"JSON recovery dry-run: dataset={dataset}")
+    print(
+        "Active: "
+        f"{active.get('file_name', f'{dataset}.json')} "
+        f"status={active.get('json_status')} "
+        f"entries={active.get('entries')} "
+        f"bom={active.get('starts_bom')}"
+    )
+    print("Candidates:")
+    for item in report["files"]:
+        if item.get("role") != "backup":
+            continue
+        marker = "*" if best and item["file_name"] == best["file_name"] else "-"
+        print(
+            f"  {marker} {item['file_name']} "
+            f"status={item['json_status']} "
+            f"entries={item['entries']} "
+            f"date_max={item['date_max']} "
+            f"sha256={item['sha256_12']}"
+        )
+    if best:
+        print(f"Best candidate: {best['file_name']} entries={best['entries']}")
+    else:
+        print("Best candidate: none")
+    retention = analyze_recovery_retention_plan(root, dataset=dataset)
+    if retention.get("primary_candidate"):
+        print(
+            "Retention plan: "
+            f"union_ids={retention['union_ids']} "
+            f"overlap_ids={retention['overlap_ids']} "
+            f"primary_only_ids={retention['primary_only_ids']} "
+            f"secondary_only_ids={retention['secondary_only_ids']} "
+            f"overflow_ids={retention['overflow_ids']} "
+            f"active_merge_safe={str(retention['active_merge_safe']).lower()}"
+        )
+        print(f"Recommendation: {retention['recommendation']}")
+    print("Live store modified: false")
+
+    if output_path:
+        result = write_recovery_candidate(root, dataset=dataset, output_path=output_path)
+        print(
+            "Wrote recovery candidate: "
+            f"{result['output_path']} "
+            f"entries={result['entries']} "
+            "live_store_modified=false"
+        )
+    return 0
+
+
+def _run_backup_plan(args: list[str]) -> int:
+    """Print a metadata-only local backup plan (what to copy before upgrading).
+
+    Read-only and local-only: it enumerates Engram-owned files under the active
+    root, never reads stored knowledge bodies, and never touches files outside
+    the Engram directory. Pass ``--json`` for machine-readable output.
+    """
+    import os as _os
+    from piia_engram.recovery import build_backup_plan
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    plan = build_backup_plan(root)
+
+    if "--json" in args:
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"Engram backup plan (metadata only): {plan['root']}")
+    if not plan["exists"]:
+        print("  (no Engram root found at this path yet — nothing to back up)")
+        return 0
+    print(f"  total: {plan['total_files']} files, {plan['total_bytes']} bytes")
+    print("  groups:")
+    for group in plan["groups"]:
+        print(f"    - {group['name']}: {group['files']} files, {group['bytes']} bytes")
+    if plan["knowledge_datasets"]:
+        print("  knowledge datasets:")
+        for ds in plan["knowledge_datasets"]:
+            print(
+                f"    - {ds['file_name']}: entries={ds['entries']} "
+                f"bytes={ds['bytes']} sha256={ds['sha256_12']}"
+            )
+    print(f"  external files included: {plan['external_files_included']} "
+          f"(excluded: {plan['external_paths_excluded']})")
+    print(f"  {plan['restore_hint']}")
+    print("  live store modified: false")
+    return 0
+
+
+def _render_import_result_text(payload: dict) -> str:
+    """Render import preview/apply output without exposing stored values."""
+    status = payload.get("status", "unknown")
+    mode = payload.get("mode", "")
+    dry_run = bool(payload.get("dry_run"))
+    summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
+    conflicts = payload.get("conflicts", []) if isinstance(payload.get("conflicts"), list) else []
+
+    title = "Engram import preview" if dry_run else "Engram import apply"
+    lines = [
+        f"{title} - {status}",
+        f"  mode: {mode or 'merge'}",
+        f"  dry_run: {'true' if dry_run else 'false'}",
+        "  metadata_only: true",
+    ]
+    if payload.get("requires_confirmation"):
+        lines.append("  requires_confirmation: true")
+        lines.append("  re-run with --apply --yes to mutate the local store")
+    if summary:
+        lines.append("  summary:")
+        for section, counts in sorted(summary.items()):
+            lines.append(
+                f"    - {section}: incoming={counts.get('incoming', 0)} "
+                f"add={counts.get('would_add', 0)} "
+                f"skip={counts.get('would_skip', 0)} "
+                f"conflicts={counts.get('conflicts', 0)}"
+            )
+    if conflicts:
+        lines.append(f"  conflicts: {len(conflicts)} (metadata only; values withheld)")
+    if payload.get("error"):
+        lines.append(f"  error: {payload['error']}")
+    if dry_run and not payload.get("requires_confirmation"):
+        lines.append("  run 'engram import <backup.json> --apply --yes' to apply")
+    return "\n".join(lines)
+
+
+def _run_import_backup(args: list[str]) -> int:
+    """Preview/apply a full Engram JSON backup import.
+
+    Default is read-only preview. Mutation requires both ``--apply`` and
+    ``--yes``; overwrite mode is explicit via ``--overwrite``.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if not args or args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram import <backup.json> [--json]\n"
+            "  engram import <backup.json> --apply --yes [--json]\n"
+            "  engram import <backup.json> --apply --yes --materialize-version-chain [--json]\n"
+            "  engram import <backup.json> --overwrite --apply --yes [--json]\n\n"
+            "Default is metadata-only preview. --overwrite maps to merge=False."
+        )
+        return 0 if args and args[0] in {"-h", "--help"} else 2
+
+    json_output = "--json" in args
+    apply = "--apply" in args
+    confirm = "--yes" in args
+    overwrite = "--overwrite" in args
+    materialize_version_chain = "--materialize-version-chain" in args
+    known_flags = {
+        "--json",
+        "--apply",
+        "--yes",
+        "--overwrite",
+        "--materialize-version-chain",
+    }
+    paths = []
+    for arg in args:
+        if arg in known_flags:
+            continue
+        if arg.startswith("--"):
+            payload = {"error": f"Unknown import option: {arg}"}
+            if json_output:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(_render_import_result_text(payload))
+            return 2
+        paths.append(arg)
+
+    if len(paths) != 1:
+        payload = {"error": "Usage: engram import <backup.json> [--json]"}
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(_render_import_result_text(payload))
+        return 2
+
+    backup_path = paths[0]
+    merge = not overwrite
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+
+    if apply and not confirm:
+        payload = eng.import_all(backup_path, merge=merge, dry_run=True)
+        payload["requires_confirmation"] = True
+        payload["confirmation_hint"] = "re-run with --apply --yes to mutate the local store"
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(_render_import_result_text(payload))
+        return 1
+
+    payload = eng.import_all(
+        backup_path,
+        merge=merge,
+        dry_run=not apply,
+        materialize_version_chain=materialize_version_chain and merge,
+    )
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(_render_import_result_text(payload))
+    return 1 if payload.get("error") else 0
+
+
+def _run_export_agents_md(args: list[str]) -> int:
+    """Export verified, non-sensitive knowledge as an AGENTS.md / CLAUDE.md block.
+
+    Local + owner-run (CLI): loads the user's own store and renders the curated,
+    committable digest via ``agents_md_export.build_agents_md_export`` — which is
+    verified-only, sensitivity-screened, and summary/metadata-only by
+    construction. Prints to stdout by default; ``--out PATH`` writes the block to
+    an explicit destination and REFUSES to overwrite an existing file (so it can
+    never clobber a hand-maintained AGENTS.md).
+    """
+    import os as _os
+    from piia_engram.agents_md_export import build_agents_md_export
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram export-agents-md [--scope global|project] [--project NAME]\n"
+            "                          [--max-sensitivity public|personal|work]\n"
+            "                          [--out PATH]\n"
+        )
+        return 0
+
+    def _opt(flag: str, default: str = "") -> str:
+        if flag in args:
+            idx = args.index(flag)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    scope = _opt("--scope", "global")
+    if scope not in {"global", "project"}:
+        print("ERROR: --scope must be 'global' or 'project'")
+        return 2
+    project = _opt("--project", "")
+    if scope == "project" and not project:
+        print("ERROR: --scope project requires --project NAME")
+        return 2
+    max_sensitivity = _opt("--max-sensitivity", "work")
+    out_path = _opt("--out", "")
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    lessons = eng.get_lessons(limit=None, _update_access=False)
+    decisions = eng.get_decisions(limit=None, _update_access=False)
+    block = build_agents_md_export(
+        lessons=lessons,
+        decisions=decisions,
+        scope=scope,
+        project=project,
+        max_sensitivity=max_sensitivity,
+    )
+
+    if out_path:
+        dest = Path(out_path).expanduser().resolve()
+        if dest.exists():
+            print(f"ERROR: refusing to overwrite an existing file: {dest}")
+            return 2
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(block, encoding="utf-8")
+        print(f"Wrote AGENTS.md export: {dest}")
+        return 0
+    print(block)
+    return 0
+
+
+def _run_recall(args: list[str]) -> int:
+    """Print a single-call recall digest for the owner (engram recall).
+
+    Local + owner-run (CLI = ``private-self``): composes existing governed read
+    methods (profile slice, recent context, relevant lessons, optional keyword
+    search) via ``recall_service.gather_recall``, collapses superseded knowledge
+    to its current head, and renders a metadata/summary-only digest. It adds no
+    new agent-facing surface — the MCP recall tool stays deferred per
+    docs/specs/recall-surface-v1.md §6.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+    from piia_engram.recall_service import gather_recall, render_recall_text
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram recall [--project NAME] [--query TEXT] [--budget N]\n"
+            "                [--no-freshness] [--no-collapse] [--json]\n"
+        )
+        return 0
+
+    def _opt(flag: str, default: str = "") -> str:
+        if flag in args:
+            idx = args.index(flag)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    project = _opt("--project", "")
+    query = _opt("--query", "")
+    try:
+        budget = int(_opt("--budget", "2000"))
+    except ValueError:
+        print("ERROR: --budget must be an integer")
+        return 2
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    payload = gather_recall(
+        eng,
+        project_folder=project,
+        query=query,
+        token_budget=budget,
+        include_freshness="--no-freshness" not in args,
+        collapse_versions="--no-collapse" not in args,
+    )
+
+    if "--json" in args:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print(render_recall_text(payload))
+    return 0
+
+
+def _run_portrait(args: list[str]) -> int:
+    """Build, store, and compare a lean user portrait (engram portrait).
+
+    Local + owner-run. Composes ``build_user_portrait`` (identity + aggregate
+    stats, no raw knowledge text), persists a timestamped snapshot under
+    ``<engram>/portraits/``, and — if an earlier snapshot exists — prints the
+    growth delta since the previous one. ``--no-save`` builds without writing,
+    ``--list`` shows stored snapshots, ``--json`` emits raw structures.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram portrait            Build + save a snapshot, show growth since last\n"
+            "  engram portrait --no-save  Build + show without writing a snapshot\n"
+            "  engram portrait --list     List stored snapshots (newest first)\n"
+            "  engram portrait --json     Emit raw JSON instead of Markdown\n"
+        )
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    want_json = "--json" in args
+
+    if "--list" in args:
+        items = eng.list_user_portraits()
+        if want_json:
+            print(json.dumps(items, ensure_ascii=False, indent=2))
+        elif not items:
+            print("(no portraits stored yet / 尚无已保存的写照)")
+        else:
+            for it in items:
+                stats = it.get("stats", {})
+                print(
+                    f"- {it.get('generated_at', '')}  "
+                    f"lessons={stats.get('lesson_count', 0)} "
+                    f"decisions={stats.get('decision_count', 0)} "
+                    f"domains={stats.get('domain_count', 0)}"
+                )
+        return 0
+
+    # Capture the prior snapshot BEFORE writing the new one (growth baseline).
+    previous = eng.get_latest_portrait()
+    portrait = eng.build_user_portrait()
+    if "--no-save" not in args:
+        eng.save_user_portrait(portrait)
+
+    if want_json:
+        out: dict = {"portrait": portrait}
+        if previous:
+            out["growth"] = eng.compare_user_portraits(previous, portrait)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+
+    print(eng.render_user_portrait(portrait), end="")
+    if previous:
+        diff = eng.compare_user_portraits(previous, portrait)
+        print()
+        print(eng.render_portrait_growth(diff), end="")
+    return 0
+
+
+def _run_telemetry_validate(args: list[str]) -> int:
+    """Validate telemetry payload/schema/migration consistency (read-only, no network).
+
+    Static local check: confirms the client payload contract, worker schema, and
+    v1.1 migration agree, the migration is additive/forward-only, and no
+    content-bearing field exists on either side. Performs NO remote action.
+    """
+    from piia_engram.telemetry_validation import (
+        render_readiness_text,
+        render_validation_text,
+        validate_remote_readiness,
+        validate_telemetry_contract,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram telemetry-validate [--json]\n"
+            "  engram telemetry-validate --remote-readiness [--json]\n"
+            "\n"
+            "  --remote-readiness  Pre-deploy checklist (payload/schema/migration\n"
+            "                      sequencing, dashboard wording, opt-in defaults,\n"
+            "                      no content fields). Read-only; performs no remote\n"
+            "                      D1/worker action.\n"
+        )
+        return 0
+
+    worker_dir = Path.cwd() / "worker"
+    if "--remote-readiness" in args:
+        report = validate_remote_readiness(worker_dir)
+        if "--json" in args:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(render_readiness_text(report))
+        return 0 if report.get("ok") else 1
+
+    report = validate_telemetry_contract(worker_dir)
+    if "--json" in args:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_validation_text(report))
+    return 0 if report.get("ok") else 1
+
+
+def _run_release_check(args: list[str]) -> int:
+    """Print a read-only release readiness report (engram release-check).
+
+    Aggregates required-file presence, English-first release notes, publish
+    allowlist, a public-doc private-term scan, and release-evidence completeness.
+    Performs NO build/tag/publish — it only reads the working tree. Exits
+    non-zero when not ready so scripts/CI can gate on it.
+    """
+    from piia_engram.release_readiness import (
+        build_release_readiness,
+        render_release_readiness_text,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print("Usage:\n  engram release-check [--json]\n")
+        return 0
+
+    # Maintainer command: run from the repo root (the working tree to ship).
+    root = Path.cwd()
+    report = build_release_readiness(root)
+    if "--json" in args:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_release_readiness_text(report))
+    return 0 if report.get("ready") else 1
+
+
+def _run_dashboard(args: list[str]) -> int:
+    """Print the non-technical owner control dashboard (engram dashboard).
+
+    Read-only and metadata-only: aggregates recall trust, lifecycle proposals,
+    integrity status, and export/telemetry readiness into one bilingual view.
+    Surfaces proposals + the commands to act on them; performs no destructive
+    action. ``--html`` writes a fully-escaped local HTML page.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+    from piia_engram.integrity import scan_integrity
+    from piia_engram.owner_dashboard import (
+        build_owner_dashboard,
+        render_dashboard_html,
+        render_dashboard_text,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print("Usage:\n  engram dashboard [--json] [--html [PATH]]\n")
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    lessons = eng.get_lessons(limit=None, _update_access=False) or []
+    decisions = eng.get_decisions(limit=None, _update_access=False) or []
+    integrity_report = scan_integrity(root)
+    telemetry_status = {}
+    try:
+        from piia_engram import telemetry as _tel
+        telemetry_status = _tel.get_status()
+    except Exception:
+        telemetry_status = {}
+
+    # Readiness reports — all read-only, metadata-only, computed here so the
+    # dashboard surface stays pure. Each is best-effort and degrades to None.
+    merge_report = None
+    try:
+        merge_report = eng.suggest_merges()
+    except Exception:
+        merge_report = None
+    reconcile_report = None
+    try:
+        from piia_engram.reconcile_proposal import build_reconcile_proposal
+        candidates = eng.collect_memory_candidates()
+        reconcile_report = build_reconcile_proposal(
+            candidates, list(lessons) + list(decisions), source="memory_files",
+        )
+    except Exception:
+        reconcile_report = None
+    version_report = None
+    try:
+        from piia_engram.governance_store import RelationStore
+        from piia_engram.version_chain import build_version_report
+        version_report = build_version_report(RelationStore(root).all_edges())
+    except Exception:
+        version_report = None
+
+    dashboard = build_owner_dashboard(
+        lessons=list(lessons), decisions=list(decisions),
+        integrity_report=integrity_report, telemetry_status=telemetry_status,
+        merge_report=merge_report, reconcile_report=reconcile_report,
+        version_report=version_report,
+    )
+
+    if "--json" in args:
+        print(json.dumps(dashboard, ensure_ascii=False, indent=2))
+        return 0
+    if "--html" in args:
+        idx = args.index("--html")
+        out = args[idx + 1] if idx + 1 < len(args) and not args[idx + 1].startswith("-") else ""
+        dest = Path(out).expanduser().resolve() if out else (root / "reports" / "dashboard.html")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(render_dashboard_html(dashboard), encoding="utf-8")
+        print(f"Wrote dashboard: {dest}")
+        return 0
+    print(render_dashboard_text(dashboard))
+    return 0
+
+
+def _run_integrity(args: list[str]) -> int:
+    """Print a metadata-only integrity scan + self-heal proposals (engram integrity).
+
+    Read-only and proposal-only: checks JSON validity, duplicate ids, store/index
+    drift, governance-ledger chain, and relation/version-chain health, then
+    suggests owner commands to fix any problems. It NEVER repairs, rebuilds, or
+    overwrites anything — acting on a proposal is an explicit owner command.
+    """
+    import os as _os
+    from piia_engram.integrity import (
+        build_self_heal_proposals,
+        render_integrity_text,
+        scan_integrity,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print("Usage:\n  engram integrity [--json]\n")
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    report = scan_integrity(root)
+    proposals = build_self_heal_proposals(report)
+
+    if "--json" in args:
+        print(json.dumps({"report": report, "proposals": proposals},
+                         ensure_ascii=False, indent=2))
+        return 0
+    print(render_integrity_text(report, proposals))
+    # Exit non-zero when problems are found so scripts/CI can detect drift.
+    return 0 if report.get("healthy") else 1
+
+
+def _run_lifecycle(args: list[str]) -> int:
+    """Print a metadata-only memory lifecycle / decay proposal (engram lifecycle).
+
+    Read-only and proposal-only: it scores active lessons + decisions by
+    freshness/access/tier/quality metadata and reports archive/prune *candidates*
+    with reasons. It NEVER archives, prunes, or deletes — acting on a proposal is
+    a separate, explicit, owner-confirmed step. See
+    docs/runbooks/memory-lifecycle.md.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+    from piia_engram.lifecycle import build_lifecycle_proposal, render_lifecycle_text
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram lifecycle [--json]                      Metadata-only decay/archive proposal\n"
+            "  engram lifecycle apply [--id ID ...] [--commit] [--yes] [--json]\n"
+            "                                                 Owner-confirmed soft archive of candidates\n"
+            "                                                 (default = dry-run preview; --commit --yes to apply)\n"
+            "  engram lifecycle restore <id> [--yes] [--json] Undo a lifecycle soft archive\n"
+        )
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+
+    if args and args[0] == "apply":
+        return _run_lifecycle_apply(Engram(root=root), args[1:])
+    if args and args[0] == "restore":
+        return _run_lifecycle_restore(Engram(root=root), args[1:])
+
+    eng = Engram(root=root)
+    lessons = eng.get_lessons(limit=None, _update_access=False) or []
+    decisions = eng.get_decisions(limit=None, _update_access=False) or []
+    report = build_lifecycle_proposal(list(lessons) + list(decisions))
+
+    if "--json" in args:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print(render_lifecycle_text(report))
+    return 0
+
+
+def _run_lifecycle_apply(eng, args: list[str]) -> int:
+    """Owner-confirmed lifecycle archive apply (dry-run by default).
+
+    ``--commit`` opts out of the safe dry-run preview; an actual mutation also
+    requires ``--yes``. Without ``--yes`` a ``--commit`` invocation fails closed
+    (reports ``requires_confirmation`` and changes nothing). ``--id`` (repeatable)
+    narrows the action to a specific candidate subset.
+    """
+    from piia_engram.lifecycle_apply import (
+        apply_lifecycle_archive,
+        render_lifecycle_apply_text,
+    )
+
+    json_output = "--json" in args
+    confirm = "--yes" in args
+    commit = "--commit" in args
+    ids: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"--json", "--yes", "--commit"}:
+            i += 1
+            continue
+        if arg == "--id":
+            if i + 1 >= len(args):
+                print("Missing value for --id")
+                return 2
+            ids.append(args[i + 1])
+            i += 2
+            continue
+        print(f"Unknown lifecycle apply option: {arg}")
+        return 2
+
+    payload = apply_lifecycle_archive(
+        eng,
+        ids=ids or None,
+        confirm=confirm,
+        dry_run=not commit,
+    )
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(render_lifecycle_apply_text(payload))
+    # Fail-closed (confirmation required) is a non-zero exit so scripts notice.
+    return 1 if payload.get("requires_confirmation") else 0
+
+
+def _run_lifecycle_restore(eng, args: list[str]) -> int:
+    """Undo a lifecycle soft archive (owner-confirmed)."""
+    json_output = "--json" in args
+    confirm = "--yes" in args
+    item_id = ""
+    for arg in args:
+        if arg in {"--json", "--yes"}:
+            continue
+        if arg.startswith("--"):
+            print(f"Unknown lifecycle restore option: {arg}")
+            return 2
+        if not item_id:
+            item_id = arg
+    if not item_id:
+        print("Usage: engram lifecycle restore <id> [--yes] [--json]")
+        return 2
+
+    if not confirm:
+        payload = {
+            "schema": 1,
+            "action": "lifecycle_restore",
+            "id": item_id,
+            "requires_confirmation": True,
+            "changed": False,
+            "status": "confirmation_required",
+        }
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"Lifecycle restore for {item_id} requires confirmation - "
+                "re-run with --yes to apply."
+            )
+        return 1
+
+    result = eng.restore_lifecycle_archive(item_id)
+    payload = {
+        "schema": 1,
+        "action": "lifecycle_restore",
+        "id": item_id,
+        "requires_confirmation": False,
+        "changed": bool(result.get("changed")),
+        "status": "restored" if result.get("changed") else (
+            "not_found" if result.get("error") else "noop"
+        ),
+        "from_tier": result.get("from_tier", ""),
+        "to_tier": result.get("to_tier", ""),
+        "error": result.get("error"),
+    }
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"Lifecycle restore {item_id}: {payload['status']} "
+            f"({payload['from_tier'] or 'none'} -> {payload['to_tier'] or 'none'})"
+        )
+    return 0 if result.get("error") is None else 1
+
+
+def _run_merge(args: list[str]) -> int:
+    """Near-duplicate merge proposal + owner-confirmed apply (engram merge).
+
+    ``engram merge`` (no subcommand) prints the metadata-only merge preview
+    (read-only). ``engram merge apply`` previews/applies the same plan via the
+    reversible soft-archive ``merge_knowledge`` primitive: dry-run by default,
+    ``--commit --yes`` to actually fold each secondary into its primary. Never
+    hard-deletes and exposes no agent-facing apply tool.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram merge [--threshold T] [--limit N] [--json]\n"
+            "                                       Metadata-only near-duplicate suggestions\n"
+            "  engram merge apply [--pair PRIMARY:SECONDARY ...] [--threshold T]\n"
+            "                     [--limit N] [--commit] [--yes] [--json]\n"
+            "                                       Owner-confirmed soft-archive merge\n"
+            "                                       (default = dry-run preview; --commit --yes to apply)\n"
+        )
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+
+    if args and args[0] == "apply":
+        return _run_merge_apply(eng, args[1:])
+
+    from piia_engram.merge_apply import apply_merge, render_merge_apply_text
+
+    threshold, limit, _ = _parse_merge_opts(args)
+    payload = apply_merge(eng, threshold=threshold, limit=limit, dry_run=True)
+    if "--json" in args:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print(render_merge_apply_text(payload))
+    print("  run 'engram merge apply --commit --yes' to fold them")
+    return 0
+
+
+def _parse_merge_opts(args: list[str]) -> tuple[float, int, list[tuple[str, str]]]:
+    """Parse shared merge options: --threshold, --limit, --pair PRIMARY:SECONDARY."""
+    threshold = 0.45
+    limit = 10
+    pairs: list[tuple[str, str]] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--threshold" and i + 1 < len(args):
+            try:
+                threshold = float(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+            continue
+        if arg == "--limit" and i + 1 < len(args):
+            try:
+                limit = int(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+            continue
+        if arg == "--pair" and i + 1 < len(args):
+            raw = args[i + 1]
+            if ":" in raw:
+                p, s = raw.split(":", 1)
+                if p and s:
+                    pairs.append((p, s))
+            i += 2
+            continue
+        i += 1
+    return threshold, limit, pairs
+
+
+def _run_merge_apply(eng, args: list[str]) -> int:
+    """Owner-confirmed near-duplicate merge apply (dry-run by default)."""
+    from piia_engram.merge_apply import apply_merge, render_merge_apply_text
+
+    json_output = "--json" in args
+    confirm = "--yes" in args
+    commit = "--commit" in args
+    threshold, limit, pairs = _parse_merge_opts(args)
+
+    payload = apply_merge(
+        eng,
+        pairs=pairs or None,
+        threshold=threshold,
+        limit=limit,
+        confirm=confirm,
+        dry_run=not commit,
+    )
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(render_merge_apply_text(payload))
+    return 1 if payload.get("requires_confirmation") else 0
+
+
+def _run_reconcile(args: list[str]) -> int:
+    """Reconcile proposal + owner-confirmed import-only apply (engram reconcile).
+
+    ``engram reconcile`` (no subcommand) scans external AI memory files and
+    prints a metadata-only classification (import / duplicate / conflict / skip),
+    importing nothing. ``engram reconcile apply`` imports ONLY the novel
+    (``import``) candidates via the existing write API: dry-run by default,
+    ``--commit --yes`` to actually import. Duplicates and conflicts are never
+    applied (conflict resolution is deferred); no agent-facing tool is exposed.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+    from piia_engram.reconcile_apply import (
+        apply_reconcile,
+        preview_reconcile_conflicts,
+        render_reconcile_conflicts_text,
+        render_reconcile_apply_text,
+    )
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram reconcile [--json]                 Metadata-only import proposal\n"
+            "  engram reconcile conflicts [--json]       Metadata-only conflict preview\n"
+            "  engram reconcile apply [--commit] [--yes] [--json]\n"
+            "                                            Owner-confirmed import-only apply\n"
+            "                                            (default = dry-run preview; --commit --yes to import)\n"
+        )
+        return 0
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    candidates = eng.collect_memory_candidates()
+
+    json_output = "--json" in args
+    apply = bool(args) and args[0] == "apply"
+    conflicts = bool(args) and args[0] == "conflicts"
+    confirm = "--yes" in args
+    commit = apply and "--commit" in args
+
+    if conflicts:
+        payload = preview_reconcile_conflicts(
+            eng, candidates,
+            source="memory_files",
+        )
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(render_reconcile_conflicts_text(payload))
+        return 0
+
+    payload = apply_reconcile(
+        eng, candidates,
+        source="memory_files",
+        confirm=confirm,
+        dry_run=not commit,
+    )
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(render_reconcile_apply_text(payload))
+    return 1 if payload.get("requires_confirmation") else 0
+
+
+def _governance_root():
+    from piia_engram.core import Engram
+    return Engram().root
+
+
+def run_grants(root) -> int:
+    """List agent trust grants + revocations (engram grants)."""
+    from piia_engram.governance_store import GrantStore
+    data = GrantStore(root).list_grants()
+    print("Agent grants (explicit):")
+    if data["grants"]:
+        for a, lvl in sorted(data["grants"].items()):
+            print(f"  {a}: {lvl}")
+    else:
+        print("  (none — agents are auto-classified by default)")
+    print("Revoked:")
+    if data["revoked"]:
+        for a in sorted(data["revoked"]):
+            print(f"  {a}")
+    else:
+        print("  (none)")
+    return 0
+
+
+def run_trust(root, agent: str, level: str) -> int:
+    """Grant an agent a trust level (engram trust <agent> <level>)."""
+    from piia_engram.governance_store import GrantStore
+    try:
+        GrantStore(root).set_grant(agent, level)
+    except ValueError as exc:
+        print(f"[error] {exc}")
+        return 2
+    print(f"[ok] {agent} → {level}")
+    return 0
+
+
+def run_revoke(root, agent: str) -> int:
+    """Revoke an agent (engram revoke <agent>)."""
+    from piia_engram.governance_store import GrantStore
+    GrantStore(root).revoke(agent)
+    print(f"[ok] revoked {agent}.")
+    print("     Note: stops FUTURE disclosure only — cannot recall context "
+          "already sent to an AI tool.")
+    return 0
+
+
+def run_audit(root, limit: int = 20) -> int:
+    """Show recent disclosure receipts + ledger integrity (engram audit)."""
+    from piia_engram.governance import GovernanceLedger, default_ledger_path
+    led = GovernanceLedger(default_ledger_path(root))
+    # Codex round-5 P2: verify() FIRST. records() does an unguarded json.loads
+    # per line, so on a corrupt ledger it would raise and traceback. verify()
+    # reports the break gracefully, so we bail before ever touching records().
+    ok, msg = led.verify()
+    if not ok:
+        print(f"ledger integrity: BROKEN — {msg}")
+        return 1
+    recs = led.records()
+    if not recs:
+        print("(no disclosures recorded yet)")
+        return 0
+    for r in recs[-limit:]:
+        ev = r.get("event", {})
+        print(f"  #{r.get('seq')} {r.get('ts')}  {ev.get('agent_id', '?')} "
+              f"[{ev.get('trust_level', '?')}] returned={ev.get('returned_count', '?')} "
+              f"excluded_sensitivity={ev.get('excluded_by_sensitivity', '?')}")
+    print("ledger integrity: OK")
+    return 0
+
+
+def run_verify_ledger(root) -> int:
+    """Verify the governance ledger hash chain (engram verify-ledger)."""
+    from piia_engram.governance import GovernanceLedger, default_ledger_path
+    ok, msg = GovernanceLedger(default_ledger_path(root)).verify()
+    print(f"[{'ok' if ok else 'FAIL'}] governance ledger: {msg}")
+    return 0 if ok else 1
+
+
+def _print_status_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram status [--no-probe]\n"
+        "  engram status --html [--output PATH] [--no-probe]\n"
+    )
+
+
+def run_status(argv: list[str] | None = None) -> int:
+    """Print a redacted first-run health summary."""
+    from piia_engram.status_report import build_status, render_status_text, write_status_html
+
+    args = list(argv or [])
+    html_output = False
+    no_probe = False
+    output: Path | None = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"-h", "--help"}:
+            _print_status_usage()
+            return 0
+        if arg == "--html":
+            html_output = True
+        elif arg == "--no-probe":
+            no_probe = True
+        elif arg == "--output":
+            if i + 1 >= len(args):
+                print("Missing value for --output")
+                _print_status_usage()
+                return 2
+            output = Path(args[i + 1]).expanduser()
+            i += 1
+        else:
+            print(f"Unknown status option: {arg}")
+            _print_status_usage()
+            return 2
+        i += 1
+
+    if output is not None and not html_output:
+        print("--output only applies with --html")
+        _print_status_usage()
+        return 2
+    status = build_status(probe=not no_probe)
+    if html_output:
+        path = write_status_html(status, output)
+        print(f"Engram status HTML written to: {path}")
+    else:
+        print(render_status_text(status), end="")
+    return 0
+
+
+def _print_continuity_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram continuity [--project PATH] [--limit N]\n"
+        "  engram continuity --json [--project PATH] [--limit N]\n"
+    )
+
+
+def run_continuity(argv: list[str] | None = None) -> int:
+    """Print a metadata-only cross-tool continuity proof."""
+    from piia_engram.continuity_report import (
+        build_continuity_report,
+        render_continuity_text,
+    )
+    from piia_engram.core import Engram
+
+    args = list(argv or [])
+    project_folder = os.getcwd()
+    limit = 500
+    json_output = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"-h", "--help"}:
+            _print_continuity_usage()
+            return 0
+        if arg == "--json":
+            json_output = True
+        elif arg == "--project":
+            if i + 1 >= len(args):
+                print("Missing value for --project")
+                _print_continuity_usage()
+                return 2
+            project_folder = args[i + 1]
+            i += 1
+        elif arg == "--limit":
+            if i + 1 >= len(args):
+                print("Missing value for --limit")
+                _print_continuity_usage()
+                return 2
+            try:
+                limit = int(args[i + 1])
+            except ValueError:
+                print("--limit must be an integer")
+                return 2
+            i += 1
+        else:
+            print(f"Unknown continuity option: {arg}")
+            _print_continuity_usage()
+            return 2
+        i += 1
+
+    report = build_continuity_report(
+        Engram(),
+        project_folder=project_folder,
+        session_limit=limit,
+    )
+    if json_output:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_continuity_text(report), end="")
+    return 0
+
+
+def _print_management_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram management [--project PATH] [--review-limit N] [--playbook-limit N]\n"
+        "                    [--review-kind all|lesson|decision] [--quality all|low|ok|missing]\n"
+        "                    [--playbook-state all|active|archived|deleted|staging] [--scope all|global|project|shared]\n"
+        "  engram management --json [same options]\n"
+        "  engram management action review approve|archive <id> [--yes] [--json]\n"
+        "  engram management action playbook archive|delete|restore <id> [--yes] [--json]\n"
+        "  engram management action playbook_scope accept_global|accept_project|accept_shared|skip <id> [--project PATH] [--yes] [--json]\n"
+    )
+
+
+def _run_management_action_cli(args: list[str]) -> int:
+    from piia_engram.core import Engram
+    from piia_engram.management_actions import (
+        render_management_action_text,
+        run_management_action,
+    )
+
+    if len(args) < 4:
+        _print_management_usage()
+        return 2
+    target, action, item_id = args[1], args[2], args[3]
+    tail = args[4:]
+    json_output = "--json" in tail
+    confirm = "--yes" in tail
+    project_folder = ""
+    project_folders: list[str] = []
+    reason = ""
+    i = 0
+    while i < len(tail):
+        arg = tail[i]
+        if arg in {"--json", "--yes"}:
+            i += 1
+            continue
+        if arg == "--reason":
+            if i + 1 >= len(tail):
+                print("Missing value for --reason")
+                _print_management_usage()
+                return 2
+            reason = tail[i + 1]
+            i += 2
+            continue
+        if arg == "--project":
+            if i + 1 >= len(tail):
+                print("Missing value for --project")
+                _print_management_usage()
+                return 2
+            project_folder = tail[i + 1]
+            project_folders.append(project_folder)
+            i += 2
+            continue
+        print(f"Unknown management action option: {arg}")
+        _print_management_usage()
+        return 2
+
+    result = run_management_action(
+        Engram(),
+        target=target,
+        action=action,
+        item_id=item_id,
+        confirm=confirm,
+        project_folder=project_folder,
+        project_folders=project_folders,
+        reason=reason,
+    )
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(render_management_action_text(result), end="")
+    return 0 if result.get("error") is None else 1
+
+
+def run_management(argv: list[str] | None = None) -> int:
+    """Print a metadata-only management projection for GUI consumers."""
+    from piia_engram.core import Engram
+    from piia_engram.management_view import (
+        build_management_view,
+        render_management_text,
+    )
+
+    args = list(argv or [])
+    if args and args[0] == "action":
+        return _run_management_action_cli(args)
+    project_folder = os.getcwd()
+    review_limit = 50
+    playbook_limit = 50
+    json_output = False
+    review_kind = "all"
+    quality_status = "all"
+    playbook_state = "all"
+    scope_type = "all"
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"-h", "--help"}:
+            _print_management_usage()
+            return 0
+        if arg == "--json":
+            json_output = True
+        elif arg == "--project":
+            if i + 1 >= len(args):
+                print("Missing value for --project")
+                _print_management_usage()
+                return 2
+            project_folder = args[i + 1]
+            i += 1
+        elif arg == "--review-limit":
+            if i + 1 >= len(args):
+                print("Missing value for --review-limit")
+                _print_management_usage()
+                return 2
+            try:
+                review_limit = int(args[i + 1])
+            except ValueError:
+                print("--review-limit must be an integer")
+                return 2
+            i += 1
+        elif arg == "--playbook-limit":
+            if i + 1 >= len(args):
+                print("Missing value for --playbook-limit")
+                _print_management_usage()
+                return 2
+            try:
+                playbook_limit = int(args[i + 1])
+            except ValueError:
+                print("--playbook-limit must be an integer")
+                return 2
+            i += 1
+        elif arg == "--review-kind":
+            if i + 1 >= len(args):
+                print("Missing value for --review-kind")
+                _print_management_usage()
+                return 2
+            review_kind = args[i + 1]
+            i += 1
+        elif arg == "--quality":
+            if i + 1 >= len(args):
+                print("Missing value for --quality")
+                _print_management_usage()
+                return 2
+            quality_status = args[i + 1]
+            i += 1
+        elif arg == "--playbook-state":
+            if i + 1 >= len(args):
+                print("Missing value for --playbook-state")
+                _print_management_usage()
+                return 2
+            playbook_state = args[i + 1]
+            i += 1
+        elif arg == "--scope":
+            if i + 1 >= len(args):
+                print("Missing value for --scope")
+                _print_management_usage()
+                return 2
+            scope_type = args[i + 1]
+            i += 1
+        else:
+            print(f"Unknown management option: {arg}")
+            _print_management_usage()
+            return 2
+        i += 1
+
+    view = build_management_view(
+        Engram(),
+        project_folder=project_folder,
+        review_limit=review_limit,
+        playbook_limit=playbook_limit,
+        review_kind=review_kind,
+        quality_status=quality_status,
+        playbook_state=playbook_state,
+        scope_type=scope_type,
+    )
+    if json_output:
+        print(json.dumps(view, ensure_ascii=False, indent=2))
+    else:
+        print(render_management_text(view), end="")
+    return 0
+
