@@ -40,18 +40,21 @@ def test_derive_matches_known_split(counter):
 
 def test_total_matches_independent_ast_count(counter):
     """Cross-check total against an independent AST walk (no shared helper)."""
-    tree = ast.parse((ROOT / "scripts").parent.joinpath(
-        "src", "piia_engram", "mcp_server.py").read_text(encoding="utf-8"))
-    independent = sum(
-        1 for n in ast.walk(tree)
-        if isinstance(n, ast.AsyncFunctionDef)
-        and any(
-            isinstance(d, ast.Call)
-            and isinstance(d.func, ast.Attribute)
-            and d.func.attr == "tool"
-            for d in n.decorator_list
+    pkg = ROOT / "src" / "piia_engram"
+    files = [pkg / "mcp_server.py", *sorted(pkg.glob("mcp_tools_*.py"))]
+    independent = 0
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        independent += sum(
+            1 for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef)
+            and any(
+                isinstance(d, ast.Call)
+                and isinstance(d.func, ast.Attribute)
+                and d.func.attr == "tool"
+                for d in n.decorator_list
+            )
         )
-    )
     assert counter.derive(ROOT)["total"] == independent
 
 

@@ -24,18 +24,21 @@ def _read(path: str) -> str:
 
 
 def _mcp_tool_names() -> set[str]:
-    tree = ast.parse(_read("src/piia_engram/mcp_server.py"))
+    pkg = ROOT / "src" / "piia_engram"
+    files = [pkg / "mcp_server.py", *sorted(pkg.glob("mcp_tools_*.py"))]
     names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.AsyncFunctionDef):
-            continue
-        for dec in node.decorator_list:
-            if (
-                isinstance(dec, ast.Call)
-                and isinstance(dec.func, ast.Attribute)
-                and dec.func.attr == "tool"
-            ):
-                names.add(node.name)
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            for dec in node.decorator_list:
+                if (
+                    isinstance(dec, ast.Call)
+                    and isinstance(dec.func, ast.Attribute)
+                    and dec.func.attr == "tool"
+                ):
+                    names.add(node.name)
     return names
 
 
@@ -342,7 +345,8 @@ def test_architecture_does_not_carry_stale_mcp_wrapper_count():
     doc = _read("docs/architecture.md")
 
     assert "81 `@mcp.tool()`" not in doc
-    assert "83 `@mcp.tool()`" in doc
+    assert "83 `@mcp.tool()`" not in doc
+    assert "87 `@mcp.tool()`" in doc
 
 
 def test_agent_client_validation_runbook_is_purpose_first():

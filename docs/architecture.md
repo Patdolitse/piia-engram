@@ -42,7 +42,7 @@ It complements the user-facing [README](../README.md) (which answers *"what does
 
 Three layers:
 
-1. **Transport** (`mcp_server.py`) — thin async wrappers; one per MCP tool. Validates input, calls one method, returns a string.
+1. **Transport** (`mcp_server.py` + `mcp_tools_*.py`) — thin async wrappers; one per MCP tool. Validates input, calls one method, returns a string.
 2. **Domain** (`Engram` class + mixins) — the data model and the rules over it. No I/O of its own beyond the `_read_json` / `_write_json` primitives in `storage.py`.
 3. **Storage** — flat JSON files under `~/.engram/`. Atomic writes via temp-file + rename, cross-process locks via `portalocker`.
 
@@ -79,10 +79,11 @@ After the v3.14.1 refactor and v3.16.0 reports split, the package is split into 
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1476 | FastMCP server: 83 `@mcp.tool()` async wrappers, stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration |
+| [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1400 | FastMCP server core: shared state (`_engram`, `_session`), stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration. Re-exports every tool from the `mcp_tools_*` modules |
+| `mcp_tools_read / write / knowledge / admin / session .py` | ~330–1030 each | All 87 `@mcp.tool()` async wrappers, grouped by surface (context/recall queries; memory store + playbooks + tool registry; bulk/merge/lifecycle; permissions/governance/import-export; agent-session context). Each binds back to `mcp_server` via late `S.<name>` lookups so module-level state and monkeypatches resolve there |
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (local log first; remote send and weekly feedback are separate, independent opt-ins, count-only/metadata-only), payload validation, HMAC daily ID, preview/status CLI support |
-| [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~1723 | `engram setup` + `piia-engram doctor` + `engram privacy` + `engram telemetry` CLI — interactive bilingual onboarding with privacy preferences |
+| [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~3050 | `engram setup` wizard + CLI entry — interactive bilingual onboarding with privacy preferences. Subcommand implementations live in [`doctor.py`](../src/piia_engram/doctor.py) (config integrity + functional checks) and [`cli_commands.py`](../src/piia_engram/cli_commands.py) (sessions/review/feedback/dashboard/recall/…), re-exported here |
 | [`audit.py`](../src/piia_engram/audit.py) | ~54 | `AuditLogger` — default-on local audit trail to `~/.engram/audit.log` (opt out with `ENGRAM_AUDIT=0`) |
 | [`stats.py`](../src/piia_engram/stats.py) | ~157 | `piia-engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
 
@@ -254,7 +255,7 @@ Startup reconciliation (`reconcile_memories()` + `reconcile_ai_configs()`) is ba
 | A new external AI tool to reconcile from | `reconcile.py` (`ReconcileMixin._CLAUDE_MEMORY_GLOBS` or `_AI_CONFIG_FILENAMES`) |
 | A new report format / dashboard view | `reports.py` (`ReportsMixin`) |
 | A new identity field | `core.py` (`_ALLOWED_PROFILE_FIELDS` in `storage.py` + new accessor on `Engram`) |
-| A new MCP tool wrapper | `mcp_server.py`. Add to `TIER1_TOOLS` only if it's a 95%-of-sessions tool. |
+| A new MCP tool wrapper | The matching `mcp_tools_*.py` module (reference server state via `S.<name>`). Add to `TIER1_TOOLS` in `mcp_server.py` only if it's a 95%-of-sessions tool. |
 | Migration from another product's format | `compat.py` |
 | A new test for an MCP tool | `tests/test_mcp_tools.py` (follow the existing pattern) |
 

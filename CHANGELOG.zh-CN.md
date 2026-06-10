@@ -15,6 +15,13 @@
   构建索引。重跑 setup 不再静默丢失客户端配置里已启用的 `ENGRAM_SEARCH`。
   hybrid 仍为默认关闭、自愿开启。
 
+### 变更
+- **内部结构重组（API 无变化）**——三个最大的模块按职责拆分以提升可维护性：
+  `core.py` 拆出 `playbooks.py` / `tools_registry.py` / `knowledge_ops.py`
+  mixin；`setup_wizard.py` 拆出 `doctor.py` / `cli_commands.py`；
+  `mcp_server.py` 拆出五个 `mcp_tools_*.py` 模块。所有公开入口、MCP 工具面
+  （87 个工具）与导入路径均保持不变。
+
 ## [3.55.0] - 2026-06-10
 
 ### 新增

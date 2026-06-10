@@ -40,26 +40,32 @@ _ROOT = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 
 
+def _mcp_source_files() -> list[Path]:
+    """mcp_server.py plus the mcp_tools_* modules its tools were split into."""
+    import piia_engram.mcp_server as mcp_server
+
+    base = Path(mcp_server.__file__)
+    return [base, *sorted(base.parent.glob("mcp_tools_*.py"))]
+
+
 def _mcp_tool_function_nodes_from_source() -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
-    """Reflect over the mcp_server source AST for every ``@mcp.tool()`` def.
+    """Reflect over the MCP source AST for every ``@mcp.tool()`` def.
 
     Source-level (not the live registry) so tier filtering — which removes
     non-core tools from ``_tool_manager._tools`` at import — cannot hide a tool
     from the completeness check.
     """
-    import piia_engram.mcp_server as mcp_server
-
-    src = Path(mcp_server.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
     nodes: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-            continue
-        for dec in node.decorator_list:
-            target = dec.func if isinstance(dec, ast.Call) else dec
-            # matches @mcp.tool() and @mcp.tool
-            if isinstance(target, ast.Attribute) and target.attr == "tool":
-                nodes[node.name] = node
+    for path in _mcp_source_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                target = dec.func if isinstance(dec, ast.Call) else dec
+                # matches @mcp.tool() / @mcp.tool / @S.mcp.tool()
+                if isinstance(target, ast.Attribute) and target.attr == "tool":
+                    nodes[node.name] = node
     return nodes
 
 
@@ -295,24 +301,25 @@ def _read_tools() -> list[str]:
 
 
 def _read_tools_that_call_track() -> list[str]:
-    import piia_engram.mcp_server as mcp_server
-
-    src = Path(mcp_server.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
     out: list[str] = []
     read_tools = set(_read_tools())
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-            continue
-        if node.name not in read_tools:
-            continue
-        if any(
-            isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Name)
-            and child.func.id == "_track"
-            for child in ast.walk(node)
-        ):
-            out.append(node.name)
+    for path in _mcp_source_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            if node.name not in read_tools:
+                continue
+            # matches both _track(...) and S._track(...)
+            if any(
+                isinstance(child, ast.Call)
+                and (
+                    (isinstance(child.func, ast.Name) and child.func.id == "_track")
+                    or (isinstance(child.func, ast.Attribute) and child.func.attr == "_track")
+                )
+                for child in ast.walk(node)
+            ):
+                out.append(node.name)
     return sorted(out)
 
 

@@ -4,7 +4,8 @@ The public-fact manifest (``docs/public-facts.json``) claims a tool split of
 ``mcp_tools_total`` / ``mcp_tools_core`` / ``mcp_tools_advanced``. Those numbers
 must be reproducible from a single command so the manifest never drifts from the
 code. This script is that command: it parses ``src/piia_engram/mcp_server.py``
-with the standard library ``ast`` module (no package import, no side effects):
+plus its ``mcp_tools_*.py`` sibling modules with the standard library ``ast``
+module (no package import, no side effects):
 
 - total   = number of ``@mcp.tool()``-decorated ``async def`` wrappers
             (equals what ``ENGRAM_TOOLS=all`` registers)
@@ -31,7 +32,14 @@ import sys
 from pathlib import Path
 
 MCP_SERVER_REL = "src/piia_engram/mcp_server.py"
+# Tool implementations are split across mcp_server.py + mcp_tools_*.py siblings.
+MCP_TOOLS_GLOB = "mcp_tools_*.py"
 TIER1_NAME = "TIER1_TOOLS"
+
+
+def _tool_source_files(root: Path) -> list[Path]:
+    base = root / MCP_SERVER_REL
+    return [base, *sorted(base.parent.glob(MCP_TOOLS_GLOB))]
 
 
 def _is_mcp_tool_decorator(node: ast.AST) -> bool:
@@ -82,9 +90,13 @@ def derive(root: Path) -> dict[str, int]:
     path = root / MCP_SERVER_REL
     if not path.is_file():
         raise SystemExit(f"[error] not found: {path}")
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    total = count_total(tree)
-    core = count_core(tree)
+    total = 0
+    core = None
+    for src in _tool_source_files(root):
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+        total += count_total(tree)
+        if core is None:
+            core = count_core(tree)
     if core is None:
         raise SystemExit(f"[error] {TIER1_NAME} frozenset literal not found in {path}")
     return {"total": total, "core": core, "advanced": total - core}

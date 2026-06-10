@@ -305,19 +305,21 @@ def test_readme_documents_tool_tiering():
 
 def test_mcp_tool_count_and_merge_tool():
     """MCP server 应暴露完整工具集合，包含 v3.30 新增工具。"""
-    tree = ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
     tools = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.AsyncFunctionDef):
-            continue
-        for decorator in node.decorator_list:
-            if (
-                isinstance(decorator, ast.Call)
-                and isinstance(decorator.func, ast.Attribute)
-                and decorator.func.attr == "tool"
-            ):
-                tools.append(node.name)
-                break
+    files = [MCP_SERVER, *sorted(MCP_SERVER.parent.glob("mcp_tools_*.py"))]
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            for decorator in node.decorator_list:
+                if (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr == "tool"
+                ):
+                    tools.append(node.name)
+                    break
     # v3.30 M13: bumped from >=57 to >=65 so any silently-removed tool
     # is caught. The current count is 65 — adding new tools is fine
     # (the assertion is a floor); removing one must be deliberate.

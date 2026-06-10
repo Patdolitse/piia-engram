@@ -291,7 +291,9 @@ def _discover_all_tools() -> set[str]:
     for name, obj in vars(mcp_server).items():
         if not inspect.iscoroutinefunction(obj):
             continue
-        if getattr(obj, "__module__", "") != mcp_server.__name__:
+        module = getattr(obj, "__module__", "")
+        # tools live in mcp_server itself or its mcp_tools_* split modules
+        if module != mcp_server.__name__ and "mcp_tools_" not in module:
             continue
         out.add(name)
     return out

@@ -8,7 +8,8 @@ parameter made required, a tightened type — breaks already-connected clients
 without any local test noticing.
 
 This module derives a canonical, deterministic snapshot of that contract
-straight from ``src/piia_engram/mcp_server.py`` using the standard-library
+straight from ``src/piia_engram/mcp_server.py`` plus its ``mcp_tools_*.py``
+sibling modules using the standard-library
 ``ast`` module (no package import, no side effects — the same approach as
 ``scripts/count_mcp_tools.py``), and provides a drift checker that classifies
 the difference between two snapshots as **breaking** vs **additive** vs
@@ -146,11 +147,13 @@ def build_snapshot(root: Path) -> dict[str, Any]:
     path = root / MCP_SERVER_REL
     if not path.is_file():
         raise SystemExit(f"[error] not found: {path}")
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-    except SyntaxError as exc:  # pragma: no cover - defensive
-        raise SystemExit(f"[error] could not parse {path}: {exc}") from exc
-    tools = extract_tools(tree)
+    tools: dict[str, Any] = {}
+    for src in [path, *sorted(path.parent.glob("mcp_tools_*.py"))]:
+        try:
+            tree = ast.parse(src.read_text(encoding="utf-8"))
+        except SyntaxError as exc:  # pragma: no cover - defensive
+            raise SystemExit(f"[error] could not parse {src}: {exc}") from exc
+        tools.update(extract_tools(tree))
     # Canonical ordering: tools sorted by name (params keep source order, which
     # is the documented call order).
     ordered = {name: tools[name] for name in sorted(tools)}

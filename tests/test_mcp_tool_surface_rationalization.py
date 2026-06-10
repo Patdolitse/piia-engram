@@ -10,12 +10,18 @@ ROOT = Path(__file__).resolve().parent.parent
 MCP_SERVER = ROOT / "src" / "piia_engram" / "mcp_server.py"
 
 
-def _tree() -> ast.Module:
-    return ast.parse(MCP_SERVER.read_text(encoding="utf-8"))
+def _trees() -> list[ast.Module]:
+    files = [MCP_SERVER, *sorted(MCP_SERVER.parent.glob("mcp_tools_*.py"))]
+    return [ast.parse(f.read_text(encoding="utf-8")) for f in files]
+
+
+def _walk_all():
+    for tree in _trees():
+        yield from ast.walk(tree)
 
 
 def _literal_assignment(name: str):
-    for node in ast.walk(_tree()):
+    for node in _walk_all():
         value = None
         if isinstance(node, ast.Assign):
             if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
@@ -38,7 +44,7 @@ def _literal_assignment(name: str):
 
 def _tool_docstrings() -> dict[str, str]:
     docs: dict[str, str] = {}
-    for node in ast.walk(_tree()):
+    for node in _walk_all():
         if not isinstance(node, ast.AsyncFunctionDef):
             continue
         if not any(

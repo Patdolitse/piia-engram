@@ -17,6 +17,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
   previously enabled `ENGRAM_SEARCH` from client configs. Hybrid stays
   opt-in/off by default.
 
+### Changed
+- **Internal restructuring (no API change)** — the three largest modules were
+  split for maintainability: `core.py` into `playbooks.py` /
+  `tools_registry.py` / `knowledge_ops.py` mixins, `setup_wizard.py` into
+  `doctor.py` / `cli_commands.py`, and `mcp_server.py` into five
+  `mcp_tools_*.py` modules. All public entry points, the MCP tool surface
+  (87 tools), and import paths are unchanged.
+
 ## [3.55.0] - 2026-06-10
 
 ### Added
