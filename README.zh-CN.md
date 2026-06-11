@@ -19,6 +19,8 @@ Claude Code、Codex、Cursor、Windsurf 等 MCP 兼容工具可以从同一份�
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![CI](https://github.com/Patdolitse/piia-engram/actions/workflows/ci.yml/badge.svg)](https://github.com/Patdolitse/piia-engram/actions/workflows/ci.yml)
+[![Guard strategic files](https://github.com/Patdolitse/piia-engram/actions/workflows/guard-strategic-files.yml/badge.svg)](https://github.com/Patdolitse/piia-engram/actions/workflows/guard-strategic-files.yml)
 
 **被收录于：**
 [![Official MCP Registry](https://img.shields.io/badge/listed_in-MCP_Registry-green?logo=modelcontextprotocol)](https://registry.modelcontextprotocol.io)
@@ -255,6 +257,16 @@ piia-engram 把可信声明当作发布证据，而不是营销文案：
 | 公开数字不会静默漂移 | `python scripts/check_public_fact_sync.py` 和 `python scripts/check_public_claim_drift.py` | README / registry / architecture 的公开事实与 `docs/public-facts.json` 一致 | CHANGELOG 保留历史版本事实 |
 | 安全与隐私措辞保持一致 | `python scripts/check_public_trust_claims.py` | 网络、telemetry、endpoint、默认明文、可选加密等声明在公开文档中一致 | 文案一致性闸，不等同第三方安全审计 |
 | 发布不能跳过证据 | `python scripts/check_release_gate.py` | 每个版本记录测试、脱敏、allowlist、构建、产物扫描、eval 和复核标记 | evidence 记录为维护者内部文件 |
+
+### 自己验证（5 分钟）
+
+不要只相信上面的表格，可以在自己的机器上运行这些检查：
+
+1. **检查你的设置** — `engram doctor` 会报告检测到的工具、存储健康状态，以及当前能力模式（capability modes）。
+2. **查看 AI 会看到什么** — 记忆透视（preview）命令 `engram preview --as automation` 会渲染调用方将收到的准确上下文（只读，不发送任何内容）。
+3. **控制暴露面** — 设置 `ENGRAM_TOOLS=core`（或组合多个组），再运行 `engram doctor`，确认它报告预期的 core 暴露面。详见 [能力模式（capability modes）](docs/operator-mcp-cheatsheet.md#能力模式)。
+4. **审计你的数据** — 按照 [数据主权审计 runbook](docs/runbooks/data-sovereignty-audit.md)，确认身份与知识数据都在你的 Engram 根目录下，外部写入均为显式且可审计。
+5. **检查声明** — [信任证据](docs/trust-evidence.md) 中的每条信任声明，都映射到你可以在本地运行的确定性检查或检查路径。
 
 ### 验证安装
 

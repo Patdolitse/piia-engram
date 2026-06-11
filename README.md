@@ -19,6 +19,8 @@ Claude Code, Codex, Cursor, Windsurf, and other MCP-compatible tools can start f
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![CI](https://github.com/Patdolitse/piia-engram/actions/workflows/ci.yml/badge.svg)](https://github.com/Patdolitse/piia-engram/actions/workflows/ci.yml)
+[![Guard strategic files](https://github.com/Patdolitse/piia-engram/actions/workflows/guard-strategic-files.yml/badge.svg)](https://github.com/Patdolitse/piia-engram/actions/workflows/guard-strategic-files.yml)
 
 **Listed in:**
 [![Official MCP Registry](https://img.shields.io/badge/listed_in-MCP_Registry-green?logo=modelcontextprotocol)](https://registry.modelcontextprotocol.io)
@@ -279,6 +281,25 @@ piia-engram treats trust claims as release artifacts, not marketing copy:
 | Public numbers do not drift silently | `python scripts/check_public_fact_sync.py` and `python scripts/check_public_claim_drift.py` | README / registry / architecture facts match `docs/public-facts.json` | Historical CHANGELOG keeps old release facts |
 | Security and privacy wording stays consistent | `python scripts/check_public_trust_claims.py` | Network, telemetry, endpoint, plaintext, and optional-encryption statements stay aligned across public docs | Prose consistency guard, not a third-party security audit |
 | Releases cannot skip evidence | `python scripts/check_release_gate.py` | Each release records tests, sanitize, allowlist, package, artifact scan, eval, and review markers | Evidence records are maintainer-internal |
+
+### Verify it yourself (5 minutes)
+
+Don't take the table above on faith — run the checks on your own machine:
+
+1. **Check your setup** — `engram doctor` reports detected tools, store
+   health, and the active capability mode.
+2. **See what AI sees** — `engram preview --as automation` renders the exact
+   context a caller would receive (read-only, nothing sent).
+3. **Control the surface** — set `ENGRAM_TOOLS=core` (or compose groups) and
+   re-run `engram doctor` to confirm it reports the expected core surface.
+   See [capability modes](docs/operator-mcp-cheatsheet.md#capability-modes).
+4. **Audit your data** — follow the
+   [data sovereignty audit runbook](docs/runbooks/data-sovereignty-audit.md)
+   to confirm identity and knowledge data stays under your Engram root, with
+   external writes explicit and audited.
+5. **Check the claims** — each trust claim in
+   [trust evidence](docs/trust-evidence.md) maps to a deterministic check or
+   inspection path you can run locally.
 
 ### Configure for Your AI Tool
 
