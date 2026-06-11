@@ -238,6 +238,7 @@ Check health anytime:
 ```bash
 engram status        # redacted install + memory health summary
 engram status --html # write a local redacted status page
+engram preview --as automation  # see exactly what a given AI caller would receive (read-only)
 engram continuity    # metadata-only proof that cross-tool handoff is ready
 engram management    # metadata-only review/playbook management view
 engram doctor        # diagnose all tools
@@ -848,6 +849,7 @@ engram setup --apply-external-config  # Skip the confirm prompt (non-interactive
 piia-engram doctor           # Check config health (all AI tools)
 piia-engram status           # Redacted install + memory health summary
 piia-engram status --html    # Write a local redacted status page
+piia-engram preview          # Show what a simulated AI caller would receive (--as ROLE, --level, --html)
 piia-engram continuity       # Prove cross-tool handoff readiness (metadata only)
 piia-engram management       # Show a metadata-only review/playbook management view
 piia-engram doctor --fix     # Auto-repair any issues found

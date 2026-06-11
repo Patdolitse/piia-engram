@@ -2252,6 +2252,113 @@ def run_status(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _print_preview_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram preview [--level quick|standard|full] [--as ROLE]\n"
+        "                 [--project NAME] [--query TEXT] [--json]\n"
+        "  engram preview --html [--output PATH] [...same options]\n"
+        "\n"
+        "Roles: owner | assistant | reviewer | automation\n"
+        "Shows exactly what a simulated AI caller would receive (exposed vs\n"
+        "withheld, redaction + budget effects). Read-only; nothing is sent.\n"
+    )
+
+
+def run_preview(argv: list[str] | None = None) -> int:
+    """Show what a simulated AI caller would receive (engram preview).
+
+    Local + owner-run (CLI = ``private-self``): composes the same governed
+    paths the real injection uses (``resolve_effective_profile`` for the
+    caller ceiling, ``gather_recall`` for the payload, ``build_safe_context``
+    for redaction + budget) and renders an owner-facing exposed/withheld
+    report. Read-only by construction — it adds no new agent-facing surface
+    and never widens what governance already allows.
+    """
+    from piia_engram.context_preview import (
+        DEFAULT_LEVEL,
+        DEFAULT_ROLE,
+        build_context_preview,
+        render_context_preview_text,
+        write_context_preview_html,
+    )
+    from piia_engram.core import Engram
+
+    args = list(argv or [])
+    level = DEFAULT_LEVEL
+    role = DEFAULT_ROLE
+    project = ""
+    query = ""
+    json_output = False
+    html_output = False
+    output: Path | None = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in {"-h", "--help"}:
+            _print_preview_usage()
+            return 0
+        if arg == "--json":
+            json_output = True
+        elif arg == "--html":
+            html_output = True
+        elif arg in {"--level", "--as", "--project", "--query", "--output"}:
+            if i + 1 >= len(args):
+                print(f"Missing value for {arg}")
+                _print_preview_usage()
+                return 2
+            value = args[i + 1]
+            if arg == "--level":
+                level = value
+            elif arg == "--as":
+                role = value
+            elif arg == "--project":
+                project = value
+            elif arg == "--query":
+                query = value
+            else:
+                output = Path(value).expanduser()
+            i += 1
+        else:
+            print(f"Unknown preview option: {arg}")
+            _print_preview_usage()
+            return 2
+        i += 1
+
+    if output is not None and not html_output:
+        print("--output only applies with --html")
+        _print_preview_usage()
+        return 2
+    if json_output and html_output:
+        print("--json and --html are mutually exclusive")
+        _print_preview_usage()
+        return 2
+
+    root = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    try:
+        preview = build_context_preview(
+            eng,
+            level=level,
+            role=role,
+            project_folder=project,
+            query=query,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        _print_preview_usage()
+        return 2
+
+    if json_output:
+        print(json.dumps(preview, ensure_ascii=False, indent=2))
+    elif html_output:
+        path = write_context_preview_html(preview, root, output)
+        print(f"Engram context preview HTML written to: {path}")
+    else:
+        print(render_context_preview_text(preview), end="")
+    return 0
+
+
 def _print_continuity_usage() -> None:
     print(
         "Usage:\n"

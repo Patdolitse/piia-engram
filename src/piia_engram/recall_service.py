@@ -101,6 +101,100 @@ def gather_recall(
     empty slice, so the digest is always producible. Returns the standard
     Recall Surface v1 payload plus a ``meta.collapsed_versions`` count.
     """
+    sources = gather_recall_sources(
+        eng,
+        project_folder=project_folder,
+        query=query,
+        limit=limit,
+        collapse_versions=collapse_versions,
+    )
+    identity = sources["identity"]
+    recent_activity = sources["recent_activity"]
+    relevant = sources["relevant"]
+    query_knowledge = sources["query_knowledge"]
+    collapsed_count = sources["collapsed_count"]
+    heads_present = sources["heads_present"]
+
+    # --- optional role-scoped memory ------------------------------------
+    role_scope_meta: dict[str, Any] = {"enabled": False}
+    if (
+        role_scoped_memory
+        and getattr(eng, "root", None) is not None
+        and _gov_rt.governance_enabled()
+    ):
+        before = len(relevant) + len(query_knowledge)
+        buckets = _gov_rt.maybe_govern_buckets(
+            eng.root,
+            {"project_relevant": relevant, "query": query_knowledge},
+            tool="get_recall",
+            declared_task=query,
+        )
+        relevant = buckets.get("project_relevant", relevant)
+        query_knowledge = buckets.get("query", query_knowledge)
+        after = len(relevant) + len(query_knowledge)
+        perms = _gov_rt.describe_caller_permissions(eng.root)
+        role_scope_meta = {
+            "enabled": _gov_rt.governance_enabled(),
+            "filtered": max(0, before - after),
+            "max_sensitivity": perms.get("max_sensitivity"),
+            "staging_excluded": (
+                perms.get("permission_profile_vnext", {}).get("staging_excluded")
+                if isinstance(perms.get("permission_profile_vnext"), dict)
+                else False
+            ),
+        }
+
+    governance = None
+    if hasattr(eng, "root"):
+        governance = {"trust_level": "private-self"}  # CLI runs as the owner
+
+    payload = _recall.build_recall_payload(
+        identity=identity,
+        recent_activity=recent_activity,
+        relevant_knowledge=relevant,
+        query_knowledge=query_knowledge,
+        project=project_folder,
+        query=query,
+        token_budget=token_budget,
+        include_freshness=include_freshness,
+        governance=governance,
+        now=now,
+    )
+    payload["meta"]["collapsed_versions"] = collapsed_count
+    payload["meta"]["version_chain"] = {
+        "collapsed": collapsed_count,
+        "heads_present": heads_present,
+    }
+    usage = payload["meta"].setdefault("context_usage", {})
+    if isinstance(usage, dict):
+        usage["version_chain"] = {
+            "collapsed": collapsed_count,
+            "heads_present": heads_present,
+        }
+        usage["role_scope"] = role_scope_meta
+    return payload
+
+
+def gather_recall_sources(
+    eng: Any,
+    *,
+    project_folder: str = "",
+    query: str = "",
+    limit: int = 8,
+    collapse_versions: bool = True,
+) -> dict[str, Any]:
+    """Fetch phase of recall: identity slice, recent activity, raw knowledge.
+
+    This is the single read path shared by :func:`gather_recall` (which
+    projects + budgets the result into the Recall Surface v1 payload) and
+    :mod:`context_preview` (which needs the *raw* items so per-item
+    ``sensitivity``/``tier`` survive for the exposed/withheld split).
+
+    All sub-fetches are guarded exactly like ``gather_recall``: a missing or
+    raising method yields an empty slice. Returns a dict with ``identity``,
+    ``recent_activity``, ``relevant``, ``query_knowledge`` (both raw,
+    post-version-collapse), ``collapsed_count`` and ``heads_present``.
+    """
     # --- identity -------------------------------------------------------
     profile: dict[str, Any] | None = None
     getter = getattr(eng, "get_safe_profile", None) or getattr(eng, "get_profile", None)
@@ -161,64 +255,14 @@ def gather_recall(
                 if isinstance(item, dict) and item.get("id") in heads
             )
 
-    # --- optional role-scoped memory ------------------------------------
-    role_scope_meta: dict[str, Any] = {"enabled": False}
-    if (
-        role_scoped_memory
-        and getattr(eng, "root", None) is not None
-        and _gov_rt.governance_enabled()
-    ):
-        before = len(relevant) + len(query_knowledge)
-        buckets = _gov_rt.maybe_govern_buckets(
-            eng.root,
-            {"project_relevant": relevant, "query": query_knowledge},
-            tool="get_recall",
-            declared_task=query,
-        )
-        relevant = buckets.get("project_relevant", relevant)
-        query_knowledge = buckets.get("query", query_knowledge)
-        after = len(relevant) + len(query_knowledge)
-        perms = _gov_rt.describe_caller_permissions(eng.root)
-        role_scope_meta = {
-            "enabled": _gov_rt.governance_enabled(),
-            "filtered": max(0, before - after),
-            "max_sensitivity": perms.get("max_sensitivity"),
-            "staging_excluded": (
-                perms.get("permission_profile_vnext", {}).get("staging_excluded")
-                if isinstance(perms.get("permission_profile_vnext"), dict)
-                else False
-            ),
-        }
-
-    governance = None
-    if hasattr(eng, "root"):
-        governance = {"trust_level": "private-self"}  # CLI runs as the owner
-
-    payload = _recall.build_recall_payload(
-        identity=identity,
-        recent_activity=recent_activity,
-        relevant_knowledge=relevant,
-        query_knowledge=query_knowledge,
-        project=project_folder,
-        query=query,
-        token_budget=token_budget,
-        include_freshness=include_freshness,
-        governance=governance,
-        now=now,
-    )
-    payload["meta"]["collapsed_versions"] = collapsed_count
-    payload["meta"]["version_chain"] = {
-        "collapsed": collapsed_count,
+    return {
+        "identity": identity,
+        "recent_activity": recent_activity,
+        "relevant": relevant,
+        "query_knowledge": query_knowledge,
+        "collapsed_count": collapsed_count,
         "heads_present": heads_present,
     }
-    usage = payload["meta"].setdefault("context_usage", {})
-    if isinstance(usage, dict):
-        usage["version_chain"] = {
-            "collapsed": collapsed_count,
-            "heads_present": heads_present,
-        }
-        usage["role_scope"] = role_scope_meta
-    return payload
 
 
 def _load_relation_edges(eng: Any) -> list[dict]:

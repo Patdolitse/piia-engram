@@ -2884,6 +2884,8 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     run_verify_ledger,
     _print_status_usage,
     run_status,
+    _print_preview_usage,
+    run_preview,
     _print_continuity_usage,
     run_continuity,
     _print_management_usage,
@@ -2922,6 +2924,8 @@ def main() -> None:
         sys.exit(run_playbook(args[1:]))
     elif args[0] == "status":
         sys.exit(run_status(args[1:]))
+    elif args[0] == "preview":
+        sys.exit(run_preview(args[1:]))
     elif args[0] == "continuity":
         sys.exit(run_continuity(args[1:]))
     elif args[0] == "management":
@@ -2999,6 +3003,7 @@ def main() -> None:
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram status           Show a redacted install + memory health summary\n"
             "  engram status --html    Write a local redacted status page\n"
+            "  engram preview          Show what a simulated AI caller would receive (--as/--level/--html)\n"
             "  engram continuity       Prove cross-tool handoff readiness (metadata only)\n"
             "  engram management       Show a metadata-only review/playbook management view\n"
             "  engram sessions         List saved cross-tool agent sessions\n"

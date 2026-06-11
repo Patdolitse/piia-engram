@@ -218,6 +218,7 @@ engram setup
 ```bash
 engram status        # 脱敏安装与记忆健康摘要
 engram status --html # 写出本地脱敏状态页
+engram preview --as automation  # 看某类 AI 调用方此刻会拿到什么（只读，不发送）
 engram continuity    # 仅用元数据证明跨工具接续已就绪
 engram management    # 脱敏的审查 / Playbook 管理视图
 engram doctor        # 诊断所有工具
@@ -810,6 +811,7 @@ engram setup --apply-external-config  # 自动配置 AI 客户端 MCP 文件并�
 piia-engram doctor           # 检查配置健康状态（已配置的 AI 工具）
 piia-engram status           # 脱敏安装与记忆健康摘要
 piia-engram status --html    # 写出本地脱敏状态页
+piia-engram preview          # 模拟某个 AI 调用方会收到的上下文（--as 角色, --level, --html）
 piia-engram continuity       # 仅用元数据证明跨工具接续已就绪
 piia-engram management       # 输出脱敏的审查 / Playbook 管理视图
 piia-engram doctor --fix     # 自动修复所有问题
