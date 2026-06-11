@@ -28,6 +28,8 @@ than a broad claim that sounds impressive.
 | Security/privacy wording should stay consistent | `scripts/check_public_trust_claims.py` | `python scripts/check_public_trust_claims.py` | This catches contradictory public prose. It is not a security audit. |
 | Memory retrieval quality has a deterministic regression floor | [docs/benchmarks/memory-eval-suite-v1.md](benchmarks/memory-eval-suite-v1.md), `scripts/run_memory_evals.py` | `python scripts/run_memory_evals.py --json` | This is a synthetic regression suite, not a live-agent benchmark and not a competitor comparison. |
 | Releases cannot skip evidence | [release evidence index](../release-evidence/README.md), `scripts/check_release_gate.py` | `python scripts/check_release_gate.py` | Evidence files are factual summaries of public-safe release checks, not private review logs. |
+| Release artifacts carry build provenance attestations | [docs/supply-chain.md](supply-chain.md), `.github/workflows/publish.yml` | `gh attestation verify piia_engram-<version>-py3-none-any.whl --repo Patdolitse/piia-engram` | This proves the artifact came from this repository's release workflow for that build. It does not prove vulnerability-free code, vulnerability-free dependencies, a third-party audit, or reproducible builds. |
+| Release artifacts carry SBOM attestations | [docs/supply-chain.md](supply-chain.md), `.github/workflows/publish.yml`, `scripts/check_sbom_hygiene.py` | `gh attestation verify piia_engram-<version>-py3-none-any.whl --repo Patdolitse/piia-engram --predicate-type https://cyclonedx.org/bom` | This proves an SBOM predicate is attached to the artifact. The workflow artifact copy is for inspection and is not a permanent release asset. |
 
 ## Run the checks yourself
 
