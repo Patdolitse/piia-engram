@@ -12,8 +12,9 @@ except ImportError:  # plain-script mode (no package context)
 @S.mcp.tool()
 async def memory_store(
     kind: str,
-    content_json: str,
+    content_json: str = "",
     source_tool: str = "",
+    items_json: str = "",
 ) -> str:
     """统一知识写入入口 — 根据 kind 自动路由到 add_lesson / add_decision / add_playbook。
     Unified knowledge write endpoint — routes to add_lesson / add_decision / add_playbook based on kind.
@@ -27,19 +28,44 @@ async def memory_store(
     tools directly. The advantage here: callers don't need to know Engram's internal taxonomy.
 
     Args:
-        kind: 知识类型 — 'lesson' | 'decision' | 'playbook'。 / Knowledge type.
-        content_json: 知识内容 JSON 字符串。格式因 kind 而异：
+        kind: 知识类型 — 'lesson' | 'decision' | 'playbook'。批量模式下作为各条目的类型（playbook 不支持批量）。 / Knowledge type; in batch mode, the item type for every item (playbook not supported in batch).
+        content_json: 知识内容 JSON 字符串（单条模式必填）。格式因 kind 而异：
             - lesson: {"summary": "...", "detail": "...", "domain": "..."}
             - decision: {"question": "...", "choice": "...", "reasoning": "..."}
             - playbook: {"title": "...", "triggers": "...", "steps_json": "[...]"}
-            Content JSON string. Schema varies by kind (see above).
+            Content JSON string (required in single mode). Schema varies by kind (see above).
         source_tool: 调用来源工具（可选），如 'claude_code', 'cursor'。 / Source tool (optional).
+        items_json: 条目 JSON 数组；给了就走批量写入（一次导入多条 lesson/decision）。 / JSON array of items; when provided, batch-writes multiple lessons/decisions in one call.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="memory_store")
     if refusal is not None:
         S._track("memory_store", success=False)
         return refusal
+
+    kind = kind.strip().lower()
+
+    if items_json:
+        # Batch path (absorbs the former bulk_add_knowledge tool).
+        if kind == "playbook":
+            return "批量模式仅支持 lesson / decision，playbook 请逐条写入"
+        try:
+            items = json.loads(items_json)
+        except json.JSONDecodeError:
+            return S._json({"error": "items_json must be a valid JSON array"})
+        if not isinstance(items, list):
+            return S._json({"error": "items_json must be a JSON array"})
+        # An agent cannot self-certify trust: strip any tier/approval fields
+        # each item smuggled through items_json so the risk-based write gate
+        # stays the sole authority over tier (high-risk items -> staging).
+        for _item in items:
+            S.strip_untrusted_trust_fields(_item)
+        return S._json(S._locked_engram_call(
+            S._engram.bulk_add_knowledge,
+            items,
+            item_type=kind or "lesson",
+            source_tool=source_tool,
+        ))
 
     try:
         content = json.loads(content_json)
@@ -402,16 +428,101 @@ def _inject_usage_policy(item, policy=_PLAYBOOK_USAGE_POLICY):
 
 
 @S.mcp.tool()
-async def get_playbooks(domain: str = "", limit: int = 20, project_folder: str = "") -> str:
-    """列出已保存的操作手册（Playbooks）。 / List saved operational playbooks.
+async def get_playbooks(
+    domain: str = "",
+    limit: int = 20,
+    project_folder: str = "",
+    mode: str = "list",
+    playbook_id: str = "",
+    confirm_cross_project: bool = False,
+    status: str = "all",
+    scope_type: str = "all",
+    include_content: bool = False,
+) -> str:
+    """Playbook 统一读取入口：列表 / 单条 / 最近使用 / 管理视图。 / Unified Playbook reader: list, single item, recently used, or management view.
 
-    用途：查看有哪些已记录的操作流程，可按领域筛选。
-    Purpose: Browse recorded operational procedures, optionally filtered by domain.
+    用途：浏览已记录的操作流程；按 ID 调取单条手册详细步骤；冷启动时浮现最近用过的流程；
+    或查看含归档/删除元数据的管理视图。
+    Purpose: Browse recorded procedures; fetch one playbook's full steps by ID; surface
+    recently used playbooks at session start; or inspect the management view with
+    archived/deleted metadata.
 
     Args:
-        domain: 按领域筛选（可选）。 / Filter by domain (optional).
-        limit: 返回条数上限（默认 20）。 / Maximum items to return (default 20).
+        domain: 按领域筛选（mode=list，可选）。 / Filter by domain (mode=list, optional).
+        limit: 返回条数上限（默认 20；mode=recent 建议传 5，mode=management 建议传 100）。 / Max items (default 20; suggest 5 for recent, 100 for management).
+        project_folder: 项目目录（可选）。 / Project folder (optional).
+        mode: list（列表，默认）| get（单条）| recent（最近使用）| management（管理视图）。 / list (default) | get | recent | management.
+        playbook_id: Playbook ID（mode=get 必填；默认 mode 下传入则自动按 get 处理）。 / Playbook ID (required for mode=get; implies get when passed with default mode).
+        confirm_cross_project: 跨项目读取确认（mode=get）。 / Cross-project read confirmation (mode=get).
+        status: 状态筛选 all/active/archived/deleted（mode=management）。 / Status filter (mode=management).
+        scope_type: 范围筛选 all/global/project（mode=management）。 / Scope filter (mode=management).
+        include_content: 管理视图是否含正文（mode=management）。 / Include full content in management view.
     """
+    # 隐式升级：默认 mode 下给了 playbook_id 就按单条读取处理。
+    if playbook_id and mode == "list":
+        mode = "get"
+    if mode not in ("list", "get", "recent", "management"):
+        return (
+            f"未知 mode: {mode}。可用: list / get / recent / management。 "
+            f"/ Unknown mode: {mode}. Available: list / get / recent / management."
+        )
+    if mode == "get":
+        if not playbook_id:
+            return "mode=get 需要提供 playbook_id。 / mode=get requires playbook_id."
+        try:
+            if project_folder:
+                S._session.detect_project(project_folder)
+            effective_project = project_folder or S._session.project_folder or None
+            result = S._engram.get_playbook(
+                playbook_id,
+                _update_access=S._gov_rt.caller_is_owner(S._engram.root),
+                project_folder=effective_project,
+                confirm_cross_project=confirm_cross_project,
+            )
+            result = S._gov_rt.maybe_govern_one(S._engram.root, result, tool="get_playbooks")
+            S._track("get_playbooks", success=True)
+        except Exception as exc:
+            S._track("get_playbooks", success=False)
+            return f"获取 Playbook 失败: {S._safe_err(exc)}"
+        if result.get("error"):
+            return S._json(result)
+        _inject_usage_policy(result)
+        return S._json(result)
+    if mode == "recent":
+        try:
+            if project_folder:
+                S._session.detect_project(project_folder)
+            effective_project = project_folder or S._session.project_folder or None
+            result = S._engram.get_recent_playbooks(limit=limit, project_folder=effective_project)
+            result = S._gov_rt.maybe_govern_list(
+                S._engram.root, result, tool="get_playbooks"
+            )
+            S._track("get_playbooks", success=True)
+        except Exception as exc:
+            S._track("get_playbooks", success=False)
+            return f"获取近期 Playbook 失败: {S._safe_err(exc)}"
+        if not result:
+            return "尚无最近使用的 Playbook。 / No recently used Playbooks."
+        for item in result:
+            _inject_usage_policy(item)
+        return S._json(result)
+    if mode == "management":
+        try:
+            result = S._engram.list_playbooks_for_management(
+                status=status,
+                project_folder=project_folder or None,
+                scope_type=scope_type,
+                include_content=include_content,
+                limit=limit,
+            )
+            S._track("get_playbooks", success=True)
+        except Exception as exc:
+            S._track("get_playbooks", success=False)
+            return f"List Playbooks for management failed: {S._safe_err(exc)}"
+        result = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, result, tool="get_playbooks"
+        )
+        return S._json(result)
     try:
         if project_folder:
             S._session.detect_project(project_folder)
@@ -434,71 +545,8 @@ async def get_playbooks(domain: str = "", limit: int = 20, project_folder: str =
 
 
 @S.mcp.tool()
-async def get_playbook(
-    playbook_id: str,
-    project_folder: str = "",
-    confirm_cross_project: bool = False,
-) -> str:
-    """获取单条 Playbook 的完整内容。 / Get the full content of a single Playbook by ID.
-
-    用途：根据 ID 调取某条操作手册的详细步骤。
-    Purpose: Retrieve detailed steps for a specific operational playbook by its ID.
-
-    Args:
-        playbook_id: Playbook ID。 / The Playbook ID.
-    """
-    try:
-        if project_folder:
-            S._session.detect_project(project_folder)
-        effective_project = project_folder or S._session.project_folder or None
-        result = S._engram.get_playbook(
-            playbook_id,
-            _update_access=S._gov_rt.caller_is_owner(S._engram.root),
-            project_folder=effective_project,
-            confirm_cross_project=confirm_cross_project,
-        )
-        result = S._gov_rt.maybe_govern_one(S._engram.root, result, tool="get_playbook")
-        S._track("get_playbook", success=True)
-    except Exception as exc:
-        S._track("get_playbook", success=False)
-        return f"获取 Playbook 失败: {S._safe_err(exc)}"
-    if result.get("error"):
-        return S._json(result)
-    _inject_usage_policy(result)
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def get_recent_playbooks(limit: int = 5, project_folder: str = "") -> str:
-    """获取最近使用过的 Playbook（按 last_reviewed 倒序）。 / Get recently used Playbooks sorted by last_reviewed descending.
-
-    用途：冷启动或会话开始时，主动浮现用户最近用过的操作流程，方便快速复用。
-    Purpose: Surface recently used playbooks at session start for quick reuse.
-
-    Args:
-        limit: 返回条数上限（默认 5）。 / Maximum items to return (default 5).
-    """
-    try:
-        if project_folder:
-            S._session.detect_project(project_folder)
-        effective_project = project_folder or S._session.project_folder or None
-        result = S._engram.get_recent_playbooks(limit=limit, project_folder=effective_project)
-        result = S._gov_rt.maybe_govern_list(
-            S._engram.root, result, tool="get_recent_playbooks"
-        )
-        S._track("get_recent_playbooks", success=True)
-    except Exception as exc:
-        S._track("get_recent_playbooks", success=False)
-        return f"获取近期 Playbook 失败: {S._safe_err(exc)}"
-    if not result:
-        return "尚无最近使用的 Playbook。 / No recently used Playbooks."
-    for item in result:
-        _inject_usage_policy(item)
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def update_playbook(
+async def manage_playbook(
+    action: str,
     playbook_id: str,
     title: str = "",
     triggers: str = "",
@@ -511,323 +559,270 @@ async def update_playbook(
     pitfalls: str = "",
     outcome: str = "",
     status: str = "",
-) -> str:
-    """更新已有 Playbook 的字段。 / Update fields on an existing Playbook.
-
-    用途：修正或补充已记录的操作手册内容，如添加新步骤、更新触发词、修改描述等。
-    Purpose: Correct or enrich an existing playbook — add steps, update triggers, fix descriptions, etc.
-
-    只传入需要更新的字段，未传入的字段保持不变。版本号自动递增。
-    Only pass the fields you want to change; omitted fields stay unchanged. Version auto-increments.
-
-    Args:
-        playbook_id: 要更新的 Playbook ID。 / ID of the Playbook to update.
-        title: 新标题（可选）。 / New title (optional).
-        triggers: 新触发词，逗号分隔（可选）。 / New trigger keywords, comma-separated (optional).
-        steps_json: 新步骤 JSON 数组（可选）。 / New steps as a JSON array (optional).
-        required_tools_json: 新工具依赖 JSON 数组（可选），只声明工具名/用途。 / New tool dependencies JSON array (optional); declares names/purposes only.
-        tool_refs: 新简写工具名，逗号分隔（可选）。 / New shorthand tool names, comma-separated (optional).
-        description: 新描述（可选）。 / New description (optional).
-        domain: 新领域（可选）。 / New domain (optional).
-        preconditions: 新前提条件，逗号分隔（可选）。 / New preconditions, comma-separated (optional).
-        pitfalls: 新陷阱，逗号分隔（可选）。 / New pitfalls, comma-separated (optional).
-        outcome: 新预期结果（可选）。 / New expected outcome (optional).
-        status: 新状态，如 active/outdated/staging（可选）。 / New status, e.g., active/outdated/staging (optional).
-    """
-    # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="update_playbook")
-    if refusal is not None:
-        return refusal
-
-    updates: dict = {}
-    if title:
-        updates["title"] = title
-    if triggers:
-        updates["triggers"] = [t.strip() for t in triggers.split(",") if t.strip()]
-    if steps_json:
-        try:
-            steps = json.loads(steps_json)
-            if isinstance(steps, list):
-                updates["steps"] = steps
-        except json.JSONDecodeError:
-            return "steps_json 格式错误，需要有效的 JSON 数组"
-    if required_tools_json:
-        try:
-            required_tools = json.loads(required_tools_json)
-            if not isinstance(required_tools, list):
-                return "required_tools_json 格式错误，需要有效的 JSON 数组"
-            updates["required_tools"] = required_tools
-        except json.JSONDecodeError:
-            return "required_tools_json 格式错误，需要有效的 JSON 数组"
-    if tool_refs:
-        updates["tool_refs"] = [t.strip() for t in re.split(r"[\n,;，、；]+", tool_refs) if t.strip()]
-    if description:
-        updates["description"] = description
-    if domain:
-        updates["domain"] = domain
-    if preconditions:
-        updates["preconditions"] = [p.strip() for p in preconditions.split(",") if p.strip()]
-    if pitfalls:
-        updates["pitfalls"] = [p.strip() for p in pitfalls.split(",") if p.strip()]
-    if outcome:
-        updates["outcome"] = outcome
-    if status:
-        updates["status"] = status
-    if not updates:
-        return "未提供任何更新字段。 / No update fields provided."
-    try:
-        result = S._locked_engram_call(S._engram.update_playbook, playbook_id, updates)
-        S._track("update_playbook", success=True)
-    except Exception as exc:
-        S._track("update_playbook", success=False)
-        return f"更新 Playbook 失败: {S._safe_err(exc)}"
-    if result.get("error"):
-        return S._json(result)
-    # The ack echoes the stored title when the caller omitted the title arg —
-    # gate so a low-trust caller can't read a secret title back (round-16).
-    ack = f"Playbook 已更新: {result.get('title', playbook_id)} (v{result.get('version', '?')})"
-    return S._gov_rt.maybe_govern_write_ack(S._engram.root, ack, tool="update_playbook")
-
-
-@S.mcp.tool()
-async def prepare_playbook_execution(
-    playbook_id: str,
-    params_json: str = "{}",
-    project_folder: str = "",
-    confirm_cross_project: bool = False,
-) -> str:
-    """准备 Playbook 逐步参考计划（参数替换 + 逐步状态跟踪）。 / Prepare a guided Playbook step plan with parameter substitution and per-step tracking.
-
-    Owner/export surface: writes a playbook execution plan file and is refused for non-owner callers when governance is enabled.
-
-    用途："按上次流程来" — 调取已有 Playbook，替换参数后返回被动参考计划。AI 逐步确认执行，不自动运行。
-    Purpose: "Use the previous procedure" — fetch a Playbook, substitute parameters, return a passive step reference. AI confirms each step; no auto-execution.
-
-    Args:
-        playbook_id: Playbook ID。 / The Playbook ID.
-        params_json: 参数 JSON 对象，键值对替换步骤中的 ${variable}（可选）。 / Parameters JSON object for ${variable} substitution (optional).
-    """
-    params = {}
-    if params_json and params_json != "{}":
-        try:
-            parsed = json.loads(params_json)
-            if isinstance(parsed, dict):
-                params = parsed
-        except json.JSONDecodeError:
-            return "params_json 格式错误，需要有效的 JSON 对象"
-    # prepare_playbook_execution is NOT a pure read: core.save_execution_plan
-    # PERSISTS the (parameter-substituted) step bodies to
-    # <root>/playbooks/executions/<id>.json BEFORE we could govern the return
-    # (Codex round-18 P1). Governing only the return left a secret-bearing file
-    # on disk for a non-owner — same two-step exfil as the export tools. Gate
-    # BEFORE the writer runs: a non-owner gets a refusal and no execution-plan
-    # file is created. Owner proceeds and gets the full plan.
-    refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="prepare_playbook_execution")
-    if refusal is not None:
-        return refusal
-    try:
-        if project_folder:
-            S._session.detect_project(project_folder)
-        effective_project = project_folder or S._session.project_folder or None
-        result = S._locked_engram_call(
-            S._engram.prepare_playbook_execution,
-            playbook_id,
-            params=params,
-            project_folder=effective_project,
-            confirm_cross_project=confirm_cross_project,
-        )
-        S._track("prepare_playbook_execution", success=True)
-    except Exception as exc:
-        S._track("prepare_playbook_execution", success=False)
-        return f"准备执行计划失败: {S._safe_err(exc)}"
-    _inject_usage_policy(result, _EXECUTION_USAGE_POLICY)
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def update_execution_step(
-    playbook_id: str,
-    step_order: int,
-    status: str,
-    notes: str = "",
-) -> str:
-    """更新执行计划中某一步的状态。 / Update the status of a step in an execution plan.
-
-    在 prepare_playbook_execution 之后逐步调用，标记每一步的完成情况。
-    Call step-by-step after prepare_playbook_execution to track progress.
-
-    Args:
-        playbook_id: Playbook ID。
-        step_order: 步骤序号（order 字段）。 / Step order number.
-        status: "completed" | "skipped" | "failed"
-        notes: 可选备注（如失败原因）。 / Optional note (e.g. failure reason).
-    """
-    # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="update_execution_step")
-    if refusal is not None:
-        S._track("update_execution_step", success=False)
-        return refusal
-
-    try:
-        result = S._locked_engram_call(
-            S._engram.update_execution_step,
-            playbook_id,
-            step_order,
-            status,
-            notes,
-        )
-        S._track("update_execution_step", success=True)
-    except Exception as exc:
-        S._track("update_execution_step", success=False)
-        return f"更新步骤状态失败: {S._safe_err(exc)}"
-    if result.get("error"):
-        return S._json(result)
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def get_execution_status(playbook_id: str) -> str:
-    """查看 Playbook 的当前步骤状态与结果汇总。 / Get current step status and outcome rollup for a Playbook.
-
-    返回每一步的状态、旧版完成度字段，以及 pending/partial/succeeded/failed 结果汇总。
-    Returns step-by-step status, legacy progress fields, and a pending/partial/succeeded/failed outcome rollup.
-
-    Args:
-        playbook_id: Playbook ID。
-    """
-    try:
-        result = S._engram.get_execution_status(playbook_id)
-        S._track("get_execution_status", success=True)
-    except Exception as exc:
-        S._track("get_execution_status", success=False)
-        return f"查询执行状态失败: {S._safe_err(exc)}"
-    # Read sibling of prepare_playbook_execution: returns the stored playbook
-    # title + (substituted) step bodies. Gate owner-only to match, or it
-    # re-opens the same bypass (Codex round-16).
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="get_execution_status"
-    )
-    _inject_usage_policy(result, _EXECUTION_USAGE_POLICY)
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def archive_playbook(playbook_id: str) -> str:
-    """归档 Playbook（标记为过时但不删除）。 / Archive a Playbook (mark as outdated without deleting).
-
-    用途：当某个操作流程已不再使用或有新版本替代时，将其归档。
-    Purpose: When a procedure is no longer in use or has been superseded, archive it.
-
-    Args:
-        playbook_id: 要归档的 Playbook ID。 / ID of the Playbook to archive.
-    """
-    # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="archive_playbook")
-    if refusal is not None:
-        S._track("archive_playbook", success=False)
-        return refusal
-
-    try:
-        result = S._locked_engram_call(S._engram.archive_playbook, playbook_id)
-        S._track("archive_playbook", success=True)
-    except Exception as exc:
-        S._track("archive_playbook", success=False)
-        return f"归档 Playbook 失败: {S._safe_err(exc)}"
-    if result.get("error"):
-        return S._json(result)
-    ack = f"Playbook archived: {playbook_id}"
-    return S._gov_rt.maybe_govern_write_ack(S._engram.root, ack, tool="archive_playbook")
-
-
-@S.mcp.tool()
-async def list_playbooks_for_management(
-    status: str = "all",
-    project_folder: str = "",
-    scope_type: str = "all",
-    include_content: bool = False,
-    limit: int = 100,
-) -> str:
-    """List Playbooks for management, including archived/deleted metadata."""
-    try:
-        result = S._engram.list_playbooks_for_management(
-            status=status,
-            project_folder=project_folder or None,
-            scope_type=scope_type,
-            include_content=include_content,
-            limit=limit,
-        )
-        S._track("list_playbooks_for_management", success=True)
-    except Exception as exc:
-        S._track("list_playbooks_for_management", success=False)
-        return f"List Playbooks for management failed: {S._safe_err(exc)}"
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="list_playbooks_for_management"
-    )
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def delete_playbook(
-    playbook_id: str,
     reason: str = "",
     dry_run: bool = True,
     confirm: bool = False,
 ) -> str:
-    """Soft-delete a Playbook after explicit confirmation."""
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="delete_playbook")
+    """Playbook 统一管理入口：更新 / 归档 / 删除 / 恢复。 / Unified Playbook management: update, archive, delete, restore.
+
+    用途：修正补充手册内容（update）、标记过时（archive）、确认后软删除（delete）、
+    恢复归档或已删手册（restore）。
+    Purpose: Correct or enrich a playbook (update), mark outdated (archive),
+    soft-delete after confirmation (delete), or restore (restore).
+
+    update 只传需要更新的字段，未传字段保持不变，版本号自动递增。
+    delete/restore 默认 dry_run=True 预览，需 confirm=True 才真正执行。
+    For update, pass only the fields to change; version auto-increments.
+    delete/restore default to dry_run=True preview and require confirm=True.
+
+    Args:
+        action: update | archive | delete | restore。
+        playbook_id: 目标 Playbook ID。 / Target Playbook ID.
+        title: 新标题（update，可选）。 / New title (update, optional).
+        triggers: 新触发词，逗号分隔（update，可选）。 / New trigger keywords, comma-separated (update, optional).
+        steps_json: 新步骤 JSON 数组（update，可选）。 / New steps as a JSON array (update, optional).
+        required_tools_json: 新工具依赖 JSON 数组（update，可选），只声明工具名/用途。 / New tool dependencies JSON array (update, optional).
+        tool_refs: 新简写工具名，逗号分隔（update，可选）。 / New shorthand tool names, comma-separated (update, optional).
+        description: 新描述（update，可选）。 / New description (update, optional).
+        domain: 新领域（update，可选）。 / New domain (update, optional).
+        preconditions: 新前提条件，逗号分隔（update，可选）。 / New preconditions, comma-separated (update, optional).
+        pitfalls: 新陷阱，逗号分隔（update，可选）。 / New pitfalls, comma-separated (update, optional).
+        outcome: 新预期结果（update，可选）。 / New expected outcome (update, optional).
+        status: 新状态，如 active/outdated/staging（update，可选）。 / New status (update, optional).
+        reason: 删除原因（delete，可选）。 / Deletion reason (delete, optional).
+        dry_run: 预览不落盘（delete/restore，默认 True）。 / Preview without writing (delete/restore, default True).
+        confirm: 确认执行（delete/restore，必须显式 True）。 / Explicit confirmation (delete/restore).
+    """
+    # a4: write-path governance gate — must run unconditionally BEFORE action
+    # validation so a low-trust caller gets a governance refusal, never an
+    # "unknown action" hint (writer-spy matrix).
+    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="manage_playbook")
     if refusal is not None:
-        S._track("delete_playbook", success=False)
+        S._track("manage_playbook", success=False)
         return refusal
 
-    try:
-        result = S._locked_engram_call(
-            S._engram.delete_playbook,
-            playbook_id=playbook_id,
-            reason=reason,
-            dry_run=dry_run,
-            confirm=confirm,
+    action = action.strip().lower()
+    if action == "update":
+        updates: dict = {}
+        if title:
+            updates["title"] = title
+        if triggers:
+            updates["triggers"] = [t.strip() for t in triggers.split(",") if t.strip()]
+        if steps_json:
+            try:
+                steps = json.loads(steps_json)
+                if isinstance(steps, list):
+                    updates["steps"] = steps
+            except json.JSONDecodeError:
+                return "steps_json 格式错误，需要有效的 JSON 数组"
+        if required_tools_json:
+            try:
+                required_tools = json.loads(required_tools_json)
+                if not isinstance(required_tools, list):
+                    return "required_tools_json 格式错误，需要有效的 JSON 数组"
+                updates["required_tools"] = required_tools
+            except json.JSONDecodeError:
+                return "required_tools_json 格式错误，需要有效的 JSON 数组"
+        if tool_refs:
+            updates["tool_refs"] = [t.strip() for t in re.split(r"[\n,;，、；]+", tool_refs) if t.strip()]
+        if description:
+            updates["description"] = description
+        if domain:
+            updates["domain"] = domain
+        if preconditions:
+            updates["preconditions"] = [p.strip() for p in preconditions.split(",") if p.strip()]
+        if pitfalls:
+            updates["pitfalls"] = [p.strip() for p in pitfalls.split(",") if p.strip()]
+        if outcome:
+            updates["outcome"] = outcome
+        if status:
+            updates["status"] = status
+        if not updates:
+            return "未提供任何更新字段。 / No update fields provided."
+        try:
+            result = S._locked_engram_call(S._engram.update_playbook, playbook_id, updates)
+            S._track("manage_playbook", success=True)
+        except Exception as exc:
+            S._track("manage_playbook", success=False)
+            return f"更新 Playbook 失败: {S._safe_err(exc)}"
+        if result.get("error"):
+            return S._json(result)
+        # The ack echoes the stored title when the caller omitted the title arg —
+        # gate so a low-trust caller can't read a secret title back (round-16).
+        ack = f"Playbook 已更新: {result.get('title', playbook_id)} (v{result.get('version', '?')})"
+        return S._gov_rt.maybe_govern_write_ack(S._engram.root, ack, tool="manage_playbook")
+    if action == "archive":
+        try:
+            result = S._locked_engram_call(S._engram.archive_playbook, playbook_id)
+            S._track("manage_playbook", success=True)
+        except Exception as exc:
+            S._track("manage_playbook", success=False)
+            return f"归档 Playbook 失败: {S._safe_err(exc)}"
+        if result.get("error"):
+            return S._json(result)
+        ack = f"Playbook archived: {playbook_id}"
+        return S._gov_rt.maybe_govern_write_ack(S._engram.root, ack, tool="manage_playbook")
+    if action == "delete":
+        try:
+            result = S._locked_engram_call(
+                S._engram.delete_playbook,
+                playbook_id=playbook_id,
+                reason=reason,
+                dry_run=dry_run,
+                confirm=confirm,
+            )
+            S._track("manage_playbook", success=True)
+        except Exception as exc:
+            S._track("manage_playbook", success=False)
+            return f"Delete Playbook failed: {S._safe_err(exc)}"
+        if result.get("error"):
+            return S._json(result)
+        result = S._gov_rt.maybe_govern_write_ack(
+            S._engram.root, result, tool="manage_playbook"
         )
-        S._track("delete_playbook", success=True)
-    except Exception as exc:
-        S._track("delete_playbook", success=False)
-        return f"Delete Playbook failed: {S._safe_err(exc)}"
-    if result.get("error"):
         return S._json(result)
-    result = S._gov_rt.maybe_govern_write_ack(
-        S._engram.root, result, tool="delete_playbook"
+    if action == "restore":
+        try:
+            result = S._locked_engram_call(
+                S._engram.restore_playbook,
+                playbook_id=playbook_id,
+                dry_run=dry_run,
+                confirm=confirm,
+            )
+            S._track("manage_playbook", success=True)
+        except Exception as exc:
+            S._track("manage_playbook", success=False)
+            return f"Restore Playbook failed: {S._safe_err(exc)}"
+        if result.get("error"):
+            return S._json(result)
+        result = S._gov_rt.maybe_govern_write_ack(
+            S._engram.root, result, tool="manage_playbook"
+        )
+        return S._json(result)
+    return (
+        f"未知 action: {action}。可用: update / archive / delete / restore。 "
+        f"/ Unknown action: {action}. Available: update / archive / delete / restore."
     )
-    return S._json(result)
 
 
 @S.mcp.tool()
-async def restore_playbook(
+async def playbook_execution(
+    action: str,
     playbook_id: str,
-    dry_run: bool = True,
-    confirm: bool = False,
+    params_json: str = "{}",
+    project_folder: str = "",
+    confirm_cross_project: bool = False,
+    step_order: int = 0,
+    step_status: str = "",
+    notes: str = "",
 ) -> str:
-    """Restore an archived/deleted Playbook after explicit confirmation."""
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="restore_playbook")
+    """Playbook 执行统一入口：准备计划 / 更新步骤 / 查看状态。 / Unified Playbook execution: prepare a plan, update a step, or check status.
+
+    用途："按上次流程来" — prepare 调取 Playbook 替换参数生成被动参考计划；
+    update_step 逐步标记完成情况；status 查看步骤状态与结果汇总。
+    AI 逐步确认执行，不自动运行。
+    Purpose: "Use the previous procedure" — prepare fetches a Playbook, substitutes
+    parameters, and returns a passive step plan; update_step tracks per-step progress;
+    status returns the step rollup. AI confirms each step; no auto-execution.
+
+    Owner/export surface: prepare writes an execution-plan file and is refused for
+    non-owner callers when governance is enabled.
+
+    Args:
+        action: prepare | update_step | status。
+        playbook_id: Playbook ID。 / The Playbook ID.
+        params_json: 参数 JSON 对象，替换步骤中的 ${variable}（prepare，可选）。 / Parameters JSON object for ${variable} substitution (prepare, optional).
+        project_folder: 项目目录（prepare，可选）。 / Project folder (prepare, optional).
+        confirm_cross_project: 跨项目确认（prepare）。 / Cross-project confirmation (prepare).
+        step_order: 步骤序号（update_step）。 / Step order number (update_step).
+        step_status: "completed" | "skipped" | "failed"（update_step）。
+        notes: 可选备注，如失败原因（update_step）。 / Optional note, e.g. failure reason (update_step).
+    """
+    # a4: write-path governance gate — must run unconditionally BEFORE action
+    # validation so a low-trust caller gets a governance refusal, never an
+    # "unknown action" hint (writer-spy matrix).
+    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="playbook_execution")
     if refusal is not None:
-        S._track("restore_playbook", success=False)
+        S._track("playbook_execution", success=False)
         return refusal
 
-    try:
-        result = S._locked_engram_call(
-            S._engram.restore_playbook,
-            playbook_id=playbook_id,
-            dry_run=dry_run,
-            confirm=confirm,
-        )
-        S._track("restore_playbook", success=True)
-    except Exception as exc:
-        S._track("restore_playbook", success=False)
-        return f"Restore Playbook failed: {S._safe_err(exc)}"
-    if result.get("error"):
+    action = action.strip().lower()
+    if action == "prepare":
+        params = {}
+        if params_json and params_json != "{}":
+            try:
+                parsed = json.loads(params_json)
+                if isinstance(parsed, dict):
+                    params = parsed
+            except json.JSONDecodeError:
+                return "params_json 格式错误，需要有效的 JSON 对象"
+        # prepare is NOT a pure read: core.save_execution_plan PERSISTS the
+        # (parameter-substituted) step bodies to
+        # <root>/playbooks/executions/<id>.json BEFORE we could govern the
+        # return (Codex round-18 P1). Governing only the return left a
+        # secret-bearing file on disk for a non-owner — same two-step exfil as
+        # the export tools. Gate BEFORE the writer runs: a non-owner gets a
+        # refusal and no execution-plan file is created. Owner proceeds and
+        # gets the full plan.
+        refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="playbook_execution")
+        if refusal is not None:
+            S._track("playbook_execution", success=False)
+            return refusal
+        try:
+            if project_folder:
+                S._session.detect_project(project_folder)
+            effective_project = project_folder or S._session.project_folder or None
+            result = S._locked_engram_call(
+                S._engram.prepare_playbook_execution,
+                playbook_id,
+                params=params,
+                project_folder=effective_project,
+                confirm_cross_project=confirm_cross_project,
+            )
+            S._track("playbook_execution", success=True)
+        except Exception as exc:
+            S._track("playbook_execution", success=False)
+            return f"准备执行计划失败: {S._safe_err(exc)}"
+        _inject_usage_policy(result, _EXECUTION_USAGE_POLICY)
         return S._json(result)
-    result = S._gov_rt.maybe_govern_write_ack(
-        S._engram.root, result, tool="restore_playbook"
+    if action == "update_step":
+        if step_status not in ("completed", "skipped", "failed"):
+            return (
+                "step_status 需为 completed / skipped / failed。 "
+                "/ step_status must be completed / skipped / failed."
+            )
+        try:
+            result = S._locked_engram_call(
+                S._engram.update_execution_step,
+                playbook_id,
+                step_order,
+                step_status,
+                notes,
+            )
+            S._track("playbook_execution", success=True)
+        except Exception as exc:
+            S._track("playbook_execution", success=False)
+            return f"更新步骤状态失败: {S._safe_err(exc)}"
+        return S._json(result)
+    if action == "status":
+        try:
+            result = S._engram.get_execution_status(playbook_id)
+            S._track_read_safe("playbook_execution", success=True)
+        except Exception as exc:
+            S._track_read_safe("playbook_execution", success=False)
+            return f"查询执行状态失败: {S._safe_err(exc)}"
+        # Read sibling of prepare: returns the stored playbook title +
+        # (substituted) step bodies. Gate owner-only to match, or it re-opens
+        # the same bypass (Codex round-16).
+        result = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, result, tool="playbook_execution"
+        )
+        _inject_usage_policy(result, _EXECUTION_USAGE_POLICY)
+        return S._json(result)
+    return (
+        f"未知 action: {action}。可用: prepare / update_step / status。 "
+        f"/ Unknown action: {action}. Available: prepare / update_step / status."
     )
-    return S._json(result)
 
 
 @S.mcp.tool()

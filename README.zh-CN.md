@@ -100,12 +100,12 @@ pip install piia-engram && engram setup
 
 下列数字每个 minor release 都会刷新：
 
-| | v3.56.0 (2026-06-11) |
+| | v4.0.0 (2026-06-11) |
 |---|---|
 | 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
-| MCP 工具 | **17 个核心**（默认加载）+ **70 个高级**（`ENGRAM_TOOLS=all` 开启）|
+| MCP 工具 | **17 个核心**（默认加载）+ **36 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **3270** 个（单元 + 集成；2 个 skipped，共收集 3272）|
+| 测试通过 | **3187** 个（单元 + 集成；2 个 skipped，共收集 3189）|
 | 代码覆盖率 | **86%** 总体 |
 | `core.py` 行数 | **1573** 行（facade，领域逻辑已拆分为专责 mixin —— 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -187,7 +187,7 @@ ChatGPT、Gemini、Kimi 没有 MCP 接口。`get_identity_card` 导出一张即�
 AI 工具总是在找本地的程序、运行时和 CLI。`register_tool` 记录已安装的工具和路径；`find_tool` 一步调取。不再每次都 `which python`——环境图谱跨工具、跨会话持久可用。
 
 **知识健康与发现**  
-`get_knowledge_overview` 找出久未复查的知识（30 天以上），计算 0–100 健康度评分（新鲜度、质量、覆盖度、清洁度四个维度），提示哪些内容值得重新确认。`suggest_merges` 全库扫描近似重复条目，返回可直接执行的合并命令。`link_knowledge` 把相关教训和决策串联成可导航的知识网络。
+`get_knowledge_overview` 找出久未复查的知识（30 天以上），计算 0–100 健康度评分（新鲜度、质量、覆盖度、清洁度四个维度），提示哪些内容值得重新确认。`explore_knowledge` 全库扫描近似重复条目（也可查关联/相似知识），返回可直接执行的合并命令。`manage_relation` 把相关教训和决策串联成可导航的知识网络。
 
 **混合检索（可选，默认关闭）**  
 默认关键词检索行为完全不变。按需开启混合检索——FTS5 全文检索 + 语义向量层——获得跨语言召回能力（例如用英文查询找到中文笔记）：`pip install "piia-engram[vector]"` 并设置 `ENGRAM_SEARCH=hybrid`，或在 `engram setup` 向导里一键开启。索引是可重建的 SQLite 文件，JSON 存储始终是唯一数据源。详见 [docs/hybrid-search.zh-CN.md](docs/hybrid-search.zh-CN.md)。
@@ -526,13 +526,13 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_resume_brief` | v3.30: 跨会话/跨工具恢复摘要 |
 | `doctor` | 记忆系统自诊断 |
 
-默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 70 个高级工具。
+默认只加载以上 17 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 36 个高级工具。
 
 **启动同步：** Engram 会在 MCP server 启动时对账本地 AI 工具中的记忆/配置片段。默认改为后台执行，避免 stdio 客户端在 initialize 阶段被同步扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感测试臂中跳过启动同步。`ENGRAM_EPHEMERAL=1` 也会在容器/临时客户端中跳过启动同步和迁移工作。
 
-### Tier-2 高级工具（70 个 — 知识管理、审查、导入导出）
+### Tier-2 高级工具（36 个 — 知识管理、审查、导入导出）
 
-高级工具包含可选本地集成、owner/admin 工具和维护工具。凡是会导出文件、导入整库、生成审查页面或修改调用方信任级别的工具，都应视为 owner/admin/export surface，而不是普通只读工具。
+高级工具包含可选本地集成、owner/admin 工具和维护工具。凡是会导出文件、导入整库、生成审查页面或修改调用方信任级别的工具，都应视为 owner/admin/export surface，而不是普通只读工具。v4.0 起，相关操作合并为带 `mode`/`action` 选择器的单一工具。
 
 <details>
 <summary>点击展开完整工具列表</summary>
@@ -545,67 +545,40 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `save_agent_context` | 保存 AI 会话检查点（也会自动运行） |
 | `list_agent_sessions` | 浏览各工具的历史会话记录 |
 | `refresh_quick_context` | 刷新本地 `quick_context.md` 快照（离线/跨工具快速通路） |
-| `get_profile` | 读取身份画像（默认 safe 模式） |
-| `get_work_style` | deprecated 兼容读取；优先使用 `get_preferences` |
-| `get_preferences` | 读取沟通与工作流偏好 |
-| `get_trust_boundaries` | 读取信任边界 |
-| `get_quality_standards` | 读取质量标准 |
+| `get_identity_facets` | 按 `facet` 读取身份切面：profile、preferences、trust_boundaries、work_style、quality_standards、domains 或 all |
+| `user_portrait` | 按 `action` 操作 AI 维护的用户画像：get / save / compare |
 | `preview_context_governance` | advanced owner-gated 预览：生成 safe-context、freshness/conflict、replay 或 evidence 提案，不自动应用 |
-| `get_playbooks` | 列出已保存的操作手册 |
-| `get_playbook` | 获取单条操作手册的完整内容 |
-| `get_recent_playbooks` | 按最近使用时间列出操作手册 |
-| `update_playbook` | 更新操作手册的步骤、触发词等字段 |
-| `archive_playbook` | 归档不再使用的操作手册 |
-| `prepare_playbook_execution` | 参数替换后生成逐步参考计划（被动参考，不自动执行） |
-| `update_execution_step` | 标记步骤为已完成、跳过或失败 |
-| `get_execution_status` | 查看操作手册的步骤进度和结果汇总 |
+| `get_playbooks` | 按 `mode` 读取操作手册：list、get（完整内容）、recent、management（含归档/删除元数据） |
+| `manage_playbook` | 按 `action` 管理操作手册生命周期：update、archive、delete、restore（变更仍需确认） |
+| `playbook_execution` | 按 `action` 引导执行：prepare 生成步骤计划、update_step 标记进度、status 查看结果汇总（被动参考，不自动执行） |
 | `get_lessons` | 列出经验教训 |
-| `get_decisions` | 列出关键决策 |
-| `get_domains` | 读取领域经验图谱 |
+| `get_decisions` | 列出关键决策；`thread_seed_id` / `history_question` 可重建决策链与修订历史 |
 | `get_knowledge_inheritance` | 根据描述生成跨项目知识继承包 |
 | `list_projects` | 列出所有项目快照 |
 | `extract_session_insights` | 从文本中提取经验和决策 |
-| `bulk_add_knowledge` | 批量添加经验或决策 |
 | `ingest_notes` | 从自由文本笔记提取结构化知识 |
 | `update_knowledge` | 更新一条知识（自动检测类型） |
 | `archive_knowledge` | 归档一条知识 |
-| `review_knowledge` | 标记知识已复习 |
 | `merge_knowledge` | 合并重复知识条目 |
-| `link_knowledge` | 建立知识间双向关联 |
-| `unlink_knowledge` | 移除知识间双向关联 |
+| `manage_relation` | 按 `action` 管理知识间类型化关系：link / unlink（决策链） |
+| `explore_knowledge` | 按 `mode` 探索知识图谱：related（关联）、similar（相似）、merge_candidates（近似重复扫描） |
 | `get_knowledge_overview` | 知识概览（摘要 + 健康度 + 过期检查） |
-| `get_related_knowledge` | 查询关联知识 |
-| `find_similar_knowledge` | 按内容查找相似知识 |
-| `suggest_merges` | 全库扫描近似重复，返回可执行的合并命令 |
-| `classify_legacy_playbooks` | owner 维护：为旧 Playbook 生成项目/global/shared 分类 dry-run 建议 |
-| `apply_legacy_playbook_scope_suggestions` | owner 维护：确认后应用高置信度旧 Playbook 分类建议 |
-| `rollback_playbook_scope_migration` | owner 维护：回滚最近一次 Playbook 作用域迁移 |
-| `get_playbook_scope_review_queue` | owner 维护：列出需要人工确认作用域的模糊 Playbook |
-| `resolve_playbook_scope_review` | owner 维护：将一条 Playbook 作用域复核项接受为 global、project 或 shared |
-| `list_playbooks_for_management` | 列出用于管理的 Playbook，包括归档/删除元数据 |
-| `delete_playbook` | 确认后软删除 Playbook |
-| `restore_playbook` | 恢复已归档或已删除的 Playbook |
 | `get_stale_knowledge` | 列出需要复习的过期知识 |
+| `review_staging` | 按 `action` 审查暂存区：list 列出待审、batch 批量决定、review_item 标记已复习、apply_text 应用审查结果 |
 | `export_knowledge_report` | owner-gated 导出：写出 Markdown 知识报告 |
 | `request_outline_review` | owner-gated 导出：生成本地交互式 HTML 知识审查页面 |
-| `apply_review` | 处理审查结果（晋升/归档暂存条目） |
-| `export_engram` | owner-gated 导出：写出完整备份 |
-| `import_engram` | owner/admin 导入：先用 `dry_run=True` 做元数据级合并/冲突预览；CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
-| `export_engram_to_openclaw` | owner-gated 导出：写出 OpenClaw 格式文件 |
-| `import_engram_from_openclaw` | owner/admin 导入：读取 OpenClaw 格式文件 |
+| `export_engram` | owner-gated 导出：写出完整备份（`format="openclaw"` 可导出 OpenClaw 格式文件） |
+| `import_engram` | owner/admin 导入：先用 `dry_run=True` 做元数据级合并/冲突预览（支持 `format="openclaw"`）；CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
 | `read_web_content` | 可选本地 Reader 集成：通过 Reader 服务读取用户提供的 URL |
 | `get_audit_log` | 查询审计日志 |
-| `add_relation` | 建立知识条目间的类型化有向关系（led_to / supersedes / implemented_by） |
-| `remove_relation` | 移除已建立的有向关系（`add_relation` 的撤销操作） |
-| `get_decision_thread` | 从一条决策出发，递归构建完整的决策链（拓扑排序） |
-| `get_decision_history` | 按问题文本查询决策修订历史（模糊匹配 + 时间线） |
-| `get_permission_profile` | 查看所有调用方的信任等级、自动分类规则和已撤销列表 |
-| `set_caller_trust` | owner/admin：设置或修改某个调用方的信任等级 |
-| `revoke_caller` | owner/admin：前向撤销某个调用方的未来访问权限 |
-| `export_feedback_report` | 内部/dogfood：导出用户反馈报告（Markdown 格式） |
 | `start_project` | 新项目启动（继承知识 + 建档） |
+| `get_permission_profile` | 查看所有调用方的信任等级、自动分类规则和已撤销列表 |
+| `manage_caller_trust` | owner/admin 按 `action` 管理调用方信任：grant 授予/修改、revoke 前向撤销 |
+| `export_feedback_report` | 内部/dogfood：导出用户反馈报告（Markdown 格式） |
 
 </details>
+
+旧 Playbook 作用域迁移（分类 / 应用 / 回滚 / 复核队列）已从 MCP 工具面移出，改为 owner 专用本地 CLI：`engram playbook scope classify|apply|rollback|queue|resolve`（默认只预览；落盘需 `--apply --yes`）。
 
 ## Playbook 自动提取
 
@@ -617,8 +590,8 @@ piia-engram 能自动检测你在会话中完成的多步骤操作流程，并�
 2. **草稿生成** — 如果检测到操作流程，自动生成包含步骤、踩坑记录、触发关键词和前置条件的 Playbook 草稿。敏感信息（API Key、Token、绝对路径）在存储前自动脱敏。
 3. **暂存** — 草稿存入暂存区，不会自动晋升为正式知识。你审查确认后才变成可信的 Playbook。
 4. **结构契约** — 存储后的 Playbook 会被规范化为带版本的契约：触发关键词、前置条件、踩坑记录、结构化步骤和可选 `required_tools` 工具依赖声明都会保持稳定格式。过薄的草稿不会被直接丢弃，但会带上机器可读的质量提醒。
-5. **工具解析** — Playbook 只声明需要什么工具名或用途，本机路径仍由工具图谱保存。`prepare_playbook_execution` 会在运行时返回 `resolved_tools`、`tools_ready` 和 `missing_tools`，让宿主 AI 知道哪些本地工具可用，同时不把解析后的路径写进 Playbook。
-6. **复用与结果回流** — 下次遇到类似任务，`search_knowledge` 通过触发关键词匹配到这份 Playbook，并把它作为被动参考返回给宿主 AI。宿主 AI 逐步和你确认执行，`get_execution_status` 会报告结果汇总（`pending`、`partial`、`succeeded` 或 `failed`），不会把跳过的步骤静默当成成功。
+5. **工具解析** — Playbook 只声明需要什么工具名或用途，本机路径仍由工具图谱保存。`playbook_execution`（action `prepare`）会在运行时返回 `resolved_tools`、`tools_ready` 和 `missing_tools`，让宿主 AI 知道哪些本地工具可用，同时不把解析后的路径写进 Playbook。
+6. **复用与结果回流** — 下次遇到类似任务，`search_knowledge` 通过触发关键词匹配到这份 Playbook，并把它作为被动参考返回给宿主 AI。宿主 AI 逐步和你确认执行，`playbook_execution`（action `status`）会报告结果汇总（`pending`、`partial`、`succeeded` 或 `failed`），不会把跳过的步骤静默当成成功。
 
 ### 设计哲学：Engram 起草，用户确认，AI 协作
 
@@ -728,7 +701,7 @@ piia-engram。运行 `pip install piia-engram && engram setup`，两个工具就
 piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。已配置的 MCP 兼容编程工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）可以读取同一份已批准上下文，让新对话和换工具从同一份用户自有记忆开始。
 
 **piia-engram 和官方 MCP memory server 有什么区别？**
-官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 87 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望已配置的 MCP 兼容编程工具从同一份已批准的编码偏好和过往经验开始，用 piia-engram。
+官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 53 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望已配置的 MCP 兼容编程工具从同一份已批准的编码偏好和过往经验开始，用 piia-engram。
 
 **piia-engram 和 Mem0、Zep、Letta 等 Agent 记忆工具有什么区别？**
 那些工具存的是 Agent 的任务上下文和会话历史——一次工作流中发生了什么。piia-engram 存的是"你这个人"——你的身份、偏好、经验教训和关键决策。这是不同的一层：身份跨工具、跨会话、跨项目持续有效，而任务记忆的范围是单次 Agent 运行。数据是你自己的本地 JSON 文件，可直接编辑。
@@ -780,7 +753,7 @@ piia-engram 可以正常使用，但以下功能目前尚未实现：
 | 方面 | 当前状态 | 计划版本 |
 |---|---|---|
 | **文件安全** | JSON 写入使用 portalocker 文件锁 + 原子替换 | 后续补充更大并发压力测试 |
-| **访问控制** | `restricted_fields` 会从 `get_user_context` 和 `get_profile(safe=true)` 中过滤画像字段 | MCP 不传调用方身份，暂不做复杂 ACL |
+| **访问控制** | `restricted_fields` 会从 `get_user_context` 和 `get_identity_facets(facet="profile", safe=true)` 中过滤画像字段 | MCP 不传调用方身份，暂不做复杂 ACL |
 | **加密** | 可选字段级 AES-256-GCM 加密，通过 `ENGRAM_SECRET` 环境变量启用。安装 `pip install piia-engram[secure]`。 | 全盘加密（v4.0）|
 | **审计日志** | 本地访问审计**默认开启**，日志写入 `~/.engram/audit.log`；可用 `ENGRAM_AUDIT=0` 关闭。纯本地文件，绝不外传。 | 按调用方审计（受 MCP 规范限制）|
 | **调用方身份** | MCP 协议不传递工具身份 | 受 MCP 规范限制 |

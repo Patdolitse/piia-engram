@@ -390,8 +390,10 @@ class TestNoSelfEscalation:
 
         mcp_server._engram = e
 
-        result = _run(mcp_server.set_caller_trust("web", "private-self"))
-        assert _is_refusal(result), "set_caller_trust must refuse a non-owner caller"
+        result = _run(mcp_server.manage_caller_trust("grant", "web", "private-self"))
+        assert _is_refusal(result), (
+            "manage_caller_trust(grant) must refuse a non-owner caller"
+        )
 
         # The grant must NOT have been written — web is still read-only-external.
         from piia_engram.governance_store import GrantStore
@@ -413,8 +415,10 @@ class TestNoSelfEscalation:
 
         mcp_server._engram = e
 
-        result = _run(mcp_server.revoke_caller("victim-agent"))
-        assert _is_refusal(result), "revoke_caller must refuse a non-owner caller"
+        result = _run(mcp_server.manage_caller_trust("revoke", "victim-agent"))
+        assert _is_refusal(result), (
+            "manage_caller_trust(revoke) must refuse a non-owner caller"
+        )
 
         from piia_engram.governance_store import GrantStore
 
@@ -441,7 +445,7 @@ class TestOwnerStillWorks:
 
         mcp_server._engram = e
 
-        result = _run(mcp_server.set_caller_trust("cursor", "trusted-local"))
+        result = _run(mcp_server.manage_caller_trust("grant", "cursor", "trusted-local"))
         assert not _is_refusal(result), "owner must be allowed to set caller trust"
 
         from piia_engram.governance_store import GrantStore
@@ -578,20 +582,13 @@ def _seed_read_probe_store(tmp_path: Path, e) -> dict[str, str]:
 
 def _read_tool_kwargs(tool_name: str, ids: dict[str, str]) -> dict:
     return {
-        "find_similar_knowledge": {"item_id": ids["lesson_id"], "limit": 5},
+        "explore_knowledge": {"mode": "related", "item_id": ids["lesson_id"]},
         "find_tool": {"query": "probe"},
         "get_daily_log": {"project_folder": ids["project_folder"]},
-        "get_decision_history": {
-            "question": "public decision question",
-            "threshold": 0.1,
-        },
-        "get_decision_thread": {"seed_id": ids["decision_id"]},
-        "get_execution_status": {"playbook_id": ids["playbook_id"]},
         "get_knowledge_inheritance": {
             "description": "python read sweep",
             "limit": 5,
         },
-        "get_playbook": {"playbook_id": ids["playbook_id"]},
         "get_project_context": {"project_folder": ids["project_folder"]},
         "get_recall": {
             "project_folder": ids["project_folder"],
@@ -604,7 +601,6 @@ def _read_tool_kwargs(tool_name: str, ids: dict[str, str]) -> dict:
             "payload_json": '{"knowledge": [{"summary": "public"}]}',
             "options_json": '{"max_chars": 500}',
         },
-        "get_related_knowledge": {"item_id": ids["lesson_id"]},
         "get_relevant_knowledge": {"project_folder": ids["project_folder"], "limit": 5},
         "get_resume_brief": {"project_folder": ids["project_folder"], "token_budget": 500},
         "read_web_content": {"url": "http://127.0.0.1:1/engram-r8-no-server"},

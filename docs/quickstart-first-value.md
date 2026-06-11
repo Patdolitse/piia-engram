@@ -70,7 +70,7 @@ New AI-suggested knowledge is classified by a risk gate:
   routed to `staging` for owner review before it becomes active.
 
 This balance keeps the first-value path frictionless while protecting sensitive
-content. You can review pending items anytime via `list_pending_staging`.
+content. You can review pending items anytime via `review_staging(action="list")`.
 
 ## 4. Recall it in a new session
 

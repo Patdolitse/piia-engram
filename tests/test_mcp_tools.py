@@ -65,19 +65,19 @@ def _run(coro):
 
 
 class TestIdentityTools:
-    def test_get_profile_empty_returns_json_dict(self, isolated_engram: Engram):
-        result = _run(mcp_server.get_profile(safe=True))
+    def test_profile_facet_empty_returns_json_dict(self, isolated_engram: Engram):
+        result = _run(mcp_server.get_identity_facets(facet="profile", safe=True))
         # Empty profile → JSON "{}" (not a human-readable fallback)
         assert json.loads(result) == {}
 
-    def test_get_profile_returns_filled_data(self, isolated_engram: Engram):
+    def test_profile_facet_returns_filled_data(self, isolated_engram: Engram):
         isolated_engram.update_profile({"role": "engineer", "language": "zh"})
-        result = _run(mcp_server.get_profile(safe=True))
+        result = _run(mcp_server.get_identity_facets(facet="profile", safe=True))
         parsed = json.loads(result)
         assert parsed["role"] == "engineer"
         assert parsed["language"] == "zh"
 
-    def test_get_profile_safe_filters_restricted_fields(
+    def test_profile_facet_safe_filters_restricted_fields(
         self, isolated_engram: Engram
     ):
         """Restricted fields in trust_boundaries must be excluded when safe=True."""
@@ -85,24 +85,55 @@ class TestIdentityTools:
             {"role": "engineer", "email": "secret@example.com"}
         )
         isolated_engram.update_trust_boundaries({"restricted_fields": ["email"]})
-        safe_result = json.loads(_run(mcp_server.get_profile(safe=True)))
+        safe_result = json.loads(
+            _run(mcp_server.get_identity_facets(facet="profile", safe=True))
+        )
         assert "email" not in safe_result
         assert safe_result["role"] == "engineer"
 
-    def test_get_preferences_returns_json(self, isolated_engram: Engram):
+    def test_preferences_facet_returns_json(self, isolated_engram: Engram):
         isolated_engram.update_preferences({"work_patterns": {"pace": "fast"}})
-        result = json.loads(_run(mcp_server.get_preferences()))
+        result = json.loads(
+            _run(mcp_server.get_identity_facets(facet="preferences"))
+        )
         assert result["work_patterns"] == {"pace": "fast"}
 
-    def test_get_trust_boundaries_returns_defaults(self, isolated_engram: Engram):
-        result = json.loads(_run(mcp_server.get_trust_boundaries()))
+    def test_trust_boundaries_facet_returns_defaults(self, isolated_engram: Engram):
+        result = json.loads(
+            _run(mcp_server.get_identity_facets(facet="trust_boundaries"))
+        )
         # Defaults are written on init
         assert "default_sharing" in result
 
-    def test_get_quality_standards_returns_dict(self, isolated_engram: Engram):
+    def test_quality_standards_facet_returns_dict(self, isolated_engram: Engram):
         isolated_engram.update_quality_standards({"acceptance_threshold": 4})
-        result = json.loads(_run(mcp_server.get_quality_standards()))
+        result = json.loads(
+            _run(mcp_server.get_identity_facets(facet="quality_standards"))
+        )
         assert result["acceptance_threshold"] == 4
+
+    def test_all_facets_aggregate(self, isolated_engram: Engram):
+        """facet="all" (default) returns one dict with every facet keyed by name."""
+        isolated_engram.update_profile({"role": "engineer"})
+        result = json.loads(_run(mcp_server.get_identity_facets()))
+        assert set(result) == {
+            "profile",
+            "preferences",
+            "trust_boundaries",
+            "work_style",
+            "quality_standards",
+            "domains",
+        }
+        assert result["profile"]["role"] == "engineer"
+
+    def test_unknown_facet_returns_error_hint(self, isolated_engram: Engram):
+        result = _run(mcp_server.get_identity_facets(facet="nope"))
+        assert "unknown facet" in result
+        assert "profile" in result  # hint lists valid facet names
+
+    def test_domains_facet_empty_friendly_message(self, isolated_engram: Engram):
+        result = _run(mcp_server.get_identity_facets(facet="domains"))
+        assert "尚无" in result
 
 
 # ---------------------------------------------------------------------------
@@ -142,10 +173,6 @@ class TestKnowledgeReadTools:
         result = _run(mcp_server.get_decisions(domain="architecture"))
         parsed = json.loads(result)
         assert all("architecture" in d.get("domain", "") for d in parsed)
-
-    def test_get_domains_empty(self, isolated_engram: Engram):
-        result = _run(mcp_server.get_domains())
-        assert "尚无" in result
 
     def test_get_project_context_missing_returns_friendly_message(
         self, isolated_engram: Engram
@@ -286,20 +313,30 @@ class TestSearchTools:
             "steps": ["Prepare", "Optional cleanup", "Verify"],
         })
 
-        plan = json.loads(_run(mcp_server.prepare_playbook_execution(pb["id"])))
+        plan = json.loads(_run(
+            mcp_server.playbook_execution("prepare", pb["id"])
+        ))
         assert "step-by-step confirmation" in plan["usage_policy"]
 
         update = json.loads(_run(
-            mcp_server.update_execution_step(pb["id"], 1, "completed")
+            mcp_server.playbook_execution(
+                "update_step", pb["id"], step_order=1, step_status="completed"
+            )
         ))
         assert update["outcome"]["status"] == "partial"
 
         json.loads(_run(
-            mcp_server.update_execution_step(
-                pb["id"], 2, "skipped", notes="Not needed"
+            mcp_server.playbook_execution(
+                "update_step",
+                pb["id"],
+                step_order=2,
+                step_status="skipped",
+                notes="Not needed",
             )
         ))
-        status = json.loads(_run(mcp_server.get_execution_status(pb["id"])))
+        status = json.loads(_run(
+            mcp_server.playbook_execution("status", pb["id"])
+        ))
 
         assert status["outcome"] == {
             "status": "partial",
@@ -327,7 +364,9 @@ class TestSearchTools:
             "steps": ["Prepare", "Verify"],
         })
 
-        result = json.loads(_run(mcp_server.prepare_playbook_execution(pb["id"])))
+        result = json.loads(_run(
+            mcp_server.playbook_execution("prepare", pb["id"])
+        ))
 
         assert result["tools_ready"] is True
         assert result["missing_tools"] == []
@@ -375,7 +414,8 @@ class TestSearchTools:
             "steps": ["Prepare", "Verify"],
         })
 
-        result = _run(mcp_server.update_playbook(
+        result = _run(mcp_server.manage_playbook(
+            "update",
             pb["id"],
             required_tools_json='[{"name": "mcp-publisher"}]',
             tool_refs="gh",
@@ -432,7 +472,7 @@ class TestToolTier:
         assert "search_knowledge" in mcp_server.TIER1_TOOLS
         # Sanity: there's something the filter would actually remove
         # (i.e., at least one well-known tool not in TIER1)
-        assert "find_similar_knowledge" not in mcp_server.TIER1_TOOLS
+        assert "explore_knowledge" not in mcp_server.TIER1_TOOLS
 
     def test_apply_tool_tier_noop_when_not_core(
         self, monkeypatch: pytest.MonkeyPatch
@@ -613,9 +653,9 @@ class TestEmptyContextReturns:
 
 
 class TestGetWorkStyle:
-    def test_get_work_style_returns_json(self, isolated_engram: Engram):
-        """Line 275: get_work_style returns JSON of work_style data."""
-        result = _run(mcp_server.get_work_style())
+    def test_work_style_facet_returns_json(self, isolated_engram: Engram):
+        """work_style facet of get_identity_facets returns JSON of work_style data."""
+        result = _run(mcp_server.get_identity_facets(facet="work_style"))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
@@ -827,7 +867,7 @@ class TestExportImportExceptions:
             raise RuntimeError("openclaw boom")
 
         monkeypatch.setattr(mcp_server, "export_to_openclaw", explode)
-        result = _run(mcp_server.export_engram_to_openclaw())
+        result = _run(mcp_server.export_engram(format="openclaw"))
         assert "OpenClaw 兼容格式失败" in result
 
     def test_import_openclaw_exception(
@@ -839,7 +879,7 @@ class TestExportImportExceptions:
             raise RuntimeError("import boom")
 
         monkeypatch.setattr(mcp_server, "import_from_openclaw", explode)
-        result = _run(mcp_server.import_engram_from_openclaw())
+        result = _run(mcp_server.import_engram(format="openclaw"))
         assert "OpenClaw 兼容格式导入失败" in result
 
     def test_export_openclaw_non_success_status(
@@ -851,7 +891,7 @@ class TestExportImportExceptions:
             return {"status": "partial", "message": "some files missing"}
 
         monkeypatch.setattr(mcp_server, "export_to_openclaw", fake_export)
-        result = json.loads(_run(mcp_server.export_engram_to_openclaw()))
+        result = json.loads(_run(mcp_server.export_engram(format="openclaw")))
         assert result["status"] == "partial"
 
 
@@ -1272,19 +1312,17 @@ def test_mcp_search_knowledge_invalid_filters_json(isolated_engram: Engram):
     assert "filters_json 格式错误" in result
 
 
-def test_list_pending_staging_is_read_only_metadata_under_governance(
-    isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
-):
+def test_review_staging_list_is_metadata_only(isolated_engram: Engram):
+    """action=list returns id/type/domain metadata, never the item body."""
     secret = "ZZ_MCP_STAGING_QUEUE_SECRET"
     isolated_engram.add_lesson({
         "summary": f"staging lesson {secret}",
         "domain": "release",
         "tier": "staging",
     })
-    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
-    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
 
-    result = json.loads(_run(mcp_server.list_pending_staging(
+    result = json.loads(_run(mcp_server.review_staging(
+        action="list",
         filters_json='{"domain":"release"}',
         limit=5,
     )))
@@ -1296,37 +1334,53 @@ def test_list_pending_staging_is_read_only_metadata_under_governance(
     assert secret not in json.dumps(result, ensure_ascii=False)
 
 
-def test_list_pending_staging_surfaces_other_review_queues(
+def test_review_staging_list_refused_for_web_caller(
+    isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+):
+    """v4.0.0 tightening: the merged review_staging is write-gated for ALL
+    actions — a web caller is refused even for action="list" (the old
+    read-only list_pending_staging allowed it metadata-only)."""
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+
+    result = _run(mcp_server.review_staging(action="list"))
+
+    assert "ENGRAM_GOVERNANCE_REFUSAL" in result
+
+
+def test_review_staging_list_surfaces_other_review_queues(
     isolated_engram: Engram,
 ):
     """An empty staging queue must not hide pending playbook scope reviews."""
     isolated_engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
 
-    result = json.loads(_run(mcp_server.list_pending_staging()))
+    result = json.loads(_run(mcp_server.review_staging(action="list")))
 
     assert result["counts"]["total_pending"] == 0
     other = result["other_queues"]["playbook_scope_review"]
     assert other["pending"] == 1
-    assert "resolve_playbook_scope_review" in other["hint"]
+    # v4.0.0: scope review moved out of MCP — the hint points at the owner CLI
+    assert "engram playbook scope resolve" in other["hint"]
 
 
-def test_list_pending_staging_other_queues_empty_when_nothing_pending(
+def test_review_staging_list_other_queues_empty_when_nothing_pending(
     isolated_engram: Engram,
 ):
     """No pending backlogs anywhere → other_queues stays an empty dict."""
-    result = json.loads(_run(mcp_server.list_pending_staging()))
+    result = json.loads(_run(mcp_server.review_staging(action="list")))
 
     assert result["other_queues"] == {}
 
 
-def test_batch_review_staging_still_write_gated_for_external(
+def test_review_staging_batch_still_write_gated_for_external(
     isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
 ):
     lesson = isolated_engram.add_lesson("needs owner review", tier="staging")
     monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
 
-    result = _run(mcp_server.batch_review_staging(
+    result = _run(mcp_server.review_staging(
+        action="batch",
         actions_json=json.dumps([{"id": lesson["id"], "action": "approve"}]),
         dry_run=False,
         confirm=True,
@@ -1427,7 +1481,7 @@ class TestGetUserContextPlaybookMatching:
         assert self._SECTION in result
         assert "MCP Registry 发布流程" in result
         assert pb_id in result
-        assert "get_playbook" in result
+        assert 'get_playbooks(mode="get"' in result
 
     def test_prompt_without_trigger_hit_omits_section(
         self, isolated_engram: Engram,
@@ -1666,10 +1720,32 @@ class TestDoctorUncleanExitWarn:
         )
 
 
-def test_mcp_apply_legacy_playbook_scope_suggestions_preview(
+# ---------------------------------------------------------------------------
+# v4.0.0: legacy Playbook scope migration moved out of MCP into the owner CLI
+# (`engram playbook scope ...`). These tests exercise the CLI entry point
+# against the same isolated root (via ENGRAM_DIR) the fixture engram uses.
+# ---------------------------------------------------------------------------
+
+
+def _run_scope_cli(args: list, capsys) -> tuple:
+    """Invoke ``engram playbook scope <args>`` and return (rc, stdout)."""
+    from piia_engram.setup_wizard import run_playbook
+
+    rc = run_playbook(["scope", *args])
+    return rc, capsys.readouterr().out
+
+
+def _cli_json(out: str) -> dict:
+    """Parse the JSON document the scope CLI prints (skip any preamble)."""
+    return json.loads(out[out.index("{"):])
+
+
+def test_cli_playbook_scope_apply_preview(
     isolated_engram: Engram, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ):
-    """MCP wrapper should expose a safe preview for legacy Playbook migration."""
+    """`engram playbook scope apply` defaults to a safe dry-run preview."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
     project = str(tmp_path / "engram")
     isolated_engram.save_project_snapshot(project, {"title": "Engram"})
     pb = isolated_engram.add_playbook({
@@ -1677,21 +1753,20 @@ def test_mcp_apply_legacy_playbook_scope_suggestions_preview(
         "triggers": ["engram", "release"],
     })
 
-    result = json.loads(_run(
-        mcp_server.apply_legacy_playbook_scope_suggestions(
-            dry_run=True,
-            confirm=False,
-        )
-    ))
+    rc, out = _run_scope_cli(["apply"], capsys)
+    result = _cli_json(out)
 
+    assert rc == 0
     assert result["dry_run"] is True
     assert [item["id"] for item in result["would_apply"]] == [pb["id"]]
 
 
-def test_mcp_rollback_playbook_scope_migration_preview(
+def test_cli_playbook_scope_rollback_preview(
     isolated_engram: Engram, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ):
-    """MCP wrapper should preview rollback without changing scope."""
+    """`engram playbook scope rollback` previews without changing scope."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
     project = str(tmp_path / "engram")
     isolated_engram.save_project_snapshot(project, {"title": "Engram"})
     pb = isolated_engram.add_playbook({
@@ -1703,14 +1778,10 @@ def test_mcp_rollback_playbook_scope_migration_preview(
         confirm=True,
     )
 
-    result = json.loads(_run(
-        mcp_server.rollback_playbook_scope_migration(
-            playbook_ids_json=json.dumps([pb["id"]]),
-            dry_run=True,
-            confirm=False,
-        )
-    ))
+    rc, out = _run_scope_cli(["rollback", "--playbook-ids", pb["id"]], capsys)
+    result = _cli_json(out)
 
+    assert rc == 0
     assert result["dry_run"] is True
     assert [item["id"] for item in result["would_rollback"]] == [pb["id"]]
     assert isolated_engram.get_playbook(
@@ -1718,12 +1789,12 @@ def test_mcp_rollback_playbook_scope_migration_preview(
     )["scope"]["type"] == "project"
 
 
-def test_mcp_playbook_scope_migration_refuses_web_caller_before_write(
-    isolated_engram: Engram, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+def test_cli_playbook_scope_apply_requires_yes_before_write(
+    isolated_engram: Engram, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ):
-    """Low-trust web callers must not apply Playbook scope migrations."""
-    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
-    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    """--apply without --yes must be refused before any mutation."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
     project = str(tmp_path / "engram")
     isolated_engram.save_project_snapshot(project, {"title": "Engram"})
     pb = isolated_engram.add_playbook({
@@ -1731,46 +1802,50 @@ def test_mcp_playbook_scope_migration_refuses_web_caller_before_write(
         "triggers": ["engram", "release"],
     })
 
-    result = _run(mcp_server.apply_legacy_playbook_scope_suggestions(
-        dry_run=False,
-        confirm=True,
-    ))
+    rc, out = _run_scope_cli(["apply", "--apply"], capsys)
 
-    assert "Governance" in result or "治理" in result
+    assert rc == 2
+    assert "--yes" in out
     stored = isolated_engram.get_playbook(pb["id"], _update_access=False)
     assert stored["scope"]["type"] == "global"
     assert "scope_migration_history" not in stored
 
 
-def test_mcp_get_playbook_scope_review_queue(
-    isolated_engram: Engram,
+def test_cli_playbook_scope_queue(
+    isolated_engram: Engram, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ):
-    """MCP wrapper should expose unresolved Playbook scope review items."""
+    """`engram playbook scope queue` lists unresolved scope review items."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
     pb = isolated_engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
 
-    result = json.loads(_run(mcp_server.get_playbook_scope_review_queue()))
+    rc, out = _run_scope_cli(["queue"], capsys)
+    result = _cli_json(out)
 
+    assert rc == 0
     assert result["total"] == 1
     assert result["items"][0]["id"] == pb["id"]
     assert result["items"][0]["suggested_scope"]["type"] == "needs_review"
 
 
-def test_mcp_resolve_playbook_scope_review_accept_shared_preview(
+def test_cli_playbook_scope_resolve_accept_shared_preview(
     isolated_engram: Engram, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ):
-    """MCP wrapper should pass explicit shared project folders to review resolution."""
+    """resolve passes explicit shared project folders through to the core."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
     project_a = str(tmp_path / "engram")
     project_b = str(tmp_path / "atlas")
     pb = isolated_engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
 
-    result = json.loads(_run(mcp_server.resolve_playbook_scope_review(
-        playbook_id=pb["id"],
-        action="accept_shared",
-        project_folders_json=json.dumps([project_a, project_b]),
-        dry_run=True,
-        confirm=False,
-    )))
+    rc, out = _run_scope_cli([
+        "resolve", pb["id"],
+        "--action", "accept_shared",
+        "--project-folders", f"{project_a},{project_b}",
+    ], capsys)
+    result = _cli_json(out)
 
+    assert rc == 0
     assert result["dry_run"] is True
     assert result["would_update"]["to_scope"]["type"] == "shared"
     assert result["would_update"]["to_scope"]["project_folders"] == [project_a, project_b]
@@ -1778,24 +1853,24 @@ def test_mcp_resolve_playbook_scope_review_accept_shared_preview(
     assert stored["scope"]["type"] == "global"
 
 
-def test_mcp_resolve_playbook_scope_review_refuses_web_caller_before_write(
-    isolated_engram: Engram, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+def test_cli_playbook_scope_resolve_requires_yes_before_write(
+    isolated_engram: Engram, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ):
-    """Low-trust web callers must not resolve Playbook scope review items."""
-    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
-    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    """resolve --apply without --yes must be refused before any mutation."""
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
     project = str(tmp_path / "engram")
     pb = isolated_engram.add_playbook({"title": "Daily cleanup", "triggers": ["notes"]})
 
-    result = _run(mcp_server.resolve_playbook_scope_review(
-        playbook_id=pb["id"],
-        action="accept_project",
-        project_folder=project,
-        dry_run=False,
-        confirm=True,
-    ))
+    rc, out = _run_scope_cli([
+        "resolve", pb["id"],
+        "--action", "accept_project",
+        "--project-folder", project,
+        "--apply",
+    ], capsys)
 
-    assert "Governance" in result or "治理" in result
+    assert rc == 2
+    assert "--yes" in out
     stored = isolated_engram.get_playbook(pb["id"], _update_access=False)
     assert stored["scope"]["type"] == "global"
     assert "scope_review_history" not in stored
@@ -1809,7 +1884,9 @@ def test_mcp_list_playbooks_for_management_includes_hidden_items(
     deleted = isolated_engram.add_playbook({"title": "Deleted flow", "triggers": ["delete"]})
     isolated_engram.delete_playbook(deleted["id"], dry_run=False, confirm=True)
 
-    result = json.loads(_run(mcp_server.list_playbooks_for_management(status="all")))
+    result = json.loads(_run(
+        mcp_server.get_playbooks(mode="management", status="all")
+    ))
 
     by_id = {item["id"]: item for item in result["items"]}
     assert by_id[active["id"]]["status"] == "active"
@@ -1835,7 +1912,9 @@ def test_mcp_list_playbooks_for_management_default_is_metadata_only(
         confirm=True,
     )
 
-    result = json.loads(_run(mcp_server.list_playbooks_for_management(status="all")))
+    result = json.loads(_run(
+        mcp_server.get_playbooks(mode="management", status="all")
+    ))
     rendered = json.dumps(result, ensure_ascii=False, sort_keys=True)
     item = result["items"][0]
 
@@ -1858,25 +1937,29 @@ def test_mcp_delete_restore_playbook_receipts_do_not_echo_content(
         "steps": [f"{secret} step"],
     })
 
-    delete_preview = _run(mcp_server.delete_playbook(
-        playbook_id=pb["id"],
+    delete_preview = _run(mcp_server.manage_playbook(
+        "delete",
+        pb["id"],
         reason=f"{secret} dry reason",
         dry_run=True,
         confirm=False,
     ))
-    deleted = _run(mcp_server.delete_playbook(
-        playbook_id=pb["id"],
+    deleted = _run(mcp_server.manage_playbook(
+        "delete",
+        pb["id"],
         reason=f"{secret} applied reason",
         dry_run=False,
         confirm=True,
     ))
-    restore_preview = _run(mcp_server.restore_playbook(
-        playbook_id=pb["id"],
+    restore_preview = _run(mcp_server.manage_playbook(
+        "restore",
+        pb["id"],
         dry_run=True,
         confirm=False,
     ))
-    restored = _run(mcp_server.restore_playbook(
-        playbook_id=pb["id"],
+    restored = _run(mcp_server.manage_playbook(
+        "restore",
+        pb["id"],
         dry_run=False,
         confirm=True,
     ))
@@ -1897,7 +1980,7 @@ def test_mcp_archive_playbook_ack_does_not_echo_title(
         "steps": [f"{secret} step"],
     })
 
-    result = _run(mcp_server.archive_playbook(pb["id"]))
+    result = _run(mcp_server.manage_playbook("archive", pb["id"]))
 
     assert secret not in result
     assert "title" not in result
@@ -1912,8 +1995,9 @@ def test_mcp_delete_playbook_refuses_web_caller_before_write(
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
     pb = isolated_engram.add_playbook({"title": "Do not delete", "triggers": ["safe"]})
 
-    result = _run(mcp_server.delete_playbook(
-        playbook_id=pb["id"],
+    result = _run(mcp_server.manage_playbook(
+        "delete",
+        pb["id"],
         reason="web attempt",
         dry_run=False,
         confirm=True,
@@ -1934,8 +2018,9 @@ def test_mcp_restore_playbook_refuses_web_caller_before_write(
     pb = isolated_engram.add_playbook({"title": "Deleted flow", "triggers": ["safe"]})
     isolated_engram.delete_playbook(pb["id"], dry_run=False, confirm=True)
 
-    result = _run(mcp_server.restore_playbook(
-        playbook_id=pb["id"],
+    result = _run(mcp_server.manage_playbook(
+        "restore",
+        pb["id"],
         dry_run=False,
         confirm=True,
     ))

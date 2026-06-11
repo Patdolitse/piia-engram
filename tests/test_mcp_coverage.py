@@ -38,9 +38,9 @@ def _run(coro):
 
 
 class TestReadToolsCoverage:
-    def test_get_domains_with_data(self, eng: Engram):
+    def test_domains_facet_with_data(self, eng: Engram):
         eng.add_lesson({"summary": "x", "domain": "python"})
-        result = _run(mcp_server.get_domains())
+        result = _run(mcp_server.get_identity_facets(facet="domains"))
         parsed = json.loads(result)
         assert "python" in parsed
 
@@ -55,19 +55,21 @@ class TestReadToolsCoverage:
         parsed = json.loads(result)
         assert "digest" in parsed
 
-    def test_get_related_knowledge(self, eng: Engram):
+    def test_explore_knowledge_related(self, eng: Engram):
         r = eng.add_lesson({"summary": "lesson A"})
-        result = _run(mcp_server.get_related_knowledge(r["id"]))
+        result = _run(mcp_server.explore_knowledge(mode="related", item_id=r["id"]))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
-    def test_find_similar_knowledge(self, eng: Engram):
+    def test_explore_knowledge_similar(self, eng: Engram):
         r = eng.add_lesson({"summary": "pytest fixture pattern for unit tests"})
-        result = _run(mcp_server.find_similar_knowledge(r["id"], limit=3))
+        result = _run(mcp_server.explore_knowledge(
+            mode="similar", item_id=r["id"], limit=3
+        ))
         parsed = json.loads(result)
         assert isinstance(parsed, (list, dict))
 
-    def test_suggest_merges_wrapper(self, eng: Engram):
+    def test_explore_knowledge_merge_candidates(self, eng: Engram):
         base = "数据库连接池必须配置最大连接数和超时设置"
         eng.add_lesson({"summary": base})
         # Bypass ingestion dedup by writing directly
@@ -78,14 +80,16 @@ class TestReadToolsCoverage:
         dup["summary"] = base.replace("和超时设置", "与超时配置")
         lessons.append(dup)
         eng._atomic_write(lessons_path, lessons)
-        result = _run(mcp_server.suggest_merges(threshold=0.4, limit=5))
+        result = _run(mcp_server.explore_knowledge(
+            mode="merge_candidates", threshold=0.4, limit=5
+        ))
         parsed = json.loads(result)
         assert "total_candidates" in parsed
         assert "suggestions" in parsed
         assert parsed["total_candidates"] >= 1
 
-    def test_suggest_merges_empty(self, eng: Engram):
-        result = _run(mcp_server.suggest_merges())
+    def test_explore_knowledge_merge_candidates_empty(self, eng: Engram):
+        result = _run(mcp_server.explore_knowledge(mode="merge_candidates"))
         parsed = json.loads(result)
         assert parsed["total_candidates"] == 0
 
@@ -191,19 +195,23 @@ class TestWriteToolsCoverage:
         parsed = json.loads(result)
         assert parsed.get("status") == "duplicate"
 
-    def test_bulk_add_knowledge_valid(self, eng: Engram):
+    def test_memory_store_batch_valid(self, eng: Engram):
         items = [{"summary": "bulk1"}, {"summary": "bulk2"}]
-        result = _run(mcp_server.bulk_add_knowledge(json.dumps(items), item_type="lesson"))
+        result = _run(mcp_server.memory_store(
+            kind="lesson", items_json=json.dumps(items)
+        ))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
-    def test_bulk_add_knowledge_invalid_json(self, eng: Engram):
-        result = _run(mcp_server.bulk_add_knowledge("not json"))
+    def test_memory_store_batch_invalid_json(self, eng: Engram):
+        result = _run(mcp_server.memory_store(kind="lesson", items_json="not json"))
         parsed = json.loads(result)
         assert "error" in parsed
 
-    def test_bulk_add_knowledge_not_array(self, eng: Engram):
-        result = _run(mcp_server.bulk_add_knowledge('{"key": "val"}'))
+    def test_memory_store_batch_not_array(self, eng: Engram):
+        result = _run(mcp_server.memory_store(
+            kind="lesson", items_json='{"key": "val"}'
+        ))
         parsed = json.loads(result)
         assert "error" in parsed
 
@@ -238,9 +246,11 @@ class TestWriteToolsCoverage:
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
-    def test_review_knowledge(self, eng: Engram):
+    def test_review_staging_review_item(self, eng: Engram):
         r = eng.add_lesson({"summary": "to review"})
-        result = _run(mcp_server.review_knowledge(r["id"]))
+        result = _run(mcp_server.review_staging(
+            action="review_item", knowledge_id=r["id"]
+        ))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
@@ -258,17 +268,21 @@ class TestReviewMergeTools:
         assert parsed.get("status") == "review_page_generated"
         assert "path" in parsed
 
-    def test_apply_review_json(self, eng: Engram):
+    def test_review_staging_apply_text_json(self, eng: Engram):
         r = eng.add_lesson({"summary": "to archive via review"})
         review = json.dumps({"archive": [{"id": r["id"], "type": "lesson"}], "promote": []})
-        result = _run(mcp_server.apply_review(review))
+        result = _run(mcp_server.review_staging(
+            action="apply_text", review_text=review
+        ))
         parsed = json.loads(result)
         assert parsed.get("archived") >= 0
 
-    def test_apply_review_text(self, eng: Engram):
+    def test_review_staging_apply_text_plain(self, eng: Engram):
         r = eng.add_lesson({"summary": "to archive via text review"})
         text = f"archive lesson {r['id']}"
-        result = _run(mcp_server.apply_review(text))
+        result = _run(mcp_server.review_staging(
+            action="apply_text", review_text=text
+        ))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
@@ -279,18 +293,18 @@ class TestReviewMergeTools:
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
-    def test_link_knowledge(self, eng: Engram):
+    def test_manage_relation_link(self, eng: Engram):
         r1 = eng.add_lesson({"summary": "React component lifecycle hooks optimization"})
         r2 = eng.add_lesson({"summary": "PostgreSQL query planner uses index scan for small tables"})
-        result = _run(mcp_server.link_knowledge(r1["id"], r2["id"]))
+        result = _run(mcp_server.manage_relation("link", r1["id"], r2["id"]))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
-    def test_unlink_knowledge(self, eng: Engram):
+    def test_manage_relation_unlink(self, eng: Engram):
         r1 = eng.add_lesson({"summary": "Docker multi-stage builds reduce image size significantly"})
         r2 = eng.add_lesson({"summary": "GitHub Actions matrix strategy for cross-platform CI"})
         eng.link_knowledge(r1["id"], r2["id"])
-        result = _run(mcp_server.unlink_knowledge(r1["id"], r2["id"]))
+        result = _run(mcp_server.manage_relation("unlink", r1["id"], r2["id"]))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
@@ -349,14 +363,14 @@ class TestSaveProjectSnapshot:
 
 
 class TestImportExportCoverage:
-    def test_export_engram_to_openclaw(self, eng: Engram):
+    def test_export_engram_openclaw_format(self, eng: Engram):
         eng.update_profile({"role": "dev"})
-        result = _run(mcp_server.export_engram_to_openclaw())
+        result = _run(mcp_server.export_engram(format="openclaw"))
         parsed = json.loads(result)
         assert isinstance(parsed, (list, dict))
 
-    def test_import_engram_from_openclaw_empty(self, eng: Engram):
-        result = _run(mcp_server.import_engram_from_openclaw())
+    def test_import_engram_openclaw_format_empty(self, eng: Engram):
+        result = _run(mcp_server.import_engram(format="openclaw"))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 

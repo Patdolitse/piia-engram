@@ -41,10 +41,10 @@ async def get_user_context(
         token_budget: 上下文 token 预算（可选）。设定后按优先级裁剪 section，低优先级 section 先丢弃。不设则返回全量。
             Optional token budget. When set, sections are included by priority until budget is exhausted.
         user_prompt: 用户当前提问（可选）。传入后会追加到上下文末尾，并与已存 Playbook 的
-            triggers 关键词匹配，命中时浮现「相关 Playbook」小节（标题 + ID；用 get_playbook 查看完整步骤）。
+            triggers 关键词匹配，命中时浮现「相关 Playbook」小节（标题 + ID；用 get_playbooks(mode="get") 查看完整步骤）。
             Optional current user prompt. Appended to the context and matched against stored
             playbook trigger keywords; hits surface a "Matched Playbooks" section (title + id;
-            call get_playbook for the full steps).
+            call get_playbooks(mode="get") for the full steps).
     """
     if project_folder:
         S._session.detect_project(project_folder)
@@ -231,73 +231,39 @@ async def get_identity_card() -> str:
 
 
 @S.mcp.tool()
-async def get_profile(safe: bool = True) -> str:
-    """获取用户身份画像。 / Get the user's identity profile.
+async def get_identity_facets(facet: str = "all", safe: bool = True) -> str:
+    """按切面读取用户身份信息（画像/偏好/信任边界/工作风格/质量标准/领域图谱）。 / Read user identity facets: profile, preferences, trust boundaries, work style, quality standards, and the domain map.
 
-    用途：需要读取角色、语言、技术水平、简介等用户画像字段时调用。
-    Purpose: Call when you need profile fields such as role, language, technical level, or description.
+    用途：需要单独读取某一类身份字段（如角色语言、协作偏好、验收标准、技术领域）时调用。
+    Purpose: Call when you need a single identity facet such as role/language, collaboration preferences, acceptance standards, or technical domains.
 
-    注意：默认遵守 trust_boundaries.restricted_fields 过滤敏感字段。设 safe=False 仅在用户明确要求时使用。
-    Note: Respects trust_boundaries.restricted_fields by default. Set safe=False only when the user explicitly requests full profile access.
+    注意：完整冷启动上下文用 get_user_context；facet 名与 update_identity 的 field 一一对应（外加 domains）。
+    Note: Use get_user_context for the full cold-start context; facet names mirror the update_identity fields (plus domains).
 
     Args:
-        safe: 默认 True，按 trust_boundaries 过滤敏感字段。 / Default True; filters sensitive fields per trust_boundaries.
+        facet: all | profile | preferences | trust_boundaries | work_style | quality_standards | domains，默认 all 聚合全部。 / One facet name, or "all" (default) for the aggregate of every facet.
+        safe: 仅作用于 profile 切面：默认 True，按 trust_boundaries 过滤敏感字段；设 False 仅在用户明确要求时使用。 / Applies to the profile facet only; default True filters sensitive fields per trust_boundaries. Set False only when the user explicitly requests full profile access.
     """
-    return S._json(S._engram.get_profile(safe=safe))
-
-
-@S.mcp.tool()
-async def get_work_style() -> str:
-    """获取用户的工作偏好（工作模式、节奏、沟通风格）。 / Get the user's work style preferences: patterns, pace, and communication style.
-
-    Deprecated compatibility read: prefer get_preferences for new callers.
-
-    用途：需要单独读取旧版 work_style 偏好时调用。
-    Purpose: Call when you specifically need the legacy work_style preference object.
-
-    注意：新版偏好优先使用 get_preferences。
-    Note: Prefer get_preferences for the newer preferences model.
-    """
-    return S._json(S._engram.get_work_style())
-
-
-@S.mcp.tool()
-async def get_preferences() -> str:
-    """获取用户的工作偏好（v2.0，含工具偏好、工作模式、沟通风格）。 / Get the user's v2.0 preferences, including tool preferences, work patterns, and communication style.
-
-    用途：需要读取用户如何协作、喜欢哪些工具、偏好什么工作方式时调用。
-    Purpose: Call when you need to understand how the user collaborates, which tools they prefer, and how they like work to be done.
-
-    注意：如果只需要完整冷启动上下文，用 get_user_context。
-    Note: Use get_user_context when you need the full cold-start context rather than preferences alone.
-    """
-    return S._json(S._engram.get_preferences())
-
-
-@S.mcp.tool()
-async def get_trust_boundaries() -> str:
-    """获取数据信任边界（哪些工具可以访问哪些 Engram 数据）。 / Get data trust boundaries that define which tools may access which Engram data.
-
-    用途：需要判断敏感字段、共享边界或工具访问权限时调用。
-    Purpose: Call when you need to inspect sensitive fields, sharing boundaries, or tool access permissions.
-
-    注意：普通上下文读取会自动遵守安全画像逻辑；不要用本工具绕过隐私边界。
-    Note: Normal context reads already respect safe-profile behavior; do not use this tool to bypass privacy boundaries.
-    """
-    return S._json(S._engram.get_trust_boundaries())
-
-
-@S.mcp.tool()
-async def get_quality_standards() -> str:
-    """获取用户的质量标准和验收条件。 / Get the user's quality standards and acceptance criteria.
-
-    用途：需要知道用户如何判断工作是否完成、测试和证据要求有多严格时调用。
-    Purpose: Call when you need to know how the user judges completion, tests, evidence, and acceptance quality.
-
-    注意：冷启动时 get_user_context 通常已经包含关键质量标准。
-    Note: get_user_context usually includes the key quality standards during cold start.
-    """
-    return S._json(S._engram.get_quality_standards())
+    readers = {
+        "profile": lambda: S._engram.get_profile(safe=safe),
+        "preferences": lambda: S._engram.get_preferences(),
+        "trust_boundaries": lambda: S._engram.get_trust_boundaries(),
+        "work_style": lambda: S._engram.get_work_style(),
+        "quality_standards": lambda: S._engram.get_quality_standards(),
+        "domains": lambda: S._engram.get_domains(),
+    }
+    if facet == "all":
+        return S._json({name: read() for name, read in readers.items()})
+    reader = readers.get(facet)
+    if reader is None:
+        return (
+            f"unknown facet: {facet!r} "
+            f"(expected all | {' | '.join(readers)})"
+        )
+    value = reader()
+    if facet == "domains" and not value:
+        return "尚无领域经验记录。"
+    return S._json(value)
 
 
 @S.mcp.tool()
@@ -340,21 +306,47 @@ async def get_decisions(
     project: Optional[str] = None,
     domain: Optional[str] = None,
     limit: int = 30,
+    thread_seed_id: str = "",
+    history_question: str = "",
+    history_threshold: float = 0.6,
 ) -> str:
-    """按时间列出用户做过的关键决策（不需要搜索词）。 / List the user's key decisions by time, without requiring a search query.
+    """按时间列出关键决策；也可还原决策链或某个问题的修订历史。 / List the user's key decisions by time; can also reconstruct a decision thread or a question's revision history.
 
-    用途：想浏览最近的决策记录，或按领域、项目、来源筛选时调用。
-    Purpose: Call when browsing recent decisions or filtering decisions by domain, project, or source.
+    用途：浏览/筛选最近决策；给 thread_seed_id 时还原包含该条目的【决策链】（演进顺序、
+    superseded 标记、当前 head）；给 history_question 时按问题文本模糊匹配，返回该决策
+    的完整修订历史（revisions + current）。
+    Purpose: Browse or filter recent decisions. With thread_seed_id, reconstruct the DECISION THREAD containing that item (evolution order, superseded flags, current heads). With history_question, fuzzy-match by question text and return the full revision history (revisions + current).
 
-    注意：如果你有明确关键词想搜索决策内容，用 search_knowledge(scope="decisions") 更精准。
-    Note: If you have explicit keywords for decision content, search_knowledge(scope="decisions") is more precise.
+    注意：有明确关键词搜索决策内容用 search_knowledge(scope="decisions")；thread_seed_id
+    与 history_question 互斥，同时给时 thread_seed_id 优先；演进关系由 manage_relation 建立。
+    Note: For keyword search use search_knowledge(scope="decisions"). thread_seed_id and history_question are mutually exclusive (thread_seed_id wins). Evolution edges are built via manage_relation.
 
     Args:
         source_tool: 按来源工具过滤（如 'claude_code', 'codex'）。 / Filter by source tool, such as 'claude_code' or 'codex'.
         project: 按项目过滤（可选）。 / Filter by project (optional).
         domain: 按领域过滤（如 'architecture'），支持多标签决策的包含匹配。 / Filter by domain, such as 'architecture'; supports contains matching for multi-label decisions.
         limit: 最多返回多少条（默认 30）。 / Maximum number of items to return (default 30).
+        thread_seed_id: 决策链中任意一条的 ID；给了就返回决策链视图。 / ID of any item in a thread; returns the thread view when provided.
+        history_question: 决策问题的关键词或完整问题文本；给了就返回修订历史。 / Keywords or full question text; returns the revision history when provided.
+        history_threshold: 修订历史的相似度阈值（0-1，默认 0.6）。 / Similarity threshold for history matching (0-1, default 0.6).
     """
+    if thread_seed_id:
+        thread = S._engram.get_decision_thread(thread_seed_id)
+        # 'order' rows are derived previews ({id, status, summary}) that do not
+        # carry the source item's sensitivity label, so content-only gating
+        # would be partial. Gate the derived thread view owner-only.
+        thread = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, thread, tool="get_decisions"
+        )
+        return S._json(thread)
+    if history_question:
+        result = S._engram.get_decision_history(
+            history_question, threshold=history_threshold
+        )
+        result = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, result, tool="get_decisions"
+        )
+        return S._json(result)
     # Read-path side-effect gate (Codex round-6): owner-only access bookkeeping.
     decisions = S._engram.get_decisions(
         limit=limit,
@@ -367,22 +359,6 @@ async def get_decisions(
     if not decisions:
         return "尚无决策记录。"
     return S._json(decisions)
-
-
-@S.mcp.tool()
-async def get_domains() -> str:
-    """获取用户的技术领域经验图谱。 / Get the user's technical domain experience map.
-
-    用途：查看用户在哪些技术、领域或主题上积累了经验。
-    Purpose: Call to see which technologies, domains, or topics the user has experience in.
-
-    注意：如果要读取某个领域里的具体经验，用 get_lessons(domain=...) 或 search_knowledge。
-    Note: To read concrete knowledge within a domain, use get_lessons(domain=...) or search_knowledge.
-    """
-    domains = S._engram.get_domains()
-    if not domains:
-        return "尚无领域经验记录。"
-    return S._json(domains)
 
 
 @S.mcp.tool()
@@ -509,7 +485,7 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
     or recalls a procedure ('X how to' / 'X steps').
 
     If you only have a project path and no query, use get_relevant_knowledge;
-    if you have an existing knowledge ID, use find_similar_knowledge.
+    if you have an existing knowledge ID, use explore_knowledge(mode="similar").
 
     Args:
         query: Search query keywords.
@@ -606,283 +582,52 @@ async def get_knowledge_overview(section: str = "all", stale_days: int = 30) -> 
 
 
 @S.mcp.tool()
-async def suggest_merges(threshold: float = 0.45, limit: int = 10) -> str:
-    """扫描全库，推荐可合并的相似/重复知识条目。 / Scan all knowledge and recommend similar or duplicate items that can be merged.
+async def explore_knowledge(
+    mode: str = "related",
+    item_id: str = "",
+    limit: int = 0,
+    threshold: float = 0.45,
+) -> str:
+    """探索知识关联：相连条目、相似条目或全库合并建议。 / Explore knowledge links: related items, similar items, or merge candidates across the library.
 
-    用途：定期维护时调用，一次性发现所有值得合并的近似条目，附带可直接执行的 merge 命令。
-    Purpose: Call during periodic maintenance to discover all near-duplicate items with actionable merge commands.
+    用途：已知条目 ID 时沿关系图看相关知识（related）或查近似重复（similar）；定期维护时
+    全库扫描可合并条目（merge_candidates，附可直接执行的 merge 命令）。
+    Purpose: Follow the knowledge graph from a known item (related), find near-duplicates of an item (similar), or scan the whole library for merge candidates during maintenance (merge_candidates, with actionable merge commands).
 
-    注意：如果已知某条的 ID 想查相似项，用 find_similar_knowledge 更直接；本工具是全库扫描。
-    Note: If you already have an item ID, find_similar_knowledge is more direct; this tool scans the entire knowledge base.
+    注意：只有关键词没有 ID 时用 search_knowledge；执行合并用 merge_knowledge。
+    Note: Use search_knowledge when you only have keywords; use merge_knowledge to actually merge.
 
     Args:
-        threshold: 相似度阈值（0.2–1.0，默认 0.45）。 / Similarity threshold (0.2–1.0, default 0.45).
-        limit: 最多返回多少组建议（默认 10，上限 30）。 / Maximum number of suggestions to return (default 10, max 30).
+        mode: related | similar | merge_candidates（默认 related）。 / Exploration mode (default related).
+        item_id: related/similar 模式必填：lesson 或 decision 的 ID。 / Required for related/similar: ID of a lesson or decision.
+        limit: 最多返回多少条；0 = 按模式默认（similar:5，merge_candidates:10）。 / Maximum items; 0 = per-mode default (similar:5, merge_candidates:10).
+        threshold: merge_candidates 模式的相似度阈值（0.2–1.0，默认 0.45）。 / Similarity threshold for merge_candidates (0.2–1.0, default 0.45).
     """
-    merges = S._engram.suggest_merges(threshold=threshold, limit=limit)
-    # Each suggestion embeds item summaries from a full-library scan; gate the
-    # aggregate maintenance view owner-only.
-    merges = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, merges, tool="suggest_merges"
-    )
-    return S._json(merges)
-
-
-@S.mcp.tool()
-async def classify_legacy_playbooks(project_folders_json: str = "[]") -> str:
-    """Dry-run classification suggestions for legacy Playbook scopes.
-
-    This scans existing Playbooks and known projects, then returns a reviewable
-    migration plan. It does not mutate stored Playbooks.
-    """
-    project_folders = None
-    if project_folders_json and project_folders_json != "[]":
-        try:
-            parsed = json.loads(project_folders_json)
-        except json.JSONDecodeError:
-            return "project_folders_json must be a valid JSON array"
-        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
-            return "project_folders_json must be a JSON array of strings"
-        project_folders = parsed
-    result = S._engram.classify_legacy_playbooks(project_folders=project_folders)
-    # Full-library maintenance view: suggestions include playbook titles and
-    # project evidence, so only the owner should see the aggregate report.
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="classify_legacy_playbooks"
-    )
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def apply_legacy_playbook_scope_suggestions(
-    project_folders_json: str = "[]",
-    playbook_ids_json: str = "[]",
-    min_confidence: float = 0.7,
-    dry_run: bool = True,
-    confirm: bool = False,
-) -> str:
-    """Apply high-confidence legacy Playbook project/global scope suggestions.
-
-    Owner/admin surface: reorganizes stored Playbook metadata and is refused for non-owner callers when governance is enabled.
-
-    Default mode is preview-only. Actual writes require ``dry_run=False`` and
-    ``confirm=True`` and are owner-only because this reorganizes stored
-    Playbook metadata across the whole corpus.
-    """
-    refusal = S._gov_rt.maybe_refuse_owner_write(
-        S._engram.root, tool="apply_legacy_playbook_scope_suggestions"
-    )
-    if refusal is not None:
-        return refusal
-
-    def _parse_optional_string_list(raw: str, field: str) -> list[str] | None | str:
-        if not raw or raw == "[]":
-            return None
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return f"{field} must be a valid JSON array"
-        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
-            return f"{field} must be a JSON array of strings"
-        return parsed
-
-    project_folders = _parse_optional_string_list(
-        project_folders_json, "project_folders_json"
-    )
-    if isinstance(project_folders, str):
-        return project_folders
-    playbook_ids = _parse_optional_string_list(playbook_ids_json, "playbook_ids_json")
-    if isinstance(playbook_ids, str):
-        return playbook_ids
-
-    try:
-        result = S._engram.apply_legacy_playbook_scope_suggestions(
-            project_folders=project_folders,
-            playbook_ids=playbook_ids,
-            min_confidence=min_confidence,
-            dry_run=dry_run,
-            confirm=confirm,
+    if mode == "merge_candidates":
+        merges = S._engram.suggest_merges(threshold=threshold, limit=limit or 10)
+        # Each suggestion embeds item summaries from a full-library scan; gate
+        # the aggregate maintenance view owner-only.
+        merges = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, merges, tool="explore_knowledge"
         )
-        S._track("apply_legacy_playbook_scope_suggestions", success=True)
-    except Exception as exc:
-        S._track("apply_legacy_playbook_scope_suggestions", success=False)
-        return f"Apply legacy Playbook scope suggestions failed: {S._safe_err(exc)}"
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="apply_legacy_playbook_scope_suggestions"
-    )
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def rollback_playbook_scope_migration(
-    playbook_ids_json: str = "[]",
-    dry_run: bool = True,
-    confirm: bool = False,
-) -> str:
-    """Rollback the latest Playbook scope migration for selected Playbooks.
-
-    Owner/admin surface: rewrites Playbook scope metadata and is refused for non-owner callers when governance is enabled.
-
-    Default mode is preview-only. Actual rollback requires ``dry_run=False``
-    and ``confirm=True`` and is owner-only.
-    """
-    refusal = S._gov_rt.maybe_refuse_owner_write(
-        S._engram.root, tool="rollback_playbook_scope_migration"
-    )
-    if refusal is not None:
-        return refusal
-
-    playbook_ids = None
-    if playbook_ids_json and playbook_ids_json != "[]":
-        try:
-            parsed = json.loads(playbook_ids_json)
-        except json.JSONDecodeError:
-            return "playbook_ids_json must be a valid JSON array"
-        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
-            return "playbook_ids_json must be a JSON array of strings"
-        playbook_ids = parsed
-
-    try:
-        result = S._engram.rollback_playbook_scope_migration(
-            playbook_ids=playbook_ids,
-            dry_run=dry_run,
-            confirm=confirm,
+        return S._json(merges)
+    if mode not in ("related", "similar"):
+        return (
+            f"unknown mode: {mode!r} "
+            "(expected related | similar | merge_candidates)"
         )
-        S._track("rollback_playbook_scope_migration", success=True)
-    except Exception as exc:
-        S._track("rollback_playbook_scope_migration", success=False)
-        return f"Rollback Playbook scope migration failed: {S._safe_err(exc)}"
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="rollback_playbook_scope_migration"
-    )
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def get_playbook_scope_review_queue(
-    project_folders_json: str = "[]",
-    include_resolved: bool = False,
-    limit: int = 50,
-) -> str:
-    """List unresolved legacy Playbooks that need manual scope review."""
-    project_folders = None
-    if project_folders_json and project_folders_json != "[]":
-        try:
-            parsed = json.loads(project_folders_json)
-        except json.JSONDecodeError:
-            return "project_folders_json must be a valid JSON array"
-        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
-            return "project_folders_json must be a JSON array of strings"
-        project_folders = parsed
-    try:
-        result = S._engram.get_playbook_scope_review_queue(
-            project_folders=project_folders,
-            include_resolved=include_resolved,
-            limit=limit,
+    if not item_id:
+        return "item_id is required for mode='related' / mode='similar'"
+    if mode == "related":
+        related = S._engram.get_related_knowledge(item_id)
+        related = S._gov_rt.maybe_govern_result(
+            S._engram.root, related, tool="explore_knowledge",
+            list_fields=("related",), item_fields=("source",),
         )
-        S._track("get_playbook_scope_review_queue", success=True)
-    except Exception as exc:
-        S._track("get_playbook_scope_review_queue", success=False)
-        return f"Get Playbook scope review queue failed: {S._safe_err(exc)}"
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="get_playbook_scope_review_queue"
-    )
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def resolve_playbook_scope_review(
-    playbook_id: str,
-    action: str,
-    project_folder: str = "",
-    project_folders_json: str = "[]",
-    note: str = "",
-    dry_run: bool = True,
-    confirm: bool = False,
-) -> str:
-    """Resolve one Playbook scope review item.
-
-    Actions (exact values): 'accept_global', 'accept_project', 'accept_shared', 'skip'.
-    - accept_project requires project_folder (single folder path; a single-item
-      project_folders_json is also accepted).
-    - accept_shared requires project_folders_json (JSON array of folder paths;
-      project_folder alone is also accepted as one entry).
-    Mutations require dry_run=False AND confirm=True; default is a dry-run preview.
-
-    Owner/admin surface: mutates legacy Playbook review state and is refused for non-owner callers when governance is enabled.
-    """
-    refusal = S._gov_rt.maybe_refuse_owner_write(
-        S._engram.root, tool="resolve_playbook_scope_review"
-    )
-    if refusal is not None:
-        return refusal
-    project_folders = None
-    if project_folders_json and project_folders_json != "[]":
-        try:
-            parsed = json.loads(project_folders_json)
-        except json.JSONDecodeError:
-            return "project_folders_json must be a valid JSON array"
-        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
-            return "project_folders_json must be a JSON array of strings"
-        project_folders = parsed
-    try:
-        result = S._engram.resolve_playbook_scope_review(
-            playbook_id=playbook_id,
-            action=action,
-            project_folder=project_folder or None,
-            project_folders=project_folders,
-            note=note,
-            dry_run=dry_run,
-            confirm=confirm,
-        )
-        S._track("resolve_playbook_scope_review", success=True)
-    except Exception as exc:
-        S._track("resolve_playbook_scope_review", success=False)
-        return f"Resolve Playbook scope review failed: {S._safe_err(exc)}"
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="resolve_playbook_scope_review"
-    )
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def get_related_knowledge(item_id: str) -> str:
-    """获取与某条 lesson 或 decision 相连的所有知识。 / Get all knowledge items linked to a given lesson or decision.
-
-    用途：已知一个知识 ID，想沿着知识关系图查看相关经验和决策时调用。
-    Purpose: Call when you have a knowledge ID and want to follow the knowledge graph to related lessons and decisions.
-
-    注意：如果想找内容相似但尚未显式关联的条目，用 find_similar_knowledge。
-    Note: Use find_similar_knowledge to find similar items that are not explicitly linked.
-
-    Args:
-        item_id: lesson 或 decision 的 ID。 / ID of a lesson or decision.
-    """
-    related = S._engram.get_related_knowledge(item_id)
-    related = S._gov_rt.maybe_govern_result(
-        S._engram.root, related, tool="get_related_knowledge",
-        list_fields=("related",), item_fields=("source",),
-    )
-    return S._json(related)
-
-
-@S.mcp.tool()
-async def find_similar_knowledge(item_id: str, limit: int = 5) -> str:
-    """根据已有知识条目 ID 查找内容相似的条目。 / Find content-similar knowledge items from an existing knowledge item ID.
-
-    用途：你已经有一条 lesson 或 decision 的 ID，想看有没有类似或重复的条目。
-    Purpose: Call when you already have a lesson or decision ID and want to find similar or duplicate items.
-
-    注意：如果你没有 ID、只有关键词，用 search_knowledge。
-    Note: If you do not have an ID and only have keywords, use search_knowledge.
-
-    Args:
-        item_id: 已有 lesson 或 decision 的 ID。 / ID of the existing lesson or decision.
-        limit: 最多返回多少条相似项（默认 5）。 / Maximum number of similar items to return (default 5).
-    """
-    similar = S._engram.find_similar_knowledge(item_id, limit=limit)
+        return S._json(related)
+    similar = S._engram.find_similar_knowledge(item_id, limit=limit or 5)
     similar = S._gov_rt.maybe_govern_result(
-        S._engram.root, similar, tool="find_similar_knowledge",
+        S._engram.root, similar, tool="explore_knowledge",
         list_fields=("similar",), item_fields=("source",),
     )
     return S._json(similar)

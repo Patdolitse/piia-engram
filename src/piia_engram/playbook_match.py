@@ -17,8 +17,9 @@ Design constraints:
   title and domain hits only improve ranking, they never qualify a candidate
   on their own.
 - **Surfacing is a pointer, not the playbook.** Only title + id + matched
-  triggers are rendered; the AI is told to call ``get_playbook`` (whose
-  response carries the passive-reference ``usage_policy``) for the steps.
+  triggers are rendered; the AI is told to call ``get_playbooks(mode="get")``
+  (whose response carries the passive-reference ``usage_policy``) for the
+  steps.
 """
 
 from __future__ import annotations
@@ -153,7 +154,7 @@ def render_matched_section(
     """Render matches as a markdown section appended to the cold-start context.
 
     Returns an empty string when there are no matches. The section is a
-    pointer list — full steps stay behind ``get_playbook`` so the
+    pointer list — full steps stay behind ``get_playbooks(mode="get")`` so the
     passive-reference ``usage_policy`` always travels with them.
     """
     if not matches:
@@ -164,7 +165,7 @@ def render_matched_section(
             "",
             "## 相关 Playbook（与当前提问匹配）",
             "以下已存操作手册的触发词命中了当前提问。"
-            "用 get_playbook(playbook_id) 查看完整步骤；"
+            '用 get_playbooks(mode="get", playbook_id=...) 查看完整步骤；'
             "Playbook 是被动参考——先与用户确认方案，再逐步执行。",
         ]
     else:
@@ -173,9 +174,9 @@ def render_matched_section(
             "",
             "## Matched Playbooks (for the current prompt)",
             "Stored playbooks whose trigger keywords match this prompt. "
-            "Call get_playbook(playbook_id) for the full steps; "
-            "playbooks are passive references — confirm the plan with the "
-            "user before executing step by step.",
+            'Call get_playbooks(mode="get", playbook_id=...) for the full '
+            "steps; playbooks are passive references — confirm the plan with "
+            "the user before executing step by step.",
         ]
     for m in matches:
         hits = ", ".join(str(t) for t in m.get("matched_triggers", [])[:5])

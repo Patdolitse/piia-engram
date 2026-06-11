@@ -359,8 +359,18 @@ def _print_playbook_usage() -> None:
     print(
         "Engram Playbook CLI\n\n"
         "Usage:\n"
-        "  engram playbook install <builtin-name> [--yes] [--project <folder>]\n\n"
-        "Default is dry-run. Pass --yes to write a built-in Playbook."
+        "  engram playbook install <builtin-name> [--yes] [--project <folder>]\n"
+        "  engram playbook scope classify [--project-folders a,b]\n"
+        "  engram playbook scope apply [--project-folders a,b] [--playbook-ids x,y]\n"
+        "                              [--min-confidence 0.7] [--apply --yes]\n"
+        "  engram playbook scope rollback [--playbook-ids x,y] [--apply --yes]\n"
+        "  engram playbook scope queue [--include-resolved] [--limit 50]\n"
+        "  engram playbook scope resolve <playbook-id>\n"
+        "                              --action accept_global|accept_project|accept_shared|skip\n"
+        "                              [--project-folder X | --project-folders a,b]\n"
+        "                              [--note TEXT] [--apply --yes]\n\n"
+        "Default is dry-run. install needs --yes to write; scope apply/rollback/resolve\n"
+        "need both --apply and --yes to mutate."
     )
 
 
@@ -374,13 +384,106 @@ def _arg_value(args: list[str], *names: str) -> str:
     return ""
 
 
+def _csv_list(value: str) -> list[str]:
+    """Split a comma/semicolon-separated CLI value into a clean list."""
+    return [part.strip() for part in re.split(r"[,;]+", value or "") if part.strip()]
+
+
+def _run_playbook_scope(args: list[str]) -> int:
+    """``engram playbook scope <cmd>`` — legacy Playbook scope migration toolkit.
+
+    v4.0.0 moved these five owner-only migration surfaces out of MCP
+    (classify_legacy_playbooks / apply_legacy_playbook_scope_suggestions /
+    rollback_playbook_scope_migration / get_playbook_scope_review_queue /
+    resolve_playbook_scope_review) into this local CLI: the CLI process is by
+    definition the local owner (private-self), so no MCP governance gate runs
+    here. Mutations stay double-locked: ``--apply`` flips dry_run off and
+    ``--yes`` confirms; core keeps dry-run unless both are given.
+    """
+    if args and args[0] in ("-h", "--help"):
+        _print_playbook_usage()
+        return 0
+    if not args or args[0] not in {"classify", "apply", "rollback", "queue", "resolve"}:
+        if args:
+            print(f"Unknown playbook scope command: {args[0]}")
+        _print_playbook_usage()
+        return 2
+
+    cmd, rest = args[0], args[1:]
+    folders = _csv_list(_arg_value(rest, "--project-folders"))
+    Engram = W._get_engram_class()
+    eng = Engram()
+
+    if cmd == "classify":
+        result = eng.classify_legacy_playbooks(project_folders=folders or None)
+    elif cmd == "queue":
+        result = eng.get_playbook_scope_review_queue(
+            project_folders=folders or None,
+            include_resolved="--include-resolved" in rest,
+            limit=_parse_sessions_limit(_arg_value(rest, "--limit"), default=50),
+        )
+    else:
+        # Mutating commands: --apply flips dry_run off and must be paired
+        # with an explicit --yes (same refusal style as `engram review`).
+        apply_flag = "--apply" in rest
+        if apply_flag and not _require_yes(rest, f"execute playbook scope {cmd}"):
+            return 2
+        dry_run = not apply_flag
+        confirm = "--yes" in rest
+        if cmd == "apply":
+            min_confidence = 0.7
+            raw_conf = _arg_value(rest, "--min-confidence")
+            if raw_conf:
+                try:
+                    min_confidence = float(raw_conf)
+                except ValueError:
+                    print(f"Invalid --min-confidence: {raw_conf}")
+                    return 2
+            result = eng.apply_legacy_playbook_scope_suggestions(
+                project_folders=folders or None,
+                playbook_ids=_csv_list(_arg_value(rest, "--playbook-ids")) or None,
+                min_confidence=min_confidence,
+                dry_run=dry_run,
+                confirm=confirm,
+            )
+        elif cmd == "rollback":
+            result = eng.rollback_playbook_scope_migration(
+                playbook_ids=_csv_list(_arg_value(rest, "--playbook-ids")) or None,
+                dry_run=dry_run,
+                confirm=confirm,
+            )
+        else:  # resolve
+            if not rest or rest[0].startswith("--"):
+                print("resolve needs a positional <playbook-id> before options")
+                _print_playbook_usage()
+                return 2
+            action = _arg_value(rest, "--action")
+            if not action:
+                print("--action is required: accept_global|accept_project|accept_shared|skip")
+                return 2
+            result = eng.resolve_playbook_scope_review(
+                rest[0],
+                action,
+                project_folder=_arg_value(rest, "--project-folder") or None,
+                project_folders=folders or None,
+                note=_arg_value(rest, "--note"),
+                dry_run=dry_run,
+                confirm=confirm,
+            )
+
+    W._safe_print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 1 if isinstance(result, dict) and result.get("error") else 0
+
+
 def run_playbook(argv: list[str] | None = None) -> int:
-    """Local CLI for installing built-in Playbook templates."""
+    """Local CLI for built-in Playbook templates and legacy scope migration."""
     W._configure_utf8_stdio()
     args = list(argv or [])
     if not args or args[0] in ("-h", "--help"):
         _print_playbook_usage()
         return 0
+    if args[0] == "scope":
+        return _run_playbook_scope(args[1:])
     if args[0] != "install" or len(args) < 2:
         _print_playbook_usage()
         return 2

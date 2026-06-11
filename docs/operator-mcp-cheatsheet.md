@@ -5,7 +5,7 @@ This is the short operational view of the Engram MCP surface.
 ## Default surface
 
 - Default: 17 core tools.
-- Opt-in full surface: 87 tools with `ENGRAM_TOOLS=all`.
+- Opt-in full surface: all 53 tools with `ENGRAM_TOOLS=all` (17 core + 36 advanced).
 - Core means high-frequency and context-budget friendly. It does not mean read-only.
 
 ## Core boundaries
@@ -26,10 +26,13 @@ Use `ENGRAM_TOOLS=all` when you intentionally need:
 - imports, exports, and backup previews;
 - Playbook maintenance and local tool-registry operations;
 - proposal-only context-governance previews;
-- owner/admin diagnostics or migration surfaces.
+- owner/admin diagnostics.
 
 All-tool mode increases the visible tool list. It does not remove governance
 checks, owner gates, or the need to confirm public actions.
+
+Legacy Playbook scope migration is not an MCP surface: it lives in the
+owner-only local CLI (`engram playbook scope classify|apply|rollback|queue|resolve`).
 
 ## Evidence labels
 

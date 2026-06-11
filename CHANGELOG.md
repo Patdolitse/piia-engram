@@ -6,6 +6,38 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.0.0] - 2026-06-11
+
+### Changed
+- **BREAKING: MCP tool surface consolidated from 87 to 53 tools.** Families of
+  closely related operations are merged into single tools with a
+  `mode`/`action` selector; the old names were removed in the same release (no
+  transitional aliases). The 17 Tier-1 core tools loaded by default are
+  unchanged. Highlights: identity reads → `get_identity_facets`; Playbook
+  reads → `get_playbooks` (`mode`); Playbook management → `manage_playbook`;
+  execution → `playbook_execution`; staging review → `review_staging`;
+  relations → `manage_relation`; exploration → `explore_knowledge`; decision
+  threads absorbed into `get_decisions` (`thread_seed_id=` /
+  `history_question=`); portraits → `user_portrait`; caller trust →
+  `manage_caller_trust`; OpenClaw import/export folded into `export_engram` /
+  `import_engram` (`format="openclaw"`); batch writes folded into
+  `memory_store` (`items_json=`). Full old-name → new-call mapping and
+  behavior notes: [docs/migration-v4.md](docs/migration-v4.md).
+- **BREAKING: legacy Playbook scope migration moved out of MCP** into the
+  owner-only local CLI: `engram playbook scope
+  classify|apply|rollback|queue|resolve` (previews by default; writes require
+  `--apply --yes`).
+- **Tighter staging-review gate** — `review_staging` runs the write gate for
+  every action including `list` (the old `list_pending_staging` was
+  read-class); read-only-external callers are now refused. Owner and
+  trusted-local callers are unaffected.
+
+### Documentation
+- New migration guide [docs/migration-v4.md](docs/migration-v4.md); tool
+  tables and counts refreshed across the bilingual README, user guide,
+  architecture, operator cheatsheet, tool-surface analysis, and registry
+  metadata.
+
 ## [3.56.0] - 2026-06-11
 
 ### Added

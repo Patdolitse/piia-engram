@@ -2,15 +2,15 @@
   "schema_version": 1,
   "_about": "Machine-readable canonical PUBLIC FACTS for piia-engram. This is the single source of truth that scripts/check_public_fact_sync.py enforces against the current-state public documentation surfaces. Update this file (and re-run the guard) whenever the numbers below change. See docs/runbooks/public-truth-sync.md.",
   "package_name": "piia-engram",
-  "local_dev_version": "3.56.0",
+  "local_dev_version": "4.0.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 3270,
+    "test_passed": 3187,
     "test_skipped": 2,
-    "test_collected": 3272,
-    "mcp_tools_total": 87,
+    "test_collected": 3189,
+    "mcp_tools_total": 53,
     "mcp_tools_core": 17,
-    "mcp_tools_advanced": 70,
+    "mcp_tools_advanced": 36,
     "telemetry_default": "off",
     "telemetry_remote_default": "off"
   },
@@ -52,32 +52,32 @@
     ],
     "required_substrings": [
       { "file": "README.md", "must_contain": [
-        "ships 87 MCP tools",
-        "all 87 tools",
+        "ships 53 MCP tools",
+        "all 53 tools",
         "17 **Tier-1 Core**",
-        "Tier-2 Advanced (70 tools",
+        "Tier-2 Advanced (36 tools",
         "**17 Core**",
-        "**70 Advanced**"
+        "**36 Advanced**"
       ] },
       { "file": "README.zh-CN.md", "must_contain": [
         "17 个核心",
-        "70 个高级"
+        "36 个高级"
       ] },
       { "file": "docs/architecture.md", "must_contain": [
-        "87 tools",
+        "53 tools",
         "17 Tier-1",
-        "70 Tier-2"
+        "36 Tier-2"
       ] },
       { "file": "glama.yaml", "must_contain": [
-        "87 MCP tools",
+        "53 MCP tools",
         "'core' (17 tools)",
-        "'all' (87 tools)"
+        "'all' (53 tools)"
       ] }
     ],
     "forbidden_in_current_state": [
-      "**2346**",
-      "2346 passed",
-      "2346 个"
+      "**3270**",
+      "3270 passed",
+      "3270 个"
     ]
   }
 }

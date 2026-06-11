@@ -130,7 +130,7 @@ Engram 把长期记忆当作**归你所有的资产**，而不是某个 agent �
 
 staged 条目始终在你掌控之中：
 
-- `list_pending_staging`——查看待审内容（冷启动 `get_resume_brief` 也会带出
+- `review_staging(action="list")`——查看待审内容（冷启动 `get_resume_brief` 也会带出
   待审数量，含高风险项）。
 - 在审查界面里批准、编辑、归档或拒绝。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
@@ -190,7 +190,7 @@ API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经
 
 - **让 AI 记住：** *"记住这个……"* 或 *"把这条存成经验。"*
 - **让 AI 回忆：** *"我之前关于……怎么说的？"* 或 *"按我一贯的风格来。"*
-- **定期审查 staging 队列**（比如每周一次）用 `list_pending_staging`——尤其
+- **定期审查 staging 队列**（比如每周一次）用 `review_staging(action="list")`——尤其
   当你开了 `ENGRAM_APPROVAL=strict`。
 - **检查健康**用 `engram doctor`（身份完整度、知识量、过期项、近重复、决策冲突、
   编码健康、健康分）。它是本地诊断——分享前先审。

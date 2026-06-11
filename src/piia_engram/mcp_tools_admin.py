@@ -39,15 +39,21 @@ async def get_permission_profile() -> str:
 
 
 @S.mcp.tool()
-async def set_caller_trust(agent_id: str, trust_level: str) -> str:
-    """设置或修改某个调用者（AI 工具）的信任级别。 / Set or change a caller's (AI tool's) trust level.
+async def manage_caller_trust(
+    action: str,
+    agent_id: str,
+    trust_level: str = "",
+) -> str:
+    """调用者信任统一入口：授予 / 修改 / 撤销某个 AI 工具的信任级别。 / Unified caller-trust management: grant, change, or revoke an AI tool's trust level.
 
     Owner/admin surface: changes caller trust grants and is refused for non-owner callers when governance is enabled.
 
-    用途：当你想提升或降低某个 AI 工具的访问权限时调用。例如：
-    - 让 Cursor 能访问工作级数据：set_caller_trust("cursor", "trusted-local")
-    - 将某个未知工具限制为只读公开：set_caller_trust("unknown-agent", "read-only-external")
-    Purpose: call when you want to upgrade or downgrade an AI tool's access level.
+    用途：action=grant 设置或修改信任级别，例如让 Cursor 访问工作级数据：
+    manage_caller_trust("grant", "cursor", "trusted-local")；action=revoke 撤销
+    未来访问权（前向撤销——已返回的上下文无法召回；重新授权再调 grant）。
+    Purpose: action=grant sets or changes a caller's trust level; action=revoke
+    denies all future reads by that caller (forward-only — context already
+    returned cannot be recalled; re-authorize via grant).
 
     可用信任级别 / Available trust levels:
     - private-self: 全部可见（自用/CLI/doctor） / Full access (self/CLI/doctor)
@@ -55,42 +61,41 @@ async def set_caller_trust(agent_id: str, trust_level: str) -> str:
     - read-only-external: 仅公开可见（未知/外部工具） / Public only (unknown/external)
 
     Args:
+        action: grant（授予/修改）| revoke（撤销）。 / grant | revoke.
         agent_id: 调用者标识（如 'cursor', 'codex', 'web-client'）。 / Caller identifier.
-        trust_level: 要设置的信任级别。 / Trust level to assign.
+        trust_level: 要设置的信任级别（grant 必填）。 / Trust level to assign (required for grant).
     """
-    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="set_caller_trust")
+    # Owner-only gate — must run unconditionally BEFORE action validation so a
+    # non-owner gets a governance refusal, never an "unknown action" hint
+    # (writer-spy matrix). Keeps the grant store owner-controlled: no
+    # self-escalation path re-opens here.
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="manage_caller_trust")
     if refusal is not None:
         return refusal
-    result = S._locked_engram_call(S._engram.set_caller_trust, agent_id, trust_level)
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="set_caller_trust"
+
+    action = action.strip().lower()
+    if action == "grant":
+        if not trust_level:
+            return (
+                "action=grant 需要提供 trust_level"
+                "（private-self / trusted-local / read-only-external）。 "
+                "/ action=grant requires trust_level."
+            )
+        result = S._locked_engram_call(S._engram.set_caller_trust, agent_id, trust_level)
+        result = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, result, tool="manage_caller_trust"
+        )
+        return S._json(result)
+    if action == "revoke":
+        result = S._locked_engram_call(S._engram.revoke_caller, agent_id)
+        result = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, result, tool="manage_caller_trust"
+        )
+        return S._json(result)
+    return (
+        f"未知 action: {action}。可用: grant / revoke。 "
+        f"/ Unknown action: {action}. Available: grant / revoke."
     )
-    return S._json(result)
-
-
-@S.mcp.tool()
-async def revoke_caller(agent_id: str) -> str:
-    """撤销某个调用者的未来访问权（前向撤销——已返回的上下文无法召回）。 / Revoke a caller's future access (forward-only — cannot recall context already returned).
-
-    Owner/admin surface: changes caller trust grants and is refused for non-owner callers when governance is enabled.
-
-    用途：当你不再信任某个 AI 工具，或想阻止它继续读取你的 Engram 数据时调用。
-    撤销后该调用者的所有后续读取请求都会被拒绝。重新授权需调用 set_caller_trust。
-    Purpose: call when you no longer trust an AI tool and want to stop it from
-    reading your Engram data. All future reads by that caller will be denied.
-    To re-authorize, call set_caller_trust.
-
-    Args:
-        agent_id: 要撤销的调用者标识。 / Caller identifier to revoke.
-    """
-    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="revoke_caller")
-    if refusal is not None:
-        return refusal
-    result = S._locked_engram_call(S._engram.revoke_caller, agent_id)
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="revoke_caller"
-    )
-    return S._json(result)
 
 
 @S.mcp.tool()
@@ -185,81 +190,74 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
 
 
 # ===========================================================================
-# USER PORTRAIT TOOLS (3)
+# USER PORTRAIT TOOL (1)
 # ===========================================================================
 
 
 @S.mcp.tool()
-async def get_user_portrait() -> str:
-    """生成精简版用户写照：身份 + 积累统计（只读，不写盘）。 / Build a lean user portrait: identity + accumulation stats (read-only, no write).
+async def user_portrait(action: str = "get") -> str:
+    """用户写照统一入口：查看 / 对比 / 保存快照。 / Unified user portrait: view, compare, or snapshot.
 
-    用途：一次拿到用户的角色/语言/技术水平 + 经验/决策/领域/项目/工具的聚合计数与主要领域，
-    用于跨工具自我介绍或仪表盘。不含任何经验/决策原文，故体积小、隐私安全。
-    Purpose: get the user's role/language/technical level plus aggregate counts
-    (lessons/decisions/domains/projects/tools) and top domains in one call —
-    for cross-tool self-introduction or a dashboard. Contains NO raw
-    lesson/decision text, so it stays small and privacy-safe.
+    用途：action=get 生成精简写照——身份（角色/语言/技术水平）+ 经验/决策/领域/
+    项目/工具聚合计数与主要领域，不含任何经验/决策原文，只读不写盘；compare 对比
+    最近两份快照给出成长增量（计数增减、新增领域/工具、身份字段变化，只读，不足
+    两份时返回当前写照并提示尚无基线）；save 保存带时间戳的版本化快照
+    （<engram>/portraits/<时间戳>.json，写操作，只保留最近若干份）。
+    Purpose: action=get builds the lean portrait (identity + aggregate counts,
+    NO raw lesson/decision text, read-only); compare reports the growth delta
+    between the two most recent snapshots (read-only); save persists a
+    timestamped versioned snapshot (write; older snapshots are pruned).
+
+    Args:
+        action: get（默认）| compare | save。
     """
-    portrait = S._engram.build_user_portrait()
-    portrait = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, portrait, tool="get_user_portrait"
-    )
-    S._track("get_user_portrait", success=True)
-    return S._json(portrait)
-
-
-@S.mcp.tool()
-async def save_user_portrait() -> str:
-    """保存一份带时间戳的用户写照快照（写操作）。 / Save a timestamped user-portrait snapshot (write operation).
-
-    用途：把当前的精简写照存为版本化快照（<engram>/portraits/<时间戳>.json），
-    供日后做成长对比。只保留最近若干份，旧的自动清理。
-    Purpose: persist the current lean portrait as a versioned snapshot
-    (<engram>/portraits/<timestamp>.json) so growth can be compared over time.
-    Only the most recent snapshots are kept; older ones are pruned.
-    """
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="save_user_portrait")
+    # a4: write-path governance gate — must run unconditionally BEFORE action
+    # validation (writer-spy matrix). Web/low-trust callers are refused here;
+    # trusted-local callers passing this gate still hit the owner-only result
+    # gates in the get/compare branches, matching the old per-tool behavior.
+    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="user_portrait")
     if refusal is not None:
         return refusal
 
-    saved = S._locked_engram_call(S._engram.save_user_portrait, None)
-    saved = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, saved, tool="save_user_portrait"
+    action = action.strip().lower()
+    if action == "get":
+        portrait = S._engram.build_user_portrait()
+        portrait = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, portrait, tool="user_portrait"
+        )
+        S._track_read_safe("user_portrait", success=True)
+        return S._json(portrait)
+    if action == "compare":
+        previous = S._engram.get_previous_portrait()
+        latest = S._engram.get_latest_portrait()
+        if latest is None:
+            # No stored snapshots at all — build a fresh (unsaved) one to show.
+            latest = S._engram.build_user_portrait()
+        if previous is None:
+            payload = {
+                "growth": None,
+                "note_zh": "尚无可对比的历史快照，先运行 user_portrait(action=\"save\") 建立基线。",
+                "note_en": "No prior snapshot to compare; run user_portrait(action=\"save\") first to establish a baseline.",
+                "latest": latest,
+            }
+        else:
+            payload = {"growth": S._engram.compare_user_portraits(previous, latest)}
+        payload = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, payload, tool="user_portrait"
+        )
+        S._track_read_safe("user_portrait", success=True)
+        return S._json(payload)
+    if action == "save":
+        saved = S._locked_engram_call(S._engram.save_user_portrait, None)
+        saved = S._gov_rt.maybe_govern_owner_only(
+            S._engram.root, saved, tool="user_portrait"
+        )
+        S._track("user_portrait", success=True)
+        return S._json(saved)
+    return (
+        f"未知 action: {action}。可用: get / compare / save。 "
+        f"/ Unknown action: {action}. Available: get / compare / save."
     )
-    S._track("save_user_portrait", success=True)
-    return S._json(saved)
-
-
-@S.mcp.tool()
-async def compare_user_portraits() -> str:
-    """对比最近两份写照快照，给出成长增量（只读）。 / Compare the two most recent portrait snapshots and report the growth delta (read-only).
-
-    用途：展示自上一份快照以来的变化——计数增减、新增领域/工具、身份字段变化。
-    若不足两份快照，返回当前写照并提示尚无可对比基线。
-    Purpose: show what changed since the previous snapshot — count deltas,
-    newly added domains/tools, identity-field changes. If fewer than two
-    snapshots exist, returns the current portrait and notes there is no
-    baseline to compare against yet.
-    """
-    previous = S._engram.get_previous_portrait()
-    latest = S._engram.get_latest_portrait()
-    if latest is None:
-        # No stored snapshots at all — build a fresh (unsaved) one to show.
-        latest = S._engram.build_user_portrait()
-    if previous is None:
-        payload = {
-            "growth": None,
-            "note_zh": "尚无可对比的历史快照，先运行 save_user_portrait 建立基线。",
-            "note_en": "No prior snapshot to compare; run save_user_portrait first to establish a baseline.",
-            "latest": latest,
-        }
-    else:
-        payload = {"growth": S._engram.compare_user_portraits(previous, latest)}
-    payload = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, payload, tool="compare_user_portraits"
-    )
-    S._track("compare_user_portraits", success=True)
-    return S._json(payload)
 
 
 # ===========================================================================
@@ -306,32 +304,60 @@ async def read_web_content(url: str) -> str:
 
 
 # ===========================================================================
-# IMPORT / EXPORT TOOLS (4)
+# IMPORT / EXPORT TOOLS (2)
 # ===========================================================================
 
 
 @S.mcp.tool()
-async def export_engram(output_path: Optional[str] = None) -> str:
-    """导出整个 Engram 为单一备份文件。 / Export the entire Engram store as a single backup file.
+async def export_engram(
+    output_path: Optional[str] = None,
+    format: str = "native",
+    output_dir: str = "",
+) -> str:
+    """导出 Engram 数据：单文件备份或 OpenClaw 兼容格式。 / Export Engram data: a single-file backup, or the OpenClaw-compatible format.
 
-    Owner/export surface: writes a full-store backup file and is refused for non-owner callers when governance is enabled.
+    Owner/export surface: writes backup/export files and is refused for non-owner callers when governance is enabled.
 
-    用途：用于备份、迁移到另一台机器或跨设备同步。
-    Purpose: Call for backup, migration to another machine, or cross-device sync.
+    用途：format="native"（默认）把整库导出为单一 JSON 备份文件，用于备份、迁移
+    到另一台机器或跨设备同步；format="openclaw" 导出为 SOUL.md + MEMORY.md +
+    USER.md，交给 OpenClaw 或兼容工作流使用。
+    Purpose: format="native" (default) exports the entire store as one JSON
+    backup for backup/migration/sync; format="openclaw" exports SOUL.md,
+    MEMORY.md, and USER.md for OpenClaw-compatible workflows.
 
     注意：导出包含全部身份、知识和项目数据，请按隐私级别处理文件。
-    Note: The export contains all identity, knowledge, and project data, so handle the file according to its privacy level.
+    Note: Exports contain all identity, knowledge, and project data, so handle the files according to their privacy level.
 
     Args:
-        output_path: 导出路径（可选，默认存到 ~/.engram/exports/engram_backup_<日期>.json）。 / Export path (optional; defaults to ~/.engram/exports/engram_backup_<date>.json).
+        output_path: 导出路径（format=native，可选，默认 ~/.engram/exports/engram_backup_<日期>.json）。 / Export path (native; optional).
+        format: native（默认）| openclaw。
+        output_dir: 输出目录（format=openclaw，可选，默认 Engram 的 compat/openclaw 目录）。 / Output directory (openclaw; optional).
     """
-    # The export writes the ENTIRE store (identity + all knowledge) to a file.
+    # The export writes the ENTIRE store (identity + all knowledge) to files.
     # path-only ≠ no-disclosure: an agent with filesystem read then opens it
     # (Codex round-16 P2-1, two-step exfil). Gate BEFORE writing — a non-owner
-    # gets a refusal and no file is produced.
+    # gets a refusal and no file is produced. Also runs BEFORE format
+    # validation so a non-owner never sees an "unknown format" hint
+    # (writer-spy matrix).
     refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="export_engram")
     if refusal is not None:
         return refusal
+    format = format.strip().lower()
+    if format == "openclaw":
+        try:
+            target_dir = output_dir or str(S._engram.root / "compat" / "openclaw")
+            result = S.export_to_openclaw(S._engram, target_dir)
+            files = result.get("files", [])
+            if result.get("status") == "success":
+                return S._json(files)
+            return S._json(result)
+        except Exception as e:
+            return f"导出 OpenClaw 兼容格式失败: {S._safe_err(e)}"
+    if format != "native":
+        return (
+            f"未知 format: {format}。可用: native / openclaw。 "
+            f"/ Unknown format: {format}. Available: native / openclaw."
+        )
     err = S._validate_path(output_path, allow_empty=True)
     if err:
         return f"错误: {err}"
@@ -343,96 +369,64 @@ async def export_engram(output_path: Optional[str] = None) -> str:
 
 
 @S.mcp.tool()
-async def import_engram(input_path: str, merge: bool = True, dry_run: bool = False) -> str:
-    """从备份文件导入 Engram 数据。 / Import Engram data from a backup file.
+async def import_engram(
+    input_path: str = "",
+    merge: bool = True,
+    dry_run: bool = False,
+    format: str = "native",
+    soul_path: str = "",
+    memory_path: str = "",
+    user_path: str = "",
+) -> str:
+    """导入 Engram 数据：从备份文件或 OpenClaw 兼容文件。 / Import Engram data: from a backup file, or from OpenClaw-compatible files.
 
     Owner/admin surface: imports or overwrites local store data and is refused for non-owner callers when governance is enabled.
 
-    用途：从备份恢复，或从另一台机器迁移数据。
-    Purpose: Call to restore from backup or migrate data from another machine.
+    用途：format="native"（默认）从 export_engram 生成的备份恢复或跨机迁移；
+    format="openclaw" 从 SOUL.md / MEMORY.md / USER.md 迁移进 Engram（只提供
+    存在的文件路径即可，导入逻辑按文件类型处理）。
+    Purpose: format="native" (default) restores or migrates from an
+    export_engram backup; format="openclaw" imports SOUL.md / MEMORY.md /
+    USER.md files (provide only the paths that exist).
 
     注意：dry_run=True 只返回元数据预览，不写入数据；merge=False 会覆盖现有数据，使用前要确认风险。
-    Note: dry_run=True returns a metadata-only preview without writing data; merge=False overwrites existing data, so confirm the risk before using it.
+    Note: dry_run=True returns a metadata-only preview without writing; merge=False overwrites existing data, so confirm the risk first.
 
     Args:
-        input_path: 备份文件路径（export_engram 生成的 JSON 文件）。 / Backup file path, usually a JSON file generated by export_engram.
-        merge: True 表示合并模式（保留已有数据并追加新数据），False 表示覆盖模式。 / True means merge mode (keep existing data and append new data); False means overwrite mode.
-        dry_run: True 表示仅预览导入计划，不修改本地 Engram 数据。 / True previews the import plan without mutating the local Engram store.
+        input_path: 备份文件路径（format=native 必填）。 / Backup file path (required for format=native).
+        merge: True 合并模式（保留已有数据并追加），False 覆盖模式（native）。 / Merge vs overwrite mode (native).
+        dry_run: True 仅预览导入计划，不修改本地数据（native）。 / Preview the import plan without mutating (native).
+        format: native（默认）| openclaw。
+        soul_path: SOUL.md 文件路径（format=openclaw，可选）。 / Path to SOUL.md (openclaw, optional).
+        memory_path: MEMORY.md 文件路径（format=openclaw，可选）。 / Path to MEMORY.md (openclaw, optional).
+        user_path: USER.md 文件路径（format=openclaw，可选）。 / Path to USER.md (openclaw, optional).
     """
-    # Whole-store import/overwrite — owner-only, gated before any side effect.
+    # Whole-store import/overwrite — owner-only, gated before any side effect
+    # and BEFORE format/path validation (writer-spy matrix).
     refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="import_engram")
     if refusal is not None:
         return refusal
+    format = format.strip().lower()
+    if format == "openclaw":
+        try:
+            result = S.import_from_openclaw(S._engram, soul_path, memory_path, user_path)
+            return S._json(result)
+        except Exception as e:
+            return f"从 OpenClaw 兼容格式导入失败: {S._safe_err(e)}"
+    if format != "native":
+        return (
+            f"未知 format: {format}。可用: native / openclaw。 "
+            f"/ Unknown format: {format}. Available: native / openclaw."
+        )
+    if not input_path:
+        return S._json({
+            "error": "format=native 需要提供 input_path。 / format=native requires input_path."
+        })
     err = S._validate_path(input_path)
     if err:
         return S._json({"error": err})
     result = S._engram.import_all(input_path, merge=merge, dry_run=dry_run)
     return S._json(result)
-
-
-@S.mcp.tool()
-async def export_engram_to_openclaw(output_dir: str = "") -> str:
-    """导出 Engram 为 OpenClaw 兼容格式（SOUL.md + MEMORY.md + USER.md）。 / Export Engram to the OpenClaw-compatible format: SOUL.md, MEMORY.md, and USER.md.
-
-    Owner/export surface: writes OpenClaw-compatible memory files and is refused for non-owner callers when governance is enabled.
-
-    用途：需要把 Engram 数据交给 OpenClaw 或兼容工作流使用时调用。
-    Purpose: Call when Engram data needs to be used by OpenClaw or compatible workflows.
-
-    注意：如果 output_dir 为空，会导出到 Engram 的 compat/openclaw 目录。
-    Note: If output_dir is empty, files are exported to Engram's compat/openclaw directory.
-
-    Args:
-        output_dir: 输出目录（可选）。 / Output directory (optional).
-    """
-    # Writes SOUL/MEMORY/USER files containing the full knowledge dump — same
-    # two-step exfil surface as export_engram. Gate before writing (round-16).
-    refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="export_engram_to_openclaw")
-    if refusal is not None:
-        return refusal
-    try:
-        target_dir = output_dir or str(S._engram.root / "compat" / "openclaw")
-        result = S.export_to_openclaw(S._engram, target_dir)
-        files = result.get("files", [])
-        if result.get("status") == "success":
-            return S._json(files)
-        return S._json(result)
-    except Exception as e:
-        return f"导出 OpenClaw 兼容格式失败: {S._safe_err(e)}"
-
-
-@S.mcp.tool()
-async def import_engram_from_openclaw(
-    soul_path: str = "",
-    memory_path: str = "",
-    user_path: str = "",
-) -> str:
-    """从 OpenClaw 格式导入数据到 Engram（SOUL.md、MEMORY.md、USER.md）。 / Import OpenClaw-format data into Engram from SOUL.md, MEMORY.md, and USER.md.
-
-    Owner/admin surface: imports external memory files into the local store and is refused for non-owner callers when governance is enabled.
-
-    用途：需要把 OpenClaw 或兼容记忆文件迁移进 Engram 时调用。
-    Purpose: Call when migrating OpenClaw or compatible memory files into Engram.
-
-    注意：只提供存在的文件路径即可；导入逻辑会按文件类型处理。
-    Note: Provide only the file paths that exist; the import logic handles each file type.
-
-    Args:
-        soul_path: SOUL.md 文件路径（可选）。 / Path to SOUL.md (optional).
-        memory_path: MEMORY.md 文件路径（可选）。 / Path to MEMORY.md (optional).
-        user_path: USER.md 文件路径（可选）。 / Path to USER.md (optional).
-    """
-    # Whole-store import — owner-only, gated before any side effect.
-    refusal = S._gov_rt.maybe_refuse_owner_write(
-        S._engram.root, tool="import_engram_from_openclaw"
-    )
-    if refusal is not None:
-        return refusal
-    try:
-        result = S.import_from_openclaw(S._engram, soul_path, memory_path, user_path)
-        return S._json(result)
-    except Exception as e:
-        return f"从 OpenClaw 兼容格式导入失败: {S._safe_err(e)}"
 
 
 @S.mcp.tool()

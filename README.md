@@ -98,12 +98,12 @@ Evidence levels follow the [agent client validation runbook](docs/runbooks/agent
 
 These are factual claims about piia-engram itself, refreshed each minor release.
 
-| | v3.56.0 (2026-06-11) |
+| | v4.0.0 (2026-06-11) |
 |---|---|
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
-| MCP tools | **17 Core** (loaded by default) + **70 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools | **17 Core** (loaded by default) + **36 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3270** (unit + integration; 2 skipped, 3272 collected) |
+| Tests passing | **3187** (unit + integration; 2 skipped, 3189 collected) |
 | Code coverage | **86%** total |
 | Lines in `core.py` | **1573** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -201,7 +201,7 @@ Finish a multi-step workflow — release to PyPI, deploy to Cloudflare, publish 
 AI tools constantly search for local programs, runtimes, and CLIs. `register_tool` records what's installed and where; `find_tool` retrieves it instantly. No more `which python` every session — the environment map persists across tools and conversations.
 
 **Knowledge health and discovery**  
-`get_knowledge_overview` surfaces stale lessons (not reviewed in 30+ days), computes a 0–100 health score across four dimensions (freshness, quality, coverage, cleanliness), and flags gaps worth revisiting. `suggest_merges` scans your entire knowledge base for near-duplicates and returns actionable merge commands. `link_knowledge` connects related lessons and decisions into a navigable knowledge graph.
+`get_knowledge_overview` surfaces stale lessons (not reviewed in 30+ days), computes a 0–100 health score across four dimensions (freshness, quality, coverage, cleanliness), and flags gaps worth revisiting. `explore_knowledge` scans your knowledge base for near-duplicates (and walks related/similar items) with actionable merge commands. `manage_relation` connects related lessons and decisions into a navigable knowledge graph.
 
 **Hybrid search (optional, off by default)**  
 The default keyword search stays unchanged. Opt in to hybrid retrieval — FTS5 full-text plus a semantic vector layer — for cross-lingual recall, e.g. an English query finding a Chinese note: `pip install "piia-engram[vector]"` and set `ENGRAM_SEARCH=hybrid`, or let `engram setup` enable it with one keystroke. The index is a rebuildable SQLite file; your JSON store remains the single source of truth. See [docs/hybrid-search.md](docs/hybrid-search.md).
@@ -512,7 +512,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 87 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 87 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 53 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 53 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 ```json
 {
@@ -550,9 +550,9 @@ piia-engram ships 87 MCP tools. By default, only the 17 **Tier-1 Core** tools ar
 | `get_resume_brief` | Build a cross-session/cross-tool resume brief |
 | `doctor` | Run memory system self-diagnosis |
 
-### Tier-2 Advanced (70 tools — knowledge management, review, governance, import/export)
+### Tier-2 Advanced (36 tools — knowledge management, review, governance, import/export)
 
-Advanced tools include optional local integrations, owner/admin surfaces, and maintenance helpers. Tools that export files, import whole stores, generate review pages, or mutate caller trust are owner/admin/export surfaces even when they are broadly useful product capabilities.
+Advanced tools include optional local integrations, owner/admin surfaces, and maintenance helpers. Tools that export files, import whole stores, generate review pages, or mutate caller trust are owner/admin/export surfaces even when they are broadly useful product capabilities. Related operations are consolidated into single tools with a `mode`/`action` selector (v4.0).
 
 <details>
 <summary>Click to expand full tool list</summary>
@@ -565,67 +565,40 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `save_agent_context` | Save AI session checkpoint (also runs automatically) |
 | `list_agent_sessions` | Browse saved session records across tools |
 | `refresh_quick_context` | Refresh local `quick_context.md` snapshot for offline/cross-tool use |
-| `get_profile` | Read user profile (safe=true by default) |
-| `get_work_style` | Deprecated compatibility read; prefer `get_preferences` |
-| `get_preferences` | Read communication and workflow preferences |
-| `get_trust_boundaries` | Read data access boundaries |
-| `get_quality_standards` | Read quality expectations |
+| `get_identity_facets` | Read identity facets via `facet`: profile, preferences, trust_boundaries, work_style, quality_standards, domains, or all |
+| `user_portrait` | `action`: get / save / compare the AI-maintained user portrait |
 | `preview_context_governance` | Advanced owner-gated preview: build safe-context, freshness/conflict, replay, or evidence proposals without applying changes |
-| `get_playbooks` | List saved operational playbooks |
-| `get_playbook` | Get full content of a single playbook by ID |
-| `get_recent_playbooks` | List playbooks by most recent use |
-| `update_playbook` | Update playbook steps, triggers, or other fields |
-| `archive_playbook` | Archive a playbook that is no longer used |
-| `prepare_playbook_execution` | Prepare a guided step plan with parameter substitution (passive reference; no auto-execution) |
-| `update_execution_step` | Mark a step as completed, skipped, or failed |
-| `get_execution_status` | View step progress and outcome rollup for a playbook |
+| `get_playbooks` | Playbook reads via `mode`: list, get (full content), recent, management (incl. archived/deleted metadata) |
+| `manage_playbook` | Playbook lifecycle via `action`: update, archive, delete, restore (mutations stay confirm-gated) |
+| `playbook_execution` | Guided execution via `action`: prepare a step plan, update_step, status rollup (passive reference; no auto-execution) |
 | `get_lessons` | List reusable lessons learned |
-| `get_decisions` | List key decisions and reasons |
-| `get_domains` | Read domain experience stats |
+| `get_decisions` | List key decisions; `thread_seed_id` / `history_question` reconstruct decision threads and revision history |
 | `get_knowledge_inheritance` | Build cross-project knowledge starter pack |
 | `list_projects` | List saved project snapshots |
 | `extract_session_insights` | Extract lessons and decisions from session text |
-| `bulk_add_knowledge` | Add multiple lessons or decisions in one call |
 | `ingest_notes` | Parse free-form notes into structured knowledge |
 | `update_knowledge` | Update a lesson or decision by ID |
 | `archive_knowledge` | Archive a lesson or decision by ID |
-| `review_knowledge` | Mark a knowledge item as reviewed |
 | `merge_knowledge` | Merge a duplicate into the primary item |
-| `link_knowledge` | Create a bidirectional link between items |
-| `unlink_knowledge` | Remove a bidirectional knowledge link |
+| `manage_relation` | `action`: link / unlink — manage typed relations between knowledge items (decision threads) |
+| `explore_knowledge` | Knowledge graph exploration via `mode`: related, similar, merge_candidates |
 | `get_knowledge_overview` | Knowledge digest, health report, stale checks |
-| `get_related_knowledge` | Follow links between knowledge items |
-| `find_similar_knowledge` | Find similar items by content |
-| `suggest_merges` | Scan for near-duplicates with actionable merge commands |
-| `classify_legacy_playbooks` | Owner maintenance: dry-run project/global/shared scope suggestions for older Playbooks |
-| `apply_legacy_playbook_scope_suggestions` | Owner maintenance: apply high-confidence legacy Playbook scope suggestions after confirmation |
-| `rollback_playbook_scope_migration` | Owner maintenance: roll back the latest Playbook scope migration |
-| `get_playbook_scope_review_queue` | Owner maintenance: list ambiguous Playbooks that need manual scope review |
-| `resolve_playbook_scope_review` | Owner maintenance: accept global, project, or shared scope for one Playbook review item |
-| `list_playbooks_for_management` | List Playbooks for management, including archived/deleted metadata |
-| `delete_playbook` | Soft-delete a Playbook after confirmation |
-| `restore_playbook` | Restore an archived or deleted Playbook |
 | `get_stale_knowledge` | List items that need review |
+| `review_staging` | Staging review hub via `action`: list pending, batch decisions, review_item, apply_text review results |
 | `export_knowledge_report` | Owner-gated export: write a readable Markdown knowledge report |
 | `request_outline_review` | Owner-gated export: generate an interactive local HTML review page |
-| `apply_review` | Process review results (promote/archive staging items) |
-| `export_engram` | Owner-gated export: write a full backup |
-| `import_engram` | Owner/admin import: use `dry_run=True` first for a metadata-only merge/conflict preview |
-| `export_engram_to_openclaw` | Owner-gated export: write OpenClaw-compatible files |
-| `import_engram_from_openclaw` | Owner/admin import: read OpenClaw-compatible files |
+| `export_engram` | Owner-gated export: write a full backup (`format="openclaw"` for OpenClaw-compatible files) |
+| `import_engram` | Owner/admin import: use `dry_run=True` first for a metadata-only merge/conflict preview (`format="openclaw"` supported) |
 | `read_web_content` | Optional local Reader integration: fetch a user-provided URL through the Reader service |
 | `get_audit_log` | Get recent audit log entries |
 | `start_project` | Start a project with inherited knowledge |
-| `add_relation` | Create a typed, directed relation between knowledge items (decision threads) |
-| `remove_relation` | Remove a typed relation (undo of add_relation) |
-| `get_decision_thread` | Reconstruct how a decision evolved step by step |
-| `get_decision_history` | Query the full revision history of a decision by question text |
 | `get_permission_profile` | View all callers' trust levels and access boundaries |
-| `set_caller_trust` | Owner/admin: set or change a caller's trust level |
-| `revoke_caller` | Owner/admin: revoke a caller's future access (forward-only) |
+| `manage_caller_trust` | Owner/admin `action`: grant / revoke a caller's trust level |
 | `export_feedback_report` | Internal/dogfood: generate an anonymous beta feedback report |
 
 </details>
+
+Legacy Playbook scope migration (classify / apply / rollback / review queue) moved out of the MCP surface into the owner-only local CLI: `engram playbook scope classify|apply|rollback|queue|resolve` (previews by default; writes require `--apply --yes`).
 
 ## Playbook Auto-Extraction
 
@@ -637,8 +610,8 @@ piia-engram can detect multi-step workflows you complete during a session and au
 2. **Draft generation** — If a workflow is detected, a playbook draft is created with steps, pitfalls, trigger keywords, and preconditions. Sensitive information (API keys, tokens, absolute paths) is automatically redacted before storage.
 3. **Staging** — The draft is saved to a staging area, never auto-promoted to verified. You review and confirm before it becomes a trusted playbook.
 4. **Schema contract** — Stored playbooks are normalized into a versioned contract: trigger keywords, preconditions, pitfalls, structured steps, and optional `required_tools` declarations. Thin drafts remain reviewable, but carry machine-readable quality warnings.
-5. **Tool resolution** — Playbooks declare tool needs by name or purpose, while local paths stay in the tools registry. `prepare_playbook_execution` returns `resolved_tools`, `tools_ready`, and `missing_tools` at runtime so the host AI can see which local tools are available without storing resolved paths in the Playbook.
-6. **Reuse and outcome** — Next time an AI tool encounters a similar task, `search_knowledge` matches the trigger keywords and returns the playbook as a passive reference. The host AI walks through the steps with you and `get_execution_status` reports an outcome rollup (`pending`, `partial`, `succeeded`, or `failed`) instead of treating skipped steps as silent success.
+5. **Tool resolution** — Playbooks declare tool needs by name or purpose, while local paths stay in the tools registry. `playbook_execution` (action `prepare`) returns `resolved_tools`, `tools_ready`, and `missing_tools` at runtime so the host AI can see which local tools are available without storing resolved paths in the Playbook.
+6. **Reuse and outcome** — Next time an AI tool encounters a similar task, `search_knowledge` matches the trigger keywords and returns the playbook as a passive reference. The host AI walks through the steps with you and `playbook_execution` (action `status`) reports an outcome rollup (`pending`, `partial`, `succeeded`, or `failed`) instead of treating skipped steps as silent success.
 
 ### Design Philosophy: Engram Starts, You Confirm, AI Applies
 
@@ -711,7 +684,7 @@ directly. Three explicit export paths, each with a different boundary:
 | A portable card to paste into ChatGPT/Gemini/Kimi | `get_identity_card` | Curated Markdown: who you are, how you work, recent verified lessons/decisions. Excludes raw config-file knowledge and caps recent items. |
 | A readable knowledge report | `export_knowledge_report` | Active lessons/decisions grouped by domain/month (Markdown). |
 | A full local backup | `export_engram` / `import_engram(dry_run=True)` / `engram import <backup.json>` | The whole store as JSON. Treat the file as sensitive — it is a complete backup, including staging and labelled items. Preview imports first to see add/skip/conflict counts without writing data. |
-| OpenClaw files | `export_engram_to_openclaw` | SOUL.md / MEMORY.md / USER.md. |
+| OpenClaw files | `export_engram` (`format="openclaw"`) | SOUL.md / MEMORY.md / USER.md. |
 | A committable AGENTS.md/CLAUDE.md digest | `engram export-agents-md` | **Verified, non-sensitive** lessons/decisions only, as a summary block. Staging and sensitive items are excluded by construction; refuses to overwrite an existing file. |
 
 Exports are **owner-gated** when `ENGRAM_GOVERNANCE=1` (see
@@ -766,7 +739,7 @@ piia-engram. Install with `pip install piia-engram && engram setup`, and both to
 piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured MCP-compatible coding tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same approved context, so new chats and tool switches can start from the same user-owned memory.
 
 **How is piia-engram different from the official MCP memory server?**
-The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 87 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 53 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.

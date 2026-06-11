@@ -79,14 +79,29 @@ def test_tool_surface_classification_pins_local_legacy_and_core_export_tools():
     assert "get_identity_card" in tier1
     assert "Owner/export surface" in docs["get_identity_card"]
 
-    assert classes["get_work_style"] == "read"
-    assert "Deprecated compatibility read" in docs["get_work_style"]
+    # v4.0 merged tools: readers stay "read", mutating hubs are governed,
+    # trust admin stays owner-only.
+    assert classes["get_identity_facets"] == "read"
+    assert classes["get_playbooks"] == "read"
+    assert classes["explore_knowledge"] == "read"
+    assert classes["manage_playbook"] == "governed_write"
+    assert classes["playbook_execution"] == "governed_write"
+    assert classes["review_staging"] == "governed_write"
+    assert classes["manage_relation"] == "governed_write"
+    assert classes["user_portrait"] == "governed_write"
+    assert classes["manage_caller_trust"] == "owner_only_write"
 
-    assert classes["classify_legacy_playbooks"] == "read"
-    assert classes["get_playbook_scope_review_queue"] == "read"
-    assert classes["apply_legacy_playbook_scope_suggestions"] == "owner_only_write"
-    assert classes["rollback_playbook_scope_migration"] == "owner_only_write"
-    assert classes["resolve_playbook_scope_review"] == "owner_only_write"
+    # Legacy playbook scope migration left the MCP surface (owner CLI now);
+    # the governance table must not keep dangling entries.
+    for legacy in (
+        "get_work_style",
+        "classify_legacy_playbooks",
+        "get_playbook_scope_review_queue",
+        "apply_legacy_playbook_scope_suggestions",
+        "rollback_playbook_scope_migration",
+        "resolve_playbook_scope_review",
+    ):
+        assert legacy not in classes, f"legacy entry {legacy} still classified"
 
     assert classes["register_tool"] == "governed_write"
     assert classes["find_tool"] == "read"

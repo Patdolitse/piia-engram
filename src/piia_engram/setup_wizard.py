@@ -3040,7 +3040,7 @@ def main() -> None:
             "  export_engram           Full local JSON backup (treat as sensitive)\n\n"
             "Tool tiers:\n"
             "  Default: 17 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 87 tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 53 tools.\n"
         )
         sys.exit(0)
 

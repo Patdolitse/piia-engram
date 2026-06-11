@@ -6,6 +6,33 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.0.0] - 2026-06-11
+
+### 变更
+- **破坏性：MCP 工具面从 87 个合并为 53 个。** 相关操作族合并为带
+  `mode`/`action` 选择器的单一工具；旧名在同一版本中直接移除（不设过渡别名）。
+  默认加载的 17 个 Tier-1 核心工具保持不变。要点：身份读取 →
+  `get_identity_facets`；Playbook 读取 → `get_playbooks`（`mode`）；Playbook
+  管理 → `manage_playbook`；执行 → `playbook_execution`；staging 评审 →
+  `review_staging`；知识关系 → `manage_relation`；关联探索 →
+  `explore_knowledge`；决策线程并入 `get_decisions`（`thread_seed_id=` /
+  `history_question=`）；画像 → `user_portrait`；调用方信任 →
+  `manage_caller_trust`；OpenClaw 导入导出并入 `export_engram` /
+  `import_engram`（`format="openclaw"`）；批量写入并入
+  `memory_store`（`items_json=`）。完整老名 → 新调用映射与行为说明见
+  [docs/migration-v4.zh-CN.md](docs/migration-v4.zh-CN.md)。
+- **破坏性：旧 Playbook 作用域迁移移出 MCP**，改为 owner 专用本地 CLI：
+  `engram playbook scope classify|apply|rollback|queue|resolve`（默认只预览；
+  落盘需 `--apply --yes`）。
+- **staging 评审门收紧**——`review_staging` 对包括 `list` 在内的所有 action
+  先过写入门（旧 `list_pending_staging` 是只读类）；read-only-external 调用方
+  现在连 `list` 也会被拒。owner 与 trusted-local 调用方不受影响。
+
+### 文档
+- 新增迁移指南 [docs/migration-v4.zh-CN.md](docs/migration-v4.zh-CN.md)；双语 README、
+  用户指南、架构文档、operator 速查表、工具面分析与注册表元数据中的工具表格
+  与数量全部刷新。
+
 ## [3.56.0] - 2026-06-11
 
 ### 新增

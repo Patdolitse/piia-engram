@@ -11,6 +11,7 @@ tools are still runtime-gated by Engram's governance classes.
 ### Read / recall
 - `get_resume_brief` — recover the last thread of work to continue a session.
 - `get_user_context` — identity, preferences, and standards for a fresh start.
+- `get_recall` — one-call recall pack (identity + relevant knowledge) for cold start.
 - `get_relevant_knowledge` — let Engram surface knowledge relevant to the moment.
 - `search_knowledge` — search prior lessons, decisions, and notes by topic.
 - `get_identity_card` — the user's portable identity card (owner-gated export/identity).
@@ -33,15 +34,19 @@ tools are still runtime-gated by Engram's governance classes.
 Available when the operator opts into the full tool set. A non-exhaustive,
 intent-grouped sample of real tools:
 
-- **Knowledge management**: `bulk_add_knowledge`, `update_knowledge`,
-  `archive_knowledge`, `review_knowledge`, `get_stale_knowledge`,
-  `merge_knowledge`, `link_knowledge`, `get_knowledge_overview`,
-  `get_knowledge_inheritance`, `find_similar_knowledge`.
-- **Playbooks**: `get_playbook`, `update_playbook`, `prepare_playbook_execution`,
-  `update_execution_step`, `get_execution_status`, `archive_playbook`.
-- **Identity / profile reads**: `get_profile`, `get_preferences`,
-  `get_work_style` (deprecated compatibility read; prefer `get_preferences`),
-  `get_quality_standards`, `get_trust_boundaries`.
+- **Knowledge management**: `update_knowledge`, `archive_knowledge`,
+  `review_staging` (`action`: list / batch / review_item / apply_text),
+  `get_stale_knowledge`, `merge_knowledge`,
+  `manage_relation` (`action`: link / unlink),
+  `explore_knowledge` (`mode`: related / similar / merge_candidates),
+  `get_knowledge_overview`, `get_knowledge_inheritance`. Batch imports go
+  through Tier-1 `memory_store` with `items_json`.
+- **Playbooks**: `get_playbooks` (`mode`: list / get / recent / management),
+  `manage_playbook` (`action`: update / archive / delete / restore),
+  `playbook_execution` (`action`: prepare / update_step / status).
+- **Identity / profile reads**: `get_identity_facets` — one tool; `facet`
+  selects profile / preferences / work_style / quality_standards /
+  trust_boundaries / domains / all.
 - **Tool graph**: `register_tool` (governed write), `find_tool`, `list_tools`
   for optional local tool/program registry workflows.
 - **Export / import**: `export_engram`, `import_engram`, `export_knowledge_report`

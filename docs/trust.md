@@ -82,13 +82,13 @@ AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`
 - **High risk** (credential values, executable commands, permission or MCP-config changes) is routed to staging for your review before it becomes active.
 - Unsupervised background writeback paths force staging regardless of risk, and LLM-extracted suggestions cannot self-label themselves as verified.
 
-You can review, edit, archive, or reject staged knowledge anytime via `list_pending_staging`; playbook review remains explicit before trusted use. Cold-start `get_resume_brief` surfaces the pending-review count (including high-risk items) so nothing sensitive slips in silently.
+You can review, edit, archive, or reject staged knowledge anytime via `review_staging`; playbook review remains explicit before trusted use. Cold-start `get_resume_brief` surfaces the pending-review count (including high-risk items) so nothing sensitive slips in silently.
 
 This is different from agent-owned memory systems where the agent continuously rewrites its own long-term memory. Engram treats durable memory as a user-owned asset and keeps the sensitive writes behind your review.
 
 Playbooks follow the same trust boundary. Engram normalizes Playbooks into a versioned structural contract and can track execution outcomes, but it does not silently execute workflows. Host AI tools receive Playbooks as passive references, walk through steps in their own runtime, and can report step status back so the result is visible as `pending`, `partial`, `succeeded`, or `failed`.
 
-Playbooks may declare tool dependencies through `required_tools`, but Engram does not store resolved local tool paths in the Playbook. `prepare_playbook_execution` resolves those dependencies against the local tools registry at runtime and returns `resolved_tools` only to the owner-gated caller; it does not store resolved local tool paths in execution-plan files.
+Playbooks may declare tool dependencies through `required_tools`, but Engram does not store resolved local tool paths in the Playbook. `playbook_execution(action="prepare")` resolves those dependencies against the local tools registry at runtime and returns `resolved_tools` only to the owner-gated caller; it does not store resolved local tool paths in execution-plan files.
 
 Each knowledge entry can carry trust-mode metadata:
 

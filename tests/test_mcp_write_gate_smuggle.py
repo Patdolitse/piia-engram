@@ -4,8 +4,8 @@ boundary.
 The risk-based write gate is the sole authority over ``tier``: low/medium-risk
 content auto-absorbs to ``verified``; high-risk content (credentials / shell /
 MCP config / permission rules) is held in ``staging`` for explicit owner
-approval. An *agent-facing* MCP entry (``memory_store`` / ``bulk_add_knowledge``)
-accepts a free-form JSON payload, so a caller could try to pre-set
+approval. The *agent-facing* MCP entry ``memory_store`` (single ``content_json``
+or batch ``items_json``) accepts a free-form JSON payload, so a caller could try to pre-set
 ``tier="verified"`` and short-circuit the staging gate via core's
 ``tier_explicit`` escape hatch.
 
@@ -126,11 +126,11 @@ def test_memory_store_smuggled_staging_on_low_risk_still_verifies(eng: Engram) -
 
 
 # ---------------------------------------------------------------------------
-# bulk_add_knowledge
+# memory_store batch path (items_json — formerly bulk_add_knowledge)
 # ---------------------------------------------------------------------------
 
 
-def test_bulk_add_knowledge_strips_smuggled_tier_each_item(eng: Engram) -> None:
+def test_memory_store_batch_strips_smuggled_tier_each_item(eng: Engram) -> None:
     items = [
         {
             "summary": "rotate the api_key and run command to redeploy svc-a",
@@ -143,7 +143,7 @@ def test_bulk_add_knowledge_strips_smuggled_tier_each_item(eng: Engram) -> None:
             **_SMUGGLE,
         },
     ]
-    out = _run(mcp_server.bulk_add_knowledge(json.dumps(items), item_type="lesson"))
+    out = _run(mcp_server.memory_store(kind="lesson", items_json=json.dumps(items)))
     report = json.loads(out)
     assert report["saved"] == 2
 

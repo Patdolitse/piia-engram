@@ -20,7 +20,7 @@ It complements the user-facing [README](../README.md) (which answers *"what does
                          │ HTTP/SSE  (self-hosted shared instance)
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  mcp_server.py — exposes 87 tools (Tier-1 by default, opt-in rest)  │
+│  mcp_server.py — exposes 53 tools (Tier-1 by default, opt-in rest)  │
 └────────────────────────┬────────────────────────────────────────────┘
                          │ Python method calls on a single shared
                          │ ``Engram`` instance
@@ -46,7 +46,7 @@ Three layers:
 2. **Domain** (`Engram` class + mixins) — the data model and the rules over it. No I/O of its own beyond the `_read_json` / `_write_json` primitives in `storage.py`.
 3. **Storage** — flat JSON files under `~/.engram/`. Atomic writes via temp-file + rename, cross-process locks via `portalocker`.
 
-MCP tool tiering is intentionally conservative: the server defines 87 tools total, with 17 Tier-1 core tools loaded by default and 70 Tier-2 advanced tools behind `ENGRAM_TOOLS=all`.
+MCP tool tiering is intentionally conservative: the server defines 53 tools total, with 17 Tier-1 core tools loaded by default and 36 Tier-2 advanced tools behind `ENGRAM_TOOLS=all`.
 
 Alongside the MCP request path there are two **capture channels** that feed the store without the AI having to call a tool: the `hooks/` subpackage (event-driven — the host tool invokes them on session stop/compact/start) and the `watcher/` subpackage (polling fallback for tools without hook support). See [§6](#6-capture-channels-hooks-and-watcher).
 
@@ -86,7 +86,7 @@ After the v3.14.1 refactor, the v3.16.0 reports split, and the v3.55.0 monolith 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
 | [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1400 | FastMCP server core: shared state (`_engram`, `_session`), stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration. Re-exports every tool from the `mcp_tools_*` modules |
-| `mcp_tools_read / write / knowledge / admin / session .py` | ~330–1030 each | All 87 `@mcp.tool()` async wrappers, grouped by surface (context/recall queries; memory store + playbooks + tool registry; bulk/merge/lifecycle; permissions/governance/import-export; agent-session context). Each binds back to `mcp_server` via late `S.<name>` lookups so module-level state and monkeypatches resolve there |
+| `mcp_tools_read / write / knowledge / admin / session .py` | ~330–1030 each | All 53 `@mcp.tool()` async wrappers, grouped by surface (context/recall queries; memory store + playbooks + tool registry; bulk/merge/lifecycle; permissions/governance/import-export; agent-session context). Each binds back to `mcp_server` via late `S.<name>` lookups so module-level state and monkeypatches resolve there |
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (local log first; remote send and weekly feedback are separate, independent opt-ins, count-only/metadata-only), payload validation, HMAC daily ID, preview/status CLI support |
 | [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~3049 | `engram setup` wizard + CLI entry — interactive bilingual onboarding with privacy preferences, including the optional one-keystroke hybrid-search step |
@@ -219,7 +219,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 
 ## 5. The MCP surface
 
-`mcp_server.py` exposes 87 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions. Tier-1 is a discoverability and context-budget tier, not a read-only safety class: write, export, and owner/admin behavior is still governed by `TOOL_GOVERNANCE_CLASS`.
+`mcp_server.py` exposes 53 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions. Tier-1 is a discoverability and context-budget tier, not a read-only safety class: write, export, and owner/admin behavior is still governed by `TOOL_GOVERNANCE_CLASS`.
 
 | Tier-1 (default) | Why |
 |------------------|-----|

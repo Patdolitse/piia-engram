@@ -147,7 +147,7 @@ your approval first.
 
 You stay in control of staged items at any time:
 
-- `list_pending_staging` — see what is waiting for review (cold-start
+- `review_staging(action="list")` — see what is waiting for review (cold-start
   `get_resume_brief` also surfaces the pending count, including high-risk items).
 - Approve, edit, archive, or reject from the review surface.
 - Playbooks always require explicit review before trusted use; Engram never
@@ -219,7 +219,7 @@ Full data-flow detail is in [Trust model](trust.md) and
 - **Make the AI recall:** *"What did I say before about…"* or *"follow my usual
   style."*
 - **Review the staging queue** periodically (e.g. weekly) with
-  `list_pending_staging` — especially if you run `ENGRAM_APPROVAL=strict`.
+  `review_staging(action="list")` — especially if you run `ENGRAM_APPROVAL=strict`.
 - **Check health** with `engram doctor` (identity completeness, knowledge
   volume, stale items, near-duplicates, decision conflicts, encoding health,
   and a health score). It is local diagnostics — review before sharing.

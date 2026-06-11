@@ -1,7 +1,7 @@
 metadata:
   name: piia-engram
-  description: "Personal intelligence identity layer for MCP-compatible AI tools. Local-first, user-governed, 87 MCP tools."
-  version: 3.56.0
+  description: "Personal intelligence identity layer for MCP-compatible AI tools. Local-first, user-governed, 53 MCP tools."
+  version: 4.0.0
   tags:
     - memory
     - identity
@@ -18,7 +18,7 @@ spec:
   environment:
     ENGRAM_TOOLS:
       type: string
-      description: "Tool tier: 'core' (17 tools) or 'all' (87 tools)"
+      description: "Tool tier: 'core' (17 tools) or 'all' (53 tools)"
       default: "all"
     ENGRAM_DIR:
       type: string
@@ -65,12 +65,12 @@ spec:
       description: "Edit existing lesson or decision content"
     - name: archive_knowledge
       description: "Archive outdated knowledge without deleting"
-    - name: review_knowledge
-      description: "Mark knowledge as reviewed, refresh timestamp"
+    - name: review_staging
+      description: "Staging review hub: list pending items, batch decisions, mark reviewed, apply review results"
     - name: merge_knowledge
       description: "Merge duplicate knowledge entries"
-    - name: link_knowledge
-      description: "Create relationships between knowledge items"
+    - name: manage_relation
+      description: "Link or unlink relationships between knowledge items"
     # Tools registry
     - name: register_tool
       description: "Optional local integration governed write: register a local tool/program in the tool graph"
@@ -79,8 +79,8 @@ spec:
     # Review and reports
     - name: request_outline_review
       description: "Owner-gated export of an interactive HTML knowledge review page"
-    - name: apply_review
-      description: "Execute review results — archive marked items"
+    - name: explore_knowledge
+      description: "Explore related, similar, or merge-candidate knowledge items"
     - name: export_feedback_report
       description: "Internal/dogfood anonymous usage metrics report"
 

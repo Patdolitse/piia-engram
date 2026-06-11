@@ -1,6 +1,6 @@
 [project]
 name = "piia-engram"
-version = "3.56.0"
+version = "4.0.0"
 description = "Local-first personal AI identity and memory for MCP-compatible coding tools — lessons, decisions, playbooks, and project context you can see, edit, and override."
 readme = "README.md"
 license = "AGPL-3.0-or-later"

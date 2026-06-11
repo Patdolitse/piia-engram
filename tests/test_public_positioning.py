@@ -206,7 +206,7 @@ def test_quickstart_first_value_stays_core_and_honest():
         "auto-verified",
         "High risk",
         "staging",
-        "list_pending_staging",
+        "review_staging",
         "get_user_context",
         "search_knowledge",
         "add_lesson",
@@ -263,15 +263,15 @@ def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims(
     doc = _read("docs/tool-surface-analysis.md")
     tools = _mcp_tool_names()
 
-    assert len(tools) == 87
+    assert len(tools) == 53
     assert "17 core tools" in doc
-    assert "70 advanced tools" in doc
+    assert "36 advanced tools" in doc
     assert "Core is not read-only" in doc
     assert "core but owner-gated" in doc
     assert "Optional local / dogfood tools" in doc
     assert "Internal maintenance / legacy tools" in doc
     assert "Release posture by bucket" in doc
-    assert "Deprecated compatibility read" in doc
+    assert "Consolidation status (v4.0)" in doc
     assert "analysis only" in doc.lower()
     for name in sorted(tools):
         assert f"`{name}`" in doc, name
@@ -289,8 +289,8 @@ def test_public_tool_surface_docs_label_owner_local_and_legacy_tools():
         'Core means "used in most sessions", not "read-only"',
         "Owner-gated export: write and return a Markdown identity card",
         "Optional local integration governed write: register",
-        "Deprecated compatibility read; prefer `get_preferences`",
-        "Owner maintenance: dry-run project/global/shared scope suggestions",
+        "Owner/admin `action`: grant / revoke",
+        "moved out of the MCP surface into the owner-only local CLI",
         "Advanced owner-gated preview: build safe-context",
         "Internal/dogfood",
     ]:
@@ -302,7 +302,7 @@ def test_public_tool_surface_docs_label_owner_local_and_legacy_tools():
         "只读安全集合",
         "owner-gated 导出",
         "可选本地集成",
-        "deprecated 兼容读取",
+        "owner/admin 按 `action` 管理调用方信任",
     ]:
         assert phrase in readme_zh
 
@@ -346,7 +346,8 @@ def test_architecture_does_not_carry_stale_mcp_wrapper_count():
 
     assert "81 `@mcp.tool()`" not in doc
     assert "83 `@mcp.tool()`" not in doc
-    assert "87 `@mcp.tool()`" in doc
+    assert "87 `@mcp.tool()`" not in doc
+    assert "53 `@mcp.tool()`" in doc
 
 
 def test_agent_client_validation_runbook_is_purpose_first():

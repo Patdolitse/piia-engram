@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "src/piia_engram/mcp_server.py",
-  "tool_count": 87,
+  "tool_count": 53,
   "tools": {
     "add_decision": {
       "params": [
@@ -256,84 +256,6 @@
       ],
       "returns": "str"
     },
-    "add_relation": {
-      "params": [
-        {
-          "name": "src_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "rel",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "dst_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "apply_legacy_playbook_scope_suggestions": {
-      "params": [
-        {
-          "name": "project_folders_json",
-          "annotation": "str",
-          "required": false,
-          "default": "[]",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "playbook_ids_json",
-          "annotation": "str",
-          "required": false,
-          "default": "[]",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "min_confidence",
-          "annotation": "float",
-          "required": false,
-          "default": 0.7,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "dry_run",
-          "annotation": "bool",
-          "required": false,
-          "default": true,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "confirm",
-          "annotation": "bool",
-          "required": false,
-          "default": false,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "apply_review": {
-      "params": [
-        {
-          "name": "review_text",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
     "archive_knowledge": {
       "params": [
         {
@@ -341,147 +263,6 @@
           "annotation": "str",
           "required": true,
           "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "archive_playbook": {
-      "params": [
-        {
-          "name": "playbook_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "batch_review_staging": {
-      "params": [
-        {
-          "name": "actions_json",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "confirm",
-          "annotation": "bool",
-          "required": false,
-          "default": false,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "dry_run",
-          "annotation": "bool",
-          "required": false,
-          "default": true,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "operation",
-          "annotation": "str",
-          "required": false,
-          "default": "review",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "filters_json",
-          "annotation": "str",
-          "required": false,
-          "default": "{}",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "limit",
-          "annotation": "int",
-          "required": false,
-          "default": 50,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "offset",
-          "annotation": "int",
-          "required": false,
-          "default": 0,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "bulk_add_knowledge": {
-      "params": [
-        {
-          "name": "items_json",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "item_type",
-          "annotation": "str",
-          "required": false,
-          "default": "lesson",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "source_tool",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "classify_legacy_playbooks": {
-      "params": [
-        {
-          "name": "project_folders_json",
-          "annotation": "str",
-          "required": false,
-          "default": "[]",
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "compare_user_portraits": {
-      "params": [],
-      "returns": "str"
-    },
-    "delete_playbook": {
-      "params": [
-        {
-          "name": "playbook_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "reason",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "dry_run",
-          "annotation": "bool",
-          "required": false,
-          "default": true,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "confirm",
-          "annotation": "bool",
-          "required": false,
-          "default": false,
           "kind": "positional_or_keyword"
         }
       ],
@@ -499,6 +280,39 @@
       ],
       "returns": "str"
     },
+    "explore_knowledge": {
+      "params": [
+        {
+          "name": "mode",
+          "annotation": "str",
+          "required": false,
+          "default": "related",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "item_id",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "limit",
+          "annotation": "int",
+          "required": false,
+          "default": 0,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "threshold",
+          "annotation": "float",
+          "required": false,
+          "default": 0.45,
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
     "export_engram": {
       "params": [
         {
@@ -507,12 +321,14 @@
           "required": false,
           "default": null,
           "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "export_engram_to_openclaw": {
-      "params": [
+        },
+        {
+          "name": "format",
+          "annotation": "str",
+          "required": false,
+          "default": "native",
+          "kind": "positional_or_keyword"
+        },
         {
           "name": "output_dir",
           "annotation": "str",
@@ -545,25 +361,6 @@
           "annotation": "str",
           "required": false,
           "default": "",
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "find_similar_knowledge": {
-      "params": [
-        {
-          "name": "item_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "limit",
-          "annotation": "int",
-          "required": false,
-          "default": 5,
           "kind": "positional_or_keyword"
         }
       ],
@@ -612,37 +409,6 @@
       ],
       "returns": "str"
     },
-    "get_decision_history": {
-      "params": [
-        {
-          "name": "question",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "threshold",
-          "annotation": "float",
-          "required": false,
-          "default": 0.6,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "get_decision_thread": {
-      "params": [
-        {
-          "name": "seed_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
     "get_decisions": {
       "params": [
         {
@@ -672,21 +438,26 @@
           "required": false,
           "default": 30,
           "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "get_domains": {
-      "params": [],
-      "returns": "str"
-    },
-    "get_execution_status": {
-      "params": [
+        },
         {
-          "name": "playbook_id",
+          "name": "thread_seed_id",
           "annotation": "str",
-          "required": true,
-          "default": null,
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "history_question",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "history_threshold",
+          "annotation": "float",
+          "required": false,
+          "default": 0.6,
           "kind": "positional_or_keyword"
         }
       ],
@@ -694,6 +465,25 @@
     },
     "get_identity_card": {
       "params": [],
+      "returns": "str"
+    },
+    "get_identity_facets": {
+      "params": [
+        {
+          "name": "facet",
+          "annotation": "str",
+          "required": false,
+          "default": "all",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "safe",
+          "annotation": "bool",
+          "required": false,
+          "default": true,
+          "kind": "positional_or_keyword"
+        }
+      ],
       "returns": "str"
     },
     "get_knowledge_inheritance": {
@@ -764,58 +554,6 @@
       "params": [],
       "returns": "str"
     },
-    "get_playbook": {
-      "params": [
-        {
-          "name": "playbook_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "project_folder",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "confirm_cross_project",
-          "annotation": "bool",
-          "required": false,
-          "default": false,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "get_playbook_scope_review_queue": {
-      "params": [
-        {
-          "name": "project_folders_json",
-          "annotation": "str",
-          "required": false,
-          "default": "[]",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "include_resolved",
-          "annotation": "bool",
-          "required": false,
-          "default": false,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "limit",
-          "annotation": "int",
-          "required": false,
-          "default": 50,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
     "get_playbooks": {
       "params": [
         {
@@ -838,21 +576,47 @@
           "required": false,
           "default": "",
           "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "get_preferences": {
-      "params": [],
-      "returns": "str"
-    },
-    "get_profile": {
-      "params": [
+        },
         {
-          "name": "safe",
+          "name": "mode",
+          "annotation": "str",
+          "required": false,
+          "default": "list",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "playbook_id",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "confirm_cross_project",
           "annotation": "bool",
           "required": false,
-          "default": true,
+          "default": false,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "status",
+          "annotation": "str",
+          "required": false,
+          "default": "all",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "scope_type",
+          "annotation": "str",
+          "required": false,
+          "default": "all",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "include_content",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
           "kind": "positional_or_keyword"
         }
       ],
@@ -868,10 +632,6 @@
           "kind": "positional_or_keyword"
         }
       ],
-      "returns": "str"
-    },
-    "get_quality_standards": {
-      "params": [],
       "returns": "str"
     },
     "get_recall": {
@@ -935,37 +695,6 @@
           "annotation": "int",
           "required": false,
           "default": 1,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "get_recent_playbooks": {
-      "params": [
-        {
-          "name": "limit",
-          "annotation": "int",
-          "required": false,
-          "default": 5,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "project_folder",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "get_related_knowledge": {
-      "params": [
-        {
-          "name": "item_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
           "kind": "positional_or_keyword"
         }
       ],
@@ -1035,10 +764,6 @@
       ],
       "returns": "str"
     },
-    "get_trust_boundaries": {
-      "params": [],
-      "returns": "str"
-    },
     "get_user_context": {
       "params": [
         {
@@ -1072,21 +797,13 @@
       ],
       "returns": "str"
     },
-    "get_user_portrait": {
-      "params": [],
-      "returns": "str"
-    },
-    "get_work_style": {
-      "params": [],
-      "returns": "str"
-    },
     "import_engram": {
       "params": [
         {
           "name": "input_path",
           "annotation": "str",
-          "required": true,
-          "default": null,
+          "required": false,
+          "default": "",
           "kind": "positional_or_keyword"
         },
         {
@@ -1102,12 +819,14 @@
           "required": false,
           "default": false,
           "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "import_engram_from_openclaw": {
-      "params": [
+        },
+        {
+          "name": "format",
+          "annotation": "str",
+          "required": false,
+          "default": "native",
+          "kind": "positional_or_keyword"
+        },
         {
           "name": "soul_path",
           "annotation": "str",
@@ -1158,25 +877,6 @@
       ],
       "returns": "str"
     },
-    "link_knowledge": {
-      "params": [
-        {
-          "name": "id_a",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "id_b",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
     "list_agent_sessions": {
       "params": [
         {
@@ -1191,72 +891,6 @@
           "annotation": "int",
           "required": false,
           "default": 20,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "list_pending_staging": {
-      "params": [
-        {
-          "name": "filters_json",
-          "annotation": "str",
-          "required": false,
-          "default": "{}",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "limit",
-          "annotation": "int",
-          "required": false,
-          "default": 50,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "offset",
-          "annotation": "int",
-          "required": false,
-          "default": 0,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "list_playbooks_for_management": {
-      "params": [
-        {
-          "name": "status",
-          "annotation": "str",
-          "required": false,
-          "default": "all",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "project_folder",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "scope_type",
-          "annotation": "str",
-          "required": false,
-          "default": "all",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "include_content",
-          "annotation": "bool",
-          "required": false,
-          "default": false,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "limit",
-          "annotation": "int",
-          "required": false,
-          "default": 100,
           "kind": "positional_or_keyword"
         }
       ],
@@ -1278,6 +912,182 @@
       ],
       "returns": "str"
     },
+    "manage_caller_trust": {
+      "params": [
+        {
+          "name": "action",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "agent_id",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "trust_level",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
+    "manage_playbook": {
+      "params": [
+        {
+          "name": "action",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "playbook_id",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "title",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "triggers",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "steps_json",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "required_tools_json",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "tool_refs",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "description",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "domain",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "preconditions",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "pitfalls",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "outcome",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "status",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "reason",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "dry_run",
+          "annotation": "bool",
+          "required": false,
+          "default": true,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "confirm",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
+    "manage_relation": {
+      "params": [
+        {
+          "name": "action",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "src_id",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "dst_id",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "rel",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
     "memory_store": {
       "params": [
         {
@@ -1290,12 +1100,19 @@
         {
           "name": "content_json",
           "annotation": "str",
-          "required": true,
-          "default": null,
+          "required": false,
+          "default": "",
           "kind": "positional_or_keyword"
         },
         {
           "name": "source_tool",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "items_json",
           "annotation": "str",
           "required": false,
           "default": "",
@@ -1323,8 +1140,15 @@
       ],
       "returns": "str"
     },
-    "prepare_playbook_execution": {
+    "playbook_execution": {
       "params": [
+        {
+          "name": "action",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
         {
           "name": "playbook_id",
           "annotation": "str",
@@ -1351,6 +1175,27 @@
           "annotation": "bool",
           "required": false,
           "default": false,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "step_order",
+          "annotation": "int",
+          "required": false,
+          "default": 0,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "step_status",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "notes",
+          "annotation": "str",
+          "required": false,
+          "default": "",
           "kind": "positional_or_keyword"
         }
       ],
@@ -1467,32 +1312,6 @@
       ],
       "returns": "str"
     },
-    "remove_relation": {
-      "params": [
-        {
-          "name": "src_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "rel",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "dst_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
     "request_outline_review": {
       "params": [
         {
@@ -1505,41 +1324,27 @@
       ],
       "returns": "str"
     },
-    "resolve_playbook_scope_review": {
+    "review_staging": {
       "params": [
-        {
-          "name": "playbook_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
         {
           "name": "action",
           "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "project_folder",
-          "annotation": "str",
           "required": false,
-          "default": "",
+          "default": "list",
           "kind": "positional_or_keyword"
         },
         {
-          "name": "project_folders_json",
+          "name": "actions_json",
           "annotation": "str",
           "required": false,
           "default": "[]",
           "kind": "positional_or_keyword"
         },
         {
-          "name": "note",
-          "annotation": "str",
+          "name": "confirm",
+          "annotation": "bool",
           "required": false,
-          "default": "",
+          "default": false,
           "kind": "positional_or_keyword"
         },
         {
@@ -1550,86 +1355,38 @@
           "kind": "positional_or_keyword"
         },
         {
-          "name": "confirm",
-          "annotation": "bool",
-          "required": false,
-          "default": false,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "restore_playbook": {
-      "params": [
-        {
-          "name": "playbook_id",
+          "name": "filters_json",
           "annotation": "str",
-          "required": true,
-          "default": null,
+          "required": false,
+          "default": "{}",
           "kind": "positional_or_keyword"
         },
         {
-          "name": "dry_run",
-          "annotation": "bool",
+          "name": "limit",
+          "annotation": "int",
           "required": false,
-          "default": true,
+          "default": 50,
           "kind": "positional_or_keyword"
         },
         {
-          "name": "confirm",
-          "annotation": "bool",
+          "name": "offset",
+          "annotation": "int",
           "required": false,
-          "default": false,
+          "default": 0,
           "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "review_knowledge": {
-      "params": [
+        },
         {
           "name": "knowledge_id",
           "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "revoke_caller": {
-      "params": [
-        {
-          "name": "agent_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "rollback_playbook_scope_migration": {
-      "params": [
-        {
-          "name": "playbook_ids_json",
-          "annotation": "str",
           "required": false,
-          "default": "[]",
+          "default": "",
           "kind": "positional_or_keyword"
         },
         {
-          "name": "dry_run",
-          "annotation": "bool",
+          "name": "review_text",
+          "annotation": "str",
           "required": false,
-          "default": true,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "confirm",
-          "annotation": "bool",
-          "required": false,
-          "default": false,
+          "default": "",
           "kind": "positional_or_keyword"
         }
       ],
@@ -1694,10 +1451,6 @@
       ],
       "returns": "str"
     },
-    "save_user_portrait": {
-      "params": [],
-      "returns": "str"
-    },
     "search_knowledge": {
       "params": [
         {
@@ -1745,25 +1498,6 @@
       ],
       "returns": "str"
     },
-    "set_caller_trust": {
-      "params": [
-        {
-          "name": "agent_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "trust_level",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
     "start_project": {
       "params": [
         {
@@ -1799,77 +1533,6 @@
           "annotation": "int",
           "required": false,
           "default": 10,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "suggest_merges": {
-      "params": [
-        {
-          "name": "threshold",
-          "annotation": "float",
-          "required": false,
-          "default": 0.45,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "limit",
-          "annotation": "int",
-          "required": false,
-          "default": 10,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "unlink_knowledge": {
-      "params": [
-        {
-          "name": "id_a",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "id_b",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        }
-      ],
-      "returns": "str"
-    },
-    "update_execution_step": {
-      "params": [
-        {
-          "name": "playbook_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "step_order",
-          "annotation": "int",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "status",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "notes",
-          "annotation": "str",
-          "required": false,
-          "default": "",
           "kind": "positional_or_keyword"
         }
       ],
@@ -1920,90 +1583,13 @@
       ],
       "returns": "str"
     },
-    "update_playbook": {
+    "user_portrait": {
       "params": [
         {
-          "name": "playbook_id",
-          "annotation": "str",
-          "required": true,
-          "default": null,
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "title",
+          "name": "action",
           "annotation": "str",
           "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "triggers",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "steps_json",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "required_tools_json",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "tool_refs",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "description",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "domain",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "preconditions",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "pitfalls",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "outcome",
-          "annotation": "str",
-          "required": false,
-          "default": "",
-          "kind": "positional_or_keyword"
-        },
-        {
-          "name": "status",
-          "annotation": "str",
-          "required": false,
-          "default": "",
+          "default": "get",
           "kind": "positional_or_keyword"
         }
       ],

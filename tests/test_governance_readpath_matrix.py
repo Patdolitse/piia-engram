@@ -74,7 +74,8 @@ _MATRIX = [
     ("get_relevant_knowledge", "get_relevant_lessons", [_pub(), _sec()],
      {"project_folder": "/x"}, "filter"),
     ("get_playbooks", "get_playbooks", [_pub(), _sec()], {}, "filter"),
-    ("get_recent_playbooks", "get_recent_playbooks", [_pub(), _sec()], {}, "filter"),
+    ("get_playbooks", "get_recent_playbooks", [_pub(), _sec()],
+     {"mode": "recent"}, "filter"),
     ("get_recent_context", "get_recent_context", [_pub(), _sec()], {}, "filter"),
     # ---- dict-of-lists read tools (maybe_govern_buckets) ----
     ("search_knowledge", "search_knowledge",
@@ -88,12 +89,12 @@ _MATRIX = [
      {"description": "d", "total": 2, "recommended_domains": ["python"],
       "items": [_pub(), _sec()]},
      {"description": "d"}, "filter"),
-    ("get_related_knowledge", "get_related_knowledge",
+    ("explore_knowledge", "get_related_knowledge",
      {"source": _pub(), "related": [_pub(), _sec()], "total": 2},
-     {"item_id": "pub-1"}, "filter"),
-    ("find_similar_knowledge", "find_similar_knowledge",
+     {"mode": "related", "item_id": "pub-1"}, "filter"),
+    ("explore_knowledge", "find_similar_knowledge",
      {"source": _pub(), "similar": [_pub(), _sec()], "total": 2},
-     {"item_id": "pub-1"}, "filter"),
+     {"mode": "similar", "item_id": "pub-1"}, "filter"),
     # start_project is a write tool; a4 write-gate refuses the call entirely
     # for non-owners (before the read part runs), so it's "withhold" not "filter".
     ("start_project", "get_knowledge_inheritance",
@@ -102,30 +103,35 @@ _MATRIX = [
     # ---- single knowledge-item dicts (maybe_govern_one) → withheld stub ----
     ("get_project_context", "get_project_snapshot", _sec(),
      {"project_folder": "/x"}, "withhold"),
-    ("get_playbook", "get_playbook", _sec(), {"playbook_id": "sec-1"}, "withhold"),
+    ("get_playbooks", "get_playbook", _sec(),
+     {"mode": "get", "playbook_id": "sec-1"}, "withhold"),
     # ---- write tools returning a FULL stored item (maybe_govern_one) ----
     ("update_knowledge", "update_knowledge", _sec(),
      {"item_id": "sec-1", "updates_json": "{}"}, "withhold"),
     ("archive_knowledge", "archive_knowledge", _sec(), {"item_id": "sec-1"}, "withhold"),
-    ("review_knowledge", "review_knowledge", _sec(), {"knowledge_id": "sec-1"}, "withhold"),
+    ("review_staging", "review_knowledge", _sec(),
+     {"action": "review_item", "knowledge_id": "sec-1"}, "withhold"),
     # ---- write tools whose ACK echoes a stored TITLE (maybe_govern_write_ack) ----
     ("merge_knowledge", "merge_knowledge",
      {"success": True, "primary_title": SECRET, "secondary_title": "other"},
      {"primary_id": "sec-1", "secondary_id": "x"}, "withhold"),
-    ("link_knowledge", "link_knowledge",
+    ("manage_relation", "link_knowledge",
      {"success": True, "message": "Linked: " + SECRET + " ↔ other"},
-     {"id_a": "sec-1", "id_b": "x"}, "withhold"),
-    ("unlink_knowledge", "unlink_knowledge",
+     {"action": "link", "src_id": "sec-1", "dst_id": "x"}, "withhold"),
+    ("manage_relation", "unlink_knowledge",
      {"success": True, "message": "Unlinked: " + SECRET + " ↔ other"},
-     {"id_a": "sec-1", "id_b": "x"}, "withhold"),
-    ("update_playbook", "update_playbook",
-     {"title": SECRET, "version": 2}, {"playbook_id": "sec-1", "status": "active"}, "withhold"),
-    ("delete_playbook", "delete_playbook",
+     {"action": "unlink", "src_id": "sec-1", "dst_id": "x"}, "withhold"),
+    ("manage_playbook", "update_playbook",
+     {"title": SECRET, "version": 2},
+     {"action": "update", "playbook_id": "sec-1", "status": "active"}, "withhold"),
+    ("manage_playbook", "delete_playbook",
      {"deleted": {"id": "sec-1", "title": SECRET}},
-     {"playbook_id": "sec-1", "dry_run": False, "confirm": True}, "withhold"),
-    ("restore_playbook", "restore_playbook",
+     {"action": "delete", "playbook_id": "sec-1", "dry_run": False,
+      "confirm": True}, "withhold"),
+    ("manage_playbook", "restore_playbook",
      {"restored": {"id": "sec-1", "title": SECRET}},
-     {"playbook_id": "sec-1", "dry_run": False, "confirm": True}, "withhold"),
+     {"action": "restore", "playbook_id": "sec-1", "dry_run": False,
+      "confirm": True}, "withhold"),
     # ---- add_* / memory_store dedup-REJECT echoes the matched stored item's
     #      existing_summary / existing_title (content the caller never supplied);
     #      a near-duplicate submission could read a work/secret item back out.
@@ -151,37 +157,24 @@ _MATRIX = [
     ("get_knowledge_overview", "get_knowledge_overview",
      {"digest": {"top_lessons": [_sec()]}, "health": {}, "stale": {}},
      {}, "withhold"),
-    ("suggest_merges", "suggest_merges", [{"pair": [_sec(), _sec()]}], {}, "withhold"),
-    ("classify_legacy_playbooks", "classify_legacy_playbooks",
-     {"suggestions": [{"id": "sec-1", "title": SECRET, "evidence": [SECRET]}]},
-     {}, "withhold"),
-    ("apply_legacy_playbook_scope_suggestions", "apply_legacy_playbook_scope_suggestions",
-     {"would_apply": [{"id": "sec-1", "title": SECRET, "evidence": [SECRET]}],
-      "applied": []},
-     {}, "withhold"),
-    ("rollback_playbook_scope_migration", "rollback_playbook_scope_migration",
-     {"would_rollback": [{"id": "sec-1", "title": SECRET}],
-      "rolled_back": []},
-     {}, "withhold"),
-    ("get_playbook_scope_review_queue", "get_playbook_scope_review_queue",
-     {"items": [{"id": "sec-1", "title": SECRET, "evidence": [SECRET]}]},
-     {}, "withhold"),
-    ("list_playbooks_for_management", "list_playbooks_for_management",
+    ("explore_knowledge", "suggest_merges", [{"pair": [_sec(), _sec()]}],
+     {"mode": "merge_candidates"}, "withhold"),
+    # v4.0.0: the five legacy playbook-scope migration tools left the MCP
+    # surface entirely (CLI-only: `engram playbook scope …`); their matrix
+    # rows are gone with them.
+    ("get_playbooks", "list_playbooks_for_management",
      {"items": [{"id": "sec-1", "title": SECRET, "deletion_reason": SECRET}]},
-     {}, "withhold"),
-    ("resolve_playbook_scope_review", "resolve_playbook_scope_review",
-     {"updated": {"id": "sec-1", "title": SECRET, "note": SECRET}},
-     {"playbook_id": "sec-1", "action": "skip"}, "withhold"),
-    ("get_decision_thread", "get_decision_thread",
+     {"mode": "management"}, "withhold"),
+    ("get_decisions", "get_decision_thread",
      {"order": [{"id": "sec-1", "summary": SECRET}], "active_ids": []},
-     {"seed_id": "sec-1"}, "withhold"),
-    ("get_decision_history", "get_decision_history",
+     {"thread_seed_id": "sec-1"}, "withhold"),
+    ("get_decisions", "get_decision_history",
      {"revisions": [{"id": "sec-1", "choice": SECRET, "reasoning": SECRET}],
       "current": {"choice": SECRET}},
-     {"question": "sec question"}, "withhold"),
-    ("get_execution_status", "get_execution_status",
+     {"history_question": "sec question"}, "withhold"),
+    ("playbook_execution", "get_execution_status",
      {"title": SECRET, "steps": [{"action": SECRET, "status": "pending"}]},
-     {"playbook_id": "sec-1"}, "withhold"),
+     {"action": "status", "playbook_id": "sec-1"}, "withhold"),
     # NOTE: get_identity_card and export_knowledge_report were MOVED to
     # _EXPORT_OWNER_ONLY (round-17 P1-2/P1-3): governing only their RETURN left
     # the secret-bearing file (exports/identity_card.md, knowledge_report_*.md)
@@ -202,22 +195,24 @@ _MATRIX = [
     # The fake is unused: get_audit_log reads root/audit.log, which the harness
     # writes in _patch_tool_method.
     ("get_audit_log", "_unused_audit_method", {"_": SECRET}, {}, "withhold"),
-    # ---- user portrait (3): lean identity+stats aggregate / versioned snapshot
-    #      / growth diff. All three flow through maybe_govern_owner_only; the
-    #      portrait dict carries identity fields (e.g. role) at the user's own
-    #      sensitivity, so it's a private-self-only aggregate like the rest of
-    #      this block. save_user_portrait is ALSO pre-write gated (governed_write
-    #      in mcp_server), which is what refuses the non-owner before the lambda
+    # ---- user portrait (merged tool, 3 actions): lean identity+stats
+    #      aggregate / versioned snapshot / growth diff. All three actions flow
+    #      through maybe_govern_owner_only; the portrait dict carries identity
+    #      fields (e.g. role) at the user's own sensitivity, so it's a
+    #      private-self-only aggregate like the rest of this block. The merged
+    #      user_portrait tool is ALSO pre-write gated (governed_write in
+    #      mcp_server), which is what refuses the non-owner before the lambda
     #      below would run; on the OFF path it passes through carrying the secret.
-    ("get_user_portrait", "build_user_portrait",
-     {"identity": {"role": SECRET}, "stats": {}}, {}, "withhold"),
-    ("save_user_portrait", "save_user_portrait",
-     {"_path": "/x", "identity": {"role": SECRET}, "stats": {}}, {}, "withhold"),
+    ("user_portrait", "build_user_portrait",
+     {"identity": {"role": SECRET}, "stats": {}}, {"action": "get"}, "withhold"),
+    ("user_portrait", "save_user_portrait",
+     {"_path": "/x", "identity": {"role": SECRET}, "stats": {}},
+     {"action": "save"}, "withhold"),
     # compare reads get_latest_portrait (patched → fake carrying SECRET); on the
     # empty gov store get_previous_portrait()→None, so the tool returns
     # {growth: None, note_*, latest: <fake>} — SECRET rides in "latest".
-    ("compare_user_portraits", "get_latest_portrait",
-     {"identity": {"role": SECRET}, "stats": {}}, {}, "withhold"),
+    ("user_portrait", "get_latest_portrait",
+     {"identity": {"role": SECRET}, "stats": {}}, {"action": "compare"}, "withhold"),
 ]
 
 # The set the leak matrix actually exercises — used by the coverage backstop.
@@ -232,11 +227,17 @@ _GOVERNED = {row[0] for row in _MATRIX}
 # file at a predictable path, so the file itself is the leak — governing the
 # return value alone is not enough.
 _EXPORT_OWNER_ONLY = {
-    "export_engram", "export_engram_to_openclaw", "request_outline_review",
+    # v4.0.0: export_engram absorbed export_engram_to_openclaw as
+    # format="openclaw" — one tool, same pre-write export gate on both paths.
+    "export_engram", "request_outline_review",
     "refresh_quick_context", "get_identity_card", "export_knowledge_report",
     # round-18: core.save_execution_plan persists step bodies to
-    # playbooks/executions/<id>.json — the file is the leak, gate before writing.
-    "prepare_playbook_execution",
+    # playbooks/executions/<id>.json — the file is the leak, gate before
+    # writing. v4.0.0: that prepare path now lives inside the merged
+    # playbook_execution tool (action="prepare"), which keeps
+    # maybe_refuse_export before any file write; its status action is
+    # owner-only-governed and covered in _MATRIX too.
+    "playbook_execution",
 }
 
 # Every other async @mcp.tool: the response carries NO stored knowledge
@@ -244,17 +245,16 @@ _EXPORT_OWNER_ONLY = {
 # (audited round-16). a0 governs knowledge bodies; these are out of that scope.
 _SAFE_ALLOWLIST = {
     # identity / preference fields — own safe= projection, deferred to the later
-    # permission-profile phase; not knowledge bodies.
-    "get_profile", "get_work_style", "get_preferences",
-    "get_trust_boundaries", "get_quality_standards",
+    # permission-profile phase; not knowledge bodies. v4.0.0: the six bare
+    # identity readers (get_profile / get_preferences / get_trust_boundaries /
+    # get_work_style / get_quality_standards / get_domains) merged into one
+    # facet reader with the same payloads.
+    "get_identity_facets",
     # metadata / registry / diagnostics — no knowledge bodies in the response.
     # NOTE: get_audit_log was moved OUT of this set (its entries echo stored
     # summary/title via the audit detail field) — now governed owner-only.
-    "get_domains", "list_projects", "list_agent_sessions",
+    "list_projects", "list_agent_sessions",
     "find_tool", "list_tools", "export_feedback_report", "doctor",
-    "list_pending_staging",  # staging ids/domains/priority only; no bodies
-    "update_execution_step",  # counts/status only, no body
-    "archive_playbook",  # id-only acknowledgement; write-gated separately
     # caller-supplied-content writes — echo only what the caller just passed in,
     # so there is nothing to read *back* above the ceiling.
     # NOTE: add_lesson / add_decision / add_playbook / memory_store were moved
@@ -263,18 +263,22 @@ _SAFE_ALLOWLIST = {
     # NOTE: refresh_quick_context was moved OUT (round-17 P1-1) — it writes
     # quick_context.md embedding lesson/decision bodies; now pre-write gated in
     # _EXPORT_OWNER_ONLY.
-    "bulk_add_knowledge", "ingest_notes", "extract_session_insights",
+    # NOTE (v4.0.0): bulk_add_knowledge merged into memory_store(items_json=…);
+    # add_relation / remove_relation / apply_review / batch_review_staging /
+    # list_pending_staging merged into manage_relation / review_staging — both
+    # merged tools echo write-acks/items, so they live in _MATRIX now.
+    # update_execution_step / archive_playbook became actions of
+    # playbook_execution / manage_playbook (classified above).
+    "ingest_notes", "extract_session_insights",
     "save_project_snapshot", "save_agent_context", "wrap_up_session",
     "register_tool", "update_identity",
-    # relation/maintenance ops returning caller IDs / counts only.
-    "add_relation", "remove_relation", "apply_review",
-    # staging batch review returns ids/actions/statuses/counts only; the write
-    # path is still maybe_refuse_write-gated as governed_write in mcp_server.
-    "batch_review_staging",
-    # permission profile: governance metadata, no knowledge bodies.
-    "get_permission_profile", "set_caller_trust", "revoke_caller",
-    # imports / external fetch.
-    "import_engram", "import_engram_from_openclaw", "read_web_content",
+    # permission profile: governance metadata, no knowledge bodies. v4.0.0:
+    # set_caller_trust + revoke_caller merged into manage_caller_trust
+    # (owner-only write gate; response is grant metadata only).
+    "get_permission_profile", "manage_caller_trust",
+    # imports / external fetch. v4.0.0: import_engram_from_openclaw is now
+    # import_engram(format="openclaw").
+    "import_engram", "read_web_content",
 }
 
 _CLASSIFIED = _GOVERNED | _EXPORT_OWNER_ONLY | _SAFE_ALLOWLIST
@@ -404,7 +408,9 @@ def test_owner_sees_everything_when_flag_on(
 _EXPORT_SPECS = [
     # tool, (target_obj, attr), kwargs
     ("export_engram", ("engram", "export_all"), {}),
-    ("export_engram_to_openclaw", ("module", "export_to_openclaw"), {}),
+    # v4.0.0: openclaw export is a format= branch of export_engram; the spy on
+    # the module-level writer proves the branch is still pre-write gated.
+    ("export_engram", ("module", "export_to_openclaw"), {"format": "openclaw"}),
     ("request_outline_review", ("engram", "export_review_page"), {"lang": "zh"}),
     # round-17 file-side-effect leaks: the writer method must NEVER run for a
     # non-owner (proves no file is created/updated).
@@ -413,8 +419,9 @@ _EXPORT_SPECS = [
     ("export_knowledge_report", ("engram", "export_knowledge_report"), {}),
     # round-18: same class — the writer persists step bodies to
     # playbooks/executions/<id>.json; spy proves it never runs for a non-owner.
-    ("prepare_playbook_execution", ("engram", "prepare_playbook_execution"),
-     {"playbook_id": "sec-1", "params_json": "{}"}),
+    # v4.0.0: that path is playbook_execution(action="prepare").
+    ("playbook_execution", ("engram", "prepare_playbook_execution"),
+     {"action": "prepare", "playbook_id": "sec-1", "params_json": "{}"}),
 ]
 
 
@@ -595,32 +602,32 @@ _SIDE_EFFECT_HARNESS = [
     ("get_decisions", lambda ids: {}),
     ("get_relevant_knowledge", lambda ids: {"project_folder": str(ids["_root"])}),
     ("get_playbooks", lambda ids: {}),
-    ("get_recent_playbooks", lambda ids: {}),
+    ("get_playbooks", lambda ids: {"mode": "recent"}),
     ("get_recent_context", lambda ids: {}),
     ("search_knowledge", lambda ids: {"query": "secret lesson choice",
                                        "scope": "all", "limit": 5}),
     ("get_stale_knowledge", lambda ids: {}),
     ("get_knowledge_inheritance", lambda ids: {"description": "test project"}),
-    ("get_related_knowledge", lambda ids: {"item_id": ids["lesson_id"]}),
-    ("find_similar_knowledge", lambda ids: {"item_id": ids["lesson_id"]}),
+    ("explore_knowledge", lambda ids: {"mode": "related",
+                                        "item_id": ids["lesson_id"]}),
+    ("explore_knowledge", lambda ids: {"mode": "similar",
+                                        "item_id": ids["lesson_id"]}),
     ("start_project", lambda ids: {"description": "new project",
                                     "project_folder": str(ids["_root"] / "proj")}),
     # ── single-item reads ──
     ("get_project_context", lambda ids: {"project_folder": str(ids["_root"])}),
-    ("get_playbook", lambda ids: {"playbook_id": ids["playbook_id"]}),
+    ("get_playbooks", lambda ids: {"mode": "get",
+                                    "playbook_id": ids["playbook_id"]}),
     # ── owner-only aggregates ──
+    # (v4.0.0: the five legacy scope-migration tools are CLI-only now and
+    #  off the MCP surface — no harness rows.)
     ("get_knowledge_overview", lambda ids: {}),
-    ("suggest_merges", lambda ids: {}),
-    ("classify_legacy_playbooks", lambda ids: {}),
-    ("apply_legacy_playbook_scope_suggestions", lambda ids: {}),
-    ("rollback_playbook_scope_migration", lambda ids: {}),
-    ("get_playbook_scope_review_queue", lambda ids: {}),
-    ("list_playbooks_for_management", lambda ids: {}),
-    ("resolve_playbook_scope_review", lambda ids: {"playbook_id": ids["playbook_id"],
-                                                    "action": "skip"}),
-    ("get_decision_thread", lambda ids: {"seed_id": ids["decision_id"]}),
-    ("get_decision_history", lambda ids: {"question": "test question"}),
-    ("get_execution_status", lambda ids: {"playbook_id": ids["playbook_id"]}),
+    ("explore_knowledge", lambda ids: {"mode": "merge_candidates"}),
+    ("get_playbooks", lambda ids: {"mode": "management"}),
+    ("get_decisions", lambda ids: {"thread_seed_id": ids["decision_id"]}),
+    ("get_decisions", lambda ids: {"history_question": "test question"}),
+    ("playbook_execution", lambda ids: {"action": "status",
+                                         "playbook_id": ids["playbook_id"]}),
     ("get_user_context", lambda ids: {}),
     ("get_resume_brief", lambda ids: {}),
     ("get_recall", lambda ids: {"project_folder": str(ids["_root"]),
@@ -633,36 +640,43 @@ _SIDE_EFFECT_HARNESS = [
     }),
     ("get_daily_log", lambda ids: {"project_folder": str(ids["_root"])}),
     ("get_audit_log", lambda ids: {}),
-    # ── user portrait (3) ──
-    ("get_user_portrait", lambda ids: {}),
-    ("save_user_portrait", lambda ids: {}),
-    ("compare_user_portraits", lambda ids: {}),
+    # ── user portrait (merged tool, 3 actions) ──
+    ("user_portrait", lambda ids: {"action": "get"}),
+    ("user_portrait", lambda ids: {"action": "save"}),
+    ("user_portrait", lambda ids: {"action": "compare"}),
     # ── export / file-writer tools ──
     ("refresh_quick_context", lambda ids: {"level": "standard"}),
     ("get_identity_card", lambda ids: {}),
     ("export_knowledge_report", lambda ids: {}),
-    ("prepare_playbook_execution", lambda ids: {"playbook_id": ids["playbook_id"],
-                                                 "params_json": "{}"}),
+    ("playbook_execution", lambda ids: {"action": "prepare",
+                                         "playbook_id": ids["playbook_id"],
+                                         "params_json": "{}"}),
     ("export_engram", lambda ids: {}),
-    ("export_engram_to_openclaw", lambda ids: {}),
+    ("export_engram", lambda ids: {"format": "openclaw"}),
     ("request_outline_review", lambda ids: {"lang": "zh"}),
     # ── write tools returning stored items ──
     ("update_knowledge", lambda ids: {"item_id": ids["lesson_id"],
                                        "updates_json": "{}"}),
     ("archive_knowledge", lambda ids: {"item_id": ids["lesson_id"]}),
-    ("review_knowledge", lambda ids: {"knowledge_id": ids["lesson_id"]}),
+    ("review_staging", lambda ids: {"action": "review_item",
+                                     "knowledge_id": ids["lesson_id"]}),
     ("merge_knowledge", lambda ids: {"primary_id": ids["lesson_id"],
                                       "secondary_id": ids["decision_id"]}),
-    ("link_knowledge", lambda ids: {"id_a": ids["lesson_id"],
-                                     "id_b": ids["decision_id"]}),
-    ("unlink_knowledge", lambda ids: {"id_a": ids["lesson_id"],
-                                       "id_b": ids["decision_id"]}),
-    ("update_playbook", lambda ids: {"playbook_id": ids["playbook_id"],
+    ("manage_relation", lambda ids: {"action": "link",
+                                      "src_id": ids["lesson_id"],
+                                      "dst_id": ids["decision_id"]}),
+    ("manage_relation", lambda ids: {"action": "unlink",
+                                      "src_id": ids["lesson_id"],
+                                      "dst_id": ids["decision_id"]}),
+    ("manage_playbook", lambda ids: {"action": "update",
+                                      "playbook_id": ids["playbook_id"],
                                       "status": "active"}),
-    ("delete_playbook", lambda ids: {"playbook_id": ids["playbook_id"],
+    ("manage_playbook", lambda ids: {"action": "delete",
+                                      "playbook_id": ids["playbook_id"],
                                       "dry_run": False, "confirm": True}),
-    ("restore_playbook", lambda ids: {"playbook_id": ids["playbook_id"],
-                                       "dry_run": False, "confirm": True}),
+    ("manage_playbook", lambda ids: {"action": "restore",
+                                      "playbook_id": ids["playbook_id"],
+                                      "dry_run": False, "confirm": True}),
     # ── write tools whose dedup-reject echoes stored items ──
     ("add_lesson", lambda ids: {"summary": "near duplicate test lesson"}),
     ("add_decision", lambda ids: {"question": "test q", "choice": "test c"}),
@@ -801,15 +815,19 @@ from piia_engram.mcp_server import _PLAYBOOK_USAGE_POLICY, _EXECUTION_USAGE_POLI
 # Tools that should carry the playbook usage policy
 _PLAYBOOK_POLICY_TOOLS = [
     ("search_knowledge", {"query": "policy", "scope": "all"}, _PLAYBOOK_USAGE_POLICY),
-    ("get_playbook", {"playbook_id": "PB_ID"}, _PLAYBOOK_USAGE_POLICY),
+    ("get_playbooks", {"mode": "get", "playbook_id": "PB_ID"}, _PLAYBOOK_USAGE_POLICY),
     ("get_playbooks", {}, _PLAYBOOK_USAGE_POLICY),
-    ("get_recent_playbooks", {}, _PLAYBOOK_USAGE_POLICY),
+    ("get_playbooks", {"mode": "recent"}, _PLAYBOOK_USAGE_POLICY),
 ]
 
 # Tools that should carry the execution usage policy
 _EXECUTION_POLICY_TOOLS = [
-    ("prepare_playbook_execution", {"playbook_id": "PB_ID", "params_json": "{}"}, _EXECUTION_USAGE_POLICY),
-    ("get_execution_status", {"playbook_id": "PB_ID"}, _EXECUTION_USAGE_POLICY),
+    ("playbook_execution",
+     {"action": "prepare", "playbook_id": "PB_ID", "params_json": "{}"},
+     _EXECUTION_USAGE_POLICY),
+    ("playbook_execution",
+     {"action": "status", "playbook_id": "PB_ID"},
+     _EXECUTION_USAGE_POLICY),
 ]
 
 
@@ -853,16 +871,16 @@ def test_execution_tools_carry_usage_policy(
     pb_id = _make_playbook(gov_engram)
     final_kwargs = {k: (pb_id if v == "PB_ID" else v) for k, v in kwargs.items()}
 
-    # prepare_playbook_execution is export-gated; run as owner for the
-    # positive test (non-owner refusal is tested in section 4).
+    # playbook_execution(action="prepare") is export-gated; run as owner for
+    # the positive test (non-owner refusal is tested in section 4).
     monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "self")
 
     out = _call(tool, final_kwargs)
 
-    # get_execution_status may return an error if no plan exists yet;
-    # for prepare_, the plan is created. For get_, accept either policy
-    # or an error message.
+    # action="status" may return an error if no plan exists yet; for
+    # action="prepare" the plan is created. Accept either the policy or an
+    # error message.
     if "error" not in out.lower() and "失败" not in out:
         assert "usage_policy" in out, f"{tool} missing usage_policy field"
         assert expected_policy[:40] in out, (
@@ -877,8 +895,9 @@ def test_usage_policy_absent_on_governance_withheld(gov_engram, monkeypatch):
 
     pb_id = _make_playbook(gov_engram)
 
-    # get_playbook on a public item should still show policy for web caller
-    # (public item passes the ceiling). Create a secret playbook for withhold.
+    # get_playbooks(mode="get") on a public item should still show policy for a
+    # web caller (public item passes the ceiling). Create a secret playbook for
+    # the withhold case.
     sec_pb = gov_engram.add_playbook({
         "title": "secret pb",
         "steps": [{"order": 1, "action": "classified"}],
@@ -886,7 +905,7 @@ def test_usage_policy_absent_on_governance_withheld(gov_engram, monkeypatch):
     })
     sec_id = sec_pb.get("id", "")
 
-    out = _call("get_playbook", {"playbook_id": sec_id})
+    out = _call("get_playbooks", {"mode": "get", "playbook_id": sec_id})
 
     # The withheld stub should have governance_withheld but NO usage_policy
     assert "governance_withheld" in out, "Expected a governance withhold stub"

@@ -128,10 +128,11 @@ def test_glama_metadata_tracks_current_public_version_and_tool_count():
     content = GLAMA_YAML.read_text(encoding="utf-8")
 
     assert f"version: {pyproject_version}" in content
-    assert "87 MCP tools" in content
+    assert "53 MCP tools" in content
     assert "'core' (17 tools)" in content
-    assert "'all' (87 tools)" in content
-    assert "60 MCP tools" not in content
+    assert "'all' (53 tools)" in content
+    assert "87 MCP tools" not in content
+    assert "'all' (87 tools)" not in content
     assert "'core' (12 tools)" not in content
 
 
@@ -320,31 +321,79 @@ def test_mcp_tool_count_and_merge_tool():
                 ):
                     tools.append(node.name)
                     break
-    # v3.30 M13: bumped from >=57 to >=65 so any silently-removed tool
-    # is caught. The current count is 65 — adding new tools is fine
-    # (the assertion is a floor); removing one must be deliberate.
-    assert len(tools) >= 65, (
-        f"Expected >=65 @mcp.tool() definitions, found {len(tools)}. "
+    # v4.0.0 consolidation: 87 tools merged down to 53 (17 core + 36
+    # advanced). The floor catches silent removals; adding tools is fine,
+    # removing one must be deliberate (exact split is pinned in
+    # tests/test_count_mcp_tools.py).
+    assert len(tools) >= 53, (
+        f"Expected >=53 @mcp.tool() definitions, found {len(tools)}. "
         "If a tool was removed intentionally, update this floor."
     )
     assert "update_knowledge" in tools
-    assert "update_playbook" in tools
-    assert "archive_playbook" in tools
-    assert "bulk_add_knowledge" in tools
     assert "get_knowledge_overview" in tools
     assert "merge_knowledge" in tools
     assert "get_knowledge_inheritance" in tools
     assert "extract_session_insights" in tools
     assert "get_audit_log" in tools
-    assert "review_knowledge" in tools
     assert "get_stale_knowledge" in tools
-    assert "update_execution_step" in tools
-    assert "get_execution_status" in tools
-    # v3.30 newcomers — pin them explicitly so an accidental removal
+    # v4.0.0 merged tools — pin them explicitly so an accidental removal
     # surfaces here before users notice in a release.
+    assert "memory_store" in tools
+    assert "get_identity_facets" in tools
+    assert "user_portrait" in tools
+    assert "get_playbooks" in tools
+    assert "manage_playbook" in tools
+    assert "playbook_execution" in tools
+    assert "explore_knowledge" in tools
+    assert "manage_relation" in tools
+    assert "review_staging" in tools
+    assert "manage_caller_trust" in tools
+    # v3.30 newcomers — still pinned.
     assert "get_resume_brief" in tools
     assert "get_daily_log" in tools
     assert "preview_context_governance" in tools
+    # Deleted pre-v4 names must not resurface (a representative subset of
+    # the 42 removed registrations; the full mapping lives in the
+    # migration guide).
+    for legacy in (
+        "get_profile",
+        "get_preferences",
+        "get_work_style",
+        "get_playbook",
+        "get_recent_playbooks",
+        "list_playbooks_for_management",
+        "update_playbook",
+        "archive_playbook",
+        "delete_playbook",
+        "restore_playbook",
+        "prepare_playbook_execution",
+        "update_execution_step",
+        "get_execution_status",
+        "bulk_add_knowledge",
+        "review_knowledge",
+        "apply_review",
+        "list_pending_staging",
+        "batch_review_staging",
+        "link_knowledge",
+        "unlink_knowledge",
+        "add_relation",
+        "remove_relation",
+        "get_related_knowledge",
+        "find_similar_knowledge",
+        "suggest_merges",
+        "get_decision_thread",
+        "get_decision_history",
+        "get_user_portrait",
+        "save_user_portrait",
+        "compare_user_portraits",
+        "export_engram_to_openclaw",
+        "import_engram_from_openclaw",
+        "set_caller_trust",
+        "revoke_caller",
+        "classify_legacy_playbooks",
+        "resolve_playbook_scope_review",
+    ):
+        assert legacy not in tools, f"legacy tool {legacy} resurfaced"
     assert "get_safe_profile" not in tools
     assert "update_lesson" not in tools
     assert "update_decision" not in tools
@@ -369,19 +418,21 @@ def test_source_and_user_facing_docs_are_utf8_without_bom():
 
 
 def test_architecture_documents_current_tool_split():
-    """Architecture docs should carry the same 87/17/70 tool split as README."""
+    """Architecture docs should carry the same 53/17/36 tool split as README."""
     content = ARCHITECTURE.read_text(encoding="utf-8")
-    assert re.search(r"\b87 tools\b", content)
+    assert re.search(r"\b53 tools\b", content)
     assert "17 Tier-1" in content
-    assert "70 Tier-2" in content
+    assert "36 Tier-2" in content
+    assert not re.search(r"\b87 tools\b", content)
+    assert "70 Tier-2" not in content
 
 
 def test_cli_help_documents_current_tool_split():
-    """CLI help text should not drift from the public 87/17 tool split."""
+    """CLI help text should not drift from the public 53/17 tool split."""
     content = SETUP_WIZARD.read_text(encoding="utf-8")
     assert "17 核心工具 / core MCP tools" in content
-    assert "unlock all 87 tools" in content
-    assert "unlock all 82 tools" not in content
+    assert "unlock all 53 tools" in content
+    assert "unlock all 87 tools" not in content
 
 
 def test_mcp_tools_default_to_core_tier(tmp_path: Path):
@@ -389,20 +440,23 @@ def test_mcp_tools_default_to_core_tier(tmp_path: Path):
     tools = _registered_mcp_tools(tmp_path)
 
     assert set(tools) == CORE_MCP_TOOLS
-    assert "get_profile" not in tools
-    assert "bulk_add_knowledge" not in tools
+    assert "get_identity_facets" not in tools
+    assert "review_staging" not in tools
 
 
 def test_mcp_tools_all_tier_registers_all_tools(tmp_path: Path):
-    """ENGRAM_TOOLS=all 时应暴露全部工具（含 update/archive playbook）。"""
+    """ENGRAM_TOOLS=all 时应暴露全部工具（含 v4.0 合并工具）。"""
     tools = _registered_mcp_tools(tmp_path, tools_tier="all")
 
-    assert len(tools) >= 65
+    assert len(tools) >= 53
     assert set(CORE_MCP_TOOLS).issubset(tools)
-    assert "get_profile" in tools
-    assert "bulk_add_knowledge" in tools
-    assert "review_knowledge" in tools
+    assert "get_identity_facets" in tools
+    assert "manage_playbook" in tools
+    assert "review_staging" in tools
     assert "get_stale_knowledge" in tools
+    assert "get_profile" not in tools
+    assert "bulk_add_knowledge" not in tools
+    assert "review_knowledge" not in tools
 
 
 def test_setup_help_mentions_tool_tiers():
@@ -418,16 +472,25 @@ def test_zh_readme_uses_pypi_install_and_current_tool_split():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "70 个" in content  # Tier-2 tool count
+    assert "36 个" in content  # Tier-2 tool count
     assert "17 个" in content  # Tier-1 tool count
-    assert "`bulk_add_knowledge`" in content
+    assert "70 个" not in content  # pre-v4 Tier-2 count must not linger
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content
     assert "`get_knowledge_inheritance`" in content
     assert "`merge_knowledge`" in content
-    assert "`review_knowledge`" in content
     assert "`get_stale_knowledge`" in content
     assert "`extract_session_insights`" in content
+    # v4.0 merged tools documented; deleted names gone.
+    assert "`get_identity_facets`" in content
+    assert "`manage_playbook`" in content
+    assert "`playbook_execution`" in content
+    assert "`explore_knowledge`" in content
+    assert "`manage_relation`" in content
+    assert "`review_staging`" in content
+    assert "`bulk_add_knowledge`" not in content
+    assert "`review_knowledge`" not in content
+    assert "`link_knowledge`" not in content
     assert "`get_safe_profile`" not in content
     assert "`bulk_add_lessons`" not in content
     assert "`bulk_add_decisions`" not in content
@@ -445,10 +508,15 @@ def test_zh_readme_documents_tool_tiering():
 
 
 def test_readmes_document_playbook_scope_management_cli():
-    assert "management action playbook_scope accept_project" in README.read_text(encoding="utf-8")
-    assert "management action playbook_scope accept_project" in README_ZH.read_text(encoding="utf-8")
-    assert "management action playbook_scope accept_shared" in README.read_text(encoding="utf-8")
-    assert "management action playbook_scope accept_shared" in README_ZH.read_text(encoding="utf-8")
+    readme = README.read_text(encoding="utf-8")
+    readme_zh = README_ZH.read_text(encoding="utf-8")
+    assert "management action playbook_scope accept_project" in readme
+    assert "management action playbook_scope accept_project" in readme_zh
+    assert "management action playbook_scope accept_shared" in readme
+    assert "management action playbook_scope accept_shared" in readme_zh
+    # v4.0: legacy scope migration left the MCP surface for the owner CLI.
+    assert "engram playbook scope" in readme
+    assert "engram playbook scope" in readme_zh
 
 
 def test_playbook_docs_preserve_passive_reference_and_outcome_contract():

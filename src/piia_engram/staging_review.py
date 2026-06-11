@@ -254,9 +254,9 @@ def _other_pending_queues(eng) -> dict[str, Any]:
             queues["playbook_scope_review"] = {
                 "pending": pending,
                 "hint": (
-                    "Legacy playbooks awaiting scope review. Use "
-                    "get_playbook_scope_review_queue to list and "
-                    "resolve_playbook_scope_review to resolve."
+                    "Legacy playbooks awaiting scope review. Run the owner "
+                    "CLI: `engram playbook scope queue` to list and "
+                    "`engram playbook scope resolve` to resolve."
                 ),
             }
     except Exception:  # noqa: BLE001 — visibility must never break listing
