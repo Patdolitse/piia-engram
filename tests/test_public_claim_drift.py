@@ -24,20 +24,20 @@ def mod():
     return module
 
 
-def _write_manifest(root: Path) -> None:
+def _write_manifest(root: Path, stale_patterns: list | None = None) -> None:
     (root / "docs").mkdir(parents=True)
+    manifest: dict = {
+        "facts": {
+            "test_passed": 2687,
+            "test_skipped": 8,
+            "test_collected": 2695,
+            "mcp_tools_total": 80,
+        }
+    }
+    if stale_patterns is not None:
+        manifest["checks"] = {"stale_patterns": stale_patterns}
     (root / "docs" / "public-facts.json").write_text(
-        json.dumps(
-            {
-                "facts": {
-                    "test_passed": 2687,
-                    "test_skipped": 8,
-                    "test_collected": 2695,
-                    "mcp_tools_total": 80,
-                }
-            }
-        ),
-        encoding="utf-8",
+        json.dumps(manifest), encoding="utf-8"
     )
 
 
@@ -137,3 +137,100 @@ def test_historical_surfaces_are_skipped(mod, tmp_path: Path):
     assert result["skipped"] == [
         {"file": "release-evidence/v-old.md", "reason": "historical"}
     ]
+
+
+# ── Registered stale patterns (checks.stale_patterns) ────────────────────
+
+
+_FAQ_STALE = [
+    {
+        "pattern": r"\*\*Tier-B\*\* \| 70",
+        "reason": "retired tier-B tool count (synthetic test registry entry)",
+    }
+]
+
+
+def test_registered_stale_pattern_fails_any_tracked_surface(mod, tmp_path: Path):
+    _write_manifest(tmp_path, stale_patterns=_FAQ_STALE)
+    (tmp_path / "FAQ_GUIDE.md").write_text(
+        "| Tier | Count |\n|------|-------|\n| **Tier-B** | 70 |\n",
+        encoding="utf-8",
+    )
+
+    result = mod.scan(tmp_path)
+
+    assert result["ok"] is False
+    assert result["problems"] == [
+        {
+            "file": "FAQ_GUIDE.md",
+            "kind": "stale_pattern",
+            "pattern": _FAQ_STALE[0]["pattern"],
+            "reason": _FAQ_STALE[0]["reason"],
+        }
+    ]
+
+
+def test_stale_pattern_clean_docs_pass(mod, tmp_path: Path):
+    _write_manifest(tmp_path, stale_patterns=_FAQ_STALE)
+    (tmp_path / "FAQ_GUIDE.md").write_text(
+        "| Tier | Count |\n|------|-------|\n| **Tier-B** | 36 |\n",
+        encoding="utf-8",
+    )
+
+    result = mod.scan(tmp_path)
+
+    assert result["ok"] is True
+    assert result["problems"] == []
+
+
+def test_stale_pattern_negated_teaching_quote_is_exempt(mod, tmp_path: Path):
+    _write_manifest(tmp_path, stale_patterns=_FAQ_STALE)
+    (tmp_path / "style.md").write_text(
+        "Avoid the retired rendering below.\n"
+        "Do not write: | **Tier-B** | 70 |\n",
+        encoding="utf-8",
+    )
+
+    result = mod.scan(tmp_path)
+
+    assert result["ok"] is True
+    assert result["problems"] == []
+
+
+def test_stale_pattern_skips_historical_surfaces(mod, tmp_path: Path):
+    _write_manifest(tmp_path, stale_patterns=_FAQ_STALE)
+    (tmp_path / "release-evidence").mkdir()
+    (tmp_path / "release-evidence" / "v-old.md").write_text(
+        "| **Tier-B** | 70 |\n",
+        encoding="utf-8",
+    )
+
+    result = mod.scan(tmp_path)
+
+    assert result["ok"] is True
+
+
+def test_stale_pattern_invalid_regex_is_setup_error(mod, tmp_path: Path):
+    _write_manifest(
+        tmp_path,
+        stale_patterns=[{"pattern": "([unclosed", "reason": "broken"}],
+    )
+
+    with pytest.raises(mod.SetupError):
+        mod.scan(tmp_path)
+
+
+def test_stale_pattern_missing_reason_is_setup_error(mod, tmp_path: Path):
+    _write_manifest(tmp_path, stale_patterns=[{"pattern": "x"}])
+
+    with pytest.raises(mod.SetupError):
+        mod.scan(tmp_path)
+
+
+def test_stale_patterns_absent_is_fine(mod, tmp_path: Path):
+    _write_manifest(tmp_path)
+    (tmp_path / "ok.md").write_text("Nothing quantified here.\n", encoding="utf-8")
+
+    result = mod.scan(tmp_path)
+
+    assert result["ok"] is True

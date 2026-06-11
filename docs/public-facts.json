@@ -78,6 +78,20 @@
       "**3270**",
       "3270 passed",
       "3270 个"
+    ],
+    "stale_patterns": [
+      {
+        "pattern": "\\*\\*Advanced\\*\\* \\| 70",
+        "reason": "pre-v4.0.0 advanced tool count (now 36); this exact FAQ-table cell shipped stale in the v4.0.0 release"
+      },
+      {
+        "pattern": "\\*\\*高级\\*\\* \\| 70",
+        "reason": "zh-CN twin of the pre-v4.0.0 advanced tool-count FAQ cell (now 36)"
+      },
+      {
+        "pattern": "\\*\\*Version\\*\\*: v[0-3]\\.",
+        "reason": "doc version header lagging the v4 major (docs/architecture.md shipped '**Version**: v3.55.0' in the v4.0.0 release)"
+      }
     ]
   }
 }

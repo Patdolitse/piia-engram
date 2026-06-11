@@ -19,6 +19,13 @@ What it catches:
   ``facts.mcp_tools_total``.
 - A small bl* of *overclaim phrases* (universal-compatibility / guaranteed
   continuity / unverified live-agent claims) that must never appear in public copy.
+- *Registered stale patterns* (``checks.stale_patterns`` in the manifest): regexes
+  for known-retired numbers / phrasings that must never reappear in any public
+  surface. This closes the inverse blind spot of the substring checks above —
+  they verify the NEW number exists but cannot see an OLD number lingering in a
+  surface nobody enumerated (e.g. a stale tool count inside a FAQ table). When a
+  public number retires, register its old rendering here and the whole tracked
+  doc tree is policed for it from then on.
 
 Historical surfaces (CHANGELOG, release-evidence/) and a short, EXPLICIT ignore
 list (docs that legitimately quote an old number as an example) are skipped and
@@ -118,6 +125,34 @@ def _load_manifest(root: Path, manifest_rel: str) -> dict:
     return data
 
 
+def _load_stale_patterns(manifest: dict) -> list[tuple[re.Pattern, str, str]]:
+    """Compile ``checks.stale_patterns`` -> [(rx, pattern, reason)].
+
+    The registry is optional (absent == empty), but every entry that IS present
+    must be well-formed: a dict with a valid-regex ``pattern`` and a non-empty
+    ``reason`` (the justification is part of the contract — an unexplained ban
+    cannot be audited). Malformed entries are a SetupError, never a silent skip.
+    """
+    raw = manifest.get("checks", {}).get("stale_patterns", [])
+    if not isinstance(raw, list):
+        raise SetupError("manifest checks.stale_patterns must be a list")
+    compiled: list[tuple[re.Pattern, str, str]] = []
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict) or not entry.get("pattern") or not entry.get("reason"):
+            raise SetupError(
+                f"checks.stale_patterns[{i}] must be an object with non-empty "
+                f"'pattern' and 'reason'"
+            )
+        try:
+            rx = re.compile(entry["pattern"])
+        except re.error as exc:
+            raise SetupError(
+                f"checks.stale_patterns[{i}] invalid regex {entry['pattern']!r}: {exc}"
+            ) from exc
+        compiled.append((rx, entry["pattern"], entry["reason"]))
+    return compiled
+
+
 def _tracked_markdown(root: Path) -> list[str]:
     """All git-tracked .md files (POSIX-relative), or a filesystem fallback."""
     try:
@@ -141,6 +176,7 @@ def _is_historical(rel: str) -> bool:
 def scan(root: Path, manifest_rel: str = DEFAULT_MANIFEST) -> dict:
     """Run the sweep. Returns a structured, metadata-only result dict."""
     manifest = _load_manifest(root, manifest_rel)
+    stale_patterns = _load_stale_patterns(manifest)
     facts = manifest["facts"]
     expected = {
         "test_passed": int(facts["test_passed"]),
@@ -194,6 +230,23 @@ def scan(root: Path, manifest_rel: str = DEFAULT_MANIFEST) -> dict:
                     "file": rel,
                     "kind": "overclaim_phrase",
                     "phrase": phrase,
+                })
+
+        # Registered stale patterns — line-aware like the overclaim scan, with
+        # the same negation exemption (a doc *teaching* "don't write the old
+        # number" legitimately quotes it; that is not a live stale claim).
+        for i, line in enumerate(lines):
+            for rx, pattern, reason in stale_patterns:
+                if not rx.search(line):
+                    continue
+                context = " ".join(lowered_lines[max(0, i - 2): i + 1])
+                if any(mark in context for mark in _NEGATION_MARKERS):
+                    continue
+                problems.append({
+                    "file": rel,
+                    "kind": "stale_pattern",
+                    "pattern": pattern,
+                    "reason": reason,
                 })
 
     # De-dup identical problems (same file/kind/fact/value or phrase).
@@ -252,6 +305,9 @@ def main(argv: list[str] | None = None) -> int:
         if p["kind"] == "stale_claim":
             print(f"::error::{p['file']}: {p['fact']} claims {p['claimed']} "
                   f"but manifest says {p['expected']}")
+        elif p["kind"] == "stale_pattern":
+            print(f"::error::{p['file']}: retired pattern /{p['pattern']}/ "
+                  f"present ({p['reason']})")
         else:
             print(f"::error::{p['file']}: overclaim phrase present: \"{p['phrase']}\"")
     print(f"[FAIL] {len(result['problems'])} claim drift / overclaim problem(s).")
