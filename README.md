@@ -775,7 +775,7 @@ Two tiers, designed so most users only see 17 tools:
 | Tier | Tools | What they do | Loaded by |
 |------|-------|-------------|-----------|
 | **Core** | 17 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
-| **Advanced** | 70 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
+| **Advanced** | 36 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
 
 Most users never need to enable Advanced tools — Core covers everyday use.
 

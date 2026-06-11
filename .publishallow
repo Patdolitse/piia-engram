@@ -31,6 +31,7 @@ scripts/**
 # Only pass/n-a marker lines are public. Detailed notes (test counts,
 # scan results, review records) stay local via .gitignore.
 release-evidence/v*.md
+release-evidence/README.md
 
 # ── CI / automation ─────────────────────────────────────────────────
 .github/**
