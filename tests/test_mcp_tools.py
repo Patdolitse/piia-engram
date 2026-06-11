@@ -463,7 +463,79 @@ class TestErrorHandling:
 # ---------------------------------------------------------------------------
 
 
+class TestCapabilityModeResolution:
+    def test_resolve_capability_modes_defaults_to_core(self):
+        assert mcp_server.resolve_capability_modes("") == mcp_server.TIER1_TOOLS
+        assert mcp_server.resolve_capability_modes("   ") == mcp_server.TIER1_TOOLS
+
+    def test_resolve_capability_modes_accepts_core_case_and_duplicates(self):
+        result = mcp_server.resolve_capability_modes(" core + CORE + Core ")
+
+        assert result == mcp_server.TIER1_TOOLS
+
+    def test_resolve_capability_modes_combines_groups_with_implicit_core(self):
+        expected = (
+            mcp_server.TIER1_TOOLS
+            | mcp_server.CAPABILITY_GROUPS["knowledge"]
+            | mcp_server.CAPABILITY_GROUPS["integrations"]
+        )
+
+        result = mcp_server.resolve_capability_modes("knowledge + integrations")
+
+        assert result == expected
+
+    def test_resolve_capability_modes_all_overrides_other_tokens(self):
+        all_tools = mcp_server.TIER1_TOOLS | frozenset().union(
+            *mcp_server.CAPABILITY_GROUPS.values()
+        )
+
+        assert mcp_server.resolve_capability_modes("all") == all_tools
+        assert mcp_server.resolve_capability_modes("core+governance+all") == all_tools
+
+    def test_resolve_capability_modes_ignores_unknown_tokens(self, capsys):
+        expected = mcp_server.TIER1_TOOLS | mcp_server.CAPABILITY_GROUPS["governance"]
+
+        result = mcp_server.resolve_capability_modes("governance + mystery")
+
+        assert result == expected
+        err = capsys.readouterr().err
+        assert "Unknown ENGRAM_TOOLS token(s)" in err
+        assert "mystery" in err
+        assert "合法值" in err
+
+    def test_resolve_capability_modes_falls_back_to_core_when_all_tokens_unknown(
+        self, capsys
+    ):
+        result = mcp_server.resolve_capability_modes("mystery + nope")
+
+        assert result == mcp_server.TIER1_TOOLS
+        err = capsys.readouterr().err
+        assert "falling back to core" in err
+        assert "回落 core" in err
+
+
 class TestToolTier:
+    def _filtered_tool_names(
+        self,
+        raw_mode: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> set[str]:
+        fake_tools = {name: object() for name in mcp_server.ALL_CAPABILITY_TOOLS}
+        import types
+
+        fake_manager = types.SimpleNamespace(_tools=fake_tools)
+        monkeypatch.setattr(mcp_server.mcp, "_tool_manager", fake_manager)
+        monkeypatch.setattr(mcp_server, "TOOL_TIER", raw_mode)
+        monkeypatch.setattr(
+            mcp_server.mcp,
+            "remove_tool",
+            lambda name: fake_tools.pop(name, None),
+        )
+
+        mcp_server._apply_tool_tier()
+
+        return set(fake_tools)
+
     def test_tier1_tools_set_is_well_known_subset(self):
         """The Tier-1 (core) set must stay a curated subset, not the full API."""
         # Sanity: contains lifecycle + key reads/writes
