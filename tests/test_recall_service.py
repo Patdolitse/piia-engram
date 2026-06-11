@@ -64,6 +64,64 @@ def test_identity_slice_keeps_stable_fields_only():
     assert "should-not-appear" not in repr(payload)
 
 
+class RichIdentityEngram(FakeEngram):
+    """Fake with the dedicated identity sub-stores (preferences / quality)."""
+
+    def __init__(self, *, preferences=None, quality=None, boundaries=None, **kw):
+        super().__init__(**kw)
+        self._preferences = preferences or {}
+        self._quality = quality or {}
+        self._boundaries = boundaries or {}
+
+    def get_preferences(self):
+        return self._preferences
+
+    def get_quality_standards(self):
+        return self._quality
+
+    def get_trust_boundaries(self):
+        return self._boundaries
+
+
+def test_identity_slice_merges_dedicated_identity_stores():
+    eng = RichIdentityEngram(
+        profile={"role": "builder", "language": "zh"},
+        preferences={
+            "work_patterns": {"语言": "中文沟通", "界面": "偏好GUI"},
+            "communication": "直接简洁",
+            "tool_preferences": {"codex": "primary"},
+        },
+        quality={"acceptance_threshold": 4, "rules": ["验证后再上线"]},
+    )
+    payload = rs.gather_recall(eng, now=_now())
+    ident = payload["identity"]
+    assert ident["work_patterns"] == ["语言: 中文沟通", "界面: 偏好GUI"]
+    assert "codex: primary" in ident["preferences"]
+    assert "communication: 直接简洁" in ident["preferences"]
+    assert ident["quality_standards"] == ["验证后再上线"]
+
+
+def test_identity_merge_never_overwrites_profile_values():
+    eng = RichIdentityEngram(
+        profile={"role": "builder", "work_patterns": ["profile wins"]},
+        preferences={"work_patterns": {"界面": "should not replace"}},
+    )
+    payload = rs.gather_recall(eng, now=_now())
+    assert payload["identity"]["work_patterns"] == ["profile wins"]
+
+
+def test_identity_merge_honors_trust_boundary_restrictions():
+    eng = RichIdentityEngram(
+        profile={"role": "builder"},
+        preferences={"work_patterns": {"界面": "GUI"}},
+        quality={"rules": ["rule"]},
+        boundaries={"restricted_fields": ["work_patterns", "quality_standards"]},
+    )
+    payload = rs.gather_recall(eng, now=_now())
+    assert "work_patterns" not in payload["identity"]
+    assert "quality_standards" not in payload["identity"]
+
+
 def test_recent_activity_digest_no_body():
     eng = FakeEngram(recent=[{
         "tool": "claude_code",

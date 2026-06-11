@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from piia_engram import i18n
 from piia_engram.context_preview import (
     DEFAULT_LEVEL,
     DEFAULT_ROLE,
@@ -248,11 +249,22 @@ def test_counts_are_consistent():
 
 
 # ---------------------------------------------------------------------------
-# Renderers
+# Renderers (bilingual: pin the runtime language so assertions are
+# deterministic regardless of the machine's profile.json preference)
 # ---------------------------------------------------------------------------
 
 
-def test_text_render_has_governance_and_read_only_note():
+@pytest.fixture
+def lang_en(monkeypatch):
+    monkeypatch.setattr(i18n, "_runtime_lang", "en")
+
+
+@pytest.fixture
+def lang_zh(monkeypatch):
+    monkeypatch.setattr(i18n, "_runtime_lang", "zh")
+
+
+def test_text_render_has_governance_and_read_only_note(lang_en):
     preview = build_context_preview(_mixed_engram(), role="assistant")
     text = render_context_preview_text(preview)
     assert "Context preview" in text
@@ -262,7 +274,91 @@ def test_text_render_has_governance_and_read_only_note():
     assert "secret recipe" in text  # withheld summary still shown to the owner
 
 
-def test_html_escapes_injected_markup():
+def test_text_render_localizes_to_chinese(lang_zh):
+    preview = build_context_preview(_mixed_engram(), role="assistant")
+    text = render_context_preview_text(preview)
+    assert "记忆透视" in text
+    assert "被拦截的知识" in text
+    assert "只读预览" in text
+    assert "secret recipe" in text  # values stay raw; only labels localize
+
+
+def test_html_lang_attribute_follows_language(lang_zh):
+    preview = build_context_preview(_mixed_engram(), role="assistant")
+    assert '<html lang="zh">' in render_context_preview_html(preview)
+    i18n._runtime_lang = "en"
+    try:
+        assert '<html lang="en">' in render_context_preview_html(preview)
+    finally:
+        i18n._runtime_lang = "zh"  # fixture monkeypatch still restores after
+
+
+def test_identity_field_names_localize_to_chinese(lang_zh):
+    preview = build_context_preview(_mixed_engram(), role="assistant")
+    text = render_context_preview_text(preview)
+    assert "角色: builder" in text
+    assert "语言: zh" in text
+    page = render_context_preview_html(preview)
+    assert ">角色</span>" in page
+    assert 'title="role"' in page  # raw key kept as tooltip for traceability
+
+
+def test_identity_field_names_stay_raw_in_english(lang_en):
+    preview = build_context_preview(_mixed_engram(), role="assistant")
+    text = render_context_preview_text(preview)
+    assert "role: builder" in text
+    assert "角色" not in text
+
+
+def test_identity_list_values_render_as_structured_items(lang_zh):
+    eng = FakeEngram(profile={
+        "role": "builder",
+        "work_patterns": ["节奏: 快速迭代", "纯文本规则，没有前缀"],
+    })
+    preview = build_context_preview(eng, role="assistant")
+    page = render_context_preview_html(preview)
+    # one bullet row per item, not a "；"-joined blob
+    assert page.count('class="val-item"') == 2
+    assert 'class="vk">节奏</span>' in page  # "标签:" prefix highlighted
+    assert "纯文本规则，没有前缀" in page
+    assert "节奏: 快速迭代" not in page
+
+
+def test_knowledge_summary_renders_multipart_as_bullets(lang_zh):
+    eng = FakeEngram(relevant=[
+        _lesson("要点一: 内容A；要点二: 内容B", sensitivity="work", item_id="l-m"),
+        _lesson("单段纯文本经验", sensitivity="work", item_id="l-s"),
+    ])
+    preview = build_context_preview(eng, role="assistant")
+    page = render_context_preview_html(preview)
+    # multipart summary becomes bullet rows inside the table cell too
+    assert 'class="vk">要点一</span>' in page
+    assert 'class="vk">要点二</span>' in page
+    assert "要点一: 内容A；要点二" not in page  # no more "；"-joined blob
+    assert "单段纯文本经验" in page  # plain summaries stay plain
+
+
+def test_long_summary_splits_title_sentences_and_highlights_arrows(lang_zh):
+    summary = "标题示例: 第一句" + "很长" * 30 + "。第二句根治法 → 下一步收尾"
+    eng = FakeEngram(relevant=[_lesson(summary, sensitivity="work", item_id="l-t")])
+    preview = build_context_preview(eng, role="assistant")
+    page = render_context_preview_html(preview)
+    assert 'class="sum-title">标题示例</div>' in page  # lead becomes a title line
+    assert "第二句根治法" in page  # sentences split into bullet rows
+    assert page.count('class="val-item"') >= 2
+    assert 'class="arr">→</span>' in page  # step arrows highlighted
+
+
+def test_html_is_structured_not_a_terminal_dump(lang_en):
+    preview = build_context_preview(_mixed_engram(), role="assistant")
+    page = render_context_preview_html(preview)
+    assert "<pre" not in page  # owner-facing layout, not a text dump
+    assert 'class="hero"' in page
+    assert 'class="stats"' in page
+    assert "Knowledge withheld from this caller" in page
+
+
+def test_html_escapes_injected_markup(lang_en):
     eng = FakeEngram(
         relevant=[
             _lesson("<script>alert(1)</script>", sensitivity="work", item_id="l-x"),
@@ -302,6 +398,7 @@ def _cli(monkeypatch, tmp_path, argv):
     # cli_commands first would trip the known module-order circularity.
     from piia_engram.setup_wizard import run_preview
 
+    monkeypatch.setattr(i18n, "_runtime_lang", "en")  # deterministic labels
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
     return run_preview(argv)
 

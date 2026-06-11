@@ -54,6 +54,80 @@ def _identity_slice(profile: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def _flatten_kv_list(value: Any) -> list[str]:
+    """Project a dict/list/str into the short-scalar list the slice expects."""
+    if isinstance(value, dict):
+        return [
+            f"{key}: {val}" for key, val in value.items()
+            if str(val).strip() and not str(key).startswith("_")
+        ]
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _augment_identity_profile(eng: Any, profile: dict[str, Any] | None) -> dict[str, Any]:
+    """Fill the identity-slice list fields from their dedicated stores.
+
+    ``_IDENTITY_LIST_FIELDS`` (preferences / quality_standards / work_patterns)
+    were specified as profile fields, but live stores keep them in dedicated
+    files (``preferences.json`` / ``quality_standards.json``). Without this
+    merge the recall identity slice never carries them — a real injection gap
+    surfaced by ``engram preview``. Profile-resident values win (no overwrite);
+    fields named in ``trust_boundaries.restricted_fields`` are never merged.
+    All reads are defensive: a missing or raising method merges nothing.
+    """
+    out = dict(profile) if isinstance(profile, dict) else {}
+
+    restricted: set[str] = set()
+    tb_getter = getattr(eng, "get_trust_boundaries", None)
+    if callable(tb_getter):
+        try:
+            boundaries = tb_getter() or {}
+            restricted = {
+                str(field) for field in boundaries.get("restricted_fields", []) or []
+            }
+        except Exception:  # pragma: no cover - defensive; never block recall
+            restricted = set()
+
+    prefs: dict[str, Any] = {}
+    prefs_getter = getattr(eng, "get_preferences", None)
+    if callable(prefs_getter):
+        try:
+            prefs = prefs_getter() or {}
+        except Exception:  # pragma: no cover - defensive
+            prefs = {}
+    if isinstance(prefs, dict):
+        if "work_patterns" not in out and "work_patterns" not in restricted:
+            patterns = _flatten_kv_list(prefs.get("work_patterns"))
+            if patterns:
+                out["work_patterns"] = patterns
+        if "preferences" not in out and "preferences" not in restricted:
+            pieces = _flatten_kv_list(prefs.get("tool_preferences"))
+            communication = prefs.get("communication")
+            if isinstance(communication, str) and communication.strip():
+                pieces.append(f"communication: {communication.strip()}")
+            if pieces:
+                out["preferences"] = pieces
+
+    if "quality_standards" not in out and "quality_standards" not in restricted:
+        quality: dict[str, Any] = {}
+        quality_getter = getattr(eng, "get_quality_standards", None)
+        if callable(quality_getter):
+            try:
+                quality = quality_getter() or {}
+            except Exception:  # pragma: no cover - defensive
+                quality = {}
+        if isinstance(quality, dict):
+            rules = _flatten_kv_list(quality.get("rules"))
+            if rules:
+                out["quality_standards"] = rules
+
+    return out
+
+
 def _recent_activity(recent: list[dict[str, Any]] | None) -> dict[str, Any]:
     """Project recent-context records to a compact, content-free-ish digest.
 
@@ -203,7 +277,7 @@ def gather_recall_sources(
             profile = getter()
         except Exception:  # pragma: no cover - defensive; never block recall
             profile = None
-    identity = _identity_slice(profile)
+    identity = _identity_slice(_augment_identity_profile(eng, profile))
 
     # --- recent activity ------------------------------------------------
     recent: list[dict[str, Any]] | None = None
