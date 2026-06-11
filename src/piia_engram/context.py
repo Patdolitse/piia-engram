@@ -1178,9 +1178,11 @@ class ContextMixin:
         if _wants("conflicts"):
             conflict_items: list[str] = []
             if decisions:
-                for c in self._detect_decision_conflicts(decisions):
+                for c in self.detect_active_decision_conflicts(decisions):
                     conflict_items.append(
-                        f"- 决策冲突: 「{c['q1']}→{c['c1']}」与「{c['q2']}→{c['c2']}」可能矛盾，请与用户确认以哪个为准"
+                        "- 最近决策冲突提醒 / Recent decision conflict reminder: "
+                        f"「{c['q1']}→{c['c1']}」与 / vs 「{c['q2']}→{c['c2']}」"
+                        " 可能矛盾，请与用户确认以哪个为准 / may conflict; confirm with the user."
                     )
             if lessons:
                 for c in self._detect_lesson_conflicts(lessons):
@@ -1188,7 +1190,7 @@ class ContextMixin:
                         f"- 经验冲突: 「{c['s1'][:30]}」与「{c['s2'][:30]}」给出矛盾建议，请与用户确认"
                     )
             if conflict_items:
-                sections["conflicts"] = "\n## 知识冲突提醒\n" + "\n".join(conflict_items)
+                sections["conflicts"] = "\n## 知识冲突提醒 / Knowledge conflict reminders\n" + "\n".join(conflict_items)
 
         # Project history
         if _wants("project") and project_folder:

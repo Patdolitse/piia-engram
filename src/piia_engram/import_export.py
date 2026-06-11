@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .decision_thread import validate_edges
+from .governance_store import RelationStore, ResolutionStore
 from .storage import (
     DEFAULT_TRUST_BOUNDARIES,
     ENCRYPTED_PROFILE_FIELDS,
@@ -714,6 +716,8 @@ class ImportExportMixin:
                     self._knowledge_dir / "decisions.json", "decision"),
                 "domains": self.get_domains(),
                 "playbooks": self._export_playbooks(),
+                "relations": RelationStore(self.root).all_edges(),
+                "conflict_resolutions": ResolutionStore(self.root).all_records(),
             },
             "environment": {
                 "tools": self._export_tools(),
@@ -940,6 +944,36 @@ class ImportExportMixin:
             if new_count:
                 self._write_playbook_index(existing_index)
             imported.append(f"playbooks(+{new_count})" if merge else f"playbooks({len(knowledge['playbooks'])})")
+
+        if "relations" in knowledge:
+            incoming_relations = validate_edges(knowledge.get("relations") or [])
+            if merge:
+                existing = RelationStore(self.root).all_edges()
+                by_key = {
+                    (edge["src"], edge["rel"], edge["dst"]): edge
+                    for edge in existing
+                }
+                added = 0
+                for edge in incoming_relations:
+                    key = (edge["src"], edge["rel"], edge["dst"])
+                    if key not in by_key:
+                        by_key[key] = edge
+                        added += 1
+                _write_json(self._knowledge_dir / "relations.json", list(by_key.values()))
+                imported.append(f"relations(+{added})")
+            else:
+                _write_json(self._knowledge_dir / "relations.json", incoming_relations)
+                imported.append(f"relations({len(incoming_relations)})")
+
+        if "conflict_resolutions" in knowledge:
+            store = ResolutionStore(self.root)
+            incoming_resolutions = knowledge.get("conflict_resolutions") or {}
+            if merge:
+                changed = store.merge_records(incoming_resolutions)
+                imported.append(f"conflict_resolutions(+{changed})")
+            else:
+                store.replace_all(incoming_resolutions)
+                imported.append(f"conflict_resolutions({len(store.all_records())})")
 
         # Environment (tools registry)
         environment = data.get("environment", {})

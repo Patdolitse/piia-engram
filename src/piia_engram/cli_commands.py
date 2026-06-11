@@ -2058,6 +2058,232 @@ def _run_merge_apply(eng, args: list[str]) -> int:
     return 1 if payload.get("requires_confirmation") else 0
 
 
+def _print_conflicts_usage() -> None:
+    print(
+        "Usage / 用法:\n"
+        "  engram conflicts list [--json]\n"
+        "      List active decision conflicts. / 列出当前 active 决策冲突。\n"
+        "  engram conflicts resolve <id1> <id2> --action supersede|archive|dismiss [--keep ID]\n"
+        "      [--commit] [--yes] [--note TEXT] [--json]\n"
+        "      Dry-run by default; --commit --yes applies. / 默认演练；--commit --yes 才写入。\n"
+    )
+
+
+def _conflict_payload(eng) -> dict:
+    from piia_engram.conflict_governance import sample_conflicts, split_conflicts
+
+    all_conflicts = eng.detect_active_decision_conflicts(include_suppressed=True)
+    conflicts, suppressed = split_conflicts(all_conflicts)
+    return {
+        "schema": 1,
+        "count_unsuppressed": len(conflicts),
+        "count_suppressed": len(suppressed),
+        "conflicts": sample_conflicts(conflicts, limit=len(conflicts)),
+        "suppressed": sample_conflicts(suppressed, limit=len(suppressed)),
+    }
+
+
+def _render_conflict_list_text(payload: dict) -> str:
+    lines = [
+        "Decision conflicts / 决策冲突",
+        f"unsuppressed / 未抑制: {payload.get('count_unsuppressed', 0)}",
+        f"suppressed / 已抑制: {payload.get('count_suppressed', 0)}",
+    ]
+    for item in payload.get("conflicts", []):
+        lines.append(
+            f"- {item.get('id1')} <-> {item.get('id2')} "
+            f"q={item.get('q_sim')} c={item.get('c_sim')} "
+            f"{item.get('q1')} / {item.get('q2')}"
+        )
+    if payload.get("suppressed"):
+        lines.append("Suppressed / 已抑制:")
+        for item in payload.get("suppressed", []):
+            changed = "content changed / 内容已变化" if item.get("content_changed") else "unchanged / 未变化"
+            lines.append(f"- {item.get('id1')} <-> {item.get('id2')} ({changed})")
+    lines.append(
+        "Resolve with `engram conflicts resolve <id1> <id2> --action ... --commit --yes`. "
+        "/ 使用该命令并加 --commit --yes 关闭冲突。"
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _parse_conflict_resolve_args(args: list[str]) -> tuple[dict, str | None]:
+    if len(args) < 2:
+        return {}, (
+            "Usage: engram conflicts resolve <id1> <id2> --action supersede|archive|dismiss "
+            "/ 用法：engram conflicts resolve <id1> <id2> --action supersede|archive|dismiss"
+        )
+    opts = {
+        "id1": args[0],
+        "id2": args[1],
+        "action": "",
+        "keep": "",
+        "note": "",
+        "json": False,
+        "commit": False,
+        "yes": False,
+    }
+    i = 2
+    while i < len(args):
+        arg = args[i]
+        if arg == "--json":
+            opts["json"] = True
+            i += 1
+            continue
+        if arg == "--commit":
+            opts["commit"] = True
+            i += 1
+            continue
+        if arg == "--yes":
+            opts["yes"] = True
+            i += 1
+            continue
+        if arg in {"--action", "--keep", "--note"}:
+            if i + 1 >= len(args):
+                return {}, f"Missing value for {arg} / 缺少 {arg} 的值"
+            opts[arg[2:]] = args[i + 1]
+            i += 2
+            continue
+        return {}, f"Unknown conflicts resolve option: {arg} / 未知 conflicts resolve 选项：{arg}"
+    return opts, None
+
+
+def _find_decision_by_id(eng, item_id: str) -> dict | None:
+    for decision in eng.get_decisions(limit=None, _update_access=False):
+        if str(decision.get("id")) == str(item_id):
+            return decision
+    return None
+
+
+def _run_conflicts_resolve(eng, args: list[str]) -> tuple[int, dict]:
+    from piia_engram.governance_store import ResolutionStore
+
+    opts, error = _parse_conflict_resolve_args(args)
+    if error:
+        return 2, {"error": error}
+
+    id1 = str(opts["id1"])
+    id2 = str(opts["id2"])
+    action = str(opts["action"])
+    keep = str(opts["keep"] or "")
+    if action not in {"supersede", "archive", "dismiss"}:
+        return 2, {"error": "Invalid --action / 无效 --action"}
+    if keep and keep not in {id1, id2}:
+        return 2, {"error": "--keep must be one of id1/id2 / --keep 必须是 id1/id2 之一"}
+    if action in {"supersede", "archive"} and not keep:
+        return 2, {"error": "--keep is required for supersede/archive / supersede/archive 必须提供 --keep"}
+
+    first = _find_decision_by_id(eng, id1)
+    second = _find_decision_by_id(eng, id2)
+    if not first or not second:
+        return 1, {"error": "Decision not found or inactive / 决策不存在或非 active"}
+
+    dry_run = not bool(opts["commit"])
+    if opts["commit"] and not opts["yes"]:
+        return 1, {
+            "schema": 1,
+            "action": action,
+            "id1": id1,
+            "id2": id2,
+            "dry_run": False,
+            "changed": False,
+            "requires_confirmation": True,
+            "status": "confirmation_required",
+        }
+
+    other = id2 if keep == id1 else id1
+    payload = {
+        "schema": 1,
+        "action": action,
+        "id1": id1,
+        "id2": id2,
+        "keep": keep,
+        "other": other if action in {"supersede", "archive"} else "",
+        "dry_run": dry_run,
+        "changed": False,
+        "requires_confirmation": False,
+        "status": "preview" if dry_run else "applied",
+    }
+    if dry_run:
+        return 0, payload
+
+    store = ResolutionStore(eng.root)
+    keep_decision = first if keep == id1 else second
+    other_decision = second if keep == id1 else first
+    if action == "supersede":
+        relation = eng.add_relation(keep, "supersedes", other)
+        archive = eng.update_decision(other, {"status": "outdated"})
+        store.record(first, second, action=action, keep=keep, note=str(opts["note"] or ""))
+        payload["changed"] = bool(relation.get("added") or archive.get("status") == "outdated")
+    elif action == "archive":
+        archive = eng.update_decision(other, {"status": "outdated"})
+        store.record(first, second, action=action, keep=keep, note=str(opts["note"] or ""))
+        payload["changed"] = bool(archive.get("status") == "outdated")
+    else:
+        record = store.dismiss(first, second, note=str(opts["note"] or ""))
+        payload["changed"] = bool(record)
+
+    eng._audit.log(
+        "write",
+        "knowledge/conflict_resolutions",
+        detail=f"{action} {id1}::{id2} keep={keep or ''}",
+    )
+    payload["kept_question"] = keep_decision.get("question", "") if keep else ""
+    payload["other_question"] = other_decision.get("question", "") if keep else ""
+    return 0, payload
+
+
+def _render_conflict_resolve_text(payload: dict) -> str:
+    if payload.get("error"):
+        return f"{payload['error']}\n"
+    status = payload.get("status")
+    changed = payload.get("changed")
+    dry = payload.get("dry_run")
+    return (
+        f"Conflict resolution / 冲突处置: {payload.get('action')} "
+        f"{payload.get('id1')} <-> {payload.get('id2')} "
+        f"status={status} dry_run={str(dry).lower()} changed={str(changed).lower()}\n"
+    )
+
+
+def run_conflicts(argv: list[str] | None = None) -> int:
+    """Read/list and owner-confirm decision-conflict resolutions."""
+    from piia_engram.core import Engram
+
+    args = list(argv or [])
+    if not args or args[0] in {"-h", "--help"}:
+        _print_conflicts_usage()
+        return 0
+
+    root = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    if args[0] == "list":
+        json_output = "--json" in args
+        unknown = [arg for arg in args[1:] if arg not in {"--json"}]
+        if unknown:
+            print(f"Unknown conflicts list option: {unknown[0]} / 未知 conflicts list 选项：{unknown[0]}")
+            return 2
+        payload = _conflict_payload(eng)
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(_render_conflict_list_text(payload), end="")
+        return 0
+    if args[0] == "resolve":
+        rc, payload = _run_conflicts_resolve(eng, args[1:])
+        if payload.get("schema") and "--json" in args:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif "--json" in args:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(_render_conflict_resolve_text(payload), end="")
+        return rc
+
+    print(f"Unknown conflicts command: {args[0]} / 未知 conflicts 命令：{args[0]}")
+    _print_conflicts_usage()
+    return 2
+
+
 def _run_reconcile(args: list[str]) -> int:
     """Reconcile proposal + owner-confirmed import-only apply (engram reconcile).
 
@@ -2602,4 +2828,3 @@ def run_management(argv: list[str] | None = None) -> int:
     else:
         print(render_management_text(view), end="")
     return 0
-

@@ -22,14 +22,17 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .storage import (
+    CONFLICT_C_CEILING as CHOICE_DIVERGENCE_THRESHOLD,
+    CONFLICT_Q_THRESHOLD as CONFLICT_QUESTION_THRESHOLD,
+)
+
 # Default similarity threshold for "this is the same item" (matches the spirit
 # of reconcile.py's bigram dedup; tuned here on token Jaccard).
 DUPLICATE_THRESHOLD = 0.6
 # Questions this similar are "about the same decision"; if the choices differ
-# that is a conflict, not a duplicate.
-CONFLICT_QUESTION_THRESHOLD = 0.6
-# Below this, two choices are considered different answers.
-CHOICE_DIVERGENCE_THRESHOLD = 0.5
+# that is a conflict, not a duplicate. These values are shared with retrieval,
+# but reconcile scores use token-Jaccard while retrieval scores use token-F1.
 
 _WORD_RE = re.compile(r"[0-9a-zA-Z_]+")
 

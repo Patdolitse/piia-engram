@@ -3243,8 +3243,8 @@ def test_detect_decision_conflict_same_topic_different_choice(tmp_path: Path):
     """同一主题不同选择应被检测为冲突。"""
     engram = make_engram(tmp_path)
     decisions = [
-        {"question": "which testing framework to use", "choice": "pytest", "domain": "python"},
-        {"question": "which testing framework to use", "choice": "unittest", "domain": "python"},
+        {"id": "d1", "question": "which testing framework to use", "choice": "pytest", "domain": "python"},
+        {"id": "d2", "question": "which testing framework to use", "choice": "unittest", "domain": "python"},
     ]
     conflicts = engram._detect_decision_conflicts(decisions)
     assert len(conflicts) == 1
@@ -3255,8 +3255,8 @@ def test_detect_decision_conflict_same_choice_no_conflict(tmp_path: Path):
     """同一主题同一选择不应被标记为冲突。"""
     engram = make_engram(tmp_path)
     decisions = [
-        {"question": "which testing framework to use", "choice": "pytest is the best choice", "domain": "python"},
-        {"question": "which testing framework to use", "choice": "pytest is the best choice for us", "domain": "python"},
+        {"id": "d1", "question": "which testing framework to use", "choice": "pytest is the best choice", "domain": "python"},
+        {"id": "d2", "question": "which testing framework to use", "choice": "pytest is the best choice for us", "domain": "python"},
     ]
     conflicts = engram._detect_decision_conflicts(decisions)
     assert len(conflicts) == 0
@@ -3266,8 +3266,8 @@ def test_detect_decision_conflict_different_domains_skipped(tmp_path: Path):
     """不同 domain 的决策不应被检测为冲突。"""
     engram = make_engram(tmp_path)
     decisions = [
-        {"question": "which framework to use", "choice": "React", "domain": "frontend"},
-        {"question": "which framework to use", "choice": "Django", "domain": "backend"},
+        {"id": "d1", "question": "which framework to use", "choice": "React", "domain": "frontend"},
+        {"id": "d2", "question": "which framework to use", "choice": "Django", "domain": "backend"},
     ]
     conflicts = engram._detect_decision_conflicts(decisions)
     assert len(conflicts) == 0
@@ -3277,8 +3277,8 @@ def test_detect_decision_conflict_overlapping_domains(tmp_path: Path):
     """domain 有交集时仍应检测冲突。"""
     engram = make_engram(tmp_path)
     decisions = [
-        {"question": "which test runner to use", "choice": "pytest", "domain": "python,testing"},
-        {"question": "which test runner to use", "choice": "unittest", "domain": "testing,ci"},
+        {"id": "d1", "question": "which test runner to use", "choice": "pytest", "domain": "python,testing"},
+        {"id": "d2", "question": "which test runner to use", "choice": "unittest", "domain": "testing,ci"},
     ]
     conflicts = engram._detect_decision_conflicts(decisions)
     assert len(conflicts) == 1

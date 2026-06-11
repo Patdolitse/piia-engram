@@ -69,8 +69,19 @@ UNTRUSTED_TRUST_FIELDS: tuple[str, ...] = (
     "approval_status",
     "approval_required",
 )
-CONFLICT_Q_THRESHOLD = 0.25   # question similarity for potential decision conflict
-CONFLICT_C_CEILING = 0.80     # choice similarity ceiling — above means same choice, not conflict
+# Decision-conflict governance thresholds: post-hoc noise reduction for
+# doctor/context/engram conflicts. These favor precision.
+# Retrieval uses token-F1 (_bigram_similarity); reconcile uses token-Jaccard.
+# The score distributions are not identical across those two algorithms.
+CONFLICT_Q_THRESHOLD = 0.6     # question similarity for potential decision conflict
+CONFLICT_C_CEILING = 0.5       # choice similarity ceiling; above means same choice, not conflict
+
+# Admission-time conflict thresholds for scripts/check_admission.py.
+# These favor recall: review more at write/admission time and avoid missing
+# possible conflicts. Keep separate from the governance thresholds above; the
+# two groups have opposite goals and must not be collapsed back together.
+ADMISSION_CONFLICT_Q_THRESHOLD = 0.25
+ADMISSION_CONFLICT_C_CEILING = 0.80
 
 # Sentiment markers for lesson conflict detection
 _NEGATION_MARKERS = frozenset({

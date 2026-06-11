@@ -827,8 +827,9 @@ def test_decision_conflict_detected():
     """Contradictory decisions in same domain → conflict warning in context."""
     with tempfile.TemporaryDirectory() as tmp:
         e = _make_engram(Path(tmp))
+        # Measured q_sim=0.769 and c_sim=0.476: conflict, not duplicate/auto-supersede.
         e.add_decision("Python 测试框架选型", choice="使用 pytest 作为唯一测试框架", domain="python")
-        e.add_decision("单元测试工具选型", choice="使用 unittest 标准库作为测试框架", domain="python")
+        e.add_decision("测试框架选型方案", choice="使用 unittest 标准库作为测试框架", domain="python")
         ctx = e.generate_context()
         assert "冲突" in ctx, "Should detect conflicting decisions"
 
@@ -995,11 +996,12 @@ def test_decision_conflict_cjk_questions():
         e._CLAUDE_MEMORY_GLOBS = []
         e._AI_GLOBAL_CONFIGS = []
         e._discover_project_roots = lambda: []
-        # Questions must be different enough to pass dedup (bigram sim < 0.55)
-        # but similar enough to trigger conflict (q_sim >= 0.25)
-        # "项目中数据库的选择" vs "数据库技术选择方案" → sim=0.375
-        e.add_decision("项目中数据库的选择", choice="PostgreSQL 关系型", domain="database")
-        e.add_decision("数据库技术选择方案", choice="MongoDB 文档型", domain="database")
+        # Questions must be similar enough for governance conflict detection
+        # yet below the duplicate/auto-supersede band (sim < 0.95; the 0.55
+        # tier only marks "related" and still stores both decisions).
+        # Measured q_sim=0.632; c_sim=0.0.
+        e.add_decision("项目中数据库的选择方案", choice="PostgreSQL 关系型", domain="database")
+        e.add_decision("数据库技术的选择方案", choice="MongoDB 文档型", domain="database")
 
         ctx = e.generate_context()
         assert "知识冲突" in ctx, "Similar CJK questions with different choices should trigger conflict"

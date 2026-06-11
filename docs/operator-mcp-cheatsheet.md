@@ -79,6 +79,26 @@ checks, owner gates, or the need to confirm public actions.
 Legacy Playbook scope migration is not an MCP surface: it lives in the
 owner-only local CLI (`engram playbook scope classify|apply|rollback|queue|resolve`).
 
+## Decision conflict governance
+
+`engram conflicts list [--json]` is the owner-only read view for active decision
+conflicts. It shows decision ids, similarity scores, and suppressed records with
+a content-change hint when a dismissed pair has changed since dismissal.
+
+`engram conflicts resolve <id1> <id2> --action supersede|archive|dismiss`
+previews by default. Writes require `--commit --yes`; `supersede` and `archive`
+also require `--keep <id>` to identify the retained decision.
+
+## 决策冲突治理
+
+`engram conflicts list [--json]` 是 owner-only 的 active 决策冲突只读视图，
+会显示决策 id、相似度分数，以及已抑制记录；如果 dismiss 后内容发生变化，会给出
+内容变化提示。
+
+`engram conflicts resolve <id1> <id2> --action supersede|archive|dismiss`
+默认只预览不写入。实际写入必须加 `--commit --yes`；`supersede` 和 `archive`
+还必须用 `--keep <id>` 指明保留哪条决策。
+
 ## Evidence labels
 
 - L0/L1: installed, wired, or reachable.

@@ -1141,34 +1141,45 @@ class RetrievalMixin:
     # ------------------------------------------------------------------
 
     def _detect_decision_conflicts(self, decisions: list[dict]) -> list[dict]:
-        """Find decision pairs with similar topics but different choices."""
-        conflicts: list[dict] = []
-        for i, d1 in enumerate(decisions):
-            for d2 in decisions[i + 1:]:
-                # Domain overlap check (skip if explicitly different domains)
-                dom1 = {d.strip() for d in (d1.get("domain") or d1.get("project") or "").split(",") if d.strip()}
-                dom2 = {d.strip() for d in (d2.get("domain") or d2.get("project") or "").split(",") if d.strip()}
-                if dom1 and dom2 and not (dom1 & dom2):
-                    continue
+        """Find actionable decision pairs with similar topics but different choices."""
+        from .conflict_governance import detect_active_decision_conflicts
 
-                q1 = self._entry_identity_text(d1, "decision")
-                q2 = self._entry_identity_text(d2, "decision")
-                q_sim = self._bigram_similarity(q1, q2)
-                if q_sim < CONFLICT_Q_THRESHOLD:
-                    continue
+        return detect_active_decision_conflicts(
+            decisions,
+            similarity=self._bigram_similarity,
+            identity_text=lambda entry: self._entry_identity_text(entry, "decision"),
+            q_threshold=CONFLICT_Q_THRESHOLD,
+            c_ceiling=CONFLICT_C_CEILING,
+        )
 
-                c1 = d1.get("choice", "")
-                c2 = d2.get("choice", "")
-                c_sim = self._bigram_similarity(c1, c2)
-                if c_sim >= CONFLICT_C_CEILING:
-                    continue  # same choice, not a conflict
+    def detect_active_decision_conflicts(
+        self,
+        decisions: list[dict] | None = None,
+        *,
+        relations: list[dict] | None = None,
+        resolutions: dict | None = None,
+        include_suppressed: bool = False,
+    ) -> list[dict]:
+        """Detect decision conflicts using stored supersedes edges and resolutions."""
+        from .conflict_governance import detect_active_decision_conflicts
+        from .governance_store import RelationStore, ResolutionStore
 
-                conflicts.append({
-                    "type": "decision",
-                    "q1": q1, "c1": c1,
-                    "q2": q2, "c2": c2,
-                })
-        return conflicts
+        if decisions is None:
+            decisions = self.get_decisions(limit=None, _update_access=False)
+        if relations is None:
+            relations = RelationStore(self.root).all_edges()
+        if resolutions is None:
+            resolutions = ResolutionStore(self.root).all_records()
+        return detect_active_decision_conflicts(
+            decisions,
+            relations=relations,
+            resolutions=resolutions,
+            similarity=self._bigram_similarity,
+            identity_text=lambda entry: self._entry_identity_text(entry, "decision"),
+            q_threshold=CONFLICT_Q_THRESHOLD,
+            c_ceiling=CONFLICT_C_CEILING,
+            include_suppressed=include_suppressed,
+        )
 
     def _detect_lesson_conflicts(self, lessons: list[dict]) -> list[dict]:
         """Find lesson pairs giving contradictory advice on the same topic."""

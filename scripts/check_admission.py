@@ -26,8 +26,8 @@ from piia_engram import quality_eval  # noqa: E402
 # This guard intentionally mirrors a small subset of storage heuristics without
 # invoking any production write path; keep it read-only and metadata-only.
 from piia_engram.storage import (  # noqa: E402
-    CONFLICT_C_CEILING,
-    CONFLICT_Q_THRESHOLD,
+    ADMISSION_CONFLICT_C_CEILING,
+    ADMISSION_CONFLICT_Q_THRESHOLD,
     SIMILARITY_DUPLICATE_THRESHOLD,
     _AFFIRMATION_MARKERS,
     _NEGATION_MARKERS,
@@ -129,10 +129,10 @@ def _decision_conflicts(candidate: dict[str, Any], existing: list[dict[str, Any]
         if not _domain_overlap(candidate, item):
             continue
         q_sim = _similarity(question, str(item.get("question") or ""))
-        if q_sim < CONFLICT_Q_THRESHOLD:
+        if q_sim < ADMISSION_CONFLICT_Q_THRESHOLD:
             continue
         c_sim = _similarity(choice, str(item.get("choice") or ""))
-        if c_sim >= CONFLICT_C_CEILING:
+        if c_sim >= ADMISSION_CONFLICT_C_CEILING:
             continue
         conflicts.append(str(item.get("id") or ""))
     return [item_id for item_id in conflicts if item_id]

@@ -746,7 +746,7 @@ async def doctor(output_format: str = "markdown") -> str:
     """记忆系统自诊断。 / Memory system self-diagnosis.
 
     用途：检查 Engram 记忆系统健康状态，发现潜在问题（数据碎片、过期知识、冲突决策、
-    身份层异常等）。等效于 ``piia-engram doctor``。
+    身份层异常等）。这是 MCP doctor；CLI 冲突视图请用 ``engram conflicts list``。
     Purpose: Run a comprehensive health check on the Engram memory system —
     detects data fragmentation, stale knowledge, conflicting decisions, identity
     issues, and more.
@@ -869,13 +869,29 @@ async def doctor(output_format: str = "markdown") -> str:
 
     # 6. Conflicting decisions
     try:
-        conflicts = S._engram._detect_decision_conflicts(decisions)
+        from piia_engram.conflict_governance import sample_conflicts, split_conflicts
+
+        all_conflicts = S._engram.detect_active_decision_conflicts(
+            decisions,
+            include_suppressed=True,
+        )
+        conflicts, suppressed_conflicts = split_conflicts(all_conflicts)
+        conflict_samples = sample_conflicts(conflicts, limit=10)
     except Exception:
         conflicts = []
+        suppressed_conflicts = []
+        conflict_samples = []
     checks.append({
         "name": "decision_conflicts",
         "status": "WARN" if conflicts else "PASS",
-        "detail": f"冲突决策: {len(conflicts)} 对" if conflicts else "无冲突",
+        "detail": (
+            "冲突决策 / decision conflicts: "
+            f"{len(conflicts)} 未抑制 / unsuppressed, "
+            f"{len(suppressed_conflicts)} 已抑制 / suppressed"
+        ),
+        "count_unsuppressed": len(conflicts),
+        "count_suppressed": len(suppressed_conflicts),
+        "samples": conflict_samples,
     })
 
     # 7. Health score (also nested under overview["health"])
@@ -955,6 +971,29 @@ async def doctor(output_format: str = "markdown") -> str:
     for c in checks:
         icon = {"PASS": "✅", "WARN": "⚠️", "FAIL": "❌", "INFO": "ℹ️"}.get(c["status"], "?")
         lines.append(f"| {c['name']} | {icon} {c['status']} | {c['detail']} |")
+
+    decision_conflict_check = next(
+        (c for c in checks if c.get("name") == "decision_conflicts"),
+        {},
+    )
+    samples = decision_conflict_check.get("samples") or []
+    if samples:
+        lines.append("")
+        lines.append("## Decision conflict samples / 决策冲突样本")
+        lines.append("")
+        for sample in samples:
+            lines.append(
+                "- "
+                f"{sample.get('id1')} ↔ {sample.get('id2')} "
+                f"(q={sample.get('q_sim')}, c={sample.get('c_sim')}): "
+                f"{sample.get('q1')} / {sample.get('q2')}"
+            )
+        lines.append("")
+        lines.append(
+            "Use `engram conflicts list` and `engram conflicts resolve` to review "
+            "or close these pairs. / 使用 `engram conflicts list` 和 "
+            "`engram conflicts resolve` 查看或关闭这些冲突对。"
+        )
 
     S._track("doctor", success=True)
     return "\n".join(lines)

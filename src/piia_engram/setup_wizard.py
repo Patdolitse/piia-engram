@@ -2958,6 +2958,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_merge,
     _parse_merge_opts,
     _run_merge_apply,
+    run_conflicts,
     _run_reconcile,
     _governance_root,
     run_grants,
@@ -3045,6 +3046,8 @@ def main() -> None:
         sys.exit(_run_lifecycle(args[1:]))
     elif args[0] == "merge":
         sys.exit(_run_merge(args[1:]))
+    elif args[0] == "conflicts":
+        sys.exit(run_conflicts(args[1:]))
     elif args[0] == "reconcile":
         sys.exit(_run_reconcile(args[1:]))
     elif args[0] == "integrity":
@@ -3107,6 +3110,7 @@ def main() -> None:
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"
             "  engram portrait         Lean user portrait snapshot + growth since last (--list/--no-save/--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
+            "  engram conflicts        决策冲突 list/resolve / decision conflicts list/resolve\n"
             "  engram integrity        Read-only integrity scan + self-heal proposals\n"
             "  engram dashboard        Non-technical owner control view (--html/--json)\n"
             "  engram release-check    Read-only release readiness report (no publish)\n"
