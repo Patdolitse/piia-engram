@@ -745,6 +745,47 @@ def test_write_mcp_config_default_env_without_data_dir(tmp_path: Path):
     assert "ENGRAM_DIR" not in env
 
 
+def test_write_mcp_config_accepts_capability_mode_parameter(tmp_path: Path):
+    """Setup can write composable ENGRAM_TOOLS modes while default stays all."""
+    config_path = tmp_path / "mcp.json"
+
+    _write_mcp_config(
+        config_path,
+        "/usr/bin/python3",
+        "/path/to/mcp_server.py",
+        engram_tools="core+knowledge",
+    )
+
+    env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["engram"]["env"]
+    assert env["ENGRAM_TOOLS"] == "core+knowledge"
+
+
+def test_write_mcp_config_preserves_existing_non_default_tools_when_requested(
+    tmp_path: Path,
+):
+    """Setup reruns must be able to preserve a user's hand-edited ENGRAM_TOOLS."""
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "engram": {
+                "command": "/old/python",
+                "args": ["old.py"],
+                "env": {"ENGRAM_TOOLS": "core+governance"},
+            }
+        }
+    }), encoding="utf-8")
+
+    _write_mcp_config(
+        config_path,
+        "/usr/bin/python3",
+        "/path/to/mcp_server.py",
+        engram_tools=None,
+    )
+
+    env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["engram"]["env"]
+    assert env["ENGRAM_TOOLS"] == "core+governance"
+
+
 def test_write_mcp_config_preserves_existing_engram_dir_when_not_overridden(tmp_path: Path):
     """Repairing an existing config must not drop a user's custom ENGRAM_DIR."""
     config_path = tmp_path / "mcp.json"
@@ -905,6 +946,55 @@ def test_write_mcp_config_toml_creates_missing_codex_config(tmp_path: Path):
     assert 'ENGRAM_TOOLS = "all"' in text
 
 
+def test_write_mcp_config_toml_accepts_capability_mode_parameter(tmp_path: Path):
+    """Codex TOML config should receive the selected capability mode."""
+    from piia_engram.setup_wizard import _write_mcp_config_toml
+
+    config_path = tmp_path / ".codex" / "config.toml"
+
+    _write_mcp_config_toml(
+        config_path,
+        "/usr/bin/python3",
+        "/path/to/mcp_server.py",
+        engram_tools="core",
+    )
+
+    text = config_path.read_text(encoding="utf-8")
+    assert 'ENGRAM_TOOLS = "core"' in text
+
+
+def test_write_mcp_config_toml_preserves_existing_non_default_tools_when_requested(
+    tmp_path: Path,
+):
+    """Codex setup reruns can preserve a hand-edited ENGRAM_TOOLS value."""
+    from piia_engram.setup_wizard import _write_mcp_config_toml
+
+    config_path = tmp_path / ".codex" / "config.toml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        '\n'.join([
+            '[mcp_servers.engram]',
+            'command = "/old/python"',
+            'args = ["old.py"]',
+            '',
+            '[mcp_servers.engram.env]',
+            'ENGRAM_TOOLS = "knowledge+integrations"',
+            '',
+        ]),
+        encoding="utf-8",
+    )
+
+    _write_mcp_config_toml(
+        config_path,
+        "/usr/bin/python3",
+        "/path/to/mcp_server.py",
+        engram_tools=None,
+    )
+
+    text = config_path.read_text(encoding="utf-8")
+    assert 'ENGRAM_TOOLS = "knowledge+integrations"' in text
+
+
 def test_write_mcp_config_toml_backs_up_and_preserves_existing_codex_config(tmp_path: Path):
     """Codex config.toml must stay TOML and get a pre-write backup."""
     from piia_engram.setup_wizard import _write_mcp_config_toml
@@ -988,6 +1078,76 @@ def test_write_tool_mcp_config_preserves_zed_settings_and_context_servers(tmp_pa
     assert config["agent"]["tool_permissions"]["default"] == "confirm"
     assert "existing" in config["context_servers"]
     assert config["context_servers"]["engram"]["args"] == ["-m", "piia_engram.mcp_server"]
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [("1", "all"), ("2", "core"), ("3", "core+knowledge"), ("", "all")],
+)
+def test_prompt_setup_capability_mode_maps_numeric_choices(
+    answer: str,
+    expected: str,
+    monkeypatch,
+):
+    """The setup wizard exposes a bilingual numeric capability-mode step."""
+    from piia_engram.setup_wizard import _prompt_setup_capability_mode
+
+    monkeypatch.setattr("builtins.input", lambda _prompt="": answer)
+
+    assert _prompt_setup_capability_mode() == expected
+
+
+def test_choose_setup_capability_mode_preserves_existing_non_default_noninteractive(
+    tmp_path: Path,
+):
+    """Non-interactive setup reruns preserve hand-edited ENGRAM_TOOLS by default."""
+    from piia_engram.setup_wizard import _choose_setup_capability_mode
+
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "engram": {
+                "command": "python",
+                "args": ["-m", "piia_engram.mcp_server"],
+                "env": {"ENGRAM_TOOLS": "core+governance"},
+            }
+        }
+    }), encoding="utf-8")
+
+    result = _choose_setup_capability_mode(
+        [{"config_path": config_path, "server_key": "mcpServers", "format": "json"}],
+        interactive=False,
+    )
+
+    assert result is None
+
+
+def test_choose_setup_capability_mode_can_replace_existing_non_default(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Interactive setup can replace an existing non-default mode when requested."""
+    from piia_engram.setup_wizard import _choose_setup_capability_mode
+
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "engram": {
+                "command": "python",
+                "args": ["-m", "piia_engram.mcp_server"],
+                "env": {"ENGRAM_TOOLS": "core+governance"},
+            }
+        }
+    }), encoding="utf-8")
+    answers = iter(["2", "3"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    result = _choose_setup_capability_mode(
+        [{"config_path": config_path, "server_key": "mcpServers", "format": "json"}],
+        interactive=True,
+    )
+
+    assert result == "core+knowledge"
 
 
 def test_write_mcp_config_toml_escapes_windows_paths(tmp_path: Path, monkeypatch):

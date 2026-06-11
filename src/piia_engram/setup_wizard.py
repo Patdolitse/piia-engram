@@ -1484,6 +1484,7 @@ def _write_mcp_config(
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
     extra_env: dict[str, str] | None = None,
+    engram_tools: str | None = "all",
 ) -> None:
     """将 engram 写入指定工具的 MCP 配置（合并，不覆盖其他工具的配置）。
     同时自动清理已知的旧版 server 名称（piia-pkc 等）。
@@ -1518,7 +1519,15 @@ def _write_mcp_config(
     # Always use `-m piia_engram.mcp_server` (module invocation).
     # Direct .py paths fail with "ImportError: attempted relative import
     # with no known parent package" in all clients that spawn a subprocess.
-    env: dict[str, str] = {"PYTHONIOENCODING": "utf-8", "ENGRAM_TOOLS": "all"}
+    selected_engram_tools = (
+        existing_env.get("ENGRAM_TOOLS")
+        if engram_tools is None and existing_env.get("ENGRAM_TOOLS")
+        else (engram_tools or "all")
+    )
+    env: dict[str, str] = {
+        "PYTHONIOENCODING": "utf-8",
+        "ENGRAM_TOOLS": str(selected_engram_tools),
+    }
 
     # If piia_engram is NOT importable from the default sys.path (e.g.
     # editable install via a different Python, or manual source checkout),
@@ -1561,6 +1570,7 @@ def _write_mcp_config_toml(
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
     extra_env: dict[str, str] | None = None,
+    engram_tools: str | None = "all",
 ) -> None:
     """修复 TOML 格式配置文件中的 engram MCP 条目（如 Codex config.toml）。
 
@@ -1594,8 +1604,13 @@ def _write_mcp_config_toml(
         '',
         '[mcp_servers.engram.env]',
         'PYTHONIOENCODING = "utf-8"',
-        'ENGRAM_TOOLS = "all"',
     ]
+    selected_engram_tools = (
+        existing_env.get("ENGRAM_TOOLS")
+        if engram_tools is None and existing_env.get("ENGRAM_TOOLS")
+        else (engram_tools or "all")
+    )
+    engram_block.append(f'ENGRAM_TOOLS = {toml_string(str(selected_engram_tools))}')
     # 如果 mcp_server_path 不是通过 -m 可达的（不在 site-packages），加 PYTHONPATH
     spec = importlib.util.find_spec("piia_engram")
     if not spec:
@@ -1661,6 +1676,7 @@ def _write_tool_mcp_config(
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
     extra_env: dict[str, str] | None = None,
+    engram_tools: str | None = "all",
 ) -> None:
     """Write an MCP config using the target client's declared format."""
     if tool.get("format", "json") == "toml":
@@ -1672,6 +1688,7 @@ def _write_tool_mcp_config(
             file_safety_root=file_safety_root,
             authorized_external_write=authorized_external_write,
             extra_env=extra_env,
+            engram_tools=engram_tools,
         )
         return
     _write_mcp_config(
@@ -1683,6 +1700,7 @@ def _write_tool_mcp_config(
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
         extra_env=extra_env,
+        engram_tools=engram_tools,
     )
 
 
@@ -2436,12 +2454,71 @@ def _run_hybrid_reindex() -> None:
     ))
 
 
+def _existing_engram_tools_values(tools: list[dict]) -> list[str]:
+    values: list[str] = []
+    for tool in tools:
+        config_path = tool.get("config_path")
+        if not config_path:
+            continue
+        fmt = tool.get("format", "json")
+        server_key = tool.get("server_key", "mcpServers")
+        config = _read_mcp_config(Path(config_path), fmt=fmt)
+        servers = config.get(server_key, {})
+        if not servers and server_key == "mcpServers":
+            servers = config.get("mcp_servers", {})
+        if not isinstance(servers, dict):
+            continue
+        engram = servers.get("engram", {})
+        env = engram.get("env", {}) if isinstance(engram, dict) else {}
+        if not isinstance(env, dict):
+            continue
+        raw = str(env.get("ENGRAM_TOOLS", "")).strip()
+        if raw and raw.lower() != "all":
+            values.append(raw)
+    return sorted(dict.fromkeys(values))
+
+
+def _prompt_setup_capability_mode() -> str:
+    print()
+    print(_t("  MCP 工具模式 / Capability mode:", "  Capability mode / MCP 工具模式:"))
+    print(_t("    1. 全部工具（推荐，53 个）", "    1. All tools (recommended, 53 tools)"))
+    print(_t("    2. 仅核心（17 个，最小面）", "    2. Core only (17 tools, minimal surface)"))
+    print(_t("    3. 核心+知识库管理（38 个）", "    3. Core + knowledge management (38 tools)"))
+    answer = _prompt(_t("  请选择工具模式", "  Choose tool mode"), "1").strip()
+    return {"2": "core", "3": "core+knowledge"}.get(answer, "all")
+
+
+def _choose_setup_capability_mode(
+    tools: list[dict],
+    *,
+    interactive: bool,
+) -> str | None:
+    existing_non_default = _existing_engram_tools_values(tools)
+    if existing_non_default:
+        listed = ", ".join(existing_non_default)
+        if not interactive:
+            return None
+        print()
+        print(_t(
+            f"  检测到已有非默认 ENGRAM_TOOLS：{listed}",
+            f"  Existing non-default ENGRAM_TOOLS detected: {listed}",
+        ))
+        keep = _prompt(_t(
+            "  保留这些现有工具模式？ 1=保留（推荐）  2=重新选择",
+            "  Keep existing tool modes? 1=Keep (recommended)  2=Choose again",
+        ), "1")
+        if keep.strip() != "2":
+            return None
+    return _prompt_setup_capability_mode()
+
+
 def _apply_external_configs(
     tools: list[dict],
     python_path: str,
     mcp_server_path: str,
     selected_data_dir: str,
     extra_env: dict[str, str] | None = None,
+    engram_tools: str | None = "all",
 ) -> tuple[list[str], list[str]]:
     """Write MCP config + inject instruction snippets/hooks for each detected
     tool. Returns ``(success_names, failed_names)``.
@@ -2464,6 +2541,7 @@ def _apply_external_configs(
                 file_safety_root=selected_data_dir,
                 authorized_external_write=True,
                 extra_env=extra_env,
+                engram_tools=engram_tools,
             )
             success.append(tool["name"])
             configured_tool_ids.append(tool["id"])
@@ -2629,9 +2707,14 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
             ), "1")
             should_write = ans.strip() != "2"
         if should_write:
+            engram_tools = _choose_setup_capability_mode(
+                tools,
+                interactive=not apply_external_config,
+            )
             success, failed = _apply_external_configs(
                 tools, python_path, mcp_server_path, selected_data_dir,
                 extra_env=extra_env,
+                engram_tools=engram_tools,
             )
             external_config_written = True
             if failed:
