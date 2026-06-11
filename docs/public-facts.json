@@ -5,16 +5,16 @@
   "local_dev_version": "4.0.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 3187,
+    "test_passed": 3260,
     "test_skipped": 2,
-    "test_collected": 3189,
+    "test_collected": 3262,
     "mcp_tools_total": 53,
     "mcp_tools_core": 17,
     "mcp_tools_advanced": 36,
     "telemetry_default": "off",
     "telemetry_remote_default": "off"
   },
-  "last_verified_date": "2026-06-11",
+  "last_verified_date": "2026-06-12",
   "sources": {
     "package_name": "pyproject.toml [project].name",
     "local_dev_version": "pyproject.toml [project].version  (cross-check: git tag --sort=-creatordate | head -1)",
