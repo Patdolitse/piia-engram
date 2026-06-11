@@ -69,6 +69,79 @@ def test_publish_workflow_order_rejects_gate_before_deps(workflow_order):
     assert "before dependency install" in problems[0]
 
 
+def _valid_supply_chain_publish_workflow_text() -> str:
+    return """
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  build-and-publish:
+    steps:
+      - name: Install project dependencies for release gates
+        run: pip install -e .
+      - name: Release gate
+        run: python scripts/check_release_gate.py
+      - name: Generate CycloneDX SBOM
+        run: |
+          python -m venv .sbom-target-venv
+          .sbom-target-venv/bin/python -m pip install dist/*.whl
+          pip install cyclonedx-bom
+          cyclonedx-py environment .sbom-target-venv/bin/python --pyproject pyproject.toml --mc-type library --output-reproducible --output-format JSON --output-file dist/piia-engram-sbom.cdx.json
+      - name: SBOM hygiene gate
+        run: python scripts/check_sbom_hygiene.py dist/piia-engram-sbom.cdx.json
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+          sbom-path: dist/piia-engram-sbom.cdx.json
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+    """
+
+
+def test_publish_workflow_order_accepts_supply_chain_contract(workflow_order):
+    ok, problems = workflow_order.check_publish_workflow_order(
+        _valid_supply_chain_publish_workflow_text(),
+        require_supply_chain=True,
+    )
+
+    assert ok is True
+    assert problems == []
+
+
+def test_publish_workflow_order_rejects_contents_write_permission(workflow_order):
+    text = _valid_supply_chain_publish_workflow_text().replace("contents: read", "contents: write")
+
+    ok, problems = workflow_order.check_publish_workflow_order(text, require_supply_chain=True)
+
+    assert ok is False
+    assert any("contents: write" in problem for problem in problems)
+
+
+def test_publish_workflow_order_rejects_sbom_as_provenance_subject(workflow_order):
+    text = _valid_supply_chain_publish_workflow_text().replace(
+        "            dist/*.tar.gz\n",
+        "            dist/*.tar.gz\n            dist/piia-engram-sbom.cdx.json\n",
+        1,
+    )
+
+    ok, problems = workflow_order.check_publish_workflow_order(text, require_supply_chain=True)
+
+    assert ok is False
+    assert any("SBOM file must not be an attestation subject" in problem for problem in problems)
+
+
 def test_pypi_fallback_sets_utf8_env_and_disables_progress_bar(pypi_fallback):
     cmd = pypi_fallback.build_twine_upload_command(["dist/*"], python="PY")
     env = pypi_fallback.build_upload_env({"PYTHONIOENCODING": "cp936"})

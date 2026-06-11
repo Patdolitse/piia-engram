@@ -108,3 +108,44 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -q
+
+  supply-chain-dryrun:
+    name: Supply-chain dry run
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          python -m venv .sbom-target-venv
+          .sbom-target-venv/bin/python -m pip install dist/*.whl
+          pip install cyclonedx-bom
+          cyclonedx-py environment .sbom-target-venv/bin/python --pyproject pyproject.toml --mc-type library --output-reproducible --output-format JSON --output-file dist/piia-engram-sbom.cdx.json
+
+      - name: SBOM hygiene gate
+        run: python scripts/check_sbom_hygiene.py dist/piia-engram-sbom.cdx.json
+
+      - name: Publish workflow order gate
+        run: python scripts/check_publish_workflow_order.py
+
+      - name: Upload supply-chain dry-run artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-dryrun-artifacts
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/piia-engram-sbom.cdx.json
