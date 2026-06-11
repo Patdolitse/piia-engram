@@ -554,6 +554,93 @@ class TestToolTier:
         # Should not raise even if the internal tool manager shape is unexpected
         mcp_server._apply_tool_tier()
 
+    def test_capability_groups_cover_all_non_core_tools_without_overlap(self):
+        grouped_tools = frozenset().union(*mcp_server.CAPABILITY_GROUPS.values())
+
+        assert mcp_server.TIER1_TOOLS | grouped_tools == frozenset(
+            mcp_server.TOOL_GOVERNANCE_CLASS
+        )
+        assert mcp_server.TIER1_TOOLS.isdisjoint(grouped_tools)
+        names = sorted(mcp_server.CAPABILITY_GROUPS)
+        for left_index, left in enumerate(names):
+            for right in names[left_index + 1:]:
+                assert mcp_server.CAPABILITY_GROUPS[left].isdisjoint(
+                    mcp_server.CAPABILITY_GROUPS[right]
+                )
+
+    def test_capability_groups_pin_sensitive_governance_membership(self):
+        assert {
+            "export_engram",
+            "import_engram",
+            "export_feedback_report",
+        } <= mcp_server.CAPABILITY_GROUPS["admin"]
+        assert "manage_caller_trust" in mcp_server.CAPABILITY_GROUPS["governance"]
+
+    def test_core_mode_hides_non_core_owner_only_and_export_owner_only_tools(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        visible = self._filtered_tool_names("core", monkeypatch)
+        sensitive = {
+            name
+            for name, klass in mcp_server.TOOL_GOVERNANCE_CLASS.items()
+            if klass in {"owner_only_write", "export_owner_only"}
+        }
+        non_core_sensitive = sensitive - mcp_server.TIER1_TOOLS
+
+        assert non_core_sensitive
+        assert non_core_sensitive.isdisjoint(visible)
+
+    @pytest.mark.parametrize("group_name", sorted(mcp_server.CAPABILITY_GROUPS))
+    def test_single_group_modes_register_core_plus_group_count(
+        self,
+        group_name: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        visible = self._filtered_tool_names(group_name, monkeypatch)
+
+        assert visible == mcp_server.TIER1_TOOLS | mcp_server.CAPABILITY_GROUPS[group_name]
+        assert len(visible) == 17 + len(mcp_server.CAPABILITY_GROUPS[group_name])
+
+    @pytest.mark.parametrize(
+        ("raw_mode", "group_names"),
+        [
+            ("knowledge+governance", ("knowledge", "governance")),
+            ("admin + integrations", ("admin", "integrations")),
+        ],
+    )
+    def test_multi_group_modes_register_expected_union(
+        self,
+        raw_mode: str,
+        group_names: tuple[str, ...],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        expected = mcp_server.TIER1_TOOLS
+        for group_name in group_names:
+            expected = expected | mcp_server.CAPABILITY_GROUPS[group_name]
+
+        visible = self._filtered_tool_names(raw_mode, monkeypatch)
+
+        assert visible == expected
+
+    @pytest.mark.parametrize(
+        ("raw_mode", "expected"),
+        [
+            ("", mcp_server.TIER1_TOOLS),
+            ("core", mcp_server.TIER1_TOOLS),
+            ("all", mcp_server.ALL_CAPABILITY_TOOLS),
+        ],
+    )
+    def test_legacy_core_and_all_modes_keep_v4_registered_sets(
+        self,
+        raw_mode: str,
+        expected: frozenset[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        visible = self._filtered_tool_names(raw_mode, monkeypatch)
+
+        assert visible == expected
+
 
 # ---------------------------------------------------------------------------
 # Path validation (Phase 3.6)

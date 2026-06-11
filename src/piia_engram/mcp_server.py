@@ -998,17 +998,15 @@ mcp = FastMCP(
 
 
 def _apply_tool_tier() -> None:
-    """Remove non-Tier-1 tools when ENGRAM_TOOLS=core (the default)."""
-    if TOOL_TIER != "core":
-        return
-
+    """Filter registered MCP tools according to ENGRAM_TOOLS capability modes."""
     tool_manager = getattr(mcp, "_tool_manager", None)
     tools = getattr(tool_manager, "_tools", None)
     if not isinstance(tools, dict):
         return
 
+    retained_tools = resolve_capability_modes(TOOL_TIER)
     for name in list(tools):
-        if name in TIER1_TOOLS:
+        if name in retained_tools:
             continue
         try:
             mcp.remove_tool(name)
@@ -1363,6 +1361,8 @@ except ImportError:  # plain-script mode (no package context)
         preview_context_governance,
         get_daily_log,
     )
+
+_apply_tool_tier()
 
 
 def main() -> None:

@@ -774,6 +774,24 @@ def _run_functional_checks(*, fix: bool = False) -> int:
 
         tool_count = len(mcp_server.mcp._tool_manager._tools)
         print(f"    [ok] MCP server: {tool_count} tools registered")
+        details = mcp_server._resolve_capability_mode_details(
+            os.environ.get("ENGRAM_TOOLS", "")
+        )
+        raw_tools = str(details["raw"]) or "<unset>"
+        modes = ", ".join(sorted(details["modes"]))  # type: ignore[arg-type]
+        unknown = ", ".join(details["unknown_tokens"])  # type: ignore[arg-type]
+        if unknown:
+            print(
+                "    [--] ENGRAM_TOOLS capability modes: "
+                f"raw={raw_tools!r}, modes={modes}, "
+                f"tools={len(details['tools'])}, ignored_unknown={unknown}"
+            )
+        else:
+            print(
+                "    [ok] ENGRAM_TOOLS capability modes: "
+                f"raw={raw_tools!r}, modes={modes}, "
+                f"tools={len(details['tools'])}, ignored_unknown=none"
+            )
     except Exception as exc:
         print(f"    [!!] MCP server import failed: {exc}")
         problems += 1
@@ -1075,4 +1093,3 @@ def _run_functional_checks(*, fix: bool = False) -> int:
 
     print()
     return problems
-
