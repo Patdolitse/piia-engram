@@ -134,6 +134,9 @@ jobs:
           .sbom-target-venv/bin/python -m pip install dist/*.whl
           pip install cyclonedx-bom
           cyclonedx-py environment .sbom-target-venv/bin/python --pyproject pyproject.toml --mc-type library --output-reproducible --output-format JSON --output-file dist/piia-engram-sbom.cdx.json
+          # --output-reproducible omits serialNumber, but actions/attest requires
+          # it; inject a content-derived (still reproducible) one.
+          python scripts/inject_sbom_serial_number.py dist/piia-engram-sbom.cdx.json
 
       - name: SBOM hygiene gate
         run: python scripts/check_sbom_hygiene.py dist/piia-engram-sbom.cdx.json

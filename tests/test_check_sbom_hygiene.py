@@ -34,6 +34,8 @@ def _write_sbom(tmp_path: Path, payload: object) -> Path:
 def _clean_sbom() -> dict[str, object]:
     return {
         "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "serialNumber": "urn:uuid:1f2e3d4c-5b6a-5798-8123-456789abcdef",
         "metadata": {
             "component": {
                 "type": "library",
@@ -91,6 +93,39 @@ def test_toolchain_component_pollution_is_blocked(sbom_hygiene, tmp_path):
 
     assert code == 1
     assert any("toolchain component" in problem for problem in problems)
+
+
+def test_missing_serial_number_is_setup_error(sbom_hygiene, tmp_path):
+    payload = _clean_sbom()
+    del payload["serialNumber"]
+    path = _write_sbom(tmp_path, payload)
+
+    code, problems = sbom_hygiene.check_sbom_hygiene(path)
+
+    assert code == 2
+    assert any("serialNumber" in problem for problem in problems)
+
+
+def test_malformed_serial_number_is_setup_error(sbom_hygiene, tmp_path):
+    payload = _clean_sbom()
+    payload["serialNumber"] = "not-a-urn"
+    path = _write_sbom(tmp_path, payload)
+
+    code, problems = sbom_hygiene.check_sbom_hygiene(path)
+
+    assert code == 2
+    assert any("serialNumber" in problem for problem in problems)
+
+
+def test_missing_spec_version_is_setup_error(sbom_hygiene, tmp_path):
+    payload = _clean_sbom()
+    del payload["specVersion"]
+    path = _write_sbom(tmp_path, payload)
+
+    code, problems = sbom_hygiene.check_sbom_hygiene(path)
+
+    assert code == 2
+    assert any("specVersion" in problem for problem in problems)
 
 
 def test_invalid_json_is_setup_error(sbom_hygiene, tmp_path):

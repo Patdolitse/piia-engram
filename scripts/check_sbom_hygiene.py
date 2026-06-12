@@ -12,6 +12,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,13 @@ def _dynamic_private_markers() -> tuple[str, ...]:
         markers.append(username)
     return tuple(markers)
 
+# actions/attest only recognizes a CycloneDX SBOM when bomFormat,
+# serialNumber and specVersion are all present; a missing field fails the
+# publish run at attestation time, which dryrun cannot exercise (OIDC-only).
+_SERIAL_NUMBER_RE = re.compile(
+    r"^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
 TOOLCHAIN_COMPONENT_NAMES = {
     "cyclonedx-bom",
     "cyclonedx-python-lib",
@@ -103,6 +111,16 @@ def _validate_structure(document: Any) -> list[str]:
         return ["SBOM root must be a JSON object"]
     if document.get("bomFormat") != "CycloneDX":
         problems.append('SBOM bomFormat must be "CycloneDX"')
+    spec_version = document.get("specVersion")
+    if not isinstance(spec_version, str) or not spec_version:
+        problems.append(
+            "SBOM specVersion must be a non-empty string (required by actions/attest)"
+        )
+    serial_number = document.get("serialNumber")
+    if not isinstance(serial_number, str) or not _SERIAL_NUMBER_RE.match(serial_number):
+        problems.append(
+            'SBOM serialNumber must match "urn:uuid:<uuid>" (required by actions/attest)'
+        )
     components = document.get("components")
     if not isinstance(components, list):
         problems.append("SBOM components must be a list")
