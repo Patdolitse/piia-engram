@@ -6,6 +6,37 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.1.0] - 2026-06-12
+
+### 新增
+- **决策冲突治理。** 冲突检测在 `doctor`、上下文组装与召回三处收敛为同一套
+  阈值；版本演进链（supersedes 关系）不再被误报为冲突。新增 owner 专用 CLI：
+  `engram conflicts list [--json]` 只读视图，以及 `engram conflicts resolve
+  --action supersede|archive|dismiss`（默认只预览；落盘需 `--commit --yes`）。
+  `doctor` 现在给出最值得处理的冲突对样本（含 id 与分数），dismiss 抑制记录
+  随原生导入导出一并迁移。
+- **MCP 工具面 capability modes。** `ENGRAM_TOOLS` 在 `core` / `all` 之外
+  支持按能力组合（`knowledge`、`governance`、`admin`、`integrations`，
+  `+` 号拼接）；未知 token 安全回退到 core 并给出双语警告。`engram setup`
+  新增工具面选择器（全部 53 / 仅核心 17 / 核心+知识库）——写入的默认值保持
+  不变——`doctor` 会显示当前生效模式。指南见
+  [docs/operator-mcp-cheatsheet.md](docs/operator-mcp-cheatsheet.md)。
+- **`engram preview`（记忆透视 Memory Lens）。** 本地双语 HTML 报告，
+  展示模拟 AI 调用方会收到的完整内容——身份卡、注入上下文，以及每条内容
+  背后的治理决策。
+- **供应链可验证性。** 发布流水线现在为发布的 wheel/sdist 产物生成 SBOM
+  与 GitHub artifact attestations。自行验证方法见
+  [docs/supply-chain.zh-CN.md](docs/supply-chain.zh-CN.md)
+  （[English](docs/supply-chain.md)）。
+
+### 修复
+- 清零随 v4.0.0 发布带出的文档漂移（过期工具数与版本头），并让漂移守卫
+  登记式排查既往漂移模式，确保同类回归无法再次发布。
+
+### 文档
+- README 新增 CI/守卫状态徽章与"自行验证"路径，链接公开守卫脚本与
+  release-evidence 索引。
+
 ## [4.0.0] - 2026-06-11
 
 ### 变更

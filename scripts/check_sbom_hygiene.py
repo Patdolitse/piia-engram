@@ -9,7 +9,9 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,8 +30,34 @@ PRIVATE_STRING_MARKERS = (
     "/Users/runner",
     "\\AppData\\",
     "RUNNER_TEMP",
-    "pp3x3",
 )
+
+# Usernames too generic to treat as identifying markers (CI runners,
+# containers); matching them as substrings would false-positive.
+_GENERIC_USERNAMES = frozenset(
+    {"runner", "runneradmin", "user", "admin", "root", "administrator", "default"}
+)
+
+
+def _dynamic_private_markers() -> tuple[str, ...]:
+    """Markers that identify this build machine without hardcoding them.
+
+    The local username must never appear in a published SBOM, but writing
+    it into this public script would itself leak it. Derive it at runtime
+    and allow extra markers via ENGRAM_SBOM_PRIVATE_MARKERS (comma-separated).
+    """
+    markers = [
+        m.strip()
+        for m in os.environ.get("ENGRAM_SBOM_PRIVATE_MARKERS", "").split(",")
+        if m.strip()
+    ]
+    try:
+        username = getpass.getuser()
+    except Exception:
+        username = ""
+    if len(username) >= 4 and username.lower() not in _GENERIC_USERNAMES:
+        markers.append(username)
+    return tuple(markers)
 
 TOOLCHAIN_COMPONENT_NAMES = {
     "cyclonedx-bom",
@@ -85,8 +113,9 @@ def _validate_structure(document: Any) -> list[str]:
 
 def _find_dirty_content(document: dict[str, Any]) -> list[str]:
     problems: list[str] = []
+    markers = PRIVATE_STRING_MARKERS + _dynamic_private_markers()
     for path, value in _iter_string_values(document):
-        for marker in PRIVATE_STRING_MARKERS:
+        for marker in markers:
             if marker in value:
                 problems.append(f"private or runner path marker {marker!r} found at {path}")
 

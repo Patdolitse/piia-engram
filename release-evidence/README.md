@@ -27,6 +27,7 @@ working notes are kept locally and are not part of the repository.
 
 | Version | Evidence | Release | Publish run |
 |---------|----------|---------|-------------|
+| v4.1.0 | [v4.1.0.md](v4.1.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.1.0) | pending |
 | v4.0.0 | [v4.0.0.md](v4.0.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.0.0) | [27333402009](https://github.com/Patdolitse/piia-engram/actions/runs/27333402009) |
 | v3.56.0 | [v3.56.0.md](v3.56.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v3.56.0) | [27292409357](https://github.com/Patdolitse/piia-engram/actions/runs/27292409357) |
 | v3.55.0 | [v3.55.0.md](v3.55.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v3.55.0) | [27264857478](https://github.com/Patdolitse/piia-engram/actions/runs/27264857478) |

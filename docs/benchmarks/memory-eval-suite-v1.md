@@ -13,13 +13,13 @@ a regression and evidence gate for the local memory layer.
 ```powershell
 $env:PYTHONUTF8='1'
 $env:PYTHONIOENCODING='utf-8'
-& 'C:\Users\pp3x3\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' scripts/run_memory_evals.py
+python scripts/run_memory_evals.py
 ```
 
 For machine-readable output:
 
 ```powershell
-& 'C:\Users\pp3x3\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' scripts/run_memory_evals.py --json
+python scripts/run_memory_evals.py --json
 ```
 
 The suite uses temporary isolated stores for recall evaluation and synthetic

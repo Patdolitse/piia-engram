@@ -6,6 +6,40 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.1.0] - 2026-06-12
+
+### Added
+- **Decision-conflict governance.** Conflict detection now uses one converged
+  threshold across `doctor`, context assembly, and recall, and version-evolution
+  chains (supersedes links) no longer count as conflicts. New owner CLI:
+  `engram conflicts list [--json]` for a read-only view and `engram conflicts
+  resolve --action supersede|archive|dismiss` (previews by default; writes
+  require `--commit --yes`). `doctor` reports the top actionable conflict pairs
+  with ids and scores, and dismissals travel with native export/import.
+- **Capability modes for the MCP tool surface.** `ENGRAM_TOOLS` now accepts
+  composable capability groups (`knowledge`, `governance`, `admin`,
+  `integrations`) in addition to `core` / `all`; unknown tokens fail safe to
+  core with a bilingual warning. `engram setup` adds a capability-mode picker
+  (all 53 / core 17 / core + knowledge) — the default it writes is unchanged —
+  and `doctor` shows the active mode. Guide:
+  [docs/operator-mcp-cheatsheet.md](docs/operator-mcp-cheatsheet.md).
+- **`engram preview` (Memory Lens).** A local bilingual HTML report showing
+  exactly what a simulated AI caller would receive — identity card, injected
+  context, and the governance decisions behind each item.
+- **Supply-chain verification.** The release pipeline now generates SBOMs and
+  GitHub artifact attestations for published wheel/sdist artifacts. How to
+  verify them yourself: [docs/supply-chain.md](docs/supply-chain.md)
+  ([中文](docs/supply-chain.zh-CN.md)).
+
+### Fixed
+- Corrected documentation drift that shipped with v4.0.0 (stale tool counts
+  and version headers), and the drift guard now sweeps registered stale
+  patterns so the same regressions cannot ship again.
+
+### Documentation
+- README gains CI/guard status badges and a "verify it yourself" path linking
+  the public guard scripts and the release-evidence index.
+
 ## [4.0.0] - 2026-06-11
 
 ### Changed

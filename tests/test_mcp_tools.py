@@ -866,7 +866,7 @@ class TestUpdateIdentityException:
         """Internal identity write failures should not bubble raw MCP exceptions."""
 
         def explode(*args, **kwargs):
-            raise RuntimeError(r"update boom at C:\Users\pp3x3\secret.json")
+            raise RuntimeError(r"update boom at C:\Users\someone\secret.json")
 
         monkeypatch.setattr(isolated_engram, "update_profile", explode)
         result = _run(

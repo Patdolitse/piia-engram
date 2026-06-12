@@ -15,7 +15,7 @@ that a downstream model will always use the recalled knowledge correctly.
 ```powershell
 $env:PYTHONUTF8='1'
 $env:PYTHONIOENCODING='utf-8'
-& 'C:\Users\pp3x3\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' scripts/eval_recall.py --json
+python scripts/eval_recall.py --json
 ```
 
 The fixture is stored at `tests/fixtures/recall_eval_v1.json`. The harness uses
