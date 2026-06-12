@@ -118,6 +118,12 @@ jobs:
           name: sbom
           path: dist/piia-engram-sbom.cdx.json
 
+      # gh-action-pypi-publish uploads every file in dist/ and rejects
+      # non-distribution files; the SBOM is already attested and uploaded
+      # as a workflow artifact above.
+      - name: Remove SBOM from dist before publish
+        run: rm dist/piia-engram-sbom.cdx.json
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         # Pure OIDC Trusted Publishing: configure the PyPI project to trust

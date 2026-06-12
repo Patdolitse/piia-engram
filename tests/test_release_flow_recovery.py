@@ -105,6 +105,8 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
           sbom-path: dist/piia-engram-sbom.cdx.json
+      - name: Remove SBOM from dist before publish
+        run: rm dist/piia-engram-sbom.cdx.json
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
     """
@@ -140,6 +142,19 @@ def test_publish_workflow_order_rejects_sbom_as_provenance_subject(workflow_orde
 
     assert ok is False
     assert any("SBOM file must not be an attestation subject" in problem for problem in problems)
+
+
+def test_publish_workflow_order_rejects_missing_sbom_removal_before_publish(workflow_order):
+    text = _valid_supply_chain_publish_workflow_text().replace(
+        "      - name: Remove SBOM from dist before publish\n"
+        "        run: rm dist/piia-engram-sbom.cdx.json\n",
+        "",
+    )
+
+    ok, problems = workflow_order.check_publish_workflow_order(text, require_supply_chain=True)
+
+    assert ok is False
+    assert any("SBOM removal before publish" in problem for problem in problems)
 
 
 def test_pypi_fallback_sets_utf8_env_and_disables_progress_bar(pypi_fallback):

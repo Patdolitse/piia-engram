@@ -38,6 +38,9 @@ SUPPLY_CHAIN_ORDER_MARKERS = (
     ("SBOM hygiene", "python scripts/check_sbom_hygiene.py dist/piia-engram-sbom.cdx.json"),
     ("build provenance attestation", "- name: Attest build provenance"),
     ("SBOM attestation", "- name: Attest SBOM"),
+    # gh-action-pypi-publish uploads every file in dist/ and fails on
+    # non-distribution files, so the SBOM must be removed before publish.
+    ("SBOM removal before publish", "rm dist/piia-engram-sbom.cdx.json"),
     ("PyPI publish", "pypa/gh-action-pypi-publish@release/v1"),
 )
 ATTEST_ACTION_RE = re.compile(r"uses:\s*actions/(attest(?:-build-provenance|-sbom)?)@([^\s#]+)")
