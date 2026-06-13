@@ -53,6 +53,21 @@
       "text": "We discussed the roadmap for next quarter.",
       "type": "lesson",
       "expect_flag": "ephemeral_todo"
+    },
+    {
+      "text": "2%）→ 立纲领并接入 release ci，必须先核对 attestation 契约否则真发布会失败",
+      "type": "lesson",
+      "expect_flag": "truncated_fragment"
+    },
+    {
+      "text": "x 孤儿改动）正式收编 push CI 绿，发布流程 3 处文档对齐渠道真相 MCP Registry",
+      "type": "lesson",
+      "expect_flag": "truncated_fragment"
+    },
+    {
+      "text": "）后成功上线 PyPI 和 MCP Registry，attestation 首验通过 release 完成",
+      "type": "lesson",
+      "expect_flag": "truncated_fragment"
     }
   ]
 }

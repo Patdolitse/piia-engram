@@ -42,9 +42,26 @@ _TRANSIENT_RE = re.compile(
 
 _QUESTION_RE = re.compile(r"[?？]\s*$")
 
+# Mid-sentence fragments: a long summary chopped into segments yields pieces
+# that open with a closing/joining punctuation, a bare number remnant
+# ("2%）"), or a lone ascii letter ("x …"). Mirrors the extraction scorer's
+# truncated_fragment check (context._assess_extraction_candidate).
+_TRUNCATED_RES = (
+    re.compile(r"^[)\]）】>》→、，。；：%…·:]"),
+    re.compile(r"^\d+(?:\.\d+)?\s*[%)）]"),
+    # lone ascii letter + space + CJK = chopped remnant ("x 孤儿改动…"); not an
+    # English article opener ("a perfectly…"), which is ascii-then-ascii.
+    re.compile(r"^[a-z]\s+[^\x00-\x7f]"),
+)
+
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _looks_truncated(text: str) -> bool:
+    t = text.strip()
+    return bool(t) and any(rx.match(t) for rx in _TRUNCATED_RES)
 
 
 def _has_transient_marker(*texts: str) -> bool:
@@ -100,6 +117,14 @@ def evaluate_candidate(entry: dict[str, Any]) -> dict[str, Any]:
 
     if _has_transient_marker(summary, detail, choice, question, reasoning):
         reasons.append("transient_marker")
+
+    # A chopped mid-sentence fragment is never durable knowledge, regardless of
+    # length. Check the primary content field for each type.
+    primary = summary if entry_type == "lesson" else (
+        choice if entry_type == "decision" else _text(entry.get("title"))
+    )
+    if _looks_truncated(primary):
+        reasons.append("truncated_fragment")
 
     # --- soft warnings (metadata only) -------------------------------------
     domain = _text(entry.get("domain"))

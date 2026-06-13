@@ -198,6 +198,25 @@ def _assess_extraction_candidate(
         flags.append("too_short")
         score -= 0.20
 
+    # Reject obvious mid-sentence fragments. When a long summary is chopped
+    # into segments (e.g. wrap_up auto-extraction over a multi-line dump),
+    # the pieces start with a closing/joining punctuation, a bare number
+    # remnant ("2%）→ ..."), or a lone ascii letter ("x 孤儿改动…"). They
+    # still trip signal words (measured_outcome / concrete_context) and score
+    # high, but they are not self-contained knowledge. A well-formed lesson or
+    # decision never opens this way, so this is conservative (no false hits on
+    # real candidates).
+    if (
+        re.match(r"^[)\]）】>》→、，。；：%…·:]", normalized)
+        or re.match(r"^\d+(?:\.\d+)?\s*[%)）]", normalized)
+        # lone ascii letter + space + CJK = a chopped remnant ("x 孤儿改动…");
+        # NOT an English article opener ("a perfectly…", "I should…"), which is
+        # ascii-then-ascii.
+        or re.match(r"^[a-z]\s+[^\x00-\x7f]", normalized)
+    ):
+        flags.append("truncated_fragment")
+        score -= 0.5
+
     score = round(max(0.0, min(1.0, score)), 2)
     accepted = score >= 0.55
     durable_signals = ("decision_commitment", "structured_decision_choice", "evidence_or_outcome")
@@ -209,6 +228,8 @@ def _assess_extraction_candidate(
         accepted = False
     if "ephemeral_todo" in flags:
         accepted = False
+    if "truncated_fragment" in flags:
+        accepted = False  # a chopped fragment is never durable knowledge
 
     reason = "accepted" if accepted else "low_quality"
     return {
