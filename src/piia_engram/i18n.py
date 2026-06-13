@@ -10,6 +10,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -28,9 +29,12 @@ def get_lang() -> str:
     """Detect user language. Priority: runtime override > profile preference > default zh."""
     if _runtime_lang is not None:
         return _runtime_lang
-    # Read from profile.json without importing core (avoids circular deps)
+    # Read from profile.json without importing core (avoids circular deps).
+    # Honor ENGRAM_DIR like every other root resolution in the codebase
+    # (cli_commands.py, beta_tracker.py); reading a hardcoded ~/.engram here
+    # missed the language preference whenever ENGRAM_DIR pointed elsewhere.
     try:
-        engram_dir = Path.home() / ".engram"
+        engram_dir = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
         profile_path = engram_dir / "identity" / "profile.json"
         if profile_path.is_file():
             import json
