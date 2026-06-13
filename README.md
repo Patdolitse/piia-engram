@@ -61,6 +61,14 @@ AI   → "Based on your preference for pytest + 90% coverage, and your
         logic (from the March incident), here's my approach..."
 ```
 
+And you never have to take that on faith — **Memory Lens** (`engram preview --html`) shows exactly what any AI caller would receive, and what governance withheld, before anything is sent:
+
+<div align="center">
+<img src="assets/memory_lens_en.png" alt="Memory Lens — read-only preview of exactly what an AI caller receives: knowledge exposed vs withheld, redaction hits, and budget effects" width="720">
+</div>
+
+*Above: a real report from a demo store — 4 items exposed; an unreviewed staging note and a lesson containing a credential are withheld, with the secret shown as `[REDACTED]`.*
+
 ---
 
 ## Install
@@ -105,7 +113,7 @@ These are factual claims about piia-engram itself, refreshed each minor release.
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **36 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3289** (unit + integration; 2 skipped, 3291 collected) |
+| Tests passing | **3297** (unit + integration; 2 skipped, 3299 collected) |
 | Code coverage | **86%** total |
 | Lines in `core.py` | **1573** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
