@@ -797,7 +797,12 @@ def render_context_preview_html(preview: dict[str, Any]) -> str:
                            font-variant-numeric: tabular-nums; letter-spacing: 0.03em; }}
 
   /* cards */
-  .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }}
+  .two-col {{ display: grid; grid-template-columns: 1fr; gap: 16px; }}
+  /* exposed identity fields tile into balanced columns so wide screens
+     fill the row instead of leaving a void; each field stays intact */
+  .card-list {{ column-gap: 36px; column-fill: balance; }}
+  @media (min-width: 720px) {{ .card-list {{ column-count: 2; }} }}
+  .card-list li {{ break-inside: avoid; -webkit-column-break-inside: avoid; }}
   .card {{ background: var(--bg-card); border: 1px solid var(--line); border-radius: var(--r); padding: 22px 24px;
           transition: border-color 0.25s, box-shadow 0.25s;
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 30px -24px #000; }}
