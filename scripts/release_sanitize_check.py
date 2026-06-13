@@ -47,7 +47,11 @@ _BUILT_IN_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     ("AWS access key", re.compile(r"AKIA[0-9A-Z]{16}"),                   "high"),
     ("Slack token",    re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"),       "high"),
     ("PEM private",    re.compile(r"BEGIN [A-Z ]*PRIVATE KEY"),           "high"),
-    ("Windows path",   re.compile(r"C:\\\\Users\\\\[A-Za-z0-9_.-]+",
+    # Match one-or-more backslashes so BOTH the source-escaped form
+    # (``C:\\Users\\name`` in .py) and the literal single-backslash form
+    # (``C:\Users\name`` in markdown / plain text) are caught. The old
+    # ``\\\\`` (exactly two) regex missed single-backslash paths in docs.
+    ("Windows path",   re.compile(r"C:\\+Users\\+[A-Za-z0-9_.-]+",
                                   re.IGNORECASE),                         "warn"),
     ("POSIX home",     re.compile(r"/home/[a-z][a-z0-9_-]+(?:/|$)"),      "warn"),
     ("password=",      re.compile(r"(?<![a-z_])password\s*[:=]\s*['\"][^'\"]+",
@@ -119,15 +123,31 @@ def _load_internal_patterns_file() -> list[tuple[str, re.Pattern[str], str]]:
                   file=sys.stderr)
     return out
 
-# Files to skip even if git-tracked.
+# Files fully skipped for ALL pattern categories, even if git-tracked.
 _SKIP_GLOBS = (
     ".git/",
     "scripts/release_sanitize_check.py",  # self
     "docs/internal/release-playbook.md",           # documents the patterns
     "docs/playbook-auto-extraction-design.md",  # discusses redaction examples
     "CHANGELOG.md",                       # historical, version paths OK
-    "tests/",                             # test fixtures often need keys
     "Dockerfile",                         # /home/<container-user>/ is not a host path
+)
+
+# Fixture-bearing files: their whole job is to carry FAKE secrets / sample
+# local paths (``sk-...`` keys, ``C:\Users\victim\...``) so redaction +
+# sanitization logic can be tested. Running the built-in + generic
+# internal-disclosure patterns over them floods with intentional-fixture
+# false positives, so these are scanned ONLY against the project's real
+# private terms from ``.sanitizeignore`` (real usernames / internal
+# codenames) — those must never appear even inside a test fixture.
+#
+# (v4.1.x review: ``tests/`` used to live in _SKIP_GLOBS and was fully
+# skipped, which hid a real private path that had reached a test fixture.
+# Demoting it to fixture-exempt keeps the fixture noise out while still
+# catching a real private identifier.)
+_FIXTURE_GLOBS = (
+    "tests/",
+    "scripts/check_generated_export_redaction.py",
 )
 
 
@@ -162,6 +182,16 @@ def _git_staged_files() -> list[Path]:
 def _should_skip(rel_path: str) -> bool:
     s = rel_path.replace("\\", "/")
     return any(s.startswith(p) or p in s for p in _SKIP_GLOBS)
+
+
+def _is_fixture(rel_path: str) -> bool:
+    """True for files that legitimately carry fake secret/path fixtures.
+
+    These are scanned only against the local ``.sanitizeignore`` real-term
+    patterns, not the built-in / generic internal-disclosure patterns.
+    """
+    s = rel_path.replace("\\", "/")
+    return any(s.startswith(p) or p in s for p in _FIXTURE_GLOBS)
 
 
 def _load_custom_terms() -> list[re.Pattern[str]]:
@@ -318,6 +348,7 @@ def main() -> int:
     # Assemble the active pattern set.
     patterns = list(_BUILT_IN_PATTERNS)
     internal_patterns: list[tuple[str, re.Pattern[str], str]] = []
+    local_patterns: list[tuple[str, re.Pattern[str], str]] = []
     if args.internal:
         local_patterns = _load_internal_patterns_file()
         internal_patterns = _INTERNAL_DISCLOSURE_PATTERNS + local_patterns
@@ -356,9 +387,20 @@ def main() -> int:
         staged_text = _read_staged_blob(rel) if args.staged else None
         if args.staged and staged_text is None:
             continue  # deleted/unreadable in index — nothing to scan
-        hits = _scan_file(path, custom, patterns, text=staged_text)
-        if args.internal:
-            hits += _scan_file_multiline(path, internal_patterns, text=staged_text)
+        if _is_fixture(rel):
+            # Intentional fake fixtures live here — scanning the built-in /
+            # generic-internal patterns would only flag the fixtures. Scan
+            # ONLY for the project's real private terms (.sanitizeignore),
+            # which must never appear even in a test fixture. Without
+            # --internal there are no such terms loaded, so skip entirely.
+            if not local_patterns:
+                continue
+            hits = _scan_file(path, [], local_patterns, text=staged_text)
+            hits += _scan_file_multiline(path, local_patterns, text=staged_text)
+        else:
+            hits = _scan_file(path, custom, patterns, text=staged_text)
+            if args.internal:
+                hits += _scan_file_multiline(path, internal_patterns, text=staged_text)
         for label, severity, lineno, line_text in hits:
             marker = "[HIGH]" if severity == "high" else "[warn]"
             print(f"  {marker} {rel}:{lineno}  {label}: {line_text}")

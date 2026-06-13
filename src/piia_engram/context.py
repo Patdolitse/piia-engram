@@ -659,7 +659,7 @@ class ContextMixin:
             r'[A-Za-z0-9._\-]{16,}',
             re.IGNORECASE,
         ), r'\1{{REDACTED}}'),
-        # Absolute Windows paths  (C:\Users\... etc.)
+        # Absolute Windows paths (drive-letter + backslash form)
         (re.compile(r'[A-Za-z]:\\(?:[^\s,;，。！？]+)'), '{{PATH}}'),
         # Absolute Unix paths (/home/..., /Users/..., /var/... etc.)
         (re.compile(r'/(?:home|Users|var|etc|opt|tmp|root)/[^\s,;，。！？]+'), '{{PATH}}'),

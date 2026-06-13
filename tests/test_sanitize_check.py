@@ -7,6 +7,7 @@ and exercises the pattern set + per-file scanning.
 from __future__ import annotations
 
 import importlib.util
+import re
 import tarfile
 import zipfile
 from pathlib import Path
@@ -294,3 +295,133 @@ def test_multiline_reports_correct_start_line(sc, tmp_path):
     assert ml_hits, "expected a multiline hit"
     # match starts on line 3 ("x = 'industry-")
     assert ml_hits[0][2] == 3
+
+
+# ── v4.1.x: Windows-path regex covers single- AND double-backslash ──────
+
+
+def test_windows_path_matches_single_backslash(sc, tmp_path):
+    """The v4.1.0 leak: a real path in a markdown/plain-text doc uses one
+    backslash (``C:\\Users\\name``). The old ``\\\\`` (exactly two) regex
+    missed it. The fixed regex must flag the single-backslash form."""
+    f = tmp_path / "doc.md"
+    f.write_text(r"old artifacts were under C:\Users\someone\proj" + "\n",
+                 encoding="utf-8")
+    hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
+    assert any(label == "Windows path" for label, *_ in hits), \
+        "single-backslash Windows path was not caught"
+
+
+def test_windows_path_still_matches_double_backslash(sc, tmp_path):
+    """Source-escaped form (``C:\\\\Users\\\\name`` on disk) stays caught."""
+    f = tmp_path / "code.py"
+    f.write_text('p = "C:\\\\Users\\\\someone\\\\proj"\n', encoding="utf-8")
+    hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
+    assert any(label == "Windows path" for label, *_ in hits)
+
+
+def test_windows_path_marker_without_username_not_flagged(sc, tmp_path):
+    """``C:\\Users`` with no trailing ``\\name`` (a redaction marker
+    constant) is not a leaked path and must not trip the pattern."""
+    f = tmp_path / "marker.py"
+    f.write_text('MARKER = r"C:\\Users"\n', encoding="utf-8")
+    hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
+    assert not any(label == "Windows path" for label, *_ in hits)
+
+
+# ── v4.1.x: fixture-bearing files scanned only for real private terms ───
+
+
+def test_is_fixture_predicate(sc):
+    assert sc._is_fixture("tests/test_x.py")
+    assert sc._is_fixture("scripts/check_generated_export_redaction.py")
+    assert not sc._is_fixture("src/piia_engram/core.py")
+    assert not sc._is_fixture("docs/benchmarks/recall-eval-v1.md")
+
+
+def test_tests_dir_demoted_from_full_skip(sc):
+    """``tests/`` must no longer be in the full-skip list (that hid a real
+    leaked path); it is now fixture-exempt instead."""
+    assert not any("tests/" == g for g in sc._SKIP_GLOBS)
+    assert "tests/" in sc._FIXTURE_GLOBS
+
+
+def test_lookahead_term_excludes_reverse_assertion(sc):
+    """A ``.sanitizeignore`` lookahead term such as ``USER(?!25)`` must
+    still catch a real path leak but NOT a deliberate reverse-assertion
+    fixture like ``USER25`` (the shape used in
+    test_telemetry_endpoint_decouple.py). Uses a neutral placeholder so
+    this test file carries no real private identifier."""
+    pat = re.compile(r"sampleuser(?!25)")
+    assert pat.search(r"C:\Users\sampleuser\secret"), "real leak must match"
+    assert not pat.search("sampleuser25"), "reverse-assertion must stay clean"
+
+
+def test_fixture_file_scanned_only_for_local_terms(sc, tmp_path, monkeypatch, capsys):
+    """End-to-end: a file under tests/ may legitimately hold a fake path
+    fixture (must be ignored) while a real private term from
+    ``.sanitizeignore`` in the same file must still be caught HIGH."""
+    import subprocess
+    import sys
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+
+    # .sanitizeignore is loaded from CWD (not via git), so do NOT add it.
+    (tmp_path / ".sanitizeignore").write_text("high:CANARYLEAK\n", encoding="utf-8")
+
+    testsdir = tmp_path / "tests"
+    testsdir.mkdir()
+    (testsdir / "test_fix.py").write_text(
+        'WIN = "C:\\\\Users\\\\victim\\\\x"  # fake fixture, must be ignored\n'
+        'TERM = "CANARYLEAK"  # real private term, must be caught\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "tests/test_fix.py"], cwd=tmp_path, check=True)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sc, "_load_custom_terms", lambda: [])
+    monkeypatch.setattr(sys, "argv",
+                        ["release_sanitize_check.py", "--strict", "--internal"])
+
+    rc = sc.main()
+    out = capsys.readouterr().out
+
+    # The fake fixture path must NOT be reported (fixture-exempt).
+    assert "Windows path" not in out
+    # The real private term MUST be reported HIGH and block release.
+    assert "local#1" in out and "tests/test_fix.py" in out
+    assert rc == 1
+
+
+def test_fixture_file_skipped_without_internal(sc, tmp_path, monkeypatch, capsys):
+    """Without --internal there are no real-term patterns loaded, so a
+    fixture file is skipped entirely (no built-in fixture false positives,
+    same net effect as the old full-skip)."""
+    import subprocess
+    import sys
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+
+    testsdir = tmp_path / "tests"
+    testsdir.mkdir()
+    (testsdir / "test_fix.py").write_text(
+        'WIN = "C:\\\\Users\\\\victim\\\\x"\n'
+        'KEY = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "tests/test_fix.py"], cwd=tmp_path, check=True)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sc, "_load_custom_terms", lambda: [])
+    monkeypatch.setattr(sys, "argv", ["release_sanitize_check.py", "--strict"])
+
+    rc = sc.main()
+    out = capsys.readouterr().out
+
+    assert "Windows path" not in out
+    assert "GitHub token" not in out
+    assert rc == 0
