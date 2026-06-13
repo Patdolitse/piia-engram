@@ -58,6 +58,94 @@ _BUILT_IN_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
                                   re.IGNORECASE),                         "warn"),
 ]
 
+# ---------------------------------------------------------------------------
+# Live-credential scan (2026-06-14 incident hardening)
+#
+# A REAL DeepSeek key once sat in tests/test_core.py as a redaction-test
+# "sample". The built-in OpenAI pattern above used ``sk-[A-Za-z0-9]{20,}``
+# (which misses ``sk-proj-…``) AND ``tests/`` is fixture-exempt from the
+# built-ins — so the real key was never flagged. This scan closes both gaps:
+# it mirrors the audited ``piia_engram.sensitivity._SECRET_VALUE_RE`` vendor
+# shapes and runs on EVERY tracked file, fixtures included. Intentional fake
+# fixtures are enumerated in _ALLOWLISTED_TEST_SECRETS; any credential-shaped
+# token NOT in that set is a hard HIGH hit. A real key would never be added to
+# the allowlist — it would be removed and the key rotated.
+# ---------------------------------------------------------------------------
+_LIVE_CREDENTIAL_RE = re.compile(
+    r"sk-[A-Za-z0-9_\-]{16,}"                 # OpenAI / DeepSeek (incl. sk-proj-)
+    r"|sk_(?:live|test)_[A-Za-z0-9]{10,}"     # Stripe secret key
+    r"|rk_(?:live|test)_[A-Za-z0-9]{10,}"     # Stripe restricted key
+    r"|gh[pousr]_[A-Za-z0-9]{20,}"            # GitHub PAT / OAuth
+    r"|github_pat_[A-Za-z0-9_]{20,}"          # GitHub fine-grained PAT
+    r"|glpat-[A-Za-z0-9_\-]{20,}"             # GitLab PAT
+    r"|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}"     # AWS access key id (+ temp)
+    r"|AIza[0-9A-Za-z_\-]{35,}"               # Google API key
+    r"|ya29\.[0-9A-Za-z_\-]{20,}"             # Google OAuth access token
+    r"|xox[baprs]-[0-9A-Za-z\-]{10,}"         # Slack token
+    r"|xapp-[0-9A-Za-z\-]{10,}"               # Slack app-level token
+    r"|hf_[A-Za-z0-9]{20,}"                   # HuggingFace
+    r"|pypi-[A-Za-z0-9_\-]{20,}"              # PyPI upload token
+)
+
+# Intentional FAKE credentials that legitimately live in tracked fixtures /
+# docstrings. Each entry is a conscious "this is fake" sign-off. Keep this in
+# sync when a new fixture key is added; the scan FAILS on anything not listed.
+_ALLOWLISTED_TEST_SECRETS = frozenset({
+    "sk-test_1234567890abcdef1234567890abcdef",
+    "sk-proj-abc123DEFghi456JKLmno789PQRstu0",
+    "sk-SUPERSECRET-do-not-print",
+    "sk-SUPERSECRETTOKENVALUE-do-not-print",
+    "sk-proj-ABCD1234EFGH5678IJKL9012MNOP3456",
+    "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+    "sk-proj-abcdefghijklmnop1234",
+    "sk-abcdefghijklmnop1234567890",
+    "sk-skip-this-not-a-real-key",
+    "sk-side-effect-free",
+    "sk-1234567890abcdef1234567890abcdef",
+    "sk-abcdef1234567890abcdef",
+    "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234",
+    "ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB5678",
+    "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+    "ghp_0123456789abcdefghij0123456789",
+    "gho_0123456789abcdefghij0123456789",
+    "AKIAIOSFODNN7EXAMPLE",
+    "ASIAIOSFODNN7EXAMPLE",
+    "AIzaSyA1234567890abcdefghijklmnopqrstuvw",
+    "ya29.a0AbCdEfGhIjKlMnOpQrStUvWxYz",
+    "xoxb-1234567890-abcdefghijkl",
+    "sk_live_abcdefghij1234567890",
+    "rk_test_abcdefghij1234567890",
+    "github_pat_0123456789abcdefghij0123",
+    "glpat-1234567890abcdefghij",
+    "xapp-1-A1234567890-abcdefghij",
+})
+
+
+def _scan_live_credentials(
+    path: Path, text: str | None = None
+) -> list[tuple[str, str, int, str]]:
+    """Flag real credential VALUE shapes in any tracked file (fixtures too).
+
+    Returns (label, "high", line_no, redacted_preview) for every
+    credential-shaped token that is not an allowlisted fake fixture. The raw
+    secret is never returned — only a short, non-reconstructable prefix.
+    """
+    hits: list[tuple[str, str, int, str]] = []
+    if text is None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except (OSError, UnicodeDecodeError):
+            return hits
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for m in _LIVE_CREDENTIAL_RE.finditer(line):
+            token = m.group(0)
+            if token in _ALLOWLISTED_TEST_SECRETS:
+                continue
+            preview = (token[:6] + "***") if len(token) > 6 else "***"
+            hits.append(("live credential", "high", lineno, preview))
+    return hits
+
+
 # v3.31 P1-2: internal-disclosure patterns. These don't leak secrets but
 # leak strategy / process signal that an outside reader can use.
 #
@@ -387,18 +475,21 @@ def main() -> int:
         staged_text = _read_staged_blob(rel) if args.staged else None
         if args.staged and staged_text is None:
             continue  # deleted/unreadable in index — nothing to scan
+        # Live-credential scan runs on EVERY tracked file, fixtures included —
+        # a REAL key must never sit in the repo even as a "sample" (this is the
+        # exact gap that let a real DeepSeek key live in a test fixture).
+        hits = _scan_live_credentials(path, text=staged_text)
         if _is_fixture(rel):
             # Intentional fake fixtures live here — scanning the built-in /
             # generic-internal patterns would only flag the fixtures. Scan
             # ONLY for the project's real private terms (.sanitizeignore),
             # which must never appear even in a test fixture. Without
-            # --internal there are no such terms loaded, so skip entirely.
-            if not local_patterns:
-                continue
-            hits = _scan_file(path, [], local_patterns, text=staged_text)
-            hits += _scan_file_multiline(path, local_patterns, text=staged_text)
+            # --internal there are no such terms loaded, so skip those.
+            if local_patterns:
+                hits += _scan_file(path, [], local_patterns, text=staged_text)
+                hits += _scan_file_multiline(path, local_patterns, text=staged_text)
         else:
-            hits = _scan_file(path, custom, patterns, text=staged_text)
+            hits += _scan_file(path, custom, patterns, text=staged_text)
             if args.internal:
                 hits += _scan_file_multiline(path, internal_patterns, text=staged_text)
         for label, severity, lineno, line_text in hits:

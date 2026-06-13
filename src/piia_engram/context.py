@@ -30,6 +30,7 @@ from .storage import (
     _now_iso,
     strip_untrusted_trust_fields,
 )
+from .sensitivity import _SECRET_VALUE_RE  # audited high-confidence credential shapes
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type hints
     from .core import Engram
@@ -674,6 +675,11 @@ class ContextMixin:
     # Sensitive-info patterns for redaction before storing playbooks.
     # Compiled once at class level for performance.
     _SENSITIVE_PATTERNS: list[tuple["re.Pattern[str]", str]] = [
+        # Well-known vendor credential VALUE shapes (GitHub / AWS / Google /
+        # Slack / GitLab / Stripe / JWT / PEM / sk-proj-…). Reuses the audited
+        # regex shared with the export-redaction boundary so both layers stay
+        # in lockstep — historically this layer only caught bare ``sk-``.
+        (_SECRET_VALUE_RE, '{{REDACTED}}'),
         # API keys / tokens (sk-..., Bearer ..., token=..., key=...)
         (re.compile(
             r'(sk-|api[_\-]?key\s*[=:]\s*|token\s*[=:]\s*|Bearer\s+|password\s*[=:]\s*)'

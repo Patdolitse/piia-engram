@@ -47,6 +47,37 @@ def sc():
     return _load_module()
 
 
+# ── live-credential scan: real keys flagged even in fixtures (2026-06-14) ──
+
+
+def test_live_credential_scan_flags_unlisted_key(sc, tmp_path):
+    # Build the token at runtime so THIS test's own source carries no literal
+    # ``sk-<token>`` for the scanner to (correctly) flag.
+    fake = "sk-" + "9f3a" + "c2b8" + "d1e4" + "0a7c" + "9562" + "fb38" + "11aa"
+    f = tmp_path / "test_fixture_like.py"
+    f.write_text(f'KEY = "{fake}"\n', encoding="utf-8")
+    hits = sc._scan_live_credentials(f)
+    assert any(sev == "high" and label == "live credential"
+               for label, sev, _lineno, _preview in hits)
+    # the raw secret is never echoed back — only a short prefix preview
+    assert all(fake not in preview for _l, _s, _ln, preview in hits)
+
+
+def test_live_credential_scan_allows_known_dummy(sc, tmp_path):
+    f = tmp_path / "test_fixture_like.py"
+    f.write_text('KEY = "sk-abcdef1234567890abcdef"\n', encoding="utf-8")
+    assert sc._scan_live_credentials(f) == []
+
+
+def test_live_credential_scan_catches_sk_proj(sc, tmp_path):
+    # the built-in OpenAI pattern (sk-[A-Za-z0-9]{20,}) missed sk-proj-…;
+    # the live scan must catch it.
+    proj = "sk-proj-" + "Zx9" + "Qw8" + "Er7" + "Ty6" + "Ui5" + "Op4" + "As3"
+    f = tmp_path / "test_fixture_like.py"
+    f.write_text(f'k = "{proj}"\n', encoding="utf-8")
+    assert any(sev == "high" for _l, sev, _ln, _p in sc._scan_live_credentials(f))
+
+
 # ── built-in secret patterns still fire ────────────────────────────────
 
 
