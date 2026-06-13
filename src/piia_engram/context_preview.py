@@ -254,7 +254,6 @@ _SENS_LABELS: dict[str, tuple[str, str]] = {
 _TIER_LABELS: dict[str, tuple[str, str]] = {
     "verified": ("已验证", "verified"),
     "staging": ("暂存", "staging"),
-    "proposed_only": ("仅提议", "proposed_only"),
 }
 # Identity field names: zh UI shows a human label, en keeps the raw key.
 # Unknown keys fall back to the raw name (never hidden, never invented).
