@@ -6837,7 +6837,7 @@ def test_redact_sensitive_tokens(tmp_path: Path):
     """敏感信息应被脱敏。"""
     from piia_engram.context import ContextMixin
     assert "{{REDACTED}}" in ContextMixin._redact_sensitive(
-        "使用 sk-9d970b7bc6094c409a09f2f9be88d64b 发布"
+        "使用 sk-1234567890abcdef1234567890abcdef 发布"  # dummy token, never a real key
     )
     assert "{{PATH}}" in ContextMixin._redact_sensitive(
         "路径是 C:\\Users\\john\\projects\\app"
