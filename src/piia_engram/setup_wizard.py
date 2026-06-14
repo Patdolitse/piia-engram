@@ -2951,6 +2951,9 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_search,
     _run_dock_export,
     _run_dock_portrait,
+    _run_dock_archive,
+    _run_dock_restore,
+    _run_dock_archived,
     _run_portrait,
     _run_telemetry_validate,
     _run_release_check,
@@ -2991,7 +2994,7 @@ def main() -> None:
     # there to avoid a double-print. `dock-resume`/`dock-search` are guaranteed
     # zero-write entries — the reminder would write .update_check.json into the
     # store — so skip them too. Never reached by the separate MCP-server entry.
-    if not (args and args[0] in ("doctor", "dock-resume", "dock-search", "dock-portrait")):
+    if not (args and args[0] in ("doctor", "dock-resume", "dock-search", "dock-portrait", "dock-archived")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3054,6 +3057,12 @@ def main() -> None:
         sys.exit(_run_dock_export(args[1:]))
     elif args[0] == "dock-portrait":
         sys.exit(_run_dock_portrait(args[1:]))
+    elif args[0] == "dock-archive":
+        sys.exit(_run_dock_archive(args[1:]))
+    elif args[0] == "dock-restore":
+        sys.exit(_run_dock_restore(args[1:]))
+    elif args[0] == "dock-archived":
+        sys.exit(_run_dock_archived(args[1:]))
     elif args[0] == "portrait":
         sys.exit(_run_portrait(args[1:]))
     elif args[0] == "lifecycle":
@@ -3126,6 +3135,9 @@ def main() -> None:
             "  engram dock-search      Zero-write keyword search for a desktop client (--query/--scope/--limit/--json)\n"
             "  engram dock-export      One-click full JSON backup for a desktop client (--output/--json)\n"
             "  engram dock-portrait    Zero-write user portrait for a desktop client (--json)\n"
+            "  engram dock-archive     Owner-confirmed reversible archive by id (--id/--json)\n"
+            "  engram dock-restore     Restore an archived entry by id (--id/--json)\n"
+            "  engram dock-archived    Zero-write list of archived entries (--json)\n"
             "  engram portrait         Lean user portrait snapshot + growth since last (--list/--no-save/--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
             "  engram conflicts        决策冲突 list/resolve / decision conflicts list/resolve\n"

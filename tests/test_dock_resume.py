@@ -355,6 +355,117 @@ def test_dock_portrait_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
     assert payload["markdown"] == ""
 
 
+# --- dock-archive / dock-restore / dock-archived (reversible prune) -----------
+
+
+def _seed_lesson(tmp_path, summary="archive-me test lesson"):
+    from piia_engram.core import Engram
+
+    e = Engram(root=tmp_path / "store")
+    r = e.add_lesson(summary)
+    return (r or {}).get("id", "")
+
+
+def test_dock_archive_restore_roundtrip(monkeypatch, tmp_path, capsys):
+    from piia_engram.setup_wizard import (
+        _run_dock_archive,
+        _run_dock_archived,
+        _run_dock_restore,
+    )
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    lid = _seed_lesson(tmp_path)
+    assert lid
+
+    # Archive a verified entry (owner-confirmed → allowed, reversible).
+    assert _run_dock_archive(["--id", lid, "--json"]) == 0
+    archived = json.loads(capsys.readouterr().out)
+    assert archived["ok"] is True
+    assert archived["result"]["to_tier"] == "archived"
+
+    # It shows up in the archived list (zero-write).
+    assert _run_dock_archived(["--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["ok"] is True and listed["read_only"] is True
+    assert any(r["id"] == lid for r in listed["results"])
+
+    # Restore moves it back to its prior tier (verified).
+    assert _run_dock_restore(["--id", lid, "--json"]) == 0
+    restored = json.loads(capsys.readouterr().out)
+    assert restored["ok"] is True
+    assert restored["result"]["to_tier"] == "verified"
+
+    # …and it's gone from the archived list.
+    assert _run_dock_archived(["--json"]) == 0
+    after = json.loads(capsys.readouterr().out)
+    assert all(r["id"] != lid for r in after["results"])
+
+
+def test_dock_archived_is_zero_write(monkeypatch, tmp_path):
+    from piia_engram.setup_wizard import _run_dock_archived
+
+    store = tmp_path / "store"
+    _populate(store)
+    monkeypatch.setenv("ENGRAM_DIR", str(store))
+    before = _snapshot(store)
+    assert _run_dock_archived(["--json"]) == 0
+    assert _snapshot(store) == before
+
+
+def test_dock_archive_requires_id(monkeypatch, tmp_path):
+    from piia_engram.setup_wizard import _run_dock_archive
+
+    _populate(tmp_path / "store")
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    assert _run_dock_archive(["--json"]) == 2
+
+
+def test_dock_archive_not_found_is_json_error(monkeypatch, tmp_path, capsys):
+    from piia_engram.setup_wizard import _run_dock_archive
+
+    _populate(tmp_path / "store")
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    assert _run_dock_archive(["--id", "nope", "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "error" in payload
+
+
+def test_dock_restore_requires_id(monkeypatch, tmp_path):
+    from piia_engram.setup_wizard import _run_dock_restore
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    assert _run_dock_restore(["--json"]) == 2
+
+
+def test_dock_restore_not_found_is_json_error(monkeypatch, tmp_path, capsys):
+    from piia_engram.setup_wizard import _run_dock_restore
+
+    _populate(tmp_path / "store")
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    assert _run_dock_restore(["--id", "nope", "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "error" in payload
+
+
+def test_dock_restore_rejects_unknown_option(monkeypatch, tmp_path):
+    from piia_engram.setup_wizard import _run_dock_restore
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    assert _run_dock_restore(["--json", "--bogus"]) == 2
+
+
+def test_dock_archived_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
+    from piia_engram.setup_wizard import _run_dock_archived
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    assert _run_dock_archived(["--json", "--bogus"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "error" in payload
+
+
 def test_dock_resume_main_skips_update_reminder(tmp_path, monkeypatch):
     """Definitively prove the zero-write entry never invokes the update reminder
     (which would write .update_check.json) — via a sentinel, not just a snapshot."""

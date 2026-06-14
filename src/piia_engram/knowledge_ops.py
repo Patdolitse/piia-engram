@@ -41,6 +41,7 @@ class KnowledgeOpsMixin:
         item_id: str,
         *,
         now: str | None = None,
+        allow_verified: bool = False,
     ) -> dict:
         """Reversibly soft-archive a lesson/decision into the ``archived`` tier.
 
@@ -51,7 +52,8 @@ class KnowledgeOpsMixin:
         never changes ``status``.
 
         Fail-closed protections:
-        - a ``verified`` entry is refused (``error="protected_verified"``);
+        - a ``verified`` entry is refused (``error="protected_verified"``) unless
+          ``allow_verified=True`` (owner-confirmed manual archive from the dock);
         - an entry already in the ``archived`` tier is an idempotent no-op
           (``changed=False``), leaving its existing ``archived_at`` intact.
 
@@ -68,7 +70,7 @@ class KnowledgeOpsMixin:
                     if entry.get("id") != item_id:
                         continue
                     current = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
-                    if current == "verified":
+                    if current == "verified" and not allow_verified:
                         result_box["result"] = {
                             "id": item_id, "type": kind, "changed": False,
                             "from_tier": current, "to_tier": current,

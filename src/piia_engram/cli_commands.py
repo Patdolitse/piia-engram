@@ -1929,6 +1929,200 @@ def _run_dock_portrait(args: list[str]) -> int:
     return 0
 
 
+def _run_dock_archive(args: list[str]) -> int:
+    """Owner-confirmed reversible archive of one entry (engram dock-archive).
+
+    Local + owner-run. Soft-archives a lesson/decision by id into the ``archived``
+    tier — a deliberate, REVERSIBLE write (recover via ``dock-restore``). The owner
+    confirmed in the dock UI, so ``allow_verified=True`` lets even a verified entry
+    be archived (still fully reversible; nothing is deleted). ``--id`` is required.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-archive --id ID [--json]\n\n"
+            "  Owner-confirmed reversible archive; recover via `engram dock-restore`.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    item_id = ""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass
+        elif a == "--id":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--id requires a value")
+            i += 1
+            item_id = args[i]
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+    if not item_id.strip():
+        return _err("--id is required")
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root)
+        result = eng.soft_archive_knowledge_tier(item_id, allow_verified=True)
+    except Exception as exc:
+        return _err(str(exc), 1)
+    if isinstance(result, dict) and result.get("error"):
+        return _err(str(result["error"]), 1)
+    if want_json:
+        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        return 0
+    print(f"已归档（可恢复）: {item_id}")
+    return 0
+
+
+def _run_dock_restore(args: list[str]) -> int:
+    """Restore one archived entry (engram dock-restore).
+
+    Local + owner-run. Undoes a soft archive: moves an ``archived`` lesson/decision
+    back to its prior tier. A deliberate write. ``--id`` is required.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-restore --id ID [--json]\n\n"
+            "  Undo a dock-archive: move an archived entry back to its prior tier.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    item_id = ""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass
+        elif a == "--id":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--id requires a value")
+            i += 1
+            item_id = args[i]
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+    if not item_id.strip():
+        return _err("--id is required")
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root)
+        result = eng.restore_lifecycle_archive(item_id)
+    except Exception as exc:
+        return _err(str(exc), 1)
+    if isinstance(result, dict) and result.get("error"):
+        return _err(str(result["error"]), 1)
+    if want_json:
+        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        return 0
+    print(f"已恢复: {item_id}")
+    return 0
+
+
+def _run_dock_archived(args: list[str]) -> int:
+    """Zero-write list of archived entries for a local desktop client.
+
+    Local + owner-run. Opens the store ``read_only`` and lists lessons/decisions in
+    the ``archived`` tier (id + kind + title) so a client can offer one-click
+    restore. Guaranteed zero-write.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-archived [--json]\n\n"
+            "  Zero-write list of archived entries (id/kind/title) for restore.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+    for a in args:
+        if a != "--json":
+            if want_json:
+                print(json.dumps(
+                    {"ok": False, "error": f"unknown option: {a}",
+                     "results": [], "count": 0},
+                    ensure_ascii=False,
+                ))
+            else:
+                print(f"ERROR: unknown option: {a}")
+            return 2
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+
+    def _title(kind: str, it: dict) -> str:
+        if kind == "decision":
+            q = (it.get("question") or "").strip()
+            c = (it.get("choice") or "").strip()
+            return f"{q} → {c}" if q and c else (q or c or "(decision)")
+        return (it.get("summary") or "(lesson)").strip()
+
+    try:
+        eng = Engram(root=root, read_only=True)
+        results = []
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            for it in eng._read_entries(eng._knowledge_dir / fname, kind):
+                if it.get("tier") == "archived":
+                    results.append({
+                        "kind": kind,
+                        "title": _title(kind, it),
+                        "id": it.get("id", ""),
+                    })
+    except Exception as exc:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": str(exc), "results": [], "count": 0},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: list archived failed: {exc}")
+        return 1
+
+    if want_json:
+        print(json.dumps(
+            {"ok": True, "read_only": True, "engram_dir": str(root),
+             "count": len(results), "results": results},
+            ensure_ascii=False,
+        ))
+        return 0
+    if not results:
+        print("(no archived entries)")
+        return 0
+    for r in results:
+        print(f"- ({r['kind']}) {r['title']}")
+    return 0
+
+
 def _run_portrait(args: list[str]) -> int:
     """Build, store, and compare a lean user portrait (engram portrait).
 
