@@ -942,7 +942,11 @@ class Engram(
                 changed = True
             ensured.append(item)
 
-        if changed and migrate:
+        # A read_only open is a guaranteed zero-write: still backfill fields in
+        # memory for this read, but never persist the migration to disk. Without
+        # this guard a legacy entry needing backfill would be rewritten even under
+        # read_only=True (dock-resume / dock-search / preview --read-only).
+        if changed and migrate and not self._read_only:
             _write_json(path, ensured)  # preserves encrypted fields as-is
 
         # Decrypt content fields for in-memory use

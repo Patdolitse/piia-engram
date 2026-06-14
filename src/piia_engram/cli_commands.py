@@ -1646,6 +1646,154 @@ def _run_dock_resume(args: list[str]) -> int:
     return 0
 
 
+def _run_dock_search(args: list[str]) -> int:
+    """Zero-write keyword search over knowledge for a local desktop client.
+
+    Local + owner-run. Opens the store ``read_only`` and runs ``search_knowledge``
+    with ``allow_hybrid_index=False`` so it never builds/persists the FTS/vector
+    index (``search_index.db``) — guaranteed zero writes to the store root. Emits
+    flattened JSON results (one list across lessons/decisions/playbooks) that a
+    client renders; ``--json`` is the structured form, text is a readable fallback.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-search --query TEXT [--scope all|lessons|decisions|playbooks]\n"
+            "                     [--limit N] [--json]\n\n"
+            "  Zero-write keyword search for a local desktop client.\n"
+            "  Opens the store read-only — never mutates the store root.\n"
+        )
+        return 0
+
+    query = ""
+    scope = "all"
+    limit = 8
+    want_json = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            want_json = True
+        elif a == "--query":
+            # A following flag-like token is a missing value, not the value.
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                print("ERROR: --query requires a value")
+                return 2
+            i += 1
+            query = args[i]
+        elif a == "--scope":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                print("ERROR: --scope requires a value")
+                return 2
+            i += 1
+            scope = args[i]
+            if scope not in {"all", "lessons", "decisions", "playbooks"}:
+                print("ERROR: --scope must be all|lessons|decisions|playbooks")
+                return 2
+        elif a == "--limit":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                print("ERROR: --limit requires a value")
+                return 2
+            i += 1
+            try:
+                limit = int(args[i])
+            except ValueError:
+                print("ERROR: --limit must be an integer")
+                return 2
+            if limit <= 0:
+                print("ERROR: --limit must be a positive integer")
+                return 2
+        else:
+            print(f"ERROR: unknown option: {a}")
+            return 2
+        i += 1
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+
+    if not query.strip():
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": "empty query",
+                 "engram_dir": str(root), "results": [], "count": 0},
+                ensure_ascii=False,
+            ))
+        else:
+            print("ERROR: --query is required and must be non-empty")
+        return 2
+
+    try:
+        eng = Engram(root=root, read_only=True)
+        # allow_hybrid_index=False keeps this zero-write: it never builds or
+        # persists the FTS/vector index to <root>/search_index.db.
+        raw = eng.search_knowledge(
+            query, scope=scope, limit=limit, allow_hybrid_index=False,
+        )
+    except Exception as exc:  # never crash the Dock spawn — emit a usable error
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": str(exc),
+                 "engram_dir": str(root), "results": [], "count": 0},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: search failed: {exc}")
+        return 1
+
+    def _title(kind: str, it: dict) -> str:
+        if kind == "decisions":
+            q = (it.get("question") or "").strip()
+            c = (it.get("choice") or "").strip()
+            return f"{q} → {c}" if q and c else (q or c or "(decision)")
+        if kind == "playbooks":
+            return (it.get("title") or it.get("name") or "(playbook)").strip()
+        return (it.get("summary") or "(lesson)").strip()
+
+    def _copy(kind: str, it: dict) -> str:
+        if kind == "decisions":
+            parts = [_title(kind, it)]
+            reasoning = (it.get("reasoning") or "").strip()
+            if reasoning:
+                parts.append(reasoning)
+            return "\n".join(parts)
+        if kind == "playbooks":
+            return _title(kind, it)
+        parts = [(it.get("summary") or "").strip()]
+        detail = (it.get("detail") or "").strip()
+        if detail:
+            parts.append(detail)
+        return "\n".join([p for p in parts if p])
+
+    results = []
+    for kind in ("lessons", "decisions", "playbooks"):
+        for it in raw.get(kind, []):
+            results.append({
+                "kind": kind[:-1],  # lesson / decision / playbook
+                "title": _title(kind, it),
+                "tier": it.get("tier", ""),
+                "id": it.get("id", ""),
+                "copy": _copy(kind, it),
+            })
+
+    if want_json:
+        print(json.dumps(
+            {"ok": True, "read_only": True, "engram_dir": str(root),
+             "query": query, "count": len(results), "results": results},
+            ensure_ascii=False,
+        ))
+        return 0
+
+    if not results:
+        print(f"(no matches for: {query})")
+        return 0
+    for r in results:
+        tier = f" [{r['tier']}]" if r["tier"] else ""
+        print(f"- ({r['kind']}{tier}) {r['title']}")
+    return 0
+
+
 def _run_portrait(args: list[str]) -> int:
     """Build, store, and compare a lean user portrait (engram portrait).
 

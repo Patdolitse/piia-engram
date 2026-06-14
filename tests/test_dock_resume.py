@@ -213,6 +213,72 @@ def test_dock_resume_budget_value_cannot_be_a_flag(monkeypatch, tmp_path):
     assert _cli(monkeypatch, tmp_path, ["--budget", "--json"]) == 2
 
 
+# --- dock-search CLI + read_only migration zero-write (Codex D2 review) ------
+
+
+def _cli_search(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_search
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_search(argv)
+
+
+def test_dock_search_help(monkeypatch, tmp_path):
+    assert _cli_search(monkeypatch, tmp_path, ["--help"]) == 0
+
+
+def test_dock_search_requires_nonempty_query(monkeypatch, tmp_path):
+    _populate(tmp_path / "store")
+    assert _cli_search(monkeypatch, tmp_path, ["--json"]) == 2  # no --query
+
+
+def test_dock_search_rejects_bad_limit_and_scope(monkeypatch, tmp_path):
+    _populate(tmp_path / "store")
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "x", "--limit", "0"]) == 2
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "x", "--scope", "bogus"]) == 2
+
+
+def test_dock_search_query_value_cannot_be_a_flag(monkeypatch, tmp_path):
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "--json"]) == 2
+
+
+def test_dock_search_json_is_structured_and_zero_write(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    _populate(store)
+    before = _snapshot(store)
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "anything", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["read_only"] is True
+    assert isinstance(payload["results"], list)
+    assert _snapshot(store) == before  # the whole search path wrote nothing
+
+
+def test_read_only_does_not_persist_field_migration(tmp_path):
+    """A legacy entry missing backfilled fields must be migrated in MEMORY only
+    under read_only — never rewritten to disk (Codex D2 review must-fix)."""
+    from piia_engram.core import Engram
+
+    store = tmp_path / "store"
+    eng = Engram(root=store)  # normal init builds structure
+    # A legacy lesson missing fields that _ensure_fields backfills.
+    lessons = eng._knowledge_dir / "lessons.json"
+    lessons.write_text(
+        json.dumps([{"summary": "legacy lesson", "id": "legacy1"}]),
+        encoding="utf-8",
+    )
+    before = _snapshot(store)
+
+    ro = Engram(root=store, read_only=True)
+    items = ro._read_entries(lessons, "lesson")
+
+    # The in-memory entry IS backfilled (proving it would normally be rewritten)…
+    assert items and items[0].get("summary") == "legacy lesson"
+    assert "status" in items[0] or "tier" in items[0]
+    # …but the file on disk is byte-for-byte unchanged under read_only.
+    assert _snapshot(store) == before
+
+
 def test_dock_resume_main_skips_update_reminder(tmp_path, monkeypatch):
     """Definitively prove the zero-write entry never invokes the update reminder
     (which would write .update_check.json) — via a sentinel, not just a snapshot."""
