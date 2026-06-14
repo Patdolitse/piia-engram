@@ -414,7 +414,16 @@ class Engram(
         self._ensure_trust_boundaries()
 
     def _atomic_write(self, path: Path, data: Any) -> None:
-        """Atomically write JSON through the shared Engram file lock."""
+        """Atomically write JSON through the shared Engram file lock.
+
+        Under ``read_only`` this is a no-op: a read-only open is a guaranteed
+        zero-write, so any lazy backfill (trust-boundary defaults, etc.) that
+        routes through here keeps its in-memory value but never persists. This is
+        the central guard that makes read_only bulletproof against read-time
+        lazy writes (companion to the _read_entries migration guard).
+        """
+        if getattr(self, "_read_only", False):
+            return
         _write_json(path, data)
 
     def _ensure_trust_boundaries(self) -> dict:
@@ -1531,7 +1540,9 @@ class Engram(
             stored = {}
 
         active_counts: dict[str, int] = {}
-        for lesson in self.get_lessons(limit=None, _update_access=False):
+        # Read-aggregation only — never trigger a field-migration write (a read
+        # path must not persist; keeps build_user_portrait truly all-reads).
+        for lesson in self.get_lessons(limit=None, _update_access=False, _migrate_fields=False):
             raw = lesson.get("domain") or ""
             for _d in raw.split(","):
                 _d = _d.strip()

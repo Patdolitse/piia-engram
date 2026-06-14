@@ -355,6 +355,46 @@ def test_dock_portrait_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
     assert payload["markdown"] == ""
 
 
+def test_dock_portrait_html_writes_styled_page_zero_write(monkeypatch, tmp_path):
+    from piia_engram.setup_wizard import _run_dock_portrait
+
+    store = tmp_path / "store"
+    _populate(store)
+    monkeypatch.setenv("ENGRAM_DIR", str(store))
+    out = tmp_path / "portrait.html"
+    before = _snapshot(store)
+    assert _run_dock_portrait(["--html", "--output", str(out)]) == 0
+    page = out.read_text(encoding="utf-8")
+    assert page.startswith("<!doctype html>")
+    assert 'class="hero"' in page and 'class="stats"' in page
+    assert _snapshot(store) == before  # rendering HTML never touches the store
+
+
+def test_dock_portrait_html_requires_output(monkeypatch, tmp_path):
+    from piia_engram.setup_wizard import _run_dock_portrait
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    assert _run_dock_portrait(["--html"]) == 2
+
+
+def test_dock_portrait_html_zero_write_with_missing_trust_boundaries(monkeypatch, tmp_path):
+    """read_only must NOT lazily backfill trust_boundaries.json to disk — the
+    central _atomic_write guard (Codex portrait-HTML must-fix)."""
+    from piia_engram.setup_wizard import _run_dock_portrait
+
+    store = tmp_path / "store"
+    _populate(store)
+    tb = store / "identity" / "trust_boundaries.json"
+    if tb.exists():
+        tb.unlink()  # simulate a legacy/missing store that would trigger backfill
+    monkeypatch.setenv("ENGRAM_DIR", str(store))
+    out = tmp_path / "p.html"
+    before = _snapshot(store)
+    assert _run_dock_portrait(["--html", "--output", str(out)]) == 0
+    assert out.exists()  # the portrait still renders (backfilled in memory)
+    assert _snapshot(store) == before  # …but trust_boundaries.json was not written
+
+
 # --- dock-archive / dock-restore / dock-archived (reversible prune) -----------
 
 

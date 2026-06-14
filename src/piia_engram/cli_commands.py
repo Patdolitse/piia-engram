@@ -1880,44 +1880,71 @@ def _run_dock_portrait(args: list[str]) -> int:
     if args and args[0] in {"-h", "--help"}:
         print(
             "Usage:\n"
-            "  engram dock-portrait [--json]\n\n"
-            "  Zero-write user portrait for a local desktop client.\n"
+            "  engram dock-portrait [--json]\n"
+            "  engram dock-portrait --html --output PATH\n\n"
+            "  Zero-write user portrait for a local desktop client. --html renders a\n"
+            "  full styled HTML page to PATH; default emits text/markdown.\n"
             "  Opens the store read-only and never saves a snapshot.\n"
         )
         return 0
 
     want_json = "--json" in args
-    for a in args:
-        if a != "--json":
-            if want_json:
-                print(json.dumps(
-                    {"ok": False, "error": f"unknown option: {a}", "markdown": ""},
-                    ensure_ascii=False,
-                ))
-            else:
-                print(f"ERROR: unknown option: {a}")
-            return 2
+    want_html = "--html" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": msg, "markdown": "", "path": ""},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    output = ""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--json", "--html"):
+            pass
+        elif a == "--output":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--output requires a value")
+            i += 1
+            output = args[i]
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+    if want_html and not output:
+        return _err("--html requires --output")
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
     try:
         eng = Engram(root=root, read_only=True)
-        portrait = eng.build_user_portrait()
-        text = eng.render_user_portrait(portrait)
+        portrait = eng.build_user_portrait_rich() if want_html else eng.build_user_portrait()
         previous = eng.get_latest_portrait()
-        if previous:
-            diff = eng.compare_user_portraits(previous, portrait)
-            text = f"{text}\n{eng.render_portrait_growth(diff)}"
+        growth = eng.compare_user_portraits(previous, portrait) if previous else None
     except Exception as exc:  # never crash the Dock spawn — emit a usable error
+        return _err(str(exc), 1)
+
+    if want_html:
+        try:
+            page = eng.render_user_portrait_html(portrait, growth)
+            Path(output).write_text(page, encoding="utf-8")
+        except Exception as exc:
+            return _err(f"could not write portrait HTML: {exc}", 1)
         if want_json:
             print(json.dumps(
-                {"ok": False, "error": str(exc),
-                 "engram_dir": str(root), "markdown": ""},
+                {"ok": True, "read_only": True, "path": str(output)},
                 ensure_ascii=False,
             ))
         else:
-            print(f"ERROR: could not build portrait: {exc}")
-        return 1
+            print(f"已生成画像: {output}")
+        return 0
 
+    text = eng.render_user_portrait(portrait)
+    if growth:
+        text = f"{text}\n{eng.render_portrait_growth(growth)}"
     if want_json:
         print(json.dumps(
             {"ok": True, "read_only": True, "engram_dir": str(root),
