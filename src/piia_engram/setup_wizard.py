@@ -2949,6 +2949,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_recall,
     _run_dock_resume,
     _run_dock_search,
+    _run_dock_export,
     _run_portrait,
     _run_telemetry_validate,
     _run_release_check,
@@ -3048,6 +3049,8 @@ def main() -> None:
         sys.exit(_run_dock_resume(args[1:]))
     elif args[0] == "dock-search":
         sys.exit(_run_dock_search(args[1:]))
+    elif args[0] == "dock-export":
+        sys.exit(_run_dock_export(args[1:]))
     elif args[0] == "portrait":
         sys.exit(_run_portrait(args[1:]))
     elif args[0] == "lifecycle":
@@ -3118,6 +3121,7 @@ def main() -> None:
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"
             "  engram dock-resume      Zero-write resume brief for a desktop client (--project/--budget/--json)\n"
             "  engram dock-search      Zero-write keyword search for a desktop client (--query/--scope/--limit/--json)\n"
+            "  engram dock-export      One-click full JSON backup for a desktop client (--output/--json)\n"
             "  engram portrait         Lean user portrait snapshot + growth since last (--list/--no-save/--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
             "  engram conflicts        决策冲突 list/resolve / decision conflicts list/resolve\n"

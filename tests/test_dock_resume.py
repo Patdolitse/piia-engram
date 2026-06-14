@@ -279,6 +279,43 @@ def test_read_only_does_not_persist_field_migration(tmp_path):
     assert _snapshot(store) == before
 
 
+# --- dock-export CLI (full backup; deliberate write, JSON contract) ----------
+
+
+def _cli_export(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_export
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_export(argv)
+
+
+def test_dock_export_help(monkeypatch, tmp_path):
+    assert _cli_export(monkeypatch, tmp_path, ["--help"]) == 0
+
+
+def test_dock_export_json_success_writes_a_backup(monkeypatch, tmp_path, capsys):
+    import os
+
+    _populate(tmp_path / "store")
+    assert _cli_export(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["path"]
+    assert os.path.exists(payload["path"])  # the backup file was produced
+
+
+def test_dock_export_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
+    # The --json contract must hold even on arg-parse errors (Codex D3 must-fix).
+    assert _cli_export(monkeypatch, tmp_path, ["--json", "--bogus"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "error" in payload
+
+
+def test_dock_export_missing_output_value(monkeypatch, tmp_path):
+    assert _cli_export(monkeypatch, tmp_path, ["--output"]) == 2
+
+
 def test_dock_resume_main_skips_update_reminder(tmp_path, monkeypatch):
     """Definitively prove the zero-write entry never invokes the update reminder
     (which would write .update_check.json) — via a sentinel, not just a snapshot."""

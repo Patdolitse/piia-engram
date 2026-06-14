@@ -1794,6 +1794,77 @@ def _run_dock_search(args: list[str]) -> int:
     return 0
 
 
+def _run_dock_export(args: list[str]) -> int:
+    """One-click full export for a local desktop client (engram dock-export).
+
+    Local + owner-run. Writes the entire store (identity + knowledge + projects)
+    to a single JSON backup via ``export_all`` and emits the path. This is an
+    explicit WRITE action — it produces a backup file (handle as sensitive) — and
+    is NOT zero-write like dock-resume/dock-search. ``--output`` overrides the
+    default location (``<engram>/exports/engram_backup_<date>.json``).
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-export [--output PATH] [--json]\n\n"
+            "  One-click full JSON backup for a local desktop client.\n"
+            "  Writes a backup file (treat as sensitive); does not mutate memory.\n"
+        )
+        return 0
+
+    # Compute --json up front so even arg-parse errors honor the JSON contract.
+    want_json = "--json" in args
+
+    def _arg_err(msg: str) -> int:
+        if want_json:
+            print(json.dumps({"ok": False, "error": msg, "path": ""},
+                             ensure_ascii=False))
+        else:
+            print(f"ERROR: {msg}")
+        return 2
+
+    output = ""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass  # already accounted for above
+        elif a == "--output":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _arg_err("--output requires a value")
+            i += 1
+            output = args[i]
+        else:
+            return _arg_err(f"unknown option: {a}")
+        i += 1
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root)
+        path = eng.export_all(output or None)
+    except Exception as exc:  # never crash the Dock spawn — emit a usable error
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": str(exc), "engram_dir": str(root), "path": ""},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: export failed: {exc}")
+        return 1
+
+    if want_json:
+        print(json.dumps(
+            {"ok": True, "engram_dir": str(root), "path": str(path)},
+            ensure_ascii=False,
+        ))
+        return 0
+    print(f"导出成功: {path}")
+    return 0
+
+
 def _run_portrait(args: list[str]) -> int:
     """Build, store, and compare a lean user portrait (engram portrait).
 
