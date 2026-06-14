@@ -34,7 +34,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_MARKER = "# piia-engram-sanitize-hook v3"
+HOOK_MARKER = "# piia-engram-sanitize-hook v4"
 
 # Older markers we still recognize as "ours" so install --upgrade can
 # safely overwrite a hook a previous version installed.
@@ -42,6 +42,7 @@ _KNOWN_MARKERS = (
     "# piia-engram-sanitize-hook v1",
     "# piia-engram-sanitize-hook v2",
     "# piia-engram-sanitize-hook v3",
+    "# piia-engram-sanitize-hook v4",
 )
 
 # Set to "" to make warn-level hits non-blocking (HIGH always blocks).
@@ -54,16 +55,23 @@ HOOK_BODY = f"""#!/bin/sh
 #
 # To bypass once (NOT recommended): git commit --no-verify
 
-# Find a python interpreter. Prefer one already on PATH; fall back to
-# the ENGRAM_PYTHON env var if set.
+# Find a WORKING python. The Windows Store alias stub (…WindowsApps\\python) is
+# on PATH for many users but exits non-zero without running any code, which
+# would falsely block EVERY commit — so each candidate is validated by actually
+# executing a no-op. ENGRAM_PYTHON overrides when it is set and works.
+_works() {{ "$1" -c "import sys" >/dev/null 2>&1; }}
 PY="${{ENGRAM_PYTHON:-}}"
+if [ -z "$PY" ] || ! _works "$PY"; then
+    PY=""
+    for _cand in python3 python py; do
+        if command -v "$_cand" >/dev/null 2>&1 && _works "$_cand"; then
+            PY="$_cand"; break
+        fi
+    done
+fi
 if [ -z "$PY" ]; then
-    if command -v python >/dev/null 2>&1; then PY=python;
-    elif command -v python3 >/dev/null 2>&1; then PY=python3;
-    else
-        echo "[pre-commit] no python found; skipping pre-commit checks" >&2
-        exit 0
-    fi
+    echo "[pre-commit] no working python found; skipping pre-commit checks" >&2
+    exit 0
 fi
 
 rc=0
