@@ -198,3 +198,34 @@ def test_dock_resume_project_requires_value(monkeypatch, tmp_path):
 
 def test_dock_resume_rejects_unknown_option(monkeypatch, tmp_path):
     assert _cli(monkeypatch, tmp_path, ["--bogus"]) == 2
+
+
+# --- Codex review-2 fixes: flag-like values + reminder sentinel -------------
+
+
+def test_dock_resume_project_value_cannot_be_a_flag(monkeypatch, tmp_path):
+    # `--project --json` must NOT swallow the flag as the project value.
+    assert _cli(monkeypatch, tmp_path, ["--project", "--json"]) == 2
+    assert _cli(monkeypatch, tmp_path, ["--project", "--bogus"]) == 2
+
+
+def test_dock_resume_budget_value_cannot_be_a_flag(monkeypatch, tmp_path):
+    assert _cli(monkeypatch, tmp_path, ["--budget", "--json"]) == 2
+
+
+def test_dock_resume_main_skips_update_reminder(tmp_path, monkeypatch):
+    """Definitively prove the zero-write entry never invokes the update reminder
+    (which would write .update_check.json) — via a sentinel, not just a snapshot."""
+    import piia_engram.update_check as uc
+    from piia_engram import setup_wizard
+
+    called: list[int] = []
+    monkeypatch.setattr(uc, "maybe_print_update_notice",
+                        lambda *a, **k: called.append(1))
+    store = tmp_path / "store"
+    _populate(store)
+    monkeypatch.setenv("ENGRAM_DIR", str(store))
+    monkeypatch.setattr("sys.argv", ["engram", "dock-resume", "--json"])
+    with pytest.raises(SystemExit):
+        setup_wizard.main()
+    assert called == []  # reminder never invoked for dock-resume

@@ -1594,13 +1594,15 @@ def _run_dock_resume(args: list[str]) -> int:
         if a == "--json":
             want_json = True
         elif a == "--project":
-            if i + 1 >= len(args):
+            # A following flag-like token is a missing value, not the value —
+            # never swallow "--json"/"--bogus" as the project path.
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
                 print("ERROR: --project requires a value")
                 return 2
             i += 1
             project = args[i]
         elif a == "--budget":
-            if i + 1 >= len(args):
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
                 print("ERROR: --budget requires a value")
                 return 2
             i += 1
