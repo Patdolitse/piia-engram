@@ -98,7 +98,14 @@ class Engram(
 ):
     """Read/write interface to the user's global Engram."""
 
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, *, read_only: bool = False):
+        # read_only: open the store for a guaranteed zero-write read — e.g. a
+        # local desktop client that only needs a resume brief and must never
+        # mutate the store. Skips the session-state stamp, structure
+        # creation (mkdir / schema_version / migration / trust boundaries), the
+        # audit log, and the encryption index purge — so the store root is never
+        # mutated. Reads still work; they tolerate missing optional dirs.
+        self._read_only = read_only
         self.root = root or _engram_root()
         self._identity_dir = self.root / "identity"
         self._knowledge_dir = self.root / "knowledge"
@@ -139,7 +146,8 @@ class Engram(
             # (Codex a5 round-2 P1-2). purge_search_index is provided by the
             # RetrievalMixin.
             try:
-                self.purge_search_index()
+                if not read_only:
+                    self.purge_search_index()
             except RuntimeError:
                 # Fail-closed: a plaintext index survived purge under encryption
                 # (Codex a5 round-3 O2). Refuse to construct the engram rather
@@ -162,7 +170,9 @@ class Engram(
         # ENGRAM_AUDIT=1 explicitly.
         from piia_engram.audit import AuditLogger
         _audit_env = os.environ.get("ENGRAM_AUDIT", "").strip().lower()
-        if _audit_env in ("1", "true", "yes", "on"):
+        if read_only:
+            audit_enabled = False  # a zero-write open never appends audit.log
+        elif _audit_env in ("1", "true", "yes", "on"):
             audit_enabled = True
         elif _audit_env in ("0", "false", "no", "off"):
             audit_enabled = False
@@ -190,7 +200,10 @@ class Engram(
                 self.root, ", ".join(self.data_orphans),
             )
 
-        self._ensure_structure()
+        # Directory/file creation (mkdir, schema_version, migration, trust
+        # boundaries) is a write — skip it for a read-only open.
+        if not read_only:
+            self._ensure_structure()
 
         # v3.30 mechanism (1): unclean-exit detection.
         # Each Engram() init stamps session_state.json with current pid +
@@ -200,10 +213,11 @@ class Engram(
         # "previous session may have ended unexpectedly". This is the
         # crash-recovery user-visible signal — the data itself is already
         # safe thanks to _atomic_write_json + portalocker.
-        try:
-            self._mark_session_start()
-        except Exception:
-            pass  # Best-effort; never block init.
+        if not read_only:
+            try:
+                self._mark_session_start()
+            except Exception:
+                pass  # Best-effort; never block init.
 
     @property
     def _session_state_path(self) -> Path:

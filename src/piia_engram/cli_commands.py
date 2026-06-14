@@ -1563,6 +1563,70 @@ def _run_recall(args: list[str]) -> int:
     return 0
 
 
+def _run_dock_resume(args: list[str]) -> int:
+    """Emit a zero-write, paste-ready resume brief for a local desktop client.
+
+    Local + owner-run. Opens the store ``read_only`` (guaranteed zero writes to
+    the store root: no session stamp, no audit, no migration, no structure/index
+    creation) and returns the cross-tool resume brief from ``get_resume_brief``.
+    Text by default (paste-ready markdown); ``--json`` emits the structured dict
+    a client parses. ``ENGRAM_DIR`` selects the store (a client passes it
+    explicitly); the brief is identity-only when no ``--project`` is given.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-resume [--project PATH] [--budget N] [--json]\n\n"
+            "  Zero-write resume brief for a local desktop client.\n"
+            "  Opens the store read-only — never mutates the store root.\n"
+        )
+        return 0
+
+    def _opt(flag: str, default: str = "") -> str:
+        if flag in args:
+            idx = args.index(flag)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    project = _opt("--project", "")
+    try:
+        budget = int(_opt("--budget", "2000"))
+    except ValueError:
+        print("ERROR: --budget must be an integer")
+        return 2
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    want_json = "--json" in args
+    try:
+        eng = Engram(root=root, read_only=True)
+        brief = eng.get_resume_brief(project_folder=project, token_budget=budget)
+    except Exception as exc:  # never crash the Dock spawn — emit a usable error
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": str(exc),
+                 "engram_dir": str(root), "markdown": ""},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: could not build resume brief: {exc}")
+        return 1
+
+    markdown = brief.get("markdown", "") if isinstance(brief, dict) else str(brief)
+    if want_json:
+        out = dict(brief) if isinstance(brief, dict) else {"markdown": markdown}
+        out.setdefault("ok", True)
+        out["engram_dir"] = str(root)
+        out["read_only"] = True
+        print(json.dumps(out, ensure_ascii=False))
+        return 0
+    print(markdown)
+    return 0
+
+
 def _run_portrait(args: list[str]) -> int:
     """Build, store, and compare a lean user portrait (engram portrait).
 

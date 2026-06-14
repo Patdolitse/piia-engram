@@ -2947,6 +2947,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_import_backup,
     _run_export_agents_md,
     _run_recall,
+    _run_dock_resume,
     _run_portrait,
     _run_telemetry_validate,
     _run_release_check,
@@ -3040,6 +3041,8 @@ def main() -> None:
         sys.exit(_run_export_agents_md(args[1:]))
     elif args[0] == "recall":
         sys.exit(_run_recall(args[1:]))
+    elif args[0] == "dock-resume":
+        sys.exit(_run_dock_resume(args[1:]))
     elif args[0] == "portrait":
         sys.exit(_run_portrait(args[1:]))
     elif args[0] == "lifecycle":
