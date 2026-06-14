@@ -2984,9 +2984,11 @@ def main() -> None:
     _configure_utf8_stdio()
     args = sys.argv[1:]
     # Non-intrusive update reminder (stderr only, opt-out, 24h-cached, fail-silent).
-    # `doctor` prints its own richer version line, so skip the generic notice there
-    # to avoid a double-print. Never reached by the separate MCP-server entry point.
-    if not (args and args[0] == "doctor"):
+    # `doctor` prints its own richer version line, so skip the generic notice
+    # there to avoid a double-print. `dock-resume` is a guaranteed zero-write
+    # entry — the reminder would write .update_check.json into the store — so
+    # skip it there too. Never reached by the separate MCP-server entry point.
+    if not (args and args[0] in ("doctor", "dock-resume")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3111,6 +3113,7 @@ def main() -> None:
             "  engram import <backup.json>  Metadata-only import preview (--apply --yes to write)\n"
             "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"
+            "  engram dock-resume      Zero-write resume brief for a desktop client (--project/--budget/--json)\n"
             "  engram portrait         Lean user portrait snapshot + growth since last (--list/--no-save/--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
             "  engram conflicts        决策冲突 list/resolve / decision conflicts list/resolve\n"

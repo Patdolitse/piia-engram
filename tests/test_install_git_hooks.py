@@ -47,9 +47,17 @@ def test_hook_body_aggregates_exit_codes(ih):
     assert 'exit 1' in body
 
 
-def test_current_marker_is_v3(ih):
-    assert ih.HOOK_MARKER == "# piia-engram-sanitize-hook v3"
+def test_current_marker_is_v4(ih):
+    assert ih.HOOK_MARKER == "# piia-engram-sanitize-hook v4"
     assert ih.HOOK_MARKER in ih.HOOK_BODY
+
+
+def test_hook_validates_python_before_use(ih):
+    # The hook must not blindly run the first `python` on PATH (e.g. the Windows
+    # Store alias stub, which exits non-zero without running code and would
+    # falsely block every commit). It validates each candidate with a no-op.
+    assert "_works" in ih.HOOK_BODY
+    assert "import sys" in ih.HOOK_BODY
 
 
 def test_old_v1_marker_recognized_for_upgrade(ih):
@@ -73,7 +81,7 @@ def test_install_upgrades_existing_v1_hook(ih, tmp_path, monkeypatch):
     monkeypatch.setattr(ih, "_git_dir", lambda: git_dir)
     assert ih.install() == 0
     new_body = hook.read_text(encoding="utf-8")
-    assert "# piia-engram-sanitize-hook v3" in new_body
+    assert "# piia-engram-sanitize-hook v4" in new_body
     assert "check_publish_allowlist.py --staged" in new_body
 
 

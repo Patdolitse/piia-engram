@@ -1585,22 +1585,39 @@ def _run_dock_resume(args: list[str]) -> int:
         )
         return 0
 
-    def _opt(flag: str, default: str = "") -> str:
-        if flag in args:
-            idx = args.index(flag)
-            if idx + 1 < len(args):
-                return args[idx + 1]
-        return default
-
-    project = _opt("--project", "")
-    try:
-        budget = int(_opt("--budget", "2000"))
-    except ValueError:
-        print("ERROR: --budget must be an integer")
-        return 2
+    project = ""
+    budget = 2000
+    want_json = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            want_json = True
+        elif a == "--project":
+            if i + 1 >= len(args):
+                print("ERROR: --project requires a value")
+                return 2
+            i += 1
+            project = args[i]
+        elif a == "--budget":
+            if i + 1 >= len(args):
+                print("ERROR: --budget requires a value")
+                return 2
+            i += 1
+            try:
+                budget = int(args[i])
+            except ValueError:
+                print("ERROR: --budget must be an integer")
+                return 2
+            if budget <= 0:
+                print("ERROR: --budget must be a positive integer")
+                return 2
+        else:
+            print(f"ERROR: unknown option: {a}")
+            return 2
+        i += 1
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
-    want_json = "--json" in args
     try:
         eng = Engram(root=root, read_only=True)
         brief = eng.get_resume_brief(project_folder=project, token_budget=budget)

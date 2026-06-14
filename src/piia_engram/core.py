@@ -122,6 +122,7 @@ class Engram(
         self._corpus_key: bytes = b""
         if self._crypto.enabled:
             salt_path = self.root / ".corpus_salt"
+            salt = b""
             if salt_path.is_file():
                 salt = salt_path.read_bytes()
             else:
@@ -135,10 +136,15 @@ class Engram(
                         ".corpus_salt file to recover your data. Creating a new "
                         "salt would make existing data permanently unreadable."
                     )
-                salt = os.urandom(16)
-                self.root.mkdir(parents=True, exist_ok=True)
-                salt_path.write_bytes(salt)
-            self._corpus_key = self._crypto.derive_corpus_key(salt)
+                # A read_only open is a guaranteed zero-write: never mint a salt
+                # or create the root. With no existing ciphertext there is
+                # nothing to decrypt, so plaintext-only reading is correct.
+                if not read_only:
+                    salt = os.urandom(16)
+                    self.root.mkdir(parents=True, exist_ok=True)
+                    salt_path.write_bytes(salt)
+            if salt:
+                self._corpus_key = self._crypto.derive_corpus_key(salt)
             # A plaintext hybrid search index left over from a pre-encryption
             # run would keep the decrypted bodies readable on disk even though
             # all new writes are encrypted. Purge it on init so enabling
