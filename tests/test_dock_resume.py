@@ -316,6 +316,45 @@ def test_dock_export_missing_output_value(monkeypatch, tmp_path):
     assert _cli_export(monkeypatch, tmp_path, ["--output"]) == 2
 
 
+# --- dock-portrait CLI (zero-write user portrait) ----------------------------
+
+
+def _cli_portrait(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_portrait
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_portrait(argv)
+
+
+def test_dock_portrait_help(monkeypatch, tmp_path):
+    assert _cli_portrait(monkeypatch, tmp_path, ["--help"]) == 0
+
+
+def test_dock_portrait_json_is_structured_and_zero_write(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    _populate(store)
+    before = _snapshot(store)
+    assert _cli_portrait(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["read_only"] is True
+    assert "markdown" in payload
+    assert _snapshot(store) == before  # builds in memory; never saves a snapshot
+
+
+def test_dock_portrait_rejects_unknown_option(monkeypatch, tmp_path):
+    assert _cli_portrait(monkeypatch, tmp_path, ["--bogus"]) == 2
+
+
+def test_dock_portrait_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
+    # The --json contract holds even on arg errors (Codex D3 v2 suggestion).
+    assert _cli_portrait(monkeypatch, tmp_path, ["--json", "--bogus"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "error" in payload
+    assert payload["markdown"] == ""
+
+
 def test_dock_resume_main_skips_update_reminder(tmp_path, monkeypatch):
     """Definitively prove the zero-write entry never invokes the update reminder
     (which would write .update_check.json) — via a sentinel, not just a snapshot."""

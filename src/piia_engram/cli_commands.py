@@ -1865,6 +1865,70 @@ def _run_dock_export(args: list[str]) -> int:
     return 0
 
 
+def _run_dock_portrait(args: list[str]) -> int:
+    """Zero-write user portrait ("查看画像") for a local desktop client.
+
+    Local + owner-run. Opens the store ``read_only`` and builds the lean user
+    portrait in memory (identity + aggregate stats), plus the growth delta vs the
+    latest saved snapshot when one exists — but NEVER saves a new snapshot, so it
+    is a guaranteed zero-write. ``--json`` wraps the rendered markdown; text is the
+    readable fallback.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-portrait [--json]\n\n"
+            "  Zero-write user portrait for a local desktop client.\n"
+            "  Opens the store read-only and never saves a snapshot.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+    for a in args:
+        if a != "--json":
+            if want_json:
+                print(json.dumps(
+                    {"ok": False, "error": f"unknown option: {a}", "markdown": ""},
+                    ensure_ascii=False,
+                ))
+            else:
+                print(f"ERROR: unknown option: {a}")
+            return 2
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root, read_only=True)
+        portrait = eng.build_user_portrait()
+        text = eng.render_user_portrait(portrait)
+        previous = eng.get_latest_portrait()
+        if previous:
+            diff = eng.compare_user_portraits(previous, portrait)
+            text = f"{text}\n{eng.render_portrait_growth(diff)}"
+    except Exception as exc:  # never crash the Dock spawn — emit a usable error
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": str(exc),
+                 "engram_dir": str(root), "markdown": ""},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: could not build portrait: {exc}")
+        return 1
+
+    if want_json:
+        print(json.dumps(
+            {"ok": True, "read_only": True, "engram_dir": str(root),
+             "markdown": text},
+            ensure_ascii=False,
+        ))
+        return 0
+    print(text, end="")
+    return 0
+
+
 def _run_portrait(args: list[str]) -> int:
     """Build, store, and compare a lean user portrait (engram portrait).
 
