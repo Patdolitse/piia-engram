@@ -399,6 +399,53 @@ class PortraitMixin:
             if nm:
                 names.append(nm)
         p["projects"] = names[:10]
+
+        # --- drill-in detail + composition (the "show me everything" view) ---
+        from collections import Counter
+
+        def _trunc(s, n=600):
+            s = (s or "").strip()
+            return s if len(s) <= n else s[:n].rstrip() + "…"
+
+        p["all_lessons"] = [
+            {"summary": l.get("summary", ""), "detail": _trunc(l.get("detail", "")),
+             "tier": l.get("tier", ""), "domain": l.get("domain", "")}
+            for l in _recent(lessons, 100000) if l.get("summary")
+        ]
+        p["all_decisions"] = [
+            {"question": d.get("question", ""), "choice": d.get("choice", ""),
+             "reasoning": _trunc(d.get("reasoning", "")), "tier": d.get("tier", "")}
+            for d in _recent(decisions, 100000) if (d.get("question") or d.get("choice"))
+        ]
+
+        by_tier: Counter = Counter()
+        by_domain: Counter = Counter()
+        for it in (*lessons, *decisions):
+            by_tier[(it.get("tier") or "—")] += 1
+            for dm in (it.get("domain") or "").split(","):
+                dm = dm.strip()
+                if dm:
+                    by_domain[dm] += 1
+        p["composition"] = {
+            "by_tier": dict(by_tier),
+            "by_domain": [{"name": k, "count": c} for k, c in by_domain.most_common(12)],
+        }
+
+        all_ts = [
+            t for t in (
+                (x.get("timestamp") or x.get("created_at") or x.get("created") or "")
+                for x in (*lessons, *decisions)
+            ) if t
+        ]
+        p["first_memory"] = min(all_ts) if all_ts else ""
+
+        tool_counts: Counter = Counter()
+        for it in (*lessons, *decisions):
+            st = (it.get("source_tool") or "").strip()
+            if st:
+                tool_counts[st] += 1
+        p["tool_usage"] = [{"name": k, "count": c} for k, c in tool_counts.most_common()]
+
         return p
 
     def render_user_portrait_html(self, portrait: dict, growth: dict | None = None) -> str:
@@ -459,17 +506,6 @@ class PortraitMixin:
             f'{esc("（暂无身份信息）" if zh else "(no identity yet)")}</span></li>'
         )
 
-        top = p.get("top_domains", []) or []
-        dom_tags = "".join(
-            f'<span class="tag tag-work">{esc(redact_export_text(d.get("name", "")))}'
-            f' · {esc(d.get("count", 0))}</span>'
-            for d in top
-        ) or f'<span class="empty">{esc("（暂无）" if zh else "(none)")}</span>'
-        tools = p.get("active_tools", []) or []
-        tool_tags = "".join(
-            f'<span class="tag tag-public">{esc(redact_export_text(t))}</span>' for t in tools
-        ) or f'<span class="empty">{esc("（暂无）" if zh else "(none)")}</span>'
-
         # work style ("how I work") — the deepest "it knows me" signal
         wp = p.get("work_patterns", {}) or {}
         wp_rows = ""
@@ -494,8 +530,9 @@ class PortraitMixin:
                 f'<div class="card"><ul class="card-list">{wp_rows}</ul></div></div>'
             )
 
-        # representative recent lessons — "what you taught me"
+        # lessons — recent teaser + drill-in to the full list ("what you taught me")
         les = p.get("recent_lessons", []) or []
+        all_les = p.get("all_lessons", []) or []
         les_items = "".join(
             (
                 '<div class="val-item">'
@@ -504,17 +541,41 @@ class PortraitMixin:
             )
             for l in les if l.get("summary")
         )
+        les_drill = ""
+        if all_les:
+            dl = "".join(
+                (
+                    '<div class="dl-item">'
+                    f'<div class="t">{esc(redact_export_text(l.get("summary", "")))}</div>'
+                    + (f'<div class="b">{esc(redact_export_text(l.get("detail", "")))}</div>'
+                       if l.get("detail") else "")
+                    + (
+                        '<div class="m">' + esc(l.get("tier", "") or "")
+                        + (f' · {esc(redact_export_text(l.get("domain", "")))}' if l.get("domain") else "")
+                        + '</div>'
+                        if (l.get("tier") or l.get("domain")) else ""
+                    )
+                    + '</div>'
+                )
+                for l in all_les
+            )
+            label = f"查看全部 {len(all_les)} 条经验" if zh else f"View all {len(all_les)} lessons"
+            les_drill = (
+                f'<details class="drill"><summary>{esc(label)}</summary>'
+                f'<div class="dl">{dl}</div></details>'
+            )
         les_html = ""
-        if les_items:
+        if les_items or les_drill:
             les_html = (
                 '<div class="section"><div class="section-header"><div class="section-icon">验</div>'
-                f'<h2>{esc("你最近教会我的" if zh else "What you taught me")}</h2>'
-                f'<span class="count">{len(les)}</span></div>'
-                f'<div class="card"><div class="val-list">{les_items}</div></div></div>'
+                f'<h2>{esc("你教会我的" if zh else "What you taught me")}</h2>'
+                f'<span class="count">{len(all_les)}</span></div>'
+                f'<div class="card"><div class="val-list">{les_items}</div>{les_drill}</div></div>'
             )
 
-        # representative recent decisions — question → choice
+        # decisions — recent teaser + drill-in to the full list
         dec = p.get("recent_decisions", []) or []
+        all_dec = p.get("all_decisions", []) or []
         dec_items = "".join(
             (
                 '<div class="val-item"><span>'
@@ -524,13 +585,33 @@ class PortraitMixin:
             )
             for d in dec if (d.get("question") or d.get("choice"))
         )
+        dec_drill = ""
+        if all_dec:
+            dd = "".join(
+                (
+                    '<div class="dl-item">'
+                    f'<div class="t">{esc(redact_export_text(d.get("question", "")))}'
+                    '<span class="arr"> → </span>'
+                    f'{esc(redact_export_text(d.get("choice", "")))}</div>'
+                    + (f'<div class="b">{esc(redact_export_text(d.get("reasoning", "")))}</div>'
+                       if d.get("reasoning") else "")
+                    + (f'<div class="m">{esc(d.get("tier", ""))}</div>' if d.get("tier") else "")
+                    + '</div>'
+                )
+                for d in all_dec
+            )
+            label = f"查看全部 {len(all_dec)} 条决策" if zh else f"View all {len(all_dec)} decisions"
+            dec_drill = (
+                f'<details class="drill"><summary>{esc(label)}</summary>'
+                f'<div class="dl">{dd}</div></details>'
+            )
         dec_html = ""
-        if dec_items:
+        if dec_items or dec_drill:
             dec_html = (
                 '<div class="section"><div class="section-header"><div class="section-icon">策</div>'
                 f'<h2>{esc("你的关键决策" if zh else "Your key decisions")}</h2>'
-                f'<span class="count">{len(dec)}</span></div>'
-                f'<div class="card"><div class="val-list">{dec_items}</div></div></div>'
+                f'<span class="count">{len(all_dec)}</span></div>'
+                f'<div class="card"><div class="val-list">{dec_items}</div>{dec_drill}</div></div>'
             )
 
         # projects
@@ -545,6 +626,72 @@ class PortraitMixin:
                 f'<h2>{esc("项目" if zh else "Projects")}</h2></div>'
                 f'<div class="card"><div class="tag-wrap">{proj_tags}</div></div></div>'
             )
+
+        # knowledge composition — bars by tier and by domain
+        comp = p.get("composition", {}) or {}
+
+        def _bars(pairs):
+            mx = max((c for _, c in pairs), default=0) or 1
+            return "".join(
+                (
+                    '<div class="bar">'
+                    f'<span class="bl">{esc(redact_export_text(str(name)))}</span>'
+                    f'<span class="bt"><span class="bf" style="width:{round(100 * c / mx)}%"></span></span>'
+                    f'<span class="bn">{esc(c)}</span></div>'
+                )
+                for name, c in pairs
+            )
+
+        tier_pairs = sorted((comp.get("by_tier", {}) or {}).items(), key=lambda kv: -kv[1])
+        dom_pairs = [(d.get("name", ""), d.get("count", 0)) for d in (comp.get("by_domain", []) or [])]
+        comp_html = ""
+        if tier_pairs or dom_pairs:
+            inner = ""
+            if tier_pairs:
+                inner += (
+                    f'<div class="card-title">{esc("按可信度" if zh else "By tier")}</div>'
+                    f'<div class="bars">{_bars(tier_pairs)}</div>'
+                )
+            if dom_pairs:
+                inner += (
+                    f'<div class="card-title" style="margin-top:18px">'
+                    f'{esc("高频领域" if zh else "Top domains")}</div>'
+                    f'<div class="bars">{_bars(dom_pairs)}</div>'
+                )
+            comp_html = (
+                '<div class="section"><div class="section-header"><div class="section-icon">构</div>'
+                f'<h2>{esc("知识构成" if zh else "Knowledge Composition")}</h2></div>'
+                f'<div class="card">{inner}</div></div>'
+            )
+
+        # collaboration tools with usage counts
+        tu = p.get("tool_usage", []) or []
+        tool_usage_tags = "".join(
+            f'<span class="tag tag-public">{esc(redact_export_text(t.get("name", "")))}'
+            f' · {esc(t.get("count", 0))}</span>'
+            for t in tu
+        )
+        tools_html = ""
+        if tool_usage_tags:
+            tools_html = (
+                '<div class="section"><div class="section-header"><div class="section-icon">具</div>'
+                f'<h2>{esc("协作工具" if zh else "Tools")}</h2></div>'
+                f'<div class="card"><div class="tag-wrap">{tool_usage_tags}</div></div></div>'
+            )
+
+        # "days together" since the first memory
+        days_meta = ""
+        fm = (p.get("first_memory", "") or "")[:10]
+        if fm:
+            try:
+                from datetime import date
+                y, mo, dy = (int(x) for x in fm.split("-")[:3])
+                delta = (date.today() - date(y, mo, dy)).days
+                if delta >= 0:
+                    lbl = f"已陪伴 {delta} 天" if zh else f"{delta} days together"
+                    days_meta = f'<span class="meta-item">{esc(lbl)}</span>'
+            except Exception:
+                days_meta = ""
 
         growth_html = ""
         if growth:
@@ -680,6 +827,27 @@ class PortraitMixin:
   .tag-work { background:var(--accent-soft); color:var(--accent); border:1px solid rgba(139,148,249,0.28); }
   .tag-public { background:rgba(56,189,248,0.13); color:var(--cyan); border:1px solid rgba(56,189,248,0.25); }
   .tag-wrap { display:flex; flex-wrap:wrap; gap:8px; }
+  .drill { margin-top:13px; border-top:1px solid var(--line-faint); padding-top:11px; }
+  .drill > summary { cursor:pointer; font-size:0.74rem; color:var(--accent); font-weight:600;
+    list-style:none; letter-spacing:0.02em; padding:3px 0; user-select:none; }
+  .drill > summary::-webkit-details-marker { display:none; }
+  .drill > summary::before { content:'▸ '; }
+  .drill[open] > summary::before { content:'▾ '; }
+  .drill[open] > summary { margin-bottom:12px; }
+  .dl { display:flex; flex-direction:column; gap:13px; }
+  .dl-item { border-left:2px solid var(--line-strong); padding:1px 0 1px 13px; }
+  .dl-item .t { color:#bcc2fb; font-weight:600; font-size:0.8rem; line-height:1.5; overflow-wrap:anywhere; }
+  .dl-item .b { color:var(--text-dim); font-size:0.77rem; line-height:1.6; margin-top:5px;
+    overflow-wrap:anywhere; white-space:pre-wrap; }
+  .dl-item .m { font-size:0.6rem; color:var(--text-muted); margin-top:5px; letter-spacing:0.05em;
+    text-transform:uppercase; }
+  .bars { display:flex; flex-direction:column; gap:9px; }
+  .bar { display:grid; grid-template-columns:104px 1fr 34px; align-items:center; gap:10px; font-size:0.74rem; }
+  .bar .bl { color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bar .bt { height:8px; background:rgba(255,255,255,0.05); border-radius:4px; overflow:hidden; }
+  .bar .bf { height:100%; border-radius:4px; background:linear-gradient(90deg,var(--accent),var(--cyan)); min-width:2px; }
+  .bar .bn { color:var(--text-muted); text-align:right; font-variant-numeric:tabular-nums;
+    font-family:Consolas,monospace; }
   .footer { text-align:center; padding-top:32px; margin-top:26px; border-top:1px solid var(--line); position:relative; }
   .footer::before { content:'✓'; position:absolute; top:-16px; left:50%; transform:translateX(-50%); width:32px;
     height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:14px;
@@ -705,20 +873,18 @@ class PortraitMixin:
             '<div class="meta-row">'
             f'<span class="meta-item"><span class="dot"></span>{esc("只读快照" if zh else "read-only")}</span>'
             f'<span class="meta-item">{esc("语言" if zh else "Language")} '
-            f'<b>{esc(ident.get("language", ""))}</b></span></div></div>'
+            f'<b>{esc(ident.get("language", ""))}</b></span>'
+            f"{days_meta}"
+            '</div></div>'
             f'<div class="stats">{stat_cards}</div>'
             '<div class="section"><div class="section-header"><div class="section-icon">身</div>'
             f'<h2>{esc("身份" if zh else "Identity")}</h2></div>'
             f'<div class="card"><ul class="card-list">{id_html}</ul></div></div>'
             f"{wp_html}"
-            '<div class="section"><div class="section-header"><div class="section-icon">域</div>'
-            f'<h2>{esc("领域 & 工具" if zh else "Domains & Tools")}</h2></div>'
-            f'<div class="card"><div class="card-title">{esc("高频领域" if zh else "Top domains")}</div>'
-            f'<div class="tag-wrap">{dom_tags}</div>'
-            f'<div class="card-title" style="margin-top:18px">{esc("活跃工具" if zh else "Active tools")}</div>'
-            f'<div class="tag-wrap">{tool_tags}</div></div></div>'
+            f"{comp_html}"
             f"{les_html}"
             f"{dec_html}"
+            f"{tools_html}"
             f"{proj_html}"
             f"{growth_html}"
             f'<div class="footer"><p>{footer}</p></div>'
