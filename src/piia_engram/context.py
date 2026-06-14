@@ -495,6 +495,149 @@ class ContextMixin:
             "results": results,
         }
 
+    def extract_candidates(
+        self, text: str, source_tool: str = "", domain: str = "",
+    ) -> dict:
+        """Dry-run extraction: return lesson/decision candidates WITHOUT writing.
+
+        Mirrors the trigger + quality gate of :meth:`extract_session_insights`
+        but performs ZERO store writes. Used by the desktop onboarding flow to
+        preview candidates for the owner to confirm before anything is saved.
+        Duplicate candidate sentences (same type + text) are collapsed.
+        """
+        if not text or not text.strip():
+            return {"candidates": [], "skipped": 0, "skipped_low_quality": 0}
+
+        sentences = re.split(r"[。！？.!?\n]+", text)
+        candidates: list[dict] = []
+        skipped = skipped_low_quality = 0
+        seen: set[tuple[str, str]] = set()
+
+        for raw in sentences:
+            sentence = raw.strip()
+            if not sentence or len(sentence) < 8:
+                skipped += 1
+                continue
+            if not self._has_content_chars(sentence):
+                skipped += 1
+                continue
+
+            sentence_lower = sentence.lower()
+            is_decision = any(t in sentence_lower for t in DECISION_TRIGGERS)
+            is_lesson = any(t in sentence_lower for t in LESSON_TRIGGERS)
+            if not is_decision and not is_lesson:
+                if re.search(
+                    r"(应该|需要|必须|建议|最好|注意|避免|不要|要|should|must|need|avoid|remember|make sure)",
+                    sentence_lower,
+                ):
+                    is_lesson = True
+                elif re.search(
+                    r"(因此|所以|最终|改为|使用|采用|选择了|therefore|so we|decided to|chose|switched)",
+                    sentence_lower,
+                ):
+                    is_decision = True
+            if not is_decision and not is_lesson:
+                skipped += 1
+                continue
+
+            candidate_type = "decision" if is_decision else "lesson"
+            trigger_reason = "decision_trigger" if is_decision else "lesson_trigger"
+            quality = _assess_extraction_candidate(
+                sentence, candidate_type, trigger_reason, 0.75,
+            )
+            if not quality["accepted"]:
+                skipped += 1
+                skipped_low_quality += 1
+                continue
+
+            key = (candidate_type, sentence.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append({
+                "type": candidate_type,
+                "text": sentence,
+                "domain": self._infer_domain(sentence, domain),
+                "quality_score": quality.get("score", 0),
+            })
+
+        return {
+            "candidates": candidates,
+            "skipped": skipped,
+            "skipped_low_quality": skipped_low_quality,
+        }
+
+    def commit_candidates(
+        self, candidates: list[dict] | None, source_tool: str = "onboarding",
+    ) -> dict:
+        """Write owner-confirmed onboarding candidates into the store.
+
+        Each candidate is ``{"type": "lesson"|"decision", "text": str,
+        "domain": str}`` — typically the subset the owner ticked from
+        :meth:`extract_candidates`. Quality/metadata are recomputed here; any
+        caller-supplied score is ignored (never trust the front-end payload).
+        Malformed entries (non-dict, non-string or empty ``text``) are skipped,
+        and a re-evaluated low-quality candidate is rejected even if its payload
+        faked a high score — so commit never becomes a back door around the
+        extraction gate. Returns save counts. A deliberate write (the "commit").
+        """
+        saved_lessons = saved_decisions = duplicates = 0
+        skipped = skipped_low_quality = 0
+        saved_ids: list[str] = []
+        for c in candidates or []:
+            if not isinstance(c, dict):
+                skipped += 1
+                continue
+            text = c.get("text")
+            if not isinstance(text, str) or not text.strip():
+                skipped += 1
+                continue
+            text = text.strip()
+            ctype = "decision" if (c.get("type") == "decision") else "lesson"
+            dom = c.get("domain")
+            item_domain = dom.strip() if isinstance(dom, str) else ""
+            trigger_reason = f"{ctype}_trigger"
+            quality = _assess_extraction_candidate(
+                text, ctype, trigger_reason, 0.75,
+            )
+            if not quality.get("accepted"):
+                skipped += 1
+                skipped_low_quality += 1
+                continue
+            meta = _make_extraction_metadata(
+                "onboarding", text, trigger_reason, source_tool, 0.75, quality,
+            )
+            if ctype == "decision":
+                res = self.add_decision({
+                    "title": text, "choice": "", "domain": item_domain,
+                    "source_tool": source_tool, "extraction": meta,
+                })
+                if isinstance(res, dict) and res.get("status") == "duplicate":
+                    duplicates += 1
+                else:
+                    saved_decisions += 1
+                    if isinstance(res, dict) and res.get("id"):
+                        saved_ids.append(res["id"])
+            else:
+                res = self.add_lesson({
+                    "summary": text, "domain": item_domain,
+                    "source_tool": source_tool, "extraction": meta,
+                })
+                if isinstance(res, dict) and res.get("status") == "duplicate":
+                    duplicates += 1
+                else:
+                    saved_lessons += 1
+                    if isinstance(res, dict) and res.get("id"):
+                        saved_ids.append(res["id"])
+        return {
+            "saved_lessons": saved_lessons,
+            "saved_decisions": saved_decisions,
+            "duplicates": duplicates,
+            "skipped": skipped,
+            "skipped_low_quality": skipped_low_quality,
+            "saved_ids": saved_ids,
+        }
+
     def extract_session_insights(
         self,
         summary: str,

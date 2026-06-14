@@ -2150,6 +2150,254 @@ def _run_dock_archived(args: list[str]) -> int:
     return 0
 
 
+def _collect_folder_signals(folder: str) -> tuple[str, list[str]]:
+    """Read a project folder's recent git commit subjects + README as text.
+
+    Best-effort and read-only: returns ("", []) when the folder is missing or has
+    nothing usable. git failures (not a repo / git absent / timeout) are swallowed
+    so onboarding degrades to whatever else was provided.
+    """
+    import subprocess
+
+    try:
+        p = Path(folder)
+        if not p.is_dir():
+            return "", []
+    except Exception:
+        return "", []
+    chunks: list[str] = []
+    used: list[str] = []
+
+    # recent commit subjects (best-effort; ignore if not a git repo / git missing)
+    try:
+        creation = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW on Windows
+        proc = subprocess.run(
+            ["git", "-C", str(p), "log", "--no-merges",
+             "--pretty=format:%s", "-n", "200"],
+            capture_output=True, text=True, timeout=15, creationflags=creation,
+            encoding="utf-8", errors="replace",  # git messages are UTF-8, not locale (gbk)
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            chunks.append(proc.stdout)
+            used.append("git-log")
+    except Exception:
+        pass
+
+    # README (first match found, truncated to keep extraction fast)
+    for name in ("README.md", "README.MD", "readme.md", "Readme.md",
+                 "README.txt", "README"):
+        rp = p / name
+        if rp.is_file():
+            try:
+                with rp.open("r", encoding="utf-8", errors="replace") as fh:
+                    chunks.append(fh.read(16000))  # bounded read, not read-all-then-slice
+                used.append("readme")
+            except Exception:
+                pass
+            break
+
+    return "\n".join(chunks), used
+
+
+def _run_dock_onboard_scan(args: list[str]) -> int:
+    """Zero-write onboarding scan + candidate preview (engram dock-onboard-scan).
+
+    Local + owner-run. Gathers free-form text from ``--text`` / ``--text-file``
+    and, when ``--folder`` is given, that project's recent git commit subjects +
+    README, then runs a DRY-RUN extraction (:meth:`Engram.extract_candidates`) so
+    the desktop client can preview lesson/decision candidates for the owner to
+    tick before anything is written. Opens the store ``read_only`` — guaranteed
+    zero-write. Confirm via ``dock-onboard-commit``.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-onboard-scan [--text TEXT] [--text-file PATH] "
+            "[--folder DIR] [--source TOOL] [--json]\n\n"
+            "  Zero-write: collect text (and a folder's git log + README) and "
+            "preview\n"
+            "  lesson/decision candidates. Nothing is saved; confirm via "
+            "dock-onboard-commit.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": msg, "candidates": [], "count": 0},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    text = ""
+    text_file = ""
+    folder = ""
+    source = "onboarding"
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass
+        elif a == "--text":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--text requires a value")
+            i += 1
+            text = args[i]
+        elif a == "--text-file":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--text-file requires a value")
+            i += 1
+            text_file = args[i]
+        elif a == "--folder":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--folder requires a value")
+            i += 1
+            folder = args[i]
+        elif a == "--source":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--source requires a value")
+            i += 1
+            source = args[i]
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+
+    parts: list[str] = []
+    sources: list[str] = []
+    if text.strip():
+        parts.append(text)
+        sources.append("text")
+    if text_file:
+        try:
+            parts.append(Path(text_file).read_text(encoding="utf-8", errors="replace"))
+            sources.append("text-file")
+        except Exception as exc:
+            return _err(f"could not read --text-file: {exc}", 1)
+    if folder:
+        collected, used = _collect_folder_signals(folder)
+        if collected:
+            parts.append(collected)
+            sources.extend(used)
+
+    combined = "\n".join(s for s in parts if s and s.strip())
+    if not combined.strip():
+        return _err(
+            "no input — provide --text, --text-file, or a --folder with git/README",
+            2,
+        )
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root, read_only=True)
+        out = eng.extract_candidates(combined, source_tool=source)
+    except Exception as exc:
+        return _err(str(exc), 1)
+
+    cands = out.get("candidates", [])
+    if want_json:
+        print(json.dumps(
+            {"ok": True, "read_only": True, "sources": sources,
+             "count": len(cands), "candidates": cands,
+             "skipped": out.get("skipped", 0)},
+            ensure_ascii=False,
+        ))
+        return 0
+    if not cands:
+        print("(no candidates found)")
+        return 0
+    for c in cands:
+        print(f"- [{c.get('type')}] {c.get('text')}")
+    return 0
+
+
+def _run_dock_onboard_commit(args: list[str]) -> int:
+    """Write owner-confirmed onboarding candidates (engram dock-onboard-commit).
+
+    Local + owner-run. Reads a JSON array of candidates the owner ticked in the
+    dock from ``--candidates-file`` (written by the client to a temp file, which
+    avoids command-line length limits), then writes them via
+    :meth:`Engram.commit_candidates`. A DELIBERATE write — the onboarding confirm
+    step; everything written is reversible via ``dock-archive``. Returns counts.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-onboard-commit --candidates-file PATH "
+            "[--source TOOL] [--json]\n\n"
+            "  Writes owner-confirmed onboarding candidates (a JSON array of\n"
+            "  {type,text,domain}). A deliberate write; recover via dock-archive.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    cand_file = ""
+    source = "onboarding"
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass
+        elif a == "--candidates-file":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--candidates-file requires a value")
+            i += 1
+            cand_file = args[i]
+        elif a == "--source":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--source requires a value")
+            i += 1
+            source = args[i]
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+
+    if not cand_file:
+        return _err("--candidates-file is required")
+    try:
+        candidates = json.loads(Path(cand_file).read_text(encoding="utf-8"))
+    except Exception as exc:
+        return _err(f"could not read --candidates-file: {exc}", 1)
+    if not isinstance(candidates, list):
+        return _err("--candidates-file must contain a JSON array")
+    if not candidates:
+        return _err("no candidates to write", 2)
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root)
+        result = eng.commit_candidates(candidates, source_tool=source)
+    except Exception as exc:
+        return _err(str(exc), 1)
+
+    if want_json:
+        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        return 0
+    print(
+        f"已写入: 经验 {result.get('saved_lessons', 0)}、"
+        f"决策 {result.get('saved_decisions', 0)}、"
+        f"重复跳过 {result.get('duplicates', 0)}"
+    )
+    return 0
+
+
 def _run_portrait(args: list[str]) -> int:
     """Build, store, and compare a lean user portrait (engram portrait).
 

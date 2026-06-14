@@ -522,3 +522,221 @@ def test_dock_resume_main_skips_update_reminder(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         setup_wizard.main()
     assert called == []  # reminder never invoked for dock-resume
+
+
+# --- dock-onboard-scan / dock-onboard-commit (D2 onboarding) ----------------
+
+
+_ONBOARD_SAMPLE = (
+    "我们决定使用 PostgreSQL 而不是 MySQL。\n"
+    "必须始终验证用户输入，避免注入攻击。\n"
+    "今天天气不错。\n"
+)
+
+
+def _scan(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_onboard_scan
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_onboard_scan(argv)
+
+
+def _commit(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_onboard_commit
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_onboard_commit(argv)
+
+
+def test_dock_onboard_scan_help(monkeypatch, tmp_path, capsys):
+    assert _scan(monkeypatch, tmp_path, ["--help"]) == 0
+    assert "dock-onboard-scan" in capsys.readouterr().out
+
+
+def test_dock_onboard_scan_text_json_and_zero_write(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    _populate(store)
+    before = _snapshot(store)
+    assert _scan(monkeypatch, tmp_path, ["--text", _ONBOARD_SAMPLE, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is True and data["read_only"] is True
+    assert data["count"] >= 1
+    assert all("type" in c and "text" in c for c in data["candidates"])
+    assert _snapshot(store) == before  # dry-run preview: not one byte changed
+
+
+def test_dock_onboard_scan_unknown_arg_is_json(monkeypatch, tmp_path, capsys):
+    assert _scan(monkeypatch, tmp_path, ["--bogus", "--json"]) == 2
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is False and "unknown option" in data["error"]
+
+
+def test_dock_onboard_scan_empty_input_errors(monkeypatch, tmp_path, capsys):
+    assert _scan(monkeypatch, tmp_path, ["--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_onboard_scan_dedupes_candidates(monkeypatch, tmp_path, capsys):
+    dup = ("我们决定使用 PostgreSQL 而不是 MySQL。\n"
+           "我们决定使用 PostgreSQL 而不是 MySQL。\n")
+    assert _scan(monkeypatch, tmp_path, ["--text", dup, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["count"] == 1  # identical sentence collapsed
+
+
+def test_dock_onboard_scan_text_file(monkeypatch, tmp_path, capsys):
+    f = tmp_path / "notes.txt"
+    f.write_text(_ONBOARD_SAMPLE, encoding="utf-8")
+    assert _scan(monkeypatch, tmp_path, ["--text-file", str(f), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is True and "text-file" in data["sources"]
+    assert data["count"] >= 1
+
+
+def test_dock_onboard_scan_folder_readme(monkeypatch, tmp_path, capsys):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "README.md").write_text(
+        "我们决定使用 PostgreSQL 而不是 MySQL。\n"
+        "必须始终在上线前测试备份恢复，避免数据丢失。\n",
+        encoding="utf-8",
+    )
+    assert _scan(monkeypatch, tmp_path, ["--folder", str(proj), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is True and "readme" in data["sources"]
+    assert data["count"] >= 1
+
+
+def test_dock_onboard_scan_missing_folder_degrades(monkeypatch, tmp_path, capsys):
+    # non-existent folder and no text -> clean error, never crashes
+    assert _scan(monkeypatch, tmp_path,
+                 ["--folder", str(tmp_path / "nope"), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_onboard_commit_help(monkeypatch, tmp_path, capsys):
+    assert _commit(monkeypatch, tmp_path, ["--help"]) == 0
+    assert "dock-onboard-commit" in capsys.readouterr().out
+
+
+def test_dock_onboard_commit_writes_knowledge(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    _populate(store)
+    cands = [
+        {"type": "decision",
+         "text": "我们决定使用 PostgreSQL 而不是 MySQL", "domain": "database"},
+        {"type": "lesson",
+         "text": "必须始终验证用户输入，避免注入攻击", "domain": ""},
+    ]
+    cf = tmp_path / "cands.json"
+    cf.write_text(json.dumps(cands, ensure_ascii=False), encoding="utf-8")
+    assert _commit(monkeypatch, tmp_path,
+                   ["--candidates-file", str(cf), "--json"]) == 0
+    res = json.loads(capsys.readouterr().out)["result"]
+    assert res["saved_lessons"] == 1 and res["saved_decisions"] == 1
+
+    from piia_engram.core import Engram
+
+    eng = Engram(root=store, read_only=True)
+    les = eng.get_lessons(limit=None, _update_access=False, _migrate_fields=False)
+    dec = eng.get_decisions(limit=None, _update_access=False, _migrate_fields=False)
+    assert len(les) >= 1 and len(dec) >= 1
+
+
+def test_dock_onboard_commit_requires_file(monkeypatch, tmp_path, capsys):
+    assert _commit(monkeypatch, tmp_path, ["--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_onboard_commit_rejects_non_array(monkeypatch, tmp_path, capsys):
+    cf = tmp_path / "bad.json"
+    cf.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
+    assert _commit(monkeypatch, tmp_path,
+                   ["--candidates-file", str(cf), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_onboard_commit_empty_array_errors(monkeypatch, tmp_path, capsys):
+    cf = tmp_path / "empty.json"
+    cf.write_text("[]", encoding="utf-8")
+    assert _commit(monkeypatch, tmp_path,
+                   ["--candidates-file", str(cf), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_onboard_round_trip(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    _populate(store)
+    assert _scan(monkeypatch, tmp_path, ["--text", _ONBOARD_SAMPLE, "--json"]) == 0
+    scan = json.loads(capsys.readouterr().out)
+    assert scan["count"] >= 1
+    cf = tmp_path / "rt.json"
+    cf.write_text(json.dumps(scan["candidates"], ensure_ascii=False),
+                  encoding="utf-8")
+    assert _commit(monkeypatch, tmp_path,
+                   ["--candidates-file", str(cf), "--json"]) == 0
+    res = json.loads(capsys.readouterr().out)["result"]
+    assert (res["saved_lessons"] + res["saved_decisions"]) == scan["count"]
+
+
+def test_dock_onboard_scan_main_skips_update_reminder(tmp_path, monkeypatch):
+    """dock-onboard-scan is a zero-write entry — it must NOT invoke the update
+    reminder (which would write .update_check.json into the store)."""
+    import piia_engram.update_check as uc
+    from piia_engram import setup_wizard
+
+    called: list[int] = []
+    monkeypatch.setattr(uc, "maybe_print_update_notice",
+                        lambda *a, **k: called.append(1))
+    store = tmp_path / "store"
+    _populate(store)
+    monkeypatch.setenv("ENGRAM_DIR", str(store))
+    monkeypatch.setattr("sys.argv",
+                        ["engram", "dock-onboard-scan",
+                         "--text", _ONBOARD_SAMPLE, "--json"])
+    with pytest.raises(SystemExit):
+        setup_wizard.main()
+    assert called == []  # reminder never invoked for the zero-write scan
+
+
+def test_dock_onboard_commit_rejects_low_quality_even_with_faked_score(
+        monkeypatch, tmp_path, capsys):
+    """A low-quality candidate must NOT be written even if its JSON payload fakes a
+    high quality_score — commit re-evaluates and is not a back door around the gate."""
+    store = tmp_path / "store"
+    _populate(store)
+    cands = [{"type": "lesson", "text": "嗯", "domain": "", "quality_score": 0.99}]
+    cf = tmp_path / "lowq.json"
+    cf.write_text(json.dumps(cands, ensure_ascii=False), encoding="utf-8")
+    assert _commit(monkeypatch, tmp_path,
+                   ["--candidates-file", str(cf), "--json"]) == 0
+    res = json.loads(capsys.readouterr().out)["result"]
+    assert res["saved_lessons"] == 0 and res["saved_decisions"] == 0
+    assert res["skipped_low_quality"] >= 1
+
+
+def test_dock_onboard_commit_handles_malformed_entries(monkeypatch, tmp_path, capsys):
+    """Non-dict / non-string text / non-string domain are skipped without crashing;
+    a valid entry in the same array is still written (no partial-write-then-throw)."""
+    store = tmp_path / "store"
+    _populate(store)
+    cands = [
+        "not a dict",
+        {"type": "lesson", "text": 12345, "domain": ""},          # non-string text
+        {"type": "lesson", "text": "", "domain": ""},               # empty text
+        {"type": "decision", "text": "我们决定使用 PostgreSQL 而不是 MySQL",
+         "domain": ["not", "a", "string"]},                         # bad domain, valid text
+    ]
+    cf = tmp_path / "mixed.json"
+    cf.write_text(json.dumps(cands, ensure_ascii=False), encoding="utf-8")
+    assert _commit(monkeypatch, tmp_path,
+                   ["--candidates-file", str(cf), "--json"]) == 0
+    res = json.loads(capsys.readouterr().out)["result"]
+    assert res["saved_decisions"] == 1   # the one valid entry still written
+    assert res["skipped"] >= 3           # the rest skipped, no crash
+
+
+def test_dock_onboard_scan_text_requires_value(monkeypatch, tmp_path, capsys):
+    """`--text --json` must be a missing-value error, not swallow the --json flag."""
+    assert _scan(monkeypatch, tmp_path, ["--text", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
