@@ -2565,8 +2565,9 @@ def _print_preview_usage() -> None:
     print(
         "Usage:\n"
         "  engram preview [--level quick|standard|full] [--as ROLE]\n"
-        "                 [--project NAME] [--query TEXT] [--json]\n"
+        "                 [--project NAME] [--query TEXT] [--read-only] [--json]\n"
         "  engram preview --html [--output PATH] [...same options]\n"
+        "  --read-only: skip session/audit/structure writes (zero-write to store)\n"
         "\n"
         "Roles: owner | assistant | reviewer | automation\n"
         "Shows exactly what a simulated AI caller would receive (exposed vs\n"
@@ -2600,6 +2601,7 @@ def run_preview(argv: list[str] | None = None) -> int:
     query = ""
     json_output = False
     html_output = False
+    read_only = False
     output: Path | None = None
     i = 0
     while i < len(args):
@@ -2611,6 +2613,8 @@ def run_preview(argv: list[str] | None = None) -> int:
             json_output = True
         elif arg == "--html":
             html_output = True
+        elif arg == "--read-only":
+            read_only = True
         elif arg in {"--level", "--as", "--project", "--query", "--output"}:
             if i + 1 >= len(args):
                 print(f"Missing value for {arg}")
@@ -2644,7 +2648,7 @@ def run_preview(argv: list[str] | None = None) -> int:
         return 2
 
     root = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
-    eng = Engram(root=root)
+    eng = Engram(root=root, read_only=read_only)
     try:
         preview = build_context_preview(
             eng,
