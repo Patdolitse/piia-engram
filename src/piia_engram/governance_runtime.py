@@ -732,6 +732,29 @@ _WRITE_REFUSAL_NO = _refusal(
     " (write policy: no). The knowledge base is read-only for this caller."
 )
 
+_TRUSTED_LOCAL_OWNER_REVIEW_REFUSAL = _refusal(
+    "【治理层】此写入会修改身份、覆盖既有知识或改变高影响关系，"
+    "需要 owner review（private-self）执行。可信本地工具仍可直接写入"
+    "低风险新 lesson/decision；高风险新知识会进入 staging。"
+    " / Governance: this write changes identity, overwrites existing knowledge,"
+    " or mutates high-impact relations and requires owner review (private-self)."
+    " Trusted-local callers may still direct-write low-risk new knowledge;"
+    " high-risk new knowledge is routed to staging."
+)
+
+_TRUSTED_LOCAL_OWNER_REVIEW_TOOLS = frozenset({
+    "update_identity",
+    "update_knowledge",
+    "archive_knowledge",
+    "merge_knowledge",
+    "manage_relation",
+    "review_staging",
+    "manage_playbook",
+    "playbook_execution",
+    "register_tool",
+    "save_project_snapshot",
+})
+
 
 def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
                        client_type: str | None = None,
@@ -748,7 +771,8 @@ def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
 
     Write policy mapping:
     - ``"verified"`` (private-self): proceed — return None
-    - ``"direct_write"`` (trusted-local): proceed — return None
+    - ``"direct_write"`` (trusted-local): proceed for low-blast new knowledge;
+      high-impact tools are refused for owner review.
     - ``"no"`` (read-only-external): refuse outright
 
     High-blast operations (grant changes, whole-store imports, file exports)
@@ -774,11 +798,19 @@ def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
         )
         return _WRITE_REFUSAL_NO
 
-    if write_policy in ("verified", "direct_write"):
-        # "verified" = owner, "direct_write" = trusted-local agent.
-        # Both write directly; high-blast ops are owner-gated separately
-        # (maybe_refuse_owner_write). A future opt-in approval workflow
-        # may route "direct_write" through staging.
+    if write_policy == "verified":
+        return None
+
+    if write_policy == "direct_write":
+        if trust == "trusted-local" and tool in _TRUSTED_LOCAL_OWNER_REVIEW_TOOLS:
+            _finalize_receipt(
+                root, tool=tool, aid=aid, ct=ct, trust=trust,
+                declared_task=declared_task, revoked=False,
+                returned_by_type={"_owner_review_required": 1},
+                excluded_sens=1, excluded_malformed=0,
+                grant_error=grant_error, effective_profile=eff,
+            )
+            return _TRUSTED_LOCAL_OWNER_REVIEW_REFUSAL
         return None
 
     _finalize_receipt(

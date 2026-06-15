@@ -45,15 +45,17 @@ level.
 | Trust level | Typical client types | Read ceiling | Write policy |
 |---|---|---|---|
 | `private-self` | `self`, `cli`, `engram`, `doctor` | `secret` | `verified` |
-| `trusted-local` | `claude_code`, `claude-code`, `codex`, `cursor`, `windsurf`, `gemini_cli`, `gemini-cli` | `work` | `direct_write` † |
+| `trusted-local` | `claude_code`, `claude-code`, `codex`, `cursor`, `windsurf`, `gemini_cli`, `gemini-cli` | `work` | `direct_write` for low-blast new knowledge † |
 | `read-only-external` | unknown, empty, web or transient callers | `public` | `no` |
 
-† `direct_write` means `trusted-local` callers write directly to the knowledge
-store (up to `work` sensitivity) — there is no propose-then-approve staging step
-on this path; `maybe_refuse_write()` lets these writes through. High-blast
-operations such as grant changes, whole-store imports, import dry-runs that read
-full backup files, and file exports are stricter and require `private-self`.
-An opt-in approval workflow (staging) is a possible future increment.
+† `direct_write` for `trusted-local` is deliberately narrow. New low/medium-risk
+lessons and decisions can write directly; high-risk new knowledge still goes to
+`staging` through the risk gate. Identity changes, existing-knowledge overwrite
+or archive, merge/relation mutations, tool registration, project snapshot writes,
+and playbook management require owner review (`private-self`) when governance is
+enabled. High-blast operations such as grant changes, whole-store imports, import
+dry-runs that read full backup files, and file exports are also stricter and
+require `private-self`.
 
 Explicit grants can override the default mapping:
 

@@ -469,6 +469,102 @@ class TestOwnerStillWorks:
             "trusted-local must be allowed to wrap up a session"
         )
 
+    def test_trusted_local_low_risk_lesson_still_direct_writes(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")  # trusted-local
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        import piia_engram.mcp_server as mcp_server
+
+        mcp_server._engram = e
+
+        result = _run(mcp_server.add_lesson(
+            summary="prefer small pure functions for testability",
+            domain="python",
+            source_tool="codex",
+        ))
+
+        assert not _is_refusal(result)
+        stored = e.get_lessons(limit=None, _update_access=False)
+        assert stored[0]["tier"] == "verified"
+        assert stored[0]["approval_status"] == "approved"
+
+    def test_trusted_local_high_risk_lesson_is_staging(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")  # trusted-local
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        import piia_engram.mcp_server as mcp_server
+
+        mcp_server._engram = e
+
+        result = _run(mcp_server.add_lesson(
+            summary="rotate api_key and run the deploy command",
+            domain="ops",
+            source_tool="codex",
+        ))
+
+        assert not _is_refusal(result)
+        stored = e.get_lessons(limit=None, _update_access=False)
+        assert stored[0]["tier"] == "staging"
+        assert stored[0]["approval_status"] == "pending"
+
+    def test_trusted_local_identity_update_needs_owner_review(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")  # trusted-local
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        import piia_engram.mcp_server as mcp_server
+
+        mcp_server._engram = e
+        before = e.get_profile(safe=False)
+
+        result = _run(mcp_server.update_identity(
+            "profile",
+            json.dumps({"role": "changed by agent"}),
+            source_tool="codex",
+        ))
+
+        assert _is_refusal(result)
+        assert "owner review" in result
+        assert e.get_profile(safe=False) == before
+
+    def test_trusted_local_existing_knowledge_update_needs_owner_review(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")  # trusted-local
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+        lesson = e.add_lesson("original stable lesson", tier="verified")
+
+        import piia_engram.mcp_server as mcp_server
+
+        mcp_server._engram = e
+
+        result = _run(mcp_server.update_knowledge(
+            lesson["id"],
+            json.dumps({"summary": "overwritten by agent"}),
+        ))
+
+        assert _is_refusal(result)
+        assert "owner review" in result
+        stored = e.get_lessons(limit=None, _update_access=False)[0]
+        assert stored["summary"] == "original stable lesson"
+
     def test_governance_off_wrap_up_allowed(self, tmp_path, monkeypatch):
         monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
         engram = _setup_engram(tmp_path)
