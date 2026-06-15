@@ -44,7 +44,7 @@ engram reindex
 别处再运行：
 
 ```bash
-export FASTEMBED_CACHE_PATH=/path/to/cache   # 例如 E:\ml-cache\fastembed
+export FASTEMBED_CACHE_PATH=/path/to/cache   # 例如 /path/to/fastembed-cache
 ```
 
 不安装 `[vector]` extra 时，混合检索仍以 keyword + FTS 两路运行（无需下载）；

@@ -1669,6 +1669,10 @@ def test_doctor_reports_governance_disabled_hint(tmp_path: Path, monkeypatch, ca
     assert "Agent governance: off" in out
     assert "ENGRAM_GOVERNANCE=1" in out
     assert "multi-tool" in out
+    assert '"ENGRAM_GOVERNANCE": "1"' in out
+    assert 'ENGRAM_GOVERNANCE = "1"' in out
+    assert "ENGRAM_CLIENT_TYPE" in out
+    assert "not written automatically" in out
 
 
 def test_doctor_non_fix_does_not_backfill_legacy_knowledge(tmp_path: Path, monkeypatch):

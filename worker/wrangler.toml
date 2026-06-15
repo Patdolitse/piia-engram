@@ -5,4 +5,4 @@ compatibility_date = "2024-12-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "engram-telemetry"
-database_id = "e06d9bea-2353-4434-9ce7-7a81717db3ef"
+database_id = "<cloudflare-d1-database-id>"

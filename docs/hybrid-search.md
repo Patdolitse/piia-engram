@@ -48,7 +48,7 @@ The first run downloads the embedding model (~90 MB). To keep it off the
 system drive, point the cache elsewhere before running:
 
 ```bash
-export FASTEMBED_CACHE_PATH=/path/to/cache   # e.g. E:\ml-cache\fastembed
+export FASTEMBED_CACHE_PATH=/path/to/cache   # e.g. /path/to/fastembed-cache
 ```
 
 Without the `[vector]` extra, hybrid still runs on keyword + FTS only (no

@@ -260,6 +260,15 @@ def test_ci_workflow_runs_claim_drift_and_export_redaction_gates():
     assert "python scripts/check_generated_export_redaction.py" in content
 
 
+def test_ci_workflow_runs_sanitize_and_worker_config_gates():
+    """CI should catch private terms and real Worker infra IDs before release."""
+    content = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert "Pre-release sanitization scan" in content
+    assert "python scripts/release_sanitize_check.py --internal --strict" in content
+    assert "Worker public config gate" in content
+    assert "python scripts/check_worker_public_config.py" in content
+
+
 def test_publish_workflow_runs_claim_drift_and_export_redaction_gates():
     """Publish workflow should repeat public/drift and export-boundary checks."""
     content = PUBLISH_WORKFLOW.read_text(encoding="utf-8")

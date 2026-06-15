@@ -78,6 +78,8 @@ experiments/**/chatgpt_scores.json
 htmlcov/
 docs/coverage/
 worker/.wrangler/
+worker/wrangler.private.toml
+worker/wrangler.local.toml
 
 # Root server.json — stale copy left by old mcp-publisher workflow.
 # Canonical source is .mcp/server.json; publish runs `cd .mcp && mcp-publisher publish`.

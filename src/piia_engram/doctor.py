@@ -666,6 +666,14 @@ def _run_governance_visibility_check(eng) -> int:
             "         Set ENGRAM_GOVERNANCE=1 in each MCP client env for "
             "per-caller gates; recommended for multi-tool use."
         )
+        print("         Add one of these snippets to each client's Engram env block:")
+        print('           JSON: "ENGRAM_GOVERNANCE": "1", "ENGRAM_CLIENT_TYPE": "<client_type>"')
+        print('           TOML: ENGRAM_GOVERNANCE = "1"')
+        print('                 ENGRAM_CLIENT_TYPE = "<client_type>"')
+        print(
+            "         Common client_type values: claude_code, codex, cursor, "
+            "windsurf. This is guidance only; configs are not written automatically."
+        )
         return 0
 
     client_type = os.environ.get("ENGRAM_CLIENT_TYPE", "") or "(unset)"
