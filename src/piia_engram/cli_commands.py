@@ -1744,7 +1744,7 @@ def _run_dock_search(args: list[str]) -> int:
 
     def _title(kind: str, it: dict) -> str:
         if kind == "decisions":
-            q = (it.get("question") or "").strip()
+            q = (it.get("question") or it.get("title") or "").strip()
             c = (it.get("choice") or "").strip()
             return f"{q} → {c}" if q and c else (q or c or "(decision)")
         if kind == "playbooks":
@@ -1769,13 +1769,27 @@ def _run_dock_search(args: list[str]) -> int:
     results = []
     for kind in ("lessons", "decisions", "playbooks"):
         for it in raw.get(kind, []):
-            results.append({
+            entry = {
                 "kind": kind[:-1],  # lesson / decision / playbook
                 "title": _title(kind, it),
                 "tier": it.get("tier", ""),
                 "id": it.get("id", ""),
                 "copy": _copy(kind, it),
-            })
+            }
+            # raw editable fields for the dock's inline edit (lesson/decision only)
+            if kind == "lessons":
+                entry["fields"] = {
+                    "summary": it.get("summary", "") or "",
+                    "detail": it.get("detail", "") or "",
+                }
+            elif kind == "decisions":
+                entry["fields"] = {
+                    # extraction-written decisions keep primary text in `title`
+                    "question": it.get("question") or it.get("title") or "",
+                    "choice": it.get("choice", "") or "",
+                    "reasoning": it.get("reasoning", "") or "",
+                }
+            results.append(entry)
 
     if want_json:
         print(json.dumps(
@@ -2395,6 +2409,100 @@ def _run_dock_onboard_commit(args: list[str]) -> int:
         f"决策 {result.get('saved_decisions', 0)}、"
         f"重复跳过 {result.get('duplicates', 0)}"
     )
+    return 0
+
+
+def _run_dock_update(args: list[str]) -> int:
+    """Edit one entry's content by id (engram dock-update).
+
+    Local + owner-run. A DELIBERATE write: updates the allowed text fields of a
+    lesson/decision via :meth:`Engram.update_knowledge`. The edited fields come
+    from ``--updates-file`` (a JSON object the dock writes to a temp file). Only a
+    whitelist of content fields is honored; a primary field (summary/question/
+    choice) may be edited but not blanked. ``--id`` and ``--updates-file`` required.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-update --id ID --updates-file PATH [--json]\n\n"
+            "  Edit a lesson/decision's content (summary/detail or\n"
+            "  question/choice/reasoning). A deliberate write.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    item_id = ""
+    upd_file = ""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass
+        elif a == "--id":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--id requires a value")
+            i += 1
+            item_id = args[i]
+        elif a == "--updates-file":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--updates-file requires a value")
+            i += 1
+            upd_file = args[i]
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+
+    if not item_id.strip():
+        return _err("--id is required")
+    if not upd_file:
+        return _err("--updates-file is required")
+    try:
+        raw_updates = json.loads(Path(upd_file).read_text(encoding="utf-8"))
+    except Exception as exc:
+        return _err(f"could not read --updates-file: {exc}", 1)
+    if not isinstance(raw_updates, dict):
+        return _err("--updates-file must contain a JSON object")
+
+    allowed = {"summary", "detail", "question", "choice", "reasoning"}
+    updates = {
+        k: v.strip() for k, v in raw_updates.items()
+        if k in allowed and isinstance(v, str)
+    }
+    if not updates:
+        return _err("no valid fields to update")
+    # a primary field may be edited but never blanked (would gut the entry)
+    for k in ("summary", "question", "choice"):
+        if k in updates and not updates[k]:
+            return _err(f"{k} cannot be empty")
+    # legacy compat: extraction-written decisions keep their primary text in
+    # `title` (question is null). When the owner edits `question`, sync `title`
+    # too so identity/dedup/report code (which prefers `title`) isn't left stale.
+    if updates.get("question"):
+        updates["title"] = updates["question"]
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root)
+        result = eng.update_knowledge(item_id, updates)
+    except Exception as exc:
+        return _err(str(exc), 1)
+    if isinstance(result, dict) and result.get("error"):
+        return _err(str(result["error"]), 1)
+    if want_json:
+        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        return 0
+    print(f"已更新: {item_id}")
     return 0
 
 

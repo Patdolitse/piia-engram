@@ -699,20 +699,21 @@ def test_dock_onboard_scan_main_skips_update_reminder(tmp_path, monkeypatch):
     assert called == []  # reminder never invoked for the zero-write scan
 
 
-def test_dock_onboard_commit_rejects_low_quality_even_with_faked_score(
-        monkeypatch, tmp_path, capsys):
-    """A low-quality candidate must NOT be written even if its JSON payload fakes a
-    high quality_score — commit re-evaluates and is not a back door around the gate."""
+def test_dock_onboard_commit_floors_near_empty(monkeypatch, tmp_path, capsys):
+    """Near-empty candidate text is skipped by the floor. Owner-confirmed content is
+    otherwise trusted — commit no longer applies the trigger-word gate (that stays
+    scan-side), so the only commit-time bar is non-empty + minimum length."""
     store = tmp_path / "store"
     _populate(store)
-    cands = [{"type": "lesson", "text": "嗯", "domain": "", "quality_score": 0.99}]
     cf = tmp_path / "lowq.json"
-    cf.write_text(json.dumps(cands, ensure_ascii=False), encoding="utf-8")
+    cf.write_text(json.dumps([{"type": "lesson", "text": "嗯", "domain": "",
+                               "quality_score": 0.99}], ensure_ascii=False),
+                  encoding="utf-8")
     assert _commit(monkeypatch, tmp_path,
                    ["--candidates-file", str(cf), "--json"]) == 0
     res = json.loads(capsys.readouterr().out)["result"]
     assert res["saved_lessons"] == 0 and res["saved_decisions"] == 0
-    assert res["skipped_low_quality"] >= 1
+    assert res["skipped"] >= 1
 
 
 def test_dock_onboard_commit_handles_malformed_entries(monkeypatch, tmp_path, capsys):
@@ -740,3 +741,124 @@ def test_dock_onboard_scan_text_requires_value(monkeypatch, tmp_path, capsys):
     """`--text --json` must be a missing-value error, not swallow the --json flag."""
     assert _scan(monkeypatch, tmp_path, ["--text", "--json"]) == 2
     assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_onboard_commit_accepts_edited_no_trigger_description(
+        monkeypatch, tmp_path, capsys):
+    """An owner-edited detailed description with NO auto-trigger words is still
+    written — commit trusts confirmed content; the trigger gate is scan-side only."""
+    store = tmp_path / "store"
+    _populate(store)
+    detailed = ("这是一段手动补充的详细描述，没有任何决定或教训触发词，"
+                "纯陈述性内容，但 owner 确认要保存")
+    cf = tmp_path / "edited.json"
+    cf.write_text(json.dumps([{"type": "lesson", "text": detailed, "domain": ""}],
+                             ensure_ascii=False), encoding="utf-8")
+    assert _commit(monkeypatch, tmp_path,
+                   ["--candidates-file", str(cf), "--json"]) == 0
+    res = json.loads(capsys.readouterr().out)["result"]
+    assert res["saved_lessons"] == 1
+
+
+# --- dock-update (edit an entry's content) ----------------------------------
+
+
+def _update(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_update
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_update(argv)
+
+
+def test_dock_update_help(monkeypatch, tmp_path, capsys):
+    assert _update(monkeypatch, tmp_path, ["--help"]) == 0
+    assert "dock-update" in capsys.readouterr().out
+
+
+def test_dock_update_edits_lesson_and_persists(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    lid = eng.add_lesson({"summary": "原始经验摘要"}).get("id")
+    uf = tmp_path / "u.json"
+    uf.write_text(json.dumps({"summary": "改过的更详细的经验摘要"}, ensure_ascii=False),
+                  encoding="utf-8")
+    assert _update(monkeypatch, tmp_path,
+                   ["--id", lid, "--updates-file", str(uf), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+    from piia_engram.core import Engram
+
+    eng2 = Engram(root=store, read_only=True)
+    les = eng2.get_lessons(limit=None, _update_access=False, _migrate_fields=False)
+    assert any(l.get("id") == lid and l.get("summary") == "改过的更详细的经验摘要"
+               for l in les)
+
+
+def test_dock_update_requires_id_and_file(monkeypatch, tmp_path, capsys):
+    assert _update(monkeypatch, tmp_path, ["--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+    assert _update(monkeypatch, tmp_path, ["--id", "x", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_update_rejects_blank_primary(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    lid = eng.add_lesson({"summary": "原始"}).get("id")
+    uf = tmp_path / "u.json"
+    uf.write_text(json.dumps({"summary": "   "}), encoding="utf-8")
+    assert _update(monkeypatch, tmp_path,
+                   ["--id", lid, "--updates-file", str(uf), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_update_not_found_is_json_error(monkeypatch, tmp_path, capsys):
+    _populate(tmp_path / "store")
+    uf = tmp_path / "u.json"
+    uf.write_text(json.dumps({"summary": "x"}), encoding="utf-8")
+    assert _update(monkeypatch, tmp_path,
+                   ["--id", "nonexistent_id", "--updates-file", str(uf), "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_search_returns_editable_fields(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_lesson({"summary": "PostgreSQL 数据库选型经验", "detail": "细节内容"})
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "PostgreSQL", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    hit = next((r for r in data["results"] if r["kind"] == "lesson"), None)
+    assert hit and isinstance(hit.get("fields"), dict)
+    assert "summary" in hit["fields"] and "detail" in hit["fields"]
+    assert _snapshot(store)  # search stays read-only; presence check only
+
+
+def test_dock_title_only_decision_search_fallback_and_update_sync(
+        monkeypatch, tmp_path, capsys):
+    """Extraction-written decisions hold primary text in `title` (question is null).
+    Search must fall back to title for display + fields.question; editing question
+    must persist BOTH question and the legacy title (no stale identity)."""
+    store = tmp_path / "store"
+    eng = _populate(store)
+    did = eng.add_decision({"title": "采用方案X作为长期架构", "choice": ""}).get("id")
+
+    # search shows it (not "(decision)") and exposes it as fields.question
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "方案X", "--json"]) == 0
+    hit = next((r for r in json.loads(capsys.readouterr().out)["results"]
+                if r["kind"] == "decision"), None)
+    assert hit and hit["title"] != "(decision)"
+    assert hit["fields"]["question"] == "采用方案X作为长期架构"
+
+    # editing question persists BOTH question and the legacy title
+    uf = tmp_path / "u.json"
+    uf.write_text(json.dumps({"question": "改为采用方案Y"}, ensure_ascii=False),
+                  encoding="utf-8")
+    assert _update(monkeypatch, tmp_path,
+                   ["--id", did, "--updates-file", str(uf), "--json"]) == 0
+    from piia_engram.core import Engram
+
+    eng2 = Engram(root=store, read_only=True)
+    decs = eng2.get_decisions(limit=None, _update_access=False, _migrate_fields=False)
+    d = next((x for x in decs if x.get("id") == did), None)
+    assert d.get("question") == "改为采用方案Y"
+    assert d.get("title") == "改为采用方案Y"  # legacy title synced, not stale

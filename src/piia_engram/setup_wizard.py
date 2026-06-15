@@ -2956,6 +2956,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_archived,
     _run_dock_onboard_scan,
     _run_dock_onboard_commit,
+    _run_dock_update,
     _run_portrait,
     _run_telemetry_validate,
     _run_release_check,
@@ -3069,6 +3070,8 @@ def main() -> None:
         sys.exit(_run_dock_onboard_scan(args[1:]))
     elif args[0] == "dock-onboard-commit":
         sys.exit(_run_dock_onboard_commit(args[1:]))
+    elif args[0] == "dock-update":
+        sys.exit(_run_dock_update(args[1:]))
     elif args[0] == "portrait":
         sys.exit(_run_portrait(args[1:]))
     elif args[0] == "lifecycle":
@@ -3146,6 +3149,7 @@ def main() -> None:
             "  engram dock-archived    Zero-write list of archived entries (--json)\n"
             "  engram dock-onboard-scan   Zero-write onboarding scan → candidate preview (--text/--text-file/--folder/--json)\n"
             "  engram dock-onboard-commit Write owner-confirmed onboarding candidates (--candidates-file/--json)\n"
+            "  engram dock-update      Edit a lesson/decision's content by id (--id/--updates-file/--json)\n"
             "  engram portrait         Lean user portrait snapshot + growth since last (--list/--no-save/--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
             "  engram conflicts        决策冲突 list/resolve / decision conflicts list/resolve\n"

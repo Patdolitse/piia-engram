@@ -573,13 +573,15 @@ class ContextMixin:
         """Write owner-confirmed onboarding candidates into the store.
 
         Each candidate is ``{"type": "lesson"|"decision", "text": str,
-        "domain": str}`` — typically the subset the owner ticked from
-        :meth:`extract_candidates`. Quality/metadata are recomputed here; any
-        caller-supplied score is ignored (never trust the front-end payload).
-        Malformed entries (non-dict, non-string or empty ``text``) are skipped,
-        and a re-evaluated low-quality candidate is rejected even if its payload
-        faked a high score — so commit never becomes a back door around the
-        extraction gate. Returns save counts. A deliberate write (the "commit").
+        "domain": str}`` — typically the subset the owner ticked (and possibly
+        edited into a fuller description) in the dock preview. Because every item
+        here is owner-reviewed and confirmed, commit does NOT re-apply the
+        trigger-word quality gate (an edited "detailed description" often no longer
+        trips the auto-extraction triggers) — that gate stays on the scan/dry-run
+        side. Only a basic floor is enforced: malformed entries (non-dict,
+        non-string ``text``) and near-empty text (< 5 chars) are skipped. Quality
+        is still recomputed and ridden into metadata for observability; any
+        caller-supplied score is ignored. Returns save counts. A deliberate write.
         """
         saved_lessons = saved_decisions = duplicates = 0
         skipped = skipped_low_quality = 0
@@ -593,17 +595,18 @@ class ContextMixin:
                 skipped += 1
                 continue
             text = text.strip()
+            if len(text) < 5:  # floor: drop only empty / near-empty fragments
+                skipped += 1
+                continue
             ctype = "decision" if (c.get("type") == "decision") else "lesson"
             dom = c.get("domain")
             item_domain = dom.strip() if isinstance(dom, str) else ""
             trigger_reason = f"{ctype}_trigger"
+            # Owner-confirmed (and possibly hand-edited) content is trusted: no
+            # quality["accepted"] gate here. quality still rides in metadata.
             quality = _assess_extraction_candidate(
                 text, ctype, trigger_reason, 0.75,
             )
-            if not quality.get("accepted"):
-                skipped += 1
-                skipped_low_quality += 1
-                continue
             meta = _make_extraction_metadata(
                 "onboarding", text, trigger_reason, source_tool, 0.75, quality,
             )
