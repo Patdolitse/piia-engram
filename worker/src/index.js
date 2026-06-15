@@ -152,11 +152,72 @@ const FEEDBACK_ALLOWED_FIELDS = new Set([
   'session_count', 'top_mcp_tools', 'configured_tools', 'beta_events',
 ]);
 
+const FEEDBACK_MAX_VALUE_LEN = 64;
+const FEEDBACK_MAX_TAG_LEN = 48;
+const FEEDBACK_MAX_WORDS = 6;
+const FEEDBACK_MAX_TAG_WORDS = 5;
+const FEEDBACK_MAX_CJK = 12;
+const FEEDBACK_MAX_DEPTH = 6;
+const FEEDBACK_EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+const FEEDBACK_URL_RE = /https?:\/\/|www\.|:\/\//i;
+const FEEDBACK_DRIVE_RE = /[A-Za-z]:[\\/]/;
+const FEEDBACK_HOMOGLYPH_AT_RE = /[＠﹫]/;
+const FEEDBACK_CJK_RE = /[\u3400-\u4DBF\u4E00-\u9FFF]/g;
+
+function feedbackCjkCount(value) {
+  return (value.match(FEEDBACK_CJK_RE) || []).length;
+}
+
+function contentLikeFeedbackStringReason(value, tag = false) {
+  const maxLen = tag ? FEEDBACK_MAX_TAG_LEN : FEEDBACK_MAX_VALUE_LEN;
+  const maxWords = tag ? FEEDBACK_MAX_TAG_WORDS : FEEDBACK_MAX_WORDS;
+  if (value.length > maxLen) return 'too_long';
+  if (/[\n\r\t]/.test(value)) return 'control_chars';
+  if (FEEDBACK_EMAIL_RE.test(value) || FEEDBACK_HOMOGLYPH_AT_RE.test(value)) return 'email';
+  if (FEEDBACK_URL_RE.test(value)) return 'url';
+  if (FEEDBACK_DRIVE_RE.test(value) || value.includes('/') || value.includes('\\')) return 'path';
+  if (feedbackCjkCount(value) >= FEEDBACK_MAX_CJK) return 'cjk_text';
+  if (value.trim().split(/\s+/).filter(Boolean).length >= maxWords) return 'free_text';
+  return '';
+}
+
+function safeFeedbackTag(key) {
+  if (typeof key !== 'string') return false;
+  if (key === '') return true;
+  return contentLikeFeedbackStringReason(key, true) === '';
+}
+
+function unsafeFeedbackValue(value, depth = 0) {
+  if (depth > FEEDBACK_MAX_DEPTH) return 'nesting_too_deep';
+  if (value == null || typeof value === 'boolean' || typeof value === 'number') return '';
+  if (typeof value === 'string') return contentLikeFeedbackStringReason(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reason = unsafeFeedbackValue(item, depth + 1);
+      if (reason) return reason;
+    }
+    return '';
+  }
+  if (typeof value === 'object') {
+    for (const [key, nested] of Object.entries(value)) {
+      if (!safeFeedbackTag(key)) return `feedback key unsafe:${String(key).slice(0, 40)}`;
+      const reason = unsafeFeedbackValue(nested, depth + 1);
+      if (reason) return reason;
+    }
+    return '';
+  }
+  return `unsupported_type:${typeof value}`;
+}
+
 function validateFeedback(data) {
   if (!data || typeof data !== 'object') return 'invalid JSON';
   if (!data.daily_id || typeof data.daily_id !== 'string') return 'missing daily_id';
   if (data.daily_id.length > 64) return 'daily_id too long';
-  // Relaxed field check — allow unknown fields but store them in raw_json
+  for (const [key, value] of Object.entries(data)) {
+    if (!FEEDBACK_ALLOWED_FIELDS.has(key)) return `unexpected feedback field: ${key}`;
+    const reason = unsafeFeedbackValue(value);
+    if (reason) return `content-like feedback value: ${key}:${reason}`;
+  }
   return null;
 }
 

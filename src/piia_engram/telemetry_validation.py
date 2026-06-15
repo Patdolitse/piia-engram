@@ -102,10 +102,10 @@ CONTENT_FIELD_MARKERS = (
 
 # Canonical feedback-report field allowlist. MUST mirror the worker's
 # ``FEEDBACK_ALLOWED_FIELDS`` (worker/src/index.js); a drift between the two is
-# flagged by :func:`validate_telemetry_contract`. The worker's feedback validator
-# is deliberately *relaxed* (it stores the whole payload in ``raw_json``), so this
-# client-side allowlist — enforced by :func:`validate_feedback_report` at the send
-# boundary — is the real privacy gate.
+# flagged by :func:`validate_telemetry_contract`. The worker mirrors this
+# allowlist and runs a coarse content-shaped value guard before persisting
+# ``raw_json``; the client still enforces the same contract at the send boundary
+# so privacy does not depend on either side alone.
 FEEDBACK_ALLOWED_KEYS = frozenset({
     "report_type", "report_version", "generated_at", "daily_id",
     "engram_version", "os", "python",

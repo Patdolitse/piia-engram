@@ -162,6 +162,20 @@ def test_worker_feedback_allowlist_matches_python_allowlist():
     }
 
 
+def test_worker_feedback_validator_rejects_unknown_fields_server_side():
+    js = _worker_js()
+    assert "FEEDBACK_ALLOWED_FIELDS.has(key)" in js
+    assert "unexpected feedback field" in js
+    assert "Relaxed field check" not in js
+
+
+def test_worker_feedback_validator_has_content_guard_server_side():
+    js = _worker_js()
+    assert "contentLikeFeedbackStringReason" in js
+    assert "unsafeFeedbackValue" in js
+    assert "content-like feedback value" in js
+
+
 def test_no_content_field_in_worker_allowlists():
     js = _worker_js()
     allow = (tv.parse_js_string_set(js, "ALLOWED_FIELDS")
