@@ -2123,7 +2123,7 @@ def _run_dock_archived(args: list[str]) -> int:
 
     def _title(kind: str, it: dict) -> str:
         if kind == "decision":
-            q = (it.get("question") or "").strip()
+            q = (it.get("question") or it.get("title") or "").strip()
             c = (it.get("choice") or "").strip()
             return f"{q} → {c}" if q and c else (q or c or "(decision)")
         return (it.get("summary") or "(lesson)").strip()

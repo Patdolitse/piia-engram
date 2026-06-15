@@ -388,8 +388,8 @@ class PortraitMixin:
             for l in _recent(lessons) if l.get("summary")
         ]
         p["recent_decisions"] = [
-            {"question": d.get("question", ""), "choice": d.get("choice", "")}
-            for d in _recent(decisions) if (d.get("question") or d.get("choice"))
+            {"question": d.get("question") or d.get("title", ""), "choice": d.get("choice", "")}
+            for d in _recent(decisions) if (d.get("question") or d.get("title") or d.get("choice"))
         ]
 
         projects = self.list_projects() or []
@@ -413,9 +413,9 @@ class PortraitMixin:
             for l in _recent(lessons, 100000) if l.get("summary")
         ]
         p["all_decisions"] = [
-            {"question": d.get("question", ""), "choice": d.get("choice", ""),
+            {"question": d.get("question") or d.get("title", ""), "choice": d.get("choice", ""),
              "reasoning": _trunc(d.get("reasoning", "")), "tier": d.get("tier", "")}
-            for d in _recent(decisions, 100000) if (d.get("question") or d.get("choice"))
+            for d in _recent(decisions, 100000) if (d.get("question") or d.get("title") or d.get("choice"))
         ]
 
         by_tier: Counter = Counter()
