@@ -30,8 +30,12 @@ scripts/**
 # ── Release-gate evidence (marker-only declarations; CI-enforced) ────
 # Only pass/n-a marker lines are public. Detailed notes (test counts,
 # scan results, review records) stay local via .gitignore.
-release-evidence/v*.md
 release-evidence/README.md
+release-evidence/v3.55.0.md
+release-evidence/v3.56.0.md
+release-evidence/v4.0.0.md
+release-evidence/v4.1.0.md
+release-evidence/v4.2.0.md
 
 # ── CI / automation ─────────────────────────────────────────────────
 .github/**

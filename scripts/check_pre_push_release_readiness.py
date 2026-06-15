@@ -24,6 +24,7 @@ DEFAULT_CHECKS = (
     ("public_fact_sync", [sys.executable, "scripts/check_public_fact_sync.py"]),
     ("public_trust_claims", [sys.executable, "scripts/check_public_trust_claims.py"]),
     ("public_claim_drift", [sys.executable, "scripts/check_public_claim_drift.py"]),
+    ("public_release_surface", [sys.executable, "scripts/check_public_release_surface.py"]),
     ("publish_workflow_order", [sys.executable, "scripts/check_publish_workflow_order.py"]),
 )
 

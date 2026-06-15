@@ -106,6 +106,8 @@ def _all_steps() -> list[dict]:
               "python scripts/check_public_fact_sync.py"),
         _step("claim_drift", LOCAL, "Public claim drift sweep",
               "python scripts/check_public_claim_drift.py"),
+        _step("release_surface", LOCAL, "Public release surface guard",
+              "python scripts/check_public_release_surface.py"),
         _step("publish_workflow_order", LOCAL, "Publish workflow dependency-order lint",
               "python scripts/check_publish_workflow_order.py"),
         _step("export_redaction", LOCAL, "Export redaction sample guard",

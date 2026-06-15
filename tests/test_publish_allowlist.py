@@ -86,6 +86,15 @@ def test_docs_are_enumerated_not_wildcarded(cl):
     )
 
 
+def test_release_evidence_notes_are_not_allowlisted(cl):
+    patterns = cl._load_allowlist()
+    note = "release-evidence/v9.9.9-notes.md"
+    assert not any(cl._matches(note, p) for p in patterns), (
+        "detailed release notes must stay local-only; allowlist marker files "
+        "explicitly instead of using release-evidence/v*.md"
+    )
+
+
 # ── real-repo invariant ─────────────────────────────────────────────
 
 

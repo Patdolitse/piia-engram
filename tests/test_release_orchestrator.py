@@ -78,6 +78,9 @@ class TestChecklist:
         assert steps["claim_drift"]["phase"] == mod.LOCAL
         assert "check_public_claim_drift.py" in steps["claim_drift"]["command"]
 
+        assert steps["release_surface"]["phase"] == mod.LOCAL
+        assert "check_public_release_surface.py" in steps["release_surface"]["command"]
+
         assert steps["publish_workflow_order"]["phase"] == mod.LOCAL
         assert "check_publish_workflow_order.py" in steps["publish_workflow_order"]["command"]
 
