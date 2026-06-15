@@ -16,9 +16,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
   under this guarantee.
 - **Read-only CLI surface for a local desktop client.** A family of zero-write
   commands to pull paste-ready context without mutating the store: `dock-resume`
-  (resume brief), `dock-search` (keyword search), `dock-portrait` (full styled
-  user-portrait HTML), and `dock-archived` (list archived entries). Plus
-  `dock-export` for a one-click full backup (writes a backup file).
+  (resume brief), `dock-search` (keyword search), `dock-list` (all active
+  lessons/decisions for a browse-all view), `dock-portrait` (full styled
+  user-portrait HTML), `dock-archived` (list archived entries), and
+  `dock-get-lang` (read the owner's language). Plus `dock-export` for a one-click
+  full backup (writes a backup file).
 - **Owner knowledge management from a local client.** `dock-onboard-scan` /
   `dock-onboard-commit` extract lesson/decision candidates from pasted text or a
   chosen project folder (recent git subjects + README) for owner-confirmed,
@@ -27,6 +29,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **Richer user-portrait HTML.** The portrait gains work-style, knowledge
   composition, collaboration tools, a "days together" meta, and click-to-expand
   drill-in to the full lesson and decision content.
+- **Owner language toggle.** `dock-set-lang` writes the profile language (zh/en),
+  so a desktop client can switch its own interface and Engram's portrait, privacy
+  preview, and CLI output together.
 
 ### Fixed
 - Hardened `read_only` against lazy-write paths (field migration, atomic write,

@@ -2506,6 +2506,252 @@ def _run_dock_update(args: list[str]) -> int:
     return 0
 
 
+def _run_dock_list(args: list[str]) -> int:
+    """Zero-write list of ALL active entries for the dock's "我的记忆" view.
+
+    Local + owner-run. Opens the store ``read_only`` and lists every active
+    lesson/decision (id/kind/tier/title + the same editable ``fields`` shape as
+    ``dock-search``) so the desktop client can show the whole memory at once and
+    filter it client-side — no query required. Excludes the ``archived`` tier
+    (those live in ``dock-archived``/restore) and any non-active ``status``
+    (superseded/outdated decisions, which keep their tier but drop out of the
+    active set). Guaranteed zero-write. ``--limit`` caps the count (most-recent
+    leaning) to protect a very large store.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-list [--limit N] [--json]\n\n"
+            "  Zero-write list of all active lessons/decisions (id/kind/tier/\n"
+            "  title + editable fields) for a local desktop client. Opens the\n"
+            "  store read-only — never mutates the store root.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+    limit = 0  # 0 = no cap
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": msg, "results": [], "count": 0},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass
+        elif a == "--limit":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--limit requires a value")
+            i += 1
+            try:
+                limit = int(args[i])
+            except ValueError:
+                return _err("--limit must be an integer")
+            if limit <= 0:
+                return _err("--limit must be a positive integer")
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+
+    def _title(kind: str, it: dict) -> str:
+        if kind == "decision":
+            # extraction-written decisions keep their primary text in `title`
+            # (question is null) — fall back so they never render as "(decision)".
+            q = (it.get("question") or it.get("title") or "").strip()
+            c = (it.get("choice") or "").strip()
+            return f"{q} → {c}" if q and c else (q or c or "(decision)")
+        return (it.get("summary") or "(lesson)").strip()
+
+    def _copy(kind: str, it: dict) -> str:
+        if kind == "decision":
+            parts = [_title(kind, it)]
+            reasoning = (it.get("reasoning") or "").strip()
+            if reasoning:
+                parts.append(reasoning)
+            return "\n".join(parts)
+        parts = [(it.get("summary") or "").strip()]
+        detail = (it.get("detail") or "").strip()
+        if detail:
+            parts.append(detail)
+        return "\n".join([p for p in parts if p])
+
+    try:
+        eng = Engram(root=root, read_only=True)
+        results = []
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            for it in eng._read_entries(eng._knowledge_dir / fname, kind):
+                if it.get("tier") == "archived":
+                    continue  # belongs to dock-archived / restore
+                if (it.get("status") or "active") != "active":
+                    continue  # superseded / outdated — not part of active memory
+                entry = {
+                    "kind": kind,
+                    "title": _title(kind, it),
+                    "tier": it.get("tier", "") or "",
+                    "id": it.get("id", ""),
+                    "copy": _copy(kind, it),
+                }
+                if kind == "lesson":
+                    entry["fields"] = {
+                        "summary": it.get("summary", "") or "",
+                        "detail": it.get("detail", "") or "",
+                    }
+                else:
+                    entry["fields"] = {
+                        # mirror dock-search: question falls back to legacy title
+                        "question": it.get("question") or it.get("title") or "",
+                        "choice": it.get("choice", "") or "",
+                        "reasoning": it.get("reasoning", "") or "",
+                    }
+                results.append(entry)
+    except Exception as exc:  # never crash the Dock spawn — emit a usable error
+        return _err(str(exc), 1)
+
+    if limit and len(results) > limit:
+        results = results[-limit:]  # keep the most-recent N (entries append-ordered)
+
+    if want_json:
+        print(json.dumps(
+            {"ok": True, "read_only": True, "engram_dir": str(root),
+             "count": len(results), "results": results},
+            ensure_ascii=False,
+        ))
+        return 0
+    if not results:
+        print("(no entries)")
+        return 0
+    for r in results:
+        tier = f" [{r['tier']}]" if r["tier"] else ""
+        print(f"- ({r['kind']}{tier}) {r['title']}")
+    return 0
+
+
+def _run_dock_set_lang(args: list[str]) -> int:
+    """Set the owner's preferred language (engram dock-set-lang --lang zh|en).
+
+    Local + owner-run. A small DELIBERATE write: updates ``language`` in
+    ``identity/profile.json`` via :meth:`Engram.update_profile`, so every Engram
+    surface that honors the profile language (``i18n.get_lang`` → portrait /
+    preview / CLI text) follows the dock's language toggle. ``--lang`` is required
+    and must be ``zh`` or ``en``. Stores the same human-readable value
+    setup_wizard writes (``中文``/``English``); ``get_lang`` reads it back through
+    the same ``"en" in value`` test.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-set-lang --lang zh|en [--json]\n\n"
+            "  Set the owner's preferred language in identity/profile.json so\n"
+            "  Engram's portrait / preview / CLI text follow the dock toggle.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    lang = ""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass
+        elif a == "--lang":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--lang requires a value")
+            i += 1
+            lang = args[i]
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+
+    lang = lang.strip().lower()
+    if lang not in {"zh", "en"}:
+        return _err("--lang must be zh or en")
+    profile_value = "中文" if lang == "zh" else "English"
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root)
+        eng.update_profile({"language": profile_value}, source_tool="dock")
+    except Exception as exc:  # never crash the Dock spawn — emit a usable error
+        return _err(str(exc), 1)
+
+    if want_json:
+        print(json.dumps(
+            {"ok": True, "lang": lang, "language": profile_value,
+             "engram_dir": str(root)},
+            ensure_ascii=False,
+        ))
+        return 0
+    print(f"已切换语言: {profile_value}")
+    return 0
+
+
+def _run_dock_get_lang(args: list[str]) -> int:
+    """Zero-write read of the owner's current language (engram dock-get-lang).
+
+    Local + owner-run. Resolves the language via :func:`i18n.get_lang` (reads
+    ``identity/profile.json`` honoring ``ENGRAM_DIR``) so the desktop dock can
+    render its own UI in the owner's language on startup and follow a later
+    toggle. Returns ``"zh"`` or ``"en"``. Guaranteed zero-write — never opens the
+    store for writing.
+    """
+    from piia_engram.i18n import get_lang
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-get-lang [--json]\n\n"
+            "  Zero-write read of the owner's language (zh|en) from\n"
+            "  identity/profile.json, for a desktop client to follow.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+    for a in args:
+        if a != "--json":
+            if want_json:
+                print(json.dumps(
+                    {"ok": False, "error": f"unknown option: {a}", "lang": "zh"},
+                    ensure_ascii=False,
+                ))
+            else:
+                print(f"ERROR: unknown option: {a}")
+            return 2
+
+    try:
+        lang = get_lang()
+    except Exception:
+        lang = "zh"
+    lang = "en" if str(lang).strip().lower().startswith("en") else "zh"
+    if want_json:
+        print(json.dumps({"ok": True, "lang": lang}, ensure_ascii=False))
+        return 0
+    print(lang)
+    return 0
+
+
 def _run_portrait(args: list[str]) -> int:
     """Build, store, and compare a lean user portrait (engram portrait).
 

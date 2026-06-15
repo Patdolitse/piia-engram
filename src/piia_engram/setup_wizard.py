@@ -2957,6 +2957,9 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_onboard_scan,
     _run_dock_onboard_commit,
     _run_dock_update,
+    _run_dock_list,
+    _run_dock_set_lang,
+    _run_dock_get_lang,
     _run_portrait,
     _run_telemetry_validate,
     _run_release_check,
@@ -2997,7 +3000,7 @@ def main() -> None:
     # there to avoid a double-print. `dock-resume`/`dock-search` are guaranteed
     # zero-write entries — the reminder would write .update_check.json into the
     # store — so skip them too. Never reached by the separate MCP-server entry.
-    if not (args and args[0] in ("doctor", "dock-resume", "dock-search", "dock-portrait", "dock-archived", "dock-onboard-scan")):
+    if not (args and args[0] in ("doctor", "dock-resume", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3072,6 +3075,12 @@ def main() -> None:
         sys.exit(_run_dock_onboard_commit(args[1:]))
     elif args[0] == "dock-update":
         sys.exit(_run_dock_update(args[1:]))
+    elif args[0] == "dock-list":
+        sys.exit(_run_dock_list(args[1:]))
+    elif args[0] == "dock-set-lang":
+        sys.exit(_run_dock_set_lang(args[1:]))
+    elif args[0] == "dock-get-lang":
+        sys.exit(_run_dock_get_lang(args[1:]))
     elif args[0] == "portrait":
         sys.exit(_run_portrait(args[1:]))
     elif args[0] == "lifecycle":
@@ -3150,6 +3159,9 @@ def main() -> None:
             "  engram dock-onboard-scan   Zero-write onboarding scan → candidate preview (--text/--text-file/--folder/--json)\n"
             "  engram dock-onboard-commit Write owner-confirmed onboarding candidates (--candidates-file/--json)\n"
             "  engram dock-update      Edit a lesson/decision's content by id (--id/--updates-file/--json)\n"
+            "  engram dock-list        Zero-write list of all active lessons/decisions for a desktop client (--limit/--json)\n"
+            "  engram dock-set-lang    Set the owner's language in profile.json (--lang zh|en/--json)\n"
+            "  engram dock-get-lang    Zero-write read of the owner's language for a desktop client (--json)\n"
             "  engram portrait         Lean user portrait snapshot + growth since last (--list/--no-save/--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
             "  engram conflicts        决策冲突 list/resolve / decision conflicts list/resolve\n"

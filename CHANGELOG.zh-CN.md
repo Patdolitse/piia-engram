@@ -14,14 +14,18 @@
   读取存储。`engram preview --read-only` 在此保证下渲染记忆透视报告。
 - **面向本地桌面客户端的只读 CLI。** 一组零写命令，用于拉取可直接粘贴的上下文
   而不改动存储：`dock-resume`（接续简报）、`dock-search`（关键词搜索）、
-  `dock-portrait`（完整样式的用户画像 HTML）、`dock-archived`（列出已归档条目）；
-  另有 `dock-export` 提供一键完整备份（会写出备份文件）。
+  `dock-list`（列出全部活跃经验/决策，供「我的记忆」一次性浏览）、
+  `dock-portrait`（完整样式的用户画像 HTML）、`dock-archived`（列出已归档条目）、
+  `dock-get-lang`（读取 owner 当前语言）；另有 `dock-export` 提供一键完整备份
+  （会写出备份文件）。
 - **从本地客户端管理 owner 知识。** `dock-onboard-scan` / `dock-onboard-commit`
   从粘贴文本或选定的项目文件夹（最近 git 提交 + README）提取经验/决策候选，
   供 owner 确认、可编辑后导入；`dock-update` 编辑条目内容；`dock-archive` /
   `dock-restore` 可逆地归档与恢复条目。
 - **更丰富的用户画像 HTML。** 画像新增工作风格、知识构成、协作工具、"已陪伴
   N 天"，以及点击展开查看完整经验/决策内容的下钻。
+- **Owner 语言切换。** `dock-set-lang` 写入 profile 的语言（zh/en），桌面客户端
+  可一处切换自身界面与 Engram 的画像、隐私预览、CLI 输出的语言。
 
 ### 修复
 - 加固 `read_only`，堵住若干惰性写入路径（字段迁移、原子写、信任边界回填），

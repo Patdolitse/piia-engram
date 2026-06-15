@@ -862,3 +862,196 @@ def test_dock_title_only_decision_search_fallback_and_update_sync(
     d = next((x for x in decs if x.get("id") == did), None)
     assert d.get("question") == "改为采用方案Y"
     assert d.get("title") == "改为采用方案Y"  # legacy title synced, not stale
+
+
+# --- dock-list: zero-write list of all active entries (我的记忆 browse view) --
+
+
+def _cli_list(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_list
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_list(argv)
+
+
+def test_dock_list_help(monkeypatch, tmp_path, capsys):
+    assert _cli_list(monkeypatch, tmp_path, ["--help"]) == 0
+    assert "dock-list" in capsys.readouterr().out
+
+
+def test_dock_list_empty_json_is_read_only(monkeypatch, tmp_path, capsys):
+    _populate(tmp_path / "store")
+    assert _cli_list(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["read_only"] is True
+    assert payload["count"] == 0
+    assert payload["results"] == []
+
+
+def test_dock_list_returns_active_lessons_and_decisions(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_lesson({"summary": "用 portalocker 做跨平台文件锁", "detail": "细节说明"})
+    eng.add_decision({"question": "存储用 JSON 还是 SQLite", "choice": "JSON 优先",
+                      "reasoning": "可读可编辑可覆盖"})
+    assert _cli_list(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 2
+    assert {r["kind"] for r in payload["results"]} == {"lesson", "decision"}
+    for r in payload["results"]:
+        assert r["id"] and r["title"] and "fields" in r and "copy" in r
+    dec = next(r for r in payload["results"] if r["kind"] == "decision")
+    assert dec["fields"]["question"] == "存储用 JSON 还是 SQLite"
+    assert dec["fields"]["choice"] == "JSON 优先"
+
+
+def test_dock_list_title_only_decision_falls_back(monkeypatch, tmp_path, capsys):
+    """An extraction-written decision keeps its primary text in `title`
+    (question is null) — dock-list must surface it, never render '(decision)'."""
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_decision({"title": "采用方案X作为长期架构", "choice": ""})
+    assert _cli_list(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    dec = next(r for r in payload["results"] if r["kind"] == "decision")
+    assert dec["title"] == "采用方案X作为长期架构"
+    assert dec["fields"]["question"] == "采用方案X作为长期架构"
+
+
+def test_dock_list_excludes_archived(monkeypatch, tmp_path, capsys):
+    from piia_engram.setup_wizard import _run_dock_archive
+
+    store = tmp_path / "store"
+    eng = _populate(store)
+    lid = eng.add_lesson({"summary": "to be archived"}).get("id")
+    eng.add_lesson({"summary": "stays active"})
+    monkeypatch.setenv("ENGRAM_DIR", str(store))
+    assert _run_dock_archive(["--id", lid, "--json"]) == 0
+    capsys.readouterr()  # drain the archive output
+    assert _cli_list(monkeypatch, tmp_path, ["--json"]) == 0
+    titles = [r["title"] for r in json.loads(capsys.readouterr().out)["results"]]
+    assert "stays active" in titles
+    assert "to be archived" not in titles
+
+
+def test_dock_list_is_zero_write(monkeypatch, tmp_path):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_lesson({"summary": "snapshot me"})
+    before = _snapshot(store)
+    _cli_list(monkeypatch, tmp_path, ["--json"])
+    assert _snapshot(store) == before  # the whole list path wrote nothing
+
+
+def test_dock_list_rejects_bad_limit(monkeypatch, tmp_path):
+    _populate(tmp_path / "store")
+    assert _cli_list(monkeypatch, tmp_path, ["--limit", "0", "--json"]) == 2
+    assert _cli_list(monkeypatch, tmp_path, ["--limit", "x", "--json"]) == 2
+
+
+def test_dock_list_limit_caps_results(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    for n in range(5):
+        eng.add_lesson({"summary": f"lesson {n}"})
+    assert _cli_list(monkeypatch, tmp_path, ["--limit", "2", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["count"] == 2
+
+
+def test_dock_list_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
+    _populate(tmp_path / "store")
+    assert _cli_list(monkeypatch, tmp_path, ["--json", "--bogus"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "error" in payload
+
+
+# --- dock-set-lang / dock-get-lang: owner language toggle (中英切换) ----------
+
+
+def _cli_set_lang(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_set_lang
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_set_lang(argv)
+
+
+def _cli_get_lang(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_get_lang
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_get_lang(argv)
+
+
+def test_dock_set_lang_help(monkeypatch, tmp_path, capsys):
+    assert _cli_set_lang(monkeypatch, tmp_path, ["--help"]) == 0
+    assert "dock-set-lang" in capsys.readouterr().out
+
+
+def test_dock_set_lang_requires_lang(monkeypatch, tmp_path):
+    _populate(tmp_path / "store")
+    assert _cli_set_lang(monkeypatch, tmp_path, ["--json"]) == 2
+
+
+def test_dock_set_lang_rejects_bad_value(monkeypatch, tmp_path, capsys):
+    _populate(tmp_path / "store")
+    assert _cli_set_lang(monkeypatch, tmp_path, ["--lang", "fr", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_dock_set_lang_value_cannot_be_a_flag(monkeypatch, tmp_path):
+    _populate(tmp_path / "store")
+    assert _cli_set_lang(monkeypatch, tmp_path, ["--lang", "--json"]) == 2
+
+
+def test_dock_set_lang_writes_profile_language(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    _populate(store)
+    assert _cli_set_lang(monkeypatch, tmp_path, ["--lang", "en", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True and payload["lang"] == "en"
+    assert payload["language"] == "English"
+    profile = json.loads(
+        (store / "identity" / "profile.json").read_text(encoding="utf-8")
+    )
+    assert profile.get("language") == "English"
+
+
+def test_dock_set_lang_zh_stores_chinese_label(monkeypatch, tmp_path):
+    store = tmp_path / "store"
+    _populate(store)
+    assert _cli_set_lang(monkeypatch, tmp_path, ["--lang", "zh"]) == 0
+    profile = json.loads(
+        (store / "identity" / "profile.json").read_text(encoding="utf-8")
+    )
+    assert profile.get("language") == "中文"
+
+
+def test_dock_get_lang_default_is_zh(monkeypatch, tmp_path, capsys):
+    _populate(tmp_path / "store")
+    assert _cli_get_lang(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True and payload["lang"] == "zh"
+
+
+def test_dock_get_lang_is_zero_write(monkeypatch, tmp_path):
+    store = tmp_path / "store"
+    _populate(store)
+    before = _snapshot(store)
+    _cli_get_lang(monkeypatch, tmp_path, ["--json"])
+    assert _snapshot(store) == before
+
+
+def test_dock_get_lang_unknown_option(monkeypatch, tmp_path):
+    _populate(tmp_path / "store")
+    assert _cli_get_lang(monkeypatch, tmp_path, ["--bogus", "--json"]) == 2
+
+
+def test_dock_set_then_get_lang_round_trip(monkeypatch, tmp_path, capsys):
+    """The toggle persists so the dock reads its own language on next launch."""
+    _populate(tmp_path / "store")
+    assert _cli_set_lang(monkeypatch, tmp_path, ["--lang", "en"]) == 0
+    capsys.readouterr()
+    assert _cli_get_lang(monkeypatch, tmp_path, ["--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["lang"] == "en"
