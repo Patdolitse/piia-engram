@@ -128,7 +128,7 @@ def test_dock_resume_rejects_bad_budget(monkeypatch, tmp_path, capsys):
     assert "budget" in capsys.readouterr().out.lower()
 
 
-# --- Codex review-1 fixes: crypto / audit / real entry / arg edges ----------
+# --- crypto / audit / real entry / arg edges ----------
 
 
 def test_read_only_zero_write_with_encryption_no_salt(tmp_path, monkeypatch):
@@ -200,7 +200,7 @@ def test_dock_resume_rejects_unknown_option(monkeypatch, tmp_path):
     assert _cli(monkeypatch, tmp_path, ["--bogus"]) == 2
 
 
-# --- Codex review-2 fixes: flag-like values + reminder sentinel -------------
+# --- flag-like values + reminder sentinel -------------
 
 
 def test_dock_resume_project_value_cannot_be_a_flag(monkeypatch, tmp_path):
@@ -213,7 +213,7 @@ def test_dock_resume_budget_value_cannot_be_a_flag(monkeypatch, tmp_path):
     assert _cli(monkeypatch, tmp_path, ["--budget", "--json"]) == 2
 
 
-# --- dock-search CLI + read_only migration zero-write (Codex D2 review) ------
+# --- dock-search CLI + read_only migration zero-write ------
 
 
 def _cli_search(monkeypatch, tmp_path, argv):
@@ -256,7 +256,7 @@ def test_dock_search_json_is_structured_and_zero_write(monkeypatch, tmp_path, ca
 
 def test_read_only_does_not_persist_field_migration(tmp_path):
     """A legacy entry missing backfilled fields must be migrated in MEMORY only
-    under read_only — never rewritten to disk (Codex D2 review must-fix)."""
+    under read_only — never rewritten to disk."""
     from piia_engram.core import Engram
 
     store = tmp_path / "store"
@@ -305,7 +305,7 @@ def test_dock_export_json_success_writes_a_backup(monkeypatch, tmp_path, capsys)
 
 
 def test_dock_export_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
-    # The --json contract must hold even on arg-parse errors (Codex D3 must-fix).
+    # The --json contract must hold even on arg-parse errors.
     assert _cli_export(monkeypatch, tmp_path, ["--json", "--bogus"]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
@@ -347,7 +347,7 @@ def test_dock_portrait_rejects_unknown_option(monkeypatch, tmp_path):
 
 
 def test_dock_portrait_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
-    # The --json contract holds even on arg errors (Codex D3 v2 suggestion).
+    # The --json contract holds even on arg errors.
     assert _cli_portrait(monkeypatch, tmp_path, ["--json", "--bogus"]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
@@ -379,7 +379,7 @@ def test_dock_portrait_html_requires_output(monkeypatch, tmp_path):
 
 def test_dock_portrait_html_zero_write_with_missing_trust_boundaries(monkeypatch, tmp_path):
     """read_only must NOT lazily backfill trust_boundaries.json to disk — the
-    central _atomic_write guard (Codex portrait-HTML must-fix)."""
+    central _atomic_write guard."""
     from piia_engram.setup_wizard import _run_dock_portrait
 
     store = tmp_path / "store"
