@@ -131,3 +131,38 @@ def test_memory_store_cannot_smuggle_mature_labeling(eng: Engram):
     assert lesson["labeling"]["annotation_quality"] == "partial"
     assert lesson["labeling"]["validation_state"] == "unreviewed"
     assert "caller_certified" not in lesson["labeling"]["signals"]
+
+
+def test_review_knowledge_marks_validated_and_refreshes_labeling(tmp_path: Path):
+    engram = Engram(root=tmp_path)
+    lesson = engram.add_lesson({
+        "summary": "reviewed memory should become validated",
+        "domain": "review",
+        "source_tool": "codex",
+        "provenance": {"source_agent": "codex", "run_id": "run-4"},
+    })
+
+    reviewed = engram.review_knowledge(lesson["id"])
+
+    assert reviewed["labeling"]["validation_state"] == "validated"
+    assert "has_last_validated_at" in reviewed["labeling"]["signals"]
+    assert reviewed["provenance"]["source_agent"] == "owner"
+    assert "last_validated_at" in reviewed["provenance"]
+
+
+def test_promote_knowledge_marks_validated_and_refreshes_labeling(tmp_path: Path):
+    engram = Engram(root=tmp_path)
+    lesson = engram.add_lesson({
+        "summary": "promotion validates staging memory",
+        "domain": "review",
+        "source_tool": "codex",
+        "tier": "staging",
+    })
+
+    result = engram.promote_knowledge(lesson["id"])
+    stored = engram.get_lessons(limit=None, _update_access=False)[0]
+
+    assert result["status"] == "promoted"
+    assert stored["tier"] == "verified"
+    assert stored["labeling"]["validation_state"] == "validated"
+    assert "has_last_validated_at" in stored["labeling"]["signals"]

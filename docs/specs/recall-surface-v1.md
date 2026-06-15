@@ -27,7 +27,8 @@ One call that returns a stable, predictable recall payload:
 1. identity/profile slice   — stable across calls (who the user is, how they work)
 2. recent activity          — what happened lately (sessions / daily log digest)
 3. relevant knowledge       — project-relevant AND optional query-focused
-4. provenance/freshness     — per knowledge item: source_agent + freshness hint
+4. provenance/freshness/labeling — per knowledge item: source_agent, freshness
+   hint, and derived validation/annotation state
 ```
 
 This is the "stronger single-call product surface" called out in the competitor
@@ -57,7 +58,11 @@ stable shape:
       "provenance": {"source_agent": "...", "run_id": "...",
                      "last_validated_at": "..."},
       "freshness": {"freshness_status": "fresh|aging|stale|unknown",
-                    "age_days": 12.4, "basis": "last_reviewed"}
+                    "age_days": 12.4, "basis": "last_reviewed"},
+      "labeling": {"source_kind": "agent",
+                   "annotation_quality": "raw|partial|mature",
+                   "validation_state": "unreviewed|validated|needs_review",
+                   "signals": ["has_source_agent"]}
     }
   ],
   "meta": {"project": "...", "query": "...", "token_budget": 2000,
@@ -110,15 +115,17 @@ shows the aggregator dominates, deprecation can be considered later — separate
 1. ✅ **Implemented** — pure aggregator helper `src/piia_engram/recall.py`
    (`build_recall_payload`) takes already-loaded sub-results and assembles the
    payload, de-duplicates by id, projects each item to summary/metadata (never
-   raw stored dicts), applies `annotate_freshness` (opt-in), and trims to a token
-   budget. Unit-tested store-free in `tests/test_recall.py`.
+   raw stored dicts), carries the safe `labeling` subset, applies freshness
+   annotation (opt-in), and trims to a token budget. Unit-tested store-free in
+   `tests/test_recall.py`.
 2. ✅ **Implemented (owner-context CLI only)** — `src/piia_engram/recall_service.py`
    (`gather_recall` + `render_recall_text`) fetches the sub-results from a live
    `Engram` through existing governed read methods, optionally collapses
    superseded versions to HEAD (`version_chain.collapse_to_heads`), and feeds
    the pure aggregator. Surfaced as **`engram recall`** (CLI = `private-self`
-   owner), so it adds no new agent-facing disclosure surface. Tested store-free
-   with a duck-typed fake in `tests/test_recall_service.py`, plus a metadata-only
+   owner), so it adds no new agent-facing disclosure surface. The text renderer
+   surfaces compact labels such as `validated/mature`. Tested store-free with a
+   duck-typed fake in `tests/test_recall_service.py`, plus a metadata-only
    quality harness in `tests/test_recall_quality.py`.
 3. ✅ **Implemented** — thin **MCP** tool `get_recall` exposes the same
    structured Recall Surface v1 payload to agents. Because the aggregate can

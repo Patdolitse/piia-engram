@@ -531,19 +531,26 @@ function copyResult() {{
 
     def promote_knowledge(self, item_id: str) -> dict:
         """Promote a staging item to verified tier."""
-        # Try lessons first, then decisions
-        for path, entry_type in [
-            (self._knowledge_dir / "lessons.json", "lesson"),
-            (self._knowledge_dir / "decisions.json", "decision"),
-        ]:
-            entries = self._read_entries(path, entry_type)
-            for entry in entries:
-                if entry.get("id") == item_id:
-                    entry["tier"] = "verified"
-                    entry["promoted_at"] = _now_iso()
-                    entry["promotion_reason"] = "user_confirmed"
-                    self._write_entries(path, entries, entry_type)
-                    return {"status": "promoted", "id": item_id}
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision"}:
+            return {"status": "not_found", "id": item_id}
+
+        ts = _now_iso()
+
+        def _promote(entry: dict) -> dict:
+            entry["tier"] = "verified"
+            entry["promoted_at"] = ts
+            entry["promotion_reason"] = "user_confirmed"
+            return self._stamp_validated_entry(
+                entry,
+                item_type,
+                source_agent="owner",
+                validated_at=ts,
+            )
+
+        updated = self._update_knowledge_item(item_type, item_id, _promote)
+        if updated is not None:
+            return {"status": "promoted", "id": item_id}
         return {"status": "not_found", "id": item_id}
 
     def apply_review(self, review_data: dict | str) -> dict:

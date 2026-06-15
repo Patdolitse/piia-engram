@@ -585,6 +585,13 @@ async def wrap_up_session(
                 snapshot_data["tech_stack"] = [s.strip() for s in tech_stack.split(",") if s.strip()]
             if known_issues:
                 snapshot_data["known_issues"] = [s.strip() for s in known_issues.split(",") if s.strip()]
+            project_info = S._collect_project_info(project_folder)
+            if project_info:
+                verified_at = S._dt.now().isoformat()
+                project_info["last_auto_snapshot"] = verified_at
+                snapshot_data.update(S._attach_current_state(
+                    project_info, verified_at=verified_at
+                ))
             S._locked_engram_call(S._engram.save_project_snapshot, project_folder, snapshot_data)
             results["project_snapshot"] = {"saved": True, "folder": project_folder}
         except Exception as exc:

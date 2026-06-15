@@ -463,16 +463,25 @@ class ContextStoreMixin:
                 snap = self.get_project_snapshot(project_folder)
                 if isinstance(snap, dict) and snap:
                     project_title = str(snap.get("title") or "")
+                    current_state = snap.get("current_state")
+                    if not isinstance(current_state, dict):
+                        current_state = {}
                     proj_lines = ["## Current project"]
                     proj_lines.append(
                         f"- **folder**: {_escape_resume_brief_text(project_folder)}"
                     )
                     for key in ("title", "version", "test_count",
                                 "mcp_tool_definitions", "module_count"):
-                        if snap.get(key) is not None:
+                        value = current_state.get(key, snap.get(key))
+                        if value is not None:
                             proj_lines.append(
-                                f"- **{key}**: {_escape_resume_brief_text(snap[key])}"
+                                f"- **{key}**: {_escape_resume_brief_text(value)}"
                             )
+                    if current_state.get("verified_at"):
+                        proj_lines.append(
+                            "- **current_state_verified_at**: "
+                            + _escape_resume_brief_text(current_state["verified_at"])
+                        )
                     ts = snap.get("tech_stack")
                     if isinstance(ts, list) and ts:
                         proj_lines.append(

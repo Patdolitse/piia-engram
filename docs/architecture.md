@@ -194,7 +194,7 @@ Everything lives under `~/.engram/` (override with `ENGRAM_DIR` env var; legacy 
 │   ├── decisions.json       array of {id, question, choice, reasoning, ...}
 │   └── domains.json         {domain_name: {project_count, first_seen, last_used}}
 ├── projects/
-│   └── <sha256(folder)>.json per-project snapshot (title, tech_stack, known_issues, ...)
+│   └── <sha256(folder)>.json per-project snapshot (title, tech_stack, known_issues, current_state, ...)
 ├── exports/
 │   ├── identity_card.md     latest export from export_identity_card
 │   ├── review_<date>.html   from export_review_page

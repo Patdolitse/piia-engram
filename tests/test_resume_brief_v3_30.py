@@ -58,6 +58,29 @@ def test_includes_project_snapshot_when_folder_provided(tmp_path: Path):
     assert "foo bar broken" in r["markdown"]
 
 
+def test_project_snapshot_current_state_overrides_stale_legacy_counts(tmp_path: Path):
+    e = _make(tmp_path)
+    project = str(tmp_path / "myproj")
+    Path(project).mkdir()
+    e.save_project_snapshot(project, {
+        "title": "MyProj",
+        "test_count": 10,
+        "mcp_tool_definitions": 3,
+        "current_state": {
+            "test_count": 25,
+            "mcp_tool_definitions": 7,
+            "verified_at": "2026-06-16T10:00:00",
+        },
+    })
+
+    r = _pop_brief(e, project_folder=project)
+
+    assert "- **test_count**: 25" in r["markdown"]
+    assert "- **mcp_tool_definitions**: 7" in r["markdown"]
+    assert "current_state_verified_at" in r["markdown"]
+    assert "- **test_count**: 10" not in r["markdown"]
+
+
 def test_resume_brief_starts_with_30_second_handoff(tmp_path: Path):
     e = _make(tmp_path)
     project = tmp_path / "handoff-proj"

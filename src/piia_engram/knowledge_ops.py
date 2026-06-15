@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
+from . import provenance as _provenance
 from .storage import _now_iso
 
 
@@ -24,6 +26,68 @@ class KnowledgeOpsMixin:
         if item_type == "playbook":
             return self.update_playbook(item_id, updates)
         return self.update_decision(item_id, updates)
+
+    def _stamp_validated_entry(
+        self,
+        entry: dict,
+        entry_type: str,
+        *,
+        source_agent: str = "owner",
+        validated_at: str | None = None,
+    ) -> dict:
+        ts = validated_at or _now_iso()
+        stamp = _provenance.normalize_provenance_fields({
+            "source_agent": source_agent or "owner",
+            "last_validated_at": ts,
+        })
+        if "last_validated_at" not in stamp:
+            stamp["last_validated_at"] = _now_iso()
+        if "source_agent" not in stamp:
+            stamp["source_agent"] = "owner"
+        try:
+            reviewed_at = datetime.fromisoformat(
+                stamp["last_validated_at"].replace("Z", "+00:00")
+            ).replace(tzinfo=None, microsecond=0).isoformat()
+        except (TypeError, ValueError):
+            reviewed_at = _now_iso()
+
+        provenance = entry.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+        provenance.update(stamp)
+        entry["provenance"] = provenance
+        entry["last_reviewed"] = reviewed_at
+        entry["last_updated"] = reviewed_at
+        return self._ensure_fields(entry, entry_type)
+
+    def mark_validated_knowledge(
+        self,
+        item_id: str,
+        *,
+        source_agent: str = "owner",
+        validated_at: str | None = None,
+        increment_access: bool = False,
+    ) -> dict:
+        """Stamp an item as explicitly validated without changing its content."""
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {item_id}"}
+
+        def _mark(entry: dict) -> dict:
+            if increment_access:
+                entry["access_count"] = entry.get("access_count", 0) + 1
+            return self._stamp_validated_entry(
+                entry,
+                item_type,
+                source_agent=source_agent,
+                validated_at=validated_at,
+            )
+
+        updated = self._update_knowledge_item(item_type, item_id, _mark)
+        if updated is None:
+            return {"error": f"Item not found: {item_id}"}
+        self._audit.log("write", "knowledge/validate", detail=item_id)
+        return updated
 
     def archive_knowledge(self, item_id: str) -> dict:
         """Archive a lesson, decision, or playbook by ID (auto-detects type)."""
@@ -174,16 +238,14 @@ class KnowledgeOpsMixin:
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {knowledge_id}"}
 
-        now = _now_iso()
-
-        def _mark_reviewed(entry: dict) -> dict:
-            entry["last_reviewed"] = now
-            entry["access_count"] = entry.get("access_count", 0) + 1
-            return entry
-
-        item = self._update_knowledge_item(item_type, knowledge_id, _mark_reviewed)
-        if item is None:
-            return {"error": f"Item not found: {knowledge_id}"}
+        item = self.mark_validated_knowledge(
+            knowledge_id,
+            source_agent="owner",
+            validated_at=_now_iso(),
+            increment_access=True,
+        )
+        if item.get("error"):
+            return item
         self._audit.log("write", "knowledge/review", detail=knowledge_id)
         return item
 
@@ -471,4 +533,3 @@ class KnowledgeOpsMixin:
             "related": related,
             "total": len(related),
         }
-

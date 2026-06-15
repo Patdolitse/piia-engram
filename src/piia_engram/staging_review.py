@@ -280,7 +280,7 @@ def _pending_item(item_type: str, item: dict[str, Any]) -> dict[str, Any]:
     if not reasons:
         reasons.append("fifo")
 
-    return {
+    row = {
         "id": str(item.get("id") or ""),
         "type": item_type,
         "domain": str(item.get("domain") or ""),
@@ -291,3 +291,24 @@ def _pending_item(item_type: str, item: dict[str, Any]) -> dict[str, Any]:
         "access_count": access_count if isinstance(access_count, int) else 0,
         "promotion_suggested": bool(item.get("promotion_suggested")),
     }
+    labeling = _project_labeling(item)
+    if labeling:
+        row["labeling"] = labeling
+    return row
+
+
+def _project_labeling(item: dict[str, Any]) -> dict[str, Any]:
+    labeling = item.get("labeling")
+    if not isinstance(labeling, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in ("source_kind", "annotation_quality", "validation_state"):
+        value = labeling.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value.strip()
+    signals = labeling.get("signals")
+    if isinstance(signals, list):
+        clean = [str(value).strip() for value in signals if str(value).strip()]
+        if clean:
+            out["signals"] = clean[:20]
+    return out

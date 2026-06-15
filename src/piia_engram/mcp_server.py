@@ -547,7 +547,11 @@ class _SessionTracker:
             try:
                 project_info = _collect_project_info(self.project_folder)
                 if project_info:
-                    project_info["last_auto_snapshot"] = _dt.now().isoformat()
+                    verified_at = _dt.now().isoformat()
+                    project_info["last_auto_snapshot"] = verified_at
+                    project_info = _attach_current_state(
+                        project_info, verified_at=verified_at
+                    )
                     _locked_engram_call(
                         _engram.save_project_snapshot,
                         self.project_folder,
@@ -625,7 +629,58 @@ def _collect_project_info(project_folder: str) -> dict:
     except Exception:
         pass
 
+    # 5. Local git position: useful for cross-tool handoff, never required.
+    try:
+        import subprocess
+
+        head = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=2,
+        )
+        if head.returncode == 0 and head.stdout.strip():
+            info["latest_local_commit"] = head.stdout.strip()
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=2,
+        )
+        if branch.returncode == 0 and branch.stdout.strip():
+            info["current_branch"] = branch.stdout.strip()
+    except Exception:
+        pass
+
     return info
+
+
+def _attach_current_state(info: dict, *, verified_at: str | None = None) -> dict:
+    """Attach machine-derived project facts without discarding legacy fields."""
+    if not isinstance(info, dict):
+        return {}
+    out = dict(info)
+    keys = (
+        "version",
+        "module_count",
+        "test_count",
+        "mcp_tool_definitions",
+        "latest_local_commit",
+        "current_branch",
+    )
+    current = {key: out[key] for key in keys if out.get(key) is not None}
+    if current:
+        current["verified_at"] = verified_at or _dt.now().isoformat()
+        out["current_state"] = current
+    return out
 
 
 _session = _SessionTracker()

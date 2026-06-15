@@ -1122,6 +1122,41 @@ class TestWrapUpSessionErrors:
         assert "error" in result["project_snapshot"]
         assert "snapshot boom" in result["project_snapshot"]["error"]
 
+    def test_wrap_up_session_calibrates_project_snapshot_current_state(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            isolated_engram,
+            "extract_session_insights",
+            lambda *a, **kw: {"lessons": [], "decisions": []},
+        )
+        monkeypatch.setattr(
+            mcp_server,
+            "_collect_project_info",
+            lambda folder: {
+                "version": "9.9.9",
+                "test_count": 42,
+                "mcp_tool_definitions": 7,
+            },
+        )
+
+        project = str(isolated_engram.root / "project")
+        result = json.loads(_run(mcp_server.wrap_up_session(
+            summary="finished current labeling loop",
+            project_folder=project,
+            project_title="Piia Engram",
+        )))
+        snapshot = isolated_engram.get_project_snapshot(project)
+
+        assert result["project_snapshot"]["saved"] is True
+        assert snapshot["title"] == "Piia Engram"
+        assert snapshot["version"] == "9.9.9"
+        assert snapshot["test_count"] == 42
+        assert snapshot["current_state"]["version"] == "9.9.9"
+        assert snapshot["current_state"]["test_count"] == 42
+        assert snapshot["current_state"]["mcp_tool_definitions"] == 7
+        assert "verified_at" in snapshot["current_state"]
+
     def test_reconcile_memories_exception(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
     ):

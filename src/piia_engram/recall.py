@@ -79,6 +79,9 @@ def _project_item(
 
     if include_freshness:
         view["freshness"] = _provenance.compute_freshness(entry, now=now)
+    labeling = _project_labeling(entry)
+    if labeling:
+        view["labeling"] = labeling
     return view
 
 
@@ -89,6 +92,23 @@ def _item_cost(view: dict[str, Any]) -> int:
 
 def _count_dicts(items: list[dict[str, Any]] | None) -> int:
     return sum(1 for item in (items or []) if isinstance(item, dict))
+
+
+def _project_labeling(entry: dict[str, Any]) -> dict[str, Any]:
+    labeling = entry.get("labeling")
+    if not isinstance(labeling, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in ("source_kind", "annotation_quality", "validation_state"):
+        value = labeling.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value.strip()
+    signals = labeling.get("signals")
+    if isinstance(signals, list):
+        clean = [str(value).strip() for value in signals if str(value).strip()]
+        if clean:
+            out["signals"] = clean[:20]
+    return out
 
 
 def merge_knowledge(

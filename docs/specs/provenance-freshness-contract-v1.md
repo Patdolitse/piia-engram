@@ -1,11 +1,10 @@
 # Provenance & Freshness Contract v1
 
-Status: **v1 — additive metadata + recall-annotation _helper_ (recall wiring =
-follow-up).** The helper module
-(`src/piia_engram/provenance.py`) and its tests ship now. Wiring into the write
-path (`add_lesson` / `add_decision` / `add_playbook`) and the recall surfaces is
-a clearly-scoped, separately-reviewed follow-up (see §6) so the MCP output shape
-does not change without explicit review.
+Status: **v1 implemented as additive metadata + governed recall/review
+surfacing.** The helper module (`src/piia_engram/provenance.py`), write-path
+normalization, opt-in freshness annotation, and validation stamping through
+review/promote paths are shipped. The default legacy read shapes remain
+compatible; richer provenance/freshness/labeling is additive or opt-in.
 
 ## 1. Goal
 
@@ -44,8 +43,10 @@ Each knowledge entry also carries a system-derived `labeling` object:
 `labeling` is **not caller-certified**. Agent-facing MCP payloads have any
 incoming `labeling` removed with the other trust fields, then Engram derives it
 from provenance, domain/project/source URL context, risk tier, and approval
-state. High-risk or staging entries are always `needs_review` and cannot be
-`mature` until they leave the review path.
+state. Staging entries are `needs_review`; high-risk entries remain conservative
+even after promotion, while ordinary owner-reviewed/promoted entries receive a
+validation stamp and can become `validated`/`mature` when the supporting signals
+are present.
 
 ### Type / safety rules
 
@@ -101,13 +102,13 @@ rather than an error.
 
 ## 5. Source-explainable recall behavior (contract)
 
-When the follow-up wiring lands, recall surfaces (`get_relevant_knowledge`,
-`search_knowledge`, and the resume/recall brief) will be able to attach, per
-returned item:
+Recall surfaces (`get_relevant_knowledge`, `search_knowledge`, `get_recall`,
+and the resume/recall brief where applicable) can attach, per returned item:
 
 ```json
 "provenance": { "source_agent": "...", "run_id": "...", "last_validated_at": "..." },
-"freshness":  { "freshness_status": "aging", "age_days": 47.1, "basis": "last_reviewed" }
+"freshness":  { "freshness_status": "aging", "age_days": 47.1, "basis": "last_reviewed" },
+"labeling":   { "validation_state": "validated", "annotation_quality": "mature" }
 ```
 
 so an AI can say *"this decision came from the codex run on 2026-05-02 and is
@@ -128,8 +129,11 @@ equally current. This is opt-in at the surface level and changes no stored data.
    they call `annotate_freshness` **after** governance filtering, so the default
    output is byte-identical and a non-owner can never have an above-ceiling item
    annotated. Covered by `tests/test_provenance_wiring.py`.
-4. **Follow-up C (validation tooling):** an explicit `mark_validated` action that
-   stamps `last_validated_at` + `source_agent` on review/promote.
+4. ✅ **Follow-up C (validation tooling) — implemented:** the core
+   `mark_validated_knowledge` primitive stamps `last_validated_at` +
+   `source_agent` and refreshes derived `labeling`; `review_knowledge` and
+   `promote_knowledge` call it through the existing review/promote paths.
+   Covered by `tests/test_data_labeling.py`.
 
 ## 7. Non-goals (v1)
 

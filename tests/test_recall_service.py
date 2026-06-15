@@ -232,6 +232,25 @@ def test_render_text_includes_context_usage_footer():
     assert "trimmed=" in text
 
 
+def test_render_text_includes_labeling_state():
+    eng = FakeEngram(
+        relevant=[{
+            "id": "L1",
+            "summary": "a validated lesson",
+            "labeling": {
+                "source_kind": "agent",
+                "annotation_quality": "mature",
+                "validation_state": "validated",
+                "signals": ["has_last_validated_at"],
+            },
+        }],
+    )
+    payload = rs.gather_recall(eng, now=_now())
+    text = rs.render_recall_text(payload)
+
+    assert "validated/mature" in text
+
+
 def test_role_scoped_memory_filters_owner_recall_when_governance_enabled(
     tmp_path, monkeypatch
 ):

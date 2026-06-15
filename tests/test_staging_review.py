@@ -173,3 +173,28 @@ def test_list_pending_limit_and_type_filter(tmp_path):
     assert payload["counts"]["listed"] == 1
     assert payload["items"][0]["id"] == decision["id"]
     assert payload["items"][0]["type"] == "decision"
+
+
+def test_list_pending_includes_labeling_metadata_only(tmp_path):
+    from piia_engram.staging_review import batch_review_staging
+
+    eng = _eng(tmp_path)
+    lesson = eng.add_lesson({
+        "summary": f"label me {SECRET}",
+        "domain": "review",
+        "source_tool": "codex",
+        "tier": "staging",
+    })
+
+    payload = batch_review_staging(
+        eng,
+        [],
+        operation="list_pending",
+        limit=10,
+    )
+
+    row = next(item for item in payload["items"] if item["id"] == lesson["id"])
+    assert row["labeling"]["source_kind"] == "agent"
+    assert row["labeling"]["validation_state"] == "needs_review"
+    assert "needs_owner_review" in row["labeling"]["signals"]
+    assert SECRET not in json.dumps(payload, ensure_ascii=False)

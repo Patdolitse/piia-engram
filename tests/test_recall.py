@@ -132,6 +132,28 @@ class TestProvenanceAndFreshness:
         assert on["knowledge"][0]["freshness"]["freshness_status"] == "fresh"
         assert "freshness" not in off["knowledge"][0]
 
+    def test_labeling_subset_carried(self):
+        entry = _lesson(
+            labeling={
+                "source_kind": "agent",
+                "annotation_quality": "mature",
+                "validation_state": "validated",
+                "signals": ["has_source_agent", "has_last_validated_at"],
+                "internal_note": "must not leak",
+            }
+        )
+        payload = recall.build_recall_payload(
+            relevant_knowledge=[entry], include_freshness=False
+        )
+        labeling = payload["knowledge"][0]["labeling"]
+        assert labeling == {
+            "source_kind": "agent",
+            "annotation_quality": "mature",
+            "validation_state": "validated",
+            "signals": ["has_source_agent", "has_last_validated_at"],
+        }
+        assert "internal_note" not in repr(payload)
+
 
 class TestTokenBudgetTrim:
     def test_trims_and_counts_excluded(self):
