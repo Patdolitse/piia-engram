@@ -43,6 +43,9 @@ secrets*
 # strategy). The public CHANGELOG.md ships; this dir never does.
 docs/internal/
 
+# Internal audit/review task packages (maintainer-only prompts & notes)
+docs/audits/
+
 # IDE
 .vscode/
 .idea/

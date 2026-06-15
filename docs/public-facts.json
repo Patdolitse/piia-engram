@@ -2,7 +2,7 @@
   "schema_version": 1,
   "_about": "Machine-readable canonical PUBLIC FACTS for piia-engram. This is the single source of truth that scripts/check_public_fact_sync.py enforces against the current-state public documentation surfaces. Update this file (and re-run the guard) whenever the numbers below change. See docs/runbooks/public-truth-sync.md.",
   "package_name": "piia-engram",
-  "local_dev_version": "4.1.0",
+  "local_dev_version": "4.2.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
     "test_passed": 3300,

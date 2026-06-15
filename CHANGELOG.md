@@ -6,6 +6,34 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.2.0] - 2026-06-15
+
+### Added
+- **Read-only, zero-write store mode.** `Engram(read_only=True)` now guarantees a
+  true no-write open: field migration, trust-boundary backfill, session stamps,
+  and the update reminder are all suppressed, so a client can read the store with
+  zero side effects. `engram preview --read-only` renders the Memory Lens report
+  under this guarantee.
+- **Read-only CLI surface for a local desktop client.** A family of zero-write
+  commands to pull paste-ready context without mutating the store: `dock-resume`
+  (resume brief), `dock-search` (keyword search), `dock-portrait` (full styled
+  user-portrait HTML), and `dock-archived` (list archived entries). Plus
+  `dock-export` for a one-click full backup (writes a backup file).
+- **Owner knowledge management from a local client.** `dock-onboard-scan` /
+  `dock-onboard-commit` extract lesson/decision candidates from pasted text or a
+  chosen project folder (recent git subjects + README) for owner-confirmed,
+  editable import; `dock-update` edits an entry's content; `dock-archive` /
+  `dock-restore` reversibly archive and restore entries.
+- **Richer user-portrait HTML.** The portrait gains work-style, knowledge
+  composition, collaboration tools, a "days together" meta, and click-to-expand
+  drill-in to the full lesson and decision content.
+
+### Fixed
+- Hardened `read_only` against lazy-write paths (field migration, atomic write,
+  trust-boundary backfill) so a read-only open is truly side-effect-free.
+- The pre-commit hook now selects a working Python interpreter instead of the
+  Windows Store stub.
+
 ## [4.1.0] - 2026-06-12
 
 ### Added
