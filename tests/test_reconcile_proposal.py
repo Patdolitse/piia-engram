@@ -6,7 +6,7 @@ from piia_engram import reconcile_proposal as rp
 
 
 EXISTING = [
-    {"id": "L1", "summary": "Always run pytest from the E:/Temp virtualenv on this machine"},
+    {"id": "L1", "summary": "Always run pytest from the Z:/Example virtualenv on this machine"},
     {"id": "D1", "question": "Which mechanism for long phase tasks?",
      "choice": "Use the D+ mechanism by default"},
 ]
@@ -19,7 +19,7 @@ def test_novel_candidate_proposed_for_import():
 
 
 def test_near_duplicate_detected():
-    cand = {"id": "C2", "summary": "Always run pytest from the E:/Temp virtualenv on this machine"}
+    cand = {"id": "C2", "summary": "Always run pytest from the Z:/Example virtualenv on this machine"}
     out = rp.classify_candidate(cand, EXISTING)
     assert out["action"] == "duplicate"
     assert out["match_id"] == "L1"
@@ -44,7 +44,7 @@ def test_same_question_same_choice_is_duplicate_not_conflict():
 def test_build_proposal_counts_and_receipt_never_applies():
     candidates = [
         {"id": "C1", "summary": "Brand new metadata-only telemetry guidance entry"},
-        {"id": "C2", "summary": "Always run pytest from the E:/Temp virtualenv on this machine"},
+        {"id": "C2", "summary": "Always run pytest from the Z:/Example virtualenv on this machine"},
         {"id": "C3", "question": "Which mechanism for long phase tasks?",
          "choice": "Use the E+ mechanism with DeepSeek audit"},
     ]

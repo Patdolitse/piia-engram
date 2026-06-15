@@ -456,3 +456,46 @@ def test_fixture_file_skipped_without_internal(sc, tmp_path, monkeypatch, capsys
     assert "Windows path" not in out
     assert "GitHub token" not in out
     assert rc == 0
+
+
+def test_fixture_file_private_workspace_path_still_scanned(sc, tmp_path, monkeypatch, capsys):
+    """Fixture exemption must not hide a real maintainer workspace path."""
+    import subprocess
+    import sys
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+
+    testsdir = tmp_path / "tests"
+    testsdir.mkdir()
+    workspace_name = "Acme Internal " + "Workspace Name"
+    (testsdir / "test_fix.py").write_text(
+        f'PROJECT = "E:/{workspace_name}/engram"\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "tests/test_fix.py"], cwd=tmp_path, check=True)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sc, "_load_custom_terms", lambda: [])
+    monkeypatch.setattr(sys, "argv", ["release_sanitize_check.py", "--strict"])
+
+    rc = sc.main()
+    out = capsys.readouterr().out
+
+    assert "private local path" in out
+    assert "tests/test_fix.py" in out
+    assert rc == 1
+
+
+def test_private_path_scan_flags_drive_temp_tool_path(sc, tmp_path):
+    """Non-Users Windows paths can still disclose maintainer machine layout."""
+    f = tmp_path / "release.py"
+    drive = "E:"
+    temp_dir = "Temp"
+    f.write_text(f'PUBLISHER = "{drive}\\\\{temp_dir}\\\\mcp-publisher.exe"\n',
+                 encoding="utf-8")
+
+    hits = sc._scan_private_local_paths(f)
+
+    assert any(label == "private local path" and sev == "warn" for label, sev, *_ in hits)

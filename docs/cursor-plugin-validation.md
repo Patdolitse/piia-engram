@@ -23,7 +23,7 @@ below.
 ## 1. Static checks (runnable now, no Cursor)
 
 ```powershell
-$py = "E:\Temp\engram-v337-pypi-smoke\Scripts\python.exe"
+$py = "python"
 $env:PYTHONPATH = (Resolve-Path ".\src").Path
 & $py -m pytest tests/test_ecosystem_entrypoints.py -q -p no:cacheprovider
 ```

@@ -45,6 +45,7 @@ docs/internal/
 
 # Internal audit/review task packages (maintainer-only prompts & notes)
 docs/audits/
+audits/
 
 # IDE
 .vscode/

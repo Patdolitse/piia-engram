@@ -1,6 +1,6 @@
 [
   {
-    "summary": "On Windows, run Engram's pytest via the E:/Temp venv with PYTHONPATH=src; the WindowsApps python is a stub.",
+    "summary": "On Windows, run Engram's pytest via the Z:/Example venv with PYTHONPATH=src; the WindowsApps python is a stub.",
     "detail": "Plain `python` resolves to the Store alias and exits 49. Use the venv interpreter and prepend the worktree src.",
     "domain": "testing, windows",
     "source_tool": "claude_code",

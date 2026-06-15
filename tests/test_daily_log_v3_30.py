@@ -21,7 +21,7 @@ def _make(tmp_path: Path) -> Engram:
 
 def test_append_creates_dated_file_with_header(tmp_path: Path):
     e = _make(tmp_path)
-    project = "E:/Personal Intelligence Identity Asset/engram"
+    project = "Z:/Example Workspace/engram"
     r = e.append_daily_log(project, "First entry of the day.", event_type="session")
     assert r["created"] is True
     file = Path(r["file"])

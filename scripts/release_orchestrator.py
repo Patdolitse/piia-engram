@@ -56,10 +56,7 @@ OIDC = "oidc"
 DEVICE_FLOW = "device_flow"
 TOKEN = "token"
 
-DEFAULT_MCP_PUBLISHER_CANDIDATES = (
-    r"E:\Temp\mcp-publisher.exe",
-    r"E:\Temp\mcp-publisher-v1.7.9-windows-amd64\mcp-publisher.exe",
-)
+DEFAULT_MCP_PUBLISHER_CANDIDATES: tuple[str, ...] = ()
 
 
 def _step(
@@ -249,7 +246,9 @@ def probe_presence(which=shutil.which, env=None) -> dict[str, bool]:
     def _mcp_present() -> bool:
         if which("mcp-publisher"):
             return True
-        explicit = str(env.get("MCP_PUBLISHER_PATH", "")).strip()
+        explicit = str(
+            env.get("MCP_PUBLISHER_PATH") or env.get("MCP_PUBLISHER_BIN") or ""
+        ).strip()
         if explicit and Path(explicit).is_file():
             return True
         return any(Path(raw).is_file() for raw in DEFAULT_MCP_PUBLISHER_CANDIDATES)

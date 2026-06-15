@@ -4,7 +4,7 @@
   "relevant_knowledge": [
     {
       "id": "L-fresh",
-      "summary": "Use E:\\Temp venv to run pytest on this machine",
+      "summary": "Use Z:\\Example venv to run pytest on this machine",
       "domain": "python",
       "last_validated_at": "2026-05-28T00:00:00+00:00",
       "provenance": {"source_agent": "claude_code", "run_id": "r-100"},

@@ -9,16 +9,14 @@ and retries publish once. Token values are never printed.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 
-DEFAULT_MCP_PUBLISHER_CANDIDATES = (
-    r"E:\Temp\mcp-publisher.exe",
-    r"E:\Temp\mcp-publisher-v1.7.9-windows-amd64\mcp-publisher.exe",
-)
+DEFAULT_MCP_PUBLISHER_CANDIDATES: tuple[str, ...] = ()
 
 
 def _run(cmd: list[str], timeout: int = 60) -> tuple[int, str, str]:
@@ -42,6 +40,9 @@ def resolve_mcp_publisher(which=shutil.which, candidates=None) -> str | None:
     found = which("mcp-publisher")
     if found:
         return found
+    explicit = os.environ.get("MCP_PUBLISHER_PATH") or os.environ.get("MCP_PUBLISHER_BIN")
+    if explicit and Path(explicit).is_file():
+        return explicit
     for raw in candidates or DEFAULT_MCP_PUBLISHER_CANDIDATES:
         if Path(raw).is_file():
             return raw

@@ -317,8 +317,8 @@ class ReconcileMixin:
         """Decode a Claude Code project directory name back to a real path.
 
         Claude encodes absolute paths by replacing every non-alphanumeric
-        character with ``-``.  E.g. ``E:\\Personal Intelligence Identity Asset``
-        becomes ``E--Personal-Intelligence-Identity-Asset``.
+        character with ``-``.  E.g. ``Z:\\Example Workspace``
+        becomes ``Z--Example-Workspace``.
 
         We reverse this by: drive letter + walk the filesystem, greedily
         matching directory names against remaining encoded segments.

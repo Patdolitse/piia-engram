@@ -5,7 +5,8 @@ patterns that should not ship in a public release:
 
 - API keys / tokens (OpenAI, GitHub, HuggingFace, PyPI, generic 32+ hex)
 - Private key headers (PEM / OpenSSH)
-- Hardcoded local paths (Windows ``C:\\Users\\...`` / POSIX ``/home/...``)
+- Hardcoded local paths (Windows ``C:\\Users\\...``, maintainer temp/tool
+  paths, internal workspace names, POSIX ``/home/...``)
 - Optional: custom sensitive-term list from ``~/.engram-release-sensitive.txt``
   (one term per line; not committed to the repo — each maintainer keeps
   their own).
@@ -121,6 +122,28 @@ _ALLOWLISTED_TEST_SECRETS = frozenset({
 })
 
 
+_PRIVATE_LOCAL_PATH_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
+    # Maintainer-specific scratch/tool paths are easy to mistake for harmless
+    # release plumbing, but they disclose local machine layout and often leak
+    # into public scripts. Keep this separate from the fixture-exempt built-ins:
+    # it runs on *every* tracked file, including tests.
+    (
+        "private local path",
+        re.compile(r"\b[A-Za-z]:[\\/]+Temp(?:[\\/][^\s'\"`<>)]*)?", re.IGNORECASE),
+        "warn",
+    ),
+    (
+        "private local path",
+        re.compile(
+            r"\b[A-Za-z]:[\\/]+[^\\/\r\n'\"`<>)]*(?:[ -][^\\/\r\n'\"`<>)]*){2,}"
+            r"[\\/][^\s'\"`<>)]*",
+            re.IGNORECASE,
+        ),
+        "warn",
+    ),
+]
+
+
 def _scan_live_credentials(
     path: Path, text: str | None = None
 ) -> list[tuple[str, str, int, str]]:
@@ -143,6 +166,30 @@ def _scan_live_credentials(
                 continue
             preview = (token[:6] + "***") if len(token) > 6 else "***"
             hits.append(("live credential", "high", lineno, preview))
+    return hits
+
+
+def _scan_private_local_paths(
+    path: Path, text: str | None = None
+) -> list[tuple[str, str, int, str]]:
+    """Flag maintainer-local path shapes in any tracked file.
+
+    Unlike the built-in fixture-exempt scan, this runs on tests too: fake
+    ``C:\\Users`` fixtures are noisy, but real workspace names and maintainer
+    temp/tool paths should never ship even inside a fixture. The matched path is
+    redacted from output so the scanner does not re-disclose it.
+    """
+    hits: list[tuple[str, str, int, str]] = []
+    if text is None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except (OSError, UnicodeDecodeError):
+            return hits
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for label, pat, severity in _PRIVATE_LOCAL_PATH_PATTERNS:
+            if pat.search(line):
+                hits.append((label, severity, lineno, "<redacted private local path>"))
+                break
     return hits
 
 
@@ -479,6 +526,7 @@ def main() -> int:
         # a REAL key must never sit in the repo even as a "sample" (this is the
         # exact gap that let a real DeepSeek key live in a test fixture).
         hits = _scan_live_credentials(path, text=staged_text)
+        hits += _scan_private_local_paths(path, text=staged_text)
         if _is_fixture(rel):
             # Intentional fake fixtures live here — scanning the built-in /
             # generic-internal patterns would only flag the fixtures. Scan

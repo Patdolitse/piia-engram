@@ -22,7 +22,7 @@ MIN_LESSON_SUMMARY_LEN = 15
 MIN_DECISION_CHOICE_LEN = 10
 
 # Transient / debugging markers that should not become long-term memory.
-# Matched on word boundaries so legitimate paths/words (e.g. "E:/Temp",
+# Matched on word boundaries so legitimate paths/words (e.g. "Z:/Example",
 # "template", "attempt") do not false-positive. "tmp"/"temp" are intentionally
 # omitted — they collide with paths far too often for a dev tool.
 _TRANSIENT_MARKERS = (

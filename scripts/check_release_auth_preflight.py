@@ -52,10 +52,7 @@ FAIL = "fail"
 WARN = "warn"
 SKIP = "skip"
 
-DEFAULT_MCP_PUBLISHER_CANDIDATES = (
-    r"E:\Temp\mcp-publisher.exe",
-    r"E:\Temp\mcp-publisher-v1.7.9-windows-amd64\mcp-publisher.exe",
-)
+DEFAULT_MCP_PUBLISHER_CANDIDATES: tuple[str, ...] = ()
 
 DEFAULT_MCP_TOKEN_CACHE_CANDIDATES = (
     "~/.mcp-publisher/token.json",
@@ -141,6 +138,9 @@ def _resolve_mcp_publisher(which=shutil.which, candidates=None) -> str | None:
     found = which("mcp-publisher")
     if found:
         return found
+    explicit = os.environ.get("MCP_PUBLISHER_PATH") or os.environ.get("MCP_PUBLISHER_BIN")
+    if explicit and Path(explicit).is_file():
+        return explicit
     for raw in candidates or DEFAULT_MCP_PUBLISHER_CANDIDATES:
         path = Path(raw)
         if path.is_file():

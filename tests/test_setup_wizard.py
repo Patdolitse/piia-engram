@@ -406,7 +406,7 @@ class TestSessionsCLI:
         text = render_status_text({
             "version": "test",
             "storage": {
-                "path": "E:\\Temp\\engram",
+                "path": "Z:\\Example\\engram",
                 "file_count": 1,
                 "bytes": 10,
                 "skipped": 1,
@@ -1160,7 +1160,7 @@ def test_write_mcp_config_toml_escapes_windows_paths(tmp_path: Path, monkeypatch
 
     config_path = tmp_path / ".codex" / "config.toml"
     python_path = r"C:\Users\testuser\AppData\Local\Programs\Python\Python312\python.exe"
-    mcp_server_path = r"E:\Temp\engram-worktrees\v342-install-gui\src\piia_engram\mcp_server.py"
+    mcp_server_path = r"Z:\Example\engram-worktrees\v342-install-gui\src\piia_engram\mcp_server.py"
     data_dir = r"C:\Users\testuser\.engram"
 
     monkeypatch.setattr("piia_engram.setup_wizard.importlib.util.find_spec", lambda _name: None)
@@ -1170,7 +1170,7 @@ def test_write_mcp_config_toml_escapes_windows_paths(tmp_path: Path, monkeypatch
     parsed = toml_parser.loads(config_path.read_text(encoding="utf-8"))
     entry = parsed["mcp_servers"]["engram"]
     assert entry["command"] == python_path
-    assert entry["env"]["PYTHONPATH"] == r"E:\Temp\engram-worktrees\v342-install-gui\src"
+    assert entry["env"]["PYTHONPATH"] == r"Z:\Example\engram-worktrees\v342-install-gui\src"
     assert entry["env"]["ENGRAM_DIR"] == data_dir
 
 
