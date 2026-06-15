@@ -14,8 +14,8 @@ fresh checkout sees it) and must record that each required gate passed:
     # Release evidence — v3.34.0
 
     - self-review: passed
-    - codex-review: passed        # independent Codex review
-    - claude-review: passed       # independent Claude acceptance review
+    - implementation-review: passed        # independent implementation review
+    - acceptance-review: passed       # independent acceptance review
     - tests: pass                 # full pytest suite green
     - sanitize: passed            # release_sanitize_check high=0
     - publish-allowlist: passed   # all tracked public files are allowlisted
@@ -26,7 +26,7 @@ fresh checkout sees it) and must record that each required gate passed:
     - negative-control: passed    # R1; or n/a (no security-sensitive change)
     - field-assertion-audit: passed  # R5; or n/a (no security-sensitive module touched)
 
-Required markers: ``self-review``, ``codex-review``, ``claude-review``,
+Required markers: ``self-review``, ``implementation-review``, ``acceptance-review``,
 ``tests``, ``sanitize``, ``publish-allowlist``, ``package-build`` and
 ``artifact-private-scan`` and ``twine-check``. Each must be on its own line as
 ``<marker>: <value>`` with a passing value (passed/pass/ok/green/yes).
@@ -69,8 +69,8 @@ from pathlib import Path
 
 REQUIRED_MARKERS = (
     "self-review",
-    "codex-review",
-    "claude-review",
+    "implementation-review",
+    "acceptance-review",
     "tests",
     "sanitize",
     "publish-allowlist",
@@ -123,7 +123,7 @@ def check_release_gate(version: str, root: Path) -> tuple[bool, list[str]]:
     if not evidence.is_file():
         return False, [
             f"missing evidence file: {EVIDENCE_DIR}/v{version}.md "
-            f"(record self-review / codex-review / claude-review / tests / "
+            f"(record self-review / implementation-review / acceptance-review / tests / "
             f"sanitize / publish-allowlist / package-build / "
             f"artifact-private-scan / twine-check / eval-gate there)"
         ]
@@ -170,7 +170,7 @@ def main() -> int:
         print(f"  - {p}")
     print("")
     print("Publishing is blocked until the evidence file records that the")
-    print("mandatory gates passed (self-review + codex-review + claude-review + tests +")
+    print("mandatory gates passed (self-review + implementation-review + acceptance-review + tests +")
     print("sanitize + publish-allowlist + package-build + artifact-private-scan +")
     print("twine-check) and the")
     print("presence-only gates are declared (eval-gate, negative-control,")
