@@ -7,7 +7,41 @@
     "url": "https://github.com/Patdolitse/piia-engram",
     "source": "github"
   },
+  "websiteUrl": "https://github.com/Patdolitse/piia-engram",
   "version": "4.2.0",
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "displayName": "Piia Engram",
+      "slug": "patdolitse-piia-engram",
+      "homepage": "https://github.com/Patdolitse/piia-engram",
+      "license": "AGPL-3.0-or-later",
+      "categories": [
+        "Developer Tools",
+        "Memory",
+        "Knowledge Management"
+      ],
+      "keywords": [
+        "memory",
+        "identity",
+        "cross-tool",
+        "local-first",
+        "mcp",
+        "knowledge-management"
+      ],
+      "capabilities": {
+        "mcp_tools_total": 53,
+        "mcp_tools_core": 17,
+        "mcp_tools_advanced": 36,
+        "prompts": 0,
+        "resources": 0
+      },
+      "install": {
+        "pip": "pip install piia-engram && engram setup",
+        "uvx": "uvx --from piia-engram piia-engram-mcp"
+      },
+      "listingNote": "Local-first personal AI identity and memory layer for MCP-compatible coding tools."
+    }
+  },
   "packages": [
     {
       "registryType": "pypi",
