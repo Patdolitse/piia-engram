@@ -350,6 +350,53 @@ def test_architecture_does_not_carry_stale_mcp_wrapper_count():
     assert "53 `@mcp.tool()`" in doc
 
 
+def test_readme_top_positions_identity_layer_not_plain_memory():
+    readme = _read("README.md")
+    readme_zh = _read("README.zh-CN.md")
+
+    assert "Local-first AI work identity" in readme[:1200]
+    assert "AI work identity layer" in readme
+    assert "persistent AI memory across tools" not in readme[:600]
+    assert "本地优先的 AI 工作身份" in readme_zh[:1200]
+    assert "AI 工作身份层" in readme_zh
+    assert "跨工具持久 AI 记忆" not in readme_zh[:600]
+
+
+def test_release_evidence_index_includes_v42_and_marker_only_policy():
+    index = _read("release-evidence/README.md")
+
+    assert "| v4.2.0 | [v4.2.0.md](v4.2.0.md)" in index
+    assert "marker-only evidence file" in index
+    assert "not raw logs" in index
+    assert "no local paths" in index
+    assert "Detailed working notes are kept locally" in index
+
+
+def test_permission_profile_vnext_doc_separates_shipped_and_deferred_controls():
+    doc = _read("docs/specs/permission-profile-vnext-design.md")
+
+    for phrase in [
+        "caller_source",
+        "initiation_source",
+        "advisory-only",
+        "not trust anchors",
+        "ENGRAM_CALLER_SOURCE",
+        "ENGRAM_INITIATION_SOURCE",
+        "quota budget",
+        "model channel",
+        "MCP conflict policy",
+        "not enforced yet",
+    ]:
+        assert phrase in doc
+
+    for forbidden in [
+        "quota engine is shipped",
+        "model router is shipped",
+        "hard authentication",
+    ]:
+        assert forbidden not in doc
+
+
 def test_agent_client_validation_runbook_is_purpose_first():
     doc = _read("docs/runbooks/agent-client-validation.md")
 

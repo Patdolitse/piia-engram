@@ -15,8 +15,10 @@ import pytest
 
 from piia_engram import governance
 from piia_engram.permission_profile_vnext import (
+    CALLER_SOURCES,
     CallerContext,
     EffectiveProfile,
+    INITIATION_SOURCES,
     ROLE_PROFILES,
     STAGE_CEILINGS,
     resolve_effective_profile,
@@ -156,6 +158,44 @@ def test_T4_profile_fields_are_labels_only():
     assert isinstance(eff.staging_excluded, bool)
     assert "secret-agent-id-123" not in blob
     assert "codex" not in blob
+
+
+def test_advisory_source_labels_are_normalized_and_cannot_widen():
+    ctx = CallerContext(
+        caller_role="owner",
+        caller_source="mcp-stdio",
+        initiation_source="Agent",
+    )
+    eff = resolve_effective_profile("read-only-external", ctx)
+
+    assert eff.caller_source == "mcp_stdio"
+    assert eff.initiation_source == "agent"
+    assert eff.effective_ceiling == "public"
+    assert eff.effective_write == "no"
+    assert "unknown_caller_source_advisory" not in eff.reasons
+    assert "unknown_initiation_source_advisory" not in eff.reasons
+
+
+def test_invalid_advisory_source_labels_become_unknown_without_enforcing_policy():
+    ctx = CallerContext(
+        caller_source="browser-extension",
+        initiation_source="prompt-injection",
+    )
+    eff = resolve_effective_profile("private-self", ctx)
+
+    assert eff.caller_source == "unknown"
+    assert eff.initiation_source == "unknown"
+    assert "unknown_caller_source_advisory" in eff.reasons
+    assert "unknown_initiation_source_advisory" in eff.reasons
+    assert eff.effective_ceiling == "secret"
+    assert eff.effective_write == "verified"
+
+
+def test_advisory_source_vocab_is_small_and_audit_only():
+    assert "desktop_dock" in CALLER_SOURCES
+    assert "mcp_stdio" in CALLER_SOURCES
+    assert "agent" in INITIATION_SOURCES
+    assert "automation" in INITIATION_SOURCES
 
 
 # --- T6: malformed inputs fail closed (most restrictive), never to owner ---

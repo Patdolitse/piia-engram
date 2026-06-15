@@ -62,6 +62,25 @@ _DEFAULT_STAGE = "implement"
 # Stages that exclude unverified (staging-tier) knowledge regardless of caller.
 _STAGING_EXCLUDING_STAGES = frozenset({"review", "publish"})
 
+# Advisory-only provenance labels. These are recorded for audit/explanation but
+# never used to raise a ceiling or grant a write policy.
+CALLER_SOURCES = frozenset({
+    "unknown",
+    "mcp_stdio",
+    "local_cli",
+    "hook",
+    "watcher",
+    "desktop_dock",
+    "web_bridge",
+})
+INITIATION_SOURCES = frozenset({
+    "unknown",
+    "human",
+    "agent",
+    "automation",
+    "scheduled",
+})
+
 
 @dataclass(frozen=True)
 class CallerContext:
@@ -70,6 +89,8 @@ class CallerContext:
     caller_role: str = ""        # "" => derive from trust level (no extra narrowing)
     workflow_stage: str = ""     # "" => "implement" (no extra tightening)
     caller_depth: int = 0        # 0 => top-level; >=1 => sub-agent downgrade
+    caller_source: str = ""      # advisory only: mcp_stdio/local_cli/hook/...
+    initiation_source: str = ""  # advisory only: human/agent/automation/...
 
 
 @dataclass(frozen=True)
@@ -77,6 +98,8 @@ class EffectiveProfile:
     trust_level: str
     effective_ceiling: str
     effective_write: str
+    caller_source: str = "unknown"
+    initiation_source: str = "unknown"
     downgraded_by_depth: bool = False
     staging_excluded: bool = False
     reasons: tuple[str, ...] = field(default_factory=tuple)
@@ -96,6 +119,17 @@ def _normalized_depth(raw) -> int:
     return 1
 
 
+def _normalized_advisory_label(raw, allowed: frozenset[str], reason: str,
+                               reasons: list[str]) -> str:
+    value = str(raw or "").strip().lower().replace("-", "_")
+    if not value:
+        return "unknown"
+    if value in allowed:
+        return value
+    reasons.append(reason)
+    return "unknown"
+
+
 def unrestricted_profile(trust_level: str = "private-self") -> EffectiveProfile:
     """The governance-OFF / owner profile: today's unrestricted behavior."""
     prof = _trust_profile(trust_level)
@@ -103,6 +137,8 @@ def unrestricted_profile(trust_level: str = "private-self") -> EffectiveProfile:
         trust_level=trust_level if trust_level in TRUST_LEVELS else DEFAULT_TRUST_LEVEL,
         effective_ceiling=prof["max_sensitivity"],
         effective_write=prof["write"],
+        caller_source="unknown",
+        initiation_source="unknown",
         downgraded_by_depth=False,
         staging_excluded=False,
         reasons=("governance_off_or_unrestricted",),
@@ -130,6 +166,18 @@ def resolve_effective_profile(
     ceiling and whose write is ``<=`` the trust write, always.
     """
     reasons: list[str] = []
+    caller_source = _normalized_advisory_label(
+        ctx.caller_source,
+        CALLER_SOURCES,
+        "unknown_caller_source_advisory",
+        reasons,
+    )
+    initiation_source = _normalized_advisory_label(
+        ctx.initiation_source,
+        INITIATION_SOURCES,
+        "unknown_initiation_source_advisory",
+        reasons,
+    )
     trust = trust_level if trust_level in TRUST_LEVELS else DEFAULT_TRUST_LEVEL
     if trust != trust_level:
         reasons.append("unknown_trust_failclosed")
@@ -202,6 +250,8 @@ def resolve_effective_profile(
         trust_level=trust,
         effective_ceiling=_LADDER[eff_ceiling],
         effective_write=_RANK_WRITE[eff_write],
+        caller_source=caller_source,
+        initiation_source=initiation_source,
         downgraded_by_depth=downgraded,
         staging_excluded=staging_excluded,
         reasons=tuple(reasons),

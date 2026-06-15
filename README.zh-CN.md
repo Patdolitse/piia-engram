@@ -1,14 +1,14 @@
 <!-- mcp-name: io.github.Patdolitse/piia-engram -->
 <div align="center">
 
-<img src="assets/social_preview_zh.png" alt="piia-engram — 跨工具持久 AI 记忆" width="640">
+<img src="assets/social_preview_zh.png" alt="piia-engram — 用户自有 AI 工作身份层" width="640">
 
 # Piia Engram
 
-### 别再对每个 AI 工具重复介绍自己——本地优先的 AI 记忆，看得见、可改可删。
+### 别再对每个 AI 工具重复介绍自己——本地优先的 AI 工作身份，看得见、可改可删。
 
 只告诉 AI 一次你是谁、怎么工作、什么算好。
-Claude Code、Codex、Cursor、Windsurf 等 MCP 兼容工具可以从同一份已确认上下文开始——文件存在你本机，无云账号，没有你看不见的黑箱记忆。
+Claude Code、Codex、Cursor、Windsurf 等 MCP 兼容工具可以从同一层 AI 工作身份开始——文件存在你本机，无云账号，没有你看不见的黑箱记忆。
 
 [安装](#安装) · [效果预览](#效果预览) · [兼容工具](#兼容的-ai-工具) · [核心功能](#核心功能) · [常见问题](#常见问题-faq)
 
@@ -108,14 +108,15 @@ pip install piia-engram && engram setup
 
 ## 量化数据
 
-下列数字每个 minor release 都会刷新：
+下列数字来自 `docs/public-facts.json` 的当前仓库事实。公开注册表和包徽章只会在 release/publish 时更新。
 
-| | v4.0.0 (2026-06-11) |
+| | 当前仓库 / 开发事实 |
 |---|---|
+| 版本口径 | **v4.2.0**（2026-06-16 已核验；最新公开包以 PyPI badge / GitHub Releases 为准）|
 | 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
 | MCP 工具 | **17 个核心**（默认加载）+ **36 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **3430** 个（单元 + 集成；2 个 skipped，共收集 3432）|
+| 测试通过 | **3438** 个（单元 + 集成；2 个 skipped，共收集 3440）|
 | 代码覆盖率 | **86%** 总体 |
 | `core.py` 行数 | **1573** 行（facade，领域逻辑已拆分为专责 mixin —— 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -721,7 +722,7 @@ piia-engram 由人驱动，AI 工具辅助开发：
 piia-engram。运行 `pip install piia-engram && engram setup`，两个工具就会从 `~/.engram/` 读取同一份身份、偏好和经验教训。无需云端，无需同步服务——它们读的是同一组本地 JSON 文件。
 
 **piia-engram 是什么？**
-piia-engram 是 AI 工具的持久记忆层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。已配置的 MCP 兼容编程工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）可以读取同一份已批准上下文，让新对话和换工具从同一份用户自有记忆开始。
+piia-engram 是面向 MCP 兼容编程工具的本地优先 AI 工作身份层。它将你的身份、偏好、代码标准、经验教训和关键决策以本地 JSON 文件存储在你的电脑上。已配置的工具（Claude Code、Codex、Cursor、Windsurf、Claude Desktop）可以读取同一份用户自有上下文，让新对话和换工具从同一个受治理的记忆与身份基础开始。
 
 **piia-engram 和官方 MCP memory server 有什么区别？**
 官方 `@modelcontextprotocol/server-memory` 存储通用的实体关系知识图谱。piia-engram 专为**开发者身份**设计：它有结构化的用户画像、代码标准、质量要求、经验教训和关键决策字段，加上 53 个知识生命周期管理工具（搜索、审查、合并、跨项目继承）。如果你需要通用实体记忆，用官方 server。如果你希望已配置的 MCP 兼容编程工具从同一份已批准的编码偏好和过往经验开始，用 piia-engram。
@@ -767,7 +768,7 @@ engram setup
 大多数用户无需开启高级工具 —— 核心工具覆盖日常使用。
 
 **piia-engram 免费吗？**
-是的。AGPL-3.0 开源，完全免费。无订阅，无云端计费，无厂商锁定。
+是的。开源核心采用 AGPL-3.0，自由软件，本地/个人使用无订阅、无云端计费、无厂商锁定。如果你计划闭源嵌入、托管再分发或企业打包，请先评估 AGPL 义务；piia-engram 目前没有单独发布商业许可证。
 
 ## 局限性说明
 
@@ -865,4 +866,4 @@ engram privacy          # 查看 piia-engram 存了什么数据、存在哪里
 
 ## License
 
-[AGPL-3.0](LICENSE) — piia-engram 是自由软件，记忆属于你。
+[AGPL-3.0](LICENSE) — piia-engram 是自由软件，AI 工作身份和记忆属于你。

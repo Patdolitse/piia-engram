@@ -251,6 +251,38 @@ def test_receipt_is_json_serializable(tmp_path):
     json.dumps(receipt)  # must not raise
 
 
+def test_vnext_advisory_sources_recorded_in_receipts(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_CALLER_SOURCE", "desktop-dock")
+    monkeypatch.setenv("ENGRAM_INITIATION_SOURCE", "Agent")
+
+    _out, receipt = gr.govern_buckets(
+        tmp_path,
+        {"lessons": [{"id": "L1", "sensitivity": "public"}]},
+        tool="search_knowledge",
+        client_type="claude_code",
+    )
+
+    vnext = receipt["permission_profile_vnext"]
+    assert vnext["caller_source"] == "desktop_dock"
+    assert vnext["initiation_source"] == "agent"
+    assert "unknown_caller_source_advisory" not in vnext["reasons"]
+    assert "unknown_initiation_source_advisory" not in vnext["reasons"]
+
+
+def test_describe_caller_permissions_includes_advisory_sources(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CALLER_SOURCE", "mcp-stdio")
+    monkeypatch.setenv("ENGRAM_INITIATION_SOURCE", "automation")
+
+    result = gr.describe_caller_permissions(tmp_path, client_type="claude_code")
+
+    vnext = result["permission_profile_vnext"]
+    assert vnext["caller_source"] == "mcp_stdio"
+    assert vnext["initiation_source"] == "automation"
+
+
 # ── R15 P2: identity resolution fails closed ─────────────────────────────────
 
 

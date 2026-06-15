@@ -35,6 +35,13 @@ currently comes from MCP startup environment (`ENGRAM_CLIENT_TYPE`), so the
 governance layer is a practical local policy boundary for well-behaved clients,
 not a hardened sandbox against a hostile local process with filesystem access.
 
+Optional provenance labels can make receipts easier to audit:
+`ENGRAM_CALLER_SOURCE` (`mcp_stdio`, `local_cli`, `hook`, `watcher`,
+`desktop_dock`, `web_bridge`) and `ENGRAM_INITIATION_SOURCE` (`human`, `agent`,
+`automation`, `scheduled`). These labels are advisory only. They are recorded in
+caller-permission descriptions and disclosure receipts, but they do not
+authenticate the caller, raise the read ceiling, or grant write access.
+
 ## Trust Levels
 
 The MCP caller identity is currently self-reported through

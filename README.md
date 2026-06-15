@@ -1,14 +1,14 @@
 <!-- mcp-name: io.github.Patdolitse/piia-engram -->
 <div align="center">
 
-<img src="assets/social_preview.png" alt="piia-engram — persistent AI memory across tools" width="640">
+<img src="assets/social_preview.png" alt="piia-engram — user-owned AI work identity layer" width="640">
 
 # Piia Engram
 
-### Local-first AI memory you can see, edit, and override — portable across your MCP coding tools.
+### Local-first AI work identity you can see, edit, and override — portable across your MCP coding tools.
 
 Tell AI once who you are, how you work, and what "good" means.
-Claude Code, Codex, Cursor, Windsurf, and other MCP-compatible tools can start from the same approved context — local files you own, no cloud account, no hidden memory you cannot inspect.
+Claude Code, Codex, Cursor, Windsurf, and other MCP-compatible tools can start from the same AI work identity layer — local files you own, no cloud account, no hidden memory you cannot inspect.
 
 [Install](#install) · [See It in Action](#see-it-in-action) · [Supported Tools](#supported-tools) · [MCP Tools](#mcp-tools) · [FAQ](#faq)
 
@@ -106,14 +106,15 @@ Evidence levels follow the [agent client validation runbook](docs/runbooks/agent
 
 ## By the numbers
 
-These are factual claims about piia-engram itself, refreshed each minor release.
+These are current repository facts from `docs/public-facts.json`. Public registries and package badges update only during release/publish.
 
-| | v4.0.0 (2026-06-11) |
+| | Current repo / development facts |
 |---|---|
+| Version frame | **v4.2.0** (verified 2026-06-16; check PyPI and GitHub Releases for the latest published package) |
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **36 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3430** (unit + integration; 2 skipped, 3432 collected) |
+| Tests passing | **3438** (unit + integration; 2 skipped, 3440 collected) |
 | Code coverage | **86%** total |
 | Lines in `core.py` | **1573** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -768,7 +769,7 @@ piia-engram is a human-directed, AI-assisted open-source project.
 piia-engram. Install with `pip install piia-engram && engram setup`, and both tools read the same identity, preferences, and lessons from `~/.engram/`. No cloud, no sync service — they both read local JSON files through MCP.
 
 **What is piia-engram?**
-piia-engram is a persistent memory layer for AI tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured MCP-compatible coding tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same approved context, so new chats and tool switches can start from the same user-owned memory.
+piia-engram is a local-first AI work identity layer for MCP-compatible coding tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same user-owned context, so new chats and tool switches can start from the same governed memory and identity base.
 
 **How is piia-engram different from the official MCP memory server?**
 The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 53 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
@@ -812,7 +813,7 @@ Two tiers, designed so most users only see 17 tools:
 Most users never need to enable Advanced tools — Core covers everyday use.
 
 **Is piia-engram free?**
-Yes. Free and open source under the AGPL-3.0 license. No subscription, no cloud tiers, no vendor lock-in.
+Yes. The open-source core is free software under AGPL-3.0. Personal/local use has no subscription, cloud tier, or vendor lock-in. If you plan closed-source embedding, hosted redistribution, or enterprise packaging, review the AGPL obligations first; piia-engram does not currently ship a separate commercial license.
 
 ## Limitations
 
@@ -919,4 +920,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[AGPL-3.0](LICENSE). piia-engram is free software. Your memory belongs to you.
+[AGPL-3.0](LICENSE). piia-engram is free software. Your AI work identity and memory belong to you.

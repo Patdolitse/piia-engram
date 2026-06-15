@@ -9,6 +9,15 @@ refuses to publish any release whose evidence file is missing or incomplete.
 These markers are factual summaries of public-safe release checks. Detailed
 working notes are kept locally and are not part of the repository.
 
+## What marker-only means
+
+The tracked evidence files are not raw logs. They contain only public-safe
+marker lines such as check name, `passed` / `n/a`, and a release-gate fact that
+can be verified from a fresh clone or a public workflow run. They must include
+no local paths, private review notes, reviewer transcripts, API output dumps, or
+unredacted scan logs. Detailed working notes are kept locally; detailed counts
+remain local unless a maintainer intentionally promotes a public-safe summary.
+
 ## Verify a release yourself
 
 - Run the gate check against a version's evidence file from a fresh clone:
@@ -27,6 +36,7 @@ working notes are kept locally and are not part of the repository.
 
 | Version | Evidence | Release | Publish run |
 |---------|----------|---------|-------------|
+| v4.2.0 | [v4.2.0.md](v4.2.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.2.0) | [27548329982](https://github.com/Patdolitse/piia-engram/actions/runs/27548329982) |
 | v4.1.0 | [v4.1.0.md](v4.1.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.1.0) | [27395714245](https://github.com/Patdolitse/piia-engram/actions/runs/27395714245) |
 | v4.0.0 | [v4.0.0.md](v4.0.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.0.0) | [27333402009](https://github.com/Patdolitse/piia-engram/actions/runs/27333402009) |
 | v3.56.0 | [v3.56.0.md](v3.56.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v3.56.0) | [27292409357](https://github.com/Patdolitse/piia-engram/actions/runs/27292409357) |

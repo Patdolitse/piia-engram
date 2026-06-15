@@ -31,11 +31,14 @@ MCP stdio is *self-reported*. This is a local-first governance boundary, **not a
 hardened sandbox**. vNext does not change that; it makes the boundary richer and
 more auditable, not cryptographically enforced.
 
-## 2. vNext additions (the four new dimensions)
+## 2. vNext additions (enforced dimensions and advisory controls)
 
-vNext adds three orthogonal inputs to caller resolution and one default-safe
-behavior. All are **optional** and only take effect when `ENGRAM_GOVERNANCE` is
-on; default-off keeps today's behavior.
+vNext currently adds three orthogonal inputs to caller resolution, one
+default-safe behavior, and two audit-only provenance labels. All are
+**optional** and only affect governed paths when `ENGRAM_GOVERNANCE` is on;
+default-off keeps today's behavior. The provenance labels are advisory-only and
+not trust anchors: they are recorded for explanation and audit, but never used
+to raise a ceiling, grant a write policy, or authenticate a caller.
 
 ### 2.1 `caller_role`
 
@@ -92,6 +95,39 @@ Rationale: a sub-agent spawned mid-task is the most likely place for prompt
 injection to try to exfiltrate memory. Defaulting sub-agents to *less* access
 limits blast radius, and the owner can still grant more explicitly.
 
+### 2.5 Advisory provenance labels
+
+Two labels describe how a call reached Engram:
+
+- `caller_source` (`ENGRAM_CALLER_SOURCE`), e.g. `mcp_stdio`, `local_cli`,
+  `hook`, `watcher`, `desktop_dock`, `web_bridge`.
+- `initiation_source` (`ENGRAM_INITIATION_SOURCE`), e.g. `human`, `agent`,
+  `automation`, `scheduled`.
+
+These labels are normalized and stored in `describe_caller_permissions` and
+disclosure receipts. Unknown labels become `unknown` and add an explanatory
+reason code. They are advisory-only, self-reported, and not trust anchors. A
+caller cannot gain read or write access by claiming `desktop_dock`, `human`, or
+any other source; the hard boundary remains trust level plus role/stage/depth.
+
+### 2.6 Future control-plane dimensions (not enforced yet)
+
+Recent multi-agent and gateway trends suggest three useful dimensions for later
+profiles:
+
+- **quota budget**: per-caller or per-workflow read/write budgets, useful for
+  bounding costly recall or runaway automation.
+- **model channel**: preferred model family, alias/channel policy, and fallback
+  posture, useful when vendors deprecate or silently redirect model aliases.
+- **MCP conflict policy**: what to do when multiple MCP servers or client
+  plugins expose overlapping memory/tool surfaces.
+
+These are RFC-level controls only. There is no shipped quota engine, model
+router, or MCP conflict resolver in this document. LiteLLM-style gateways and
+client-native routing are complementary layers; Engram should record the policy
+and evidence when such controls exist, not pretend to enforce them before code
+and tests land.
+
 ## 3. Sensitive / staging filtering
 
 Two filters compose with the sensitivity gate:
@@ -122,6 +158,8 @@ metadata-only (no content):
   "caller_role": "assistant",
   "workflow_stage": "implement",
   "caller_depth": 1,
+  "caller_source": "mcp_stdio",
+  "initiation_source": "agent",
   "effective_ceiling": "work",
   "downgraded_by_depth": true,
   "returned_count": 12,
@@ -133,7 +171,7 @@ metadata-only (no content):
 These append to the same hash-chained ledger, so every narrowing decision is
 explainable after the fact.
 
-## 5. Data model / API sketch (not implemented)
+## 5. Data model / API sketch (partially implemented)
 
 ```python
 @dataclass(frozen=True)
@@ -143,6 +181,8 @@ class CallerContext:
     caller_role: str = ""        # "" => derive from trust level
     workflow_stage: str = ""     # "" => "implement"
     caller_depth: int = 0
+    caller_source: str = ""      # advisory only, receipt/description label
+    initiation_source: str = ""  # advisory only, receipt/description label
 
 def resolve_effective_profile(root, ctx: CallerContext) -> EffectiveProfile:
     """Pure function: (trust, role, stage, depth) -> ceiling + write + flags.
@@ -171,8 +211,11 @@ unrestricted profile (today's behavior).
    preview paths behind `ENGRAM_GOVERNANCE`; default-off remains equivalent.
 3. ✅ **Done, gated** — Staging filtering and sub-agent downgrade are enforced
    through the effective profile when governance is enabled.
-4. **Deferred (gated)** — Extend receipts; add an audit-log read tool (separate
-   task).
+4. ✅ **Done, gated** — Extend receipts and caller-permission descriptions with
+   advisory `caller_source` / `initiation_source` labels. Adding a governed
+   audit-log read tool remains a separate task.
+5. **Deferred / RFC only** — quota budget, model channel / alias policy, and MCP
+   conflict policy fields. These are not enforced yet.
 
 The conflict-reconciliation **proposal** layer (`reconcile_proposal.py`,
 `tests/test_reconcile_proposal.py`) also landed this pass: it classifies

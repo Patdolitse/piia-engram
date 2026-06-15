@@ -149,6 +149,8 @@ def _current_vnext_profile(agent_id: str, client_type: str, trust: str):
         caller_role=os.environ.get("ENGRAM_CALLER_ROLE", "").strip(),
         workflow_stage=os.environ.get("ENGRAM_WORKFLOW_STAGE", "").strip(),
         caller_depth=_env_depth(),
+        caller_source=os.environ.get("ENGRAM_CALLER_SOURCE", "").strip(),
+        initiation_source=os.environ.get("ENGRAM_INITIATION_SOURCE", "").strip(),
     )
     eff = resolve_effective_profile(
         trust,
@@ -319,6 +321,8 @@ def _finalize_receipt(
     if effective_profile is not None:
         receipt["permission_profile_vnext"] = {
             "effective_write": effective_profile.effective_write,
+            "caller_source": effective_profile.caller_source,
+            "initiation_source": effective_profile.initiation_source,
             "staging_excluded": effective_profile.staging_excluded,
             "downgraded_by_depth": effective_profile.downgraded_by_depth,
             "reasons": list(effective_profile.reasons),
@@ -712,6 +716,8 @@ def describe_caller_permissions(
             "caller_role": ctx.caller_role,
             "workflow_stage": ctx.workflow_stage or "implement",
             "caller_depth": ctx.caller_depth,
+            "caller_source": eff.caller_source,
+            "initiation_source": eff.initiation_source,
             "staging_excluded": eff.staging_excluded,
             "downgraded_by_depth": eff.downgraded_by_depth,
             "reasons": list(eff.reasons),
