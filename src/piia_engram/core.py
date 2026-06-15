@@ -1206,12 +1206,16 @@ class Engram(
         result_box: dict[str, Any] = {}
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
+            existing_ids = {str(item.get("id")) for item in lessons if item.get("id")}
             for lesson in lessons:
                 if lesson.get("id") != lesson_id:
                     continue
+                before = dict(lesson)
+                content_changed = False
                 old_tier = lesson.get("tier")
                 tier_changed = False
                 new_tier = None
+                now = _now_iso()
                 for key, value in updates.items():
                     if key not in allowed_fields:
                         continue
@@ -1227,9 +1231,30 @@ class Engram(
                         if value != old_tier:
                             tier_changed = True
                             new_tier = value
+                    elif key in {"summary", "detail", "domain"} and value != lesson.get(key):
+                        content_changed = True
                     lesson[key] = value
-                lesson["last_updated"] = _now_iso()
+                lesson["last_updated"] = now
                 lesson = self._ensure_fields(lesson, "lesson")
+                if content_changed:
+                    suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
+                    base_id = f"{lesson_id}-prev-{suffix}"
+                    snapshot_id = base_id
+                    counter = 2
+                    while snapshot_id in existing_ids:
+                        snapshot_id = f"{base_id}-{counter}"
+                        counter += 1
+                    snapshot = dict(before)
+                    snapshot["id"] = snapshot_id
+                    snapshot["status"] = "superseded"
+                    snapshot["tier"] = "archived"
+                    snapshot["snapshot_of"] = lesson_id
+                    snapshot["superseded_by"] = lesson_id
+                    snapshot["superseded_at"] = now
+                    snapshot["last_updated"] = now
+                    snapshot = self._ensure_fields(snapshot, "lesson")
+                    lessons.append(snapshot)
+                    result_box["snapshot_id"] = snapshot_id
                 result_box["result"] = lesson
                 result_box["tier_changed"] = tier_changed
                 result_box["old_tier"] = old_tier
@@ -1245,6 +1270,16 @@ class Engram(
                 "write",
                 "knowledge/tier_change",
                 detail=f"lesson {lesson_id}: {result_box.get('old_tier')} -> {result_box.get('new_tier')}",
+            )
+        snapshot_id = result_box.get("snapshot_id")
+        if snapshot_id:
+            from .governance_store import RelationStore
+
+            RelationStore(self.root).add_relation(lesson_id, "supersedes", snapshot_id)
+            self._audit.log(
+                "write",
+                "knowledge/version_snapshot",
+                detail=f"lesson {lesson_id} supersedes {snapshot_id}",
             )
         return result
 

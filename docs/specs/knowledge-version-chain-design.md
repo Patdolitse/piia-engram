@@ -72,10 +72,15 @@ history is available on demand — without deleting anything.
 ## 5. Write paths (future)
 
 ```text
-update_lesson / update_decision (exist today) → when content materially changes,
-  optionally create a NEW version: copy → new id → parent_id=old, root_id=old.root,
-  supersedes=[old], updated_by=caller; mark old status=outdated.
-  Default behavior stays in-place edit; versioning is opt-in per update.
+update_lesson (implemented) → when lesson content fields materially change
+  (`summary`, `detail`, `domain`), keep the existing id as the HEAD, copy the
+  previous body into an archived `status=superseded` snapshot, and add a typed
+  `HEAD supersedes snapshot` relation. Tier/status-only lifecycle edits do not
+  create snapshots.
+
+update_decision (existing thread behavior) → decision updates and explicit
+  supersedes edges remain the decision-chain path; do not infer a replacement
+  decision without owner intent.
 ```
 
 This keeps the common case (small fix) cheap and only forks history when asked.
