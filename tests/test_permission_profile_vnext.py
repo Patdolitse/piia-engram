@@ -9,6 +9,7 @@ test_governance_runtime.py, which this pass does not touch).
 from __future__ import annotations
 
 import itertools
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +22,8 @@ from piia_engram.permission_profile_vnext import (
     resolve_effective_profile,
     unrestricted_profile,
 )
+
+_ROOT = Path(__file__).resolve().parents[1]
 
 _SENS = governance.SENSITIVITY_ORDER
 _WRITE_RANK = {"no": 0, "direct_write": 1, "verified": 2}
@@ -228,3 +231,18 @@ def test_phase2_govern_list_excludes_staging_for_non_owner(monkeypatch, tmp_path
     filtered = grt.maybe_govern_list(tmp_path, items, tool="test_tool")
 
     assert [item["id"] for item in filtered] == ["verified"]
+
+
+def test_permission_profile_vnext_docs_match_partial_wiring_status():
+    """Docs/module text must not claim vNext has no production wiring anymore."""
+    design = (_ROOT / "docs" / "specs" / "permission-profile-vnext-design.md").read_text(
+        encoding="utf-8"
+    )
+    module = (_ROOT / "src" / "piia_engram" / "permission_profile_vnext.py").read_text(
+        encoding="utf-8"
+    )
+
+    combined = f"{design}\n{module}".lower()
+    assert "no production wiring" not in combined
+    assert "partial wiring behind engram_governance" in combined
+    assert "default-off behavior" in combined

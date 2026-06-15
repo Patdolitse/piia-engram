@@ -1,13 +1,12 @@
 # Permission Profile vNext — design (planned long task)
 
-Status: **rollout phase 1 landed (pure resolver + property tests); gate wiring
-still deferred.** `src/piia_engram/permission_profile_vnext.py` implements the
-pure `resolve_effective_profile` from §5 with the never-widen property proven by
-`tests/test_permission_profile_vnext.py` (T1–T6). It builds on the existing
-governance substrate; it does not replace it. **No production read gate calls it
-yet** — phases 2–4 (§7) remain gated on (a) the adversarial leakage review in §8
-and (b) explicit user sign-off, because they change what an agent can see.
-Default-off behavior is therefore byte-identical to before this pass.
+Status: **partial wiring behind ENGRAM_GOVERNANCE.**
+`src/piia_engram/permission_profile_vnext.py` implements the pure
+`resolve_effective_profile` from §5 with the never-widen property proven by
+`tests/test_permission_profile_vnext.py` (T1–T6). It now feeds the governed
+read/ack description path and recall/context-preview filtering when governance is
+enabled. It builds on the existing governance substrate; it does not replace it.
+Default-off behavior is still byte-identical to the ungoverned path.
 
 ## 1. What exists today (build on, don't reinvent)
 
@@ -166,12 +165,12 @@ unrestricted profile (today's behavior).
 ## 7. Rollout phases
 
 1. ✅ **Done** — Spec + pure `resolve_effective_profile` with property tests
-   proving *never-widen* (no production wiring).
+   proving *never-widen*.
    `src/piia_engram/permission_profile_vnext.py` + `tests/test_permission_profile_vnext.py`.
-2. **Deferred (gated)** — Wire into read gates behind `ENGRAM_GOVERNANCE`,
-   default-equivalent. Requires §8 verdict + user sign-off.
-3. **Deferred (gated)** — Add staging filter + sub-agent downgrade, each behind
-   its own sub-flag.
+2. ✅ **Done, gated** — Wire into governed read/ack description and recall/context
+   preview paths behind `ENGRAM_GOVERNANCE`; default-off remains equivalent.
+3. ✅ **Done, gated** — Staging filtering and sub-agent downgrade are enforced
+   through the effective profile when governance is enabled.
 4. **Deferred (gated)** — Extend receipts; add an audit-log read tool (separate
    task).
 
@@ -216,15 +215,15 @@ The design is acceptable to implement only if T1–T6 all resolve to "narrows or
 no-op, never widens, never leaks content." Record the subagent's verdict here
 before phase 2.
 
-**Phase-1 evidence (resolver only).** `tests/test_permission_profile_vnext.py`
+**Phase evidence.** `tests/test_permission_profile_vnext.py`
 encodes T1–T6 against the pure resolver: T5 is a property sweep over every
 `trust × role × stage × depth × restore` combination asserting the resolved
 ceiling/write never exceed the trust anchor; T1/T6 assert role/stage/depth
 spoofing and malformed inputs only narrow (fail closed to `public`/`no`); T3
 asserts the staging opt-in is honored only for `private-self`; T4 asserts the
-profile carries enum labels/flags, not content. These pass. The formal
-security-subagent verdict authorizing **gate wiring (phase 2)** is still required
-and recorded separately; phase-1 lands the substrate, not the enforcement.
+profile carries enum labels/flags, not content. Additional runtime tests cover
+the partial wiring behind ENGRAM_GOVERNANCE, including depth narrowing and
+non-owner staging exclusion.
 
 ## 9. Non-goals
 

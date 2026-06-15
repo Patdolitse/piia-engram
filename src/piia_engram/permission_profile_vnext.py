@@ -1,12 +1,12 @@
-"""Permission Profile vNext — pure resolver (rollout phase 1).
+"""Permission Profile vNext — resolver with partial governance wiring.
 
 Implements the ``resolve_effective_profile`` sketch from
 ``docs/specs/permission-profile-vnext-design.md`` §5 as a **pure, side-effect
-free** function. This is rollout phase 1 only: *no production wiring*. The read
-gates in ``governance_runtime`` are untouched and keep their current behavior, so
-governance-OFF stays byte-identical and governance-ON behaves exactly as today.
-This module exists so the never-widen composition can be proven by property
-tests (§8 T5) before any gate calls it (phase 2, separately reviewed + gated).
+free** function. Rollout is now **partial wiring behind ENGRAM_GOVERNANCE**:
+``governance_runtime`` and recall/context preview paths call the resolver when
+governance is enabled, while governance-OFF remains byte-identical to the
+ungoverned path. This module exists so the never-widen composition stays proven
+by property tests (§8 T5) while the rollout remains explicitly gated.
 
 Composition rule (design §5):
 

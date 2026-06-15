@@ -1099,9 +1099,10 @@ def _run_functional_checks(*, fix: bool = False) -> int:
                 )
         else:
             W._safe_print(
-                "    [--] Search mode: keyword (default). Better cross-lingual "
-                "recall available: pip install 'piia-engram[vector]' then set "
-                "ENGRAM_SEARCH=hybrid and run 'engram reindex' "
+                "    [--] Search mode: keyword (default stays keyword; hybrid is "
+                "opt-in). Better cross-lingual recall available: set "
+                "ENGRAM_SEARCH=hybrid and run 'engram reindex'. The vector layer "
+                "is optional via pip install 'piia-engram[vector]' "
                 "(see docs/hybrid-search.md)"
             )
     except Exception as exc:

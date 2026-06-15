@@ -2,6 +2,8 @@
 
 > Status: opt-in, off by default. The default search behavior is unchanged
 > (keyword). Turn this on only if you want it.
+> When enabled, the normal `search_knowledge` path uses hybrid; this is not a
+> separate or experimental-only tool surface.
 
 [中文版](hybrid-search.zh-CN.md)
 

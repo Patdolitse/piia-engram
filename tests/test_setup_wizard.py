@@ -1637,7 +1637,10 @@ def test_doctor_reports_search_mode_keyword_hint(tmp_path: Path, monkeypatch, ca
 
     out = capsys.readouterr().out
     assert "Search mode: keyword" in out
+    assert "default stays keyword" in out
+    assert "hybrid is opt-in" in out
     assert "ENGRAM_SEARCH=hybrid" in out
+    assert "vector layer is optional" in out
 
 
 def test_doctor_reports_search_mode_hybrid(tmp_path: Path, monkeypatch, capsys):
@@ -1652,6 +1655,7 @@ def test_doctor_reports_search_mode_hybrid(tmp_path: Path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Search mode: hybrid" in out
+    assert "keyword + FTS" in out
 
 
 def test_doctor_reports_governance_disabled_hint(tmp_path: Path, monkeypatch, capsys):

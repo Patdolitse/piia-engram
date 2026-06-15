@@ -2,6 +2,7 @@
 
 > 状态：按需开启，默认关闭。默认检索行为完全不变（关键词）。
 > 只有当你需要时才开启。
+> 开启后，常规 `search_knowledge` 路径会使用混合检索；它不是独立的实验工具面。
 
 [English version](hybrid-search.md)
 
