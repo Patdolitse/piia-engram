@@ -872,13 +872,20 @@ and owner-only exports/imports/grant changes require `private-self`. See
 [docs/governance.md](docs/governance.md) for the exact trust levels, gates,
 honest boundaries, and ledger commands.
 
+Recommended rollout: keep the global default compatible, but enable governance
+in each MCP client env when you use Engram across multiple AI tools, automation,
+or any remote-facing bridge. `engram status` and `engram doctor` report whether
+this layer is on. Caller identity is still supplied by MCP environment
+variables, not cryptographic authentication, so governance is a practical local
+policy boundary rather than a hardened sandbox.
+
 ## CLI Commands
 
 ```bash
 engram setup            # Interactive install wizard (confirms before writing client configs)
 engram setup --apply-external-config  # Skip the confirm prompt (non-interactive/CI); writes with backups
-piia-engram doctor           # Check config health (all AI tools)
-piia-engram status           # Redacted install + memory health summary
+piia-engram doctor           # Check config health + governance state
+piia-engram status           # Redacted install + memory/governance summary
 piia-engram status --html    # Write a local redacted status page
 piia-engram preview          # Show what a simulated AI caller would receive (--as ROLE, --level, --html)
 piia-engram continuity       # Prove cross-tool handoff readiness (metadata only)

@@ -170,6 +170,40 @@ def _telemetry_summary() -> dict[str, Any]:
         return {"error": str(exc), "local_enabled": False, "remote_enabled": False, "phase": "unknown"}
 
 
+def _governance_summary(root: Path) -> dict[str, Any]:
+    try:
+        from . import governance_runtime as gov_rt
+
+        perms = gov_rt.describe_caller_permissions(root)
+        enabled = bool(perms.get("governance_enabled"))
+        return {
+            "enabled": enabled,
+            "client_type": os.environ.get("ENGRAM_CLIENT_TYPE", "") or "(unset)",
+            "trust_level": str(perms.get("trust_level") or "unknown"),
+            "max_sensitivity": str(perms.get("max_sensitivity") or "unknown"),
+            "write_policy": str(perms.get("write_policy") or "unknown"),
+            "revoked": bool(perms.get("revoked")),
+            "note": str(perms.get("note") or ""),
+            "recommendation": (
+                "Set ENGRAM_GOVERNANCE=1 in each MCP client env for per-caller "
+                "read/write gates and disclosure audit; recommended for multi-tool use."
+            ),
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "client_type": os.environ.get("ENGRAM_CLIENT_TYPE", "") or "(unset)",
+            "trust_level": "unknown",
+            "max_sensitivity": "unknown",
+            "write_policy": "unknown",
+            "revoked": False,
+            "error": str(exc),
+            "recommendation": (
+                "Set ENGRAM_GOVERNANCE=1 after governance diagnostics are healthy."
+            ),
+        }
+
+
 def _client_summary() -> dict[str, Any]:
     """Summarize MCP client configuration without exposing config paths."""
     try:
@@ -286,6 +320,7 @@ def build_status(*, probe: bool = True) -> dict[str, Any]:
         "clients": _client_summary(),
         "encoding": _encoding_summary(),
         "telemetry": _telemetry_summary(),
+        "governance": _governance_summary(root),
         "mcp_entry": {"ok": None, "command": "piia-engram-mcp", "message": "probe skipped"},
         "warnings": [],
     }
@@ -298,6 +333,13 @@ def build_status(*, probe: bool = True) -> dict[str, Any]:
     if status["storage"].get("skipped"):
         status["warnings"].append(
             f"{status['storage']['skipped']} storage file(s) could not be scanned"
+        )
+    if (
+        not status["governance"].get("enabled")
+        and status["clients"].get("configured", 0) > 1
+    ):
+        status["warnings"].append(
+            "agent governance is off; multi-tool setups should enable ENGRAM_GOVERNANCE=1"
         )
     if not status["encoding"]["ok"]:
         status["warnings"].append("terminal is not reporting UTF-8 stdout/stderr")
@@ -319,6 +361,16 @@ def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) ->
     clients = status.get("clients", {"configured": 0, "total": 0, "tools": []})
     encoding = status["encoding"]
     telemetry = status["telemetry"]
+    governance = status.get("governance") or {
+        "enabled": False,
+        "client_type": "(unset)",
+        "trust_level": "unrestricted",
+        "max_sensitivity": "all",
+        "write_policy": "verified",
+        "recommendation": (
+            "Set ENGRAM_GOVERNANCE=1 for per-caller gates; recommended for multi-tool use."
+        ),
+    }
     mcp = status["mcp_entry"]
     session_tail = "none"
     if sessions["latest"]:
@@ -329,6 +381,21 @@ def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) ->
     knowledge_mark = "!!" if knowledge.get("staging") else "ok"
     client_mark = "!!" if clients.get("attention") or not clients.get("configured") else "ok"
     encoding_mark = "ok" if encoding.get("ok") else "!!"
+    governance_enabled = bool(governance.get("enabled"))
+    governance_mark = "ok" if governance_enabled else "--"
+    if governance_enabled:
+        governance_label = (
+            "on "
+            f"(client={governance.get('client_type')}, "
+            f"trust={governance.get('trust_level')}, "
+            f"max={governance.get('max_sensitivity')}, "
+            f"write={governance.get('write_policy')})"
+        )
+    else:
+        governance_label = (
+            "off (unrestricted; set ENGRAM_GOVERNANCE=1 for per-caller gates, "
+            "recommended for multi-tool use)"
+        )
     storage_path = "<engram-root>" if redact_paths else storage["path"]
     lines = [
         "Engram status",
@@ -341,6 +408,7 @@ def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) ->
         ),
         f"  [ok] Agent sessions: {sessions['count']} saved; latest {session_tail}",
         f"  [{client_mark}] MCP clients: {clients.get('configured', 0)}/{clients.get('total', 0)} configured",
+        f"  [{governance_mark}] Agent governance: {governance_label}",
         f"  [{mcp_mark}] MCP entry: {mcp.get('command')} - {mcp.get('message')}",
         (
             f"  [{encoding_mark}] Terminal encoding: "

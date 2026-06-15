@@ -823,6 +823,8 @@ export ENGRAM_CLIENT_TYPE=claude_code
 
 治理默认关闭；开启后，已知本地编码工具只会读取 `public` / `work` 范围内的内容，未知调用方默认 fail-closed 为 public-only。导出、导入、授权变更等 owner-only 操作需要 `private-self` 信任档。
 
+推荐落地方式：保持全局默认兼容，但当你把 Engram 同时接给多个 AI 工具、自动化流程，或任何远程桥接时，把 `ENGRAM_GOVERNANCE=1` 写进每个 MCP 客户端的 env。`engram status` 和 `engram doctor` 会显示治理层当前是开还是关。
+
 注意：当前客户端身份来自 MCP 启动环境变量，是治理分层与防误用机制，不是加密身份认证边界。详细矩阵见 [docs/governance.md](docs/governance.md)。
 
 ## CLI 命令
@@ -830,8 +832,8 @@ export ENGRAM_CLIENT_TYPE=claude_code
 ```bash
 engram setup            # 交互式安装向导（默认不改外部工具配置）
 engram setup --apply-external-config  # 自动配置 AI 客户端 MCP 文件并备份
-piia-engram doctor           # 检查配置健康状态（已配置的 AI 工具）
-piia-engram status           # 脱敏安装与记忆健康摘要
+piia-engram doctor           # 检查配置健康状态与治理层状态
+piia-engram status           # 脱敏安装、记忆与治理状态摘要
 piia-engram status --html    # 写出本地脱敏状态页
 piia-engram preview          # 模拟某个 AI 调用方会收到的上下文（--as 角色, --level, --html）
 piia-engram continuity       # 仅用元数据证明跨工具接续已就绪

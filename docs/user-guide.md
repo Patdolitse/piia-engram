@@ -182,7 +182,9 @@ playbooks, project snapshots, recent contexts, and daily logs.
   local `~/.engram/audit.log` (plain JSON-lines, never sent anywhere). Opt out
   with `ENGRAM_AUDIT=0`.
 - The per-caller governance layer is **off**; enable it with
-  `ENGRAM_GOVERNANCE=1`.
+  `ENGRAM_GOVERNANCE=1`. This is recommended when the same store is connected
+  to multiple AI tools, automation, or remote-facing bridges; `engram status`
+  and `engram doctor` show whether it is active.
 - `engram setup` does not modify external client configs without your confirm
   (or the explicit `--apply-external-config` flag).
 

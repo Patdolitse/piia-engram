@@ -129,6 +129,39 @@ class TestSessionsCLI:
         assert _removed_private_builtin_title() not in out
         assert _removed_private_builtin_name() not in out
 
+    def test_status_surfaces_governance_disabled_hint(self, tmp_path, monkeypatch):
+        """engram status should make the optional caller-governance state visible."""
+        from piia_engram.status_report import build_status, render_status_text
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+        monkeypatch.delenv("ENGRAM_CLIENT_TYPE", raising=False)
+
+        status = build_status(probe=False)
+        text = render_status_text(status)
+
+        assert status["governance"]["enabled"] is False
+        assert "Agent governance: off" in text
+        assert "ENGRAM_GOVERNANCE=1" in text
+        assert "multi-tool" in text
+
+    def test_status_surfaces_governance_enabled_caller(self, tmp_path, monkeypatch):
+        """When enabled, status should show the active caller trust boundary."""
+        from piia_engram.status_report import build_status, render_status_text
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")
+
+        status = build_status(probe=False)
+        text = render_status_text(status)
+
+        assert status["governance"]["enabled"] is True
+        assert status["governance"]["client_type"] == "codex"
+        assert status["governance"]["trust_level"] == "trusted-local"
+        assert "Agent governance: on" in text
+        assert "trusted-local" in text
+
     def test_status_html_writes_redacted_local_report(self, tmp_path, monkeypatch, capsys):
         """--html should write a local status page with metadata only."""
         from piia_engram.core import Engram
@@ -1619,6 +1652,23 @@ def test_doctor_reports_search_mode_hybrid(tmp_path: Path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Search mode: hybrid" in out
+
+
+def test_doctor_reports_governance_disabled_hint(tmp_path: Path, monkeypatch, capsys):
+    """doctor should surface that caller governance is off and how to enable it."""
+    from piia_engram.setup_wizard import _run_functional_checks
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+    monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+    monkeypatch.delenv("ENGRAM_CLIENT_TYPE", raising=False)
+
+    _run_functional_checks(fix=False)
+
+    out = capsys.readouterr().out
+    assert "Agent governance: off" in out
+    assert "ENGRAM_GOVERNANCE=1" in out
+    assert "multi-tool" in out
 
 
 def test_doctor_non_fix_does_not_backfill_legacy_knowledge(tmp_path: Path, monkeypatch):

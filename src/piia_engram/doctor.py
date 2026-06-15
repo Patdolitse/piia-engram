@@ -651,6 +651,34 @@ def run_doctor(fix: bool = False) -> int:
     return remaining + func_issues
 
 
+def _run_governance_visibility_check(eng) -> int:
+    try:
+        from piia_engram import governance_runtime as gov_rt
+
+        perms = gov_rt.describe_caller_permissions(eng.root)
+    except Exception as exc:
+        print(f"    [!!] Agent governance check failed: {exc}")
+        return 1
+
+    if not perms.get("governance_enabled"):
+        print("    [--] Agent governance: off (unrestricted caller policy)")
+        print(
+            "         Set ENGRAM_GOVERNANCE=1 in each MCP client env for "
+            "per-caller gates; recommended for multi-tool use."
+        )
+        return 0
+
+    client_type = os.environ.get("ENGRAM_CLIENT_TYPE", "") or "(unset)"
+    print(
+        "    [ok] Agent governance: on "
+        f"(client={client_type}, trust={perms.get('trust_level')}, "
+        f"max={perms.get('max_sensitivity')}, write={perms.get('write_policy')})"
+    )
+    if perms.get("revoked"):
+        print("         Current caller is revoked; future disclosures should be refused.")
+    return 0
+
+
 def _run_functional_checks(*, fix: bool = False) -> int:
     """运行功能性验证：MCP server 能否启动、知识库能否读写、quick_context 是否可用。
 
@@ -795,6 +823,8 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     except Exception as exc:
         print(f"    [!!] MCP server import failed: {exc}")
         problems += 1
+
+    problems += _run_governance_visibility_check(eng)
 
     problems += W._run_terminal_encoding_check()
 

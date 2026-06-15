@@ -23,6 +23,18 @@ When governance is off, the `maybe_*` governance helpers are designed to be
 true no-ops: callers receive the same payloads and ordinary Engram behavior is
 unchanged.
 
+Recommended rollout: keep the global default off for backward compatibility,
+but enable `ENGRAM_GOVERNANCE=1` in each MCP client env when Engram is shared
+across multiple AI tools, automation, or any remote-facing bridge. `engram
+status` and `engram doctor` surface the current mode so users can see whether
+per-caller filtering, write gates, owner-only exports/imports, and disclosure
+receipts are active.
+
+This is intentionally not described as strong authentication. Caller identity
+currently comes from MCP startup environment (`ENGRAM_CLIENT_TYPE`), so the
+governance layer is a practical local policy boundary for well-behaved clients,
+not a hardened sandbox against a hostile local process with filesystem access.
+
 ## Trust Levels
 
 The MCP caller identity is currently self-reported through

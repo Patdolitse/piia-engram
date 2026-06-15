@@ -159,7 +159,7 @@ staged 条目始终在你掌控之中：
   都是**单独的显式 opt-in**。知识内容、提示词、AI 回复、文件路径、邮箱、IP 地址
   从不被采集。
 - 审计日志**默认开启**；它把读写操作记录到本地 `~/.engram/audit.log`（纯 JSON-lines，绝不外传）。可用 `ENGRAM_AUDIT=0` 关闭。
-- 按调用方治理层**默认关闭**；用 `ENGRAM_GOVERNANCE=1` 开启。
+- 按调用方治理层**默认关闭**；用 `ENGRAM_GOVERNANCE=1` 开启。当同一份记忆同时接给多个 AI 工具、自动化流程或远程桥接时建议开启；`engram status` 和 `engram doctor` 会显示它当前是否启用。
 - `engram setup` 不会在未经你确认（或显式 `--apply-external-config` 标志）的
   情况下改动外部客户端配置。
 
