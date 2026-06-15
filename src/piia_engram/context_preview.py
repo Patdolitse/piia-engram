@@ -531,8 +531,8 @@ def render_context_preview_html(preview: dict[str, Any]) -> str:
         "Read-only preview — what this caller would receive right now; nothing was sent to any AI tool",
     )
     tagline = (
-        f"{t('模拟调用方', 'Simulated caller')}: {preview.get('role', '')}"
-        f" · {caller.get('trust_level', '')}"
+        f"{t('⚯ 隐私预览 · 模拟', '⚯ Privacy preview · caller')} "
+        f"{preview.get('role', '')} · {caller.get('trust_level', '')}"
     )
 
     # --- hero meta row -----------------------------------------------------
