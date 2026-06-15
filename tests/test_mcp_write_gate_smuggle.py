@@ -205,4 +205,5 @@ def test_untrusted_trust_fields_contract() -> None:
         "memory_state",
         "approval_status",
         "approval_required",
+        "labeling",
     }

@@ -30,6 +30,23 @@ decisions, playbooks). All are optional; entries without them remain valid.
 `freshness_status` is **derived at recall time, never stored** (see §3) so it
 cannot go stale on disk.
 
+Each knowledge entry also carries a system-derived `labeling` object:
+
+```json
+{
+  "source_kind": "human | agent | imported | unknown",
+  "annotation_quality": "raw | partial | mature",
+  "validation_state": "unreviewed | validated | needs_review",
+  "signals": ["has_source_agent", "has_domain", "needs_owner_review"]
+}
+```
+
+`labeling` is **not caller-certified**. Agent-facing MCP payloads have any
+incoming `labeling` removed with the other trust fields, then Engram derives it
+from provenance, domain/project/source URL context, risk tier, and approval
+state. High-risk or staging entries are always `needs_review` and cannot be
+`mature` until they leave the review path.
+
 ### Type / safety rules
 
 - `source_agent`, `run_id` are short identifiers: trimmed, capped at 120 chars,

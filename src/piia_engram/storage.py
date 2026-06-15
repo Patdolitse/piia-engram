@@ -68,6 +68,7 @@ UNTRUSTED_TRUST_FIELDS: tuple[str, ...] = (
     "memory_state",
     "approval_status",
     "approval_required",
+    "labeling",
 )
 # Decision-conflict governance thresholds: post-hoc noise reduction for
 # doctor/context/engram conflicts. These favor precision.

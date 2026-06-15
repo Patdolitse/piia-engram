@@ -779,6 +779,107 @@ class Engram(
             return "low"
         return max(valid, key=lambda level: rank[level])
 
+    @staticmethod
+    def _labeling_source_kind(entry: dict) -> str:
+        provenance = entry.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+        source_tool = str(
+            entry.get("source_tool") or provenance.get("source_tool") or ""
+        ).strip().lower()
+        source_agent = str(provenance.get("source_agent") or "").strip().lower()
+        source = f"{source_tool} {source_agent}".strip()
+        if not source or source == "unknown":
+            return "unknown"
+        if any(token in source for token in (
+            "import", "migration", "migrate", "sync", "bulk", "bootstrap", "seed",
+        )):
+            return "imported"
+        if any(token in source for token in (
+            "codex", "claude", "cursor", "windsurf", "agent", "gpt", "sonnet", "opus",
+        )):
+            return "agent"
+        if any(
+            token in source for token in ("human", "manual", "owner", "user", "self")
+        ):
+            return "human"
+        return "agent" if source_agent else "unknown"
+
+    def _derive_labeling(self, entry: dict) -> dict[str, Any]:
+        """Derive non-authoritative data-label maturity metadata."""
+        provenance = entry.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+        signals: set[str] = set()
+
+        source_tool = str(
+            entry.get("source_tool") or provenance.get("source_tool") or ""
+        ).strip()
+        if source_tool and source_tool != "unknown":
+            signals.add("has_source_tool")
+        if str(provenance.get("source_agent") or "").strip():
+            signals.add("has_source_agent")
+        if str(provenance.get("run_id") or "").strip():
+            signals.add("has_run_id")
+        if str(provenance.get("last_validated_at") or "").strip():
+            signals.add("has_last_validated_at")
+        if str(entry.get("domain") or "").strip():
+            signals.add("has_domain")
+        if str(entry.get("project") or entry.get("source_project") or "").strip():
+            signals.add("has_project")
+        if str(entry.get("source_url") or "").strip():
+            signals.add("has_source_url")
+
+        if entry.get("risk_level") == "high":
+            signals.add("high_risk")
+        needs_review = (
+            entry.get("tier") == "staging"
+            or entry.get("memory_state") == "staging"
+            or entry.get("approval_required") is True
+            or entry.get("approval_status") == "pending"
+        )
+        if needs_review:
+            signals.add("needs_owner_review")
+
+        if needs_review or entry.get("risk_level") == "high":
+            validation_state = "needs_review"
+        elif "has_last_validated_at" in signals:
+            validation_state = "validated"
+        else:
+            validation_state = "unreviewed"
+
+        has_explainable_source = bool(
+            {"has_source_tool", "has_source_agent"} & signals
+        )
+        has_context_label = bool(
+            {"has_domain", "has_project", "has_source_url"} & signals
+        )
+        if (
+            validation_state == "validated"
+            and has_explainable_source
+            and has_context_label
+            and "has_run_id" in signals
+        ):
+            annotation_quality = "mature"
+        elif has_explainable_source or has_context_label or "has_run_id" in signals:
+            annotation_quality = "partial"
+        else:
+            annotation_quality = "raw"
+
+        if validation_state == "needs_review" and annotation_quality == "mature":
+            annotation_quality = "partial"
+
+        return {
+            "source_kind": self._labeling_source_kind(entry),
+            "annotation_quality": annotation_quality,
+            "validation_state": validation_state,
+            "signals": sorted(signals),
+        }
+
+    def _refresh_labeling(self, entry: dict) -> dict:
+        entry["labeling"] = self._derive_labeling(entry)
+        return entry
+
     def _apply_write_risk_gate(self, entry: dict, *, tier_explicit: bool) -> str:
         """Risk-tiered write gate for a NEW entry (call once, after _ensure_fields).
 
@@ -808,6 +909,7 @@ class Engram(
             "rejected",
             "deprecated",
         }:
+            self._refresh_labeling(entry)
             return f"preserved (state={entry.get('memory_state', 'rejected')})"
         # Strict mode gates EVERY new write — including a caller-pinned tier.
         # This must run *before* honoring an explicit tier: otherwise a caller
@@ -818,10 +920,12 @@ class Engram(
             entry["memory_state"] = "staging"
             entry["approval_status"] = "pending"
             entry["approval_required"] = True
+            self._refresh_labeling(entry)
             return "strict-mode->staging (ENGRAM_APPROVAL=strict)"
         # Outside strict mode, a deliberately caller-pinned tier (a seed, an
         # import, or a test fixture) is honored and the risk gate is skipped.
         if tier_explicit:
+            self._refresh_labeling(entry)
             return f"explicit tier={entry.get('tier', 'verified')}"
         if entry.get("risk_level") == "high":
             entry["tier"] = "staging"
@@ -829,12 +933,14 @@ class Engram(
             entry["approval_status"] = "pending"
             entry["approval_required"] = True
             flags = ",".join(entry.get("risk_flags", [])) or "none"
+            self._refresh_labeling(entry)
             return f"gated->staging (risk=high, flags={flags})"
         # low / medium risk -> auto-absorbed to verified
         entry["tier"] = "verified"
         entry["memory_state"] = "verified"
         entry["approval_status"] = "approved"
         entry["approval_required"] = False
+        self._refresh_labeling(entry)
         return f"auto-absorbed->verified (risk={entry.get('risk_level', 'low')})"
 
     def _ensure_fields(self, entry: dict, entry_type: str) -> dict:
@@ -902,6 +1008,7 @@ class Engram(
         entry["approval_required"] = (
             entry["memory_state"] == "staging" or entry["risk_level"] == "high"
         )
+        self._refresh_labeling(entry)
 
         return entry
 
