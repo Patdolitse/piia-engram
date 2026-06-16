@@ -27,14 +27,15 @@ def _read_json_quiet(path: Path) -> Any:
 
 def _package_version() -> str:
     try:
+        from . import __version__
+
+        return __version__
+    except Exception:
+        pass
+    try:
         return metadata.version("piia-engram")
     except metadata.PackageNotFoundError:
-        try:
-            from . import __version__
-
-            return __version__
-        except Exception:
-            return "unknown"
+        return "unknown"
 
 
 def _entry_tier(entry: Any) -> str:
@@ -176,12 +177,26 @@ def _governance_summary(root: Path) -> dict[str, Any]:
 
         perms = gov_rt.describe_caller_permissions(root)
         enabled = bool(perms.get("governance_enabled"))
+        vnext = perms.get("permission_profile_vnext")
+        vnext = vnext if isinstance(vnext, dict) else {}
+        caller_source = str(
+            vnext.get("caller_source")
+            or os.environ.get("ENGRAM_CALLER_SOURCE", "")
+            or "unknown"
+        )
+        initiation_source = str(
+            vnext.get("initiation_source")
+            or os.environ.get("ENGRAM_INITIATION_SOURCE", "")
+            or "unknown"
+        )
         return {
             "enabled": enabled,
             "client_type": os.environ.get("ENGRAM_CLIENT_TYPE", "") or "(unset)",
             "trust_level": str(perms.get("trust_level") or "unknown"),
             "max_sensitivity": str(perms.get("max_sensitivity") or "unknown"),
             "write_policy": str(perms.get("write_policy") or "unknown"),
+            "caller_source": caller_source,
+            "initiation_source": initiation_source,
             "revoked": bool(perms.get("revoked")),
             "note": str(perms.get("note") or ""),
             "recommendation": (
@@ -196,6 +211,10 @@ def _governance_summary(root: Path) -> dict[str, Any]:
             "trust_level": "unknown",
             "max_sensitivity": "unknown",
             "write_policy": "unknown",
+            "caller_source": os.environ.get("ENGRAM_CALLER_SOURCE", "") or "unknown",
+            "initiation_source": (
+                os.environ.get("ENGRAM_INITIATION_SOURCE", "") or "unknown"
+            ),
             "revoked": False,
             "error": str(exc),
             "recommendation": (
@@ -384,12 +403,17 @@ def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) ->
     governance_enabled = bool(governance.get("enabled"))
     governance_mark = "ok" if governance_enabled else "--"
     if governance_enabled:
+        source_tail = (
+            f", source={governance.get('caller_source', 'unknown')}, "
+            f"initiated={governance.get('initiation_source', 'unknown')}"
+        )
         governance_label = (
             "on "
             f"(client={governance.get('client_type')}, "
             f"trust={governance.get('trust_level')}, "
             f"max={governance.get('max_sensitivity')}, "
-            f"write={governance.get('write_policy')})"
+            f"write={governance.get('write_policy')}"
+            f"{source_tail})"
         )
     else:
         governance_label = (

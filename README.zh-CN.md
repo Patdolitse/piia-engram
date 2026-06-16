@@ -116,7 +116,7 @@ pip install piia-engram && engram setup
 | 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
 | MCP 工具 | **17 个核心**（默认加载）+ **36 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **3438** 个（单元 + 集成；2 个 skipped，共收集 3440）|
+| 测试通过 | **3450** 个（单元 + 集成；2 个 skipped，共收集 3452）|
 | 代码覆盖率 | **86%** 总体 |
 | `core.py` 行数 | **1573** 行（facade，领域逻辑已拆分为专责 mixin —— 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
@@ -850,6 +850,7 @@ piia-engram management action review approve <id> --yes --json  # 结构化脱�
 piia-engram management action playbook delete <id> --yes --json # 软删除 Playbook，不回显正文
 piia-engram management action playbook_scope accept_project <id> --project . --yes --json # 处理歧义 Playbook 作用域
 piia-engram management action playbook_scope accept_shared <id> --project ./app-a --project ./app-b --yes --json # 让一个 Playbook 只在选定项目间共享
+piia-engram dock-status      # Dock owner-console 零写状态页（--json）
 piia-engram repair-encoding  # dry-run 扫描乱码 / mojibake
 piia-engram repair-encoding --apply  # 备份后修复可逆乱码
 piia-engram backup-plan      # 升级前要备份哪些文件的元数据清单（仅本地，不读取知识正文）

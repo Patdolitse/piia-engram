@@ -906,6 +906,30 @@ def test_dock_list_returns_active_lessons_and_decisions(monkeypatch, tmp_path, c
     assert dec["fields"]["choice"] == "JSON 优先"
 
 
+def test_dock_list_includes_system_derived_labeling(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_lesson({
+        "summary": "validated dock-visible labeling",
+        "domain": "dock",
+        "source_tool": "codex",
+        "provenance": {
+            "source_agent": "codex",
+            "run_id": "run-dock-m1",
+            "last_validated_at": "2026-06-16T12:00:00Z",
+        },
+    })
+
+    assert _cli_list(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    row = payload["results"][0]
+
+    assert row["labeling"]["source_kind"] == "agent"
+    assert row["labeling"]["annotation_quality"] == "mature"
+    assert row["labeling"]["validation_state"] == "validated"
+    assert "has_last_validated_at" in row["labeling"]["signals"]
+
+
 def test_dock_list_title_only_decision_falls_back(monkeypatch, tmp_path, capsys):
     """An extraction-written decision keeps its primary text in `title`
     (question is null) — dock-list must surface it, never render '(decision)'."""
@@ -1041,6 +1065,108 @@ def test_dock_get_lang_is_zero_write(monkeypatch, tmp_path):
     before = _snapshot(store)
     _cli_get_lang(monkeypatch, tmp_path, ["--json"])
     assert _snapshot(store) == before
+
+
+# --- dock-status: zero-write owner console home contract --------------------
+
+
+def _cli_status(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_status
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_status(argv)
+
+
+def test_dock_status_help(monkeypatch, tmp_path, capsys):
+    assert _cli_status(monkeypatch, tmp_path, ["--help"]) == 0
+    assert "dock-status" in capsys.readouterr().out
+
+
+def test_dock_status_json_is_read_only_and_metadata_only(
+    monkeypatch, tmp_path, capsys
+):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    secret = "DOCK_STATUS_BODY_SECRET"
+    eng.add_lesson({"summary": secret, "detail": secret, "domain": "private"})
+
+    before = _snapshot(store)
+    assert _cli_status(monkeypatch, tmp_path, ["--json"]) == 0
+    assert _snapshot(store) == before
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["read_only"] is True
+    assert payload["dock_contract_version"] == "M1"
+    assert payload["engram_dir"] == str(store)
+    assert payload["status"]["knowledge"]["total"] == 1
+    assert "zero_write" in payload["dock_capabilities"]
+    assert "owner_write" in payload["dock_capabilities"]
+    assert secret not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_dock_status_defaults_to_dock_advisory_sources(
+    monkeypatch, tmp_path, capsys
+):
+    _populate(tmp_path / "store")
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")
+    monkeypatch.delenv("ENGRAM_CALLER_SOURCE", raising=False)
+    monkeypatch.delenv("ENGRAM_INITIATION_SOURCE", raising=False)
+
+    assert _cli_status(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    gov = payload["status"]["governance"]
+    assert gov["enabled"] is True
+    assert gov["trust_level"] == "trusted-local"
+    assert gov["caller_source"] == "desktop_dock"
+    assert gov["initiation_source"] == "unknown"
+
+
+def test_dock_status_preserves_explicit_initiation_source(
+    monkeypatch, tmp_path, capsys
+):
+    _populate(tmp_path / "store")
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")
+    monkeypatch.setenv("ENGRAM_CALLER_SOURCE", "desktop-dock")
+    monkeypatch.setenv("ENGRAM_INITIATION_SOURCE", "human")
+
+    assert _cli_status(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    gov = payload["status"]["governance"]
+    assert gov["caller_source"] == "desktop_dock"
+    assert gov["initiation_source"] == "human"
+
+
+def test_dock_status_unknown_option_stays_json(monkeypatch, tmp_path, capsys):
+    _populate(tmp_path / "store")
+    assert _cli_status(monkeypatch, tmp_path, ["--json", "--bogus"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "unknown option" in payload["error"]
+
+
+def test_dock_status_real_main_entry_is_zero_write(tmp_path, monkeypatch, capsys):
+    from piia_engram import setup_wizard
+
+    store = tmp_path / "store"
+    _populate(store)
+    monkeypatch.setenv("ENGRAM_DIR", str(store))
+    monkeypatch.setattr("sys.argv", ["engram", "dock-status", "--json"])
+    before = _snapshot(store)
+
+    with pytest.raises(SystemExit) as exc:
+        setup_wizard.main()
+
+    assert exc.value.code == 0
+    assert _snapshot(store) == before
+    assert not (store / ".update_check.json").exists()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["dock_contract_version"] == "M1"
+    assert payload["read_only"] is True
 
 
 def test_dock_get_lang_unknown_option(monkeypatch, tmp_path):

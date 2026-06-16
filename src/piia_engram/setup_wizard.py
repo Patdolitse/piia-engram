@@ -2960,6 +2960,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_list,
     _run_dock_set_lang,
     _run_dock_get_lang,
+    _run_dock_status,
     _run_portrait,
     _run_telemetry_validate,
     _run_release_check,
@@ -3000,7 +3001,7 @@ def main() -> None:
     # there to avoid a double-print. `dock-resume`/`dock-search` are guaranteed
     # zero-write entries — the reminder would write .update_check.json into the
     # store — so skip them too. Never reached by the separate MCP-server entry.
-    if not (args and args[0] in ("doctor", "dock-resume", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan")):
+    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3081,6 +3082,8 @@ def main() -> None:
         sys.exit(_run_dock_set_lang(args[1:]))
     elif args[0] == "dock-get-lang":
         sys.exit(_run_dock_get_lang(args[1:]))
+    elif args[0] == "dock-status":
+        sys.exit(_run_dock_status(args[1:]))
     elif args[0] == "portrait":
         sys.exit(_run_portrait(args[1:]))
     elif args[0] == "lifecycle":
@@ -3149,6 +3152,7 @@ def main() -> None:
             "  engram import <backup.json>  Metadata-only import preview (--apply --yes to write)\n"
             "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"
+            "  engram dock-status      Zero-write owner-console status for a desktop client (--json)\n"
             "  engram dock-resume      Zero-write resume brief for a desktop client (--project/--budget/--json)\n"
             "  engram dock-search      Zero-write keyword search for a desktop client (--query/--scope/--limit/--json)\n"
             "  engram dock-export      One-click full JSON backup for a desktop client (--output/--json)\n"

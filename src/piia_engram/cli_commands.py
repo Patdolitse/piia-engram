@@ -1563,6 +1563,52 @@ def _run_recall(args: list[str]) -> int:
     return 0
 
 
+_DOCK_CONTRACT_VERSION = "M1"
+_DOCK_ZERO_WRITE_ACTIONS = (
+    "dock-status",
+    "dock-resume",
+    "dock-search",
+    "dock-list",
+    "dock-portrait",
+    "dock-archived",
+    "dock-get-lang",
+    "dock-onboard-scan",
+)
+_DOCK_OWNER_WRITE_ACTIONS = (
+    "dock-archive",
+    "dock-restore",
+    "dock-onboard-commit",
+    "dock-update",
+    "dock-set-lang",
+)
+_DOCK_EXPORT_ACTIONS = ("dock-export",)
+
+
+def _dock_capabilities() -> dict:
+    return {
+        "zero_write": list(_DOCK_ZERO_WRITE_ACTIONS),
+        "owner_write": list(_DOCK_OWNER_WRITE_ACTIONS),
+        "export_write": list(_DOCK_EXPORT_ACTIONS),
+    }
+
+
+def _dock_labeling_projection(item: dict) -> dict:
+    labeling = item.get("labeling") if isinstance(item, dict) else None
+    if not isinstance(labeling, dict):
+        return {}
+    out = {}
+    for key in ("source_kind", "annotation_quality", "validation_state"):
+        value = labeling.get(key)
+        if isinstance(value, str) and value:
+            out[key] = value
+    signals = labeling.get("signals")
+    if isinstance(signals, list):
+        clean = [str(signal) for signal in signals if str(signal)]
+        if clean:
+            out["signals"] = clean[:12]
+    return out
+
+
 def _run_dock_resume(args: list[str]) -> int:
     """Emit a zero-write, paste-ready resume brief for a local desktop client.
 
@@ -1776,6 +1822,9 @@ def _run_dock_search(args: list[str]) -> int:
                 "id": it.get("id", ""),
                 "copy": _copy(kind, it),
             }
+            labeling = _dock_labeling_projection(it)
+            if labeling:
+                entry["labeling"] = labeling
             # raw editable fields for the dock's inline edit (lesson/decision only)
             if kind == "lessons":
                 entry["fields"] = {
@@ -2603,6 +2652,9 @@ def _run_dock_list(args: list[str]) -> int:
                     "id": it.get("id", ""),
                     "copy": _copy(kind, it),
                 }
+                labeling = _dock_labeling_projection(it)
+                if labeling:
+                    entry["labeling"] = labeling
                 if kind == "lesson":
                     entry["fields"] = {
                         "summary": it.get("summary", "") or "",
@@ -2749,6 +2801,85 @@ def _run_dock_get_lang(args: list[str]) -> int:
         print(json.dumps({"ok": True, "lang": lang}, ensure_ascii=False))
         return 0
     print(lang)
+    return 0
+
+
+def _run_dock_status(args: list[str]) -> int:
+    """Zero-write owner-console status for a desktop Dock client.
+
+    This is the Dock home-screen contract: metadata-only health, counts,
+    governance visibility, and Dock action capabilities. It never probes
+    external executables and never opens the Engram store for writing.
+    """
+    import os as _os
+    from piia_engram.status_report import build_status, render_status_text
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-status [--json]\n\n"
+            "  Zero-write metadata-only status for a local desktop client.\n"
+            "  Includes knowledge counts, governance visibility, and Dock M1\n"
+            "  action capabilities. Does not probe or mutate the store root.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": msg, "status": {}},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    for a in args:
+        if a != "--json":
+            return _err(f"unknown option: {a}")
+
+    source_was_set = "ENGRAM_CALLER_SOURCE" in _os.environ
+    initiation_was_set = "ENGRAM_INITIATION_SOURCE" in _os.environ
+    if not source_was_set:
+        _os.environ["ENGRAM_CALLER_SOURCE"] = "desktop_dock"
+    if not initiation_was_set:
+        _os.environ["ENGRAM_INITIATION_SOURCE"] = "unknown"
+
+    try:
+        status = build_status(probe=False)
+    except Exception as exc:
+        return _err(str(exc), 1)
+    finally:
+        if not source_was_set:
+            _os.environ.pop("ENGRAM_CALLER_SOURCE", None)
+        if not initiation_was_set:
+            _os.environ.pop("ENGRAM_INITIATION_SOURCE", None)
+
+    root = str(
+        status.get("root")
+        or Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    )
+    payload = {
+        "ok": True,
+        "read_only": True,
+        "engram_dir": root,
+        "dock_contract_version": _DOCK_CONTRACT_VERSION,
+        "dock_capabilities": _dock_capabilities(),
+        "status": status,
+    }
+    if want_json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    print(
+        f"Dock contract: {_DOCK_CONTRACT_VERSION}\n"
+        f"Zero-write actions: {', '.join(_DOCK_ZERO_WRITE_ACTIONS)}\n"
+        f"Owner-write actions: {', '.join(_DOCK_OWNER_WRITE_ACTIONS)}\n\n"
+        f"{render_status_text(status, redact_paths=False)}",
+        end="",
+    )
     return 0
 
 

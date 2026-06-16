@@ -137,6 +137,7 @@ def test_new_public_docs_are_publish_allowlisted():
         "docs/tool-surface-analysis.md",
         "docs/cross-tool-continuity-demo.md",
         "docs/runbooks/agent-client-validation.md",
+        "docs/specs/dock-m1-contract.md",
     ]:
         assert path in allowlist
 
@@ -395,6 +396,29 @@ def test_permission_profile_vnext_doc_separates_shipped_and_deferred_controls():
         "hard authentication",
     ]:
         assert forbidden not in doc
+
+
+def test_dock_m1_contract_is_backend_contract_not_gui_claim():
+    doc = _read("docs/specs/dock-m1-contract.md")
+    readme = _read("README.md")
+    readme_zh = _read("README.zh-CN.md")
+
+    for phrase in [
+        "implemented backend contract, not a standalone desktop GUI",
+        "dock-status",
+        "dock_contract_version",
+        "Zero-write reads",
+        "Owner-confirmed writes",
+        "Sensitive export",
+        "desktop_dock",
+        "initiation_source",
+        "system-derived",
+    ]:
+        assert phrase in doc
+
+    assert "piia-engram dock-status" in readme
+    assert "piia-engram dock-status" in readme_zh
+    assert "packaged desktop application" not in readme
 
 
 def test_agent_client_validation_runbook_is_purpose_first():

@@ -133,6 +133,94 @@ def test_memory_store_cannot_smuggle_mature_labeling(eng: Engram):
     assert "caller_certified" not in lesson["labeling"]["signals"]
 
 
+def test_memory_store_decision_cannot_smuggle_validated_labeling(eng: Engram):
+    payload = {
+        "question": "Which storage shape should the Dock use?",
+        "choice": "Use stable JSON contracts",
+        "reasoning": "Desktop clients need predictable metadata.",
+        "source_tool": "codex",
+        "labeling": {
+            "source_kind": "human",
+            "annotation_quality": "mature",
+            "validation_state": "validated",
+            "signals": ["caller_certified"],
+        },
+    }
+
+    _run(
+        mcp_server.memory_store(
+            kind="decision",
+            content_json=json.dumps(payload),
+            source_tool="codex",
+        )
+    )
+
+    decision = eng.get_decisions()[0]
+    assert decision["labeling"]["source_kind"] == "agent"
+    assert decision["labeling"]["annotation_quality"] == "partial"
+    assert decision["labeling"]["validation_state"] == "unreviewed"
+    assert "caller_certified" not in decision["labeling"]["signals"]
+
+
+def test_memory_store_batch_items_cannot_smuggle_labeling(eng: Engram):
+    items = [
+        {
+            "summary": "batch import should not self-certify",
+            "domain": "dock",
+            "labeling": {
+                "source_kind": "human",
+                "annotation_quality": "mature",
+                "validation_state": "validated",
+                "signals": ["caller_certified"],
+            },
+        }
+    ]
+
+    _run(
+        mcp_server.memory_store(
+            kind="lesson",
+            items_json=json.dumps(items),
+            source_tool="codex",
+        )
+    )
+
+    lesson = eng.get_lessons()[0]
+    assert lesson["labeling"]["source_kind"] == "agent"
+    assert lesson["labeling"]["annotation_quality"] == "partial"
+    assert lesson["labeling"]["validation_state"] == "unreviewed"
+    assert "caller_certified" not in lesson["labeling"]["signals"]
+
+
+def test_memory_store_batch_decisions_cannot_smuggle_labeling(eng: Engram):
+    items = [
+        {
+            "question": "Can batch decisions self-certify?",
+            "choice": "No",
+            "reasoning": "Caller labels must be re-derived.",
+            "labeling": {
+                "source_kind": "human",
+                "annotation_quality": "mature",
+                "validation_state": "validated",
+                "signals": ["caller_certified"],
+            },
+        }
+    ]
+
+    _run(
+        mcp_server.memory_store(
+            kind="decision",
+            items_json=json.dumps(items),
+            source_tool="codex",
+        )
+    )
+
+    decision = eng.get_decisions()[0]
+    assert decision["labeling"]["source_kind"] == "agent"
+    assert decision["labeling"]["annotation_quality"] == "partial"
+    assert decision["labeling"]["validation_state"] == "unreviewed"
+    assert "caller_certified" not in decision["labeling"]["signals"]
+
+
 def test_review_knowledge_marks_validated_and_refreshes_labeling(tmp_path: Path):
     engram = Engram(root=tmp_path)
     lesson = engram.add_lesson({

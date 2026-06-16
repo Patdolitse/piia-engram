@@ -114,7 +114,7 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **36 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3438** (unit + integration; 2 skipped, 3440 collected) |
+| Tests passing | **3450** (unit + integration; 2 skipped, 3452 collected) |
 | Code coverage | **86%** total |
 | Lines in `core.py` | **1573** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -902,6 +902,7 @@ piia-engram management action review approve <id> --yes --json  # Structured met
 piia-engram management action playbook delete <id> --yes --json # Soft-delete a Playbook without body echo
 piia-engram management action playbook_scope accept_project <id> --project . --yes --json # Resolve ambiguous Playbook scope
 piia-engram management action playbook_scope accept_shared <id> --project ./app-a --project ./app-b --yes --json # Share one Playbook with selected projects
+piia-engram dock-status      # Zero-write Dock owner-console status (--json)
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
 piia-engram repair-encoding --apply  # Repair reversible cases with a backup
 piia-engram backup-plan      # Metadata-only plan of what to copy before upgrading (local-only)

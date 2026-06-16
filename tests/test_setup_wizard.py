@@ -145,6 +145,18 @@ class TestSessionsCLI:
         assert "ENGRAM_GOVERNANCE=1" in text
         assert "multi-tool" in text
 
+    def test_status_version_prefers_source_version_over_stale_metadata(self, monkeypatch):
+        """Local source checkouts should not display stale installed package metadata."""
+        from piia_engram import __version__, status_report
+
+        monkeypatch.setattr(
+            status_report.metadata,
+            "version",
+            lambda _name: "0.0.0-stale",
+        )
+
+        assert status_report._package_version() == __version__
+
     def test_status_surfaces_governance_enabled_caller(self, tmp_path, monkeypatch):
         """When enabled, status should show the active caller trust boundary."""
         from piia_engram.status_report import build_status, render_status_text
@@ -152,6 +164,8 @@ class TestSessionsCLI:
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
         monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "codex")
+        monkeypatch.setenv("ENGRAM_CALLER_SOURCE", "mcp-stdio")
+        monkeypatch.setenv("ENGRAM_INITIATION_SOURCE", "automation")
 
         status = build_status(probe=False)
         text = render_status_text(status)
@@ -159,8 +173,12 @@ class TestSessionsCLI:
         assert status["governance"]["enabled"] is True
         assert status["governance"]["client_type"] == "codex"
         assert status["governance"]["trust_level"] == "trusted-local"
+        assert status["governance"]["caller_source"] == "mcp_stdio"
+        assert status["governance"]["initiation_source"] == "automation"
         assert "Agent governance: on" in text
         assert "trusted-local" in text
+        assert "source=mcp_stdio" in text
+        assert "initiated=automation" in text
 
     def test_status_html_writes_redacted_local_report(self, tmp_path, monkeypatch, capsys):
         """--html should write a local status page with metadata only."""
