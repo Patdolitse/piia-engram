@@ -32,6 +32,10 @@ FRESH = "fresh"
 AGING = "aging"
 STALE = "stale"
 UNKNOWN = "unknown"
+TRIGGER_BOUND = "trigger_bound"
+
+_TRIGGER_BOUND_VALIDATION_KINDS = {"test", "tests", "ci", "check", "anchor"}
+_HUMAN_VALIDATION_KINDS = {"human", "user", "manual"}
 
 # Priority order of timestamp fields used to measure age.
 FRESHNESS_BASES = ("last_validated_at", "last_reviewed", "created_at", "timestamp")
@@ -106,6 +110,40 @@ def resolve_source_agent(entry: dict[str, Any]) -> str:
     return _clean_identifier(entry.get("source_tool")) or ""
 
 
+def _validation_kind(entry: dict[str, Any]) -> str:
+    """Return a normalized validation kind, if the entry declares one.
+
+    This is intentionally advisory. Older entries do not have this field and
+    keep the previous time-based freshness behavior. Newer entries can mark a
+    fact as held by a re-runnable signal (test/check/anchor) so it does not
+    become stale only because the wall clock moved.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    prov = entry.get("provenance")
+    candidates = []
+    if isinstance(prov, dict):
+        candidates.extend(
+            [
+                prov.get("validation_kind"),
+                prov.get("validation_source"),
+                prov.get("confirmed_by"),
+            ]
+        )
+    candidates.extend(
+        [
+            entry.get("validation_kind"),
+            entry.get("validation_source"),
+            entry.get("confirmed_by"),
+        ]
+    )
+    for value in candidates:
+        cleaned = _clean_identifier(value)
+        if cleaned:
+            return cleaned.lower().replace("-", "_")
+    return ""
+
+
 def _best_timestamp(entry: dict[str, Any]) -> tuple[datetime | None, str]:
     """Return (datetime, basis) using the documented priority order."""
     prov = entry.get("provenance") if isinstance(entry, dict) else None
@@ -147,6 +185,21 @@ def compute_freshness(
         }
 
     age_days = max(0.0, (now - ts).total_seconds() / 86400.0)
+    validation_kind = _validation_kind(entry if isinstance(entry, dict) else {})
+
+    # Facts confirmed by a re-runnable signal should be invalidated by that
+    # signal changing/failing, not by a wall-clock TTL. Keep the age visible for
+    # observability, but mark the freshness policy as trigger-bound instead of
+    # aging/stale. Human/manual confirmations keep the legacy time-decay path.
+    if validation_kind in _TRIGGER_BOUND_VALIDATION_KINDS:
+        return {
+            "freshness_status": TRIGGER_BOUND,
+            "age_days": round(age_days, 1),
+            "basis": basis,
+            "validation_kind": validation_kind,
+            "as_of": now.isoformat(),
+        }
+
     if age_days <= FRESH_MAX_DAYS:
         status = FRESH
     elif age_days <= AGING_MAX_DAYS:
@@ -154,12 +207,15 @@ def compute_freshness(
     else:
         status = STALE
 
-    return {
+    out = {
         "freshness_status": status,
         "age_days": round(age_days, 1),
         "basis": basis,
         "as_of": now.isoformat(),
     }
+    if validation_kind in _HUMAN_VALIDATION_KINDS:
+        out["validation_kind"] = validation_kind
+    return out
 
 
 def annotate_freshness(

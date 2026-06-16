@@ -125,6 +125,40 @@ def test_freshness_future_timestamp_clamps_to_zero():
     assert ann["freshness_status"] == P.FRESH
 
 
+def test_test_confirmed_facts_are_trigger_bound_not_stale_by_age():
+    entry = {
+        "provenance": {
+            "last_validated_at": _days_ago(200),
+            "validation_kind": "test",
+        }
+    }
+    ann = P.compute_freshness(entry, now=NOW)
+    assert ann["freshness_status"] == P.TRIGGER_BOUND
+    assert ann["basis"] == "last_validated_at"
+    assert ann["age_days"] == 200.0
+    assert ann["validation_kind"] == "test"
+
+
+def test_anchor_confirmed_facts_are_trigger_bound_not_stale_by_age():
+    entry = {
+        "last_reviewed": _days_ago(120),
+        "validation_kind": "anchor",
+    }
+    ann = P.compute_freshness(entry, now=NOW)
+    assert ann["freshness_status"] == P.TRIGGER_BOUND
+    assert ann["validation_kind"] == "anchor"
+
+
+def test_human_confirmed_facts_keep_time_decay():
+    entry = {
+        "last_reviewed": _days_ago(120),
+        "provenance": {"validation_kind": "human"},
+    }
+    ann = P.compute_freshness(entry, now=NOW)
+    assert ann["freshness_status"] == P.STALE
+    assert ann["validation_kind"] == "human"
+
+
 # --- annotate_freshness (non-destructive) ----------------------------------
 
 def test_annotate_is_non_destructive():
