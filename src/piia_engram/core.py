@@ -80,6 +80,17 @@ from .compat import (  # noqa: F401
 )
 
 
+def _strip_untrusted_freshness_provenance(entry: dict[str, Any]) -> None:
+    """Remove freshness-trust claims from ordinary core dict writes."""
+    provenance = entry.get("provenance")
+    if not isinstance(provenance, dict):
+        return
+    clean = dict(provenance)
+    clean.pop("confirmation_source", None)
+    clean.pop("anchor_status", None)
+    entry["provenance"] = clean
+
+
 
 # ---------------------------------------------------------------------------
 # Engram Core Class
@@ -1143,6 +1154,7 @@ class Engram(
         """
         path = self._knowledge_dir / "lessons.json"
 
+        allow_internal_provenance = extra.pop("_allow_internal_provenance", False) is True
         tier_explicit = ("tier" in lesson) if isinstance(lesson, dict) else False
         tier_explicit = tier_explicit or ("tier" in extra)
 
@@ -1162,6 +1174,9 @@ class Engram(
         for key, value in extra.items():
             if value is not None:
                 new_lesson[key] = value
+
+        if not allow_internal_provenance:
+            _strip_untrusted_freshness_provenance(new_lesson)
 
         new_lesson = self._repair_incoming_text(new_lesson)
         new_lesson["timestamp"] = new_lesson.get("timestamp") or _now_iso()
@@ -1411,6 +1426,7 @@ class Engram(
         """
         path = self._knowledge_dir / "decisions.json"
 
+        allow_internal_provenance = extra.pop("_allow_internal_provenance", False) is True
         tier_explicit = ("tier" in decision) if isinstance(decision, dict) else False
         tier_explicit = tier_explicit or ("tier" in extra)
 
@@ -1430,6 +1446,9 @@ class Engram(
         for key, value in extra.items():
             if value is not None:
                 new_decision[key] = value
+
+        if not allow_internal_provenance:
+            _strip_untrusted_freshness_provenance(new_decision)
 
         new_decision = self._repair_incoming_text(new_decision)
         # Sanitize project field regardless of input path (dict or kwargs)

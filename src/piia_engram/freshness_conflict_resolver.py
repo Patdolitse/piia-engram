@@ -86,6 +86,8 @@ def _freshness_items(entries: list[dict[str, Any]], now: datetime | None) -> lis
     items: list[dict[str, Any]] = []
     for entry in entries:
         fresh = _provenance.compute_freshness(entry, now=now)
+        if fresh.get("skip_decay") is True:
+            continue
         status = fresh.get("freshness_status")
         if status not in {"aging", "stale"}:
             continue

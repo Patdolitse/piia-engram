@@ -40,6 +40,41 @@ def test_stale_unused_staging_scores_high():
     assert "freshness_stale" in scored["reasons"]
 
 
+def test_skip_decay_test_signal_does_not_add_freshness_decay():
+    entry = {
+        "id": "signal",
+        "summary": "old but test-backed lesson text",
+        "created_at": _iso(500),
+        "last_reviewed": _iso(500),
+        "access_count": 20,
+        "tier": "verified",
+        "provenance": {"confirmation_source": "test_signal"},
+    }
+    scored = lifecycle.score_entry(entry, now=NOW)
+    assert scored["freshness_status"] == "stale"
+    assert scored["decay_score"] < lifecycle.ARCHIVE_THRESHOLD
+    assert "freshness_stale" not in scored["reasons"]
+
+
+def test_skip_decay_valid_anchor_does_not_add_freshness_decay():
+    entry = {
+        "id": "anchor",
+        "summary": "old but anchor-backed lesson text",
+        "created_at": _iso(500),
+        "last_reviewed": _iso(500),
+        "access_count": 20,
+        "tier": "verified",
+        "provenance": {
+            "confirmation_source": "anchor",
+            "anchor_status": " VALID ",
+        },
+    }
+    scored = lifecycle.score_entry(entry, now=NOW)
+    assert scored["freshness_status"] == "stale"
+    assert scored["decay_score"] < lifecycle.ARCHIVE_THRESHOLD
+    assert "freshness_stale" not in scored["reasons"]
+
+
 def test_score_is_monotonic_in_age():
     young = {"id": "y", "summary": "lesson text long enough to pass", "created_at": _iso(10), "access_count": 0}
     old = {"id": "o", "summary": "lesson text long enough to pass", "created_at": _iso(300), "access_count": 0}

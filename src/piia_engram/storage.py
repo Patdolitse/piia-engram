@@ -69,6 +69,8 @@ UNTRUSTED_TRUST_FIELDS: tuple[str, ...] = (
     "approval_status",
     "approval_required",
     "labeling",
+    "provenance.confirmation_source",
+    "provenance.anchor_status",
 )
 # Decision-conflict governance thresholds: post-hoc noise reduction for
 # doctor/context/engram conflicts. These favor precision.
@@ -237,7 +239,13 @@ def strip_untrusted_trust_fields(payload: Any) -> Any:
     """
     if isinstance(payload, dict):
         for _field in UNTRUSTED_TRUST_FIELDS:
-            payload.pop(_field, None)
+            if "." not in _field:
+                payload.pop(_field, None)
+                continue
+            parent, child = _field.split(".", 1)
+            nested = payload.get(parent)
+            if isinstance(nested, dict):
+                nested.pop(child, None)
     return payload
 
 

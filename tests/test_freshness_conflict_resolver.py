@@ -36,6 +36,71 @@ def test_stale_items_are_proposed_for_review_without_body_leakage():
     assert proposal["receipt"]["applied"] is False
 
 
+def test_skip_decay_test_signal_is_not_proposed_for_refresh_or_archive():
+    lessons = [
+        {
+            "id": "L-signal",
+            "summary": "old test-backed invariant",
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "last_reviewed": "2025-01-01T00:00:00+00:00",
+            "access_count": 20,
+            "tier": "verified",
+            "status": "active",
+            "provenance": {"confirmation_source": "test_signal"},
+        }
+    ]
+
+    proposal = fcr.build_freshness_conflict_proposal(lessons, [], now=NOW)
+
+    assert proposal["counts"]["refresh_review"] == 0
+    assert proposal["counts"]["archive_candidate"] == 0
+    assert all(item.get("id") != "L-signal" for item in proposal["items"])
+
+
+def test_skip_decay_valid_anchor_is_not_proposed_for_refresh_or_archive():
+    lessons = [
+        {
+            "id": "L-anchor",
+            "summary": "old anchor-backed invariant",
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "last_reviewed": "2025-01-01T00:00:00+00:00",
+            "access_count": 20,
+            "tier": "verified",
+            "status": "active",
+            "provenance": {
+                "confirmation_source": "anchor",
+                "anchor_status": " valid ",
+            },
+        }
+    ]
+
+    proposal = fcr.build_freshness_conflict_proposal(lessons, [], now=NOW)
+
+    assert proposal["counts"]["refresh_review"] == 0
+    assert proposal["counts"]["archive_candidate"] == 0
+    assert all(item.get("id") != "L-anchor" for item in proposal["items"])
+
+
+def test_invalid_anchor_still_gets_refresh_review():
+    lessons = [
+        {
+            "id": "L-anchor-invalid",
+            "summary": "old invalid-anchor invariant",
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "status": "active",
+            "provenance": {
+                "confirmation_source": "anchor",
+                "anchor_status": "invalid",
+            },
+        }
+    ]
+
+    proposal = fcr.build_freshness_conflict_proposal(lessons, [], now=NOW)
+
+    assert proposal["counts"]["refresh_review"] == 1
+    assert proposal["items"][0]["id"] == "L-anchor-invalid"
+
+
 def test_decision_conflict_is_metadata_only():
     decisions = [
         {

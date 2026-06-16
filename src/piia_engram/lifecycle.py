@@ -93,11 +93,12 @@ def score_entry(
 
     fresh = _provenance.compute_freshness(entry, now=now)
     status = fresh.get("freshness_status", "unknown")
+    skip_decay = fresh.get("skip_decay") is True
     reasons: list[str] = []
     score = 0.0
 
     fw = _FRESHNESS_WEIGHT.get(status, _FRESHNESS_WEIGHT["unknown"])
-    if fw:
+    if fw and not skip_decay:
         score += fw
         reasons.append(f"freshness_{status}")
 

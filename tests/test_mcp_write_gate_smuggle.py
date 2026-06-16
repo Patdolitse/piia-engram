@@ -125,6 +125,44 @@ def test_memory_store_smuggled_staging_on_low_risk_still_verifies(eng: Engram) -
     assert item["memory_state"] == "verified"
 
 
+def test_memory_store_lesson_strips_smuggled_freshness_provenance(eng: Engram) -> None:
+    content = {
+        "summary": "a caller cannot self-certify as a test signal",
+        "domain": "freshness",
+        "provenance": {
+            "source_agent": "codex",
+            "confirmation_source": "test_signal",
+            "anchor_status": "valid",
+        },
+    }
+    out = _run(mcp_server.memory_store("lesson", json.dumps(content)))
+    assert "澶辫触" not in out
+
+    item = eng.get_lessons(limit=None, _update_access=False)[0]
+    assert item["provenance"]["source_agent"] == "codex"
+    assert "confirmation_source" not in item["provenance"]
+    assert "anchor_status" not in item["provenance"]
+
+
+def test_memory_store_decision_strips_smuggled_freshness_provenance(eng: Engram) -> None:
+    content = {
+        "question": "Can an agent self-certify anchor provenance?",
+        "choice": "no",
+        "provenance": {
+            "source_agent": "codex",
+            "confirmation_source": "anchor",
+            "anchor_status": "valid",
+        },
+    }
+    out = _run(mcp_server.memory_store("decision", json.dumps(content)))
+    assert "澶辫触" not in out
+
+    item = eng.get_decisions(limit=None, _update_access=False)[0]
+    assert item["provenance"]["source_agent"] == "codex"
+    assert "confirmation_source" not in item["provenance"]
+    assert "anchor_status" not in item["provenance"]
+
+
 # ---------------------------------------------------------------------------
 # memory_store batch path (items_json — formerly bulk_add_knowledge)
 # ---------------------------------------------------------------------------
@@ -156,6 +194,40 @@ def test_memory_store_batch_strips_smuggled_tier_each_item(eng: Engram) -> None:
         assert item["approval_status"] == "pending"
 
 
+def test_memory_store_batch_strips_smuggled_freshness_provenance_each_item(
+    eng: Engram,
+) -> None:
+    items = [
+        {
+            "summary": "batch test signal smuggle",
+            "domain": "freshness",
+            "provenance": {
+                "source_agent": "codex",
+                "confirmation_source": "test_signal",
+            },
+        },
+        {
+            "summary": "batch anchor smuggle",
+            "domain": "freshness",
+            "provenance": {
+                "source_agent": "codex",
+                "confirmation_source": "anchor",
+                "anchor_status": "valid",
+            },
+        },
+    ]
+    out = _run(mcp_server.memory_store(kind="lesson", items_json=json.dumps(items)))
+    report = json.loads(out)
+    assert report["saved"] == 2
+
+    stored = eng.get_lessons(limit=None, _update_access=False)
+    assert len(stored) == 2
+    for item in stored:
+        assert item["provenance"]["source_agent"] == "codex"
+        assert "confirmation_source" not in item["provenance"]
+        assert "anchor_status" not in item["provenance"]
+
+
 # ---------------------------------------------------------------------------
 # Escape hatch preserved for internal callers (seeds / imports / fixtures)
 # ---------------------------------------------------------------------------
@@ -172,6 +244,66 @@ def test_internal_core_caller_keeps_tier_escape_hatch(eng: Engram) -> None:
     assert seeded["memory_state"] == "verified"
 
 
+def test_core_dict_lesson_strips_agent_supplied_freshness_provenance(
+    eng: Engram,
+) -> None:
+    stored = eng.add_lesson(
+        {
+            "summary": "direct dict caller cannot self-certify signal",
+            "domain": "freshness",
+            "provenance": {
+                "source_agent": "codex",
+                "confirmation_source": "test_signal",
+                "anchor_status": "valid",
+            },
+        }
+    )
+
+    assert stored["provenance"]["source_agent"] == "codex"
+    assert "confirmation_source" not in stored["provenance"]
+    assert "anchor_status" not in stored["provenance"]
+
+
+def test_core_dict_decision_strips_agent_supplied_freshness_provenance(
+    eng: Engram,
+) -> None:
+    stored = eng.add_decision(
+        {
+            "question": "Can direct dict caller self-certify signal?",
+            "choice": "no",
+            "provenance": {
+                "source_agent": "codex",
+                "confirmation_source": "test_signal",
+                "anchor_status": "valid",
+            },
+        }
+    )
+
+    assert stored["provenance"]["source_agent"] == "codex"
+    assert "confirmation_source" not in stored["provenance"]
+    assert "anchor_status" not in stored["provenance"]
+
+
+def test_internal_core_caller_can_opt_in_to_freshness_provenance(
+    eng: Engram,
+) -> None:
+    stored = eng.add_lesson(
+        {
+            "summary": "internal owner-gated anchor stamp",
+            "domain": "freshness",
+            "provenance": {
+                "source_agent": "owner",
+                "confirmation_source": "anchor",
+                "anchor_status": "valid",
+            },
+        },
+        _allow_internal_provenance=True,
+    )
+
+    assert stored["provenance"]["confirmation_source"] == "anchor"
+    assert stored["provenance"]["anchor_status"] == "valid"
+
+
 # ---------------------------------------------------------------------------
 # Unit: the shared helper
 # ---------------------------------------------------------------------------
@@ -184,12 +316,21 @@ def test_strip_helper_removes_all_untrusted_fields() -> None:
         "memory_state": "verified",
         "approval_status": "approved",
         "approval_required": False,
+        "provenance": {
+            "source_agent": "codex",
+            "confirmation_source": "test_signal",
+            "anchor_status": "valid",
+        },
     }
     returned = strip_untrusted_trust_fields(payload)
     assert returned is payload  # mutates in place and returns the same object
-    assert payload == {"summary": "keep me"}
+    assert payload == {"summary": "keep me", "provenance": {"source_agent": "codex"}}
     for field in UNTRUSTED_TRUST_FIELDS:
-        assert field not in payload
+        if field.startswith("provenance."):
+            _, nested = field.split(".", 1)
+            assert nested not in payload["provenance"]
+        else:
+            assert field not in payload
 
 
 def test_strip_helper_is_noop_on_non_dict() -> None:
@@ -206,4 +347,6 @@ def test_untrusted_trust_fields_contract() -> None:
         "approval_status",
         "approval_required",
         "labeling",
+        "provenance.confirmation_source",
+        "provenance.anchor_status",
     }
