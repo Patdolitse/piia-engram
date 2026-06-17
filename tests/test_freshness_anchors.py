@@ -510,6 +510,121 @@ def test_revalidate_anchors_handles_decisions_and_playbooks(
     assert stored_playbook["provenance"]["anchor_status"] == "invalid"
     assert P.compute_freshness(stored_decision)["skip_decay"] is False
     assert P.compute_freshness(stored_playbook)["skip_decay"] is False
+    # the demote applies to every knowledge type, not just lessons
+    assert report["demoted"] == 2
+    for stored in (stored_decision, stored_playbook):
+        assert stored["tier"] == "staging"
+        assert stored["approval_status"] == "pending"
+        assert "confirmation_source" not in stored["provenance"]
+
+
+def test_revalidate_file_anchor_invalid_demotes(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The demote path is anchor-type agnostic: a `file:` anchor (a config file
+    the fact was tied to) demotes the same way when the file is gone."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "vitest.config.ts").write_text("export default {}\n", encoding="utf-8")
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("fact tied to the vitest config file")
+    eng.confirm_knowledge(
+        lesson["id"], by="anchor", anchor_ref="file:vitest.config.ts",
+        anchor_project_id=PROJECT_ID,
+    )
+    assert eng.revalidate_anchors(str(repo))["valid"] == 1
+
+    (repo / "vitest.config.ts").unlink()
+    report = eng.revalidate_anchors(str(repo))
+
+    assert report["invalid"] == 1
+    assert report["demoted"] == 1
+    demoted = _stored_lesson(eng, lesson["id"])
+    assert demoted["tier"] == "staging"
+    assert "confirmation_source" not in demoted["provenance"]
+    assert demoted["provenance"]["anchor_status"] == "invalid"
+    assert demoted["provenance"]["anchor_ref"] == "file:vitest.config.ts"
+
+
+def test_revalidate_mixed_batch_demotes_only_the_invalid(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One revalidate over a mix demotes ONLY the invalid anchor; the valid one
+    stays verified and trigger-bound. Selective, not blanket."""
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"jest": "^29.0.0"})  # jest present, left-pad absent
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    keep = eng.add_lesson("jest is wired in")
+    drop = eng.add_lesson("left-pad is wired in")
+    eng.confirm_knowledge(keep["id"], by="anchor", anchor_ref="dep:jest",
+                          anchor_project_id=PROJECT_ID)
+    eng.confirm_knowledge(drop["id"], by="anchor", anchor_ref="dep:left-pad",
+                          anchor_project_id=PROJECT_ID)
+
+    report = eng.revalidate_anchors(str(repo))
+
+    assert report["checked"] == 2
+    assert report["valid"] == 1
+    assert report["invalid"] == 1
+    assert report["demoted"] == 1
+    kept = _stored_lesson(eng, keep["id"])
+    dropped = _stored_lesson(eng, drop["id"])
+    assert kept["tier"] == "verified"
+    assert kept["provenance"]["confirmation_source"] == "anchor"
+    assert P.compute_freshness(kept)["skip_decay"] is True
+    assert dropped["tier"] == "staging"
+    assert "confirmation_source" not in dropped["provenance"]
+
+
+def test_anchor_invalidation_is_one_way_recovery_needs_reconfirm(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Demotion is one-way by design: a dependency reappearing does NOT auto-
+    restore trust (a returned dep doesn't re-verify the claim's content). The
+    demoted entry is no longer an anchor entry, so future rechecks skip it; only
+    an explicit re-confirm restores it. The anti-false-confidence trust gate."""
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("jest-backed fact")
+    eng.confirm_knowledge(lesson["id"], by="anchor", anchor_ref="dep:jest",
+                          anchor_project_id=PROJECT_ID)
+
+    # dep removed -> demote
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    assert eng.revalidate_anchors(str(repo))["demoted"] == 1
+    demoted = _stored_lesson(eng, lesson["id"])
+    assert demoted["tier"] == "staging"
+    assert "confirmation_source" not in demoted["provenance"]
+
+    # dep restored -> NOT auto-restored: the entry is no longer an anchor entry,
+    # so revalidate skips it entirely (nothing checked, nothing changed).
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    report = eng.revalidate_anchors(str(repo))
+    assert report["checked"] == 0
+    still = _stored_lesson(eng, lesson["id"])
+    assert still["tier"] == "staging"
+    assert "confirmation_source" not in still["provenance"]
+    assert still["provenance"]["anchor_status"] == "invalid"
+
+    # A deliberate owner re-confirm re-establishes the anchor binding and puts
+    # the fact back on the trigger (off the clock). Note: confirm stamps the
+    # trust source but does NOT itself promote the tier — the entry comes back
+    # as staging + anchor-bound, and promotion to verified stays a separate
+    # deliberate step (no silent jump back to verified just from re-confirming).
+    eng.confirm_knowledge(lesson["id"], by="anchor", anchor_ref="dep:jest",
+                          anchor_project_id=PROJECT_ID)
+    restored = _stored_lesson(eng, lesson["id"])
+    assert restored["provenance"]["confirmation_source"] == "anchor"
+    assert restored["provenance"]["anchor_status"] == "valid"
+    assert restored["tier"] == "staging"  # confirm re-binds; promote is separate
+    assert P.compute_freshness(restored)["skip_decay"] is True
 
 
 def test_revalidate_anchors_is_idempotent(
