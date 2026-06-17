@@ -91,6 +91,8 @@ Evidence levels follow the [agent client validation runbook](docs/runbooks/agent
 | Cursor | MCP over stdio | L2 setup/read-search evidence path |
 | Claude Desktop | MCP over stdio | L1/L2 setup path; client-specific evidence pending |
 | Hermes | MCP over stdio | L2 end-to-end verified (hermes-agent 0.15.2, 2026-06-03) |
+| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | L3 static file-bridge evidence |
+| ChatGPT / Gemini / Kimi | Markdown identity card fallback | Usable |
 | Windsurf | MCP over stdio | Expected to work |
 | GitHub Copilot | MCP over stdio | Expected to work |
 | Cline | MCP over stdio | Expected to work |
@@ -100,8 +102,6 @@ Evidence levels follow the [agent client validation runbook](docs/runbooks/agent
 | Zed | MCP over stdio | Expected to work |
 | Trae | MCP over stdio | Expected to work |
 | Tencent CodeBuddy | MCP over stdio | Expected to work |
-| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | L3 static file-bridge evidence |
-| ChatGPT / Gemini / Kimi | Markdown identity card fallback | Usable |
 
 ## By the numbers
 

@@ -92,6 +92,8 @@ pip install piia-engram && engram setup
 | Cursor | MCP (stdio) | L2 setup / read-search 证据路径 |
 | Claude Desktop | MCP (stdio) | L1/L2 setup 路径，客户端专项证据待补 |
 | Hermes | MCP (stdio) | L2 端到端验证（hermes-agent 0.15.2，2026-06-03） |
+| OpenClaw | SOUL.md/MEMORY.md 导入导出 | L3 静态文件桥证据 |
+| ChatGPT / Kimi / Gemini | 粘贴身份卡 | 可用 |
 | Windsurf | MCP (stdio) | 应兼容 |
 | GitHub Copilot | MCP (stdio) | 应兼容 |
 | Cline | MCP (stdio) | 应兼容 |
@@ -101,8 +103,6 @@ pip install piia-engram && engram setup
 | Zed | MCP (stdio) | 应兼容 |
 | Trae | MCP (stdio) | 应兼容 |
 | 腾讯 CodeBuddy | MCP (stdio) | 应兼容 |
-| OpenClaw | SOUL.md/MEMORY.md 导入导出 | L3 静态文件桥证据 |
-| ChatGPT / Kimi / Gemini | 粘贴身份卡 | 可用 |
 
 ## 量化数据
 
