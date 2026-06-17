@@ -6,6 +6,19 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.3.0] - 2026-06-17
+
+### 安全
+- 加固私有路径脱敏（更广的模式覆盖），并清除 fixture/代码中泄漏的本地路径。
+- worker 反馈载荷改为服务端校验，并守护公开 worker 配置，避免 Cloudflare worker 配置泄漏。
+- 收窄可信本地（trusted-local）写入：可信本地 agent 仍可直接写入低风险的新经验/决策，但高影响操作（改身份、覆盖既有知识、改关系）改为需 owner review。
+
+### 新增
+- `doctor` 与状态报告中可选地呈现治理状态。
+- 知识的系统派生 provenance/标注元数据，并在 recall/staging/review 间打通标注验证闭环（标注由系统派生、仅作参考，agent 无法自设）。
+- 经验版本快照（知识版本链），编辑时保留历史。
+- Dock M1：只读的后端状态契约（`dock-status`）——零写、仅元数据。
+
 ## [4.2.0] - 2026-06-15
 
 ### 新增

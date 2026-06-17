@@ -101,7 +101,7 @@ The MCP layer routes tools through a deny-by-default governance matrix in
 | Tool class | Gate | Effect when governance is enabled |
 |---|---|---|
 | `read` | `maybe_govern_list`, `maybe_govern_result`, `maybe_govern_one`, or `maybe_govern_owner_only` where needed | Filters item lists/results by sensitivity, or withholds opaque aggregate views from non-owners. |
-| `governed_write` | `maybe_refuse_write` before mutation | Refuses `read-only-external` and revoked callers. Allows `private-self` and, currently, `trusted-local`. |
+| `governed_write` | `maybe_refuse_write` before mutation | Refuses `read-only-external` and revoked callers. Allows `private-self`; `trusted-local` may direct-write low-blast new knowledge, but high-impact tools (identity, overwriting knowledge, relations) are refused for owner review. |
 | `owner_only_write` | `maybe_refuse_owner_write` before mutation | Allows only unrevoked `private-self`. Used for grant-store changes and whole-store imports. |
 | `export_owner_only` | `maybe_refuse_export` before file creation | Allows only unrevoked `private-self`; non-owners get a refusal and no export/report file is written. |
 | `safe_allowlist` | Explicit review only | Reserved for reviewed exceptions that do not need a write gate. |

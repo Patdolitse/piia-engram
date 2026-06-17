@@ -6,6 +6,19 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.3.0] - 2026-06-17
+
+### Security
+- Hardened private-path sanitization with broader pattern coverage, and removed leaked local paths from fixtures and code.
+- Validate worker feedback payloads server-side, and guard the public worker config so Cloudflare worker settings can't leak.
+- Narrowed trusted-local writes: trusted-local agents may still direct-write low-risk new lessons/decisions, but high-impact operations (identity changes, overwriting existing knowledge, relation changes) now route to owner review.
+
+### Added
+- Optional governance-status surfacing in `doctor` and the status report.
+- System-derived provenance/labeling metadata on knowledge, with a labeling validation loop across recall, staging, and review (labels are system-derived and advisory; agents cannot set them).
+- Lesson version snapshots (knowledge version chain) so edits keep prior history.
+- Dock M1: a read-only backend status contract (`dock-status`) - zero-write, metadata-only.
+
 ## [4.2.0] - 2026-06-15
 
 ### Added
