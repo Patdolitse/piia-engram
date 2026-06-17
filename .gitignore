@@ -57,6 +57,8 @@ audits/
 Thumbs.db
 
 # Generated temp files
+# .tmp/ is a scratch dir created by eval/test runs (e.g. tests/test_recall_eval.py)
+.tmp/
 test_output.txt
 test_stdout.txt
 test_out.txt
