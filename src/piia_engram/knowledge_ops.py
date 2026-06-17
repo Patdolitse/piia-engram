@@ -130,6 +130,7 @@ class KnowledgeOpsMixin:
             "valid": 0,
             "invalid": 0,
             "unknown": 0,
+            "demoted": 0,
             "skipped_mismatch": 0,
             "skipped_legacy": 0,
             "project_id": project_id,
@@ -182,12 +183,33 @@ class KnowledgeOpsMixin:
             status = _freshness_anchors.check_anchor(parsed, project_root)
             checked_at = _now_iso()
 
-            def _mark(entry: dict, *, _status: str = status) -> dict:
+            def _mark(
+                entry: dict, *, _status: str = status, _item_type: str = item_type
+            ) -> dict:
                 prov = entry.get("provenance")
                 if not isinstance(prov, dict):
                     prov = {}
                 prov["anchor_status"] = _status
                 prov["anchor_checked_at"] = checked_at
+                if _status == _freshness_anchors.INVALID:
+                    # deanrie #13: an INVALID anchor (the dependency/config the
+                    # fact was tied to is gone) is a definitive staleness EVENT,
+                    # not gradual aging. Drop the fact straight back to an
+                    # unconfirmed guess instead of letting it ride the 90-day
+                    # clock. UNKNOWN (couldn't check) deliberately does NOT take
+                    # this path — it still falls back to time decay, so an
+                    # unresolvable miss never hides a real invalidation. Keep the
+                    # anchor_* fields as evidence of why it was demoted; clear
+                    # only the confirmation that no longer holds.
+                    prov.pop("confirmation_source", None)
+                    entry["provenance"] = prov
+                    entry["tier"] = "staging"
+                    # Re-derive memory_state / approval_status / approval_required
+                    # / labeling so the demoted entry isn't left internally
+                    # inconsistent (tier=staging but still approval_status=
+                    # approved). _ensure_fields derives memory_state="staging"
+                    # from the tier and cascades the dependent fields.
+                    return self._ensure_fields(entry, _item_type)
                 entry["provenance"] = prov
                 return entry
 
@@ -198,6 +220,8 @@ class KnowledgeOpsMixin:
                 report[status] += 1
             else:
                 report["unknown"] += 1
+            if status == _freshness_anchors.INVALID:
+                report["demoted"] += 1
 
         return report
 

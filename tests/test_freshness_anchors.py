@@ -386,6 +386,90 @@ def test_revalidate_anchors_flips_invalid_without_touching_last_validated_at(
     assert P.compute_freshness(invalid)["skip_decay"] is False
 
 
+def test_revalidate_invalid_anchor_demotes_to_guess(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """deanrie #13: an INVALIDATED anchor (the dep it was tied to is gone) is a
+    definitive staleness event — the fact drops straight back to an unconfirmed
+    guess, not onto the slow time-decay clock. The anchor_* fields are kept as
+    evidence of why it was demoted."""
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("jest-backed fact")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+    confirmed = _stored_lesson(eng, lesson["id"])
+    assert confirmed["tier"] == "verified"
+    assert confirmed["provenance"]["confirmation_source"] == "anchor"
+
+    # jest removed -> the dependency anchor is definitively INVALID
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    report = eng.revalidate_anchors(str(repo))
+
+    assert report["invalid"] == 1
+    assert report["demoted"] == 1
+    demoted = _stored_lesson(eng, lesson["id"])
+    # dropped back to an unconfirmed guess
+    assert demoted["tier"] == "staging"
+    assert demoted["memory_state"] == "staging"
+    assert "confirmation_source" not in demoted["provenance"]
+    assert P.classify_freshness_source(demoted) == P.SOURCE_AGENT
+    assert P.compute_freshness(demoted)["skip_decay"] is False
+    # evidence of WHY it was demoted is retained
+    assert demoted["provenance"]["anchor_status"] == "invalid"
+    assert demoted["provenance"]["anchor_ref"] == "dep:jest"
+    assert demoted["provenance"]["anchor_project_id"] == PROJECT_ID
+    assert "anchor_checked_at" in demoted["provenance"]
+    # derived fields are recomputed consistently with the demoted tier
+    # (no tier=staging-but-still-approved inconsistency)
+    assert demoted["approval_status"] == "pending"
+    assert demoted["approval_required"] is True
+    assert demoted["labeling"]["validation_state"] == "needs_review"
+
+
+def test_revalidate_unknown_anchor_does_not_demote(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """deanrie #13: an UNRESOLVABLE anchor (couldn't check) must NOT be treated
+    as an invalidation. It falls back to time decay but keeps its confirmed tier
+    and anchor confirmation, so an unresolvable miss never hides a real one."""
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("jest-backed fact")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    # no recognizable manifest left -> the check can't resolve -> UNKNOWN
+    (repo / "package.json").unlink()
+    report = eng.revalidate_anchors(str(repo))
+
+    assert report["unknown"] == 1
+    assert report["invalid"] == 0
+    assert report["demoted"] == 0
+    still = _stored_lesson(eng, lesson["id"])
+    # NOT demoted: confirmed tier + anchor confirmation stay intact
+    assert still["tier"] == "verified"
+    assert still["provenance"]["confirmation_source"] == "anchor"
+    assert still["provenance"]["anchor_status"] == "unknown"
+    assert still["approval_status"] == "approved"
+    # but freshness still falls back to time decay (anchor not currently valid)
+    assert P.compute_freshness(still)["skip_decay"] is False
+
+
 def test_revalidate_anchors_handles_decisions_and_playbooks(
     tmp_path: Path,
     eng: Engram,
