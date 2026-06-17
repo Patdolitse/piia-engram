@@ -71,6 +71,7 @@ UNTRUSTED_TRUST_FIELDS: tuple[str, ...] = (
     "labeling",
     "provenance.confirmation_source",
     "provenance.anchor_status",
+    "provenance.anchor_project_id",
 )
 # Decision-conflict governance thresholds: post-hoc noise reduction for
 # doctor/context/engram conflicts. These favor precision.

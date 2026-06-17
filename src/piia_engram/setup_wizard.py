@@ -2936,6 +2936,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     run_playbook,
     run_review,
     run_confirm,
+    run_anchors,
     _run_telemetry_cli,
     _run_privacy_report,
     _build_feedback_report,
@@ -3023,6 +3024,8 @@ def main() -> None:
         sys.exit(run_review(args[1:]))
     elif args[0] == "confirm":
         sys.exit(run_confirm(args[1:]))
+    elif args[0] == "anchors":
+        sys.exit(run_anchors(args[1:]))
     elif args[0] == "playbook":
         sys.exit(run_playbook(args[1:]))
     elif args[0] == "status":
@@ -3146,6 +3149,7 @@ def main() -> None:
             "  engram review approve <id> --yes  Promote staging item\n"
             "  engram review archive <id> --yes  Archive review item\n"
             "  engram confirm <id> --by human|test|anchor  Owner-confirm freshness provenance\n"
+            "  engram anchors check   Owner-run anchor revalidation for the current repo\n"
             "  engram playbook install <builtin-name> [--yes]\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"

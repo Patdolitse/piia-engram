@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from . import freshness_anchors as _freshness_anchors
 from . import provenance as _provenance
 from .storage import _now_iso
 
@@ -69,6 +70,7 @@ class KnowledgeOpsMixin:
         *,
         by: str,
         anchor_ref: str | None = None,
+        anchor_project_id: str | None = None,
     ) -> dict:
         """Owner-confirm a knowledge item with an explicit freshness source."""
         mode = str(by or "").strip().lower()
@@ -104,6 +106,8 @@ class KnowledgeOpsMixin:
                     provenance = {}
                 provenance["anchor_status"] = "valid"
                 provenance["anchor_ref"] = anchor_ref
+                if isinstance(anchor_project_id, str) and anchor_project_id.strip():
+                    provenance["anchor_project_id"] = anchor_project_id.strip()
                 updated["provenance"] = provenance
             return updated
 
@@ -112,6 +116,90 @@ class KnowledgeOpsMixin:
             return {"error": f"Item not found: {item_id}"}
         self._audit.log("write", "knowledge/confirm", detail=item_id)
         return updated
+
+    def revalidate_anchors(
+        self,
+        project_root: str,
+        *,
+        adopt_legacy: bool = False,
+    ) -> dict:
+        """Owner-run recheck for already-confirmed anchor provenance."""
+        project_id = _freshness_anchors.read_project_id(project_root)
+        report = {
+            "checked": 0,
+            "valid": 0,
+            "invalid": 0,
+            "unknown": 0,
+            "skipped_mismatch": 0,
+            "skipped_legacy": 0,
+            "project_id": project_id,
+        }
+
+        def _iter_anchor_items() -> list[tuple[str, dict]]:
+            rows: list[tuple[str, dict]] = []
+            for item in self.get_lessons(limit=None, _update_access=False):
+                rows.append(("lesson", item))
+            for item in self.get_decisions(limit=None, _update_access=False):
+                rows.append(("decision", item))
+            for item in self.get_playbooks(limit=None, _update_access=False):
+                rows.append(("playbook", item))
+            return rows
+
+        for item_type, item in _iter_anchor_items():
+            provenance = item.get("provenance")
+            if not isinstance(provenance, dict):
+                continue
+            source = str(provenance.get("confirmation_source") or "").strip().lower()
+            if source != "anchor":
+                continue
+
+            item_id = item.get("id")
+            if not isinstance(item_id, str) or not item_id:
+                continue
+
+            item_project_id = provenance.get("anchor_project_id")
+            if not isinstance(item_project_id, str) or not item_project_id.strip():
+                if adopt_legacy and project_id:
+                    def _adopt(entry: dict) -> dict:
+                        prov = entry.get("provenance")
+                        if not isinstance(prov, dict):
+                            prov = {}
+                        prov["anchor_project_id"] = project_id
+                        entry["provenance"] = prov
+                        return entry
+
+                    self._update_knowledge_item(item_type, item_id, _adopt)
+                    self._audit.log("write", "knowledge/anchor_check", detail=item_id)
+                else:
+                    report["skipped_legacy"] += 1
+                continue
+
+            if project_id is None or item_project_id.strip() != project_id:
+                report["skipped_mismatch"] += 1
+                continue
+
+            parsed = _freshness_anchors.parse_anchor_ref(provenance.get("anchor_ref"))
+            status = _freshness_anchors.check_anchor(parsed, project_root)
+            checked_at = _now_iso()
+
+            def _mark(entry: dict, *, _status: str = status) -> dict:
+                prov = entry.get("provenance")
+                if not isinstance(prov, dict):
+                    prov = {}
+                prov["anchor_status"] = _status
+                prov["anchor_checked_at"] = checked_at
+                entry["provenance"] = prov
+                return entry
+
+            self._update_knowledge_item(item_type, item_id, _mark)
+            self._audit.log("write", "knowledge/anchor_check", detail=item_id)
+            report["checked"] += 1
+            if status in {"valid", "invalid", "unknown"}:
+                report[status] += 1
+            else:
+                report["unknown"] += 1
+
+        return report
 
     def mark_validated_knowledge(
         self,

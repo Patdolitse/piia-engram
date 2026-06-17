@@ -195,6 +195,13 @@ def _print_confirm_usage() -> None:
     )
 
 
+def _print_anchors_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram anchors check [--root PATH] [--adopt-legacy] [--json]\n"
+    )
+
+
 def _review_title(item_type: str, item: dict) -> str:
     if item_type == "decision":
         title = item.get("question") or item.get("title") or ""
@@ -649,10 +656,17 @@ def run_confirm(argv: list[str] | None = None) -> int:
 
     from piia_engram.core import Engram
 
+    anchor_project_id = None
+    if by.strip().lower() == "anchor":
+        from piia_engram import freshness_anchors
+
+        anchor_project_id = freshness_anchors.read_project_id(os.getcwd())
+
     result = Engram().confirm_knowledge(
         item_id,
         by=by,
         anchor_ref=anchor_ref or None,
+        anchor_project_id=anchor_project_id,
     )
     if json_output:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -661,6 +675,66 @@ def run_confirm(argv: list[str] | None = None) -> int:
     else:
         print(f"已确认知识: {item_id} (by={by})")
     return 1 if result.get("error") else 0
+
+
+def run_anchors(argv: list[str] | None = None) -> int:
+    """Owner-run anchor maintenance CLI."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_anchors_usage()
+        return 0
+    if not args or args[0] != "check":
+        if args:
+            print(f"Unknown anchors command: {args[0]}")
+        _print_anchors_usage()
+        return 2
+
+    root = os.getcwd()
+    json_output = False
+    adopt_legacy = False
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        if arg == "--json":
+            json_output = True
+            i += 1
+            continue
+        if arg == "--adopt-legacy":
+            adopt_legacy = True
+            i += 1
+            continue
+        if arg == "--root":
+            if i + 1 >= len(args):
+                print("--root requires a path")
+                return 2
+            root = args[i + 1]
+            i += 2
+            continue
+        print(f"Unknown anchors check option: {arg}")
+        _print_anchors_usage()
+        return 2
+
+    from piia_engram.core import Engram
+
+    result = Engram().revalidate_anchors(root, adopt_legacy=adopt_legacy)
+    missing_project = result.get("project_id") is None
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        if missing_project:
+            print("当前目录不是 git 仓库或没有 origin 远程，无法校验 anchor。")
+        print(
+            "Anchor 校验完成: "
+            f"project_id={result.get('project_id') or '-'}, "
+            f"checked={result.get('checked', 0)}, "
+            f"valid={result.get('valid', 0)}, "
+            f"invalid={result.get('invalid', 0)}, "
+            f"unknown={result.get('unknown', 0)}, "
+            f"skipped_mismatch={result.get('skipped_mismatch', 0)}, "
+            f"skipped_legacy={result.get('skipped_legacy', 0)}"
+        )
+    return 1 if missing_project else 0
 
 
 def _run_telemetry_cli(sub_args: list[str]) -> None:

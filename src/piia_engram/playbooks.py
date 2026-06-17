@@ -514,12 +514,17 @@ class PlaybookMixin:
         Each playbook is stored as an individual file in ~/.engram/playbooks/.
         An index file (_index.json) is maintained for fast search.
         """
+        allow_internal_provenance = extra.pop("_allow_internal_provenance", False) is True
         new_pb = dict(playbook)
         if source_tool:
             new_pb["source_tool"] = source_tool
         for key, value in extra.items():
             if value is not None:
                 new_pb[key] = value
+        if not allow_internal_provenance:
+            from .core import _strip_untrusted_freshness_provenance
+
+            _strip_untrusted_freshness_provenance(new_pb)
 
         new_pb = self._repair_incoming_text(new_pb)
         if not new_pb.get("title"):

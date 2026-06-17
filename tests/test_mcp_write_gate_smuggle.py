@@ -349,4 +349,5 @@ def test_untrusted_trust_fields_contract() -> None:
         "labeling",
         "provenance.confirmation_source",
         "provenance.anchor_status",
+        "provenance.anchor_project_id",
     }

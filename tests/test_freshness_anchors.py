@@ -1,0 +1,571 @@
+"""A.5b owner-only anchor revalidation tests."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from piia_engram import freshness_anchors as A
+from piia_engram import provenance as P
+from piia_engram.core import Engram, strip_untrusted_trust_fields
+from piia_engram.storage import UNTRUSTED_TRUST_FIELDS
+
+
+PROJECT_ID = "github.com/acme/widget"
+UPPER_PROJECT_ID = "github.com/foo/bar"
+
+
+@pytest.fixture()
+def eng(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engram:
+    root = tmp_path / "engram"
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    return Engram(root=root)
+
+
+def _stored_lesson(eng: Engram, item_id: str) -> dict:
+    return next(
+        item
+        for item in eng.get_lessons(limit=None, _update_access=False)
+        if item["id"] == item_id
+    )
+
+
+def _stored_decision(eng: Engram, item_id: str) -> dict:
+    return next(
+        item
+        for item in eng.get_decisions(limit=None, _update_access=False)
+        if item["id"] == item_id
+    )
+
+
+def _stored_playbook(eng: Engram, item_id: str) -> dict:
+    return next(
+        item
+        for item in eng.get_playbooks(limit=None, _update_access=False)
+        if item["id"] == item_id
+    )
+
+
+def _write_package_json(root: Path, deps: dict[str, str]) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "package.json").write_text(
+        json.dumps({"dependencies": deps}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def test_normalize_git_remote_variants_share_stable_project_id() -> None:
+    expected = "github.com/foo/bar"
+
+    assert A.normalize_git_remote("git@github.com:foo/bar.git") == expected
+    assert A.normalize_git_remote("https://GitHub.com/foo/bar.git") == expected
+    assert A.normalize_git_remote("ssh://git@github.com/foo/bar.git") == expected
+    assert A.normalize_git_remote("git@GITHUB.com:foo/bar") == expected
+    assert A.normalize_git_remote("git@github.com:Foo/Bar.git") == expected
+    assert A.normalize_git_remote("ssh://git@example.com/Foo/Bar.git") == "example.com/Foo/Bar"
+    assert A.normalize_git_remote("not a remote") is None
+
+
+def test_read_project_id_uses_git_origin_remote(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    try:
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "git@github.com:Foo/Bar.git"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        pytest.skip(f"git unavailable for read_project_id smoke test: {exc}")
+
+    assert A.read_project_id(str(repo)) == "github.com/foo/bar"
+
+
+def test_parse_anchor_ref_accepts_dep_and_file_only() -> None:
+    assert A.parse_anchor_ref("dep:jest") == {"kind": "dep", "ref": "jest"}
+    assert A.parse_anchor_ref(" file:vitest.config.ts ") == {
+        "kind": "file",
+        "ref": "vitest.config.ts",
+    }
+    assert A.parse_anchor_ref("garbage") is None
+    assert A.parse_anchor_ref("") is None
+    assert A.parse_anchor_ref("url:https://example.com") is None
+
+
+def test_check_anchor_dep_from_package_json_valid_invalid_unknown(tmp_path: Path) -> None:
+    parsed = A.parse_anchor_ref("dep:jest")
+    assert parsed is not None
+
+    _write_package_json(tmp_path, {"jest": "^29.0.0"})
+    assert A.check_anchor(parsed, str(tmp_path)) == "valid"
+
+    _write_package_json(tmp_path, {"vitest": "^2.0.0"})
+    assert A.check_anchor(parsed, str(tmp_path)) == "invalid"
+
+    (tmp_path / "package.json").unlink()
+    assert A.check_anchor(parsed, str(tmp_path)) == "unknown"
+
+
+def test_check_anchor_dep_from_package_json_peer_and_optional(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({
+            "peerDependencies": {"react": "^19.0.0"},
+            "optionalDependencies": {"fsevents": "^2.3.0"},
+        }),
+        encoding="utf-8",
+    )
+
+    assert A.check_anchor(A.parse_anchor_ref("dep:react"), str(tmp_path)) == "valid"
+    assert A.check_anchor(A.parse_anchor_ref("dep:fsevents"), str(tmp_path)) == "valid"
+
+
+def test_check_anchor_dep_from_python_manifests(tmp_path: Path) -> None:
+    req = A.parse_anchor_ref("dep:requests")
+    assert req is not None
+    (tmp_path / "requirements.txt").write_text(
+        "requests>=2\npytest==8.0\n",
+        encoding="utf-8",
+    )
+    assert A.check_anchor(req, str(tmp_path)) == "valid"
+
+    pyproject_dep = A.parse_anchor_ref("dep:ruff")
+    assert pyproject_dep is not None
+    (tmp_path / "requirements.txt").unlink()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = ['ruff>=0.8']\n"
+        "[project.optional-dependencies]\ntest = ['pytest']\n",
+        encoding="utf-8",
+    )
+    assert A.check_anchor(pyproject_dep, str(tmp_path)) == "valid"
+
+
+def test_check_anchor_unknown_for_unsupported_pyproject_layouts(tmp_path: Path) -> None:
+    parsed = A.parse_anchor_ref("dep:django")
+    assert parsed is not None
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.poetry.dependencies]\npython = '^3.11'\ndjango = '^5'\n",
+        encoding="utf-8",
+    )
+    assert A.check_anchor(parsed, str(tmp_path)) == "unknown"
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.pdm]\n[tool.pdm.dev-dependencies]\ntest = ['pytest']\n",
+        encoding="utf-8",
+    )
+    assert A.check_anchor(parsed, str(tmp_path)) == "unknown"
+
+
+def test_check_anchor_unknown_for_indirect_requirements(tmp_path: Path) -> None:
+    parsed = A.parse_anchor_ref("dep:django")
+    assert parsed is not None
+    (tmp_path / "requirements.txt").write_text(
+        "-r requirements-base.txt\npytest==8.0\n",
+        encoding="utf-8",
+    )
+
+    assert A.check_anchor(parsed, str(tmp_path)) == "unknown"
+
+
+def test_check_anchor_file_ref_is_confined_to_root(tmp_path: Path) -> None:
+    (tmp_path / "vitest.config.ts").write_text("export default {}", encoding="utf-8")
+
+    assert A.check_anchor(A.parse_anchor_ref("file:vitest.config.ts"), str(tmp_path)) == "valid"
+    assert A.check_anchor(A.parse_anchor_ref("file:missing.txt"), str(tmp_path)) == "invalid"
+    assert A.check_anchor(A.parse_anchor_ref("file:../escape.txt"), str(tmp_path)) in {
+        "invalid",
+        "unknown",
+    }
+
+
+def test_confirm_anchor_can_store_project_id(eng: Engram) -> None:
+    lesson = eng.add_lesson("anchor belongs to one project")
+
+    updated = eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    assert updated["provenance"]["confirmation_source"] == "anchor"
+    assert updated["provenance"]["anchor_status"] == "valid"
+    assert updated["provenance"]["anchor_project_id"] == PROJECT_ID
+
+
+def test_confirm_cli_anchor_stamps_current_git_project_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from piia_engram.setup_wizard import run_confirm
+
+    data_root = tmp_path / "engram"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    try:
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "git@github.com:acme/widget.git"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        pytest.skip(f"git unavailable for confirm CLI smoke test: {exc}")
+
+    monkeypatch.setenv("ENGRAM_DIR", str(data_root))
+    monkeypatch.chdir(repo)
+    lesson = Engram(root=data_root).add_lesson("cli anchor captures project id")
+
+    assert run_confirm([lesson["id"], "--by", "anchor", "--anchor", "dep:jest"]) == 0
+
+    assert "已确认知识" in capsys.readouterr().out
+    stored = Engram(root=data_root).get_lessons(limit=None, _update_access=False)[0]
+    assert stored["provenance"]["anchor_project_id"] == PROJECT_ID
+
+
+def test_github_project_id_case_normalization_allows_revalidation_match(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    upper = A.normalize_git_remote("git@github.com:Foo/Bar.git")
+    lower = A.normalize_git_remote("https://github.com/foo/bar.git")
+    assert upper == lower == UPPER_PROJECT_ID
+    monkeypatch.setattr(A, "read_project_id", lambda _root: lower)
+
+    lesson = eng.add_lesson("case-normalized anchor")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=upper,
+    )
+
+    report = eng.revalidate_anchors(str(repo))
+
+    assert report["checked"] == 1
+    assert report["valid"] == 1
+
+
+def test_revalidate_anchors_flips_invalid_without_touching_last_validated_at(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("jest-backed fact")
+    updated = eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+    last_validated_at = updated["provenance"]["last_validated_at"]
+
+    report = eng.revalidate_anchors(str(repo))
+    still_valid = _stored_lesson(eng, lesson["id"])
+    assert report["checked"] == 1
+    assert report["valid"] == 1
+    assert still_valid["provenance"]["anchor_status"] == "valid"
+    assert P.compute_freshness(still_valid)["skip_decay"] is True
+
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    report = eng.revalidate_anchors(str(repo))
+    invalid = _stored_lesson(eng, lesson["id"])
+
+    assert report["checked"] == 1
+    assert report["invalid"] == 1
+    assert invalid["provenance"]["anchor_status"] == "invalid"
+    assert "anchor_checked_at" in invalid["provenance"]
+    assert invalid["provenance"]["last_validated_at"] == last_validated_at
+    assert P.compute_freshness(invalid)["skip_decay"] is False
+
+
+def test_revalidate_anchors_handles_decisions_and_playbooks(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    decision = eng.add_decision("Is Jest installed?", "yes")
+    playbook = eng.add_playbook({
+        "title": "Run Jest tests for anchor validation",
+        "steps": ["npm test"],
+    })
+    eng.confirm_knowledge(
+        decision["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+    eng.confirm_knowledge(
+        playbook["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    report = eng.revalidate_anchors(str(repo))
+    assert report["checked"] == 2
+    assert report["valid"] == 2
+
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    report = eng.revalidate_anchors(str(repo))
+    stored_decision = _stored_decision(eng, decision["id"])
+    stored_playbook = _stored_playbook(eng, playbook["id"])
+    assert report["checked"] == 2
+    assert report["invalid"] == 2
+    assert stored_decision["provenance"]["anchor_status"] == "invalid"
+    assert stored_playbook["provenance"]["anchor_status"] == "invalid"
+    assert P.compute_freshness(stored_decision)["skip_decay"] is False
+    assert P.compute_freshness(stored_playbook)["skip_decay"] is False
+
+
+def test_revalidate_anchors_is_idempotent(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("idempotent anchor check")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    first = eng.revalidate_anchors(str(repo))
+    second = eng.revalidate_anchors(str(repo))
+
+    comparable_keys = {"checked", "valid", "invalid", "unknown", "skipped_mismatch", "skipped_legacy", "project_id"}
+    assert {key: first[key] for key in comparable_keys} == {
+        key: second[key] for key in comparable_keys
+    }
+
+
+def test_revalidate_anchors_skips_mismatched_project_without_mutation(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(A, "read_project_id", lambda _root: "github.com/other/repo")
+    lesson = eng.add_lesson("different project anchor")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+    before = dict(_stored_lesson(eng, lesson["id"])["provenance"])
+
+    report = eng.revalidate_anchors(str(repo))
+
+    assert report["checked"] == 0
+    assert report["skipped_mismatch"] == 1
+    assert _stored_lesson(eng, lesson["id"])["provenance"] == before
+
+
+def test_revalidate_anchors_skips_or_adopts_legacy_without_checking_status(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("legacy anchor without project id")
+    eng.confirm_knowledge(lesson["id"], by="anchor", anchor_ref="dep:jest")
+
+    report = eng.revalidate_anchors(str(repo))
+    skipped = _stored_lesson(eng, lesson["id"])
+    assert report["checked"] == 0
+    assert report["skipped_legacy"] == 1
+    assert "anchor_project_id" not in skipped["provenance"]
+
+    report = eng.revalidate_anchors(str(repo), adopt_legacy=True)
+    adopted = _stored_lesson(eng, lesson["id"])
+    assert report["checked"] == 0
+    assert adopted["provenance"]["anchor_project_id"] == PROJECT_ID
+    assert adopted["provenance"]["anchor_status"] == "valid"
+    assert "anchor_checked_at" not in adopted["provenance"]
+
+
+def test_anchors_check_cli_reports_revalidation_json(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from piia_engram.setup_wizard import run_anchors
+
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("cli anchor check")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    assert run_anchors(["check", "--root", str(repo), "--json"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["project_id"] == PROJECT_ID
+    assert report["invalid"] == 1
+
+
+def test_anchors_check_cli_non_git_root_returns_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from piia_engram.setup_wizard import run_anchors
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram"))
+    root = tmp_path / "not-a-repo"
+    root.mkdir()
+
+    assert run_anchors(["check", "--root", str(root)]) == 1
+
+    assert "不是 git 仓库或没有 origin 远程" in capsys.readouterr().out
+
+
+def test_anchors_check_cli_non_git_root_json_returns_report_and_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from piia_engram.setup_wizard import run_anchors
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram"))
+    root = tmp_path / "not-a-repo"
+    root.mkdir()
+
+    assert run_anchors(["check", "--root", str(root), "--json"]) == 1
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["project_id"] is None
+
+
+def test_agent_writes_strip_anchor_project_id_with_other_freshness_claims(
+    eng: Engram,
+) -> None:
+    stored = eng.add_lesson(
+        {
+            "summary": "agent cannot bind anchor to a project",
+            "domain": "freshness",
+            "provenance": {
+                "source_agent": "codex",
+                "confirmation_source": "anchor",
+                "anchor_status": "valid",
+                "anchor_project_id": PROJECT_ID,
+            },
+        }
+    )
+
+    assert stored["provenance"]["source_agent"] == "codex"
+    assert "confirmation_source" not in stored["provenance"]
+    assert "anchor_status" not in stored["provenance"]
+    assert "anchor_project_id" not in stored["provenance"]
+
+    payload = {
+        "summary": "strip helper keeps only non-trust provenance",
+        "provenance": {
+            "source_agent": "codex",
+            "confirmation_source": "anchor",
+            "anchor_status": "valid",
+            "anchor_project_id": PROJECT_ID,
+        },
+    }
+    strip_untrusted_trust_fields(payload)
+    assert payload["provenance"] == {"source_agent": "codex"}
+    assert "provenance.anchor_project_id" in UNTRUSTED_TRUST_FIELDS
+
+
+def test_playbook_writes_strip_untrusted_freshness_provenance(
+    eng: Engram,
+) -> None:
+    stored = eng.add_playbook(
+        {
+            "title": "agent playbook cannot self-certify anchor",
+            "steps": ["run tests"],
+            "provenance": {
+                "source_agent": "codex",
+                "confirmation_source": "anchor",
+                "anchor_status": "valid",
+                "anchor_project_id": PROJECT_ID,
+            },
+        }
+    )
+
+    assert stored["provenance"]["source_agent"] == "codex"
+    assert "confirmation_source" not in stored["provenance"]
+    assert "anchor_status" not in stored["provenance"]
+    assert "anchor_project_id" not in stored["provenance"]
+
+
+def test_playbook_internal_provenance_opt_in_preserves_anchor_fields(
+    eng: Engram,
+) -> None:
+    stored = eng.add_playbook(
+        {
+            "title": "internal playbook anchor stamp",
+            "steps": ["run tests"],
+            "provenance": {
+                "source_agent": "owner",
+                "confirmation_source": "anchor",
+                "anchor_status": "valid",
+                "anchor_project_id": PROJECT_ID,
+            },
+        },
+        _allow_internal_provenance=True,
+    )
+
+    assert stored["provenance"]["confirmation_source"] == "anchor"
+    assert stored["provenance"]["anchor_status"] == "valid"
+    assert stored["provenance"]["anchor_project_id"] == PROJECT_ID
+    assert "_allow_internal_provenance" not in stored
+
+
+def test_public_freshness_status_remains_four_state_after_anchor_revalidation(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    lesson = eng.add_lesson("public freshness status remains four-state")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    eng.revalidate_anchors(str(repo))
+    stored = _stored_lesson(eng, lesson["id"])
+    freshness = P.compute_freshness(stored)
+
+    assert freshness["freshness_status"] in {P.FRESH, P.AGING, P.STALE, P.UNKNOWN}
+    assert freshness["freshness_status"] not in {"valid", "invalid", "unknown_anchor"}

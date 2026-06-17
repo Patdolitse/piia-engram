@@ -88,6 +88,7 @@ def _strip_untrusted_freshness_provenance(entry: dict[str, Any]) -> None:
     clean = dict(provenance)
     clean.pop("confirmation_source", None)
     clean.pop("anchor_status", None)
+    clean.pop("anchor_project_id", None)
     entry["provenance"] = clean
 
 
