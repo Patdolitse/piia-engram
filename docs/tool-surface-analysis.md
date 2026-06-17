@@ -9,9 +9,9 @@ Source of truth:
 - `TOOL_GOVERNANCE_CLASS` for side-effect and governance class
 - `tests/snapshots/mcp_tool_schema.json` for the generated schema snapshot
 
-Current count: **53 MCP tools**. The default server loads **17 core tools** with `ENGRAM_TOOLS=core`; the other **36 advanced tools** are available with `ENGRAM_TOOLS=all`. The machine-readable taxonomy snapshot is [`mcp-tool-surface.json`](mcp-tool-surface.json), and `tests/test_mcp_tool_surface_classification.py` verifies that it stays aligned with `scripts/count_mcp_tools.py --json`.
+Current count: **54 MCP tools**. The default server loads **17 core tools** with `ENGRAM_TOOLS=core`; the other **37 advanced tools** are available with `ENGRAM_TOOLS=all`. The machine-readable taxonomy snapshot is [`mcp-tool-surface.json`](mcp-tool-surface.json), and `tests/test_mcp_tool_surface_classification.py` verifies that it stays aligned with `scripts/count_mcp_tools.py --json`.
 
-v4.0 consolidated the previous 87-tool surface into 53 tools: families of closely related operations were merged into single tools with a `mode`/`action` selector (for example `get_identity_facets`, `manage_playbook`, `review_staging`), and legacy Playbook scope migration moved out of MCP into the owner-only local CLI. See [`migration-v4.md`](migration-v4.md) for the old-name → new-call mapping.
+v4.0 consolidated the previous 87-tool surface into 53 tools, and later source-aware freshness work added one owner-only confirmation tool for the current 54-tool surface. Families of closely related operations were merged into single tools with a `mode`/`action` selector (for example `get_identity_facets`, `manage_playbook`, `review_staging`), and legacy Playbook scope migration moved out of MCP into the owner-only local CLI. See [`migration-v4.md`](migration-v4.md) for the old-name → new-call mapping.
 
 ## Core is not read-only
 
@@ -21,7 +21,7 @@ The core tier means "common in daily sessions", not "safe/read-only". Some core 
 |---|---:|---|
 | `read` | 26 | Reads or reports metadata without ordinary store mutation. |
 | `governed_write` | 20 | Mutates ordinary knowledge/project/session data through the write gate. |
-| `owner_only_write` | 2 | Changes trust grants or imports/migrates whole-store state. |
+| `owner_only_write` | 3 | Changes trust grants/imports, or applies owner-only confirmation stamps. |
 | `export_owner_only` | 5 | Writes full-knowledge exports or local files and requires owner-level export permission. |
 
 `get_identity_card` is intentionally in the 17-tool core set for discoverability, but it is classed as `export_owner_only`: it writes an identity-card export file and can include identity, lessons, and decisions. Treat it as "core but owner-gated", not as a harmless read. Merged tools keep the strictest gate of their family: `playbook_execution` is `governed_write` and its `prepare` action additionally passes the export gate before writing a local execution-plan file, and `review_staging` runs the write gate for every action, including `list`.
@@ -30,7 +30,7 @@ The core tier means "common in daily sessions", not "safe/read-only". Some core 
 
 | Posture | Count | Meaning |
 |---|---:|---|
-| General publishable | 48 | Broad Engram product capability. Many belong in advanced/admin docs rather than first-run docs. |
+| General publishable | 49 | Broad Engram product capability. Many belong in advanced/admin docs rather than first-run docs. |
 | Optional local / dogfood in current form | 5 | Useful, but depends on local paths, an optional local Reader, or beta-maintainer workflow. |
 | Internal maintenance / legacy | 0 (moved to CLI) | Legacy Playbook scope migration is no longer an MCP surface; it lives in the owner-only local CLI. |
 
@@ -107,6 +107,7 @@ These are publishable as general Engram capabilities, assuming their existing go
 - `extract_session_insights`
 - `update_knowledge`
 - `archive_knowledge`
+- `confirm_knowledge` (owner-only confirmation stamp)
 - `review_staging` — `action`: list / batch / review_item / apply_text
 - `request_outline_review` (owner-gated local HTML export surface)
 - `merge_knowledge`

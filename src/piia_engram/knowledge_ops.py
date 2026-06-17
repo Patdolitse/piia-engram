@@ -34,6 +34,7 @@ class KnowledgeOpsMixin:
         *,
         source_agent: str = "owner",
         validated_at: str | None = None,
+        confirmation_source: str | None = None,
     ) -> dict:
         ts = validated_at or _now_iso()
         stamp = _provenance.normalize_provenance_fields({
@@ -55,10 +56,62 @@ class KnowledgeOpsMixin:
         if not isinstance(provenance, dict):
             provenance = {}
         provenance.update(stamp)
+        if confirmation_source in {"human", "test_signal", "anchor"}:
+            provenance["confirmation_source"] = confirmation_source
         entry["provenance"] = provenance
         entry["last_reviewed"] = reviewed_at
         entry["last_updated"] = reviewed_at
         return self._ensure_fields(entry, entry_type)
+
+    def confirm_knowledge(
+        self,
+        item_id: str,
+        *,
+        by: str,
+        anchor_ref: str | None = None,
+    ) -> dict:
+        """Owner-confirm a knowledge item with an explicit freshness source."""
+        mode = str(by or "").strip().lower()
+        source_by_mode = {
+            "human": "human",
+            "test": "test_signal",
+            "anchor": "anchor",
+        }
+        confirmation_source = source_by_mode.get(mode)
+        if confirmation_source is None:
+            return {"error": f"Invalid confirmation mode: {by}"}
+        if mode == "anchor":
+            if not isinstance(anchor_ref, str) or not anchor_ref.strip():
+                return {"error": "anchor_ref is required when by=anchor"}
+
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {item_id}"}
+
+        ts = _now_iso()
+
+        def _mark(entry: dict) -> dict:
+            updated = self._stamp_validated_entry(
+                entry,
+                item_type,
+                source_agent="owner",
+                validated_at=ts,
+                confirmation_source=confirmation_source,
+            )
+            if mode == "anchor":
+                provenance = updated.get("provenance")
+                if not isinstance(provenance, dict):
+                    provenance = {}
+                provenance["anchor_status"] = "valid"
+                provenance["anchor_ref"] = anchor_ref
+                updated["provenance"] = provenance
+            return updated
+
+        updated = self._update_knowledge_item(item_type, item_id, _mark)
+        if updated is None:
+            return {"error": f"Item not found: {item_id}"}
+        self._audit.log("write", "knowledge/confirm", detail=item_id)
+        return updated
 
     def mark_validated_knowledge(
         self,

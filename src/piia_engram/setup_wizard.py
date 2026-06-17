@@ -2481,9 +2481,9 @@ def _existing_engram_tools_values(tools: list[dict]) -> list[str]:
 def _prompt_setup_capability_mode() -> str:
     print()
     print(_t("  MCP 工具模式 / Capability mode:", "  Capability mode / MCP 工具模式:"))
-    print(_t("    1. 全部工具（推荐，53 个）", "    1. All tools (recommended, 53 tools)"))
+    print(_t("    1. 全部工具（推荐，54 个）", "    1. All tools (recommended, 54 tools)"))
     print(_t("    2. 仅核心（17 个，最小面）", "    2. Core only (17 tools, minimal surface)"))
-    print(_t("    3. 核心+知识库管理（38 个）", "    3. Core + knowledge management (38 tools)"))
+    print(_t("    3. 核心+知识库管理（39 个）", "    3. Core + knowledge management (39 tools)"))
     answer = _prompt(_t("  请选择工具模式", "  Choose tool mode"), "1").strip()
     return {"2": "core", "3": "core+knowledge"}.get(answer, "all")
 
@@ -2935,6 +2935,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _arg_value,
     run_playbook,
     run_review,
+    run_confirm,
     _run_telemetry_cli,
     _run_privacy_report,
     _build_feedback_report,
@@ -3020,6 +3021,8 @@ def main() -> None:
         sys.exit(run_sessions(args[1:]))
     elif args[0] == "review":
         sys.exit(run_review(args[1:]))
+    elif args[0] == "confirm":
+        sys.exit(run_confirm(args[1:]))
     elif args[0] == "playbook":
         sys.exit(run_playbook(args[1:]))
     elif args[0] == "status":
@@ -3142,6 +3145,7 @@ def main() -> None:
             "  engram review show <id> Inspect one review item\n"
             "  engram review approve <id> --yes  Promote staging item\n"
             "  engram review archive <id> --yes  Archive review item\n"
+            "  engram confirm <id> --by human|test|anchor  Owner-confirm freshness provenance\n"
             "  engram playbook install <builtin-name> [--yes]\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
@@ -3190,7 +3194,7 @@ def main() -> None:
             "  export_engram           Full local JSON backup (treat as sensitive)\n\n"
             "Tool tiers:\n"
             "  Default: 17 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 53 tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 54 tools.\n"
         )
         sys.exit(0)
 

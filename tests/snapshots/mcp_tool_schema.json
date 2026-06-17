@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "src/piia_engram/mcp_server.py",
-  "tool_count": 53,
+  "tool_count": 54,
   "tools": {
     "add_decision": {
       "params": [
@@ -263,6 +263,32 @@
           "annotation": "str",
           "required": true,
           "default": null,
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
+    "confirm_knowledge": {
+      "params": [
+        {
+          "name": "item_id",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "by",
+          "annotation": "str",
+          "required": false,
+          "default": "human",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "anchor_ref",
+          "annotation": "str",
+          "required": false,
+          "default": "",
           "kind": "positional_or_keyword"
         }
       ],

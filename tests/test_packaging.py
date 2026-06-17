@@ -128,9 +128,9 @@ def test_glama_metadata_tracks_current_public_version_and_tool_count():
     content = GLAMA_YAML.read_text(encoding="utf-8")
 
     assert f"version: {pyproject_version}" in content
-    assert "53 MCP tools" in content
+    assert "54 MCP tools" in content
     assert "'core' (17 tools)" in content
-    assert "'all' (53 tools)" in content
+    assert "'all' (54 tools)" in content
     assert "87 MCP tools" not in content
     assert "'all' (87 tools)" not in content
     assert "'core' (12 tools)" not in content
@@ -330,12 +330,12 @@ def test_mcp_tool_count_and_merge_tool():
                 ):
                     tools.append(node.name)
                     break
-    # v4.0.0 consolidation: 87 tools merged down to 53 (17 core + 36
-    # advanced). The floor catches silent removals; adding tools is fine,
+    # v4.0.0 consolidation: 87 tools merged down to 53; source-aware
+    # freshness later added one owner-confirm tool. The floor catches removals,
     # removing one must be deliberate (exact split is pinned in
     # tests/test_count_mcp_tools.py).
-    assert len(tools) >= 53, (
-        f"Expected >=53 @mcp.tool() definitions, found {len(tools)}. "
+    assert len(tools) >= 54, (
+        f"Expected >=54 @mcp.tool() definitions, found {len(tools)}. "
         "If a tool was removed intentionally, update this floor."
     )
     assert "update_knowledge" in tools
@@ -427,20 +427,20 @@ def test_source_and_user_facing_docs_are_utf8_without_bom():
 
 
 def test_architecture_documents_current_tool_split():
-    """Architecture docs should carry the same 53/17/36 tool split as README."""
+    """Architecture docs should carry the same 54/17/37 tool split as README."""
     content = ARCHITECTURE.read_text(encoding="utf-8")
-    assert re.search(r"\b53 tools\b", content)
+    assert re.search(r"\b54 tools\b", content)
     assert "17 Tier-1" in content
-    assert "36 Tier-2" in content
+    assert "37 Tier-2" in content
     assert not re.search(r"\b87 tools\b", content)
     assert "70 Tier-2" not in content
 
 
 def test_cli_help_documents_current_tool_split():
-    """CLI help text should not drift from the public 53/17 tool split."""
+    """CLI help text should not drift from the public 54/17 tool split."""
     content = SETUP_WIZARD.read_text(encoding="utf-8")
     assert "17 核心工具 / core MCP tools" in content
-    assert "unlock all 53 tools" in content
+    assert "unlock all 54 tools" in content
     assert "unlock all 87 tools" not in content
 
 
@@ -457,7 +457,7 @@ def test_mcp_tools_all_tier_registers_all_tools(tmp_path: Path):
     """ENGRAM_TOOLS=all 时应暴露全部工具（含 v4.0 合并工具）。"""
     tools = _registered_mcp_tools(tmp_path, tools_tier="all")
 
-    assert len(tools) >= 53
+    assert len(tools) >= 54
     assert set(CORE_MCP_TOOLS).issubset(tools)
     assert "get_identity_facets" in tools
     assert "manage_playbook" in tools
@@ -481,7 +481,7 @@ def test_zh_readme_uses_pypi_install_and_current_tool_split():
     content = README_ZH.read_text(encoding="utf-8")
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
-    assert "36 个" in content  # Tier-2 tool count
+    assert "37 个" in content  # Tier-2 tool count
     assert "17 个" in content  # Tier-1 tool count
     assert "70 个" not in content  # pre-v4 Tier-2 count must not linger
     assert "`update_knowledge`" in content

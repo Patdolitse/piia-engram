@@ -8,9 +8,9 @@
     "test_passed": 3450,
     "test_skipped": 2,
     "test_collected": 3452,
-    "mcp_tools_total": 53,
+    "mcp_tools_total": 54,
     "mcp_tools_core": 17,
-    "mcp_tools_advanced": 36,
+    "mcp_tools_advanced": 37,
     "telemetry_default": "off",
     "telemetry_remote_default": "off"
   },
@@ -52,26 +52,26 @@
     ],
     "required_substrings": [
       { "file": "README.md", "must_contain": [
-        "ships 53 MCP tools",
-        "all 53 tools",
+        "ships 54 MCP tools",
+        "all 54 tools",
         "17 **Tier-1 Core**",
-        "Tier-2 Advanced (36 tools",
+        "Tier-2 Advanced (37 tools",
         "**17 Core**",
-        "**36 Advanced**"
+        "**37 Advanced**"
       ] },
       { "file": "README.zh-CN.md", "must_contain": [
         "17 个核心",
-        "36 个高级"
+        "37 个高级"
       ] },
       { "file": "docs/architecture.md", "must_contain": [
-        "53 tools",
+        "54 tools",
         "17 Tier-1",
-        "36 Tier-2"
+        "37 Tier-2"
       ] },
       { "file": "glama.yaml", "must_contain": [
-        "53 MCP tools",
+        "54 MCP tools",
         "'core' (17 tools)",
-        "'all' (53 tools)"
+        "'all' (54 tools)"
       ] }
     ],
     "forbidden_in_current_state": [
@@ -82,11 +82,11 @@
     "stale_patterns": [
       {
         "pattern": "\\*\\*Advanced\\*\\* \\| 70",
-        "reason": "pre-v4.0.0 advanced tool count (now 36); this exact FAQ-table cell shipped stale in the v4.0.0 release"
+        "reason": "pre-v4.0.0 advanced tool count (now 37); this exact FAQ-table cell shipped stale in the v4.0.0 release"
       },
       {
         "pattern": "\\*\\*高级\\*\\* \\| 70",
-        "reason": "zh-CN twin of the pre-v4.0.0 advanced tool-count FAQ cell (now 36)"
+        "reason": "zh-CN twin of the pre-v4.0.0 advanced tool-count FAQ cell (now 37)"
       },
       {
         "pattern": "\\*\\*Version\\*\\*: v[0-3]\\.",

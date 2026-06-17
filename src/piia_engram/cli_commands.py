@@ -188,6 +188,13 @@ def _print_review_usage() -> None:
     )
 
 
+def _print_confirm_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram confirm <id> --by human|test|anchor [--anchor <ref>] [--json]\n"
+    )
+
+
 def _review_title(item_type: str, item: dict) -> str:
     if item_type == "decision":
         title = item.get("question") or item.get("title") or ""
@@ -595,6 +602,65 @@ def run_review(argv: list[str] | None = None) -> int:
         eng, limit=limit, sort=sort, low_quality_only=low_quality_only,
     ))
     return 0
+
+
+def run_confirm(argv: list[str] | None = None) -> int:
+    """Owner confirmation stamping CLI for one knowledge item."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_confirm_usage()
+        return 0
+    if not args or args[0].startswith("--"):
+        _print_confirm_usage()
+        return 2
+
+    item_id = args[0]
+    json_output = "--json" in args
+    by = ""
+    anchor_ref = ""
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        if arg == "--json":
+            i += 1
+            continue
+        if arg == "--by":
+            if i + 1 >= len(args):
+                print("--by requires human|test|anchor")
+                return 2
+            by = args[i + 1]
+            i += 2
+            continue
+        if arg == "--anchor":
+            if i + 1 >= len(args):
+                print("--anchor requires a reference string")
+                return 2
+            anchor_ref = args[i + 1]
+            i += 2
+            continue
+        print(f"Unknown confirm option: {arg}")
+        _print_confirm_usage()
+        return 2
+
+    if not by:
+        print("--by is required: human|test|anchor")
+        return 2
+
+    from piia_engram.core import Engram
+
+    result = Engram().confirm_knowledge(
+        item_id,
+        by=by,
+        anchor_ref=anchor_ref or None,
+    )
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif result.get("error"):
+        print(f"确认失败: {result['error']}")
+    else:
+        print(f"已确认知识: {item_id} (by={by})")
+    return 1 if result.get("error") else 0
 
 
 def _run_telemetry_cli(sub_args: list[str]) -> None:

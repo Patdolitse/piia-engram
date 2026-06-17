@@ -185,7 +185,7 @@ def check(root: Path, public_facts_rel: str = DEFAULT_PUBLIC_FACTS) -> dict:
 
     _require("name: piia-engram" in glama, problems,
              "glama.yaml must expose the canonical package name")
-    _require("53 MCP tools" in glama, problems,
+    _require("54 MCP tools" in glama, problems,
              "glama.yaml must expose the current tool count")
     _require("name: engram" in skill, problems,
              "skills/engram/SKILL.md frontmatter must expose the skill name")

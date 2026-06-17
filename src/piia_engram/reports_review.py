@@ -546,6 +546,7 @@ function copyResult() {{
                 item_type,
                 source_agent="owner",
                 validated_at=ts,
+                confirmation_source="human",
             )
 
         updated = self._update_knowledge_item(item_type, item_id, _promote)

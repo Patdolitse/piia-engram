@@ -4,9 +4,9 @@
   "last_reviewed": "2026-06-11",
   "source_of_truth": "scripts/count_mcp_tools.py --json",
   "counts": {
-    "total": 53,
+    "total": 54,
     "core": 17,
-    "advanced": 36
+    "advanced": 37
   },
   "tiers": [
     {

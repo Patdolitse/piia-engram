@@ -121,6 +121,41 @@ async def archive_knowledge(item_id: str) -> str:
 
 
 @S.mcp.tool()
+async def confirm_knowledge(
+    item_id: str,
+    by: str = "human",
+    anchor_ref: str = "",
+) -> str:
+    """Owner-only: explicitly stamp a knowledge item with human/test/anchor freshness provenance.
+
+    Owner/admin surface: writes owner-confirmed provenance stamps and is refused for non-owner callers when governance is enabled.
+
+    用途：用户/owner 已经确认某条知识仍成立，或明确背书它由测试信号/锚点支撑时调用。
+    Purpose: Call only after explicit owner confirmation that a knowledge item is
+    still valid, or is backed by a test signal / owner-approved anchor.
+
+    Args:
+        item_id: lesson、decision 或 playbook 的 ID。 / ID of the lesson, decision, or playbook.
+        by: human（人确认）| test（测试信号）| anchor（显式锚点）。 / human | test | anchor.
+        anchor_ref: by=anchor 时必填的锚点字符串，如 dep:jest 或 file:package.json。 / Required when by=anchor.
+    """
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="confirm_knowledge")
+    if refusal is not None:
+        return refusal
+
+    result = S._locked_engram_call(
+        S._engram.confirm_knowledge,
+        item_id,
+        by=by,
+        anchor_ref=anchor_ref or None,
+    )
+    result = S._gov_rt.maybe_govern_owner_only(
+        S._engram.root, result, tool="confirm_knowledge"
+    )
+    return S._json(result)
+
+
+@S.mcp.tool()
 async def review_staging(
     action: str = "list",
     actions_json: str = "[]",

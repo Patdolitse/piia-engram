@@ -29,9 +29,9 @@
         "knowledge-management"
       ],
       "capabilities": {
-        "mcp_tools_total": 53,
+        "mcp_tools_total": 54,
         "mcp_tools_core": 17,
-        "mcp_tools_advanced": 36,
+        "mcp_tools_advanced": 37,
         "prompts": 0,
         "resources": 0
       },

@@ -834,7 +834,7 @@ CAPABILITY_GROUPS: dict[str, frozenset[str]] = {
         "get_decisions", "list_projects", "get_knowledge_inheritance",
         "get_knowledge_overview", "explore_knowledge", "export_knowledge_report",
         "ingest_notes", "extract_session_insights", "update_knowledge",
-        "archive_knowledge", "review_staging", "get_stale_knowledge",
+        "archive_knowledge", "confirm_knowledge", "review_staging", "get_stale_knowledge",
         "request_outline_review", "merge_knowledge", "manage_relation",
         "get_playbooks", "manage_playbook", "playbook_execution",
     }),
@@ -969,6 +969,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     # --- owner_only_write: grant store / whole-store import ---
     "manage_caller_trust": "owner_only_write",
     "import_engram": "owner_only_write",
+    "confirm_knowledge": "owner_only_write",
     # --- export_owner_only: full dump / report file to disk ---
     "export_engram": "export_owner_only",
     "export_knowledge_report": "export_owner_only",
@@ -1319,6 +1320,7 @@ try:
         extract_session_insights,
         update_knowledge,
         archive_knowledge,
+        confirm_knowledge,
         review_staging,
         get_stale_knowledge,
         request_outline_review,
@@ -1386,6 +1388,7 @@ except ImportError:  # plain-script mode (no package context)
         extract_session_insights,
         update_knowledge,
         archive_knowledge,
+        confirm_knowledge,
         review_staging,
         get_stale_knowledge,
         request_outline_review,
