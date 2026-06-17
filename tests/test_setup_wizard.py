@@ -1673,7 +1673,19 @@ def test_doctor_reports_search_mode_hybrid(tmp_path: Path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Search mode: hybrid" in out
-    assert "keyword + FTS" in out
+    # The second assertion must match whichever branch doctor.py takes for THIS
+    # environment: vector deps present -> [ok] full stack; absent -> [!] graceful
+    # fallback. CI runs the base install (no [vector] extra), so a bare
+    # "keyword + FTS" assertion would false-fail there even though the product
+    # behaves correctly. Mirror doctor.py's own import guard exactly.
+    try:
+        import fastembed  # noqa: F401
+        import sqlite_vec  # noqa: F401
+
+        assert "keyword + FTS + semantic vector" in out
+    except ImportError:
+        assert "falls back to keyword+FTS only" in out
+        assert "piia-engram[vector]" in out
 
 
 def test_doctor_reports_governance_disabled_hint(tmp_path: Path, monkeypatch, capsys):
