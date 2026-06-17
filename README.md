@@ -25,8 +25,7 @@ Claude Code, Codex, Cursor, Windsurf, and other MCP-compatible tools can start f
 **Listed in:**
 [![Official MCP Registry](https://img.shields.io/badge/listed_in-MCP_Registry-green?logo=modelcontextprotocol)](https://registry.modelcontextprotocol.io)
 [![awesome-mcp-servers](https://img.shields.io/badge/listed_in-awesome--mcp--servers-orange?logo=awesome-lists)](https://github.com/punkpeye/awesome-mcp-servers)
-[![piia-engram MCP server](https://glama.ai/mcp/servers/@Patdolitse/piia-engram/badge)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
-[![piia-engram on LobeHub](https://lobehub.com/badge/mcp/patdolitse-piia-engram)](https://lobehub.com/mcp/patdolitse-piia-engram)
+[![Glama](https://img.shields.io/badge/listed_in-Glama-7c3aed)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
 
 Also listed in: [awesome-agents](https://github.com/kyrolabs/awesome-agents) · [Awesome-MCP-ZH](https://github.com/yzfly/Awesome-MCP-ZH) · [mcpservers.org](https://mcpservers.org/servers/patdolitse/piia-engram) · [Cursor Directory](https://cursor.directory/plugins/piia-engram) · [ModelScope](https://www.modelscope.cn/mcp/servers/Patdolitse/piia-engram) · [PulseMCP](https://www.pulsemcp.com/servers/patdolitse-engram)
 

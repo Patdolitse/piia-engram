@@ -178,12 +178,10 @@ def check(root: Path, public_facts_rel: str = DEFAULT_PUBLIC_FACTS) -> dict:
         _require("piia-engram-mcp" in str(install.get("uvx", "")), problems,
                  "publisher metadata must include uvx/piia-engram-mcp guidance")
 
-    badge = "https://lobehub.com/badge/mcp/patdolitse-piia-engram"
-    page = "https://lobehub.com/mcp/patdolitse-piia-engram"
-    _require(badge in readme and page in readme, problems,
-             "README.md must carry the LobeHub claim badge/link")
-    _require(badge in readme_zh and "https://lobehub.com/zh/mcp/patdolitse-piia-engram" in readme_zh,
-             problems, "README.zh-CN.md must carry the LobeHub claim badge/link")
+    # LobeHub badge intentionally pulled from the READMEs while the LobeHub
+    # listing still shows "unvalidated"; re-add the badge + this check once the
+    # listing is validated. The publisher slug/metadata above stays in sync so
+    # the listing itself remains correct.
 
     _require("name: piia-engram" in glama, problems,
              "glama.yaml must expose the canonical package name")

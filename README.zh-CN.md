@@ -27,9 +27,7 @@ Claude Code、Codex、Cursor、Windsurf 等 MCP 兼容工具可以从同一层 A
 [![Awesome-MCP-ZH](https://img.shields.io/badge/listed_in-Awesome--MCP--ZH-orange?logo=awesome-lists)](https://github.com/yzfly/Awesome-MCP-ZH)
 [![ModelScope](https://img.shields.io/badge/listed_in-ModelScope-blue)](https://www.modelscope.cn/mcp/servers/Patdolitse/piia-engram)
 [![awesome-mcp-servers](https://img.shields.io/badge/listed_in-awesome--mcp--servers-orange?logo=awesome-lists)](https://github.com/punkpeye/awesome-mcp-servers)
-
-[![piia-engram MCP server](https://glama.ai/mcp/servers/@Patdolitse/piia-engram/badge)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
-[![piia-engram on LobeHub](https://lobehub.com/badge/mcp/patdolitse-piia-engram)](https://lobehub.com/zh/mcp/patdolitse-piia-engram)
+[![Glama](https://img.shields.io/badge/listed_in-Glama-7c3aed)](https://glama.ai/mcp/servers/@Patdolitse/piia-engram)
 
 还收录于：[awesome-agents](https://github.com/kyrolabs/awesome-agents) · [mcpservers.org](https://mcpservers.org/servers/patdolitse/piia-engram) · [Cursor Directory](https://cursor.directory/plugins/piia-engram) · [PulseMCP](https://www.pulsemcp.com/servers/patdolitse-engram)
 
