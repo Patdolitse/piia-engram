@@ -45,8 +45,54 @@
   "packages": [
     {
       "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
       "identifier": "piia-engram",
       "version": "4.2.0",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "piia-engram==4.2.0",
+          "description": "Install this exact PyPI package version before running the MCP console script."
+        },
+        {
+          "type": "positional",
+          "value": "piia-engram-mcp",
+          "description": "Console script that starts the MCP server; the package name itself launches setup."
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--transport",
+          "value": "stdio",
+          "description": "Run the server over standard MCP stdio transport."
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "ENGRAM_MCP_STARTUP_SYNC",
+          "description": "Skip optional local startup reconciliation during marketplace/client validation; set to background for local cross-tool sync.",
+          "default": "off",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "ENGRAM_TOOLS",
+          "description": "Expose the context-budget friendly default surface; set to all for the full advanced surface.",
+          "default": "core",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "PYTHONIOENCODING",
+          "description": "Force UTF-8 stdio frames on Windows-style consoles.",
+          "default": "utf-8",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ],
       "transport": {
         "type": "stdio"
       }

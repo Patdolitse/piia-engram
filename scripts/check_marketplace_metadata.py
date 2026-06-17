@@ -103,12 +103,48 @@ def check(root: Path, public_facts_rel: str = DEFAULT_PUBLIC_FACTS) -> dict:
     package = packages[0] if isinstance(packages, list) and packages else {}
     _require(package.get("registryType") == "pypi", problems,
              ".mcp/server.json package registryType must be pypi")
+    _require(package.get("registryBaseUrl") == "https://pypi.org", problems,
+             ".mcp/server.json package registryBaseUrl must be https://pypi.org")
     _require(package.get("identifier") == "piia-engram", problems,
              ".mcp/server.json package identifier must be piia-engram")
     _require(package.get("version") == version, problems,
              ".mcp/server.json package version must match pyproject.toml")
+    _require(package.get("runtimeHint") == "uvx", problems,
+             ".mcp/server.json package runtimeHint must be uvx")
     _require((package.get("transport") or {}).get("type") == "stdio", problems,
              ".mcp/server.json package transport must be stdio")
+
+    runtime_args = package.get("runtimeArguments") or []
+    runtime_values = [
+        str(arg.get("value", ""))
+        for arg in runtime_args
+        if isinstance(arg, dict)
+    ]
+    _require(f"piia-engram=={version}" in runtime_values, problems,
+             ".mcp/server.json runtimeArguments must pin the PyPI version")
+    _require("piia-engram-mcp" in runtime_values, problems,
+             ".mcp/server.json runtimeArguments must run piia-engram-mcp")
+
+    package_args = package.get("packageArguments") or []
+    transport_args = [
+        arg
+        for arg in package_args
+        if isinstance(arg, dict) and arg.get("name") == "--transport"
+    ]
+    _require(any(arg.get("value") == "stdio" for arg in transport_args), problems,
+             ".mcp/server.json packageArguments must force --transport stdio")
+
+    env_defaults = {
+        item.get("name"): item.get("default")
+        for item in (package.get("environmentVariables") or [])
+        if isinstance(item, dict)
+    }
+    _require(env_defaults.get("ENGRAM_MCP_STARTUP_SYNC") == "off", problems,
+             ".mcp/server.json should default marketplace startup sync to off")
+    _require(env_defaults.get("ENGRAM_TOOLS") == "core", problems,
+             ".mcp/server.json should default marketplace tools to core")
+    _require(env_defaults.get("PYTHONIOENCODING") == "utf-8", problems,
+             ".mcp/server.json should force UTF-8 stdio for marketplaces")
 
     meta = (server.get("_meta") or {}).get(PUBLISHER_META_KEY)
     _require(isinstance(meta, dict), problems,
