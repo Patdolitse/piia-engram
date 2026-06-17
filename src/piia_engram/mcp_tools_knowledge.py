@@ -125,6 +125,7 @@ async def confirm_knowledge(
     item_id: str,
     by: str = "human",
     anchor_ref: str = "",
+    project_root: str = "",
 ) -> str:
     """Owner-only: explicitly stamp a knowledge item with human/test/anchor freshness provenance.
 
@@ -138,19 +139,59 @@ async def confirm_knowledge(
         item_id: lesson、decision 或 playbook 的 ID。 / ID of the lesson, decision, or playbook.
         by: human（人确认）| test（测试信号）| anchor（显式锚点）。 / human | test | anchor.
         anchor_ref: by=anchor 时必填的锚点字符串，如 dep:jest 或 file:package.json。 / Required when by=anchor.
+        project_root: by=anchor 时可选的当前仓库根目录，用于捕获 anchor_project_id。 / Optional current repository root for anchor project binding.
     """
     refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="confirm_knowledge")
     if refusal is not None:
         return refusal
+
+    anchor_project_id = None
+    if str(by or "").strip().lower() == "anchor" and project_root.strip():
+        from piia_engram import freshness_anchors
+
+        anchor_project_id = freshness_anchors.read_project_id(project_root)
 
     result = S._locked_engram_call(
         S._engram.confirm_knowledge,
         item_id,
         by=by,
         anchor_ref=anchor_ref or None,
+        anchor_project_id=anchor_project_id,
     )
     result = S._gov_rt.maybe_govern_owner_only(
         S._engram.root, result, tool="confirm_knowledge"
+    )
+    return S._json(result)
+
+
+@S.mcp.tool()
+async def check_anchors(
+    project_root: str,
+    adopt_legacy: bool = False,
+) -> str:
+    """Owner-only: revalidate anchor-backed freshness provenance for one repository.
+
+    Owner/admin surface: checks project-local anchors and writes anchor_status / anchor_checked_at; refused for non-owner callers when governance is enabled.
+
+    用途：owner 在当前仓库内确认依赖或文件锚点是否仍成立；失效锚点会回落时间衰减。
+    Purpose: Let the owner re-check dependency/file anchors for a repository;
+    invalid anchors fall back to time decay through the pure freshness policy.
+
+    Args:
+        project_root: 当前仓库根目录。 / Current repository root.
+        adopt_legacy: 是否为旧 anchor 绑定当前 project id，但不重新判定状态。 / Whether to bind legacy anchors to the current project id without changing status.
+    """
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="check_anchors")
+    if refusal is not None:
+        return refusal
+
+    result = S._locked_engram_call(
+        S._engram.revalidate_anchors,
+        project_root,
+        adopt_legacy=adopt_legacy,
+    )
+    result = S._gov_rt.maybe_govern_owner_only(
+        S._engram.root, result, tool="check_anchors"
     )
     return S._json(result)
 

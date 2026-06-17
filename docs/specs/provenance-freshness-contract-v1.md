@@ -141,3 +141,19 @@ equally current. This is opt-in at the surface level and changes no stored data.
   see governance notes). This is descriptive metadata, not attestation.
 - No automatic re-validation or expiry of stale knowledge — freshness is a
   *hint*, never an automatic delete.
+
+## 8. Deferred / future
+
+The following items are known and intentionally deferred, not omissions in the
+current source-aware freshness scope:
+
+- Monorepo anchor scope: anchors currently bind to one project identity instead
+  of per-package or per-subtree scopes.
+- Repository rename or alias migration: renamed repos may need an explicit
+  alias/adoption workflow.
+- Broader dependency ecosystems: dependency anchors currently cover npm,
+  Python, and file-backed references only.
+- Doctor-driven anchor validation: `doctor` does not yet run automatic anchor
+  revalidation.
+- Non-owner MCP anchor writes: anchor status writeback remains owner/internal
+  only; non-owner agents cannot stamp or repair anchor trust fields.

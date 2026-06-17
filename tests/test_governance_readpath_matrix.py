@@ -111,6 +111,9 @@ _MATRIX = [
     ("archive_knowledge", "archive_knowledge", _sec(), {"item_id": "sec-1"}, "withhold"),
     ("confirm_knowledge", "confirm_knowledge", _sec(),
      {"item_id": "sec-1", "by": "test"}, "withhold"),
+    ("check_anchors", "revalidate_anchors",
+     {"project_id": SECRET, "checked": 1},
+     {"project_root": "/x"}, "withhold"),
     ("review_staging", "review_knowledge", _sec(),
      {"action": "review_item", "knowledge_id": "sec-1"}, "withhold"),
     # ---- write tools whose ACK echoes a stored TITLE (maybe_govern_write_ack) ----
@@ -662,6 +665,7 @@ _SIDE_EFFECT_HARNESS = [
     ("archive_knowledge", lambda ids: {"item_id": ids["lesson_id"]}),
     ("confirm_knowledge", lambda ids: {"item_id": ids["lesson_id"],
                                         "by": "test"}),
+    ("check_anchors", lambda ids: {"project_root": str(ids["_root"])}),
     ("review_staging", lambda ids: {"action": "review_item",
                                      "knowledge_id": ids["lesson_id"]}),
     ("merge_knowledge", lambda ids: {"primary_id": ids["lesson_id"],

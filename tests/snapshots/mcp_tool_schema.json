@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "src/piia_engram/mcp_server.py",
-  "tool_count": 54,
+  "tool_count": 55,
   "tools": {
     "add_decision": {
       "params": [
@@ -268,6 +268,25 @@
       ],
       "returns": "str"
     },
+    "check_anchors": {
+      "params": [
+        {
+          "name": "project_root",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "adopt_legacy",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
     "confirm_knowledge": {
       "params": [
         {
@@ -286,6 +305,13 @@
         },
         {
           "name": "anchor_ref",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "project_root",
           "annotation": "str",
           "required": false,
           "default": "",

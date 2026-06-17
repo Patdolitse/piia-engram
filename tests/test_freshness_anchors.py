@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import subprocess
+import asyncio
 from pathlib import Path
 
 import pytest
 
+from piia_engram import mcp_server
 from piia_engram import freshness_anchors as A
 from piia_engram import provenance as P
 from piia_engram.core import Engram, strip_untrusted_trust_fields
@@ -47,6 +49,10 @@ def _stored_playbook(eng: Engram, item_id: str) -> dict:
         for item in eng.get_playbooks(limit=None, _update_access=False)
         if item["id"] == item_id
     )
+
+
+def _run(coro):
+    return asyncio.run(coro)
 
 
 def _write_package_json(root: Path, deps: dict[str, str]) -> None:
@@ -228,6 +234,94 @@ def test_confirm_cli_anchor_stamps_current_git_project_id(
     assert "已确认知识" in capsys.readouterr().out
     stored = Engram(root=data_root).get_lessons(limit=None, _update_access=False)[0]
     assert stored["provenance"]["anchor_project_id"] == PROJECT_ID
+
+
+def test_mcp_confirm_anchor_can_capture_project_id_from_project_root(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    try:
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "git@github.com:acme/widget.git"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        pytest.skip(f"git unavailable for MCP confirm project-root smoke test: {exc}")
+    monkeypatch.setattr(mcp_server, "_engram", eng)
+    lesson = eng.add_lesson("mcp confirm captures project id")
+
+    out = _run(
+        mcp_server.confirm_knowledge(
+            lesson["id"],
+            by="anchor",
+            anchor_ref="dep:jest",
+            project_root=str(repo),
+        )
+    )
+
+    result = json.loads(out)
+    assert result["provenance"]["anchor_project_id"] == PROJECT_ID
+
+
+def test_mcp_check_anchors_revalidates_when_owner_allowed(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    monkeypatch.setattr(mcp_server, "_engram", eng)
+    lesson = eng.add_lesson("mcp check anchors flips invalid")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    out = _run(mcp_server.check_anchors(project_root=str(repo)))
+
+    result = json.loads(out)
+    stored = _stored_lesson(eng, lesson["id"])
+    assert result["checked"] == 1
+    assert result["invalid"] == 1
+    assert stored["provenance"]["anchor_status"] == "invalid"
+
+
+def test_mcp_check_anchors_is_owner_gated(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+    monkeypatch.setattr(mcp_server, "_engram", eng)
+    lesson = eng.add_lesson("mcp check anchors owner gate")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    def _refuse(*_args, **_kwargs):
+        return json.dumps({"error": "owner_only"})
+
+    monkeypatch.setattr(mcp_server._gov_rt, "maybe_refuse_owner_write", _refuse)
+
+    out = _run(mcp_server.check_anchors(project_root=str(repo)))
+
+    assert json.loads(out) == {"error": "owner_only"}
+    stored = _stored_lesson(eng, lesson["id"])
+    assert stored["provenance"]["anchor_status"] == "valid"
 
 
 def test_github_project_id_case_normalization_allows_revalidation_match(

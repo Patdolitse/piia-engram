@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from . import provenance as _provenance
 from .export_redaction import redact_export_text
 from .storage import (
     MAX_KNOWLEDGE_ENTRIES,
@@ -20,6 +21,13 @@ from .storage import (
 
 class AnalyticsMixin:
     """Health reports, stale detection, knowledge digest, stats, and report export."""
+
+    def _freshness_skip_decay(self, item: dict) -> bool:
+        """Whether freshness policy says this item is trigger-managed."""
+        try:
+            return _provenance.compute_freshness(item).get("skip_decay") is True
+        except Exception:
+            return False
 
     def get_health_report(self) -> dict:
         """Generate a health report for the knowledge asset."""
@@ -79,6 +87,8 @@ class AnalyticsMixin:
         items_needing_review = []
         items_to_archive = []
         for item_type, item in lifecycle_items:
+            if self._freshness_skip_decay(item):
+                continue
             reviewed_at = self._reviewed_at(item)
             if not reviewed_at:
                 continue
@@ -162,6 +172,9 @@ class AnalyticsMixin:
             review_cutoff = datetime.now() - timedelta(days=STALE_KNOWLEDGE_DAYS)
             fresh_count = 0
             for item in active_lessons + active_decisions:
+                if self._freshness_skip_decay(item):
+                    fresh_count += 1
+                    continue
                 reviewed_at = self._reviewed_at(item)
                 if reviewed_at and reviewed_at > review_cutoff:
                     fresh_count += 1
@@ -253,6 +266,8 @@ class AnalyticsMixin:
         for lesson in lessons:
             if lesson.get("status") != "active":
                 continue
+            if self._freshness_skip_decay(lesson):
+                continue
             reviewed_at = self._reviewed_at(lesson)
             if reviewed_at and reviewed_at <= cutoff:
                 stale_lessons.append({
@@ -267,6 +282,8 @@ class AnalyticsMixin:
         stale_decisions = []
         for decision in decisions:
             if decision.get("status") != "active":
+                continue
+            if self._freshness_skip_decay(decision):
                 continue
             reviewed_at = self._reviewed_at(decision)
             if reviewed_at and reviewed_at <= cutoff:
