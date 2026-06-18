@@ -6,6 +6,13 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.4.0] - 2026-06-18
+
+### Added
+- Source-aware freshness: `compute_freshness` now reads each fact's source and picks a decay policy from it. Human-confirmed facts keep time-based decay; test- and anchor-confirmed facts are trigger-bound and stay off the staleness clock. The public 4-state `freshness_status` is unchanged; source-awareness is an additive `skip_decay` / `decay_policy` signal honored by the decay, refresh, and stale-surfacing paths.
+- Owner confirmation stamping: `confirm_knowledge` records an explicit confirmation source (human, test, or anchor). Agents cannot self-attest; trust fields are stripped on every write path.
+- Anchor read-time validator (`check_anchors`, owner-run): ties a fact to an observable repo anchor (a dependency or a file), resolved against the project's git-remote identity. An invalidated anchor (the dependency is gone) demotes the fact back to a guess (tier to staging, confirmation cleared, the invalid anchor status kept as evidence); an unresolvable check only falls back to time decay, so "couldn't check" never reads as "it's gone". Demotion is one-way: a returning dependency does not auto-restore trust; re-confirmation is deliberate.
+
 ## [4.3.0] - 2026-06-17
 
 ### Security

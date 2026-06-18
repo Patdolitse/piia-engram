@@ -6,6 +6,13 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.4.0] - 2026-06-18
+
+### 新增
+- 来源感知的新鲜度：`compute_freshness` 现在先读每条知识的来源，再据此选择衰减策略。人工确认的事实仍走时间衰减；测试/锚点确认的事实是触发式的，不再受时钟驱动而变 stale。公开的 4 态 `freshness_status` 不变；来源感知以附加信号 `skip_decay` / `decay_policy` 叠加，由衰减、刷新、stale 呈现等路径遵守。
+- owner 确认盖章：`confirm_knowledge` 记录显式确认来源（human、test 或 anchor）。agent 无法自证；每条写入路径都会剥离信任字段。
+- 锚点读时校验器（`check_anchors`，owner 触发）：把一条事实绑定到仓库里可观察的锚点（某个依赖或文件），以项目的 git-remote 身份解析。锚点被判失效（依赖没了）时，把这条事实降回 guess（tier→staging、清除确认、保留 invalid 锚点状态作为证据）；查不出结果（unresolvable）则只回退到时间衰减，所以“查不了”不会被当成“它没了”。降级是单向的：依赖回来也不自动恢复信任，需刻意重新确认。
+
 ## [4.3.0] - 2026-06-17
 
 ### 安全
