@@ -19,6 +19,11 @@ reader_cache/
 # Corpus encryption salt (per-engram; derived key material — never commit)
 .corpus_salt
 
+# Maintainer-only workspace registry (lives one level up). A pre-push doc-sync
+# hook can mis-stage it into this repo from a git worktree; ignore it here so it
+# can never be tracked or published (defense-in-depth alongside .publishallow).
+/PROJECT_REGISTRY.md
+
 # Secrets / credentials（防止意外提交）
 *.pem
 *.key
