@@ -107,3 +107,56 @@ def test_create_onboard_candidates_from_enumeration(eng):
     file_fact = _by_anchor(eng, "file:README.md")
     assert file_fact is not None
     assert "README.md" in file_fact["summary"]
+
+
+# --- M2 review fixes (Codex) -------------------------------------------------
+
+
+def test_accept_refuses_known_invalid_anchor(eng, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text('{"dependencies": {}}', encoding="utf-8")  # no react
+    eng.create_onboard_candidate(
+        "This project depends on `react` (^18.2.0).",
+        anchor_ref="dep:react",
+        anchor_detail={"version": "^18.2.0"},
+        anchor_project_id="github.com/acme/app",
+        extractor="onboard-repo@test",
+    )
+    item_id = _by_anchor(eng, "dep:react")["id"]
+
+    result = eng.accept_onboard_candidate(item_id, project_root=str(repo))
+
+    assert "error" in result                          # refused, not promoted
+    assert _by_anchor(eng, "dep:react")["tier"] == "staging"
+
+
+def test_create_onboard_candidates_idempotent_by_anchor(eng):
+    anchors = [{"kind": "dep", "ref": "react", "detail": {"version": "^18.2.0"},
+                "source": "package.json", "anchor_ref": "dep:react"}]
+    first = eng.create_onboard_candidates(anchors, repo_id="github.com/acme/app")
+    second = eng.create_onboard_candidates(anchors, repo_id="github.com/acme/app")
+
+    assert first["created"] == 1
+    assert second["created"] == 0
+    assert second["existing"] == 1
+    matches = [e for e in eng.get_lessons(limit=None, _update_access=False)
+               if e.get("provenance", {}).get("anchor_ref") == "dep:react"]
+    assert len(matches) == 1                          # no duplicate entity
+
+
+def test_create_onboard_candidates_updates_on_version_change(eng):
+    old = [{"kind": "dep", "ref": "react", "detail": {"version": "^18.0.0"},
+            "source": "package.json", "anchor_ref": "dep:react"}]
+    new = [{"kind": "dep", "ref": "react", "detail": {"version": "^18.2.0"},
+            "source": "package.json", "anchor_ref": "dep:react"}]
+    eng.create_onboard_candidates(old, repo_id="github.com/acme/app")
+    res = eng.create_onboard_candidates(new, repo_id="github.com/acme/app")
+
+    assert res["updated"] == 1
+    entry = _by_anchor(eng, "dep:react")
+    assert entry["provenance"]["anchor_detail"]["version"] == "^18.2.0"
+    assert "^18.2.0" in entry["summary"]
+    matches = [e for e in eng.get_lessons(limit=None, _update_access=False)
+               if e.get("provenance", {}).get("anchor_ref") == "dep:react"]
+    assert len(matches) == 1                          # updated in place, not duplicated

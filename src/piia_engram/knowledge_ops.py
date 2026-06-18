@@ -77,10 +77,24 @@ class KnowledgeOpsMixin:
     ) -> dict:
         """Turn enumerate_anchors() output into STAGING candidate facts.
 
-        dep/file anchors become candidates; kind="unsupported" markers are
-        skipped (counted in the summary, not silently dropped).
+        Idempotent per repo, keyed on (repo_id, anchor_ref): a new anchor is
+        created; an unchanged one is left alone (existing); a changed one (e.g. a
+        version bump) updates the STAGING candidate in place. Already-accepted
+        (verified) facts are never silently rewritten -- they count as existing.
+        kind="unsupported" markers are skipped + counted, not dropped.
         """
+        # Index current repo-facts for this repo by anchor_ref (for upsert).
+        index: dict[str, dict] = {}
+        for entry in self.get_lessons(limit=None, _update_access=False):
+            prov = entry.get("provenance")
+            if isinstance(prov, dict) and prov.get("anchor_project_id") == repo_id:
+                ref_str = prov.get("anchor_ref")
+                if isinstance(ref_str, str) and ref_str:
+                    index[ref_str] = entry
+
         created: list[dict] = []
+        existing = 0
+        updated = 0
         skipped = 0
         for anchor in anchors:
             if not isinstance(anchor, dict):
@@ -94,6 +108,28 @@ class KnowledgeOpsMixin:
             detail = anchor.get("detail") if isinstance(anchor.get("detail"), dict) else {}
             anchor_ref = anchor.get("anchor_ref") or _freshness_anchors.format_anchor_ref(kind, ref)
             claim = self._onboard_claim_text(kind, ref, detail)
+
+            prior = index.get(anchor_ref)
+            if prior is not None:
+                prior_prov = prior.get("provenance") if isinstance(prior.get("provenance"), dict) else {}
+                prior_detail = prior_prov.get("anchor_detail")
+                prior_detail = prior_detail if isinstance(prior_detail, dict) else {}
+                if prior_detail == detail:
+                    existing += 1
+                    continue
+                if prior.get("tier") == "staging":
+                    def _mark(entry: dict, _claim: str = claim, _detail: dict = detail) -> dict:
+                        entry["summary"] = _claim
+                        prov2 = entry.get("provenance") if isinstance(entry.get("provenance"), dict) else {}
+                        prov2["anchor_detail"] = _detail
+                        entry["provenance"] = prov2
+                        return self._ensure_fields(entry, "lesson")
+                    self._update_knowledge_item("lesson", prior.get("id", ""), _mark)
+                    updated += 1
+                else:
+                    existing += 1  # owner-accepted (verified) -- leave it intact
+                continue
+
             created.append(self.create_onboard_candidate(
                 claim,
                 anchor_ref=anchor_ref,
@@ -101,7 +137,13 @@ class KnowledgeOpsMixin:
                 anchor_project_id=repo_id,
                 extractor=extractor,
             ))
-        return {"created": len(created), "skipped": skipped, "candidates": created}
+        return {
+            "created": len(created),
+            "existing": existing,
+            "updated": updated,
+            "skipped": skipped,
+            "candidates": created,
+        }
 
     def _stamp_validated_entry(
         self,
@@ -220,6 +262,13 @@ class KnowledgeOpsMixin:
         if project_root:
             parsed = _freshness_anchors.parse_anchor_ref(anchor_ref)
             status = _freshness_anchors.check_anchor(parsed, project_root)
+        if status == _freshness_anchors.INVALID:
+            # Refuse to verify a fact bound to a broken anchor; don't rely on a
+            # later check_anchors pass to demote it. (UNKNOWN stays acceptable.)
+            return {
+                "error": f"anchor {anchor_ref!r} is INVALID in the given project; not accepting",
+                "anchor_status": status,
+            }
 
         ts = _now_iso()
 
