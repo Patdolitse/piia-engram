@@ -654,7 +654,7 @@ class KnowledgeOpsMixin:
                 prov["anchor_status"] = _status
                 prov["anchor_checked_at"] = checked_at
                 if _status == _freshness_anchors.INVALID:
-                    # deanrie #13: an INVALID anchor (the dependency/config the
+                    # An INVALID anchor (the dependency/config the
                     # fact was tied to is gone) is a definitive staleness EVENT,
                     # not gradual aging. Drop the fact straight back to an
                     # unconfirmed guess instead of letting it ride the 90-day

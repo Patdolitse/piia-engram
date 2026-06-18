@@ -391,7 +391,7 @@ def test_revalidate_invalid_anchor_demotes_to_guess(
     eng: Engram,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """deanrie #13: an INVALIDATED anchor (the dep it was tied to is gone) is a
+    """An INVALIDATED anchor (the dep it was tied to is gone) is a
     definitive staleness event — the fact drops straight back to an unconfirmed
     guess, not onto the slow time-decay clock. The anchor_* fields are kept as
     evidence of why it was demoted."""
@@ -439,7 +439,7 @@ def test_revalidate_unknown_anchor_does_not_demote(
     eng: Engram,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """deanrie #13: an UNRESOLVABLE anchor (couldn't check) must NOT be treated
+    """An UNRESOLVABLE anchor (couldn't check) must NOT be treated
     as an invalidation. It falls back to time decay but keeps its confirmed tier
     and anchor confirmation, so an unresolvable miss never hides a real one."""
     repo = tmp_path / "repo"
