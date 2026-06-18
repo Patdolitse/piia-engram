@@ -160,6 +160,7 @@ def gather_recall(
     limit: int = 8,
     token_budget: int = 2000,
     include_freshness: bool = True,
+    include_trust: bool = False,
     collapse_versions: bool = True,
     role_scoped_memory: bool = False,
     now: datetime | None = None,
@@ -231,6 +232,7 @@ def gather_recall(
         query=query,
         token_budget=token_budget,
         include_freshness=include_freshness,
+        include_trust=include_trust,
         governance=governance,
         now=now,
     )

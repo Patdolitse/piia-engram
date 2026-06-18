@@ -181,3 +181,27 @@ def test_onboard_repo_orchestrates_scan_to_candidates(eng):
     again = eng.onboard_repo(str(golden), repo_id="github.com/acme/app")
     assert again["created"] == 0
     assert again["existing"] >= 8
+
+
+def test_gather_recall_surfaces_trust_for_owner(eng):
+    from piia_engram import recall_service
+
+    eng.create_onboard_candidate(
+        "This project depends on `react` (^18.2.0).",
+        anchor_ref="dep:react",
+        anchor_detail={"version": "^18.2.0"},
+        anchor_project_id="github.com/acme/app",
+        extractor="onboard-repo@test",
+    )
+    item_id = _by_anchor(eng, "dep:react")["id"]
+    eng.accept_onboard_candidate(item_id)  # owner-accepts -> verified
+
+    payload = recall_service.gather_recall(eng, query="react", include_trust=True)
+    items = payload.get("knowledge", [])
+    trust_items = [i for i in items if isinstance(i.get("trust"), dict)]
+    assert trust_items, f"no trust block surfaced for owner; items={items!r}"
+    assert any(i["trust"].get("confirmation_source") == "anchor" for i in trust_items)
+
+    # default (non-owner) recall must NOT surface trust
+    governed = recall_service.gather_recall(eng, query="react")
+    assert all("trust" not in i for i in governed.get("knowledge", []))
