@@ -342,10 +342,14 @@ class KnowledgeOpsMixin:
         Per-item atomic: reuses accept_onboard_candidate for each candidate, so
         every one is independently anchor-verified, cross-repo-guarded, and
         refused if its anchor is INVALID. The batch can partially succeed — one
-        bad anchor never rolls back the others. Candidates whose
-        anchor_project_id does not match this repo are SKIPPED (never accepted
-        cross-repo). dry_run previews count + repo_id + the in-scope candidates
-        with zero writes (the CLI runs dry by default; --yes commits).
+        bad anchor never rolls back the others, and one unexpected exception
+        never aborts the rest. Candidates whose anchor_project_id differs from
+        this batch's repo are SKIPPED; that cross-repo filter stays active even
+        when the repo identity can't be resolved (resolved_repo_id is None), so
+        an unresolved root never silently accepts an identified repo's candidate.
+        dry_run is a zero-write preview that still verifies anchors read-only, so
+        would_accept / would_reject are honest. The CLI runs dry by default;
+        --yes commits.
         """
         resolved_repo_id = repo_id
         if resolved_repo_id is None and project_root:
@@ -354,19 +358,25 @@ class KnowledgeOpsMixin:
         results: list[dict] = []
         preview: list[dict] = []
         accepted = rejected = skipped = 0
+        would_accept = would_reject = 0
 
         for entry in self.get_lessons(limit=None, _update_access=False):
             if entry.get("domain") != "repo-fact" or entry.get("tier") != "staging":
                 continue
             prov = entry.get("provenance") if isinstance(entry.get("provenance"), dict) else {}
             anchor_ref = prov.get("anchor_ref")
-            if not isinstance(anchor_ref, str) or not anchor_ref.strip():
-                continue  # not an onboard candidate
             item_id = entry.get("id", "")
+            if not isinstance(anchor_ref, str) or not anchor_ref.strip():
+                # surface (never silently drop) a staging repo-fact with no anchor
+                skipped += 1
+                results.append({"id": item_id, "status": "skipped", "reason": "no anchor_ref"})
+                continue
             cand_pid = prov.get("anchor_project_id")
+            # Cross-repo guard stays active regardless of resolved_repo_id: a
+            # candidate carrying a repo identity different from this batch's
+            # (including when resolved_repo_id is None) is never accepted here.
             if (
-                resolved_repo_id is not None
-                and isinstance(cand_pid, str)
+                isinstance(cand_pid, str)
                 and cand_pid.strip()
                 and cand_pid.strip() != resolved_repo_id
             ):
@@ -376,12 +386,36 @@ class KnowledgeOpsMixin:
                     "status": "skipped", "reason": "different repo",
                 })
                 continue
-            preview.append({
-                "id": item_id, "anchor_ref": anchor_ref, "summary": entry.get("summary"),
-            })
+
             if dry_run:
+                # zero-write but honest: read-only anchor check so the owner sees
+                # what would actually succeed before committing with --yes.
+                status = _freshness_anchors.UNKNOWN
+                if project_root:
+                    parsed = _freshness_anchors.parse_anchor_ref(anchor_ref)
+                    status = _freshness_anchors.check_anchor(parsed, project_root)
+                if status == _freshness_anchors.INVALID:
+                    would_reject += 1
+                    results.append({
+                        "id": item_id, "anchor_ref": anchor_ref,
+                        "status": "would_reject", "reason": "anchor INVALID",
+                    })
+                else:
+                    would_accept += 1
+                    preview.append({
+                        "id": item_id, "anchor_ref": anchor_ref, "summary": entry.get("summary"),
+                    })
                 continue
-            res = self.accept_onboard_candidate(item_id, project_root=project_root)
+
+            try:
+                res = self.accept_onboard_candidate(item_id, project_root=project_root)
+            except Exception as exc:  # per-item isolation: never abort the batch
+                rejected += 1
+                results.append({
+                    "id": item_id, "anchor_ref": anchor_ref,
+                    "status": "rejected", "reason": f"exception: {exc}",
+                })
+                continue
             if isinstance(res, dict) and res.get("error"):
                 rejected += 1
                 results.append({
@@ -396,7 +430,8 @@ class KnowledgeOpsMixin:
             return {
                 "dry_run": True,
                 "repo_id": resolved_repo_id,
-                "would_accept": len(preview),
+                "would_accept": would_accept,
+                "would_reject": would_reject,
                 "skipped": skipped,
                 "candidates": preview,
                 "accepted": 0,

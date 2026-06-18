@@ -180,9 +180,74 @@ def test_accept_onboard_candidates_refuses_invalid_anchor(eng, tmp_path):
         "dep react", anchor_ref="dep:react", anchor_detail={"version": "^18"}, extractor="t"
     )
 
-    res = eng.accept_onboard_candidates(project_root=str(repo))
+    res = eng.accept_onboard_candidates(project_root=str(repo), repo_id="id:x")
     assert res["accepted"] == 0
     assert res["rejected"] >= 1          # invalid anchor refused, not promoted
+
+
+# --- G2 (Codex review fixes): boundary + honesty -----------------------------
+
+
+def test_batch_skips_identified_candidates_when_repo_unresolved(eng, monkeypatch):
+    # When the repo identity can't be resolved, a candidate that DOES carry a
+    # repo identity must be SKIPPED — never blindly accept another repo's fact.
+    monkeypatch.setattr("piia_engram.freshness_anchors.read_project_id", lambda root: None)
+    eng.create_onboard_candidate(
+        "dep a", anchor_ref="dep:a", anchor_project_id="github.com/acme/app", extractor="t"
+    )
+    res = eng.accept_onboard_candidates(project_root="/nowhere")
+    assert res["accepted"] == 0
+    assert res["skipped"] >= 1
+    a = next(
+        e for e in eng.get_lessons(limit=None, _update_access=False)
+        if e.get("provenance", {}).get("anchor_ref") == "dep:a"
+    )
+    assert a["tier"] == "staging"        # untouched
+
+
+def test_accept_onboard_candidates_partial_success(eng, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text('{"dependencies": {"react": "^18"}}', encoding="utf-8")
+    eng.create_onboard_candidate("dep react", anchor_ref="dep:react", anchor_project_id="id:x", extractor="t")
+    eng.create_onboard_candidate("dep vue", anchor_ref="dep:vue", anchor_project_id="id:x", extractor="t")
+
+    res = eng.accept_onboard_candidates(project_root=str(repo), repo_id="id:x")
+    assert res["accepted"] == 1          # react present -> valid
+    assert res["rejected"] == 1          # vue absent -> invalid, refused
+    vue = next(
+        e for e in eng.get_lessons(limit=None, _update_access=False)
+        if e.get("provenance", {}).get("anchor_ref") == "dep:vue"
+    )
+    assert vue["tier"] == "staging"      # the bad one stays staging (partial success)
+
+
+def test_accept_onboard_candidates_dry_run_flags_invalid(eng, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text('{"dependencies": {"react": "^18"}}', encoding="utf-8")
+    eng.create_onboard_candidate("dep react", anchor_ref="dep:react", anchor_project_id="id:x", extractor="t")
+    eng.create_onboard_candidate("dep vue", anchor_ref="dep:vue", anchor_project_id="id:x", extractor="t")
+
+    res = eng.accept_onboard_candidates(project_root=str(repo), repo_id="id:x", dry_run=True)
+    assert res["would_accept"] == 1      # honest: dry-run verifies anchors read-only
+    assert res["would_reject"] == 1
+    left = [
+        e for e in eng.get_lessons(limit=None, _update_access=False)
+        if e.get("domain") == "repo-fact" and e.get("tier") == "verified"
+    ]
+    assert left == []                    # dry-run wrote nothing
+
+
+def test_accept_onboard_candidates_counts_missing_anchor_ref(eng):
+    # a staging repo-fact with no anchor_ref is surfaced (skipped), not silently dropped
+    eng.add_lesson(
+        {"summary": "manual repo fact", "domain": "repo-fact", "tier": "staging", "provenance": {}},
+        _allow_internal_provenance=True,
+    )
+    res = eng.accept_onboard_candidates(repo_id="id:x")
+    assert res["skipped"] >= 1
+    assert any(r.get("reason") == "no anchor_ref" for r in res["results"])
 
 
 # --- G2: batch accept (CLI) --------------------------------------------------
