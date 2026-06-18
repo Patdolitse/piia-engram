@@ -145,6 +145,30 @@ class KnowledgeOpsMixin:
             "candidates": created,
         }
 
+    def onboard_repo(
+        self,
+        project_root: str,
+        *,
+        repo_id: str | None = None,
+        extractor: str = "onboard-repo",
+    ) -> dict:
+        """Scan a repo's anchors and create STAGING candidate facts.
+
+        Orchestrates M1 enumeration + M2 candidate creation: resolve the repo
+        identity (git remote, unless repo_id is given), enumerate npm/Python/file
+        anchors, and create/upsert staging repo-fact candidates. The owner accepts
+        each later via accept_onboard_candidate; nothing is auto-verified here.
+        """
+        if repo_id is None:
+            repo_id = _freshness_anchors.read_project_id(project_root)
+        anchors = _freshness_anchors.enumerate_anchors(project_root)
+        summary = self.create_onboard_candidates(
+            anchors, repo_id=repo_id, extractor=extractor
+        )
+        summary["repo_id"] = repo_id
+        summary["anchors_scanned"] = len(anchors)
+        return summary
+
     def _stamp_validated_entry(
         self,
         entry: dict,

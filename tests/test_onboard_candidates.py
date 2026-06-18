@@ -160,3 +160,24 @@ def test_create_onboard_candidates_updates_on_version_change(eng):
     matches = [e for e in eng.get_lessons(limit=None, _update_access=False)
                if e.get("provenance", {}).get("anchor_ref") == "dep:react"]
     assert len(matches) == 1                          # updated in place, not duplicated
+
+
+def test_onboard_repo_orchestrates_scan_to_candidates(eng):
+    golden = Path(__file__).resolve().parent / "fixtures" / "onboard_repo_golden"
+    summary = eng.onboard_repo(str(golden), repo_id="github.com/acme/app")
+
+    assert summary["anchors_scanned"] >= 8       # 5 npm + 3 py + README
+    assert summary["created"] >= 8
+    assert summary["repo_id"] == "github.com/acme/app"
+
+    facts = [e for e in eng.get_lessons(limit=None, _update_access=False)
+             if e.get("domain") == "repo-fact"]
+    assert facts, "no repo-fact candidates created"
+    assert all(f["tier"] == "staging" for f in facts)        # all staging
+    assert any("react" in f["summary"] for f in facts)        # npm dep
+    assert any("requests" in f["summary"] for f in facts)     # python dep
+
+    # re-running is idempotent (no duplicates)
+    again = eng.onboard_repo(str(golden), repo_id="github.com/acme/app")
+    assert again["created"] == 0
+    assert again["existing"] >= 8
