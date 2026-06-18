@@ -387,6 +387,12 @@ class KnowledgeOpsMixin:
                 })
                 continue
 
+            # A candidate with no anchor_project_id (e.g. a repo with no git
+            # remote) is not cross-repo-identifiable, so it is verified soundly
+            # by the per-item anchor check below: that only accepts a fact that
+            # is actually true of project_root (an absent dep -> INVALID ->
+            # refused), which keeps no-remote repos usable without weakening the
+            # cross-repo guard for identified candidates.
             if dry_run:
                 # zero-write but honest: read-only anchor check so the owner sees
                 # what would actually succeed before committing with --yes.

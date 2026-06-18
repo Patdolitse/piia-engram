@@ -770,7 +770,7 @@ def _run_onboard_accept_all(args: list[str]) -> int:
         print(
             f"将接受 {result.get('would_accept', 0)} 条候选 (repo: {result.get('repo_id')})；"
             f"锚点失效将拒 {result.get('would_reject', 0)} 条；"
-            f"跳过 {result.get('skipped', 0)} 条跨仓库候选。加 --yes 执行。"
+            f"跳过 {result.get('skipped', 0)} 条（跨仓库或无锚点）。加 --yes 执行。"
         )
     else:
         print(
