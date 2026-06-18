@@ -6,6 +6,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.6.0] - 2026-06-18
+
+### 新增
+- Dock owner 控制台质量面：新增 4 个本地、owner 运行的命令，供桌面客户端驱动。`engram dock-quality` 和 `engram dock-governance` 是零写汇总——知识质量计数 + 下一条审核 lane，以及治理就绪度 + 各客户端设置覆盖。`engram dock-review-queue` 按 lane 列出待审条目。`engram dock-quality-action` 执行单条 owner 确认动作（validate / promote / archive）：默认只预览，加 `--yes` 才写；promote 只作用于 staging 条目；archive 可恢复。四个命令都只返回元数据——不含标题、正文、推理或路径。
+
 ## [4.5.1] - 2026-06-18
 
 ### 修复

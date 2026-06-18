@@ -6,6 +6,11 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.6.0] - 2026-06-18
+
+### Added
+- Dock owner-console quality surfaces: four new local, owner-run commands a desktop client can drive. `engram dock-quality` and `engram dock-governance` are zero-write summaries — knowledge-quality counts plus the next review lane, and governance readiness plus per-client setting coverage. `engram dock-review-queue` lists items needing review, grouped by lane. `engram dock-quality-action` applies a single owner-confirmed action (validate, promote, or archive): it previews by default and writes only with `--yes`, promotes staged items only, and archives reversibly. All four return metadata only — no titles, bodies, reasoning, or paths.
+
 ## [4.5.1] - 2026-06-18
 
 ### Fixed

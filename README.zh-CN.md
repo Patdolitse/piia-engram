@@ -110,11 +110,11 @@ pip install piia-engram && engram setup
 
 | | 当前仓库 / 开发事实 |
 |---|---|
-| 版本口径 | **v4.5.1**（2026-06-18 已核验；最新公开包以 PyPI badge / GitHub Releases 为准）|
+| 版本口径 | **v4.6.0**（2026-06-18 已核验；最新公开包以 PyPI badge / GitHub Releases 为准）|
 | 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
 | MCP 工具 | **17 个核心**（默认加载）+ **40 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
-| 测试通过 | **3616** 个（单元 + 集成；3 个 skipped，共收集 3619）|
+| 测试通过 | **3637** 个（单元 + 集成；3 个 skipped，共收集 3640）|
 | 代码覆盖率 | **86%** 总体 |
 | `core.py` 行数 | **1770** 行（facade，领域逻辑已拆分为专责 mixin —— 见 [架构文档](docs/architecture.md)）|
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|

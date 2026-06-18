@@ -28,8 +28,8 @@ backing up the owner's local AI work identity store.
 
 | Class | Commands | Store behavior |
 |---|---|---|
-| Zero-write reads | `dock-status`, `dock-resume`, `dock-search`, `dock-list`, `dock-portrait`, `dock-archived`, `dock-get-lang`, `dock-onboard-scan` | Must not mutate the Engram store root, update checks, audit stamps, migrations, indexes, or session state. |
-| Owner-confirmed writes | `dock-archive`, `dock-restore`, `dock-onboard-commit`, `dock-update`, `dock-set-lang` | Deliberate local writes after the owner confirms the action in the client. |
+| Zero-write reads | `dock-status`, `dock-resume`, `dock-quality`, `dock-governance`, `dock-review-queue`, `dock-search`, `dock-list`, `dock-portrait`, `dock-archived`, `dock-get-lang`, `dock-onboard-scan` | Must not mutate the Engram store root, update checks, audit stamps, migrations, indexes, or session state. |
+| Owner-confirmed writes | `dock-archive`, `dock-restore`, `dock-onboard-commit`, `dock-update`, `dock-set-lang`, `dock-quality-action` | Deliberate local writes after the owner confirms the action in the client. |
 | Sensitive export | `dock-export` | Writes a full JSON backup file. Treat the output as sensitive. |
 
 Every JSON response uses `ok: true|false`. Error responses use
@@ -87,12 +87,40 @@ to write back. Agent-facing write paths strip caller-supplied `labeling`, `tier`
 `memory_state`, `approval_status`, and `approval_required`; the storage layer
 re-derives them from provenance, risk, tier, and owner-review state.
 
+## M2 — owner-confidence surfaces
+
+Four surfaces help a desktop client show the owner how trustworthy their store
+is and act on it. All are metadata-only — they never emit titles, bodies,
+reasoning, IDs of content, config paths, or raw session text.
+
+- `dock-quality` (zero-write): aggregate knowledge-quality counts by kind /
+  tier / freshness / labeling maturity, plus review-queue pressure and the next
+  owner review lane (`review_staging` / `review_needs_review` / `review_stale`
+  / `none`).
+- `dock-governance` (zero-write, pathless): process governance state plus
+  per-client `ENGRAM_GOVERNANCE` env coverage and a `writes_config: false`
+  recommendation. Never emits config paths, command args, raw config, or
+  exception text.
+- `dock-review-queue` (zero-write): rows of `kind` + `id` + `lanes` +
+  `freshness` + `labeling` + available `actions`, with per-lane counts.
+  Excludes archived/inactive items. `--lane` filters; `--limit` caps.
+- `dock-quality-action` (owner-confirmed write): one owner action —
+  `validate` / `promote` / `archive` — on a single item. Previews by default;
+  writes only with `--yes`. `promote` acts on staging only (re-checked
+  atomically under the store lock); `archive` is a recoverable tier archive,
+  never a delete. Refused actions stay zero-write; the receipt is metadata-only.
+
 ## Validation
 
 The contract is covered by:
 
 - `tests/test_dock_resume.py`: zero-write Dock commands, `dock-status`, row
   shapes, and labeling projection.
+- `tests/test_dock_quality.py` / `test_dock_governance.py` /
+  `test_dock_review_queue.py` / `test_dock_quality_action.py`: the M2
+  owner-confidence surfaces, their metadata-only payloads, and the write-action
+  boundaries (`--yes` gate, staging-only promote, recoverable archive,
+  zero-write refusals).
 - `tests/test_data_labeling.py`: caller-supplied maturity labels cannot be
   smuggled through single or batch write paths.
 - `tests/test_setup_wizard.py`: status governance visibility, including
