@@ -28,7 +28,13 @@ def eng(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engram:
     return Engram(root=root)
 
 
-def test_onboard_repo_zero_to_verified_recall_under_10min(eng):
+def test_onboard_repo_zero_to_verified_recall_under_10min(eng, monkeypatch):
+    # golden/ is nested in the engram repo; pin read_project_id so onboard + accept
+    # see a consistent repo identity (the real flow uses the same root for both).
+    monkeypatch.setattr(
+        "piia_engram.freshness_anchors.read_project_id",
+        lambda root: REPO_ID,
+    )
     transcript: dict = {"fixture": str(GOLDEN), "repo_id": REPO_ID, "steps": []}
     t0 = time.monotonic()
 

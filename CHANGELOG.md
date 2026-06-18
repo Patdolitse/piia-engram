@@ -6,6 +6,16 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.5.0] - 2026-06-18
+
+### Added
+- Onboard-repo first value path: `onboard_repo` scans a local repository, writes staged knowledge candidates with repo provenance, and lets the owner promote selected candidates through `onboard_accept` / `accept_onboard_candidate`; accepted repo-backed facts can then surface trusted recall for private-self owner calls.
+- CLI and MCP shells for repo onboarding: the local CLI can run the scan and accept flow, and the advanced owner-only MCP surface now exposes `onboard_repo` and `onboard_accept` without expanding the default Tier-1 tool set.
+- Acceptance proof target: the owner-confirmed scan -> staging candidate -> accept -> trusted recall workflow is designed to complete in <=10 minutes for a representative repository.
+
+### Fixed
+- `accept_onboard_candidate` now refuses to promote a staged candidate when its recorded `anchor_project_id` conflicts with the accepting repository's resolved project id, leaving the candidate staged for review instead of trusting cross-repo provenance.
+
 ## [4.4.0] - 2026-06-18
 
 ### Added

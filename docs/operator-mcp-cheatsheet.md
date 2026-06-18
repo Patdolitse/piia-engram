@@ -5,7 +5,7 @@ This is the short operational view of the Engram MCP surface.
 ## Default surface
 
 - Default: 17 core tools.
-- Opt-in full surface: all 55 tools with `ENGRAM_TOOLS=all` (17 core + 38 advanced).
+- Opt-in full surface: all 57 tools with `ENGRAM_TOOLS=all` (17 core + 40 advanced).
 - Core means high-frequency and context-budget friendly. It does not mean read-only.
 
 ## Capability modes
@@ -30,7 +30,7 @@ ENGRAM_TOOLS=all
 
 | Mode | Tools |
 |---|---|
-| `knowledge` | `refresh_quick_context`, `get_identity_facets`, `get_lessons`, `get_decisions`, `list_projects`, `get_knowledge_inheritance`, `get_knowledge_overview`, `explore_knowledge`, `export_knowledge_report`, `ingest_notes`, `extract_session_insights`, `update_knowledge`, `archive_knowledge`, `review_staging`, `get_stale_knowledge`, `request_outline_review`, `merge_knowledge`, `manage_relation`, `get_playbooks`, `manage_playbook`, `playbook_execution` |
+| `knowledge` | `refresh_quick_context`, `get_identity_facets`, `get_lessons`, `get_decisions`, `list_projects`, `get_knowledge_inheritance`, `get_knowledge_overview`, `explore_knowledge`, `export_knowledge_report`, `ingest_notes`, `extract_session_insights`, `update_knowledge`, `archive_knowledge`, `confirm_knowledge`, `onboard_repo`, `onboard_accept`, `check_anchors`, `review_staging`, `get_stale_knowledge`, `request_outline_review`, `merge_knowledge`, `manage_relation`, `get_playbooks`, `manage_playbook`, `playbook_execution` |
 | `governance` | `get_permission_profile`, `manage_caller_trust`, `get_audit_log`, `preview_context_governance` |
 | `admin` | `user_portrait`, `export_engram`, `import_engram`, `export_feedback_report`, `start_project`, `save_agent_context`, `list_agent_sessions` |
 | `integrations` | `read_web_content`, `register_tool`, `find_tool`, `list_tools` |
@@ -48,7 +48,7 @@ token。
 
 | 模式 | 工具 |
 |---|---|
-| `knowledge` | `refresh_quick_context`, `get_identity_facets`, `get_lessons`, `get_decisions`, `list_projects`, `get_knowledge_inheritance`, `get_knowledge_overview`, `explore_knowledge`, `export_knowledge_report`, `ingest_notes`, `extract_session_insights`, `update_knowledge`, `archive_knowledge`, `review_staging`, `get_stale_knowledge`, `request_outline_review`, `merge_knowledge`, `manage_relation`, `get_playbooks`, `manage_playbook`, `playbook_execution` |
+| `knowledge` | `refresh_quick_context`, `get_identity_facets`, `get_lessons`, `get_decisions`, `list_projects`, `get_knowledge_inheritance`, `get_knowledge_overview`, `explore_knowledge`, `export_knowledge_report`, `ingest_notes`, `extract_session_insights`, `update_knowledge`, `archive_knowledge`, `confirm_knowledge`, `onboard_repo`, `onboard_accept`, `check_anchors`, `review_staging`, `get_stale_knowledge`, `request_outline_review`, `merge_knowledge`, `manage_relation`, `get_playbooks`, `manage_playbook`, `playbook_execution` |
 | `governance` | `get_permission_profile`, `manage_caller_trust`, `get_audit_log`, `preview_context_governance` |
 | `admin` | `user_portrait`, `export_engram`, `import_engram`, `export_feedback_report`, `start_project`, `save_agent_context`, `list_agent_sessions` |
 | `integrations` | `read_web_content`, `register_tool`, `find_tool`, `list_tools` |

@@ -90,6 +90,8 @@ def test_tool_surface_classification_pins_local_legacy_and_core_export_tools():
     assert classes["manage_relation"] == "governed_write"
     assert classes["user_portrait"] == "governed_write"
     assert classes["manage_caller_trust"] == "owner_only_write"
+    assert classes["onboard_repo"] == "owner_only_write"
+    assert classes["onboard_accept"] == "owner_only_write"
 
     # Legacy playbook scope migration left the MCP surface (owner CLI now);
     # the governance table must not keep dangling entries.

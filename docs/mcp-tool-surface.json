@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "status": "taxonomy_snapshot",
-  "last_reviewed": "2026-06-11",
+  "last_reviewed": "2026-06-18",
   "source_of_truth": "scripts/count_mcp_tools.py --json",
   "counts": {
-    "total": 55,
+    "total": 57,
     "core": 17,
-    "advanced": 38
+    "advanced": 40
   },
   "tiers": [
     {

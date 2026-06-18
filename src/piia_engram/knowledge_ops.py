@@ -284,6 +284,17 @@ class KnowledgeOpsMixin:
 
         status = _freshness_anchors.UNKNOWN
         if project_root:
+            candidate_project_id = provenance.get("anchor_project_id") if isinstance(provenance, dict) else None
+            if isinstance(candidate_project_id, str) and candidate_project_id.strip():
+                root_project_id = _freshness_anchors.read_project_id(project_root)
+                if root_project_id is not None and root_project_id != candidate_project_id.strip():
+                    return {
+                        "error": (
+                            "candidate anchor_project_id "
+                            f"{candidate_project_id.strip()!r} does not match project "
+                            f"{root_project_id!r}; not accepting"
+                        ),
+                    }
             parsed = _freshness_anchors.parse_anchor_ref(anchor_ref)
             status = _freshness_anchors.check_anchor(parsed, project_root)
         if status == _freshness_anchors.INVALID:

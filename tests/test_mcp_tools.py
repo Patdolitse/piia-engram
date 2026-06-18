@@ -575,6 +575,8 @@ class TestToolTier:
             "export_feedback_report",
         } <= mcp_server.CAPABILITY_GROUPS["admin"]
         assert "manage_caller_trust" in mcp_server.CAPABILITY_GROUPS["governance"]
+        assert "onboard_repo" in mcp_server.CAPABILITY_GROUPS["knowledge"]
+        assert "onboard_accept" in mcp_server.CAPABILITY_GROUPS["knowledge"]
 
     def test_core_mode_hides_non_core_owner_only_and_export_owner_only_tools(
         self,
@@ -1782,6 +1784,42 @@ class TestRecallWrapper:
             item.get("summary") == "Release gates should stay focused before publishing."
             for item in result["knowledge"]
         )
+
+    def test_mcp_get_recall_passes_trust_only_for_owner(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        captured: dict = {}
+
+        def _gather(*args, **kwargs):
+            captured.update(kwargs)
+            return {"identity": {}, "knowledge": [], "meta": {}}
+
+        monkeypatch.setattr(mcp_server._gov_rt, "caller_is_owner", lambda root: True)
+        monkeypatch.setattr(mcp_server._recall_service, "gather_recall", _gather)
+        monkeypatch.setattr(mcp_server, "_track", lambda *args, **kwargs: None)
+
+        result = json.loads(_run(mcp_server.get_recall()))
+
+        assert result["knowledge"] == []
+        assert captured["include_trust"] is True
+        assert "include_trust" not in mcp_server.get_recall.__annotations__
+
+    def test_mcp_get_recall_refuses_non_owner_before_trust_gather(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+        monkeypatch.setattr(mcp_server._gov_rt, "caller_is_owner", lambda root: False)
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("get_recall should refuse before gather_recall")
+
+        monkeypatch.setattr(mcp_server._recall_service, "gather_recall", _boom)
+
+        result = _run(mcp_server.get_recall())
+
+        assert "private-self only" in result
+        assert "gather_recall" not in result
 
 
 class TestContextGovernancePreviewWrapper:

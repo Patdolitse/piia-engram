@@ -50,8 +50,16 @@ def test_create_onboard_candidate_is_staging_unconfirmed(eng):
     assert entry.get("domain") == "repo-fact"
 
 
-def test_accept_onboard_candidate_verifies_and_stamps_anchor(eng):
-    golden = Path(__file__).resolve().parent / "fixtures" / "onboard_repo_golden"
+def test_accept_onboard_candidate_verifies_and_stamps_anchor(eng, monkeypatch):
+    golden = GOLDEN
+    # golden/ is nested in the engram repo, so read_project_id(golden) resolves to
+    # the engram remote, not this candidate's id. Pin it so the accept project-id
+    # match check passes (the real flow onboards + accepts from the SAME root, so
+    # ids always match there; this just makes the unit test deterministic).
+    monkeypatch.setattr(
+        "piia_engram.freshness_anchors.read_project_id",
+        lambda root: "github.com/acme/app",
+    )
     eng.create_onboard_candidate(
         "This project depends on `react` (^18.2.0).",
         anchor_ref="dep:react",
@@ -131,6 +139,30 @@ def test_accept_refuses_known_invalid_anchor(eng, tmp_path):
     result = eng.accept_onboard_candidate(item_id, project_root=str(repo))
 
     assert "error" in result                          # refused, not promoted
+    assert _by_anchor(eng, "dep:react")["tier"] == "staging"
+
+
+def test_accept_refuses_candidate_from_different_project_id(eng, monkeypatch):
+    # The accept root resolves to a DIFFERENT repo identity than the candidate's
+    # anchor_project_id -> must refuse (prevents cross-repo accept where another
+    # repo with a same-named dep could verify this repo's candidate).
+    monkeypatch.setattr(
+        "piia_engram.freshness_anchors.read_project_id",
+        lambda root: "github.com/other/app",
+    )
+    eng.create_onboard_candidate(
+        "This project depends on `react` (^18.2.0).",
+        anchor_ref="dep:react",
+        anchor_detail={"version": "^18.2.0"},
+        anchor_project_id="github.com/acme/app",
+        extractor="onboard-repo@test",
+    )
+    item_id = _by_anchor(eng, "dep:react")["id"]
+
+    result = eng.accept_onboard_candidate(item_id, project_root=str(GOLDEN))
+
+    assert "error" in result
+    assert "anchor_project_id" in result["error"]
     assert _by_anchor(eng, "dep:react")["tier"] == "staging"
 
 

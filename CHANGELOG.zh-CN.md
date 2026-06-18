@@ -6,6 +6,16 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.5.0] - 2026-06-18
+
+### 新增
+- onboard-repo 首次价值路径：`onboard_repo` 扫描本地仓库，生成带仓库 provenance 的 staging 候选知识；owner 再通过 `onboard_accept` / `accept_onboard_candidate` 接受候选，已接受的仓库事实可在 private-self owner recall 中带着 trust 信号返回。
+- CLI 与 MCP 外壳：本地 CLI 支持扫描与接受流程，高级 owner-only MCP 面新增 `onboard_repo` 与 `onboard_accept`，默认 Tier-1 工具集保持不变。
+- 验收证明目标：scan -> staging candidate -> owner accept -> trusted recall 的确认流程面向代表性仓库设计为 <=10 分钟内完成。
+
+### 修复
+- `accept_onboard_candidate` 现在会拒绝推广 `anchor_project_id` 与目标仓库解析出的 project id 不一致的候选，并保留其 staging 状态，避免跨仓库 provenance 被误信任。
+
 ## [4.4.0] - 2026-06-18
 
 ### 新增

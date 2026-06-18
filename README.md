@@ -109,11 +109,11 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 
 | | Current repo / development facts |
 |---|---|
-| Version frame | **v4.4.0** (verified 2026-06-18; check PyPI and GitHub Releases for the latest published package) |
+| Version frame | **v4.5.0** (verified 2026-06-18; check PyPI and GitHub Releases for the latest published package) |
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
-| MCP tools | **17 Core** (loaded by default) + **38 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools | **17 Core** (loaded by default) + **40 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3561** (unit + integration; 2 skipped, 3563 collected) |
+| Tests passing | **3603** (unit + integration; 3 skipped, 3606 collected) |
 | Code coverage | **86%** total |
 | Lines in `core.py` | **1770** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -542,7 +542,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 55 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 55 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 57 MCP tools. By default, only the 17 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 57 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 You can also expose composable capability modes such as knowledge management, governance, admin, or integrations; see the [capability modes guide](docs/operator-mcp-cheatsheet.md#capability-modes).
 
@@ -582,7 +582,7 @@ You can also expose composable capability modes such as knowledge management, go
 | `get_resume_brief` | Build a cross-session/cross-tool resume brief |
 | `doctor` | Run memory system self-diagnosis |
 
-### Tier-2 Advanced (38 tools — knowledge management, review, governance, import/export)
+### Tier-2 Advanced (40 tools — knowledge management, review, governance, import/export)
 
 Advanced tools include optional local integrations, owner/admin surfaces, and maintenance helpers. Tools that export files, import whole stores, generate review pages, or mutate caller trust are owner/admin/export surfaces even when they are broadly useful product capabilities. Related operations are consolidated into single tools with a `mode`/`action` selector (v4.0).
 
@@ -611,6 +611,10 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `ingest_notes` | Parse free-form notes into structured knowledge |
 | `update_knowledge` | Update a lesson or decision by ID |
 | `archive_knowledge` | Archive a lesson or decision by ID |
+| `confirm_knowledge` | Owner-only confirmation stamp via human, test, or anchor provenance |
+| `onboard_repo` | Owner-only repo scan: create staging repo-fact candidates from anchors |
+| `onboard_accept` | Owner-only accept: validate a candidate anchor and promote it to verified |
+| `check_anchors` | Owner-only revalidation for existing anchor-backed facts |
 | `merge_knowledge` | Merge a duplicate into the primary item |
 | `manage_relation` | `action`: link / unlink — manage typed relations between knowledge items (decision threads) |
 | `explore_knowledge` | Knowledge graph exploration via `mode`: related, similar, merge_candidates |
@@ -771,7 +775,7 @@ piia-engram. Install with `pip install piia-engram && engram setup`, and both to
 piia-engram is a local-first AI work identity layer for MCP-compatible coding tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same user-owned context, so new chats and tool switches can start from the same governed memory and identity base.
 
 **How is piia-engram different from the official MCP memory server?**
-The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 55 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 57 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.
@@ -807,7 +811,7 @@ Two tiers, designed so most users only see 17 tools:
 | Tier | Tools | What they do | Loaded by |
 |------|-------|-------------|-----------|
 | **Core** | 17 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
-| **Advanced** | 38 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
+| **Advanced** | 40 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
 
 Most users never need to enable Advanced tools — Core covers everyday use.
 

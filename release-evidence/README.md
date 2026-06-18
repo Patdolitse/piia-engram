@@ -36,6 +36,7 @@ remain local unless a maintainer intentionally promotes a public-safe summary.
 
 | Version | Evidence | Release | Publish run |
 |---------|----------|---------|-------------|
+| v4.5.0 | [v4.5.0.md](v4.5.0.md) | pending owner publish | pending owner publish |
 | v4.2.0 | [v4.2.0.md](v4.2.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.2.0) | [27548329982](https://github.com/Patdolitse/piia-engram/actions/runs/27548329982) |
 | v4.1.0 | [v4.1.0.md](v4.1.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.1.0) | [27395714245](https://github.com/Patdolitse/piia-engram/actions/runs/27395714245) |
 | v4.0.0 | [v4.0.0.md](v4.0.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.0.0) | [27333402009](https://github.com/Patdolitse/piia-engram/actions/runs/27333402009) |

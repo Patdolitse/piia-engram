@@ -2481,7 +2481,7 @@ def _existing_engram_tools_values(tools: list[dict]) -> list[str]:
 def _prompt_setup_capability_mode() -> str:
     print()
     print(_t("  MCP 工具模式 / Capability mode:", "  Capability mode / MCP 工具模式:"))
-    print(_t("    1. 全部工具（推荐，55 个）", "    1. All tools (recommended, 55 tools)"))
+    print(_t("    1. 全部工具（推荐，57 个）", "    1. All tools (recommended, 57 tools)"))
     print(_t("    2. 仅核心（17 个，最小面）", "    2. Core only (17 tools, minimal surface)"))
     print(_t("    3. 核心+知识库管理（40 个）", "    3. Core + knowledge management (40 tools)"))
     answer = _prompt(_t("  请选择工具模式", "  Choose tool mode"), "1").strip()
@@ -3204,7 +3204,7 @@ def main() -> None:
             "  export_engram           Full local JSON backup (treat as sensitive)\n\n"
             "Tool tiers:\n"
             "  Default: 17 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 55 tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 57 tools.\n"
         )
         sys.exit(0)
 

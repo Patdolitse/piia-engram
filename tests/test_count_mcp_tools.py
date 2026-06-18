@@ -30,11 +30,11 @@ def counter():
 
 
 def test_derive_matches_known_split(counter):
-    """The committed split is 55 total = 17 core + 38 advanced."""
+    """The committed split is 57 total = 17 core + 40 advanced."""
     counts = counter.derive(ROOT)
-    assert counts["total"] == 55
+    assert counts["total"] == 57
     assert counts["core"] == 17
-    assert counts["advanced"] == 38
+    assert counts["advanced"] == 40
     assert counts["core"] + counts["advanced"] == counts["total"]
 
 
@@ -75,4 +75,4 @@ def test_json_output(counter, tmp_path, monkeypatch, capsys):
     ])
     assert counter.main() == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"total": 55, "core": 17, "advanced": 38}
+    assert payload == {"total": 57, "core": 17, "advanced": 40}

@@ -1,7 +1,7 @@
 metadata:
   name: piia-engram
-  description: "Personal intelligence identity layer for MCP-compatible AI tools. Local-first, user-governed, 55 MCP tools."
-  version: 4.4.0
+  description: "Personal intelligence identity layer for MCP-compatible AI tools. Local-first, user-governed, 57 MCP tools."
+  version: 4.5.0
   tags:
     - memory
     - identity
@@ -18,7 +18,7 @@ spec:
   environment:
     ENGRAM_TOOLS:
       type: string
-      description: "Tool tier: 'core' (17 tools) or 'all' (55 tools)"
+      description: "Tool tier: 'core' (17 tools) or 'all' (57 tools)"
       default: "all"
     ENGRAM_DIR:
       type: string

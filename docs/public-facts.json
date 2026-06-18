@@ -2,15 +2,15 @@
   "schema_version": 1,
   "_about": "Machine-readable canonical PUBLIC FACTS for piia-engram. This is the single source of truth that scripts/check_public_fact_sync.py enforces against the current-state public documentation surfaces. Update this file (and re-run the guard) whenever the numbers below change. See docs/runbooks/public-truth-sync.md.",
   "package_name": "piia-engram",
-  "local_dev_version": "4.4.0",
+  "local_dev_version": "4.5.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 3561,
-    "test_skipped": 2,
-    "test_collected": 3563,
-    "mcp_tools_total": 55,
+    "test_passed": 3603,
+    "test_skipped": 3,
+    "test_collected": 3606,
+    "mcp_tools_total": 57,
     "mcp_tools_core": 17,
-    "mcp_tools_advanced": 38,
+    "mcp_tools_advanced": 40,
     "telemetry_default": "off",
     "telemetry_remote_default": "off"
   },
@@ -52,26 +52,26 @@
     ],
     "required_substrings": [
       { "file": "README.md", "must_contain": [
-        "ships 55 MCP tools",
-        "all 55 tools",
+        "ships 57 MCP tools",
+        "all 57 tools",
         "17 **Tier-1 Core**",
-        "Tier-2 Advanced (38 tools",
+        "Tier-2 Advanced (40 tools",
         "**17 Core**",
-        "**38 Advanced**"
+        "**40 Advanced**"
       ] },
       { "file": "README.zh-CN.md", "must_contain": [
         "17 个核心",
-        "38 个高级"
+        "40 个高级"
       ] },
       { "file": "docs/architecture.md", "must_contain": [
-        "55 tools",
+        "57 tools",
         "17 Tier-1",
-        "38 Tier-2"
+        "40 Tier-2"
       ] },
       { "file": "glama.yaml", "must_contain": [
-        "55 MCP tools",
+        "57 MCP tools",
         "'core' (17 tools)",
-        "'all' (55 tools)"
+        "'all' (57 tools)"
       ] }
     ],
     "forbidden_in_current_state": [
@@ -82,11 +82,11 @@
     "stale_patterns": [
       {
         "pattern": "\\*\\*Advanced\\*\\* \\| 70",
-        "reason": "pre-v4.0.0 advanced tool count (now 38); this exact FAQ-table cell shipped stale in the v4.0.0 release"
+        "reason": "pre-v4.0.0 advanced tool count (now 40); this exact FAQ-table cell shipped stale in the v4.0.0 release"
       },
       {
         "pattern": "\\*\\*高级\\*\\* \\| 70",
-        "reason": "zh-CN twin of the pre-v4.0.0 advanced tool-count FAQ cell (now 38)"
+        "reason": "zh-CN twin of the pre-v4.0.0 advanced tool-count FAQ cell (now 40)"
       },
       {
         "pattern": "\\*\\*Version\\*\\*: v[0-3]\\.",

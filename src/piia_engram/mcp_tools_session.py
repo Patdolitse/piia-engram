@@ -218,6 +218,7 @@ async def get_recall(
             token_budget=safe_budget,
             include_freshness=include_freshness,
             collapse_versions=collapse_versions,
+            include_trust=True,
             # Owner gate decides whether this aggregate view may be read at all.
             # When governance is on, role-scoped memory then narrows which
             # sensitivity tiers the owner-context call may project.

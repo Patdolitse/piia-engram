@@ -25,7 +25,7 @@ def test_marketplace_metadata_guard_passes_current_repo():
     assert report["ok"] is True, report["problems"]
     assert report["displayName"] == "Piia Engram"
     assert report["slug"] == "patdolitse-piia-engram"
-    assert report["facts"]["mcp_tools_total"] == 55
+    assert report["facts"]["mcp_tools_total"] == 57
 
 
 def test_marketplace_metadata_guard_catches_fallback_title(tmp_path):

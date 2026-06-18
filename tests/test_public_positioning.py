@@ -264,9 +264,9 @@ def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims(
     doc = _read("docs/tool-surface-analysis.md")
     tools = _mcp_tool_names()
 
-    assert len(tools) == 55
+    assert len(tools) == 57
     assert "17 core tools" in doc
-    assert "38 advanced tools" in doc
+    assert "40 advanced tools" in doc
     assert "Core is not read-only" in doc
     assert "core but owner-gated" in doc
     assert "Optional local / dogfood tools" in doc
@@ -348,7 +348,7 @@ def test_architecture_does_not_carry_stale_mcp_wrapper_count():
     assert "81 `@mcp.tool()`" not in doc
     assert "83 `@mcp.tool()`" not in doc
     assert "87 `@mcp.tool()`" not in doc
-    assert "55 `@mcp.tool()`" in doc
+    assert "57 `@mcp.tool()`" in doc
 
 
 def test_readme_top_positions_identity_layer_not_plain_memory():

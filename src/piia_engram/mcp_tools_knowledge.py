@@ -165,6 +165,67 @@ async def confirm_knowledge(
 
 
 @S.mcp.tool()
+async def onboard_repo(project_root: str = "") -> str:
+    """Owner-only: scan a repo and create staging repo-fact candidates.
+
+    Owner/admin surface: writes staging candidate repo-facts and is refused for
+    non-owner callers when governance is enabled.
+
+    用途：owner 扫描仓库中的 npm/Python/file 锚点，生成 staging 候选事实供后续确认；
+    不会自动验证或提升信任。
+    Purpose: Scan the repo's npm/Python/file anchors and create staging
+    repo-fact candidates for the owner to accept later. Nothing is auto-verified.
+
+    Args:
+        project_root: 仓库根目录；留空时使用当前工作目录。 / Repository root; defaults to cwd.
+    """
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="onboard_repo")
+    if refusal is not None:
+        return refusal
+
+    import os as _os
+
+    root = project_root.strip() or _os.getcwd()
+    result = S._locked_engram_call(S._engram.onboard_repo, root)
+    result = S._gov_rt.maybe_govern_owner_only(
+        S._engram.root, result, tool="onboard_repo"
+    )
+    return S._json(result)
+
+
+@S.mcp.tool()
+async def onboard_accept(item_id: str, project_root: str = "") -> str:
+    """Owner-only: accept an onboard candidate and stamp anchor provenance.
+
+    Owner/admin surface: promotes a staging candidate to a verified owner fact
+    and is refused for non-owner callers when governance is enabled.
+
+    用途：owner 确认一条 onboard 候选，先按仓库校验其锚点，再提升为 verified 并盖
+    anchor 确认戳；锚点无效或绑定到不同仓库时拒绝。
+    Purpose: Owner-accept an onboard candidate by checking its anchor against
+    the repo, then promoting it to a verified fact with anchor provenance.
+
+    Args:
+        item_id: onboard 候选的 ID。 / The onboard candidate id.
+        project_root: 仓库根目录；留空时使用当前工作目录。 / Repository root; defaults to cwd.
+    """
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="onboard_accept")
+    if refusal is not None:
+        return refusal
+
+    import os as _os
+
+    root = project_root.strip() or _os.getcwd()
+    result = S._locked_engram_call(
+        S._engram.accept_onboard_candidate, item_id, project_root=root
+    )
+    result = S._gov_rt.maybe_govern_owner_only(
+        S._engram.root, result, tool="onboard_accept"
+    )
+    return S._json(result)
+
+
+@S.mcp.tool()
 async def check_anchors(
     project_root: str,
     adopt_legacy: bool = False,
