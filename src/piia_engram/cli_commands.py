@@ -2070,6 +2070,178 @@ def _run_dock_quality(args: list[str]) -> int:
     return 0
 
 
+def _dock_config_governance_summary() -> dict:
+    """Per-client ENGRAM_GOVERNANCE env coverage (metadata-only, pathless).
+
+    Inspects each detected MCP client's config for the engram entry and whether
+    ENGRAM_GOVERNANCE is set. Rows expose name / status / verified /
+    governance_env only — never config paths, args, or raw config (Dock M2
+    boundary). A failed inspection degrades to a sanitized generic message.
+    """
+    def _truthy(value: object) -> bool:
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    clients: list[dict] = []
+    try:
+        configs = W._tool_configs()
+    except Exception:
+        return {
+            "configured": 0, "governance_enabled": 0, "needs_governance": 0,
+            "total": 0, "clients": [], "error": "unable to inspect client configs",
+        }
+
+    for tool_id, cfg in configs.items():
+        name = str(cfg.get("name") or tool_id)
+        fmt = str(cfg.get("format") or "json")
+        server_key = str(cfg.get("server_key") or "mcpServers")
+        row = {
+            "name": name, "status": "not configured",
+            "verified": bool(cfg.get("verified")), "governance_env": "missing",
+        }
+        for raw_path in cfg.get("config_paths", []):
+            path = Path(raw_path)
+            if not path.is_file():
+                continue
+            try:
+                config = W._read_mcp_config(path, fmt)
+            except Exception:
+                row["status"] = "needs attention"
+                row["governance_env"] = "unknown"
+                row["error"] = "unable to inspect client config"
+                break
+            servers = config.get(server_key, {}) if isinstance(config, dict) else {}
+            if not isinstance(servers, dict):
+                continue
+            entry = servers.get("engram") or servers.get("piia-engram")
+            if not isinstance(entry, dict):
+                row["status"] = "missing entry"
+                continue
+            try:
+                classification = W._classify_engram_entry(entry)
+            except Exception:
+                row["status"] = "needs attention"
+                row["governance_env"] = "unknown"
+                row["error"] = "unable to classify client config"
+                break
+            severity = str(classification.get("severity") or "warn")
+            row["status"] = "configured" if severity == "ok" else "needs attention"
+            env = entry.get("env")
+            env = env if isinstance(env, dict) else {}
+            row["governance_env"] = (
+                "enabled" if _truthy(env.get("ENGRAM_GOVERNANCE")) else "missing"
+            )
+            break
+        clients.append(row)
+
+    configured = sum(1 for item in clients if item.get("status") == "configured")
+    governance_enabled = sum(
+        1 for item in clients
+        if item.get("status") == "configured" and item.get("governance_env") == "enabled"
+    )
+    return {
+        "configured": configured,
+        "governance_enabled": governance_enabled,
+        "needs_governance": max(0, configured - governance_enabled),
+        "total": len(clients),
+        "clients": clients,
+    }
+
+
+def _run_dock_governance(args: list[str]) -> int:
+    """Zero-write owner-facing governance readiness summary (Dock M2).
+
+    Local + owner-run. Reports the process governance state + per-client
+    ENGRAM_GOVERNANCE env coverage + a writes_config=false recommendation.
+    Pathless: never emits config paths, command args, raw config, or exception
+    text (the process governance block's transient error field is stripped).
+    """
+    import os as _os
+    from piia_engram.status_report import build_status
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-governance [--json]\n\n"
+            "  Zero-write governance readiness summary for a local desktop client.\n"
+            "  Reports current governance state and client env coverage; writes nothing.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "read_only": True, "error": msg,
+                 "governance": {}, "client_governance": {}},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    for a in args:
+        if a != "--json":
+            return _err(f"unknown option: {a}")
+
+    source_was_set = "ENGRAM_CALLER_SOURCE" in _os.environ
+    initiation_was_set = "ENGRAM_INITIATION_SOURCE" in _os.environ
+    if not source_was_set:
+        _os.environ["ENGRAM_CALLER_SOURCE"] = "desktop_dock"
+    if not initiation_was_set:
+        _os.environ["ENGRAM_INITIATION_SOURCE"] = "unknown"
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        status = build_status(probe=False)
+        governance = dict(status.get("governance", {})) if isinstance(status, dict) else {}
+        governance.pop("error", None)  # never surface raw exception text
+        client_governance = _dock_config_governance_summary()
+    except Exception:
+        return _err("unable to build governance summary", 1)
+    finally:
+        if not source_was_set:
+            _os.environ.pop("ENGRAM_CALLER_SOURCE", None)
+        if not initiation_was_set:
+            _os.environ.pop("ENGRAM_INITIATION_SOURCE", None)
+
+    needs_env = int(client_governance.get("needs_governance", 0) or 0)
+    enabled = bool(governance.get("enabled"))
+    recommendation = {
+        "code": "governance_ready" if enabled and needs_env == 0 else "enable_governance",
+        "writes_config": False,
+        "command": "Set ENGRAM_GOVERNANCE=1 in each MCP client env",
+        "reason": (
+            "Governance is enabled for this process and configured clients."
+            if enabled and needs_env == 0
+            else "Governance is optional but recommended for multi-tool or automated use."
+        ),
+    }
+    payload = {
+        "ok": True,
+        "read_only": True,
+        "engram_dir": str(status.get("root") or root) if isinstance(status, dict) else str(root),
+        "dock_contract_version": _DOCK_CONTRACT_VERSION,
+        "dock_capabilities": _dock_capabilities(),
+        "governance": governance,
+        "client_governance": client_governance,
+        "recommendation": recommendation,
+    }
+    if want_json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    print(
+        "Dock governance\n"
+        f"Governance: {'on' if enabled else 'off'}\n"
+        f"Configured clients: {client_governance.get('configured', 0)} / "
+        f"{client_governance.get('total', 0)}\n"
+        f"Clients with ENGRAM_GOVERNANCE=1: "
+        f"{client_governance.get('governance_enabled', 0)}"
+    )
+    return 0
+
+
 def _run_dock_resume(args: list[str]) -> int:
     """Emit a zero-write, paste-ready resume brief for a local desktop client.
 
