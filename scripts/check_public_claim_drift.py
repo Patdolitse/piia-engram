@@ -63,6 +63,7 @@ _EXPLICIT_IGNORE = (
 _HISTORICAL_PREFIXES = (
     "CHANGELOG",
     "release-evidence/",
+    "docs/migration-v4",  # version-migration guides describe a past release's tool count (v4.0: 87->53)
 )
 
 # Quantified-claim patterns -> manifest fact key they must equal.
