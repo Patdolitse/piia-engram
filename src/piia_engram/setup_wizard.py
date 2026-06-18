@@ -2954,6 +2954,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_resume,
     _run_dock_quality,
     _run_dock_governance,
+    _run_dock_review_queue,
     _run_dock_search,
     _run_dock_export,
     _run_dock_portrait,
@@ -3007,7 +3008,7 @@ def main() -> None:
     # there to avoid a double-print. `dock-resume`/`dock-search` are guaranteed
     # zero-write entries — the reminder would write .update_check.json into the
     # store — so skip them too. Never reached by the separate MCP-server entry.
-    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan")):
+    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3076,6 +3077,8 @@ def main() -> None:
         sys.exit(_run_dock_quality(args[1:]))
     elif args[0] == "dock-governance":
         sys.exit(_run_dock_governance(args[1:]))
+    elif args[0] == "dock-review-queue":
+        sys.exit(_run_dock_review_queue(args[1:]))
     elif args[0] == "dock-search":
         sys.exit(_run_dock_search(args[1:]))
     elif args[0] == "dock-export":

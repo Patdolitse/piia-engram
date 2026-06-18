@@ -2242,6 +2242,170 @@ def _run_dock_governance(args: list[str]) -> int:
     return 0
 
 
+_DOCK_REVIEW_LANES = ("staging", "needs_review", "unreviewed", "partial", "stale")
+
+
+def _dock_review_row(kind: str, item: dict) -> dict | None:
+    """Project one knowledge item to a metadata-only review-queue row.
+
+    Returns None for archived/inactive items or items in no review lane. The
+    row carries id + lanes + freshness + labeling + actions only — never the
+    title, body, editable fields, or copy text (Dock M2 boundary).
+    """
+    from piia_engram.provenance import compute_freshness
+
+    if not isinstance(item, dict):
+        return None
+    if item.get("tier") == "archived":
+        return None
+    if (item.get("status") or "active") != "active":
+        return None
+
+    labeling = _dock_labeling_projection(item)
+    freshness = compute_freshness(item).get("freshness_status", "unknown")
+    freshness = freshness if freshness in {"fresh", "aging", "stale", "unknown"} else "unknown"
+    tier = str(item.get("tier") or "verified")
+    validation_state = str(labeling.get("validation_state") or "unknown")
+    annotation_quality = str(labeling.get("annotation_quality") or "unknown")
+
+    lanes: list[str] = []
+    if tier == "staging":
+        lanes.append("staging")
+    if validation_state == "needs_review":
+        lanes.append("needs_review")
+    if validation_state == "unreviewed":
+        lanes.append("unreviewed")
+    if annotation_quality == "partial":
+        lanes.append("partial")
+    if freshness == "stale":
+        lanes.append("stale")
+    if not lanes:
+        return None
+
+    actions = ["validate", "archive"]
+    if tier == "staging":
+        actions.insert(0, "promote")
+    return {
+        "kind": kind,
+        "id": str(item.get("id") or ""),
+        "tier": tier,
+        "lanes": lanes,
+        "reasons": lanes,
+        "freshness": freshness,
+        "labeling": labeling,
+        "actions": actions,
+    }
+
+
+def _run_dock_review_queue(args: list[str]) -> int:
+    """Zero-write metadata-only quality review queue (Dock M2).
+
+    Local + owner-run. Opens the store ``read_only`` and emits review-queue rows
+    (id + lanes + maturity/freshness metadata + available actions) for the
+    desktop client; never titles, bodies, editable fields, or copy text.
+    Archived/inactive items are excluded. ``--lane`` filters; ``--limit`` caps.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-review-queue [--lane all|staging|needs_review|unreviewed|"
+            "partial|stale] [--limit N] [--json]\n\n"
+            "  Zero-write metadata-only review queue for a local desktop client.\n"
+            "  Emits ids, lanes, maturity metadata, freshness, and available actions;\n"
+            "  never emits titles, bodies, editable fields, or copy text.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+    lane = "all"
+    limit = 0
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "read_only": True, "error": msg,
+                 "lane": lane, "count": 0, "results": []},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--json":
+            pass
+        elif a == "--lane":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--lane requires a value")
+            i += 1
+            lane = args[i].strip()
+            if lane not in {"all", *_DOCK_REVIEW_LANES}:
+                return _err("invalid lane")
+        elif a == "--limit":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--limit requires a value")
+            i += 1
+            try:
+                limit = int(args[i])
+            except ValueError:
+                return _err("--limit must be an integer")
+            if limit <= 0:
+                return _err("--limit must be a positive integer")
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root, read_only=True)
+        rows: list[dict] = []
+        lanes = {name: 0 for name in _DOCK_REVIEW_LANES}
+        total_queue_rows = 0
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            for item in eng._read_entries(eng._knowledge_dir / fname, kind):
+                row = _dock_review_row(kind, item)
+                if row is None:
+                    continue
+                total_queue_rows += 1
+                for name in row["lanes"]:
+                    lanes[name] += 1
+                if lane == "all" or lane in row["lanes"]:
+                    rows.append(row)
+        lanes["all"] = total_queue_rows
+    except Exception:
+        return _err("unable to build review queue", 1)
+
+    if limit:
+        rows = rows[:limit]
+
+    payload = {
+        "ok": True,
+        "read_only": True,
+        "engram_dir": str(root),
+        "dock_contract_version": _DOCK_CONTRACT_VERSION,
+        "dock_capabilities": _dock_capabilities(),
+        "lane": lane,
+        "lanes": lanes,
+        "count": len(rows),
+        "results": rows,
+    }
+    if want_json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if not rows:
+        print("(no review queue entries)")
+        return 0
+    for row in rows:
+        print(f"- ({row['kind']} {row['id']}) {','.join(row['lanes'])}")
+    return 0
+
+
 def _run_dock_resume(args: list[str]) -> int:
     """Emit a zero-write, paste-ready resume brief for a local desktop client.
 
