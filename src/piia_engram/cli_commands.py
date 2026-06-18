@@ -1809,7 +1809,7 @@ def _run_recall(args: list[str]) -> int:
     """
     import os as _os
     from piia_engram.core import Engram
-    from piia_engram.recall_service import gather_recall, render_recall_text
+    from piia_engram.recall_service import gather_recall, record_recall_funnel, render_recall_text
 
     if args and args[0] in {"-h", "--help"}:
         print(
@@ -1845,6 +1845,9 @@ def _run_recall(args: list[str]) -> int:
         include_trust="--no-trust" not in args,  # CLI = owner/private-self: show why-trustworthy
         collapse_versions="--no-collapse" not in args,
     )
+    # First-value funnel (opt-in, content-blind). CLI recall has no specific AI
+    # tool context, so current_tool is left unknown.
+    record_recall_funnel(payload, current_tool="", surface="cli")
 
     if "--json" in args:
         print(json.dumps(payload, ensure_ascii=False, indent=2))

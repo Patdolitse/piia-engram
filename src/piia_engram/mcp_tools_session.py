@@ -224,6 +224,17 @@ async def get_recall(
             # sensitivity tiers the owner-context call may project.
             role_scoped_memory=S._gov_rt.governance_enabled(),
         )
+        # First-value funnel (opt-in, content-blind). After the owner gate, so a
+        # refused non-owner read never reaches here. current_tool drives the
+        # cross-tool relation (computed locally; the tool pair is never recorded).
+        try:
+            from . import telemetry as _tel
+
+            S._recall_service.record_recall_funnel(
+                payload, current_tool=_tel.current_tool_label(), surface="mcp"
+            )
+        except Exception:
+            pass
         perms = S._gov_rt.describe_caller_permissions(S._engram.root)
         meta = payload.setdefault("meta", {})
         governance = meta.setdefault("governance", {})

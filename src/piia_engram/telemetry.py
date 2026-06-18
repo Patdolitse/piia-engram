@@ -292,6 +292,28 @@ def bucket_recall(n: Any) -> str:    # _B_RECALL
     return _bucketize(n, [(0, "0"), (3, "1_3"), (8, "4_8")], "9_plus")
 
 
+def current_tool_label() -> str:
+    """Best-effort, bounded label for the calling AI tool (for cross-tool funnel).
+
+    Reads the advisory ENGRAM_CLIENT_TYPE / ENGRAM_CALLER_SOURCE env labels and
+    maps them to the closed _FV_TOOLS set; unset -> "unknown". Only the bounded
+    label is ever recorded — never a raw client string.
+    """
+    raw = (
+        os.environ.get("ENGRAM_CLIENT_TYPE", "")
+        or os.environ.get("ENGRAM_CALLER_SOURCE", "")
+    ).strip().lower()
+    if not raw:
+        return "unknown"
+    if "claude" in raw:
+        return "claude_code"
+    if "cursor" in raw:
+        return "cursor"
+    if "codex" in raw:
+        return "codex"
+    return "other"
+
+
 def first_value_log_path() -> Path:
     return _engram_root() / "first_value_events.jsonl"
 

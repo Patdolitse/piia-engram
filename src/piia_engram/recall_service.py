@@ -449,3 +449,100 @@ def render_recall_text(payload: dict[str, Any]) -> str:
                 f"returned={returned}, trimmed={trimmed}, budget={used}/{requested}"
             )
     return "\n".join(lines)
+
+
+def record_recall_funnel(
+    payload: dict, *, current_tool: str = "", surface: str = "mcp"
+) -> None:
+    """Record the back-half first-value funnel events (trust + cross-tool payoff).
+
+    Content-blind result extractor: derives bucketed outcomes from the recall
+    payload only. The cross-tool relation is computed LOCALLY (the calling tool
+    vs each item's source agent); only the relation + counts buckets are ever
+    recorded — never the tool pair, item ids, or content. Gated by
+    first_value_enabled() and wrapped so telemetry can never break recall.
+    """
+    from . import telemetry as _tel
+
+    if not _tel.first_value_enabled():
+        return
+    try:
+        items = payload.get("knowledge", []) if isinstance(payload, dict) else []
+        items = [i for i in items if isinstance(i, dict)]
+        rec_surface = surface if surface in _tel._FV_SURFACES else "unknown"
+
+        # --- trust payoff: did the owner see why facts are trustworthy? ---
+        trust_items = [i for i in items if isinstance(i.get("trust"), dict)]
+        if trust_items:
+            bases: set[str] = set()
+            statuses: set[str] = set()
+            has_validated = has_expiry = False
+            for i in trust_items:
+                t = i["trust"]
+                if t.get("confirmation_source"):
+                    bases.add(str(t["confirmation_source"]))
+                if t.get("anchor_status"):
+                    statuses.add(str(t["anchor_status"]))
+                if t.get("validated_at"):
+                    has_validated = True
+                if t.get("decay_policy") or t.get("freshness_status"):
+                    has_expiry = True
+            basis = "mixed" if len(bases) > 1 else (next(iter(bases)) if bases else "unknown")
+            if basis not in {"anchor", "human", "test_signal", "mixed", "unknown"}:
+                basis = "unknown"
+            if not statuses:
+                amix = "none"
+            elif statuses == {"valid"}:
+                amix = "valid_only"
+            elif statuses == {"unknown"}:
+                amix = "unknown_only"
+            else:
+                amix = "mixed"
+            _tel.record_first_value_event(
+                "recall.trust.payoff",
+                {
+                    "payoff": True,
+                    "trusted_items_bucket": _tel.bucket_recall(len(trust_items)),
+                    "trust_basis": basis,
+                    "anchor_status_mix": amix,
+                    "has_validated_at": has_validated,
+                    "has_expiry_signal": has_expiry,
+                },
+                surface=rec_surface,
+            )
+
+        # --- cross-tool payoff: recalled in a tool other than the one that wrote it
+        ct = current_tool if current_tool in _tel._FV_TOOLS else "unknown"
+        cross = trusted_cross = same = 0
+        for i in items:
+            origin = str((i.get("provenance") or {}).get("source_agent") or "")
+            if not origin or ct == "unknown":
+                continue
+            if origin != ct:
+                cross += 1
+                if isinstance(i.get("trust"), dict):
+                    trusted_cross += 1
+            else:
+                same += 1
+        if cross and same:
+            relation = "mixed"
+        elif cross:
+            relation = "cross_tool"
+        elif same:
+            relation = "same_tool"
+        else:
+            relation = "unknown"
+        _tel.record_first_value_event(
+            "recall.cross_tool.payoff",
+            {
+                "payoff": cross > 0,
+                "current_tool": ct,
+                "source_relation": relation,
+                "cross_tool_items_bucket": _tel.bucket_recall(cross),
+                "trusted_cross_tool_items_bucket": _tel.bucket_recall(trusted_cross),
+                "recall_surface": "get_recall",
+            },
+            surface=rec_surface,
+        )
+    except Exception:
+        pass

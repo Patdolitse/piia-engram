@@ -91,6 +91,52 @@ def test_onboard_funnel_off_records_nothing(tmp_path, monkeypatch):
     assert not telemetry.first_value_log_path().exists()
 
 
+def test_recall_funnel_records_trust_and_cross_tool(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram"))
+    monkeypatch.setenv("ENGRAM_TELEMETRY", "1")
+    for k in ("DO_NOT_TRACK", "NO_TELEMETRY", "CI", "GITHUB_ACTIONS"):
+        monkeypatch.delenv(k, raising=False)
+    from piia_engram import recall_service
+
+    payload = {
+        "knowledge": [
+            {  # written by claude_code, recalled in codex -> cross-tool, trusted
+                "summary": "depends on react",
+                "trust": {
+                    "confirmation_source": "anchor", "anchor": "dep:react",
+                    "anchor_status": "valid", "validated_at": "2026-06-18T10:00:00",
+                    "decay_policy": "trigger",
+                },
+                "provenance": {"source_agent": "claude_code"},
+            },
+            {"summary": "y", "provenance": {"source_agent": "codex"}},  # same tool
+        ]
+    }
+    recall_service.record_recall_funnel(payload, current_tool="codex", surface="mcp")
+
+    events = telemetry.read_first_value_events()
+    names = [e["event"] for e in events]
+    assert "recall.trust.payoff" in names
+    assert "recall.cross_tool.payoff" in names
+
+    trust = next(e for e in events if e["event"] == "recall.trust.payoff")
+    assert trust["fields"]["payoff"] is True
+    assert trust["fields"]["trust_basis"] == "anchor"
+    assert trust["fields"]["anchor_status_mix"] == "valid_only"
+    assert trust["fields"]["has_validated_at"] is True
+
+    ct = next(e for e in events if e["event"] == "recall.cross_tool.payoff")
+    assert ct["fields"]["current_tool"] == "codex"
+    assert ct["fields"]["source_relation"] == "mixed"  # one cross, one same
+    assert ct["fields"]["payoff"] is True
+
+    # privacy red line: the tool PAIR and the anchor/content never appear
+    blob = "\n".join(str(e) for e in events)
+    assert "claude_code" not in blob      # the OTHER tool is never recorded
+    assert "dep:react" not in blob
+    assert "depends on react" not in blob
+
+
 def test_onboard_funnel_respects_do_not_track(tmp_path, monkeypatch):
     root = tmp_path / "engram"
     monkeypatch.setenv("ENGRAM_DIR", str(root))
