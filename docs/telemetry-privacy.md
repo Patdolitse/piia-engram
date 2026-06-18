@@ -80,6 +80,33 @@ state, returning bucket, error trend — all short fixed-vocabulary strings).
   deduplicated people. This wording is enforced by
   `validate_dashboard_wording()` and the worker-contract tests.
 
+## First-value funnel (local-only, opt-in, content-blind)
+
+A separate, newer signal records **where you land in the onboard → trusted-recall
+funnel**, so a solo maintainer can see whether people reach first value and where
+they get stuck — without ever reading memory content. The one-line promise:
+*we see where you land, never what is in your memory.*
+
+- **Local only.** Funnel events are written to a local `first_value_events.jsonl`
+  under your Engram dir and are **never sent anywhere** in this phase (the remote
+  worker has no funnel fields). `engram telemetry funnel` shows them; you can open
+  or delete the file anytime.
+- **Same opt-in, stricter gate.** Off by default; honors `DO_NOT_TRACK` and
+  `NO_TELEMETRY` *absolutely* — even an explicit `ENGRAM_TELEMETRY=1` cannot
+  override them here — and auto-silences in CI.
+- **Strict fail-closed whitelist.** Only six declared events with closed
+  bucket/enum fields are ever written; an unknown event, an unknown field, or a
+  value outside its set rejects the whole event, so a stray content-shaped field
+  can never be persisted.
+- **What it records:** onboard scan / candidates / accept (bucketed counts, an
+  acceptance-rate label, and a *categorized* reject reason), trusted-recall
+  payoff (trust basis, anchor-status mix), and cross-tool payoff.
+- **What it never records:** memory content, fact text, queries, file names,
+  paths, dependency / package names, repo ids, anchor refs, item ids, raw error
+  messages, persistent UUIDs — and **never the tool pair**: "a fact written in
+  one tool was recalled in another" is computed locally; only the relation
+  (`cross_tool`) is recorded, never "codex → claude".
+
 ## How the guarantees are enforced (defense in depth)
 
 1. **Payload contract** — `build_payload()` emits only declared fields and runs
