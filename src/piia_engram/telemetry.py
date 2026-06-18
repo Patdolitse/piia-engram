@@ -263,6 +263,35 @@ FIRST_VALUE_SCHEMA: dict[str, dict[str, Any]] = {
 }
 
 
+def _bucketize(n: Any, edges: list[tuple[int, str]], top: str) -> str:
+    """Collapse a non-negative count into a coarse bucket label."""
+    n = n if isinstance(n, int) and n >= 0 else 0
+    for hi, label in edges:
+        if n <= hi:
+            return label
+    return top
+
+
+def bucket_scan(n: Any) -> str:      # _B_SCAN
+    return _bucketize(n, [(0, "0"), (4, "1_4"), (9, "5_9"), (24, "10_24"), (99, "25_99")], "100_plus")
+
+
+def bucket_wide(n: Any) -> str:      # _B_WIDE
+    return _bucketize(n, [(0, "0"), (4, "1_4"), (9, "5_9"), (24, "10_24")], "25_plus")
+
+
+def bucket_med(n: Any) -> str:       # _B_MED
+    return _bucketize(n, [(0, "0"), (4, "1_4"), (9, "5_9")], "10_plus")
+
+
+def bucket_small(n: Any) -> str:     # _B_SMALL
+    return _bucketize(n, [(0, "0"), (4, "1_4")], "5_plus")
+
+
+def bucket_recall(n: Any) -> str:    # _B_RECALL
+    return _bucketize(n, [(0, "0"), (3, "1_3"), (8, "4_8")], "9_plus")
+
+
 def first_value_log_path() -> Path:
     return _engram_root() / "first_value_events.jsonl"
 

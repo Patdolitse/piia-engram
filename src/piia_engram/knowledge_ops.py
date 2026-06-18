@@ -137,6 +137,7 @@ class KnowledgeOpsMixin:
                 anchor_project_id=repo_id,
                 extractor=extractor,
             ))
+        self._record_fv_candidates(created, existing, updated, skipped)
         return {
             "created": len(created),
             "existing": existing,
@@ -162,6 +163,7 @@ class KnowledgeOpsMixin:
         if repo_id is None:
             repo_id = _freshness_anchors.read_project_id(project_root)
         anchors = _freshness_anchors.enumerate_anchors(project_root)
+        self._record_fv_scan(anchors, repo_id)
         summary = self.create_onboard_candidates(
             anchors, repo_id=repo_id, extractor=extractor
         )
@@ -433,6 +435,10 @@ class KnowledgeOpsMixin:
                 results.append({"id": item_id, "anchor_ref": anchor_ref, "status": "accepted"})
 
         if dry_run:
+            self._record_fv_accept_batch(
+                dry_run=True, accepted=would_accept, rejected=would_reject,
+                skipped=skipped, results=results,
+            )
             return {
                 "dry_run": True,
                 "repo_id": resolved_repo_id,
@@ -444,6 +450,10 @@ class KnowledgeOpsMixin:
                 "rejected": 0,
                 "results": results,
             }
+        self._record_fv_accept_batch(
+            dry_run=False, accepted=accepted, rejected=rejected,
+            skipped=skipped, results=results,
+        )
         return {
             "dry_run": False,
             "repo_id": resolved_repo_id,
@@ -452,6 +462,122 @@ class KnowledgeOpsMixin:
             "skipped": skipped,
             "results": results,
         }
+
+    # ------------------------------------------------------------------
+    # First-value funnel telemetry — result extractors (content-blind).
+    # Each derives a bucketed outcome from the RESULT only (never args), is
+    # gated by first_value_enabled(), and is wrapped so telemetry can never
+    # break the onboarding flow. Nothing here writes content, ids, paths,
+    # names, versions, or reasons — only closed bucket/enum values.
+    # ------------------------------------------------------------------
+
+    def _record_fv_scan(self, anchors: list, repo_id: object) -> None:
+        from . import telemetry as _tel
+        if not _tel.first_value_enabled():
+            return
+        try:
+            kinds = [a.get("kind") for a in anchors if isinstance(a, dict)]
+            _tel.record_first_value_event("onboard.scan.completed", {
+                "anchors_bucket": _tel.bucket_scan(len(anchors)),
+                "dep_anchors_bucket": _tel.bucket_wide(kinds.count("dep")),
+                "file_anchors_bucket": _tel.bucket_wide(kinds.count("file")),
+                "unsupported_bucket": _tel.bucket_med(kinds.count("unsupported")),
+                "repo_identity": "resolved" if repo_id else "unresolved",
+                "outcome": "success" if anchors else "empty",
+                "error_category": "none",
+            })
+        except Exception:
+            pass
+
+    def _record_fv_candidates(
+        self, created: list, existing: int, updated: int, skipped: int
+    ) -> None:
+        from . import telemetry as _tel
+        if not _tel.first_value_enabled():
+            return
+        try:
+            kinds: set[str] = set()
+            for c in created:
+                ref = (c.get("provenance") or {}).get("anchor_ref", "") if isinstance(c, dict) else ""
+                if ref.startswith("dep:"):
+                    kinds.add("dep")
+                elif ref.startswith("file:"):
+                    kinds.add("file")
+            n = len(created)
+            if not n:
+                mix = "none"
+            elif {"dep", "file"} <= kinds:
+                mix = "mixed"
+            elif "dep" in kinds:
+                mix = "dep_only"
+            elif "file" in kinds:
+                mix = "file_only"
+            else:
+                mix = "none"
+            if n and not existing and not updated:
+                idem = "new_candidates"
+            elif not n and updated:
+                idem = "updated_existing"
+            elif not n and not updated:
+                idem = "all_existing"
+            else:
+                idem = "mixed"
+            _tel.record_first_value_event("onboard.candidates.materialized", {
+                "created_bucket": _tel.bucket_wide(n),
+                "existing_bucket": _tel.bucket_wide(existing),
+                "updated_bucket": _tel.bucket_med(updated),
+                "skipped_bucket": _tel.bucket_small(skipped),
+                "candidate_mix": mix,
+                "idempotency": idem,
+            })
+        except Exception:
+            pass
+
+    def _record_fv_accept_batch(
+        self, *, dry_run: bool, accepted: int, rejected: int, skipped: int, results: list
+    ) -> None:
+        from . import telemetry as _tel
+        if not _tel.first_value_enabled():
+            return
+        try:
+            total = accepted + rejected
+            if total == 0 or accepted == 0:
+                rate = "none"
+            elif accepted == total:
+                rate = "all"
+            else:
+                frac = accepted / total
+                rate = "high" if frac >= 0.75 else "medium" if frac >= 0.4 else "low"
+            counts: dict[str, int] = {}
+            for r in results:
+                if not isinstance(r, dict) or r.get("status") not in ("rejected", "would_reject"):
+                    continue
+                reason = str(r.get("reason") or "").lower()
+                if "invalid" in reason:
+                    cat = "anchor_invalid"
+                elif "does not match" in reason or "anchor_project_id" in reason:
+                    cat = "repo_mismatch"
+                elif "no anchor" in reason or "missing" in reason:
+                    cat = "missing_anchor"
+                else:
+                    cat = "exception"
+                counts[cat] = counts.get(cat, 0) + 1
+            if not counts:
+                dom = "none"
+            elif len(counts) == 1:
+                dom = next(iter(counts))
+            else:
+                dom = "mixed"
+            _tel.record_first_value_event("onboard.accept.batch_completed", {
+                "dry_run": bool(dry_run),
+                "accepted_bucket": _tel.bucket_wide(accepted),
+                "rejected_bucket": _tel.bucket_med(rejected),
+                "skipped_bucket": _tel.bucket_small(skipped),
+                "acceptance_rate": rate,
+                "dominant_reject_reason": dom,
+            })
+        except Exception:
+            pass
 
     def revalidate_anchors(
         self,
