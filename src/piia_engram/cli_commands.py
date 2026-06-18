@@ -727,8 +727,57 @@ def run_onboard(argv: list[str] | None = None) -> int:
 
 def _print_onboard_accept_usage() -> None:
     print("Usage: engram onboard-accept <item_id> [--root PATH] [--json]")
-    print("  Owner-accept an onboard candidate: verify its anchor against the repo and")
-    print("  promote it to a confirmed fact. Refuses if the anchor is invalid.")
+    print("       engram onboard-accept --all [--yes] [--root PATH] [--json]")
+    print("  Owner-accept onboard candidate(s): verify the anchor against the repo and")
+    print("  promote to a confirmed fact. A single accept refuses if the anchor is invalid.")
+    print("  --all batch-accepts every staging candidate for this repo; it previews by")
+    print("  default (count + repo + skipped cross-repo) and needs --yes to write.")
+
+
+def _run_onboard_accept_all(args: list[str]) -> int:
+    """Batch owner-accept (engram onboard-accept --all): preview unless --yes.
+
+    Owner-explicit only. Reuses the per-item accept path so each candidate is
+    anchor-verified, cross-repo-skipped, and invalid-anchor-refused; the batch
+    can partially succeed. Without --yes it is a zero-write dry-run preview.
+    """
+    json_output = "--json" in args
+    confirm = "--yes" in args
+    root = os.getcwd()
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("--all", "--yes", "--json"):
+            i += 1
+            continue
+        if arg == "--root":
+            if i + 1 >= len(args):
+                print("--root requires a path")
+                return 2
+            root = args[i + 1]
+            i += 2
+            continue
+        print(f"Unknown onboard-accept option: {arg}")
+        _print_onboard_accept_usage()
+        return 2
+
+    from piia_engram.core import Engram
+
+    result = Engram().accept_onboard_candidates(project_root=root, dry_run=not confirm)
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif result.get("dry_run"):
+        print(
+            f"将接受 {result.get('would_accept', 0)} 条候选 (repo: {result.get('repo_id')})；"
+            f"跳过 {result.get('skipped', 0)} 条跨仓库候选。加 --yes 执行。"
+        )
+    else:
+        print(
+            f"批量接受完成 (repo: {result.get('repo_id')}): "
+            f"已接受 {result.get('accepted', 0)}，拒绝 {result.get('rejected', 0)}，"
+            f"跳过 {result.get('skipped', 0)} 条。"
+        )
+    return 0
 
 
 def run_onboard_accept(argv: list[str] | None = None) -> int:
@@ -738,6 +787,8 @@ def run_onboard_accept(argv: list[str] | None = None) -> int:
     if args and args[0] in ("-h", "--help"):
         _print_onboard_accept_usage()
         return 0
+    if "--all" in args:
+        return _run_onboard_accept_all(args)
     if not args or args[0].startswith("--"):
         _print_onboard_accept_usage()
         return 2
@@ -1763,7 +1814,7 @@ def _run_recall(args: list[str]) -> int:
         print(
             "Usage:\n"
             "  engram recall [--project NAME] [--query TEXT] [--budget N]\n"
-            "                [--no-freshness] [--no-collapse] [--json]\n"
+            "                [--no-freshness] [--no-collapse] [--no-trust] [--json]\n"
         )
         return 0
 
@@ -1790,6 +1841,7 @@ def _run_recall(args: list[str]) -> int:
         query=query,
         token_budget=budget,
         include_freshness="--no-freshness" not in args,
+        include_trust="--no-trust" not in args,  # CLI = owner/private-self: show why-trustworthy
         collapse_versions="--no-collapse" not in args,
     )
 

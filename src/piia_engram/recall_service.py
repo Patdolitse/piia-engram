@@ -405,6 +405,25 @@ def render_recall_text(payload: dict[str, Any]) -> str:
         if isinstance(pv, dict) and pv.get("source_agent"):
             prov = f" «src:{pv['source_agent']}»"
         lines.append(f"  - ({prefix}){fresh}{labeling_tag}{prov} {label}")
+        # Owner trust block (owner/private-self only; gated upstream by
+        # include_trust). Surfaces the 4.5.0 first-value payoff — why a fact is
+        # trustworthy, its anchor, when it was validated, and when it expires.
+        trust = item.get("trust")
+        if isinstance(trust, dict):
+            bits: list[str] = []
+            if trust.get("confirmation_source"):
+                bits.append(f"why={trust['confirmation_source']}")
+            if trust.get("anchor"):
+                bits.append(f"anchor={trust['anchor']}")
+            if trust.get("anchor_status"):
+                bits.append(f"status={trust['anchor_status']}")
+            if trust.get("validated_at"):
+                bits.append(f"validated={trust['validated_at']}")
+            expires = trust.get("decay_policy") or trust.get("freshness_status")
+            if expires:
+                bits.append(f"expires={expires}")
+            if bits:
+                lines.append("      trust: " + ", ".join(bits))
 
     gov = meta.get("governance", {})
     excluded = gov.get("excluded_count", 0) if isinstance(gov, dict) else 0

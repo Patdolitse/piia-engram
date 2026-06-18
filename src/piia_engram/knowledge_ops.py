@@ -330,6 +330,88 @@ class KnowledgeOpsMixin:
         self._audit.log("write", "knowledge/onboard-accept", detail=item_id)
         return updated
 
+    def accept_onboard_candidates(
+        self,
+        *,
+        project_root: str | None = None,
+        repo_id: str | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Owner-accept ALL staging onboard candidates in one batch.
+
+        Per-item atomic: reuses accept_onboard_candidate for each candidate, so
+        every one is independently anchor-verified, cross-repo-guarded, and
+        refused if its anchor is INVALID. The batch can partially succeed — one
+        bad anchor never rolls back the others. Candidates whose
+        anchor_project_id does not match this repo are SKIPPED (never accepted
+        cross-repo). dry_run previews count + repo_id + the in-scope candidates
+        with zero writes (the CLI runs dry by default; --yes commits).
+        """
+        resolved_repo_id = repo_id
+        if resolved_repo_id is None and project_root:
+            resolved_repo_id = _freshness_anchors.read_project_id(project_root)
+
+        results: list[dict] = []
+        preview: list[dict] = []
+        accepted = rejected = skipped = 0
+
+        for entry in self.get_lessons(limit=None, _update_access=False):
+            if entry.get("domain") != "repo-fact" or entry.get("tier") != "staging":
+                continue
+            prov = entry.get("provenance") if isinstance(entry.get("provenance"), dict) else {}
+            anchor_ref = prov.get("anchor_ref")
+            if not isinstance(anchor_ref, str) or not anchor_ref.strip():
+                continue  # not an onboard candidate
+            item_id = entry.get("id", "")
+            cand_pid = prov.get("anchor_project_id")
+            if (
+                resolved_repo_id is not None
+                and isinstance(cand_pid, str)
+                and cand_pid.strip()
+                and cand_pid.strip() != resolved_repo_id
+            ):
+                skipped += 1
+                results.append({
+                    "id": item_id, "anchor_ref": anchor_ref,
+                    "status": "skipped", "reason": "different repo",
+                })
+                continue
+            preview.append({
+                "id": item_id, "anchor_ref": anchor_ref, "summary": entry.get("summary"),
+            })
+            if dry_run:
+                continue
+            res = self.accept_onboard_candidate(item_id, project_root=project_root)
+            if isinstance(res, dict) and res.get("error"):
+                rejected += 1
+                results.append({
+                    "id": item_id, "anchor_ref": anchor_ref,
+                    "status": "rejected", "reason": res["error"],
+                })
+            else:
+                accepted += 1
+                results.append({"id": item_id, "anchor_ref": anchor_ref, "status": "accepted"})
+
+        if dry_run:
+            return {
+                "dry_run": True,
+                "repo_id": resolved_repo_id,
+                "would_accept": len(preview),
+                "skipped": skipped,
+                "candidates": preview,
+                "accepted": 0,
+                "rejected": 0,
+                "results": results,
+            }
+        return {
+            "dry_run": False,
+            "repo_id": resolved_repo_id,
+            "accepted": accepted,
+            "rejected": rejected,
+            "skipped": skipped,
+            "results": results,
+        }
+
     def revalidate_anchors(
         self,
         project_root: str,
