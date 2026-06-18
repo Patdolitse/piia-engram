@@ -109,11 +109,11 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 
 | | Current repo / development facts |
 |---|---|
-| Version frame | **v4.5.0** (verified 2026-06-18; check PyPI and GitHub Releases for the latest published package) |
+| Version frame | **v4.5.1** (verified 2026-06-18; check PyPI and GitHub Releases for the latest published package) |
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **40 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3603** (unit + integration; 3 skipped, 3606 collected) |
+| Tests passing | **3616** (unit + integration; 3 skipped, 3619 collected) |
 | Code coverage | **86%** total |
 | Lines in `core.py` | **1770** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |

@@ -6,6 +6,14 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.5.1] - 2026-06-18
+
+### Fixed
+- `engram recall` now shows the owner trust block for each repo-backed fact — why it's trusted, its anchor, when it was last validated, and its decay policy — so the trusted-recall first value is visible from the CLI, not only through an MCP client. Pass `--no-trust` to hide it.
+
+### Added
+- Batch onboarding accept: `engram onboard-accept --all` accepts every staging candidate for the current repository in one command. It previews by default (how many would be accepted, refused for an invalid anchor, or skipped as cross-repo) and needs `--yes` to write. Each candidate is still verified against its anchor individually, so the batch can partially succeed and never accepts another repository's candidate.
+
 ## [4.5.0] - 2026-06-18
 
 ### Added
