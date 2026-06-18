@@ -6,11 +6,14 @@ which atomically sets tier=verified + stamps confirmation_source="anchor".
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from piia_engram.core import Engram
+
+GOLDEN = Path(__file__).resolve().parent / "fixtures" / "onboard_repo_golden"
 
 
 @pytest.fixture()
@@ -205,3 +208,32 @@ def test_gather_recall_surfaces_trust_for_owner(eng):
     # default (non-owner) recall must NOT surface trust
     governed = recall_service.gather_recall(eng, query="react")
     assert all("trust" not in i for i in governed.get("knowledge", []))
+
+
+# --- M4c: CLI thin shells (share the same Engram core) ----------------------
+
+
+def test_run_onboard_cli_creates_candidates(eng, capsys):
+    from piia_engram import setup_wizard as W
+
+    rc = W.run_onboard(["--root", str(GOLDEN), "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["created"] >= 5
+    facts = [e for e in eng.get_lessons(limit=None, _update_access=False)
+             if e.get("domain") == "repo-fact"]
+    assert facts and all(f["tier"] == "staging" for f in facts)
+
+
+def test_run_onboard_accept_cli(eng, capsys):
+    from piia_engram import setup_wizard as W
+
+    W.run_onboard(["--root", str(GOLDEN), "--json"])
+    capsys.readouterr()  # clear
+    item_id = _by_anchor(eng, "dep:react")["id"]
+
+    rc = W.run_onboard_accept([item_id, "--root", str(GOLDEN), "--json"])
+    assert rc == 0
+    accepted = _by_anchor(eng, "dep:react")
+    assert accepted["tier"] == "verified"
+    assert accepted["provenance"]["confirmation_source"] == "anchor"

@@ -677,6 +677,103 @@ def run_confirm(argv: list[str] | None = None) -> int:
     return 1 if result.get("error") else 0
 
 
+def _print_onboard_usage() -> None:
+    print("Usage: engram onboard [--root PATH] [--json]")
+    print("  Scan the repo's npm/Python/file anchors and create staging candidate")
+    print("  repo-facts. Review with `engram review`; accept with `engram onboard-accept <id>`.")
+
+
+def run_onboard(argv: list[str] | None = None) -> int:
+    """Scan the current repo and create STAGING candidate facts (owner accepts later)."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_onboard_usage()
+        return 0
+    root = os.getcwd()
+    json_output = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--json":
+            json_output = True
+            i += 1
+            continue
+        if arg == "--root":
+            if i + 1 >= len(args):
+                print("--root requires a path")
+                return 2
+            root = args[i + 1]
+            i += 2
+            continue
+        print(f"Unknown onboard option: {arg}")
+        _print_onboard_usage()
+        return 2
+
+    from piia_engram.core import Engram
+
+    result = Engram().onboard_repo(root)
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"Onboarded {root}: scanned {result.get('anchors_scanned', 0)} anchor(s), "
+            f"created {result.get('created', 0)}, existing {result.get('existing', 0)}, "
+            f"updated {result.get('updated', 0)} staging candidate fact(s)."
+        )
+        print("Review with `engram review`; accept with `engram onboard-accept <id>`.")
+    return 0
+
+
+def _print_onboard_accept_usage() -> None:
+    print("Usage: engram onboard-accept <item_id> [--root PATH] [--json]")
+    print("  Owner-accept an onboard candidate: verify its anchor against the repo and")
+    print("  promote it to a confirmed fact. Refuses if the anchor is invalid.")
+
+
+def run_onboard_accept(argv: list[str] | None = None) -> int:
+    """Owner-accept an onboard candidate (promote to verified + stamp the anchor)."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_onboard_accept_usage()
+        return 0
+    if not args or args[0].startswith("--"):
+        _print_onboard_accept_usage()
+        return 2
+    item_id = args[0]
+    json_output = False
+    root = os.getcwd()
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        if arg == "--json":
+            json_output = True
+            i += 1
+            continue
+        if arg == "--root":
+            if i + 1 >= len(args):
+                print("--root requires a path")
+                return 2
+            root = args[i + 1]
+            i += 2
+            continue
+        print(f"Unknown onboard-accept option: {arg}")
+        _print_onboard_accept_usage()
+        return 2
+
+    from piia_engram.core import Engram
+
+    result = Engram().accept_onboard_candidate(item_id, project_root=root)
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif result.get("error"):
+        print(f"接受失败: {result['error']}")
+    else:
+        print(f"已接受 onboard 候选: {item_id} (tier=verified, anchor stamped)")
+    return 1 if result.get("error") else 0
+
+
 def run_anchors(argv: list[str] | None = None) -> int:
     """Owner-run anchor maintenance CLI."""
     W._configure_utf8_stdio()

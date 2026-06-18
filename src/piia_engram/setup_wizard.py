@@ -2937,6 +2937,8 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     run_review,
     run_confirm,
     run_anchors,
+    run_onboard,
+    run_onboard_accept,
     _run_telemetry_cli,
     _run_privacy_report,
     _build_feedback_report,
@@ -3026,6 +3028,10 @@ def main() -> None:
         sys.exit(run_confirm(args[1:]))
     elif args[0] == "anchors":
         sys.exit(run_anchors(args[1:]))
+    elif args[0] == "onboard":
+        sys.exit(run_onboard(args[1:]))
+    elif args[0] == "onboard-accept":
+        sys.exit(run_onboard_accept(args[1:]))
     elif args[0] == "playbook":
         sys.exit(run_playbook(args[1:]))
     elif args[0] == "status":
