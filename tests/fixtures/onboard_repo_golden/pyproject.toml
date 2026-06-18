@@ -1,0 +1,10 @@
+[project]
+name = "onboard-golden-fixture"
+version = "1.0.0"
+description = "Stable fixture repo for piia-engram onboard-repo acceptance tests."
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.31",
+  "pydantic>=2.5",
+  "httpx>=0.26",
+]

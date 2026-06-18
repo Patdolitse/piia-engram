@@ -7,6 +7,7 @@ store and it is not part of the pure ``compute_freshness`` read path.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -287,3 +288,190 @@ def check_anchor(parsed: dict[str, str] | None, root: str) -> str:
     if kind == "dep":
         return _check_dep_anchor(ref, project_root)
     return _check_file_anchor(ref, project_root)
+
+
+# --- onboard-repo: anchor enumeration (M1) -----------------------------------
+# The functions above CHECK a single given anchor ref. enumerate_anchors does
+# the inverse: it scans a repo's manifests + key files and yields candidate
+# anchors (with version/position detail) for the onboard-repo flow. Top-level
+# deps only (no transitive); unsupported/unreadable manifests are surfaced as
+# kind="unsupported", never silently dropped. Output is deduped by (kind, ref)
+# and sorted for determinism (stable across re-runs).
+
+_KEY_FILE_CANDIDATES = (
+    "README.md",
+    "README.rst",
+    "README",
+    "LICENSE",
+    "LICENSE.md",
+    "CONTRIBUTING.md",
+    "Dockerfile",
+    "Makefile",
+)
+
+
+def format_anchor_ref(kind: str, ref: str) -> str:
+    """Format a stored A.5a anchor ref string (``dep:<name>`` / ``file:<path>``)."""
+    return f"{kind}:{ref}"
+
+
+def _split_requirement(spec_text: str) -> tuple[str, str] | None:
+    """Return ``(normalized_name, version_remainder)`` for a PEP 508 dependency
+    string. The caller strips line comments first (requirements use ``#``;
+    PEP-508 dep strings do not). Returns ``None`` for blanks, URLs, VCS refs, and
+    ``-r``/``-c`` includes; drops extras (``[security]``) and env markers."""
+    text = spec_text.strip()
+    if not text or text.startswith(("-", "http://", "https://", "git+")):
+        return None
+    core = text.split(";", 1)[0].strip()
+    if " @ " in core:
+        core = core.split(" @ ", 1)[0].strip()
+    match = _DEP_NAME_RE.match(core)
+    if not match:
+        return None
+    name = _normalize_dep_name(match.group(1))
+    remainder = core[match.end():].strip()
+    if remainder.startswith("["):
+        close = remainder.find("]")
+        if close != -1:
+            remainder = remainder[close + 1:].strip()
+    return name, remainder
+
+
+def _add_dep(out: list[dict[str, Any]], name: Any, version: Any, source: str) -> None:
+    out.append({
+        "kind": "dep",
+        "ref": _normalize_dep_name(str(name)),
+        "detail": {"version": str(version)},
+        "source": source,
+    })
+
+
+def _enumerate_package_json(path: Path, out: list[dict[str, Any]]) -> None:
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        out.append({"kind": "unsupported", "ref": "package.json",
+                    "source": "package.json", "reason": "unreadable"})
+        return
+    if not isinstance(data, dict):
+        return
+    for section in (
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+    ):
+        deps = data.get(section)
+        if not isinstance(deps, dict):
+            continue
+        for name, spec in deps.items():
+            _add_dep(out, name, spec, "package.json")
+
+
+def _enumerate_pyproject(path: Path, out: list[dict[str, Any]]) -> None:
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        out.append({"kind": "unsupported", "ref": "pyproject.toml",
+                    "source": "pyproject.toml", "reason": "unreadable"})
+        return
+    data = _toml_loads(text)
+    if data is None:
+        out.append({"kind": "unsupported", "ref": "pyproject.toml",
+                    "source": "pyproject.toml", "reason": "unparseable"})
+        return
+    tool = data.get("tool")
+    if isinstance(tool, dict) and any(
+        isinstance(tool.get(name), dict) for name in _UNSUPPORTED_PYPROJECT_TOOL_TABLES
+    ):
+        # Match the checker: a poetry/pdm table makes the whole file unverifiable,
+        # so do not enumerate [project] deps the checker would later reject.
+        out.append({"kind": "unsupported", "ref": "pyproject.toml",
+                    "source": "pyproject.toml", "reason": "poetry/pdm not supported"})
+        return
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return  # no PEP-621 [project] table -> nothing to enumerate (not unsupported)
+    entries: list[str] = []
+    deps = project.get("dependencies")
+    if isinstance(deps, list):
+        entries.extend(str(dep) for dep in deps)
+    optional = project.get("optional-dependencies")
+    if isinstance(optional, dict):
+        for values in optional.values():
+            if isinstance(values, list):
+                entries.extend(str(dep) for dep in values)
+    for entry in entries:
+        parsed = _split_requirement(entry)
+        if parsed is None:
+            continue
+        name, version = parsed
+        _add_dep(out, name, version, "pyproject.toml")
+
+
+def _enumerate_requirements(root: Path, out: list[dict[str, Any]]) -> None:
+    for req_path in sorted(root.glob("requirements*.txt")):
+        try:
+            lines = req_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+        for line in lines:
+            clean = line.split("#", 1)[0].strip()  # strip line comment
+            parsed = _split_requirement(clean)
+            if parsed is None:
+                continue
+            name, version = parsed
+            _add_dep(out, name, version, req_path.name)
+
+
+def _enumerate_key_files(root: Path, out: list[dict[str, Any]]) -> None:
+    for name in _KEY_FILE_CANDIDATES:
+        candidate = root / name
+        if not candidate.is_file():
+            continue
+        try:
+            digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        out.append({
+            "kind": "file",
+            "ref": name,
+            "detail": {"hash": digest},
+            "source": "file",
+        })
+
+
+def enumerate_anchors(root: str) -> list[dict[str, Any]]:
+    """Enumerate candidate anchors from a repo's manifests and key files.
+
+    Returns a deterministic, deduplicated list of candidate dicts:
+    ``{"kind": "dep"|"file"|"unsupported", "ref": str, "detail": {...}, "source": str}``.
+    Top-level deps only (no transitive). Unsupported/unreadable manifests are
+    surfaced as ``kind="unsupported"`` rather than dropped.
+    """
+    root_path = Path(root).expanduser()
+    raw: list[dict[str, Any]] = []
+    _enumerate_package_json(root_path / "package.json", raw)
+    _enumerate_pyproject(root_path / "pyproject.toml", raw)
+    _enumerate_requirements(root_path, raw)
+    _enumerate_key_files(root_path, raw)
+
+    # dedup by (kind, ref); first occurrence wins. Insertion order encodes the
+    # source priority (package.json > pyproject > requirements > file); refs are
+    # already normalized so the same dep across manifests dedups. Sort for
+    # determinism, then attach the ready-to-store anchor_ref string for M2.
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in raw:
+        key = (item["kind"], item["ref"])
+        if key not in seen:
+            seen[key] = item
+    result = [seen[key] for key in sorted(seen)]
+    for item in result:
+        if item["kind"] in ("dep", "file"):
+            item["anchor_ref"] = format_anchor_ref(item["kind"], item["ref"])
+    return result
