@@ -28,6 +28,81 @@ class KnowledgeOpsMixin:
             return self.update_playbook(item_id, updates)
         return self.update_decision(item_id, updates)
 
+    def create_onboard_candidate(
+        self,
+        claim_text: str,
+        *,
+        anchor_ref: str,
+        anchor_detail: dict | None = None,
+        anchor_project_id: str | None = None,
+        extractor: str = "onboard-repo",
+    ) -> dict:
+        """Create a STAGING repo-fact candidate from an enumerated anchor.
+
+        Agent-proposed and trust-stripped: tier is forced to "staging" (not
+        auto-verified) and NO confirmation_source/anchor_status is set here. The
+        owner grants trust later via accept_onboard_candidate. Uses the internal
+        provenance path only to retain the anchor binding (anchor_project_id is
+        otherwise stripped on ordinary writes) — never to self-attest trust.
+        """
+        provenance: dict[str, Any] = {"extractor": extractor, "anchor_ref": anchor_ref}
+        if anchor_detail is not None:
+            provenance["anchor_detail"] = anchor_detail
+        if anchor_project_id is not None:
+            provenance["anchor_project_id"] = anchor_project_id
+        lesson = {
+            "summary": claim_text,
+            "domain": "repo-fact",
+            "tier": "staging",
+            "provenance": provenance,
+        }
+        return self.add_lesson(lesson, _allow_internal_provenance=True)
+
+    @staticmethod
+    def _onboard_claim_text(kind: str, ref: str, detail: dict | None) -> str:
+        detail = detail if isinstance(detail, dict) else {}
+        if kind == "dep":
+            version = detail.get("version")
+            if version:
+                return f"This project depends on `{ref}` ({version})."
+            return f"This project depends on `{ref}`."
+        return f"This project includes the file `{ref}`."
+
+    def create_onboard_candidates(
+        self,
+        anchors: list[dict],
+        *,
+        repo_id: str | None = None,
+        extractor: str = "onboard-repo",
+    ) -> dict:
+        """Turn enumerate_anchors() output into STAGING candidate facts.
+
+        dep/file anchors become candidates; kind="unsupported" markers are
+        skipped (counted in the summary, not silently dropped).
+        """
+        created: list[dict] = []
+        skipped = 0
+        for anchor in anchors:
+            if not isinstance(anchor, dict):
+                skipped += 1
+                continue
+            kind = anchor.get("kind")
+            ref = str(anchor.get("ref", ""))
+            if kind not in {"dep", "file"} or not ref:
+                skipped += 1
+                continue
+            detail = anchor.get("detail") if isinstance(anchor.get("detail"), dict) else {}
+            anchor_ref = anchor.get("anchor_ref") or _freshness_anchors.format_anchor_ref(kind, ref)
+            claim = self._onboard_claim_text(kind, ref, detail)
+            created.append(self.create_onboard_candidate(
+                claim,
+                anchor_ref=anchor_ref,
+                anchor_detail=detail,
+                anchor_project_id=repo_id,
+                extractor=extractor,
+            ))
+        return {"created": len(created), "skipped": skipped, "candidates": created}
+
     def _stamp_validated_entry(
         self,
         entry: dict,
@@ -115,6 +190,60 @@ class KnowledgeOpsMixin:
         if updated is None:
             return {"error": f"Item not found: {item_id}"}
         self._audit.log("write", "knowledge/confirm", detail=item_id)
+        return updated
+
+    def accept_onboard_candidate(
+        self,
+        item_id: str,
+        *,
+        project_root: str | None = None,
+    ) -> dict:
+        """Owner-accept an onboard candidate: atomically promote it to verified
+        and stamp the anchor confirmation.
+
+        Owner is the trust authority, so this DOES promote tier staging->verified
+        (unlike confirm_knowledge, which is stamp-only), and it stamps
+        confirmation_source="anchor" (not "human" like promote_knowledge).
+        anchor_status is derived by checking the anchor against project_root when
+        given, else "unknown" — never fabricated. (A later read-time check_anchors
+        pass demotes the fact if the anchor is INVALID.)
+        """
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {item_id}"}
+        provenance = item.get("provenance")
+        anchor_ref = provenance.get("anchor_ref") if isinstance(provenance, dict) else None
+        if not isinstance(anchor_ref, str) or not anchor_ref.strip():
+            return {"error": "Item has no anchor_ref to accept"}
+
+        status = _freshness_anchors.UNKNOWN
+        if project_root:
+            parsed = _freshness_anchors.parse_anchor_ref(anchor_ref)
+            status = _freshness_anchors.check_anchor(parsed, project_root)
+
+        ts = _now_iso()
+
+        def _mark(entry: dict) -> dict:
+            entry["tier"] = "verified"
+            updated = self._stamp_validated_entry(
+                entry,
+                item_type,
+                source_agent="owner",
+                validated_at=ts,
+                confirmation_source="anchor",
+            )
+            prov = updated.get("provenance")
+            if not isinstance(prov, dict):
+                prov = {}
+            prov["anchor_status"] = status
+            prov["anchor_ref"] = anchor_ref
+            updated["provenance"] = prov
+            return updated
+
+        updated = self._update_knowledge_item(item_type, item_id, _mark)
+        if updated is None:
+            return {"error": f"Item not found: {item_id}"}
+        self._audit.log("write", "knowledge/onboard-accept", detail=item_id)
         return updated
 
     def revalidate_anchors(
