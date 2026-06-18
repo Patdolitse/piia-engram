@@ -1,12 +1,16 @@
 """Local pre-push / pre-release readiness aggregator.
 
 Runs the repo-local, read-only gates that should be green before asking the
-owner to approve a public action. The default checks are local file / git-index
-reads only. It performs no push, tag, upload, registry write, external refresh,
-or deploy.
+owner to approve a public action. It performs no push, tag, upload, registry
+write, external refresh, or deploy.
 
-Default mode is intentionally lightweight. Use ``--full-tests`` when preparing
-an actual push/release candidate.
+The default set is a 1:1 mirror of the ci.yml ``test`` job's guard steps (see
+CI_TEST_JOB_CHECKS) plus a few cheap extras, so a green run here means those CI
+guards are green locally. Add ``--full-tests`` to also run the full pytest suite
+(``pytest tests/ -q``) -- that makes this a complete local replay of the ci
+``test`` job before you push. Runs on the current interpreter only; it does not
+replicate CI's 3.10-3.13 matrix. A parity test (tests/) fails if the mirror
+drifts from ci.yml.
 """
 
 from __future__ import annotations
@@ -18,17 +22,46 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_CHECKS = (
-    ("count_mcp_tools_smoke", [sys.executable, "scripts/count_mcp_tools.py", "--json"]),
-    ("publish_allowlist", [sys.executable, "scripts/check_publish_allowlist.py"]),
-    ("public_fact_sync", [sys.executable, "scripts/check_public_fact_sync.py"]),
-    ("public_trust_claims", [sys.executable, "scripts/check_public_trust_claims.py"]),
-    ("public_claim_drift", [sys.executable, "scripts/check_public_claim_drift.py"]),
-    ("public_release_surface", [sys.executable, "scripts/check_public_release_surface.py"]),
+# --- ci.yml `test` job mirror -------------------------------------------------
+# These MUST stay a 1:1, in-order mirror of the guard steps in
+# .github/workflows/ci.yml `test` job (minus `pip install`). 4.3.0 AND 4.4.0
+# both shipped a CI-red because pre-push verification ran only a hand-picked
+# SUBSET of these. test_ci_test_job_parity (tests/test_pre_push_release_
+# readiness.py) parses ci.yml and FAILS if this list drifts from the workflow,
+# so the mirror can never silently fall behind CI again. Run on the current
+# local interpreter only -- this does NOT replicate CI's 3.10-3.13 matrix.
+CI_TEST_JOB_CHECKS = (
     ("publish_workflow_order", [sys.executable, "scripts/check_publish_workflow_order.py"]),
+    ("ci_pytest_entrypoint",
+     [sys.executable, "scripts/check_ci_pytest_entrypoint.py", "--discover-script-imports"]),
+    ("public_fact_sync", [sys.executable, "scripts/check_public_fact_sync.py"]),
+    ("public_claim_drift", [sys.executable, "scripts/check_public_claim_drift.py"]),
+    ("public_trust_claims", [sys.executable, "scripts/check_public_trust_claims.py"]),
+    ("release_sanitize",
+     [sys.executable, "scripts/release_sanitize_check.py", "--internal", "--strict"]),
+    ("worker_public_config", [sys.executable, "scripts/check_worker_public_config.py"]),
+    ("export_redaction",
+     [sys.executable, "scripts/check_export_redaction.py", "--strict",
+      "docs/samples/export-redaction-clean-sample.md"]),
+    ("generated_export_redaction",
+     [sys.executable, "scripts/check_generated_export_redaction.py"]),
+    ("memory_eval_suite", [sys.executable, "scripts/run_memory_evals.py", "--json"]),
 )
 
-FULL_TEST_CHECK = ("pytest", [sys.executable, "-m", "pytest", "-q"])
+# Extra local guards NOT in the ci `test` job but cheap and worth running before
+# a push (they run in other ci jobs / git hooks). Additive -- not part of the
+# parity mirror.
+EXTRA_CHECKS = (
+    ("count_mcp_tools_smoke", [sys.executable, "scripts/count_mcp_tools.py", "--json"]),
+    ("publish_allowlist", [sys.executable, "scripts/check_publish_allowlist.py"]),
+    ("public_release_surface", [sys.executable, "scripts/check_public_release_surface.py"]),
+)
+
+DEFAULT_CHECKS = CI_TEST_JOB_CHECKS + EXTRA_CHECKS
+
+# Final step of the ci `test` job; gated behind --full-tests so the default stays
+# fast. `tests/ -q` matches ci exactly (run via -m for interpreter parity).
+FULL_TEST_CHECK = ("pytest", [sys.executable, "-m", "pytest", "tests/", "-q"])
 
 
 def _run(cmd: list[str], root: Path, timeout: int) -> tuple[int, str, str]:
@@ -124,7 +157,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     parser.add_argument("--root", default=".", help="Repo root (default: cwd)")
-    parser.add_argument("--full-tests", action="store_true", help="Also run python -m pytest -q")
+    parser.add_argument("--full-tests", action="store_true",
+                        help="Also run the full suite (pytest tests/ -q) for a complete ci test-job replay")
     parser.add_argument("--timeout", type=int, default=1200, help="Per-check timeout in seconds")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     args = parser.parse_args(argv)
