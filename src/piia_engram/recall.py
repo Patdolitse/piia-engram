@@ -48,7 +48,11 @@ def _dedup_key(entry: dict[str, Any], index: int) -> str:
 
 
 def _project_item(
-    entry: dict[str, Any], *, include_freshness: bool, now: datetime | None
+    entry: dict[str, Any],
+    *,
+    include_freshness: bool,
+    now: datetime | None,
+    include_trust: bool = False,
 ) -> dict[str, Any]:
     """Project a stored knowledge dict to the stable recall view (summary/meta)."""
     etype = _entry_type(entry)
@@ -82,7 +86,43 @@ def _project_item(
     labeling = _project_labeling(entry)
     if labeling:
         view["labeling"] = labeling
+    if include_trust:
+        trust = _project_trust(entry, freshness=view.get("freshness"), now=now)
+        if trust:
+            view["trust"] = trust
     return view
+
+
+def _project_trust(
+    entry: dict[str, Any], *, freshness: dict[str, Any] | None, now: datetime | None
+) -> dict[str, Any]:
+    """Owner-only allowlisted trust block: why-trustworthy / anchor / expires /
+    validated-at. `expires` is derived from freshness (trigger-bound/skip_decay
+    facts don't expire on a clock; time facts age) -- never a fabricated date."""
+    raw = entry.get("provenance")
+    raw = raw if isinstance(raw, dict) else {}
+    trust: dict[str, Any] = {}
+    cs = raw.get("confirmation_source")
+    if isinstance(cs, str) and cs.strip():
+        trust["confirmation_source"] = cs.strip()
+    anchor_ref = raw.get("anchor_ref")
+    if isinstance(anchor_ref, str) and anchor_ref.strip():
+        trust["anchor"] = anchor_ref.strip()
+    anchor_status = raw.get("anchor_status")
+    if isinstance(anchor_status, str) and anchor_status.strip():
+        trust["anchor_status"] = anchor_status.strip()
+    anchor_project_id = raw.get("anchor_project_id")
+    if isinstance(anchor_project_id, str) and anchor_project_id.strip():
+        trust["anchor_project_id"] = anchor_project_id.strip()
+    validated_at = raw.get("last_validated_at")
+    if isinstance(validated_at, str) and validated_at.strip():
+        trust["validated_at"] = validated_at.strip()
+    fr = freshness if isinstance(freshness, dict) else _provenance.compute_freshness(entry, now=now)
+    if isinstance(fr, dict):
+        for key in ("decay_policy", "skip_decay", "freshness_status"):
+            if key in fr:
+                trust[key] = fr[key]
+    return trust
 
 
 def _item_cost(view: dict[str, Any]) -> int:
@@ -144,6 +184,7 @@ def build_recall_payload(
     query: str = "",
     token_budget: int = 2000,
     include_freshness: bool = True,
+    include_trust: bool = False,
     governance: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -160,7 +201,9 @@ def build_recall_payload(
     excluded = 0
     budget = max(0, int(token_budget))
     for entry in merged:
-        view = _project_item(entry, include_freshness=include_freshness, now=now)
+        view = _project_item(
+            entry, include_freshness=include_freshness, now=now, include_trust=include_trust
+        )
         cost = _item_cost(view)
         # Always allow at least one item through so a tiny budget never yields an
         # empty knowledge list when there is something to say.
