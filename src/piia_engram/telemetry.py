@@ -105,8 +105,10 @@ def _save_config(cfg: dict[str, Any]) -> None:
 def is_enabled() -> bool:
     """Check if usage statistics are enabled.
 
-    Respects ENGRAM_TELEMETRY env var (0/false/off = disabled) and
-    the persisted config in ~/.engram/telemetry_config.json.
+    Respects ENGRAM_TELEMETRY env var (0/false/off = disabled) and the persisted
+    config in ~/.engram/telemetry_config.json. (DO_NOT_TRACK / NO_TELEMETRY are
+    honored by the first-value funnel gate; an explicit per-app ENGRAM_TELEMETRY
+    opt-in deliberately overrides a global DNT for the existing stats path.)
     """
     env = os.environ.get("ENGRAM_TELEMETRY", "").strip().lower()
     if env in ("0", "false", "off", "no"):
@@ -179,6 +181,190 @@ def get_status() -> dict[str, Any]:
         "endpoint": get_endpoint() if remote else "(disabled)",
         "phase": "2 (local + remote)" if remote else "1 (local log only)",
     }
+
+
+# ---------------------------------------------------------------------------
+# First-value funnel telemetry (opt-in, content-blind, bucketed, LOCAL-ONLY).
+#
+# Records WHERE a user lands in the onboard -> trusted-recall funnel, never
+# WHAT is in their memory. STRICT whitelist: only the events/fields/values
+# below are ever written; anything else is rejected (fail-closed), so a stray
+# content-shaped field can never leak. Honors opt-in + DO_NOT_TRACK /
+# NO_TELEMETRY / CI. Local JSONL only — nothing leaves the machine this phase.
+# ---------------------------------------------------------------------------
+
+# Reusable bucket vocabularies (raw counts collapsed to coarse ranges).
+_B_SMALL = frozenset({"0", "1_4", "5_plus"})
+_B_MED = frozenset({"0", "1_4", "5_9", "10_plus"})
+_B_WIDE = frozenset({"0", "1_4", "5_9", "10_24", "25_plus"})
+_B_SCAN = frozenset({"0", "1_4", "5_9", "10_24", "25_99", "100_plus"})
+_B_RECALL = frozenset({"0", "1_3", "4_8", "9_plus"})
+_B_RECALL_NZ = frozenset({"1_3", "4_8", "9_plus"})
+_FV_TOOLS = frozenset({"codex", "claude_code", "cursor", "other", "unknown"})
+_FV_SURFACES = frozenset({"cli", "mcp", "core", "", "unknown"})
+
+# Each field maps to bool OR a closed string set. Never a free string — that is
+# the property that makes content leakage structurally impossible.
+FIRST_VALUE_SCHEMA: dict[str, dict[str, Any]] = {
+    "onboard.scan.completed": {
+        "anchors_bucket": _B_SCAN,
+        "dep_anchors_bucket": _B_WIDE,
+        "file_anchors_bucket": _B_WIDE,
+        "unsupported_bucket": _B_MED,
+        "repo_identity": frozenset({"resolved", "unresolved"}),
+        "outcome": frozenset({"success", "empty", "partial", "error"}),
+        "error_category": frozenset({"none", "validation", "io", "permission", "unknown"}),
+    },
+    "onboard.candidates.materialized": {
+        "created_bucket": _B_WIDE,
+        "existing_bucket": _B_WIDE,
+        "updated_bucket": _B_MED,
+        "skipped_bucket": _B_SMALL,
+        "candidate_mix": frozenset({"none", "dep_only", "file_only", "mixed"}),
+        "idempotency": frozenset({"new_candidates", "all_existing", "updated_existing", "mixed"}),
+    },
+    "onboard.accept.completed": {
+        "result": frozenset({"accepted", "rejected", "not_found"}),
+        "anchor_status": frozenset({"valid", "unknown", "invalid", "missing"}),
+        "project_match": frozenset({"matched", "mismatch", "unresolved", "not_checked"}),
+        "from_tier": frozenset({"staging", "verified", "other", "unknown"}),
+        "to_tier": frozenset({"verified", "unchanged", "unknown"}),
+        "confirmation": frozenset({"anchor", "none"}),
+        "checked_anchor": bool,
+    },
+    "onboard.accept.batch_completed": {
+        "dry_run": bool,
+        "accepted_bucket": _B_WIDE,
+        "rejected_bucket": _B_MED,
+        "skipped_bucket": _B_SMALL,
+        "acceptance_rate": frozenset({"none", "low", "medium", "high", "all"}),
+        "dominant_reject_reason": frozenset(
+            {"anchor_invalid", "repo_mismatch", "missing_anchor", "exception", "none", "mixed"}
+        ),
+    },
+    "recall.trust.payoff": {
+        "payoff": bool,
+        "trusted_items_bucket": _B_RECALL_NZ,
+        "trust_basis": frozenset({"anchor", "human", "test_signal", "mixed", "unknown"}),
+        "anchor_status_mix": frozenset({"valid_only", "unknown_only", "mixed", "none"}),
+        "has_validated_at": bool,
+        "has_expiry_signal": bool,
+    },
+    "recall.cross_tool.payoff": {
+        "payoff": bool,
+        "current_tool": _FV_TOOLS,
+        "source_relation": frozenset({"same_tool", "cross_tool", "mixed", "unknown"}),
+        "cross_tool_items_bucket": _B_RECALL,
+        "trusted_cross_tool_items_bucket": _B_RECALL,
+        "recall_surface": frozenset(
+            {"get_recall", "get_relevant_knowledge", "get_resume_brief", "search_knowledge"}
+        ),
+    },
+}
+
+
+def first_value_log_path() -> Path:
+    return _engram_root() / "first_value_events.jsonl"
+
+
+def _telemetry_suppressed() -> bool:
+    """Honor the cross-tool opt-out standards DO_NOT_TRACK / NO_TELEMETRY."""
+    for var in ("DO_NOT_TRACK", "NO_TELEMETRY"):
+        if os.environ.get(var, "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    return False
+
+
+def _ci_environment() -> bool:
+    for var in ("CI", "GITHUB_ACTIONS"):
+        if os.environ.get(var, "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    return False
+
+
+def first_value_enabled() -> bool:
+    """First-value funnel gate (stricter privacy posture than the stats path).
+
+    Opt-in AND not DO_NOT_TRACK / NO_TELEMETRY AND not CI. The funnel is the
+    newest, most content-adjacent surface, so it honors the cross-tool opt-out
+    signals absolutely — even an explicit ENGRAM_TELEMETRY=1 cannot override a
+    DO_NOT_TRACK here — and auto-silences in CI so test runs accrue no events.
+    """
+    if _ci_environment() or _telemetry_suppressed():
+        return False
+    return is_enabled()
+
+
+def _validate_first_value_event(event: str, fields: Any) -> dict | None:
+    """Strict, fail-closed whitelist. Returns validated fields, or None to reject."""
+    schema = FIRST_VALUE_SCHEMA.get(event)
+    if schema is None or not isinstance(fields, dict):
+        return None
+    clean: dict[str, Any] = {}
+    for key, value in fields.items():
+        allowed = schema.get(key)
+        if allowed is None:
+            return None  # unknown field -> reject the whole event
+        if allowed is bool:
+            if not isinstance(value, bool):
+                return None
+        elif value not in allowed:
+            return None  # value outside the closed set -> reject (catches content)
+        clean[key] = value
+    return clean
+
+
+def record_first_value_event(
+    event: str, fields: dict, *, surface: str = "", client_tool: str = ""
+) -> bool:
+    """Record one bucketed first-value funnel event to the local JSONL log.
+
+    Returns True iff written. No-op (False) when telemetry is off / suppressed /
+    in CI, or when the event fails the strict whitelist. Never writes content,
+    args, ids, paths, query text, or a persistent UUID.
+    """
+    if not first_value_enabled():
+        return False
+    clean = _validate_first_value_event(event, fields)
+    if clean is None:
+        return False
+    surface = surface if surface in _FV_SURFACES else "unknown"
+    client_tool = client_tool if client_tool in _FV_TOOLS else ""
+    record = {
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "event": event,
+        "surface": surface,
+        "fields": clean,
+    }
+    if client_tool:
+        record["client_tool"] = client_tool
+    try:
+        path = first_value_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        return False
+    return True
+
+
+def read_first_value_events() -> list[dict]:
+    """Read back local first-value events (for `telemetry funnel` + tests)."""
+    path = first_value_log_path()
+    if not path.is_file():
+        return []
+    out: list[dict] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    out.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    return out
 
 
 # ---------------------------------------------------------------------------
