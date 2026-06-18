@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import quality_eval as _quality_eval
-from .storage import _now_iso
+from .storage import SkipWrite, _now_iso
 
 
 class ReviewMixin:
@@ -549,7 +549,7 @@ function copyResult() {{
         def _promote(entry: dict) -> dict:
             if require_tier is not None and str(entry.get("tier") or "") != require_tier:
                 mismatch["hit"] = True
-                return entry  # leave unchanged; the caller refuses
+                raise SkipWrite  # abort under the lock: true zero-write, no re-serialize
             entry["tier"] = "verified"
             entry["promoted_at"] = ts
             entry["promotion_reason"] = "user_confirmed"

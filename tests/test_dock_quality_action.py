@@ -101,18 +101,44 @@ def test_quality_action_item_not_found_is_zero_write(eng, capsys, tmp_path):
     assert before == after  # refusal stays zero-write
 
 
-def test_promote_knowledge_require_tier_refuses_non_staging_atomically(eng):
+def test_promote_knowledge_require_tier_refuses_non_staging_atomically(eng, tmp_path):
     eng.add_lesson({"summary": "v", "tier": "verified"})
     vid = next(
         e["id"] for e in eng.get_lessons(limit=None, _update_access=False)
         if e.get("tier") == "verified"
     )
+    lessons = tmp_path / "engram" / "knowledge" / "lessons.json"
+    before_mtime = lessons.stat().st_mtime_ns
+
     res = eng.promote_knowledge(vid, require_tier="staging")
     assert res["status"] == "tier_mismatch"
     assert _tier_of(eng, vid) == "verified"  # locked mutator left it unchanged
+    # mismatch aborts via SkipWrite -> the knowledge file is not rewritten at all
+    assert lessons.stat().st_mtime_ns == before_mtime
     # the default (no require_tier) path still promotes, unchanged behavior
     res2 = eng.promote_knowledge(vid)
     assert res2["status"] == "promoted"
+
+
+def test_update_json_skipwrite_aborts_write(tmp_path):
+    from piia_engram.storage import SkipWrite, _update_json
+
+    p = tmp_path / "x.json"
+    _update_json(p, lambda cur: {"v": 1})
+    before = p.read_text(encoding="utf-8")
+    before_mtime = p.stat().st_mtime_ns
+
+    def _abort(_cur):
+        raise SkipWrite
+
+    out = _update_json(p, _abort)
+    assert out == {"v": 1}                       # returns current state
+    assert p.read_text(encoding="utf-8") == before
+    assert p.stat().st_mtime_ns == before_mtime  # file not touched at all
+
+    # control: a normal mutator that changes content does write
+    _update_json(p, lambda cur: {"v": 2})
+    assert json.loads(p.read_text(encoding="utf-8"))["v"] == 2
 
 
 def test_quality_action_archive_is_recoverable(eng, capsys):

@@ -2542,7 +2542,13 @@ def _run_dock_quality_action(args: list[str]) -> int:
         if action == "promote" and before_tier != "staging":
             return _err("item_not_staging", 1)
 
-        # 2) all guards passed — open a writable store only now and apply
+        # 2) all guards passed — open a writable store only now and apply.
+        #    On the rare concurrent race (item left staging between the read-only
+        #    check and the lock) promote_knowledge(require_tier=...) refuses
+        #    atomically and writes no knowledge (SkipWrite abort). Opening the
+        #    writable store here does stamp session_state (crash-recovery
+        #    bookkeeping for the owner-confirmed write we were authorized to
+        #    perform) — that is store session metadata, never a knowledge change.
         eng = Engram(root=root)
         if action == "validate":
             updated = eng.mark_validated_knowledge(item_id, source_agent="owner")

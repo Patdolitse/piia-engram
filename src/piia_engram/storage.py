@@ -455,6 +455,18 @@ def _atomic_write_json(path: Path, data: Any) -> None:
         raise
 
 
+class SkipWrite(Exception):
+    """Raised by an ``_update_json`` mutator to abort the write with no side effect.
+
+    A mutator that determines, under the write lock, that no change should be
+    persisted raises this instead of returning data. ``_update_json`` then
+    returns the current state without serializing or replacing the file — a true
+    zero-write abort that holds even when content-equality cannot short-circuit
+    the write (e.g. corpus encryption re-serializes unchanged data with a fresh
+    nonce). Existing mutators that always return data are unaffected.
+    """
+
+
 def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
     """Atomic read-modify-write under ONE lock.
 
@@ -462,7 +474,8 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
     updaters: the read happens outside the write lock, so two processes can
     read the same state and clobber each other (lost updates). This holds the
     per-directory write lock across read → ``mutator(current)`` → atomic
-    replace, so updates serialize correctly. ``mutator`` returns the new data.
+    replace, so updates serialize correctly. ``mutator`` returns the new data,
+    or raises :class:`SkipWrite` to abort with no write.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.parent / ".engram-write.lock"
@@ -474,7 +487,11 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
             # We must NOT silently fall back to the default and then overwrite
             # — that would wipe real governance state (grants/revoked/edges).
             current = _read_json(path) if path.is_file() else _default
-            new_data = mutator(current)
+            try:
+                new_data = mutator(current)
+            except SkipWrite:
+                # Mutator aborted under the lock: return current, write nothing.
+                return current
             candidate_text = json.dumps(new_data, ensure_ascii=False, indent=2) + "\n"
             try:
                 existing = path.read_text(encoding="utf-8") if path.is_file() else None
