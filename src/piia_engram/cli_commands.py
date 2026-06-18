@@ -886,6 +886,78 @@ def run_anchors(argv: list[str] | None = None) -> int:
     return 1 if missing_project else 0
 
 
+def _render_first_value_funnel(events: list) -> str:
+    """Render the local first-value funnel state from recorded events.
+
+    Content-blind: the events carry only bucket/enum values, so this view shows
+    WHERE the owner lands in the onboard -> trusted-recall funnel, never WHAT is
+    in their memory.
+    """
+    by: dict[str, list] = {}
+    for e in events:
+        if isinstance(e, dict):
+            by.setdefault(str(e.get("event")), []).append(e)
+
+    def last(name: str) -> dict | None:
+        evs = by.get(name, [])
+        return evs[-1].get("fields", {}) if evs else None
+
+    scan = last("onboard.scan.completed")
+    cands = last("onboard.candidates.materialized")
+    accept = last("onboard.accept.batch_completed") or last("onboard.accept.completed")
+    trust = last("recall.trust.payoff")
+    cross = last("recall.cross_tool.payoff")
+
+    accepted = bool(
+        accept and (str(accept.get("accepted_bucket", "0")) != "0"
+                    or accept.get("result") == "accepted")
+    )
+    trusted = bool(trust and trust.get("payoff"))
+    crossed = bool(cross and cross.get("payoff"))
+
+    lines = ["First value funnel — local, opt-in, content-blind:"]
+    lines.append(
+        f"  scan:               {'yes' if scan else 'no'}"
+        + (f"   (anchors={scan['anchors_bucket']})" if scan else "")
+    )
+    lines.append(
+        f"  candidates:         {'yes' if cands else 'no'}"
+        + (f"   (created={cands['created_bucket']})" if cands else "")
+    )
+    if accept:
+        astate = "yes" if accepted else "previewed only"
+        lines.append(
+            f"  accepted:           {astate}"
+            f"   (accepted={accept.get('accepted_bucket', '?')}, "
+            f"rate={accept.get('acceptance_rate', '?')})"
+        )
+    else:
+        lines.append("  accepted:           no")
+    lines.append(f"  trusted recall:     {'yes' if trusted else 'no'}")
+    lines.append(f"  cross-tool recall:  {'yes' if crossed else 'no'}")
+
+    if not scan:
+        drop = "no onboard scan yet"
+    elif not cands:
+        drop = "scanned, but no candidates materialized"
+    elif not accepted:
+        drop = "candidates not accepted (the confirm gap)"
+    elif not trusted:
+        drop = "accepted, but no trusted recall yet"
+    elif not crossed:
+        drop = "trusted recall reached, but not yet cross-tool"
+    else:
+        drop = "none — full first value reached"
+    lines.append(f"  dropoff:            {drop}")
+
+    if not events:
+        lines.append("")
+        lines.append("  (No funnel events — telemetry off, or no onboard/recall run yet.)")
+        lines.append("  It records only WHERE you land, never WHAT is in your memory.")
+        lines.append("  Enable: engram telemetry on   (local-only, off by default).")
+    return "\n".join(lines)
+
+
 def _run_telemetry_cli(sub_args: list[str]) -> None:
     """Handle `engram telemetry <subcommand>`."""
     from piia_engram.telemetry import (
@@ -915,6 +987,18 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print("\n  Next payload (if enabled):\n")
         print(preview_payload())
         print()
+
+    elif sub == "funnel":
+        from piia_engram.telemetry import read_first_value_events
+
+        events = read_first_value_events()
+        if "--json" in sub_args:
+            print(json.dumps({"event_count": len(events), "events": events},
+                             ensure_ascii=False, indent=2))
+        else:
+            print()
+            print(_render_first_value_funnel(events))
+            print()
 
     elif sub in ("off", "disable"):
         set_enabled(False)
@@ -976,6 +1060,7 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print(
             "\nUsage:\n"
             "  engram telemetry status         Show current status\n"
+            "  engram telemetry funnel         Show the local first-value funnel\n"
             "  engram telemetry preview        Show what data will be logged\n"
             "  engram telemetry on             Enable anonymous usage statistics\n"
             "  engram telemetry off            Disable anonymous usage statistics\n"

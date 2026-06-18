@@ -137,6 +137,39 @@ def test_recall_funnel_records_trust_and_cross_tool(tmp_path, monkeypatch):
     assert "depends on react" not in blob
 
 
+def test_telemetry_funnel_command_shows_stages(fv_on, capsys):
+    from piia_engram import setup_wizard  # noqa: F401 — resolve import cycle
+    from piia_engram import cli_commands
+
+    eng = Engram(root=fv_on)
+    eng.onboard_repo(str(GOLDEN), repo_id="github.com/acme/app")
+    eng.accept_onboard_candidates(project_root=str(GOLDEN))
+
+    cli_commands._run_telemetry_cli(["funnel"])
+    out = capsys.readouterr().out
+    assert "First value funnel" in out
+    assert "scan:" in out
+    assert "accepted:" in out
+    assert "trusted recall:" in out
+    assert "cross-tool" in out
+    assert "dropoff:" in out
+    # privacy: no fact content / repo path ever appears in the funnel view
+    assert "react" not in out
+    assert str(GOLDEN) not in out
+
+
+def test_telemetry_funnel_command_empty_when_no_events(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram"))
+    monkeypatch.setenv("ENGRAM_TELEMETRY", "0")
+    from piia_engram import setup_wizard  # noqa: F401
+    from piia_engram import cli_commands
+
+    cli_commands._run_telemetry_cli(["funnel"])
+    out = capsys.readouterr().out
+    assert "First value funnel" in out
+    assert "no" in out.lower()  # nothing reached
+
+
 def test_onboard_funnel_respects_do_not_track(tmp_path, monkeypatch):
     root = tmp_path / "engram"
     monkeypatch.setenv("ENGRAM_DIR", str(root))
