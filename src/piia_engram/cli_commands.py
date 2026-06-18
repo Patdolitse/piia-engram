@@ -1899,6 +1899,177 @@ def _dock_labeling_projection(item: dict) -> dict:
     return out
 
 
+def _dock_quality_summary(entries: list[dict]) -> dict:
+    """Aggregate metadata-only knowledge-quality counts for Dock M2.
+
+    Counts by kind / tier / freshness / labeling maturity + review-queue
+    pressure. Pure projection over already-loaded entries — never emits ids,
+    titles, bodies, reasoning, or raw session content.
+    """
+    from piia_engram.provenance import compute_freshness
+
+    tier = {"verified": 0, "staging": 0, "archived": 0, "other": 0}
+    by_kind = {"lesson": 0, "decision": 0}
+    freshness = {"fresh": 0, "aging": 0, "stale": 0, "unknown": 0}
+    source_kind = {"human": 0, "agent": 0, "imported": 0, "unknown": 0}
+    annotation_quality = {"raw": 0, "partial": 0, "mature": 0, "unknown": 0}
+    validation_state = {"unreviewed": 0, "validated": 0, "needs_review": 0, "unknown": 0}
+    review_queue = {
+        "staging": 0, "needs_review": 0, "unreviewed": 0,
+        "partial": 0, "stale": 0, "archived": 0, "items": 0,
+    }
+
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        queue_item = False
+        kind = str(item.get("kind") or item.get("type") or "")
+        if kind in by_kind:
+            by_kind[kind] += 1
+        t = str(item.get("tier") or "verified")
+        is_archived = t == "archived"
+        tier[t if t in tier else "other"] += 1
+        if t == "staging":
+            review_queue["staging"] += 1
+            queue_item = True
+        if is_archived:
+            review_queue["archived"] += 1
+
+        fresh = compute_freshness(item).get("freshness_status", "unknown")
+        fresh = fresh if fresh in freshness else "unknown"
+        freshness[fresh] += 1
+        if fresh == "stale" and not is_archived:
+            review_queue["stale"] += 1
+            queue_item = True
+
+        labeling = _dock_labeling_projection(item)
+        sk = labeling.get("source_kind", "unknown")
+        aq = labeling.get("annotation_quality", "unknown")
+        vs = labeling.get("validation_state", "unknown")
+        source_kind[sk if sk in source_kind else "unknown"] += 1
+        annotation_quality[aq if aq in annotation_quality else "unknown"] += 1
+        validation_state[vs if vs in validation_state else "unknown"] += 1
+        if vs == "needs_review" and not is_archived:
+            review_queue["needs_review"] += 1
+            queue_item = True
+        if vs == "unreviewed" and not is_archived:
+            review_queue["unreviewed"] += 1
+            queue_item = True
+        if aq == "partial" and not is_archived:
+            review_queue["partial"] += 1
+            queue_item = True
+        if queue_item:
+            review_queue["items"] += 1
+
+    review_queue["signals"] = sum(
+        value for key, value in review_queue.items()
+        if key not in {"archived", "items", "signals"}
+    )
+    review_queue["total"] = review_queue["items"]
+    active = sum(
+        1 for item in entries
+        if isinstance(item, dict) and item.get("tier") != "archived"
+    )
+    return {
+        "total": len(entries),
+        "active": active,
+        "archived": tier["archived"],
+        "by_kind": by_kind,
+        "tier": tier,
+        "freshness": freshness,
+        "labeling": {
+            "source_kind": source_kind,
+            "annotation_quality": annotation_quality,
+            "validation_state": validation_state,
+        },
+        "review_queue": review_queue,
+    }
+
+
+def _run_dock_quality(args: list[str]) -> int:
+    """Zero-write owner-facing knowledge quality summary (Dock M2).
+
+    Local + owner-run. Opens the store ``read_only`` and emits a metadata-only
+    aggregate (counts by tier / freshness / validation maturity + review-queue
+    pressure) plus the next owner review lane. Never emits ids, titles, bodies,
+    reasoning, or raw session content.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-quality [--json]\n\n"
+            "  Zero-write metadata-only quality summary for a local desktop client.\n"
+            "  Counts freshness, validation, maturity, staging, and archived states.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+
+    def _err(msg: str, code: int = 2) -> int:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "read_only": True, "error": msg, "quality": {}},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: {msg}")
+        return code
+
+    for a in args:
+        if a != "--json":
+            return _err(f"unknown option: {a}")
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        eng = Engram(root=root, read_only=True)
+        entries: list[dict] = []
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            for item in eng._read_entries(eng._knowledge_dir / fname, kind):
+                item = dict(item)
+                item["kind"] = kind
+                entries.append(item)
+        quality = _dock_quality_summary(entries)
+    except Exception:
+        return _err("unable to build quality summary", 1)
+
+    rq = quality["review_queue"]
+    next_action = (
+        "review_staging" if rq["staging"]
+        else "review_needs_review" if rq["needs_review"]
+        else "review_stale" if rq["stale"]
+        else "none"
+    )
+    payload = {
+        "ok": True,
+        "read_only": True,
+        "engram_dir": str(root),
+        "dock_contract_version": _DOCK_CONTRACT_VERSION,
+        "dock_capabilities": _dock_capabilities(),
+        "quality": quality,
+        "next_action": next_action,
+    }
+    if want_json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    q = quality
+    print(
+        "Dock quality\n"
+        f"Knowledge: total={q['total']} active={q['active']} archived={q['archived']}\n"
+        f"Tier: verified={q['tier']['verified']} staging={q['tier']['staging']}\n"
+        f"Validation: validated={q['labeling']['validation_state']['validated']} "
+        f"needs_review={q['labeling']['validation_state']['needs_review']} "
+        f"unreviewed={q['labeling']['validation_state']['unreviewed']}\n"
+        f"Review queue: staging={rq['staging']} needs_review={rq['needs_review']} "
+        f"stale={rq['stale']}\n"
+        f"Next: {next_action}"
+    )
+    return 0
+
+
 def _run_dock_resume(args: list[str]) -> int:
     """Emit a zero-write, paste-ready resume brief for a local desktop client.
 
