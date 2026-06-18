@@ -1870,6 +1870,7 @@ _DOCK_OWNER_WRITE_ACTIONS = (
     "dock-onboard-commit",
     "dock-update",
     "dock-set-lang",
+    "dock-quality-action",
 )
 _DOCK_EXPORT_ACTIONS = ("dock-export",)
 
@@ -2404,6 +2405,192 @@ def _run_dock_review_queue(args: list[str]) -> int:
     for row in rows:
         print(f"- ({row['kind']} {row['id']}) {','.join(row['lanes'])}")
     return 0
+
+
+def _dock_quality_action_payload(
+    *,
+    ok: bool,
+    action: str,
+    item_id: str,
+    confirmed: bool,
+    dry_run: bool,
+    requires_confirmation: bool,
+    result: dict | None = None,
+    error: str | None = None,
+) -> dict:
+    return {
+        "ok": bool(ok),
+        "action": action,
+        "id": item_id,
+        "confirmed": bool(confirmed),
+        "dry_run": bool(dry_run),
+        "requires_confirmation": bool(requires_confirmation),
+        "result": result or {},
+        "error": error,
+    }
+
+
+def _dock_quality_action_result(
+    *,
+    item_id: str,
+    kind: str,
+    action: str,
+    before_tier: str,
+    after: dict,
+) -> dict:
+    labeling = _dock_labeling_projection(after)
+    return {
+        "id": item_id,
+        "kind": kind,
+        "action": action,
+        "changed": True,
+        "from_tier": before_tier,
+        "to_tier": str(after.get("tier") or ""),
+        "validation_state": labeling.get("validation_state", "unknown"),
+        "annotation_quality": labeling.get("annotation_quality", "unknown"),
+    }
+
+
+def _run_dock_quality_action(args: list[str]) -> int:
+    """Owner-confirmed quality action for one Dock review item (Dock M2 write surface).
+
+    The ONLY Dock M2 write surface. Writes only after ``--yes`` (otherwise a
+    zero-side-effect dry-run that reports requires_confirmation). Supports only
+    validate / promote / archive; promote acts on staging only; archive is a
+    recoverable tier archive (reversible, never a delete). Returns a
+    metadata-only receipt — no titles, bodies, or copy.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-quality-action --action validate|promote|archive --id ID "
+            "--yes [--json]\n\n"
+            "  Owner-confirmed quality action. Writes only after --yes and returns a\n"
+            "  metadata-only receipt without content fields.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+    action = ""
+    item_id = ""
+    confirmed = "--yes" in args
+
+    def _emit(payload: dict, code: int) -> int:
+        if want_json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            if payload.get("ok"):
+                print(f"{payload.get('action')} applied: {payload.get('id')}")
+            else:
+                print(f"ERROR: {payload.get('error')}")
+        return code
+
+    def _err(msg: str, code: int = 2, *, requires_confirmation: bool = False) -> int:
+        return _emit(
+            _dock_quality_action_payload(
+                ok=False,
+                action=action,
+                item_id=item_id,
+                confirmed=confirmed,
+                dry_run=True,
+                requires_confirmation=requires_confirmation,
+                error=msg,
+            ),
+            code,
+        )
+
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in {"--json", "--yes"}:
+            pass
+        elif a == "--action":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--action requires a value")
+            i += 1
+            action = args[i].strip()
+        elif a == "--id":
+            if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                return _err("--id requires a value")
+            i += 1
+            item_id = args[i].strip()
+        else:
+            return _err(f"unknown option: {a}")
+        i += 1
+
+    if action not in {"validate", "promote", "archive"}:
+        return _err("invalid_action")
+    if not item_id:
+        return _err("--id is required")
+    if not confirmed:
+        return _err("confirmation_required", requires_confirmation=True)
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    try:
+        # 1) read-only lookup + guards — refused cases never open a writable store
+        #    (a writable Engram would stamp session_state / migrate-rewrite legacy
+        #    entries, so an item_not_found / item_not_staging refusal must stay
+        #    genuinely zero-write).
+        ro = Engram(root=root, read_only=True)
+        kind, item = ro._find_item_by_id(item_id)
+        if kind not in {"lesson", "decision"} or not isinstance(item, dict):
+            return _err("item_not_found", 1)
+        before_tier = str(item.get("tier") or "")
+        if action == "promote" and before_tier != "staging":
+            return _err("item_not_staging", 1)
+
+        # 2) all guards passed — open a writable store only now and apply
+        eng = Engram(root=root)
+        if action == "validate":
+            updated = eng.mark_validated_knowledge(item_id, source_agent="owner")
+            if updated.get("error"):
+                return _err("item_not_found", 1)
+            result = _dock_quality_action_result(
+                item_id=item_id, kind=kind, action=action,
+                before_tier=before_tier, after=updated,
+            )
+        elif action == "promote":
+            # require_tier re-checks staging atomically under the store lock,
+            # closing the check-then-write race from the read-only pre-check.
+            applied = eng.promote_knowledge(item_id, require_tier="staging")
+            if applied.get("status") == "tier_mismatch":
+                return _err("item_not_staging", 1)
+            if applied.get("status") != "promoted":
+                return _err("item_not_found", 1)
+            _kind_after, updated = eng._find_item_by_id(item_id)
+            if not isinstance(updated, dict):
+                return _err("item_not_found", 1)
+            result = _dock_quality_action_result(
+                item_id=item_id, kind=kind, action=action,
+                before_tier=before_tier, after=updated,
+            )
+        else:  # archive — recoverable tier archive, never a delete
+            applied = eng.soft_archive_knowledge_tier(item_id, allow_verified=True)
+            if applied.get("error"):
+                return _err("item_not_found", 1)
+            result = {
+                "id": item_id,
+                "kind": str(applied.get("type") or kind),
+                "action": action,
+                "changed": bool(applied.get("changed")),
+                "from_tier": str(applied.get("from_tier") or ""),
+                "to_tier": str(applied.get("to_tier") or ""),
+                "reversible": True,
+            }
+    except Exception:
+        return _err("unable_to_apply_quality_action", 1)
+
+    return _emit(
+        _dock_quality_action_payload(
+            ok=True, action=action, item_id=item_id,
+            confirmed=True, dry_run=False, requires_confirmation=False,
+            result=result,
+        ),
+        0,
+    )
 
 
 def _run_dock_resume(args: list[str]) -> int:

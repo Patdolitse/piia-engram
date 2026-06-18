@@ -2955,6 +2955,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_quality,
     _run_dock_governance,
     _run_dock_review_queue,
+    _run_dock_quality_action,
     _run_dock_search,
     _run_dock_export,
     _run_dock_portrait,
@@ -3005,10 +3006,11 @@ def main() -> None:
     args = sys.argv[1:]
     # Non-intrusive update reminder (stderr only, opt-out, 24h-cached, fail-silent).
     # `doctor` prints its own richer version line, so skip the generic notice
-    # there to avoid a double-print. `dock-resume`/`dock-search` are guaranteed
-    # zero-write entries — the reminder would write .update_check.json into the
-    # store — so skip them too. Never reached by the separate MCP-server entry.
-    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan")):
+    # there to avoid a double-print. The Dock contract commands are read-only or
+    # dry-run-by-default JSON surfaces — the reminder would write .update_check.json
+    # into the store — so skip them too (`dock-quality-action` only writes after
+    # an explicit --yes, never on its default dry-run). Not reached by the MCP entry.
+    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3079,6 +3081,8 @@ def main() -> None:
         sys.exit(_run_dock_governance(args[1:]))
     elif args[0] == "dock-review-queue":
         sys.exit(_run_dock_review_queue(args[1:]))
+    elif args[0] == "dock-quality-action":
+        sys.exit(_run_dock_quality_action(args[1:]))
     elif args[0] == "dock-search":
         sys.exit(_run_dock_search(args[1:]))
     elif args[0] == "dock-export":

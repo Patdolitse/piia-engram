@@ -529,15 +529,27 @@ function copyResult() {{
         out_path.write_text(html, encoding="utf-8")
         return out_path
 
-    def promote_knowledge(self, item_id: str) -> dict:
-        """Promote a staging item to verified tier."""
+    def promote_knowledge(self, item_id: str, *, require_tier: str | None = None) -> dict:
+        """Promote a staging item to verified tier.
+
+        When ``require_tier`` is given, the tier is re-checked atomically inside
+        the locked mutator: if the item is not in that tier, nothing is written
+        and ``{"status": "tier_mismatch"}`` is returned. This closes the
+        check-then-write race for callers that must only promote staging items
+        (e.g. the Dock quality-action surface) — a concurrent change that moved
+        the item out of staging can no longer be silently promoted.
+        """
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision"}:
             return {"status": "not_found", "id": item_id}
 
         ts = _now_iso()
+        mismatch = {"hit": False}
 
         def _promote(entry: dict) -> dict:
+            if require_tier is not None and str(entry.get("tier") or "") != require_tier:
+                mismatch["hit"] = True
+                return entry  # leave unchanged; the caller refuses
             entry["tier"] = "verified"
             entry["promoted_at"] = ts
             entry["promotion_reason"] = "user_confirmed"
@@ -550,6 +562,8 @@ function copyResult() {{
             )
 
         updated = self._update_knowledge_item(item_type, item_id, _promote)
+        if mismatch["hit"]:
+            return {"status": "tier_mismatch", "id": item_id}
         if updated is not None:
             return {"status": "promoted", "id": item_id}
         return {"status": "not_found", "id": item_id}
