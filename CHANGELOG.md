@@ -6,6 +6,11 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.6.1] - 2026-06-19
+
+### Added
+- Opt-in, content-blind first-value funnel telemetry: an optional local signal that records *where* you land in the onboard → trusted-recall funnel (scan, candidates, accept, trusted recall, cross-tool recall) as coarse buckets — never *what* is in your memory. Off by default, local-only (nothing is sent anywhere this phase), and it honors `DO_NOT_TRACK` / `NO_TELEMETRY` absolutely. It never records content, file names, paths, ids, raw errors, a persistent identifier, or the tool pair. New `engram telemetry funnel` shows your own local funnel; see [docs/telemetry-privacy.md](docs/telemetry-privacy.md).
+
 ## [4.6.0] - 2026-06-18
 
 ### Added

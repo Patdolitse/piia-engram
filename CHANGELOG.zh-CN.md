@@ -6,6 +6,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.6.1] - 2026-06-19
+
+### 新增
+- opt-in、content-blind 的首价值漏斗遥测：一个可选的本地信号，把你在 onboard → 可信召回 漏斗里**走到哪一步**（扫描/候选/接受/可信召回/跨工具召回）记成粗粒度的桶——绝不记**你记忆里有什么**。默认关、纯本地（本期不外发任何数据），并**绝对尊重** `DO_NOT_TRACK` / `NO_TELEMETRY`。绝不记录内容、文件名、路径、id、错误原文、持久标识，也**绝不记工具对**。新增 `engram telemetry funnel` 让你看自己的本地漏斗；详见 [docs/telemetry-privacy.md](docs/telemetry-privacy.md)。
+
 ## [4.6.0] - 2026-06-18
 
 ### 新增
