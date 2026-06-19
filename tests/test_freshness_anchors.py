@@ -840,6 +840,60 @@ def test_playbook_internal_provenance_opt_in_preserves_anchor_fields(
     assert "_allow_internal_provenance" not in stored
 
 
+# ---------------------------------------------------------------------------
+# Feature #33: dependency successor detection
+# ---------------------------------------------------------------------------
+
+
+def test_detect_dep_successor_jest_absent_vitest_present(tmp_path: Path) -> None:
+    """jest removed + vitest now in package.json → returns 'vitest'."""
+    (tmp_path / "package.json").write_text(
+        json.dumps({"devDependencies": {"vitest": "^2.0.0"}}),
+        encoding="utf-8",
+    )
+    assert A._detect_dep_successor("jest", tmp_path) == "vitest"
+
+
+def test_detect_dep_successor_jest_still_present_returns_none(tmp_path: Path) -> None:
+    """jest still in package.json → NOT superseded, returns None."""
+    (tmp_path / "package.json").write_text(
+        json.dumps({"devDependencies": {"jest": "^29.0.0", "vitest": "^2.0.0"}}),
+        encoding="utf-8",
+    )
+    assert A._detect_dep_successor("jest", tmp_path) is None
+
+
+def test_detect_dep_successor_unknown_dep_returns_none(tmp_path: Path) -> None:
+    """A dep with no curated successor mapping → None (never fabricates hints)."""
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"lodash": "^4.17.21"}}),
+        encoding="utf-8",
+    )
+    assert A._detect_dep_successor("lodash", tmp_path) is None
+
+
+def test_detect_dep_successor_missing_manifest_returns_none(tmp_path: Path) -> None:
+    """No manifest at all → can't determine → None."""
+    assert A._detect_dep_successor("jest", tmp_path) is None
+
+
+def test_detect_dep_successor_mocha_replaced_by_vitest(tmp_path: Path) -> None:
+    """mocha→vitest is also a curated migration."""
+    (tmp_path / "package.json").write_text(
+        json.dumps({"devDependencies": {"vitest": "^2.0.0"}}),
+        encoding="utf-8",
+    )
+    assert A._detect_dep_successor("mocha", tmp_path) == "vitest"
+
+
+def test_check_anchor_dep_jest_absent_vitest_present_still_invalid(tmp_path: Path) -> None:
+    """check_anchor must stay 'invalid' when jest is gone (even if vitest present).
+    Successor detection is side metadata only — it must NOT change the public status."""
+    parsed = A.parse_anchor_ref("dep:jest")
+    _write_package_json(tmp_path, {"vitest": "^2.0.0"})
+    assert A.check_anchor(parsed, str(tmp_path)) == "invalid"
+
+
 def test_public_freshness_status_remains_four_state_after_anchor_revalidation(
     tmp_path: Path,
     eng: Engram,

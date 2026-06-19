@@ -216,6 +216,68 @@ def _dep_in_pyproject(path: Path, wanted: str) -> tuple[bool, bool]:
     return False, True
 
 
+# Curated successor map: high-confidence one-hop test-framework migrations only.
+# Keys and values are pre-normalized via _normalize_dep_name at build time.
+_DEP_SUCCESSORS: dict[str, tuple[str, ...]] = {
+    "jest": ("vitest",),
+    "mocha": ("vitest",),
+}
+
+
+def _detect_dep_successor(ref: str, root: Path) -> str | None:
+    """Return the normalized name of a known successor if it is present in the
+    project manifests, or ``None`` if the dep has no curated migration or the
+    successor is not installed.
+
+    Returns ``None`` if the original dep is still present (it isn't superseded
+    yet) or if no readable manifest is found.
+
+    This is SIDE metadata only — it never changes ``check_anchor``'s result.
+    """
+    wanted = _normalize_dep_name(ref)
+    candidates = _DEP_SUCCESSORS.get(wanted)
+    if not candidates:
+        return None
+
+    # Collect manifest paths, mirroring _check_dep_anchor's iteration order.
+    manifest_paths: list[tuple[str, Path]] = []
+    package_json = root / "package.json"
+    if package_json.is_file():
+        manifest_paths.append(("package.json", package_json))
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file():
+        manifest_paths.append(("pyproject.toml", pyproject))
+    for req_path in sorted(root.glob("requirements*.txt")):
+        manifest_paths.append(("requirements", req_path))
+
+    if not manifest_paths:
+        return None
+
+    # Guard: if the original dep is still present, it's not superseded.
+    for kind, path in manifest_paths:
+        if kind == "package.json":
+            found, readable = _dep_in_package_json(path, wanted)
+        elif kind == "pyproject.toml":
+            found, readable = _dep_in_pyproject(path, wanted)
+        else:
+            found, readable = _dep_in_requirements(path, wanted)
+        if found:
+            return None
+
+    for successor in candidates:
+        successor_norm = _normalize_dep_name(successor)
+        for kind, path in manifest_paths:
+            if kind == "package.json":
+                found, readable = _dep_in_package_json(path, successor_norm)
+            elif kind == "pyproject.toml":
+                found, readable = _dep_in_pyproject(path, successor_norm)
+            else:
+                found, readable = _dep_in_requirements(path, successor_norm)
+            if found:
+                return successor_norm
+    return None
+
+
 def _check_dep_anchor(ref: str, root: Path) -> str:
     wanted = _normalize_dep_name(ref)
     readable_manifest = False
