@@ -3097,6 +3097,34 @@ def _run_dock_portrait(args: list[str]) -> int:
     return 0
 
 
+def _run_serve(args: list[str]) -> int:
+    """Launch the local Dock GUI in the browser (engram serve --ui).
+
+    Loopback-only (127.0.0.1) browser GUI to view/edit/delete lessons/playbooks +
+    settings without the CLI. Opens a one-time-token auth bootstrap; the server runs
+    until interrupted.
+    """
+    if not args or "--ui" not in args:
+        print(
+            "Usage: engram serve --ui [--port N]\n\n"
+            "  Launch the local Engram Dock GUI in your browser (127.0.0.1 only)."
+        )
+        return 2
+    port = 7333
+    if "--port" in args:
+        i = args.index("--port")
+        if i + 1 < len(args):
+            try:
+                port = int(args[i + 1])
+            except ValueError:
+                print("ERROR: --port requires an integer")
+                return 2
+    from piia_engram.dock_ui import server as _server
+
+    _server.serve_ui(port=port)
+    return 0
+
+
 def _run_dock_archive(args: list[str]) -> int:
     """Owner-confirmed reversible archive of one entry (engram dock-archive).
 
@@ -3143,15 +3171,17 @@ def _run_dock_archive(args: list[str]) -> int:
         return _err("--id is required")
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    # Shared core: the HTTP dock route calls the same archive_entry (single source
+    # of truth; CLI = local owner, HTTP = authed dock session — both already gated).
+    from piia_engram.dock_ui.contracts import archive_entry
     try:
-        eng = Engram(root=root)
-        result = eng.soft_archive_knowledge_tier(item_id, allow_verified=True)
+        receipt = archive_entry(Engram(root=root), item_id)
     except Exception as exc:
         return _err(str(exc), 1)
-    if isinstance(result, dict) and result.get("error"):
-        return _err(str(result["error"]), 1)
+    if not receipt.get("ok"):
+        return _err(str(receipt.get("error", "archive failed")), 1)
     if want_json:
-        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        print(json.dumps({"ok": True, "result": receipt.get("result")}, ensure_ascii=False))
         return 0
     print(f"已归档（可恢复）: {item_id}")
     return 0

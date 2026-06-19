@@ -2969,6 +2969,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_set_lang,
     _run_dock_get_lang,
     _run_dock_status,
+    _run_serve,
     _run_portrait,
     _run_weekly,
     _run_telemetry_validate,
@@ -3110,6 +3111,8 @@ def main() -> None:
         sys.exit(_run_dock_get_lang(args[1:]))
     elif args[0] == "dock-status":
         sys.exit(_run_dock_status(args[1:]))
+    elif args[0] == "serve":
+        sys.exit(_run_serve(args[1:]))
     elif args[0] == "portrait":
         sys.exit(_run_portrait(args[1:]))
     elif args[0] == "weekly":

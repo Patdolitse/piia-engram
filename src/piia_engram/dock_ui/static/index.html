@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Engram Dock</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div id="app">
+    <nav id="nav">
+      <div class="brand">Engram <span>Dock</span></div>
+      <a data-view="overview" class="active">概览</a>
+      <a data-view="memory">记忆</a>
+      <a data-view="playbooks">Playbooks</a>
+      <a data-view="rules">规则与权限</a>
+      <a data-view="settings">设置</a>
+      <a data-view="trash">回收站</a>
+      <div class="nav-foot">本地 · 127.0.0.1 · 不上云</div>
+    </nav>
+    <main id="main">
+      <section data-view="overview" class="view active">
+        <h1>概览</h1>
+        <div class="resume-hero">
+          <div>
+            <div class="resume-title">接着上次</div>
+            <div class="resume-sub">一键拿到你的跨工具上下文，粘到你正在用的 AI 工具里继续——不用再重新交代。</div>
+          </div>
+          <button id="resume-btn" class="btn btn-lg">接着上次</button>
+        </div>
+        <div id="resume-out" class="resume-out" hidden></div>
+        <p class="muted" style="margin-top:18px">你的本地 Engram 记忆库——完全在本机，不上云。</p>
+        <div id="overview-cards" class="cards"></div>
+      </section>
+
+      <section data-view="memory" class="view">
+        <div class="toolbar">
+          <h1>记忆</h1>
+          <input id="memory-search" type="search" placeholder="搜索经验 / 决策…" autocomplete="off">
+          <select id="memory-kind">
+            <option value="all">全部</option>
+            <option value="lesson">经验</option>
+            <option value="decision">决策</option>
+          </select>
+        </div>
+        <div class="split">
+          <table id="memory-table">
+            <thead><tr><th>类型</th><th>标题</th><th>层级</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <aside id="detail" class="detail"><p class="muted">点一条记忆查看详情</p></aside>
+        </div>
+      </section>
+
+      <section data-view="playbooks" class="view"><h1>Playbooks</h1><p class="muted">即将推出。</p></section>
+      <section data-view="rules" class="view"><h1>规则与权限</h1><p class="muted">即将推出。</p></section>
+      <section data-view="settings" class="view"><h1>设置</h1><p class="muted">即将推出。</p></section>
+      <section data-view="trash" class="view"><h1>回收站</h1><p class="muted">即将推出。</p></section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
