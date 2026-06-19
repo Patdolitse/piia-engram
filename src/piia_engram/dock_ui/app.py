@@ -19,6 +19,7 @@ from .contracts import (
     archive_entry,
     dock_archived_list_payload,
     dock_memory_list_payload,
+    dock_playbook_list_payload,
     dock_resume_payload,
     restore_entry,
     update_entry,
@@ -181,6 +182,18 @@ def create_app(engram: Any, *, auth_token: str, port: int) -> Starlette:
         payload = dock_archived_list_payload(_Engram(root=engram.root, read_only=True))
         return _no_store(JSONResponse(payload))
 
+    async def dock_playbooks(request: Request) -> Response:
+        # Playbooks: a zero-write, view-only list of active playbooks (separate per-id
+        # subsystem). Read-only, session-gated. v1 has no edit/archive (Codex design).
+        if _current_session(request) is None:
+            return _no_store(
+                JSONResponse({"ok": False, "error": "unauthenticated"}, status_code=401)
+            )
+        from piia_engram.core import Engram as _Engram
+
+        payload = dock_playbook_list_payload(_Engram(root=engram.root, read_only=True))
+        return _no_store(JSONResponse(payload))
+
     def _require_write_auth(request: Request) -> Response | None:
         # Owner gate for unsafe methods (Codex Option A): session + exact loopback
         # Origin + CSRF. Returns an error response so the caller bails BEFORE opening
@@ -245,6 +258,7 @@ def create_app(engram: Any, *, auth_token: str, port: int) -> Starlette:
         Route("/api/dock-memory", dock_memory, methods=["GET"]),
         Route("/api/dock-resume", dock_resume, methods=["GET"]),
         Route("/api/dock-archived", dock_archived, methods=["GET"]),
+        Route("/api/dock-playbooks", dock_playbooks, methods=["GET"]),
         Route("/api/dock-archive", dock_archive, methods=["POST"]),
         Route("/api/dock-restore", dock_restore, methods=["POST"]),
         Route("/api/dock-update", dock_update, methods=["POST"]),

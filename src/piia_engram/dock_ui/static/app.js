@@ -2,6 +2,7 @@
   "use strict";
 
   var memory = [];
+  var playbooks = [];        // active playbooks for the Playbooks view (read-only v1)
   var selected = new Set();  // ids checked for bulk archive in the 记忆 view
 
   function csrf() { return sessionStorage.getItem("engram_dock_csrf") || ""; }
@@ -37,7 +38,8 @@
     document.querySelectorAll(".view").forEach(function (s) {
       s.classList.toggle("active", s.dataset.view === name);
     });
-    if (name === "trash") loadTrash();  // refresh archived list each time it's opened
+    if (name === "trash") loadTrash();          // refresh archived list each time it's opened
+    if (name === "playbooks") loadPlaybooks();  // load playbooks on first/each open
   }
 
   function renderMemory() {
@@ -150,6 +152,77 @@
         window.alert("恢复失败：" + (res.body.error || res.status));
       }
     }).catch(function () { window.alert("恢复失败（网络）"); });
+  }
+
+  // Playbooks (view-only v1): a separate per-id subsystem; read + display only.
+  function scopeLabel(t) { return t === "project" ? "项目" : t === "shared" ? "共享" : "全局"; }
+
+  function loadPlaybooks() {
+    var tb = document.querySelector("#pb-table tbody");
+    return api("/api/dock-playbooks").then(function (res) {
+      playbooks = (res && res.results) || [];
+      renderPlaybooks();
+    }).catch(function () {
+      if (tb) tb.innerHTML = "<tr><td colspan='4' class='muted'>读取 Playbook 失败</td></tr>";
+    });
+  }
+
+  function renderPlaybooks() {
+    var q = (document.getElementById("pb-search").value || "").toLowerCase();
+    var rows = playbooks.filter(function (p) {
+      if (!q) return true;
+      return (p.title || "").toLowerCase().indexOf(q) >= 0 ||
+        (p.description || "").toLowerCase().indexOf(q) >= 0 ||
+        (p.domain || "").toLowerCase().indexOf(q) >= 0;
+    });
+    var tb = document.querySelector("#pb-table tbody");
+    tb.innerHTML = "";
+    if (rows.length === 0) {
+      tb.innerHTML = "<tr><td colspan='4' class='muted'>还没有 Playbook（多用一会儿 Engram 会自动沉淀）</td></tr>";
+      return;
+    }
+    rows.forEach(function (p) {
+      var ver = (p.version == null ? 1 : p.version);
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td class='cell-title'>" + escapeHtml(p.title) + "</td>" +
+        "<td>" + (p.domain ? "<span class='tier'>" + escapeHtml(p.domain) + "</span>" : "") + "</td>" +
+        "<td><span class='tier'>" + scopeLabel(p.scope_type) +
+          (p.project_count ? "·" + p.project_count : "") + "</span></td>" +
+        "<td><span class='tier'>v" + escapeHtml(String(ver)) + "</span></td>";
+      tr.onclick = function () { showPlaybook(p.id); };
+      tb.appendChild(tr);
+    });
+  }
+
+  function pbList(label, items) {
+    if (!items || items.length === 0) return "";
+    var lis = items.map(function (x) { return "<li>" + escapeHtml(x) + "</li>"; }).join("");
+    return "<label>" + label + "</label><ul class='pb-ul'>" + lis + "</ul>";
+  }
+
+  function showPlaybook(id) {
+    var p = playbooks.filter(function (x) { return x.id === id; })[0];
+    var d = document.getElementById("pb-detail");
+    if (!p) { d.innerHTML = "<p class='muted'>点一条 Playbook 查看完整步骤</p>"; return; }
+    var ver = (p.version == null ? 1 : p.version);
+    var html = "<h2>" + escapeHtml(p.title) + "</h2>" +
+      "<div class='meta'>" + scopeLabel(p.scope_type) + " · v" + escapeHtml(String(ver)) +
+      (p.domain ? " · " + escapeHtml(p.domain) : "") + "</div>";
+    if (p.description) html += "<label>描述</label><div class='field'>" + escapeHtml(p.description) + "</div>";
+    if (p.outcome) html += "<label>预期结果</label><div class='field'>" + escapeHtml(p.outcome) + "</div>";
+    if (p.steps && p.steps.length) {
+      var steps = p.steps.map(function (s) {
+        var t = escapeHtml(s.action || "");
+        if (s.detail) t += "<span class='pb-step-detail'>" + escapeHtml(s.detail) + "</span>";
+        return "<li>" + t + "</li>";
+      }).join("");
+      html += "<label>步骤</label><ol class='pb-ol'>" + steps + "</ol>";
+    }
+    html += pbList("坑 / 注意", p.pitfalls);
+    html += pbList("前置条件", p.preconditions);
+    html += pbList("触发词", p.triggers);
+    d.innerHTML = html;
   }
 
   function fieldLabels(kind) {
@@ -265,6 +338,8 @@
   if (selAll) selAll.onchange = onSelectAll;
   var bulkBtn = document.getElementById("bulk-archive-btn");
   if (bulkBtn) bulkBtn.onclick = bulkArchive;
+  var pbSearch = document.getElementById("pb-search");
+  if (pbSearch) pbSearch.oninput = renderPlaybooks;
 
   loadMemory();
 })();

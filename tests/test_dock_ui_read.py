@@ -15,6 +15,7 @@ from piia_engram.dock_ui.app import create_app
 from piia_engram.dock_ui.contracts import (
     dock_archived_list_payload,
     dock_memory_list_payload,
+    dock_playbook_list_payload,
     dock_resume_payload,
 )
 
@@ -169,4 +170,73 @@ class TestDockArchivedRoute:
         _authed(client)
         before = _snap(eng.root)
         client.get("/api/dock-archived")
+        assert _snap(eng.root) == before
+
+
+def _seed_playbook(eng: Engram) -> None:
+    eng.add_playbook({
+        "title": "发布流程",
+        "description": "怎么把新版本发出去",
+        "outcome": "全渠道发布完成",
+        "steps": [{"action": "跑全量测试", "detail": "pytest tests/"},
+                  {"action": "打 tag 并推送", "detail": "git tag + push"}],
+        "pitfalls": ["别跳过 CI", "别在 main 上直接改"],
+        "preconditions": ["工作区干净"],
+        "triggers": ["发布", "release"],
+        "domain": "release",
+    })
+
+
+class TestDockPlaybooksCore:
+    """View-only Playbooks (Codex design pass): playbooks are a separate per-id-file
+    subsystem; this is a zero-write read projecting display fields, never a path."""
+
+    def test_lists_active_playbooks_with_display_fields(self, eng: Engram):
+        _seed_playbook(eng)
+        payload = dock_playbook_list_payload(Engram(root=eng.root, read_only=True))
+        assert payload["ok"] is True
+        assert payload["count"] >= 1
+        pb = next(p for p in payload["results"] if p["title"] == "发布流程")
+        assert pb["id"]
+        assert pb["description"] == "怎么把新版本发出去"
+        assert pb["outcome"] == "全渠道发布完成"
+        assert pb["steps"][0]["action"] == "跑全量测试"
+        assert "别跳过 CI" in pb["pitfalls"]
+        assert "工作区干净" in pb["preconditions"]
+        assert pb["scope_type"]  # global/project/shared — a label, never a raw path
+
+    def test_no_local_path_leaks_in_scope(self, eng: Engram):
+        _seed_playbook(eng)
+        payload = dock_playbook_list_payload(Engram(root=eng.root, read_only=True))
+        for pb in payload["results"]:
+            # the raw scope dict (which may carry project_folder paths) is never surfaced
+            assert "scope" not in pb or "project_folder" not in (pb.get("scope") or {})
+            assert "project_folder" not in pb
+
+    def test_core_is_zero_write(self, eng: Engram, tmp_path: Path):
+        _seed_playbook(eng)
+        before = _snap(tmp_path)
+        dock_playbook_list_payload(Engram(root=eng.root, read_only=True))
+        assert _snap(tmp_path) == before
+
+
+class TestDockPlaybooksRoute:
+    def test_requires_session(self, client: TestClient):
+        assert client.get("/api/dock-playbooks").status_code == 401
+
+    def test_returns_playbooks(self, client: TestClient, eng: Engram):
+        _seed_playbook(eng)
+        _authed(client)
+        resp = client.get("/api/dock-playbooks")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True and body["count"] >= 1
+        assert resp.headers.get("cache-control") == "no-store"
+        assert "engram_dir" not in body  # never leak the server's local path
+
+    def test_route_is_zero_write(self, client: TestClient, eng: Engram):
+        _seed_playbook(eng)
+        _authed(client)
+        before = _snap(eng.root)
+        client.get("/api/dock-playbooks")
         assert _snap(eng.root) == before

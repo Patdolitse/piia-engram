@@ -58,7 +58,20 @@
         </div>
       </section>
 
-      <section data-view="playbooks" class="view"><h1>Playbooks</h1><p class="muted">即将推出。</p></section>
+      <section data-view="playbooks" class="view">
+        <div class="toolbar">
+          <h1>Playbooks</h1>
+          <input id="pb-search" type="search" placeholder="搜索 Playbook…" autocomplete="off">
+        </div>
+        <p class="muted">你沉淀下来的可复用流程。点一条看完整步骤、坑和前置条件。（v1 只读，编辑稍后开放）</p>
+        <div class="split">
+          <table id="pb-table">
+            <thead><tr><th>标题</th><th>领域</th><th>范围</th><th>版本</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <aside id="pb-detail" class="detail"><p class="muted">点一条 Playbook 查看完整步骤</p></aside>
+        </div>
+      </section>
       <section data-view="rules" class="view"><h1>规则与权限</h1><p class="muted">即将推出。</p></section>
       <section data-view="settings" class="view"><h1>设置</h1><p class="muted">即将推出。</p></section>
       <section data-view="trash" class="view">

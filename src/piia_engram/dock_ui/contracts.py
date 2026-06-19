@@ -207,3 +207,53 @@ def dock_resume_payload(eng: Any, *, project: str = "", budget: int = 2000) -> d
         return {"ok": False, "error": str(exc), "markdown": ""}
     markdown = brief.get("markdown", "") if isinstance(brief, dict) else str(brief)
     return {"ok": True, "read_only": True, "markdown": markdown}
+
+
+def dock_playbook_list_payload(eng: Any) -> dict:
+    """Zero-write list of active playbooks for the Playbooks view (Codex design pass).
+
+    Playbooks are a SEPARATE per-id-file subsystem (not lessons.json/decisions.json),
+    so this has its own core. Takes an ALREADY-OPENED read_only Engram and calls
+    ``get_playbooks(_update_access=False)`` — read_only suppresses the audit log and
+    _update_access=False suppresses the last_reviewed write-back, together guaranteeing
+    zero write. Projects only display fields; the raw ``scope`` (which may carry a
+    ``project_folder`` local path) is reduced to a ``scope_type`` label so the server's
+    filesystem never leaks to the browser. v1 is view-only — no edit/archive here.
+    """
+    try:
+        playbooks = eng.get_playbooks(limit=None, _update_access=False) or []
+        results: list[dict] = []
+        for pb in playbooks:
+            if not isinstance(pb, dict):
+                continue
+            scope = pb.get("scope") if isinstance(pb.get("scope"), dict) else {}
+            scope_type = str(scope.get("type") or "global")
+            if scope_type == "shared":
+                project_count = len(scope.get("project_ids") or [])
+            elif scope_type == "project":
+                project_count = 1
+            else:
+                project_count = 0
+            steps = [
+                {"action": str(s.get("action", "") or ""), "detail": str(s.get("detail", "") or "")}
+                for s in (pb.get("steps") or []) if isinstance(s, dict)
+            ]
+            results.append({
+                "id": str(pb.get("id", "") or ""),
+                "title": str(pb.get("title", "") or ""),
+                "description": str(pb.get("description", "") or ""),
+                "outcome": str(pb.get("outcome", "") or ""),
+                "steps": steps,
+                "pitfalls": [str(p) for p in (pb.get("pitfalls") or []) if str(p)],
+                "preconditions": [str(p) for p in (pb.get("preconditions") or []) if str(p)],
+                "triggers": [str(t) for t in (pb.get("triggers") or []) if str(t)],
+                "domain": str(pb.get("domain", "") or ""),
+                "status": str(pb.get("status", "active") or "active"),
+                "version": pb.get("version", 1),
+                "scope_type": scope_type,       # global / project / shared — never a path
+                "project_count": project_count,
+                "last_reviewed": str(pb.get("last_reviewed", "") or ""),
+            })
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "count": 0, "results": []}
+    return {"ok": True, "read_only": True, "count": len(results), "results": results}
