@@ -3169,6 +3169,8 @@ def main() -> None:
             "  engram review archive <id> --yes  Archive review item\n"
             "  engram confirm <id> --by human|test|anchor  Owner-confirm freshness provenance\n"
             "  engram anchors check   Owner-run anchor revalidation for the current repo\n"
+            "  engram onboard [--root PATH]  Scan repo anchors -> staging candidate repo-facts\n"
+            "  engram onboard-accept --all [--yes]  Verify & accept repo-fact candidate(s) (single: <id>)\n"
             "  engram playbook install <builtin-name> [--yes]\n"
             "  engram feedback         Generate anonymous beta feedback report\n"
             "  engram feedback --dry-run  Preview payload without sending\n"
