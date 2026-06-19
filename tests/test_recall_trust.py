@@ -72,3 +72,59 @@ def test_build_recall_payload_surfaces_trust_when_included():
 def test_build_recall_payload_no_trust_by_default():
     payload = recall.build_recall_payload(relevant_knowledge=[_verified_anchor_entry()])
     assert "trust" not in payload["knowledge"][0]
+
+
+# ---------------------------------------------------------------------------
+# Feature #33: successor hint in trust block
+# ---------------------------------------------------------------------------
+
+
+def _superseded_entry() -> dict:
+    return {
+        "id": "sup123",
+        "summary": "This project depends on `jest` (^29).",
+        "domain": "repo-fact",
+        "tier": "staging",
+        "provenance": {
+            "anchor_ref": "dep:jest",
+            "anchor_status": "invalid",
+            "anchor_project_id": "github.com/acme/app",
+            "anchor_event": "superseded",
+            "anchor_successor_ref": "dep:vitest",
+            "anchor_successor_status": "valid",
+            "source_agent": "owner",
+        },
+    }
+
+
+def test_project_trust_includes_superseded_by_when_anchor_event_superseded():
+    view = recall._project_item(
+        _superseded_entry(), include_freshness=True, now=None, include_trust=True
+    )
+    trust = view["trust"]
+    assert trust.get("superseded_by") == "dep:vitest"
+
+
+def test_project_trust_no_superseded_by_when_not_superseded():
+    """A normal invalid anchor (no successor found) must NOT expose superseded_by."""
+    entry = {
+        "id": "x",
+        "summary": "This project depends on `jest`.",
+        "tier": "staging",
+        "provenance": {
+            "anchor_ref": "dep:jest",
+            "anchor_status": "invalid",
+            "source_agent": "owner",
+        },
+    }
+    view = recall._project_item(entry, include_freshness=True, now=None, include_trust=True)
+    trust = view.get("trust", {})
+    assert "superseded_by" not in trust
+
+
+def test_project_trust_superseded_by_not_leaked_without_include_trust():
+    """Default recall (include_trust=False) must NOT expose superseded_by."""
+    view = recall._project_item(
+        _superseded_entry(), include_freshness=True, now=None
+    )
+    assert "trust" not in view

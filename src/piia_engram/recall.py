@@ -122,6 +122,11 @@ def _project_trust(
         for key in ("decay_policy", "skip_decay", "freshness_status"):
             if key in fr:
                 trust[key] = fr[key]
+    # Feature #33: successor hint — additive, owner-only, never leaks via default recall.
+    if raw.get("anchor_event") == "superseded":
+        successor = raw.get("anchor_successor_ref")
+        if isinstance(successor, str) and successor.strip():
+            trust["superseded_by"] = successor.strip()
     return trust
 
 
