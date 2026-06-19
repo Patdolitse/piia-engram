@@ -6,6 +6,11 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.6.2] - 2026-06-19
+
+### Added
+- Dependency successor detection: when a repo-backed fact's dependency anchor breaks because the dependency was replaced by a known successor (e.g. `jest` → `vitest`), recall now surfaces the migration as a hint (`superseded_by`) instead of just a bare invalidation — the now-false fact still drops back to an unconfirmed guess, but you also get a pointer to re-onboard the successor. The mapping is curated and conservative (high-confidence test-framework migrations only), and the hint clears automatically once the fact is re-validated.
+
 ## [4.6.1] - 2026-06-19
 
 ### Added

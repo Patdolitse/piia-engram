@@ -1,6 +1,6 @@
 {
   "name": "piia-engram",
-  "version": "4.6.1",
+  "version": "4.6.2",
   "description": "Local-first personal AI identity layer for MCP-compatible coding tools. Stores your lessons, decisions, playbooks, and project context as local JSON. AI proposes; high-risk items wait for your review, and everything stays visible and reversible. Local-first, no cloud, no account.",
   "author": {
     "name": "Engram Contributors",
