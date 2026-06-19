@@ -111,7 +111,8 @@ async def memory_store(
             if result.get("status") == "duplicate":
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="memory_store"))
-            return f"教训已记录: {label}"
+            tier = result.get("tier", "staging")
+            return f"[Engram] 教训已记录 · tier={tier} · 可召回: {label}"
         elif kind == "decision":
             result = S._locked_engram_call(S._engram.add_decision, content)
             label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
@@ -119,12 +120,14 @@ async def memory_store(
             if result.get("status") == "duplicate":
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="memory_store"))
-            return f"决策已记录: {label}"
+            tier = result.get("tier", "staging")
+            return f"[Engram] 决策已记录 · tier={tier} · 可召回: {label}"
         else:  # playbook
             result = S._locked_engram_call(S._engram.add_playbook, content)
             label = content.get("title", "")[:60]
             S._track("memory_store", success=True)
-            return f"Playbook 已记录: {label}"
+            tier = result.get("tier", "staging")
+            return f"[Engram] Playbook 已记录 · tier={tier} · 可召回: {label}"
     except Exception as exc:
         S._track("memory_store", success=False)
         return f"memory_store 失败: {S._safe_err(exc)}"
@@ -198,7 +201,8 @@ async def add_lesson(
         # Gate it like any write-echo: owner sees it, lower tiers get a
         # title/body-free confirmation.
         return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="add_lesson"))
-    return f"教训已记录: {summary}"
+    tier = result.get("tier", "staging")
+    return f"[Engram] 教训已记录 · tier={tier} · 可召回: {summary}"
 
 
 @S.mcp.tool()
@@ -277,7 +281,8 @@ async def add_decision(
         # Dedup-reject echoes the matched stored decision's ``existing_title`` —
         # gate it like any write-echo (see add_lesson).
         return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="add_decision"))
-    return f"决策已记录: {question} → {choice}"
+    tier = result.get("tier", "staging")
+    return f"[Engram] 决策已记录 · tier={tier} · 可召回: {question} → {choice}"
 
 
 @S.mcp.tool()
@@ -385,7 +390,8 @@ async def add_playbook(
         return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="add_playbook"))
     if result.get("error"):
         return S._json(result)
-    return f"Playbook 已记录: {title} (triggers: {triggers})"
+    tier = result.get("tier", "staging")
+    return f"[Engram] Playbook 已记录 · tier={tier} · 可召回: {title} (triggers: {triggers})"
 
 
 # ---------------------------------------------------------------------------

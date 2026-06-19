@@ -353,6 +353,7 @@ class TestWriterSpyExternalNoDelta:
         import piia_engram.mcp_server as mcp_server
 
         mcp_server._engram = e
+        _reset_tracking(mcp_server)
 
         func = getattr(mcp_server, tool_name)
         before = _snapshot(engram)
@@ -367,6 +368,47 @@ class TestWriterSpyExternalNoDelta:
             f"{tool_name} mutated data files despite refusing the caller. "
             f"Changed: {sorted(set(before) ^ set(after)) or 'content of existing files'}"
         )
+
+    def test_refused_write_at_checkpoint_boundary_writes_no_context(
+        self, tmp_path, monkeypatch
+    ):
+        """A refused read-only-external mutating call must stay disk-side-effect
+        free even when the GLOBAL session counter sits exactly on the checkpoint
+        cadence. Regression for the governance write-boundary leak: a denied
+        ``add_playbook`` whose ``_track(success=False)`` still reached
+        ``_session.record`` and, at ``_real_call_count % _CHECKPOINT_EVERY == 0``,
+        wrote ``contexts/<client>/auto-*-cpN.md`` on behalf of a refused caller."""
+        monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+        monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+        engram = _setup_engram(tmp_path)
+        monkeypatch.setenv("ENGRAM_DIR", str(engram))
+        e = _make_engram(engram)
+
+        import piia_engram.mcp_server as mcp_server
+
+        mcp_server._engram = e
+        _reset_tracking(mcp_server)
+        # Park the counter one short of the cadence so the NEXT real call would
+        # normally trigger an interim checkpoint.
+        mcp_server._session._real_call_count = (
+            mcp_server._session._CHECKPOINT_EVERY - 1
+        )
+
+        before = _snapshot(engram)
+        result = _run(mcp_server.add_playbook(title="x", triggers="y"))
+        after = _snapshot(engram)
+
+        assert _is_refusal(result), (
+            f"add_playbook must refuse a read-only-external caller; returned: {result!r:.200}"
+        )
+        assert before == after, (
+            "a refused external caller triggered a disk write at the checkpoint "
+            f"boundary. Changed: {sorted(set(before) ^ set(after)) or 'content of existing files'}"
+        )
+        # A denied call is not real session activity — it must not be counted.
+        assert mcp_server._session._real_call_count == (
+            mcp_server._session._CHECKPOINT_EVERY - 1
+        ), "a refused external write was counted toward the checkpoint cadence"
 
 
 # ---------------------------------------------------------------------------

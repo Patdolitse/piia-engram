@@ -61,6 +61,14 @@ def main() -> int:
                 token_budget=_TOKEN_BUDGET,
             )
             markdown = str(brief.get("markdown", "") or "")
+            # Layer 3: append a once-per-week weekly hint. engram is left to default
+            # so the helper builds a read_only (zero-write) instance for the recap.
+            try:
+                from ._weekly_hint import maybe_append_weekly_hint
+
+                markdown = maybe_append_weekly_hint(markdown, project_folder=project_folder)
+            except Exception:
+                pass
         except Exception as exc:
             log_failure("cursor_inject_resume_brief", "get_resume_brief failed", exc)
             return _passthrough()

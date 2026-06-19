@@ -6,6 +6,15 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.7.0] - 2026-06-19
+
+### Added
+- Presence loop — Engram now makes itself visible each time it works. Saving a lesson, decision, or playbook returns a branded, tier-aware confirmation; `recall` opens with a branded trust header (`[Engram Recall] N memories · X fresh · Y stale`) computed only from freshness it can substantiate (never an unearned "verified"); and the cross-session resume brief now leads with `[Engram] Resumed N memories from <project> · last session <when>`.
+- Weekly recap: new `engram weekly [--json]` prints a ≤10-line digest of the last 7 days — new lessons/decisions/playbooks counts, top domains, portrait growth, the review backlog, and one older memory worth resurfacing (chosen deterministically, never random). A once-per-week, ignorable SessionStart hint reminds you it exists.
+
+### Fixed
+- Read/refusal write boundary: a refused read-only-external caller can no longer cause any incidental disk write (such as a session checkpoint), and the new weekly recap reads are strictly zero-write.
+
 ## [4.6.2] - 2026-06-19
 
 ### Added

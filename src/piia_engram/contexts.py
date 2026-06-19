@@ -80,6 +80,25 @@ def _escape_resume_brief_text(value: Any) -> str:
     return "".join(out)
 
 
+def _resume_brand_line(n_memories: int, project_label: str, last_session_when: str) -> str:
+    """[Engram] presence lead line for the resume brief (Layer 1).
+
+    The brief is injected as model context at SessionStart (Claude Code / Cursor
+    hooks) and returned by the get_resume_brief tool; leading it with this line
+    makes the next AI naturally carry out "[Engram] Resumed N memories …".
+
+    Honest by construction: ``n_memories`` is how many lessons + decisions this
+    brief actually surfaced (never an unsubstantiated total). ``from {project}``
+    and ``· last session {when}`` are dropped when unknown rather than fabricated.
+    """
+    line = f"[Engram] Resumed {n_memories} memories"
+    if project_label:
+        line += f" from {project_label}"
+    if last_session_when:
+        line += f" · last session {last_session_when}"
+    return line
+
+
 class ContextStoreMixin:
     """Mixin: agent context auto-save and recovery.
 
@@ -429,6 +448,9 @@ class ContextStoreMixin:
         sections_skipped: list[str] = []
         project_title = ""
         recent_activity = ""
+        last_session_when = ""
+        n_lessons = 0
+        n_decisions = 0
 
         # ---- 1. Identity (cheapest, always include) ---------------------
         try:
@@ -562,6 +584,8 @@ class ContextStoreMixin:
         try:
             recent = self.get_recent_context(limit=2)
             if recent:
+                # Newest-first: cite the most recent session's time in the brand line.
+                last_session_when = str(recent[0].get("modified_at", "") or "")
                 ctx_lines = ["## Recent session contexts (newest first)"]
                 for r in recent:
                     body = r.get("content", "")
@@ -622,6 +646,7 @@ class ContextStoreMixin:
                                 f"- {prefix}{_escape_resume_brief_text(summary)}"
                             )
                     if len(parts) > 1:
+                        n_lessons = len(parts) - 1
                         sections.append(("lessons", "\n".join(parts)))
         except Exception as exc:
             sections_skipped.append(f"lessons ({exc})")
@@ -657,6 +682,7 @@ class ContextStoreMixin:
                         elif safe_q:
                             parts.append(f"- {prefix}{safe_q}")
                     if len(parts) > 1:
+                        n_decisions = len(parts) - 1
                         sections.append(("decisions", "\n".join(parts)))
         except Exception as exc:
             sections_skipped.append(f"decisions ({exc})")
@@ -817,6 +843,22 @@ class ContextStoreMixin:
             total += text_len
 
         body = "\n\n".join(parts)
+        # [Engram] presence lead line (Layer 1) — brand the brief so the next AI
+        # carries out "[Engram] Resumed N memories …". Count ONLY memories that
+        # actually made it into this brief (honest, no overclaim); omit project /
+        # last-session when unknown.
+        _n_memories = (
+            (n_lessons if "lessons" in included else 0)
+            + (n_decisions if "decisions" in included else 0)
+        )
+        _project_label = project_title or (
+            Path(project_folder).name if project_folder else ""
+        )
+        body = (
+            _resume_brand_line(_n_memories, _project_label, last_session_when)
+            + "\n\n"
+            + body
+        )
         markdown = wrapper_open + wrapper_preamble + body + wrapper_close
 
         # ~4 chars/token is the standard rough estimate.

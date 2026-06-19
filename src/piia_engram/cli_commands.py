@@ -3961,6 +3961,30 @@ def _run_dock_status(args: list[str]) -> int:
     return 0
 
 
+def _run_weekly(args: list[str]) -> int:
+    """`engram weekly [--json]` — Layer 3 weekly recap (presence loop).
+
+    Strictly READ-ONLY: composes the past-7-days digest from existing read APIs
+    and prints it. The only Layer-3 write (the once-per-week SessionStart hint
+    dedup) lives in the hook layer, never here.
+    """
+    import json as _json
+    import os
+
+    from .core import Engram
+    from .reports_weekly import build_weekly_recap, render_weekly_text
+
+    want_json = "--json" in args
+    # read_only=True → guaranteed zero-write: no audit.log, no session stamp, no
+    # structure creation. The recap is a pure read surface (Codex final review).
+    recap = build_weekly_recap(Engram(read_only=True), project_folder=os.getcwd())
+    if want_json:
+        print(_json.dumps(recap, ensure_ascii=False, indent=2))
+    else:
+        print(render_weekly_text(recap))
+    return 0
+
+
 def _run_portrait(args: list[str]) -> int:
     """Build, store, and compare a lean user portrait (engram portrait).
 

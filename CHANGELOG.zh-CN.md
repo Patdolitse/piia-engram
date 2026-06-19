@@ -6,6 +6,15 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.7.0] - 2026-06-19
+
+### 新增
+- 存在感闭环——Engram 每次起作用都可见。保存经验/决策/手册会返回品牌化、带信任层级的确认；`recall` 顶部多一行品牌化信任抬头（`[Engram Recall] N memories · X fresh · Y stale`，只用能证实的新鲜度计数，绝不假装 "verified"）；跨会话简报以 `[Engram] Resumed N memories from <项目> · last session <时间>` 开头。
+- 周复盘：新命令 `engram weekly [--json]` 输出过去 7 天的 ≤10 行摘要——新增 lessons/decisions/playbooks 计数、top 领域、画像成长、待审积压，以及一条值得"重现"的旧记忆（确定性挑选，非随机）。SessionStart 每周一次、可忽略的提示提醒你它的存在。
+
+### 修复
+- 读取/拒绝写边界：被拒绝的只读外部调用不再产生任何附带写盘（例如 session checkpoint）；新的周复盘读取严格零写。
+
 ## [4.6.2] - 2026-06-19
 
 ### 新增

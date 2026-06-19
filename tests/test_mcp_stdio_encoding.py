@@ -245,7 +245,7 @@ def test_startup_sync_and_write_tool_share_write_lock(monkeypatch):
 
     result = asyncio.run(mcp_server.add_lesson("locked write"))
 
-    assert result == "教训已记录: locked write"
+    assert result == "[Engram] 教训已记录 · tier=staging · 可召回: locked write"
     assert events == ["lock:enter", "add", "lock:exit"]
 
 

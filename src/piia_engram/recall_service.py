@@ -361,6 +361,26 @@ def _load_relation_edges(eng: Any) -> list[dict]:
 def render_recall_text(payload: dict[str, Any]) -> str:
     """Render a recall payload as a compact, owner-facing text digest."""
     lines: list[str] = []
+    # [Engram] presence header — brand the recall block. Counts come ONLY from
+    # freshness_status; the recall payload projects no tier, so we never imply a
+    # "verified" count we cannot substantiate. Degrades to a bare memory count
+    # when no item carries freshness (include_freshness=False) or knowledge=[].
+    _knowledge = payload.get("knowledge", []) if isinstance(payload, dict) else []
+
+    def _fresh_status(_it: object) -> str:
+        if isinstance(_it, dict) and isinstance(_it.get("freshness"), dict):
+            return str(_it["freshness"].get("freshness_status") or "")
+        return ""
+
+    if any(_fresh_status(_it) for _it in _knowledge):
+        _fresh_n = sum(1 for _it in _knowledge if _fresh_status(_it) == "fresh")
+        _stale_n = sum(1 for _it in _knowledge if _fresh_status(_it) == "stale")
+        lines.append(
+            f"[Engram Recall] {len(_knowledge)} memories · "
+            f"{_fresh_n} fresh · {_stale_n} stale"
+        )
+    else:
+        lines.append(f"[Engram Recall] {len(_knowledge)} memories")
     meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
     project = meta.get("project") or "(all projects)"
     lines.append(f"Recall digest — project: {project}")

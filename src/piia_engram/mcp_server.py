@@ -758,6 +758,27 @@ def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None
                     return
             except Exception:
                 return
+    # Governance write-boundary: a DENIED low-trust mutating write must be
+    # disk-side-effect free too. Without this, a refused non-owner write still
+    # falls through to the telemetry flush + session checkpoint below; if the
+    # global session counter happens to hit _CHECKPOINT_EVERY on that call, a
+    # context autosave (contexts/<client>/auto-*-cpN.md) is written ON BEHALF of
+    # a caller who was refused — breaking the "refused mutating tool writes no
+    # data file" contract the WriterSpy guards. Mirrors the read-class
+    # suppression above for the write-refusal case; suppressing here drops both
+    # the telemetry flush and the session checkpoint, and prevents the denied
+    # call's args_summary from ever reaching a checkpoint. Owner failures and
+    # governance-OFF still record exactly as before (caller_is_owner() is True).
+    if success is False and tool_class in WRITE_GATE_CLASSES_MUTATING:
+        try:
+            if not _gov_rt.caller_is_owner(_engram.root):
+                return
+        except Exception:
+            try:
+                if _gov_rt.governance_enabled():
+                    return
+            except Exception:
+                return
     if _tracker is not None:
         _tracker.record(tool_name, success=success)
         _track_count += 1

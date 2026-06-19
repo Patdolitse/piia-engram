@@ -2970,6 +2970,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_get_lang,
     _run_dock_status,
     _run_portrait,
+    _run_weekly,
     _run_telemetry_validate,
     _run_release_check,
     _run_dashboard,
@@ -3010,7 +3011,7 @@ def main() -> None:
     # dry-run-by-default JSON surfaces — the reminder would write .update_check.json
     # into the store — so skip them too (`dock-quality-action` only writes after
     # an explicit --yes, never on its default dry-run). Not reached by the MCP entry.
-    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan")):
+    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan", "weekly")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3111,6 +3112,8 @@ def main() -> None:
         sys.exit(_run_dock_status(args[1:]))
     elif args[0] == "portrait":
         sys.exit(_run_portrait(args[1:]))
+    elif args[0] == "weekly":
+        sys.exit(_run_weekly(args[1:]))
     elif args[0] == "lifecycle":
         sys.exit(_run_lifecycle(args[1:]))
     elif args[0] == "merge":
@@ -3196,6 +3199,7 @@ def main() -> None:
             "  engram dock-set-lang    Set the owner's language in profile.json (--lang zh|en/--json)\n"
             "  engram dock-get-lang    Zero-write read of the owner's language for a desktop client (--json)\n"
             "  engram portrait         Lean user portrait snapshot + growth since last (--list/--no-save/--json)\n"
+            "  engram weekly           Past-7-days recap: counts, top domains, growth, 1 resurfaced memory (--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
             "  engram conflicts        决策冲突 list/resolve / decision conflicts list/resolve\n"
             "  engram integrity        Read-only integrity scan + self-heal proposals\n"
