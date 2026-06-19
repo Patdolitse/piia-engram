@@ -3631,33 +3631,24 @@ def _run_dock_update(args: list[str]) -> int:
     if not isinstance(raw_updates, dict):
         return _err("--updates-file must contain a JSON object")
 
-    allowed = {"summary", "detail", "question", "choice", "reasoning"}
-    updates = {
-        k: v.strip() for k, v in raw_updates.items()
-        if k in allowed and isinstance(v, str)
-    }
-    if not updates:
-        return _err("no valid fields to update")
-    # a primary field may be edited but never blanked (would gut the entry)
-    for k in ("summary", "question", "choice"):
-        if k in updates and not updates[k]:
-            return _err(f"{k} cannot be empty")
-    # legacy compat: extraction-written decisions keep their primary text in
-    # `title` (question is null). When the owner edits `question`, sync `title`
-    # too so identity/dedup/report code (which prefers `title`) isn't left stale.
-    if updates.get("question"):
-        updates["title"] = updates["question"]
-
+    # Shared core: the HTTP /api/dock-update route calls the same update_entry — one
+    # source of truth for the field whitelist / non-blank primary / question→title
+    # sync / write (CLI = local owner, HTTP = authed dock session, both already
+    # gated). The receipt's `error_kind` preserves the CLI's exit-code split: a
+    # "validation" failure (no/blank/unknown fields) is a bad request (exit 2); a
+    # "write" failure (id not found, write failed) is exit 1 — the same codes the
+    # inline copy returned.
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    from piia_engram.dock_ui.contracts import update_entry
     try:
-        eng = Engram(root=root)
-        result = eng.update_knowledge(item_id, updates)
+        receipt = update_entry(Engram(root=root), item_id, raw_updates)
     except Exception as exc:
         return _err(str(exc), 1)
-    if isinstance(result, dict) and result.get("error"):
-        return _err(str(result["error"]), 1)
+    if not receipt.get("ok"):
+        code = 2 if receipt.get("error_kind") == "validation" else 1
+        return _err(str(receipt.get("error", "update failed")), code)
     if want_json:
-        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        print(json.dumps({"ok": True, "result": receipt.get("result")}, ensure_ascii=False))
         return 0
     print(f"已更新: {item_id}")
     return 0
@@ -3722,65 +3713,20 @@ def _run_dock_list(args: list[str]) -> int:
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
 
-    def _title(kind: str, it: dict) -> str:
-        if kind == "decision":
-            # extraction-written decisions keep their primary text in `title`
-            # (question is null) — fall back so they never render as "(decision)".
-            q = (it.get("question") or it.get("title") or "").strip()
-            c = (it.get("choice") or "").strip()
-            return f"{q} → {c}" if q and c else (q or c or "(decision)")
-        return (it.get("summary") or "(lesson)").strip()
-
-    def _copy(kind: str, it: dict) -> str:
-        if kind == "decision":
-            parts = [_title(kind, it)]
-            reasoning = (it.get("reasoning") or "").strip()
-            if reasoning:
-                parts.append(reasoning)
-            return "\n".join(parts)
-        parts = [(it.get("summary") or "").strip()]
-        detail = (it.get("detail") or "").strip()
-        if detail:
-            parts.append(detail)
-        return "\n".join([p for p in parts if p])
-
+    # Shared core: the HTTP /api/dock-memory route calls the same
+    # dock_memory_list_payload on a read_only Engram — one source of truth for the
+    # active-set filter (excludes archived tier + non-active status) and the
+    # title/copy/fields/labeling projection; guaranteed zero-write. The CLI wraps it
+    # with `engram_dir` for a local desktop client; the HTTP payload omits the path
+    # (the server's local store path must never leak to a browser).
+    from piia_engram.dock_ui.contracts import dock_memory_list_payload
     try:
-        eng = Engram(root=root, read_only=True)
-        results = []
-        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
-            for it in eng._read_entries(eng._knowledge_dir / fname, kind):
-                if it.get("tier") == "archived":
-                    continue  # belongs to dock-archived / restore
-                if (it.get("status") or "active") != "active":
-                    continue  # superseded / outdated — not part of active memory
-                entry = {
-                    "kind": kind,
-                    "title": _title(kind, it),
-                    "tier": it.get("tier", "") or "",
-                    "id": it.get("id", ""),
-                    "copy": _copy(kind, it),
-                }
-                labeling = _dock_labeling_projection(it)
-                if labeling:
-                    entry["labeling"] = labeling
-                if kind == "lesson":
-                    entry["fields"] = {
-                        "summary": it.get("summary", "") or "",
-                        "detail": it.get("detail", "") or "",
-                    }
-                else:
-                    entry["fields"] = {
-                        # mirror dock-search: question falls back to legacy title
-                        "question": it.get("question") or it.get("title") or "",
-                        "choice": it.get("choice", "") or "",
-                        "reasoning": it.get("reasoning", "") or "",
-                    }
-                results.append(entry)
+        payload = dock_memory_list_payload(Engram(root=root, read_only=True), limit=limit)
     except Exception as exc:  # never crash the Dock spawn — emit a usable error
         return _err(str(exc), 1)
-
-    if limit and len(results) > limit:
-        results = results[-limit:]  # keep the most-recent N (entries append-ordered)
+    if not payload.get("ok"):
+        return _err(str(payload.get("error", "list failed")), 1)
+    results = payload.get("results", [])
 
     if want_json:
         print(json.dumps(

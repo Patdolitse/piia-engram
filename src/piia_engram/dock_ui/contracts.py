@@ -123,29 +123,34 @@ def update_entry(eng: Any, item_id: str, raw_updates: dict) -> dict:
     call site). Only ``_EDITABLE_FIELDS`` are honored; a primary field
     (summary/question/choice) may be edited but never blanked (would gut the
     entry). Returns a receipt dict or a structured ``{"ok": False, "error": ...}``.
+
+    Each failure carries ``error_kind`` so every transport maps it to its own
+    protocol: ``"validation"`` is a bad request (HTTP 400, CLI exit 2) — the fields
+    were absent, empty, or unknown; ``"write"`` is a valid request that couldn't
+    land (HTTP 400, CLI exit 1) — entry not found or the write itself failed.
     """
     item_id = str(item_id or "").strip()
     if not item_id:
-        return {"ok": False, "error": "id is required"}
+        return {"ok": False, "error": "id is required", "error_kind": "validation"}
     if not isinstance(raw_updates, dict):
-        return {"ok": False, "error": "updates must be an object"}
+        return {"ok": False, "error": "updates must be an object", "error_kind": "validation"}
     updates = {
         k: v.strip() for k, v in raw_updates.items()
         if k in _EDITABLE_FIELDS and isinstance(v, str)
     }
     if not updates:
-        return {"ok": False, "error": "no valid fields to update"}
+        return {"ok": False, "error": "no valid fields to update", "error_kind": "validation"}
     for k in ("summary", "question", "choice"):
         if k in updates and not updates[k]:
-            return {"ok": False, "error": f"{k} cannot be empty"}
+            return {"ok": False, "error": f"{k} cannot be empty", "error_kind": "validation"}
     if updates.get("question"):
         updates["title"] = updates["question"]  # legacy: keep title in sync for dedup/report
     try:
         result = eng.update_knowledge(item_id, updates)
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": str(exc), "error_kind": "write"}
     if isinstance(result, dict) and result.get("error"):
-        return {"ok": False, "error": str(result["error"])}
+        return {"ok": False, "error": str(result["error"]), "error_kind": "write"}
     return {"ok": True, "changed": True, "result": result}
 
 

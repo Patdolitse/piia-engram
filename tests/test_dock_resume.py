@@ -864,6 +864,29 @@ def test_dock_title_only_decision_search_fallback_and_update_sync(
     assert d.get("title") == "改为采用方案Y"  # legacy title synced, not stale
 
 
+def test_update_entry_classifies_validation_vs_write_errors(tmp_path):
+    """The shared core tags each failure with ``error_kind`` so every caller maps it
+    to its own protocol (CLI exit 2 vs 1; HTTP 400). A bad/empty/absent field is a
+    request-shape problem (``validation``); a real edit that can't land — missing id,
+    failed write — is ``write``. This is the seam the converged CLI relies on to keep
+    its exit-code split (blank-primary -> 2, not-found -> 1) after dropping its inline
+    copy of the rules."""
+    from piia_engram.core import Engram
+    from piia_engram.dock_ui.contracts import update_entry
+
+    eng = _populate(tmp_path / "store")
+    lid = eng.add_lesson({"summary": "原始"}).get("id")
+
+    blank = update_entry(eng, lid, {"summary": "   "})
+    assert blank["ok"] is False and blank["error_kind"] == "validation"
+
+    no_fields = update_entry(eng, lid, {"bogus": "y"})
+    assert no_fields["ok"] is False and no_fields["error_kind"] == "validation"
+
+    missing = update_entry(eng, "nonexistent_id", {"summary": "x"})
+    assert missing["ok"] is False and missing["error_kind"] == "write"
+
+
 # --- dock-list: zero-write list of all active entries (我的记忆 browse view) --
 
 
