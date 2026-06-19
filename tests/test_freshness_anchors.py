@@ -916,3 +916,97 @@ def test_public_freshness_status_remains_four_state_after_anchor_revalidation(
 
     assert freshness["freshness_status"] in {P.FRESH, P.AGING, P.STALE, P.UNKNOWN}
     assert freshness["freshness_status"] not in {"valid", "invalid", "unknown_anchor"}
+
+
+# ---------------------------------------------------------------------------
+# Feature #33: revalidate_anchors — superseded provenance + counter
+# ---------------------------------------------------------------------------
+
+
+def test_revalidate_anchors_records_superseded_hint_on_jest_to_vitest(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When jest is INVALID and vitest is present, revalidate_anchors should:
+    - still demote to staging (tier, confirmation_source cleared, anchor_status=invalid)
+    - additionally set anchor_event='superseded', anchor_successor_ref='dep:vitest',
+      anchor_successor_status='valid' on the provenance
+    - report superseded >= 1 alongside the existing counters (unchanged)
+    """
+    repo = tmp_path / "repo"
+    # jest was present, now removed; vitest is present (migration happened)
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+
+    lesson = eng.add_lesson("jest-backed fact migrated to vitest")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+    # Sanity: was confirmed, vitest not jest
+    assert _stored_lesson(eng, lesson["id"])["tier"] == "verified"
+
+    report = eng.revalidate_anchors(str(repo))
+
+    stored = _stored_lesson(eng, lesson["id"])
+    prov = stored["provenance"]
+
+    # Standard demotion must still happen
+    assert stored["tier"] == "staging"
+    assert "confirmation_source" not in prov
+    assert prov["anchor_status"] == "invalid"
+
+    # NEW: successor hint set as side metadata
+    assert prov.get("anchor_event") == "superseded"
+    assert prov.get("anchor_successor_ref") == "dep:vitest"
+    assert prov.get("anchor_successor_status") == "valid"
+
+    # Report has superseded counter alongside existing counters
+    assert "superseded" in report
+    assert report["superseded"] >= 1
+    # Existing counters must still be present and correct
+    assert report["checked"] == 1
+    assert report["invalid"] == 1
+    assert report["demoted"] == 1
+    assert report["valid"] == 0
+
+
+def test_revalidate_anchors_no_superseded_when_no_vitest_present(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conservativeness: jest invalid but NO successor (vitest) present
+    → normal demote, NO anchor_event='superseded' set."""
+    repo = tmp_path / "repo"
+    # jest gone, no successor either
+    _write_package_json(repo, {"mocha": "^10.0.0"})  # mocha is not a jest successor
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+
+    lesson = eng.add_lesson("jest-backed fact, no vitest")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    report = eng.revalidate_anchors(str(repo))
+
+    stored = _stored_lesson(eng, lesson["id"])
+    prov = stored["provenance"]
+
+    # Normal demote
+    assert stored["tier"] == "staging"
+    assert "confirmation_source" not in prov
+    assert prov["anchor_status"] == "invalid"
+
+    # NO superseded metadata
+    assert "anchor_event" not in prov
+    assert "anchor_successor_ref" not in prov
+
+    # Report superseded counter present but zero
+    assert report.get("superseded", 0) == 0

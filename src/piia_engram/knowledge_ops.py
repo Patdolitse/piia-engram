@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from . import freshness_anchors as _freshness_anchors
@@ -593,6 +594,7 @@ class KnowledgeOpsMixin:
             "invalid": 0,
             "unknown": 0,
             "demoted": 0,
+            "superseded": 0,
             "skipped_mismatch": 0,
             "skipped_legacy": 0,
             "project_id": project_id,
@@ -645,8 +647,29 @@ class KnowledgeOpsMixin:
             status = _freshness_anchors.check_anchor(parsed, project_root)
             checked_at = _now_iso()
 
+            # Successor detection: only for dep: anchors that are INVALID.
+            # This is SIDE metadata only — it does NOT change status or demotion.
+            successor_ref: str | None = None
+            if (
+                status == _freshness_anchors.INVALID
+                and isinstance(parsed, dict)
+                and parsed.get("kind") == "dep"
+            ):
+                dep_ref = parsed.get("ref", "")
+                successor_name = _freshness_anchors._detect_dep_successor(
+                    dep_ref, Path(project_root).expanduser()
+                )
+                if successor_name is not None:
+                    successor_ref = _freshness_anchors.format_anchor_ref(
+                        "dep", successor_name
+                    )
+
             def _mark(
-                entry: dict, *, _status: str = status, _item_type: str = item_type
+                entry: dict,
+                *,
+                _status: str = status,
+                _item_type: str = item_type,
+                _successor_ref: str | None = successor_ref,
             ) -> dict:
                 prov = entry.get("provenance")
                 if not isinstance(prov, dict):
@@ -664,6 +687,10 @@ class KnowledgeOpsMixin:
                     # anchor_* fields as evidence of why it was demoted; clear
                     # only the confirmation that no longer holds.
                     prov.pop("confirmation_source", None)
+                    if _successor_ref is not None:
+                        prov["anchor_event"] = "superseded"
+                        prov["anchor_successor_ref"] = _successor_ref
+                        prov["anchor_successor_status"] = "valid"
                     entry["provenance"] = prov
                     entry["tier"] = "staging"
                     # Re-derive memory_state / approval_status / approval_required
@@ -684,6 +711,8 @@ class KnowledgeOpsMixin:
                 report["unknown"] += 1
             if status == _freshness_anchors.INVALID:
                 report["demoted"] += 1
+                if successor_ref is not None:
+                    report["superseded"] += 1
 
         return report
 
