@@ -7,6 +7,7 @@ No third-party crypto deps (no itsdangerous); ``secrets`` only.
 from __future__ import annotations
 
 import secrets
+import time
 
 SESSION_COOKIE = "engram_dock_session"
 CSRF_HEADER = "x-engram-csrf"
@@ -31,19 +32,33 @@ class TokenStore:
 
 
 class SessionStore:
-    """In-memory sessions keyed by an opaque 256-bit id; each carries a CSRF token."""
+    """In-memory sessions keyed by an opaque 256-bit id; each carries a CSRF token.
 
-    def __init__(self) -> None:
+    Sessions expire server-side after ``ttl`` seconds (Codex stage review, Med): a
+    replayed old session id is rejected by the server itself, not merely by the
+    browser's cookie max-age. ``get`` is the single choke point — it evicts and
+    returns ``None`` once a session is past its TTL, so every gate built on ``get``
+    (including ``validate_csrf``) inherits the expiry for free.
+    """
+
+    def __init__(self, *, ttl: int = SESSION_MAX_AGE) -> None:
         self._sessions: dict[str, dict] = {}
+        self._ttl = ttl
 
     def create(self) -> tuple[str, str]:
         sid = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(32)
-        self._sessions[sid] = {"csrf": csrf}
+        self._sessions[sid] = {"csrf": csrf, "created": time.time()}
         return sid, csrf
 
     def get(self, sid: str) -> dict | None:
-        return self._sessions.get(sid) if sid else None
+        sess = self._sessions.get(sid) if sid else None
+        if not sess:
+            return None
+        if time.time() - float(sess.get("created", 0)) > self._ttl:
+            self._sessions.pop(sid, None)
+            return None
+        return sess
 
     def validate_csrf(self, sid: str, csrf: str) -> bool:
         sess = self.get(sid)

@@ -37,6 +37,23 @@ def client(eng: Engram) -> TestClient:
     return TestClient(app, base_url=_BASE)
 
 
+class TestSessionTtl:
+    """Server-side sessions must expire (Codex stage review, Med): a replayed old
+    session id is rejected by the server, not just by the browser's cookie max-age."""
+
+    def test_session_expires_server_side_after_ttl(self):
+        import time
+
+        from piia_engram.dock_ui.security import SessionStore
+
+        store = SessionStore(ttl=1000)
+        sid, _csrf = store.create()
+        assert store.get(sid) is not None
+        # backdate the session beyond the TTL — the server must now reject it
+        store._sessions[sid]["created"] = time.time() - 2000
+        assert store.get(sid) is None
+
+
 class TestDockUiAuthGate:
     def test_unauthenticated_read_is_rejected(self, client: TestClient):
         resp = client.get("/api/dock-status")
