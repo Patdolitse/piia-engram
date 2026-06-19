@@ -145,3 +145,73 @@ class TestDockUpdateWritePath:
         assert resp.json()["ok"] is False
         kept = next(l for l in Engram(root=eng.root).get_lessons(limit=None) if l["id"] == lid)
         assert kept["summary"] == "keep me"  # original intact
+
+
+class TestDockRestoreCore:
+    """回收站 one-click restore core — the inverse of archive_entry; shared by CLI
+    dock-restore and the HTTP route."""
+
+    def test_restore_moves_out_of_archived(self, eng: Engram):
+        from piia_engram.dock_ui.contracts import restore_entry
+
+        lid = eng.add_lesson({"summary": "x"})["id"]
+        eng.soft_archive_knowledge_tier(lid, allow_verified=True)
+        receipt = restore_entry(Engram(root=eng.root), lid)
+        assert receipt["ok"] is True
+        back = next(l for l in Engram(root=eng.root).get_lessons(limit=None) if l["id"] == lid)
+        assert back.get("tier") != "archived"  # reversed the soft-archive
+
+    def test_restore_missing_id_is_error(self, eng: Engram):
+        from piia_engram.dock_ui.contracts import restore_entry
+
+        receipt = restore_entry(Engram(root=eng.root), "nope")
+        assert receipt["ok"] is False and "error" in receipt
+
+
+class TestDockRestoreWritePath:
+    """One-click restore from 回收站 — same owner gate as archive (session + exact
+    loopback Origin + CSRF). A refused request opens no writable Engram (zero
+    side-effect)."""
+
+    def _archived_lid(self, eng: Engram) -> str:
+        lid = eng.add_lesson({"summary": "archived then restored"})["id"]
+        eng.soft_archive_knowledge_tier(lid, allow_verified=True)
+        return lid
+
+    def test_restore_without_session_is_zero_side_effect(self, client: TestClient, eng: Engram):
+        lid = self._archived_lid(eng)
+        before = _snap(eng.root)
+        resp = client.post("/api/dock-restore", json={"id": lid})
+        assert resp.status_code == 401
+        assert _snap(eng.root) == before
+
+    def test_restore_without_csrf_is_zero_side_effect(self, client: TestClient, eng: Engram):
+        lid = self._archived_lid(eng)
+        _authed(client)
+        before = _snap(eng.root)
+        resp = client.post("/api/dock-restore", json={"id": lid}, headers={"Origin": _BASE})
+        assert resp.status_code == 403
+        assert _snap(eng.root) == before
+
+    def test_restore_bad_origin_is_zero_side_effect(self, client: TestClient, eng: Engram):
+        lid = self._archived_lid(eng)
+        csrf = _authed(client)
+        before = _snap(eng.root)
+        resp = client.post(
+            "/api/dock-restore", json={"id": lid},
+            headers={"Origin": "http://evil.test", "X-Engram-CSRF": csrf},
+        )
+        assert resp.status_code == 403
+        assert _snap(eng.root) == before
+
+    def test_restore_happy_path_unarchives(self, client: TestClient, eng: Engram):
+        lid = self._archived_lid(eng)
+        csrf = _authed(client)
+        resp = client.post(
+            "/api/dock-restore", json={"id": lid},
+            headers={"Origin": _BASE, "X-Engram-CSRF": csrf},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        lessons = {l["id"]: l for l in Engram(root=eng.root).get_lessons(limit=None)}
+        assert lessons[lid].get("tier") != "archived"  # back in the active set

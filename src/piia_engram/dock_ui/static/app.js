@@ -2,6 +2,7 @@
   "use strict";
 
   var memory = [];
+  var selected = new Set();  // ids checked for bulk archive in the 记忆 view
 
   function csrf() { return sessionStorage.getItem("engram_dock_csrf") || ""; }
 
@@ -36,6 +37,7 @@
     document.querySelectorAll(".view").forEach(function (s) {
       s.classList.toggle("active", s.dataset.view === name);
     });
+    if (name === "trash") loadTrash();  // refresh archived list each time it's opened
   }
 
   function renderMemory() {
@@ -50,18 +52,104 @@
     var tb = document.querySelector("#memory-table tbody");
     tb.innerHTML = "";
     if (rows.length === 0) {
-      tb.innerHTML = "<tr><td colspan='3' class='muted'>没有匹配的记忆</td></tr>";
+      tb.innerHTML = "<tr><td colspan='4' class='muted'>没有匹配的记忆</td></tr>";
+      updateBulkBar();
       return;
     }
     rows.forEach(function (m) {
       var tr = document.createElement("tr");
       tr.innerHTML =
+        "<td class='col-check'><input type='checkbox' class='row-check' data-id='" +
+          escapeHtml(m.id) + "'" + (selected.has(m.id) ? " checked" : "") + "></td>" +
         "<td><span class='tag tag-" + m.kind + "'>" + kindLabel(m.kind) + "</span></td>" +
-        "<td>" + escapeHtml(m.title) + "</td>" +
+        "<td class='cell-title'>" + escapeHtml(m.title) + "</td>" +
         "<td>" + (m.tier ? "<span class='tier'>" + escapeHtml(m.tier) + "</span>" : "") + "</td>";
+      var cb = tr.querySelector(".row-check");
+      cb.onclick = function (e) { e.stopPropagation(); };  // don't open the detail panel
+      cb.onchange = function () {
+        if (cb.checked) selected.add(m.id); else selected.delete(m.id);
+        updateBulkBar();
+      };
       tr.onclick = function () { showDetail(m.id); };
       tb.appendChild(tr);
     });
+    updateBulkBar();
+  }
+
+  // Bulk archive: the toolbar bar shows the count; one confirm archives them all.
+  function updateBulkBar() {
+    var bar = document.getElementById("memory-bulk");
+    if (bar) {
+      bar.hidden = selected.size === 0;
+      var c = document.getElementById("bulk-count");
+      if (c) c.textContent = "已选 " + selected.size + " 条";
+    }
+    var all = document.getElementById("memory-select-all");
+    if (all) {
+      var checks = document.querySelectorAll("#memory-table .row-check");
+      all.checked = checks.length > 0 &&
+        Array.prototype.every.call(checks, function (x) { return x.checked; });
+    }
+  }
+
+  function onSelectAll() {
+    var all = document.getElementById("memory-select-all");
+    var checks = document.querySelectorAll("#memory-table .row-check");
+    Array.prototype.forEach.call(checks, function (x) {
+      x.checked = all.checked;
+      var id = x.getAttribute("data-id");
+      if (all.checked) selected.add(id); else selected.delete(id);
+    });
+    updateBulkBar();
+  }
+
+  function bulkArchive() {
+    var ids = Array.from(selected);  // selected is a Set, not array-like
+    if (ids.length === 0) return;
+    if (!window.confirm("批量归档选中的 " + ids.length + " 条记忆？可在回收站恢复，不会删除。")) return;
+    // sequential (not parallel) so concurrent writes don't contend on the store files
+    ids.reduce(function (p, id) {
+      return p.then(function () { return post("/api/dock-archive", { id: id }); });
+    }, Promise.resolve()).then(function () {
+      selected.clear();
+      document.getElementById("detail").innerHTML =
+        "<p class='muted'>已批量归档（可在回收站恢复）。</p>";
+      return loadMemory();
+    }).catch(function () { return loadMemory(); });
+  }
+
+  // 回收站: archived entries with one-click restore.
+  function loadTrash() {
+    var box = document.getElementById("trash-list");
+    if (!box) return;
+    box.innerHTML = "<div class='muted'>正在加载…</div>";
+    api("/api/dock-archived").then(function (res) {
+      if (!res || !res.ok) { box.innerHTML = "<div class='err'>读取回收站失败。</div>"; return; }
+      var rows = res.results || [];
+      if (rows.length === 0) { box.innerHTML = "<p class='muted'>回收站是空的。</p>"; return; }
+      box.innerHTML = "";
+      rows.forEach(function (m) {
+        var row = document.createElement("div");
+        row.className = "trash-row";
+        row.innerHTML =
+          "<span class='trash-meta'><span class='tag tag-" + m.kind + "'>" +
+            kindLabel(m.kind) + "</span> " + escapeHtml(m.title) + "</span>" +
+          "<button class='btn btn-primary trash-restore'>恢复</button>";
+        row.querySelector(".trash-restore").onclick = function () { restoreItem(m.id); };
+        box.appendChild(row);
+      });
+    }).catch(function () { box.innerHTML = "<div class='err'>读取回收站失败（网络）。</div>"; });
+  }
+
+  function restoreItem(id) {
+    post("/api/dock-restore", { id: id }).then(function (res) {
+      if (res.status === 200 && res.body.ok) {
+        loadTrash();    // it's gone from the trash
+        loadMemory();   // …and back in the active set
+      } else {
+        window.alert("恢复失败：" + (res.body.error || res.status));
+      }
+    }).catch(function () { window.alert("恢复失败（网络）"); });
   }
 
   function fieldLabels(kind) {
@@ -173,6 +261,10 @@
   if (rb) rb.onclick = loadResume;
   document.getElementById("memory-search").oninput = renderMemory;
   document.getElementById("memory-kind").onchange = renderMemory;
+  var selAll = document.getElementById("memory-select-all");
+  if (selAll) selAll.onchange = onSelectAll;
+  var bulkBtn = document.getElementById("bulk-archive-btn");
+  if (bulkBtn) bulkBtn.onclick = bulkArchive;
 
   loadMemory();
 })();

@@ -3231,15 +3231,17 @@ def _run_dock_restore(args: list[str]) -> int:
         return _err("--id is required")
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    # Shared core: the HTTP /api/dock-restore route calls the same restore_entry
+    # (single source of truth; CLI = local owner, HTTP = authed dock session).
+    from piia_engram.dock_ui.contracts import restore_entry
     try:
-        eng = Engram(root=root)
-        result = eng.restore_lifecycle_archive(item_id)
+        receipt = restore_entry(Engram(root=root), item_id)
     except Exception as exc:
         return _err(str(exc), 1)
-    if isinstance(result, dict) and result.get("error"):
-        return _err(str(result["error"]), 1)
+    if not receipt.get("ok"):
+        return _err(str(receipt.get("error", "restore failed")), 1)
     if want_json:
-        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        print(json.dumps({"ok": True, "result": receipt.get("result")}, ensure_ascii=False))
         return 0
     print(f"已恢复: {item_id}")
     return 0
@@ -3278,24 +3280,16 @@ def _run_dock_archived(args: list[str]) -> int:
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
 
-    def _title(kind: str, it: dict) -> str:
-        if kind == "decision":
-            q = (it.get("question") or it.get("title") or "").strip()
-            c = (it.get("choice") or "").strip()
-            return f"{q} → {c}" if q and c else (q or c or "(decision)")
-        return (it.get("summary") or "(lesson)").strip()
-
+    # Shared core: the HTTP /api/dock-archived route calls the same
+    # dock_archived_list_payload on a read_only Engram (one source of truth;
+    # guaranteed zero-write). The CLI adds `engram_dir` for a local desktop client;
+    # the HTTP payload omits the path (never leak the server's store path).
+    from piia_engram.dock_ui.contracts import dock_archived_list_payload
     try:
-        eng = Engram(root=root, read_only=True)
-        results = []
-        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
-            for it in eng._read_entries(eng._knowledge_dir / fname, kind):
-                if it.get("tier") == "archived":
-                    results.append({
-                        "kind": kind,
-                        "title": _title(kind, it),
-                        "id": it.get("id", ""),
-                    })
+        payload = dock_archived_list_payload(Engram(root=root, read_only=True))
+        if not payload.get("ok"):
+            raise RuntimeError(payload.get("error", "list archived failed"))
+        results = payload.get("results", [])
     except Exception as exc:
         if want_json:
             print(json.dumps(

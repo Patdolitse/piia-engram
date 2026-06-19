@@ -44,7 +44,17 @@ th { background: #fbfbfc; color: #6b7280; font-weight: 600; font-size: 12px; }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: #f3f6ff; }
-td:nth-child(2) { max-width: 460px; }
+.cell-title { max-width: 460px; }
+.col-check { width: 34px; text-align: center; }
+.col-check input { cursor: pointer; }
+
+.bulk-bar { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 9px 14px; background: #eef2ff; border: 1px solid #dbe4ff; border-radius: 9px; }
+.muted-strong { font-weight: 600; color: #1d4fd7; }
+
+.trash-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
+.trash-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; background: #fff; border: 1px solid #e6e8ec; border-radius: 10px; padding: 11px 16px; }
+.trash-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-row .btn { white-space: nowrap; }
 
 .tag { font-size: 12px; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
 .tag-lesson { background: #e0f2fe; color: #0369a1; }

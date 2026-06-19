@@ -12,7 +12,11 @@ from starlette.testclient import TestClient
 
 from piia_engram.core import Engram
 from piia_engram.dock_ui.app import create_app
-from piia_engram.dock_ui.contracts import dock_memory_list_payload, dock_resume_payload
+from piia_engram.dock_ui.contracts import (
+    dock_archived_list_payload,
+    dock_memory_list_payload,
+    dock_resume_payload,
+)
 
 _TOKEN = "read-token-xyz"
 _PORT = 8731
@@ -118,4 +122,51 @@ class TestDockResumeRoute:
         _authed(client)
         before = _snap(eng.root)
         client.get("/api/dock-resume")
+        assert _snap(eng.root) == before
+
+
+class TestDockArchivedCore:
+    """回收站: a zero-write list of archived (soft-deleted) entries, so the GUI can
+    offer one-click restore. Shares the core with the CLI `dock-archived`."""
+
+    def test_lists_only_archived_entries(self, eng: Engram):
+        lid = next(l["id"] for l in eng.get_lessons(limit=None))
+        eng.soft_archive_knowledge_tier(lid, allow_verified=True)
+        payload = dock_archived_list_payload(Engram(root=eng.root, read_only=True))
+        assert payload["ok"] is True
+        assert payload["count"] == 1  # only the archived lesson; the active decision is excluded
+        row = payload["results"][0]
+        assert row["id"] == lid and row["kind"] == "lesson" and row["title"]
+
+    def test_empty_when_nothing_archived(self, eng: Engram):
+        payload = dock_archived_list_payload(Engram(root=eng.root, read_only=True))
+        assert payload["ok"] is True and payload["count"] == 0 and payload["results"] == []
+
+    def test_core_is_zero_write(self, eng: Engram, tmp_path: Path):
+        lid = next(l["id"] for l in eng.get_lessons(limit=None))
+        eng.soft_archive_knowledge_tier(lid, allow_verified=True)
+        before = _snap(tmp_path)
+        dock_archived_list_payload(Engram(root=eng.root, read_only=True))
+        assert _snap(tmp_path) == before
+
+
+class TestDockArchivedRoute:
+    def test_requires_session(self, client: TestClient):
+        assert client.get("/api/dock-archived").status_code == 401
+
+    def test_returns_archived(self, client: TestClient, eng: Engram):
+        lid = next(l["id"] for l in eng.get_lessons(limit=None))
+        eng.soft_archive_knowledge_tier(lid, allow_verified=True)
+        _authed(client)
+        resp = client.get("/api/dock-archived")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True and body["count"] == 1
+        assert resp.headers.get("cache-control") == "no-store"
+        assert "engram_dir" not in body  # the server's local path is NOT leaked to the browser
+
+    def test_route_is_zero_write(self, client: TestClient, eng: Engram):
+        _authed(client)
+        before = _snap(eng.root)
+        client.get("/api/dock-archived")
         assert _snap(eng.root) == before

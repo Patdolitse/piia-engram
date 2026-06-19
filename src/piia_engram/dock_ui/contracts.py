@@ -31,6 +31,25 @@ def archive_entry(eng: Any, item_id: str) -> dict:
     return {"ok": True, "reversible": True, "changed": True, "result": result}
 
 
+def restore_entry(eng: Any, item_id: str) -> dict:
+    """Reverse a soft-archive: move one ``archived`` entry back to its prior tier.
+
+    The inverse of :func:`archive_entry` and itself reversible (re-archivable);
+    nothing is hard-deleted. Returns a receipt dict or a structured
+    ``{"ok": False, "error": ...}`` (id absent, entry not found, or restore failed).
+    """
+    item_id = str(item_id or "").strip()
+    if not item_id:
+        return {"ok": False, "error": "id is required"}
+    try:
+        result = eng.restore_lifecycle_archive(item_id)
+    except Exception as exc:  # never crash the caller — return a usable error
+        return {"ok": False, "error": str(exc)}
+    if isinstance(result, dict) and result.get("error"):
+        return {"ok": False, "error": str(result["error"])}
+    return {"ok": True, "reversible": True, "changed": True, "result": result}
+
+
 def _mem_title(kind: str, it: dict) -> str:
     if kind == "decision":
         q = (it.get("question") or it.get("title") or "").strip()
@@ -112,6 +131,29 @@ def dock_memory_list_payload(eng: Any, *, limit: int = 0) -> dict:
         return {"ok": False, "error": str(exc), "count": 0, "results": []}
     if limit and len(results) > limit:
         results = results[-limit:]  # most-recent N (entries append-ordered)
+    return {"ok": True, "read_only": True, "count": len(results), "results": results}
+
+
+def dock_archived_list_payload(eng: Any) -> dict:
+    """Zero-write list of archived (soft-deleted) lessons/decisions for the 回收站.
+
+    Takes an ALREADY-OPENED read_only Engram (zero-write). The inverse of the active
+    set: lists exactly the ``archived`` tier (id/kind/title) so the dock can offer
+    one-click restore. Caller adds any framing (CLI adds engram_dir; HTTP omits it,
+    never leaking the server's local store path to the browser).
+    """
+    try:
+        results: list[dict] = []
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            for it in eng._read_entries(eng._knowledge_dir / fname, kind):
+                if it.get("tier") == "archived":
+                    results.append({
+                        "kind": kind,
+                        "title": _mem_title(kind, it),
+                        "id": it.get("id", ""),
+                    })
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "count": 0, "results": []}
     return {"ok": True, "read_only": True, "count": len(results), "results": results}
 
 
