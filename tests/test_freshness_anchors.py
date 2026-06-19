@@ -12,6 +12,7 @@ import pytest
 from piia_engram import mcp_server
 from piia_engram import freshness_anchors as A
 from piia_engram import provenance as P
+from piia_engram import recall as R
 from piia_engram.core import Engram, strip_untrusted_trust_fields
 from piia_engram.storage import UNTRUSTED_TRUST_FIELDS
 
@@ -1010,3 +1011,156 @@ def test_revalidate_anchors_no_superseded_when_no_vitest_present(
 
     # Report superseded counter present but zero
     assert report.get("superseded", 0) == 0
+
+
+# ---------------------------------------------------------------------------
+# Nit 2: stale-trust-signal fix — superseded fields CLEARED on re-validation
+# ---------------------------------------------------------------------------
+
+
+def _demote_to_superseded(
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+    repo: Path,
+) -> str:
+    """Helper: create a verified jest fact, switch to vitest, revalidate → superseded.
+
+    Returns the item_id of the demoted lesson.
+    """
+    _write_package_json(repo, {"vitest": "^2.0.0"})
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+
+    lesson = eng.add_lesson("jest-backed fact for nit-2 tests")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+    eng.revalidate_anchors(str(repo))
+
+    stored = _stored_lesson(eng, lesson["id"])
+    # Sanity: must be superseded before we test the clear
+    assert stored["provenance"].get("anchor_event") == "superseded"
+    assert stored["provenance"].get("anchor_successor_ref") == "dep:vitest"
+    return lesson["id"]
+
+
+def test_nit2_confirm_knowledge_clears_superseded_fields(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """confirm_knowledge(by='anchor') on a superseded fact must clear the 3
+    stale-trust fields so trust.superseded_by is never emitted for a re-verified fact."""
+    repo = tmp_path / "repo"
+    item_id = _demote_to_superseded(eng, monkeypatch, repo)
+
+    # Re-confirm with a valid anchor (re-stamp as valid)
+    result = eng.confirm_knowledge(
+        item_id,
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+    prov = result["provenance"]
+
+    assert prov["anchor_status"] == "valid"
+    assert "anchor_event" not in prov
+    assert "anchor_successor_ref" not in prov
+    assert "anchor_successor_status" not in prov
+
+
+def test_nit2_accept_onboard_candidate_clears_superseded_fields(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """accept_onboard_candidate with a VALID anchor must clear the 3 stale fields."""
+    repo = tmp_path / "repo"
+    # Superseded because vitest replaced jest; staging now
+    item_id = _demote_to_superseded(eng, monkeypatch, repo)
+
+    # Restore jest to package.json so the anchor is VALID again
+    _write_package_json(repo, {"jest": "^29.0.0"})
+
+    result = eng.accept_onboard_candidate(item_id, project_root=str(repo))
+    assert "error" not in result, result
+
+    prov = result["provenance"]
+    assert prov["anchor_status"] == "valid"
+    assert result["tier"] == "verified"
+    assert "anchor_event" not in prov
+    assert "anchor_successor_ref" not in prov
+    assert "anchor_successor_status" not in prov
+
+
+def test_nit2_revalidate_anchors_clears_superseded_fields_on_valid_path(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """revalidate_anchors: when anchor is VALID, any stale superseded fields are
+    cleared (defensive path — re-confirmed fact with leftover metadata)."""
+    repo = tmp_path / "repo"
+    monkeypatch.setattr(A, "read_project_id", lambda _root: PROJECT_ID)
+
+    # Craft a confirmed fact that already carries stale superseded fields
+    _write_package_json(repo, {"jest": "^29.0.0"})
+    lesson = eng.add_lesson("jest fact with stale superseded metadata")
+    eng.confirm_knowledge(
+        lesson["id"],
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+    # Manually inject the 3 stale fields (simulating the pre-fix bug state)
+    item_type, _stored_item = eng._find_item_by_id(lesson["id"])
+
+    def _inject_stale(entry: dict) -> dict:
+        prov = entry.get("provenance", {})
+        prov["anchor_event"] = "superseded"
+        prov["anchor_successor_ref"] = "dep:vitest"
+        prov["anchor_successor_status"] = "valid"
+        entry["provenance"] = prov
+        return entry
+
+    eng._update_knowledge_item(item_type, lesson["id"], _inject_stale)
+
+    # Confirm stale fields are present before revalidate
+    before = _stored_lesson(eng, lesson["id"])
+    assert before["provenance"].get("anchor_event") == "superseded"
+
+    # jest is present → revalidate returns VALID → should clear the 3 fields
+    eng.revalidate_anchors(str(repo))
+
+    after = _stored_lesson(eng, lesson["id"])
+    prov = after["provenance"]
+    assert prov["anchor_status"] == "valid"
+    assert "anchor_event" not in prov
+    assert "anchor_successor_ref" not in prov
+    assert "anchor_successor_status" not in prov
+
+
+def test_nit2_recall_trust_no_superseded_by_after_reconfirm(
+    tmp_path: Path,
+    eng: Engram,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: after confirm_knowledge re-stamps a superseded fact as valid,
+    recall._project_item must NOT emit trust.superseded_by."""
+    repo = tmp_path / "repo"
+    item_id = _demote_to_superseded(eng, monkeypatch, repo)
+
+    # Re-confirm → clears stale fields
+    eng.confirm_knowledge(
+        item_id,
+        by="anchor",
+        anchor_ref="dep:jest",
+        anchor_project_id=PROJECT_ID,
+    )
+
+    stored = _stored_lesson(eng, item_id)
+    view = R._project_item(stored, include_freshness=True, now=None, include_trust=True)
+    trust = view.get("trust", {})
+    assert "superseded_by" not in trust

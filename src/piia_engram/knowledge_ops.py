@@ -252,6 +252,8 @@ class KnowledgeOpsMixin:
                 provenance["anchor_ref"] = anchor_ref
                 if isinstance(anchor_project_id, str) and anchor_project_id.strip():
                     provenance["anchor_project_id"] = anchor_project_id.strip()
+                for _k in ("anchor_event", "anchor_successor_ref", "anchor_successor_status"):
+                    provenance.pop(_k, None)
                 updated["provenance"] = provenance
             return updated
 
@@ -324,6 +326,9 @@ class KnowledgeOpsMixin:
                 prov = {}
             prov["anchor_status"] = status
             prov["anchor_ref"] = anchor_ref
+            if status == _freshness_anchors.VALID:
+                for _k in ("anchor_event", "anchor_successor_ref", "anchor_successor_status"):
+                    prov.pop(_k, None)
             updated["provenance"] = prov
             return updated
 
@@ -699,6 +704,9 @@ class KnowledgeOpsMixin:
                     # approved). _ensure_fields derives memory_state="staging"
                     # from the tier and cascades the dependent fields.
                     return self._ensure_fields(entry, _item_type)
+                if _status == _freshness_anchors.VALID:
+                    for _k in ("anchor_event", "anchor_successor_ref", "anchor_successor_status"):
+                        prov.pop(_k, None)
                 entry["provenance"] = prov
                 return entry
 
