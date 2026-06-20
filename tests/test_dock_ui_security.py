@@ -136,3 +136,51 @@ class TestDockUiAuthPage:
         assert "location.hash" in body      # read token from the fragment
         assert "/auth/exchange" in body     # POST it to exchange for a session
         assert "replaceState" in body       # strip the token from history
+
+
+class TestDockUiHardening:
+    """Release hardening (Codex ship-line task 2): pin the static / method-gating /
+    MIME-sniffing / refused-write boundary so they can't silently regress."""
+
+    def test_static_path_traversal_is_blocked(self, client: TestClient):
+        # StaticFiles must never serve anything outside dock_ui/static (encoded dot
+        # segments bypass client-side URL normalization and reach the server raw).
+        for path in (
+            "/static/../app.py",
+            "/static/..%2f..%2fapp.py",
+            "/static/%2e%2e/%2e%2e/pyproject.toml",
+        ):
+            resp = client.get(path)
+            assert resp.status_code in (403, 404), f"{path} -> {resp.status_code}"
+            assert "create_app" not in resp.text  # never leaked app.py source
+
+    def test_get_on_a_write_route_is_405(self, client: TestClient):
+        # /api/dock-archive is POST-only; a GET is rejected by routing, never runs.
+        assert client.get("/api/dock-archive").status_code == 405
+
+    def test_post_on_a_read_route_is_405(self, client: TestClient):
+        # /api/dock-memory is GET-only; a POST is rejected by routing.
+        assert client.post("/api/dock-memory").status_code == 405
+
+    def test_responses_carry_nosniff(self, client: TestClient):
+        # Even static assets (which bypass _no_store) carry X-Content-Type-Options,
+        # so a JS/CSS/JSON body can't be MIME-sniffed into something executable.
+        assert client.get("/static/app.js").headers.get("x-content-type-options") == "nosniff"
+        assert client.get("/api/dock-status").headers.get("x-content-type-options") == "nosniff"
+
+    def test_refused_write_constructs_no_engram(self, client: TestClient, monkeypatch):
+        # Stronger than a file snapshot: a refused write must return BEFORE any Engram
+        # (writable OR read-only) is even constructed in the request.
+        import piia_engram.core as core
+
+        constructed: list = []
+        real = core.Engram
+
+        def spy(*a, **k):
+            constructed.append(k.get("read_only", False))
+            return real(*a, **k)
+
+        monkeypatch.setattr(core, "Engram", spy)
+        resp = client.post("/api/dock-archive", json={"id": "x"})  # no session
+        assert resp.status_code == 401
+        assert constructed == []

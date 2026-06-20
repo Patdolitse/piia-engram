@@ -34,8 +34,10 @@ from .security import (
 
 
 def _no_store(resp: Response) -> Response:
-    # Never let a browser/proxy cache memory-store responses; no CORS ever.
+    # Never let a browser/proxy cache memory-store responses; no CORS ever. nosniff so a
+    # JSON body can't be MIME-sniffed into something executable.
     resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
 
 
@@ -51,7 +53,10 @@ class _HostGuard(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.headers.get("host", "") not in self._allowed:
             return _no_store(JSONResponse({"ok": False, "error": "bad host"}, status_code=403))
-        return await call_next(request)
+        response = await call_next(request)
+        # nosniff on every served response, including /static (which bypasses _no_store).
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        return response
 
 
 # The launcher opens /auth#t=<token>. The token lives ONLY in the URL fragment, so
