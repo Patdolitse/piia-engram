@@ -1,1 +1,2 @@
 include demos/*.py
+recursive-include src/piia_engram/dock_ui/static *.html *.css *.js

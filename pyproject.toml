@@ -46,6 +46,12 @@ dev = [
 remote = [
     "uvicorn>=0.20",
 ]
+# Local browser Dock GUI (`engram serve --ui`): a loopback-only ASGI app served by
+# Starlette + uvicorn. Static assets (dock_ui/static) ship via package-data below.
+ui = [
+    "starlette>=0.40",
+    "uvicorn>=0.20",
+]
 secure = [
     "cryptography>=41.0",
 ]
@@ -57,6 +63,7 @@ vector = [
     "fastembed>=0.3.0",
 ]
 all = [
+    "starlette>=0.40",
     "uvicorn>=0.20",
     "cryptography>=41.0",
     "sqlite-vec>=0.1.0",
@@ -69,6 +76,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Ship the Dock GUI's static assets (HTML/CSS/JS) inside the wheel + sdist. They live
+# under the dock_ui package (not a Python package themselves), so StaticFiles can find
+# them next to app.py in an installed package, exactly like in a source checkout.
+[tool.setuptools.package-data]
+"piia_engram.dock_ui" = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

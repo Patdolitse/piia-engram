@@ -57,3 +57,30 @@ class TestDockSpaServing:
         c = TestClient(create_app(eng, auth_token=_TOKEN, port=_PORT),
                        base_url=f"http://evil.test:{_PORT}")
         assert c.get("/static/app.js").status_code == 403
+
+
+def test_all_static_files_are_covered_by_package_data():
+    """Release guard: every file under dock_ui/static must match a pyproject
+    package-data glob, or `pip install piia-engram[ui]` would ship a GUI missing
+    assets (the wheel only includes declared package data). Reads the actual globs
+    from pyproject so adding e.g. a .svg without updating packaging trips this."""
+    import sys
+
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:  # pragma: no cover
+        import tomli as tomllib
+
+    import piia_engram.dock_ui as dock_ui
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    globs = data["tool"]["setuptools"]["package-data"]["piia_engram.dock_ui"]
+    covered = {g.rsplit(".", 1)[-1] for g in globs if g.startswith("static/")}
+
+    static_dir = Path(dock_ui.__file__).parent / "static"
+    stray = [
+        p.name for p in static_dir.iterdir()
+        if p.is_file() and p.suffix.lstrip(".") not in covered
+    ]
+    assert not stray, f"static files not covered by package-data globs {globs}: {stray}"

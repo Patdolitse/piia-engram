@@ -3119,7 +3119,17 @@ def _run_serve(args: list[str]) -> int:
             except ValueError:
                 print("ERROR: --port requires an integer")
                 return 2
-    from piia_engram.dock_ui import server as _server
+    try:
+        from piia_engram.dock_ui import server as _server
+    except ImportError as exc:
+        # The GUI needs the optional [ui] extra (Starlette + uvicorn). Point the user
+        # at the one-line fix instead of leaking a raw ModuleNotFoundError traceback.
+        missing = getattr(exc, "name", "") or "starlette/uvicorn"
+        print(
+            f"ERROR: the Dock GUI needs the optional [ui] dependencies (missing: {missing}).\n"
+            '  Install them with:  pip install "piia-engram[ui]"'
+        )
+        return 1
 
     _server.serve_ui(port=port)
     return 0
