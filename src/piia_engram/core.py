@@ -97,6 +97,12 @@ def _strip_untrusted_freshness_provenance(entry: dict[str, Any]) -> None:
 # Engram Core Class
 # ---------------------------------------------------------------------------
 
+class BackupFailedError(RuntimeError):
+    """Raised when a pre-upgrade backup fails AND a schema migration is pending,
+    so init is halted rather than migrating the irreplaceable store unprotected.
+    """
+
+
 class Engram(
     ImportExportMixin,
     RetrievalMixin,
@@ -251,8 +257,11 @@ class Engram(
     def _maybe_backup_on_upgrade(self) -> None:
         """Snapshot the user's data store once when first opened under a NEWER Engram
         version — BEFORE any schema/field migration can touch it — so an upgrade can
-        never silently lose or corrupt the irreplaceable memory. Best-effort: a
-        failure warns but never blocks. Opt out with ENGRAM_NO_AUTO_BACKUP=1.
+        never silently lose or corrupt the irreplaceable memory.
+
+        Best-effort by default (a failure warns but never blocks). The one exception:
+        if a backup fails *and a schema migration is actually pending*, init is halted
+        rather than migrating the store unprotected. Opt out with ENGRAM_NO_AUTO_BACKUP=1.
         """
         if self._read_only:
             return
@@ -271,48 +280,115 @@ class Engram(
             if isinstance(meta, dict)
             else ""
         )
-        if last_version == current_version:
-            return  # already opened under this version — nothing to do
+        if not self._is_upgrade(last_version, current_version):
+            return  # unchanged or a downgrade — no newer migration to protect against
 
         # Only back up if there is real memory to protect — skip a brand-new/empty
         # store (nothing to lose; just record the version so we don't back up later).
-        def _has_content(p: Path) -> bool:
-            try:
-                return p.is_file() and p.stat().st_size > 2  # bigger than "[]"
-            except Exception:
-                return False
-
-        has_data = (
-            _has_content(self._knowledge_dir / "lessons.json")
-            or _has_content(self._knowledge_dir / "decisions.json")
-            or (self._playbooks_dir.is_dir() and any(self._playbooks_dir.glob("*.json")))
-        )
-        if not has_data:
+        if not self._store_has_user_data():
             self._record_backup_version(current_version)
             return
 
         try:
             self._backup_store(current_version)
-            self._record_backup_version(current_version)
-            self._prune_backups(keep=5)
-        except Exception as exc:  # never block init on a backup failure
+        except Exception as exc:
+            # A backup failed. If a real schema migration is pending, refuse to migrate
+            # the irreplaceable store unprotected — halt so the user can free disk space
+            # / investigate (or set ENGRAM_NO_AUTO_BACKUP=1). With no migration pending
+            # the open won't mutate data, so stay best-effort and proceed.
+            if self._schema_migration_pending():
+                raise BackupFailedError(
+                    "Engram could not back up your data before a pending schema "
+                    "migration, so the upgrade was halted to avoid touching the store "
+                    f"unprotected ({exc}). Free disk space and retry, or set "
+                    "ENGRAM_NO_AUTO_BACKUP=1 to proceed without a backup."
+                ) from exc
             logger.warning(
-                "Engram auto-backup before upgrade failed (%s); proceeding without a "
-                "fresh backup. Set ENGRAM_NO_AUTO_BACKUP=1 to silence this.", exc,
+                "Engram auto-backup before upgrade failed (%s); no schema migration is "
+                "pending, so proceeding without a fresh backup. Set "
+                "ENGRAM_NO_AUTO_BACKUP=1 to silence this.", exc,
             )
+            return
+        # Record + prune only after a complete backup so a failed attempt retries next open.
+        self._record_backup_version(current_version)
+        self._prune_backups(keep=5)
+
+    @staticmethod
+    def _is_upgrade(last_version: str, current_version: str) -> bool:
+        """True when ``current_version`` is newer than ``last_version`` (a backup is
+        due). An empty or unparseable version falls back to 'back up on any change' —
+        we never silently skip protecting data because a version string looked odd.
+        """
+        if not last_version:
+            return True  # never recorded → first open under this feature → protect
+
+        def _tuple(v: str) -> tuple[int, ...] | None:
+            parts = str(v).split(".")
+            out: list[int] = []
+            for p in parts:
+                if not p.isdigit():
+                    return None
+                out.append(int(p))
+            return tuple(out) if out else None
+
+        lt, ct = _tuple(last_version), _tuple(current_version)
+        if lt is None or ct is None:
+            return last_version != current_version  # can't order → conservative
+        return ct > lt
+
+    def _store_has_user_data(self) -> bool:
+        """True if the store holds any irreplaceable user data — knowledge, identity
+        facts, playbooks, or project snapshots. Excludes default-seeded files (e.g.
+        trust_boundaries) so a freshly-initialised empty store reads as nothing to
+        protect.
+        """
+        def _has_content(p: Path) -> bool:
+            try:
+                return p.is_file() and p.stat().st_size > 2  # bigger than "[]"/"{}"
+            except Exception:
+                return False
+
+        if _has_content(self._knowledge_dir / "lessons.json"):
+            return True
+        if _has_content(self._knowledge_dir / "decisions.json"):
+            return True
+        for name in ("profile.json", "preferences.json", "work_style.json", "quality_standards.json"):
+            if _has_content(self._identity_dir / name):
+                return True
+        if self._playbooks_dir.is_dir() and any(self._playbooks_dir.glob("*.json")):
+            return True
+        if self._projects_dir.is_dir() and any(self._projects_dir.glob("*.json")):
+            return True
+        return False
+
+    def _schema_migration_pending(self) -> bool:
+        """True if the on-disk schema is older than the code's SCHEMA_VERSION, so a
+        data-touching migration will run in _ensure_structure."""
+        ver_data = _read_json(self.root / "schema_version.json", allow_corrupt=True)
+        current = (
+            ver_data.get("schema_version", "1.0") if isinstance(ver_data, dict) else "1.0"
+        )
+        return self._parse_schema_version(current) < self._parse_schema_version(SCHEMA_VERSION)
 
     def _backup_store(self, version: str) -> Path:
         """Copy the store's data into backups/engram-<version>-<timestamp>/, skipping
         transient logs (telemetry/audit/session/update markers) and the backups dir
         itself (never recurse). Keeps .corpus_salt so an encrypted store stays
-        restorable.
+        restorable. The copy is staged to a hidden .partial dir and atomically renamed
+        into place only on full success, so a failed/partial copy never survives as a
+        seemingly-valid backup.
         """
         import shutil
         from datetime import datetime
 
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        dest = self.root / "backups" / f"engram-{version}-{ts}"
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Sub-second + pid uniqueness so two near-simultaneous opens can't collide.
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        bdir = self.root / "backups"
+        bdir.mkdir(parents=True, exist_ok=True)
+        final = bdir / f"engram-{version}-{ts}-{os.getpid()}"
+        staging = bdir / f".{final.name}.partial"
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
 
         skip_exact = {"backups", "audit.log", "beta_events.jsonl", ".update_check.json"}
 
@@ -323,8 +399,13 @@ class Engram(
                     out.add(n)
             return out
 
-        shutil.copytree(self.root, dest, ignore=_ignore)
-        return dest
+        try:
+            shutil.copytree(self.root, staging, ignore=_ignore)
+            os.replace(staging, final)  # atomic rename within the same dir/filesystem
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)  # leave no partial behind
+            raise
+        return final
 
     def _record_backup_version(self, version: str) -> None:
         try:

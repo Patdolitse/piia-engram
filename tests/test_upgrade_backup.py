@@ -38,6 +38,12 @@ def _set_last_version(root: Path, version: str) -> None:
     )
 
 
+def _set_schema(root: Path, version: str) -> None:
+    (root / "schema_version.json").write_text(
+        json.dumps({"schema_version": version}), encoding="utf-8"
+    )
+
+
 def test_backup_triggers_on_version_change(tmp_path: Path):
     store = tmp_path / "store"
     eng = _seed(store)
@@ -127,3 +133,125 @@ def test_retention_keeps_only_recent(tmp_path: Path):
 
     remaining = [p for p in bdir.iterdir() if p.is_dir()]
     assert len(remaining) == 5
+
+
+def test_backup_triggers_on_identity_only_store(tmp_path: Path):
+    # A store that holds only identity facts (no lessons/decisions/playbooks) is
+    # still non-empty and irreplaceable — it must be backed up, not skipped.
+    store = tmp_path / "store"
+    eng = Engram(root=store)
+    (store / "identity").mkdir(parents=True, exist_ok=True)
+    (store / "identity" / "preferences.json").write_text(
+        json.dumps({"work_patterns": {"language": "zh"}}), encoding="utf-8"
+    )
+    _set_last_version(store, "0.0.0")
+
+    eng._maybe_backup_on_upgrade()
+
+    backups = list((store / "backups").glob("engram-*"))
+    assert len(backups) == 1
+    assert (backups[0] / "identity" / "preferences.json").is_file()
+
+
+def test_backup_triggers_on_projects_only_store(tmp_path: Path):
+    # Project snapshots are irreplaceable user data too — a projects-only store
+    # must be backed up.
+    store = tmp_path / "store"
+    eng = Engram(root=store)
+    eng.save_project_snapshot("/some/project", {"title": "X", "notes": "keep me"})
+    _set_last_version(store, "0.0.0")
+
+    eng._maybe_backup_on_upgrade()
+
+    backups = list((store / "backups").glob("engram-*"))
+    assert len(backups) == 1
+    assert any((backups[0] / "projects").glob("*.json"))
+
+
+def test_no_backup_on_downgrade(tmp_path: Path):
+    # Opening an OLDER Engram after a newer one recorded a higher version is a
+    # downgrade, not an upgrade — don't back up (and don't churn retention).
+    store = tmp_path / "store"
+    eng = _seed(store)
+    _set_last_version(store, "99.99.99")  # higher than current => current looks older
+
+    eng._maybe_backup_on_upgrade()
+
+    assert not (store / "backups").exists()
+
+
+def test_partial_backup_is_cleaned_up_on_failure(tmp_path: Path, monkeypatch):
+    # If copytree fails mid-copy (e.g. disk full), no half-written backup dir may
+    # survive to masquerade as a valid snapshot. With no schema migration pending
+    # the failure is best-effort (no raise).
+    import shutil
+
+    store = tmp_path / "store"
+    eng = _seed(store)  # _seed's init leaves schema at the current version (no migration pending)
+    _set_last_version(store, "0.0.0")
+
+    def boom(src, dst, *args, **kwargs):
+        Path(dst).mkdir(parents=True, exist_ok=True)
+        (Path(dst) / "half").write_text("partial", encoding="utf-8")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(shutil, "copytree", boom)
+
+    eng._maybe_backup_on_upgrade()  # best-effort: must not raise
+
+    bdir = store / "backups"
+    assert list(bdir.glob("engram-*")) == []   # no complete backup
+    assert list(bdir.glob(".*")) == []          # no leftover .partial staging
+
+
+def test_backup_failure_blocks_init_when_migration_pending(tmp_path: Path, monkeypatch):
+    # Owner decision: when a real schema migration is pending and the backup
+    # fails, halt rather than migrate the store unprotected.
+    from piia_engram.core import BackupFailedError
+
+    store = tmp_path / "store"
+    eng = _seed(store)
+    _set_schema(store, "1.0")  # pending migration to current schema
+    _set_last_version(store, "0.0.0")
+
+    def boom(self, version):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Engram, "_backup_store", boom)
+
+    with pytest.raises(BackupFailedError):
+        eng._maybe_backup_on_upgrade()
+
+    assert not list((store / "backups").glob("engram-*")) if (store / "backups").exists() else True
+
+
+def test_backup_failure_does_not_block_when_no_migration_pending(tmp_path: Path, monkeypatch):
+    # No pending migration => the open won't mutate the store => a backup failure
+    # stays best-effort (warn, never block), and the version is NOT recorded so it
+    # retries on the next open.
+    store = tmp_path / "store"
+    eng = _seed(store)  # schema already at current
+    _set_last_version(store, "0.0.0")
+
+    def boom(self, version):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Engram, "_backup_store", boom)
+
+    eng._maybe_backup_on_upgrade()  # must not raise
+
+    meta = json.loads((store / ".backup_state.json").read_text())
+    assert meta["last_backed_up_version"] == "0.0.0"  # unchanged => will retry next open
+
+
+def test_backup_dir_name_is_unique_across_rapid_calls(tmp_path: Path):
+    # Two backups in quick succession must not collide on the same directory name
+    # (timestamp carries sub-second + pid uniqueness).
+    store = tmp_path / "store"
+    eng = _seed(store)
+
+    d1 = eng._backup_store("4.8.0")
+    d2 = eng._backup_store("4.8.0")
+
+    assert d1 != d2
+    assert d1.is_dir() and d2.is_dir()
