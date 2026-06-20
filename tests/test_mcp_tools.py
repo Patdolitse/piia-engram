@@ -1752,6 +1752,57 @@ class TestResumeBriefWrapper:
         )
 
 
+class TestColdStartBootstrap:
+    """Cold-start regression: bootstrap must be REACHABLE via get_user_context,
+    not just unit-tested in isolation. The bug: bootstrap was gated behind
+    ``if not context``, but generate_context returns a non-empty "identity not
+    set" scaffold for an empty store, so a brand-new user with a discoverable
+    CLAUDE.md got the scaffold instead of their auto-imported rules ("it already
+    knows me"). Only get_resume_brief ran bootstrap unconditionally."""
+
+    def test_get_user_context_imports_rule_files_on_cold_start(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        # Re-enable bootstrap (the fixture disables it) + feed a synthetic rule
+        # file so the scan never touches the real home dir.
+        (isolated_engram.root / ".bootstrap_done").unlink()
+        fake = tmp_path / "fake_CLAUDE.md"
+        fake.write_text(
+            "# Rules\n所有沟通使用中文。\n我是一名独立开发者。\n这个 repo 用 pytest 测试。\n",
+            encoding="utf-8",
+        )
+        import piia_engram.bootstrap as bs
+        monkeypatch.setattr(bs, "_scan_rule_files", lambda: [
+            {"path": fake, "scope": "global",
+             "lines": fake.read_text(encoding="utf-8").splitlines()},
+        ])
+
+        result = _run(mcp_server.get_user_context())
+
+        # The new user must see imported content, NOT the generic scaffold.
+        assert "身份画像未设置" not in result
+        assert "首次连接自动导入" in result
+        assert "zh-CN" in result or "沟通语言" in result
+
+    def test_get_user_context_no_rule_files_still_gives_guidance(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        # No discoverable rules → import nothing, but the user still gets
+        # actionable cold-start guidance (no crash, no empty output).
+        (isolated_engram.root / ".bootstrap_done").unlink()
+        import piia_engram.bootstrap as bs
+        monkeypatch.setattr(bs, "_scan_rule_files", lambda: [])
+
+        result = _run(mcp_server.get_user_context())
+
+        assert result.strip()
+        assert (
+            "update_identity" in result
+            or "engram setup" in result
+            or "身份画像未设置" in result
+        )
+
+
 class TestRecallWrapper:
     def test_mcp_get_recall_wrapper_returns_recall_payload(
         self, isolated_engram: Engram, tmp_path: Path
