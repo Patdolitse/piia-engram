@@ -6,6 +6,14 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.8.0] - 2026-06-20
+
+### Added
+- Engram Dock — a local browser GUI. `engram serve --ui` opens a loopback-only (127.0.0.1) web interface for your memory, no commands needed: view/edit/archive lessons and decisions (with bulk archive and a restore-from-trash bin), browse playbooks, see a live overview of your store, and grab your cross-tool "接续" (resume) context to paste into whatever AI tool you're using — all in one click. Install with `pip install "piia-engram[ui]"`.
+
+### Security
+- The Dock GUI is security-first: it binds 127.0.0.1 only (never the network), exchanges a one-time startup token for a server-side session (HttpOnly + SameSite=Strict cookie), allowlists the Host header (DNS-rebinding defense), requires Origin + a CSRF token on every write, sets no CORS plus `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` on responses, and never serves your store path to the browser. Reads are zero-write; a refused write opens no writable store.
+
 ## [4.7.0] - 2026-06-19
 
 ### Added

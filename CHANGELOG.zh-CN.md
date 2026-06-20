@@ -6,6 +6,14 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.8.0] - 2026-06-20
+
+### 新增
+- Engram Dock——本地浏览器 GUI。`engram serve --ui` 打开一个仅本地（127.0.0.1）的网页界面来管理你的记忆，不用敲命令：查看/编辑/归档经验与决策（支持批量归档 + 回收站一键恢复）、浏览 Playbook、看记忆库实时概览、一键拿到跨工具「接续」上下文粘到你正在用的 AI 工具里。安装：`pip install "piia-engram[ui]"`。
+
+### 安全
+- Dock GUI 安全优先：只绑 127.0.0.1（永不上网），用一次性启动令牌换服务端会话（HttpOnly + SameSite=Strict cookie），对 Host 头做白名单（防 DNS 重绑定），每次写操作都要 Origin + CSRF 令牌，响应无 CORS、带 `no-store` 和 `nosniff`，且永不把记忆库路径发给浏览器。读取零写；被拒绝的写不会打开可写库。
+
 ## [4.7.0] - 2026-06-19
 
 ### 新增
