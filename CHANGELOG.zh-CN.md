@@ -6,6 +6,14 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.9.0] - 2026-06-20
+
+### 新增
+- 升级前自动备份：当你的记忆库首次在更新版本的 Engram 下打开时，Engram 会在任何 schema 迁移发生**之前**，把你的数据——经验、身份、Playbook、项目上下文——快照到 `backups/engram-<版本>-<时间戳>/`，这样升级永远不会悄悄丢失或损坏你不可再生的记忆。只保留最近 5 份，每个版本最多触发一次，尽力而为：失败只告警、绝不阻断——除非确有待执行的 schema 迁移，这时它会停下来让你先清理磁盘，而不是无保护地迁移。设 `ENGRAM_NO_AUTO_BACKUP=1` 可关闭。
+- Dock GUI 设置页：切换界面语言（中文 / English），一眼看到记忆库的治理 + 遥测状态（只读）。
+- Dock GUI 规则与权限页：只读查看你的治理规则和各调用方权限档案。
+- `engram dock-playbooks`：Dock GUI playbook 列表的命令行版，与 HTTP 路由共享同一核心。
+
 ## [4.8.0] - 2026-06-20
 
 ### 新增

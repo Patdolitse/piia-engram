@@ -6,6 +6,14 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.9.0] - 2026-06-20
+
+### Added
+- Automatic pre-upgrade backup: the first time your store is opened under a newer Engram version, Engram snapshots your data — knowledge, identity, playbooks, and project context — to `backups/engram-<version>-<timestamp>/` BEFORE any schema migration runs, so an upgrade can never silently lose or corrupt your irreplaceable memory. It keeps the 5 most recent snapshots, runs at most once per upgrade, and is best-effort: a failure warns and never blocks — unless a schema migration is actually pending, in which case it stops so you can free disk space rather than migrate unprotected. Opt out with `ENGRAM_NO_AUTO_BACKUP=1`.
+- Dock GUI — Settings page: switch the interface language (中文 / English) and see your store's governance + telemetry status at a glance (read-only).
+- Dock GUI — Rules & Permissions page: a read-only view of your governance rules and per-caller permission profile.
+- `engram dock-playbooks`: a CLI counterpart to the Dock GUI's playbook list, sharing one core with the HTTP route.
+
 ## [4.8.0] - 2026-06-20
 
 ### Added
