@@ -113,7 +113,7 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **40 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3713** (unit + integration; 3 skipped, 3716 collected) |
+| Tests passing | **3787** (unit + integration; 3 skipped, 3790 collected) |
 | Code coverage | **86%** total |
 | Lines in `core.py` | **1770** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |

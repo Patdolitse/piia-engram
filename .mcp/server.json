@@ -8,7 +8,7 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/Patdolitse/piia-engram",
-  "version": "4.7.0",
+  "version": "4.8.0",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "displayName": "Piia Engram",
@@ -47,13 +47,13 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "piia-engram",
-      "version": "4.7.0",
+      "version": "4.8.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
           "type": "named",
           "name": "--from",
-          "value": "piia-engram==4.7.0",
+          "value": "piia-engram==4.8.0",
           "description": "Install this exact PyPI package version before running the MCP console script."
         },
         {
