@@ -6,6 +6,11 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.9.1] - 2026-06-20
+
+### Fixed
+- Cold start now delivers "it already knows me" through `get_user_context`: the auto-import of your CLAUDE.md / AGENTS.md rules was silently unreachable on that tool — a non-empty "identity not set" scaffold shadowed its trigger condition — so a brand-new user saw the generic scaffold instead of their imported preferences. It now imports on first call, matching `get_resume_brief`.
+
 ## [4.9.0] - 2026-06-20
 
 ### Added
