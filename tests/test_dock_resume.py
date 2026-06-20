@@ -991,6 +991,47 @@ def test_dock_list_is_zero_write(monkeypatch, tmp_path):
     assert _snapshot(store) == before  # the whole list path wrote nothing
 
 
+# --- dock-playbooks: zero-write list of active playbooks (CLI parity) -------
+
+
+def _cli_playbooks(monkeypatch, tmp_path, argv):
+    from piia_engram.setup_wizard import _run_dock_playbooks
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    return _run_dock_playbooks(argv)
+
+
+def test_dock_playbooks_help(monkeypatch, tmp_path, capsys):
+    assert _cli_playbooks(monkeypatch, tmp_path, ["--help"]) == 0
+    assert "dock-playbooks" in capsys.readouterr().out
+
+
+def test_dock_playbooks_lists_active(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_playbook({"title": "发布流程", "description": "怎么发布",
+                      "steps": [{"action": "跑测试", "detail": "pytest"}]})
+    assert _cli_playbooks(monkeypatch, tmp_path, ["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True and payload["read_only"] is True
+    assert any(p["title"] == "发布流程" for p in payload["results"])
+
+
+def test_dock_playbooks_is_zero_write(monkeypatch, tmp_path):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_playbook({"title": "snapshot me"})
+    before = _snapshot(store)
+    _cli_playbooks(monkeypatch, tmp_path, ["--json"])
+    assert _snapshot(store) == before  # the whole playbooks path wrote nothing
+
+
+def test_dock_playbooks_rejects_unknown_option(monkeypatch, tmp_path, capsys):
+    _populate(tmp_path / "store")
+    assert _cli_playbooks(monkeypatch, tmp_path, ["--json", "--bogus"]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
 def test_dock_list_rejects_bad_limit(monkeypatch, tmp_path):
     _populate(tmp_path / "store")
     assert _cli_list(monkeypatch, tmp_path, ["--limit", "0", "--json"]) == 2

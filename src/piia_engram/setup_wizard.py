@@ -2966,6 +2966,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_dock_onboard_commit,
     _run_dock_update,
     _run_dock_list,
+    _run_dock_playbooks,
     _run_dock_set_lang,
     _run_dock_get_lang,
     _run_dock_status,
@@ -3012,7 +3013,7 @@ def main() -> None:
     # dry-run-by-default JSON surfaces — the reminder would write .update_check.json
     # into the store — so skip them too (`dock-quality-action` only writes after
     # an explicit --yes, never on its default dry-run). Not reached by the MCP entry.
-    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-get-lang", "dock-onboard-scan", "weekly")):
+    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang", "dock-onboard-scan", "weekly")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3105,6 +3106,8 @@ def main() -> None:
         sys.exit(_run_dock_update(args[1:]))
     elif args[0] == "dock-list":
         sys.exit(_run_dock_list(args[1:]))
+    elif args[0] == "dock-playbooks":
+        sys.exit(_run_dock_playbooks(args[1:]))
     elif args[0] == "dock-set-lang":
         sys.exit(_run_dock_set_lang(args[1:]))
     elif args[0] == "dock-get-lang":

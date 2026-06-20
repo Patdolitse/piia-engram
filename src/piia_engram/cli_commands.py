@@ -3326,6 +3326,73 @@ def _run_dock_archived(args: list[str]) -> int:
     return 0
 
 
+def _run_dock_playbooks(args: list[str]) -> int:
+    """Zero-write list of active playbooks for a local desktop client (engram dock-playbooks).
+
+    Local + owner-run. Opens the store ``read_only`` and lists active playbooks
+    (id/title/scope/status + steps/pitfalls/preconditions) via the same shared core
+    the HTTP /api/dock-playbooks route uses. Guaranteed zero-write; never the path.
+    """
+    import os as _os
+    from piia_engram.core import Engram
+
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "Usage:\n"
+            "  engram dock-playbooks [--json]\n\n"
+            "  Zero-write list of active playbooks (title/scope/status + steps) for a\n"
+            "  local desktop client. Opens the store read-only — never mutates it.\n"
+        )
+        return 0
+
+    want_json = "--json" in args
+    for a in args:
+        if a != "--json":
+            if want_json:
+                print(json.dumps(
+                    {"ok": False, "error": f"unknown option: {a}", "results": [], "count": 0},
+                    ensure_ascii=False,
+                ))
+            else:
+                print(f"ERROR: unknown option: {a}")
+            return 2
+
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+
+    # Shared core: the HTTP /api/dock-playbooks route calls the same
+    # dock_playbook_list_payload on a read_only Engram (one source of truth;
+    # guaranteed zero-write). The CLI adds `engram_dir` for a local desktop client.
+    from piia_engram.dock_ui.contracts import dock_playbook_list_payload
+    try:
+        payload = dock_playbook_list_payload(Engram(root=root, read_only=True))
+        if not payload.get("ok"):
+            raise RuntimeError(payload.get("error", "list playbooks failed"))
+        results = payload.get("results", [])
+    except Exception as exc:
+        if want_json:
+            print(json.dumps(
+                {"ok": False, "error": str(exc), "results": [], "count": 0},
+                ensure_ascii=False,
+            ))
+        else:
+            print(f"ERROR: list playbooks failed: {exc}")
+        return 1
+
+    if want_json:
+        print(json.dumps(
+            {"ok": True, "read_only": True, "engram_dir": str(root),
+             "count": len(results), "results": results},
+            ensure_ascii=False,
+        ))
+        return 0
+    if not results:
+        print("(no playbooks)")
+        return 0
+    for r in results:
+        print(f"- {r.get('title', '')}  [{r.get('scope_type', '')}/{r.get('status', '')}]")
+    return 0
+
+
 def _collect_folder_signals(folder: str) -> tuple[str, list[str]]:
     """Read a project folder's recent git commit subjects + README as text.
 
