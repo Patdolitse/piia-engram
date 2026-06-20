@@ -17,6 +17,7 @@ from piia_engram.dock_ui.contracts import (
     dock_memory_list_payload,
     dock_playbook_list_payload,
     dock_resume_payload,
+    dock_status_payload,
 )
 
 _TOKEN = "read-token-xyz"
@@ -240,3 +241,45 @@ class TestDockPlaybooksRoute:
         before = _snap(eng.root)
         client.get("/api/dock-playbooks")
         assert _snap(eng.root) == before
+
+
+class TestDockStatusCore:
+    """概览: zero-write, metadata-only status (Codex ship-line task 3). Reuses
+    build_status with the server's own root; projects counts/flags, never the path."""
+
+    def test_status_has_real_metadata(self, eng: Engram):
+        payload = dock_status_payload(Engram(root=eng.root, read_only=True))
+        assert payload["ok"] is True
+        st = payload["status"]
+        assert st["version"]  # a real version string, not the {} stub
+        # the eng fixture seeds 1 lesson + 1 decision
+        assert st["knowledge"]["lessons"] >= 1
+        assert st["knowledge"]["decisions"] >= 1
+
+    def test_status_never_leaks_the_local_path(self, eng: Engram):
+        st = dock_status_payload(Engram(root=eng.root, read_only=True))["status"]
+        # the two path-bearing build_status fields (top-level root + storage.path) are
+        # excluded by the explicit allowlist projection.
+        assert "root" not in st
+        assert set(st["storage"].keys()) == {"file_count", "bytes", "skipped"}
+
+    def test_core_is_zero_write(self, eng: Engram, tmp_path: Path):
+        before = _snap(tmp_path)
+        dock_status_payload(Engram(root=eng.root, read_only=True))
+        assert _snap(tmp_path) == before
+
+
+class TestDockStatusRoute:
+    def test_requires_session(self, client: TestClient):
+        assert client.get("/api/dock-status").status_code == 401
+
+    def test_returns_real_status(self, client: TestClient, eng: Engram):
+        _authed(client)
+        resp = client.get("/api/dock-status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["status"]["version"]
+        assert body["status"]["knowledge"]["decisions"] >= 1
+        assert resp.headers.get("cache-control") == "no-store"
+        assert "root" not in body["status"]  # no local path leak

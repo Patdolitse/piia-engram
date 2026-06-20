@@ -27,6 +27,9 @@ h1 { font-size: 21px; margin: 0 0 12px; }
 .resume-md { white-space: pre-wrap; word-break: break-word; background: #f6f7f9; border-radius: 8px; padding: 12px 14px; max-height: 440px; overflow: auto; font: 12.5px/1.6 ui-monospace, "SF Mono", Consolas, monospace; margin: 0; }
 .err { color: #b91c1c; }
 
+.status-strip { margin-top: 14px; font-size: 12.5px; line-height: 1.7; }
+.status-warn { color: #b45309; margin-top: 4px; }
+
 .cards { display: flex; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
 .card { background: #fff; border: 1px solid #e6e8ec; border-radius: 12px; padding: 18px 22px; min-width: 120px; }
 .card .n { font-size: 28px; font-weight: 700; }

@@ -257,3 +257,56 @@ def dock_playbook_list_payload(eng: Any) -> dict:
     except Exception as exc:
         return {"ok": False, "error": str(exc), "count": 0, "results": []}
     return {"ok": True, "read_only": True, "count": len(results), "results": results}
+
+
+def dock_status_payload(eng: Any) -> dict:
+    """Zero-write, metadata-only status for the 概览 page (Codex ship-line task 3).
+
+    Reuses ``build_status`` with the Dock server's OWN root (not the ambient
+    ENGRAM_DIR) and probe=False (no MCP subprocess). Projects only counts/flags via an
+    explicit allowlist — never the local store path (build_status carries ``root`` +
+    ``storage.path``, which must never reach the browser).
+    """
+    from piia_engram.status_report import build_status
+    try:
+        status = build_status(root=eng.root, probe=False)
+    except Exception as exc:  # never crash the dock — return a usable error
+        return {"ok": False, "error": str(exc)}
+
+    def _d(key: str) -> dict:
+        value = status.get(key)
+        return value if isinstance(value, dict) else {}
+
+    knowledge, storage, sessions = _d("knowledge"), _d("storage"), _d("sessions")
+    clients, governance, telemetry, encoding = _d("clients"), _d("governance"), _d("telemetry"), _d("encoding")
+    latest = sessions.get("latest") if isinstance(sessions.get("latest"), dict) else {}
+    return {
+        "ok": True,
+        "read_only": True,
+        "status": {
+            "version": str(status.get("version", "") or ""),
+            "platform": str(status.get("platform", "") or ""),
+            "knowledge": {
+                k: int(knowledge.get(k, 0) or 0)
+                for k in ("total", "verified", "staging", "archived", "lessons", "decisions", "playbooks")
+            },
+            "storage": {
+                "file_count": int(storage.get("file_count", 0) or 0),
+                "bytes": int(storage.get("bytes", 0) or 0),
+                "skipped": int(storage.get("skipped", 0) or 0),
+            },
+            "sessions": {
+                "count": int(sessions.get("count", 0) or 0),
+                "latest_tool": str(latest.get("tool", "") or ""),
+                "latest_at": str(latest.get("modified_at", "") or ""),
+            },
+            "clients": {
+                "configured": int(clients.get("configured", 0) or 0),
+                "total": int(clients.get("total", 0) or 0),
+            },
+            "governance_enabled": bool(governance.get("enabled")),
+            "telemetry_enabled": bool(telemetry.get("local_enabled")),
+            "encoding_ok": bool(encoding.get("ok")),
+            "warnings": [str(w) for w in (status.get("warnings") or [])],
+        },
+    }

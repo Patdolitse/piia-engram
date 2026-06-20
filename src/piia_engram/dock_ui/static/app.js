@@ -300,6 +300,42 @@
     });
   }
 
+  function fmtBytes(n) {
+    n = n || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+
+  // 概览底部一行真实状态（版本/库内知识/存储/治理/最近会话）——零写、不含本地路径。
+  function loadStatus() {
+    var el = document.getElementById("overview-status");
+    if (!el) return;
+    api("/api/dock-status").then(function (res) {
+      el.innerHTML = "";
+      if (!res || !res.ok) return;
+      var s = res.status || {}, k = s.knowledge || {}, st = s.storage || {}, ses = s.sessions || {};
+      var parts = [
+        "Engram v" + (s.version || ""),
+        "库内 " + (k.total || 0) + " 条知识（已验证 " + (k.verified || 0) +
+          (k.staging ? " · 待审 " + k.staging : "") + "）",
+        "Playbook " + (k.playbooks || 0),
+        "存储 " + (st.file_count || 0) + " 文件 / " + fmtBytes(st.bytes),
+        "治理 " + (s.governance_enabled ? "已开" : "未开"),
+      ];
+      if (ses.latest_tool) parts.push("最近 " + ses.latest_tool);
+      var main = document.createElement("div");
+      main.textContent = parts.join("  ·  ");
+      el.appendChild(main);
+      if (s.warnings && s.warnings.length) {
+        var w = document.createElement("div");
+        w.className = "status-warn";
+        w.textContent = "⚠ " + s.warnings.join("；");
+        el.appendChild(w);
+      }
+    }).catch(function () { el.innerHTML = ""; });
+  }
+
   // 接续 (the soul): one-click cross-tool context to paste into the AI tool you're using.
   function loadResume() {
     var out = document.getElementById("resume-out");
@@ -342,4 +378,5 @@
   if (pbSearch) pbSearch.oninput = renderPlaybooks;
 
   loadMemory();
+  loadStatus();
 })();

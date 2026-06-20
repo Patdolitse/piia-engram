@@ -325,9 +325,14 @@ def _resolve_mcp_entry_command() -> str:
     return "piia-engram-mcp"
 
 
-def build_status(*, probe: bool = True) -> dict[str, Any]:
-    """Build a metadata-only status object. Never includes memory bodies."""
-    root = _engram_root()
+def build_status(*, probe: bool = True, root: Path | None = None) -> dict[str, Any]:
+    """Build a metadata-only status object. Never includes memory bodies.
+
+    ``root`` lets a caller target a specific store (e.g. the Dock GUI server's own
+    root) instead of the ambient ``ENGRAM_DIR``; defaults to the env-resolved root so
+    existing callers are unchanged.
+    """
+    root = root if root is not None else _engram_root()
     status = {
         "version": _package_version(),
         "platform": platform.system().lower() or sys.platform,

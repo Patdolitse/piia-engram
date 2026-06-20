@@ -21,6 +21,7 @@ from .contracts import (
     dock_memory_list_payload,
     dock_playbook_list_payload,
     dock_resume_payload,
+    dock_status_payload,
     restore_entry,
     update_entry,
 )
@@ -148,7 +149,12 @@ def create_app(engram: Any, *, auth_token: str, port: int) -> Starlette:
             return _no_store(
                 JSONResponse({"ok": False, "error": "unauthenticated"}, status_code=401)
             )
-        return _no_store(JSONResponse({"ok": True, "status": {}}))
+        from piia_engram.core import Engram as _Engram
+
+        # Metadata-only, zero-write, keyed to the server's own root (not ENGRAM_DIR);
+        # the payload projects counts/flags and never the local store path.
+        payload = dock_status_payload(_Engram(root=engram.root, read_only=True))
+        return _no_store(JSONResponse(payload))
 
     async def dock_memory(request: Request) -> Response:
         if _current_session(request) is None:
