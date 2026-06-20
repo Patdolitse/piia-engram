@@ -3121,6 +3121,7 @@ def _run_serve(args: list[str]) -> int:
                 return 2
     try:
         from piia_engram.dock_ui import server as _server
+        import uvicorn  # noqa: F401 — serve_ui imports it lazily; presence-check both [ui] deps here
     except ImportError as exc:
         # The GUI needs the optional [ui] extra (Starlette + uvicorn). Point the user
         # at the one-line fix instead of leaking a raw ModuleNotFoundError traceback.
