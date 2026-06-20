@@ -333,3 +333,32 @@ def set_language(eng: Any, lang: str) -> dict:
     except Exception as exc:  # never crash the caller — return a usable error
         return {"ok": False, "error": str(exc)}
     return {"ok": True, "changed": True, "lang": lang, "language": profile_value}
+
+
+def dock_permissions_payload(eng: Any) -> dict:
+    """Zero-write read of governance + the resolved permission profile for the 规则与权限
+    page. Reuses describe_caller_permissions (trust/sensitivity/write-policy, no store
+    path); projects a display subset. The trust grant/revoke WRITE is a separate,
+    security-sensitive surface — deliberately not here.
+    """
+    from piia_engram.governance_runtime import describe_caller_permissions
+    try:
+        perms = describe_caller_permissions(eng.root)
+    except Exception as exc:  # never crash the dock — return a usable error
+        return {"ok": False, "error": str(exc)}
+    vnext = perms.get("permission_profile_vnext")
+    vnext = vnext if isinstance(vnext, dict) else {}
+    return {
+        "ok": True,
+        "read_only": True,
+        "permissions": {
+            "governance_enabled": bool(perms.get("governance_enabled")),
+            "trust_level": str(perms.get("trust_level", "") or ""),
+            "max_sensitivity": str(perms.get("max_sensitivity", "") or ""),
+            "write_policy": str(perms.get("write_policy", "") or ""),
+            "revoked": bool(perms.get("revoked")),
+            "caller_role": str(vnext.get("caller_role", "") or ""),
+            "workflow_stage": str(vnext.get("workflow_stage", "") or ""),
+            "note": str(perms.get("note", "") or ""),
+        },
+    }

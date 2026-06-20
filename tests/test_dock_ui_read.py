@@ -284,3 +284,38 @@ class TestDockStatusRoute:
         assert body["status"]["knowledge"]["decisions"] >= 1
         assert resp.headers.get("cache-control") == "no-store"
         assert "root" not in body["status"]  # no local path leak
+
+
+class TestDockPermissionsCore:
+    """规则与权限: zero-write read of governance + the resolved permission profile.
+    The trust grant/revoke WRITE is deliberately NOT here (security-sensitive, separate)."""
+
+    def test_permissions_has_governance_fields(self, eng: Engram):
+        from piia_engram.dock_ui.contracts import dock_permissions_payload
+
+        payload = dock_permissions_payload(Engram(root=eng.root, read_only=True))
+        assert payload["ok"] is True
+        perm = payload["permissions"]
+        assert "governance_enabled" in perm
+        assert perm["trust_level"]   # e.g. "unrestricted" when governance is off
+        assert perm["write_policy"]
+
+    def test_core_is_zero_write(self, eng: Engram, tmp_path: Path):
+        from piia_engram.dock_ui.contracts import dock_permissions_payload
+
+        before = _snap(tmp_path)
+        dock_permissions_payload(Engram(root=eng.root, read_only=True))
+        assert _snap(tmp_path) == before
+
+
+class TestDockPermissionsRoute:
+    def test_requires_session(self, client: TestClient):
+        assert client.get("/api/dock-permissions").status_code == 401
+
+    def test_returns_permissions(self, client: TestClient):
+        _authed(client)
+        resp = client.get("/api/dock-permissions")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True and "governance_enabled" in body["permissions"]
+        assert resp.headers.get("cache-control") == "no-store"

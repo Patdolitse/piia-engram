@@ -41,6 +41,7 @@
     if (name === "trash") loadTrash();          // refresh archived list each time it's opened
     if (name === "playbooks") loadPlaybooks();  // load playbooks on first/each open
     if (name === "settings") loadSettings();    // load current language + status
+    if (name === "rules") loadPermissions();    // load governance + permission profile
   }
 
   function renderMemory() {
@@ -372,6 +373,33 @@
     }).catch(function () {
       if (msg) { msg.textContent = "切换失败（网络）"; msg.className = "detail-msg err"; }
     });
+  }
+
+  // 规则与权限: read-only governance + resolved permission profile.
+  function loadPermissions() {
+    var box = document.getElementById("rules-body");
+    if (!box) return;
+    box.innerHTML = "<div class='muted'>正在加载…</div>";
+    api("/api/dock-permissions").then(function (res) {
+      if (!res || !res.ok) { box.innerHTML = "<div class='err'>读取权限失败。</div>"; return; }
+      var p = res.permissions || {};
+      var rows = [
+        ["治理 Governance", p.governance_enabled ? "已开启" : "未开启"],
+        ["信任级别 Trust", p.trust_level || "—"],
+        ["敏感度上限", p.max_sensitivity || "—"],
+        ["写策略 Write policy", p.write_policy || "—"],
+        ["已撤销 Revoked", p.revoked ? "是" : "否"],
+      ];
+      if (p.caller_role) rows.push(["调用方角色", p.caller_role]);
+      if (p.workflow_stage) rows.push(["工作流阶段", p.workflow_stage]);
+      var html = "<table class='rules-table'><tbody>";
+      rows.forEach(function (r) {
+        html += "<tr><th>" + escapeHtml(r[0]) + "</th><td>" + escapeHtml(r[1]) + "</td></tr>";
+      });
+      html += "</tbody></table>";
+      if (p.note) html += "<p class='muted' style='margin-top:12px'>" + escapeHtml(p.note) + "</p>";
+      box.innerHTML = html;
+    }).catch(function () { box.innerHTML = "<div class='err'>读取权限失败（网络）。</div>"; });
   }
 
   // 接续 (the soul): one-click cross-tool context to paste into the AI tool you're using.

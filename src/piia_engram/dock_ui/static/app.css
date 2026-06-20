@@ -59,6 +59,11 @@ tbody tr:hover { background: #f3f6ff; }
 .trash-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trash-row .btn { white-space: nowrap; }
 
+.rules-body { margin-top: 16px; max-width: 640px; }
+.rules-table { width: 100%; }
+.rules-table th { text-align: left; color: #6b7280; font-weight: 600; width: 180px; padding: 9px 13px; }
+.rules-table td { padding: 9px 13px; }
+
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; background: #fff; border: 1px solid #e6e8ec; border-radius: 12px; padding: 16px 20px; margin-top: 16px; max-width: 720px; }
 .set-label { font-weight: 600; }
 .set-hint { font-size: 12.5px; margin-top: 3px; }
