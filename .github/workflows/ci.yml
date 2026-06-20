@@ -121,6 +121,33 @@ jobs:
       - name: Run tests
         run: pytest tests/ -q
 
+  test-extras:
+    # The main `test` matrix installs only `.[dev]` to prove the core works with
+    # zero extras (deps are just mcp + portalocker). That leaves the optional
+    # surfaces — field/corpus encryption ([secure]) and the local Dock GUI
+    # ([ui]) — exercised ONLY when their extra is installed: their tests
+    # importorskip / HAS_CRYPTO-gate, so under `.[dev]` they silently skip. This
+    # job installs those extras so those suites actually run in CI. (remote/SSE +
+    # vector are deferred on purpose — local-first focus + heavy model download.)
+    name: Test extras (secure + ui)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies (with secure + ui extras)
+        run: pip install -e ".[dev,secure,ui]"
+
+      - name: Run tests (crypto + Dock GUI suites now execute, not skip)
+        run: pytest tests/ -q
+
   supply-chain-dryrun:
     name: Supply-chain dry run
     runs-on: ubuntu-latest

@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("starlette")  # Dock GUI HTTP tests need the [ui] extra
 from starlette.testclient import TestClient
 
 from piia_engram.core import Engram

@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("starlette")  # Dock GUI HTTP tests need the [ui] extra
 from starlette.testclient import TestClient
 
 # Load setup_wizard first so the pre-existing setup_wizard<->cli_commands import
