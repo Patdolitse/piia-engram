@@ -218,6 +218,17 @@ class Engram(
                 self.root, ", ".join(self.data_orphans),
             )
 
+        # Auto-backup before any migration: snapshot the user's data the FIRST time
+        # the store is opened under a NEWER Engram version, so an upgrade migration
+        # can never silently lose or corrupt the irreplaceable memory. Best-effort (a
+        # failure warns, never blocks); opt out with ENGRAM_NO_AUTO_BACKUP=1. Skipped
+        # under ENGRAM_TEST=1 for suite isolation (same carve-out as the audit above);
+        # the dedicated test drives _maybe_backup_on_upgrade() directly.
+        if not read_only and os.environ.get("ENGRAM_TEST", "").strip().lower() not in (
+            "1", "true", "yes",
+        ):
+            self._maybe_backup_on_upgrade()
+
         # Directory/file creation (mkdir, schema_version, migration, trust
         # boundaries) is a write — skip it for a read-only open.
         if not read_only:
@@ -236,6 +247,109 @@ class Engram(
                 self._mark_session_start()
             except Exception:
                 pass  # Best-effort; never block init.
+
+    def _maybe_backup_on_upgrade(self) -> None:
+        """Snapshot the user's data store once when first opened under a NEWER Engram
+        version — BEFORE any schema/field migration can touch it — so an upgrade can
+        never silently lose or corrupt the irreplaceable memory. Best-effort: a
+        failure warns but never blocks. Opt out with ENGRAM_NO_AUTO_BACKUP=1.
+        """
+        if self._read_only:
+            return
+        if os.environ.get("ENGRAM_NO_AUTO_BACKUP", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        ):
+            return
+        try:
+            from piia_engram import __version__ as current_version
+        except Exception:
+            return
+        state_path = self.root / ".backup_state.json"
+        meta = _read_json(state_path, allow_corrupt=True)  # {} if missing/corrupt; never raises
+        last_version = (
+            str(meta.get("last_backed_up_version", "") or "")
+            if isinstance(meta, dict)
+            else ""
+        )
+        if last_version == current_version:
+            return  # already opened under this version — nothing to do
+
+        # Only back up if there is real memory to protect — skip a brand-new/empty
+        # store (nothing to lose; just record the version so we don't back up later).
+        def _has_content(p: Path) -> bool:
+            try:
+                return p.is_file() and p.stat().st_size > 2  # bigger than "[]"
+            except Exception:
+                return False
+
+        has_data = (
+            _has_content(self._knowledge_dir / "lessons.json")
+            or _has_content(self._knowledge_dir / "decisions.json")
+            or (self._playbooks_dir.is_dir() and any(self._playbooks_dir.glob("*.json")))
+        )
+        if not has_data:
+            self._record_backup_version(current_version)
+            return
+
+        try:
+            self._backup_store(current_version)
+            self._record_backup_version(current_version)
+            self._prune_backups(keep=5)
+        except Exception as exc:  # never block init on a backup failure
+            logger.warning(
+                "Engram auto-backup before upgrade failed (%s); proceeding without a "
+                "fresh backup. Set ENGRAM_NO_AUTO_BACKUP=1 to silence this.", exc,
+            )
+
+    def _backup_store(self, version: str) -> Path:
+        """Copy the store's data into backups/engram-<version>-<timestamp>/, skipping
+        transient logs (telemetry/audit/session/update markers) and the backups dir
+        itself (never recurse). Keeps .corpus_salt so an encrypted store stays
+        restorable.
+        """
+        import shutil
+        from datetime import datetime
+
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = self.root / "backups" / f"engram-{version}-{ts}"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        skip_exact = {"backups", "audit.log", "beta_events.jsonl", ".update_check.json"}
+
+        def _ignore(_directory: str, names: list[str]) -> set[str]:
+            out: set[str] = set()
+            for n in names:
+                if n in skip_exact or n.endswith(".tmp") or "heartbeat" in n:
+                    out.add(n)
+            return out
+
+        shutil.copytree(self.root, dest, ignore=_ignore)
+        return dest
+
+    def _record_backup_version(self, version: str) -> None:
+        try:
+            _write_json(self.root / ".backup_state.json", {"last_backed_up_version": version})
+        except Exception:
+            pass  # best-effort metadata; never block init
+
+    def _prune_backups(self, keep: int = 5) -> None:
+        """Keep only the most-recent ``keep`` upgrade backups; delete older ones so
+        the backups dir can't grow without bound."""
+        import shutil
+
+        try:
+            bdir = self.root / "backups"
+            if not bdir.is_dir():
+                return
+            backups = sorted(
+                (p for p in bdir.iterdir() if p.is_dir() and p.name.startswith("engram-")),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for old in backups[keep:]:
+                shutil.rmtree(old, ignore_errors=True)
+        except Exception:
+            pass  # pruning is best-effort
 
     @property
     def _session_state_path(self) -> Path:
