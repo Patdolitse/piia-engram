@@ -280,12 +280,17 @@ def dock_status_payload(eng: Any) -> dict:
     knowledge, storage, sessions = _d("knowledge"), _d("storage"), _d("sessions")
     clients, governance, telemetry, encoding = _d("clients"), _d("governance"), _d("telemetry"), _d("encoding")
     latest = sessions.get("latest") if isinstance(sessions.get("latest"), dict) else {}
+    try:
+        raw_lang = str((eng.get_profile() or {}).get("language", "") or "")
+    except Exception:
+        raw_lang = ""
     return {
         "ok": True,
         "read_only": True,
         "status": {
             "version": str(status.get("version", "") or ""),
             "platform": str(status.get("platform", "") or ""),
+            "language": "en" if raw_lang.strip().lower().startswith("en") else "zh",
             "knowledge": {
                 k: int(knowledge.get(k, 0) or 0)
                 for k in ("total", "verified", "staging", "archived", "lessons", "decisions", "playbooks")
@@ -310,3 +315,21 @@ def dock_status_payload(eng: Any) -> dict:
             "warnings": [str(w) for w in (status.get("warnings") or [])],
         },
     }
+
+
+def set_language(eng: Any, lang: str) -> dict:
+    """Set the owner's preferred language (zh|en) — a small deliberate write shared by
+    the CLI dock-set-lang and the HTTP route. Stores the human-readable profile value
+    (中文/English) so ``i18n.get_lang`` reads it back the same way; returns the
+    normalized lang. Caller owns authorization (CLI = local owner; HTTP = authed dock
+    session); a refused HTTP request never reaches this (no writable Engram opened).
+    """
+    lang = str(lang or "").strip().lower()
+    if lang not in {"zh", "en"}:
+        return {"ok": False, "error": "lang must be zh or en"}
+    profile_value = "中文" if lang == "zh" else "English"
+    try:
+        eng.update_profile({"language": profile_value}, source_tool="dock")
+    except Exception as exc:  # never crash the caller — return a usable error
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "changed": True, "lang": lang, "language": profile_value}

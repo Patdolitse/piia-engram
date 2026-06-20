@@ -215,3 +215,60 @@ class TestDockRestoreWritePath:
         assert resp.json()["ok"] is True
         lessons = {l["id"]: l for l in Engram(root=eng.root).get_lessons(limit=None)}
         assert lessons[lid].get("tier") != "archived"  # back in the active set
+
+
+class TestSetLanguageCore:
+    """设置: the owner's language preference — a small deliberate write shared by the
+    CLI dock-set-lang and the HTTP route."""
+
+    def test_set_language_persists_and_normalizes(self, eng: Engram):
+        from piia_engram.dock_ui.contracts import set_language
+
+        receipt = set_language(eng, "en")
+        assert receipt["ok"] is True and receipt["lang"] == "en"
+        assert Engram(root=eng.root).get_profile().get("language") == "English"
+        receipt = set_language(eng, "zh")
+        assert receipt["lang"] == "zh"
+        assert Engram(root=eng.root).get_profile().get("language") == "中文"
+
+    def test_set_language_rejects_bad_value(self, eng: Engram):
+        from piia_engram.dock_ui.contracts import set_language
+
+        receipt = set_language(eng, "fr")
+        assert receipt["ok"] is False and "error" in receipt
+
+
+class TestDockSetLangWritePath:
+    """Same owner gate as the other writes; a refused request opens no writable Engram."""
+
+    def test_set_lang_without_session_is_zero_side_effect(self, client: TestClient, eng: Engram):
+        before = _snap(eng.root)
+        resp = client.post("/api/dock-set-lang", json={"lang": "en"})
+        assert resp.status_code == 401
+        assert _snap(eng.root) == before
+
+    def test_set_lang_without_csrf_is_zero_side_effect(self, client: TestClient, eng: Engram):
+        _authed(client)
+        before = _snap(eng.root)
+        resp = client.post("/api/dock-set-lang", json={"lang": "en"}, headers={"Origin": _BASE})
+        assert resp.status_code == 403
+        assert _snap(eng.root) == before
+
+    def test_set_lang_happy_path(self, client: TestClient, eng: Engram):
+        csrf = _authed(client)
+        resp = client.post(
+            "/api/dock-set-lang", json={"lang": "en"},
+            headers={"Origin": _BASE, "X-Engram-CSRF": csrf},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True and resp.json()["lang"] == "en"
+        assert Engram(root=eng.root).get_profile().get("language") == "English"
+
+    def test_set_lang_bad_value_is_400(self, client: TestClient, eng: Engram):
+        csrf = _authed(client)
+        resp = client.post(
+            "/api/dock-set-lang", json={"lang": "fr"},
+            headers={"Origin": _BASE, "X-Engram-CSRF": csrf},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["ok"] is False

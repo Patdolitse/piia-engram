@@ -23,6 +23,7 @@ from .contracts import (
     dock_resume_payload,
     dock_status_payload,
     restore_entry,
+    set_language,
     update_entry,
 )
 from .security import (
@@ -261,6 +262,20 @@ def create_app(engram: Any, *, auth_token: str, port: int) -> Starlette:
         receipt = restore_entry(_Engram(root=engram.root), item_id)
         return _no_store(JSONResponse(receipt, status_code=200 if receipt.get("ok") else 400))
 
+    async def dock_set_lang(request: Request) -> Response:
+        err = _require_write_auth(request)
+        if err is not None:
+            return err  # zero side-effect: no writable Engram opened on a refused write
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        lang = str((body or {}).get("lang") or "")
+        from piia_engram.core import Engram as _Engram
+
+        receipt = set_language(_Engram(root=engram.root), lang)
+        return _no_store(JSONResponse(receipt, status_code=200 if receipt.get("ok") else 400))
+
     routes = [
         Route("/", spa_root, methods=["GET"]),
         Route("/auth", auth_page, methods=["GET"]),
@@ -272,6 +287,7 @@ def create_app(engram: Any, *, auth_token: str, port: int) -> Starlette:
         Route("/api/dock-playbooks", dock_playbooks, methods=["GET"]),
         Route("/api/dock-archive", dock_archive, methods=["POST"]),
         Route("/api/dock-restore", dock_restore, methods=["POST"]),
+        Route("/api/dock-set-lang", dock_set_lang, methods=["POST"]),
         Route("/api/dock-update", dock_update, methods=["POST"]),
         Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
     ]

@@ -252,6 +252,7 @@ class TestDockStatusCore:
         assert payload["ok"] is True
         st = payload["status"]
         assert st["version"]  # a real version string, not the {} stub
+        assert st["language"] in ("zh", "en")  # for the 设置 page toggle
         # the eng fixture seeds 1 lesson + 1 decision
         assert st["knowledge"]["lessons"] >= 1
         assert st["knowledge"]["decisions"] >= 1

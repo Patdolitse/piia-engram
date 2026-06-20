@@ -40,6 +40,7 @@
     });
     if (name === "trash") loadTrash();          // refresh archived list each time it's opened
     if (name === "playbooks") loadPlaybooks();  // load playbooks on first/each open
+    if (name === "settings") loadSettings();    // load current language + status
   }
 
   function renderMemory() {
@@ -336,6 +337,43 @@
     }).catch(function () { el.innerHTML = ""; });
   }
 
+  // 设置: language preference (a small write) + read-only governance/telemetry status.
+  var settings = {};
+  function loadSettings() {
+    api("/api/dock-status").then(function (res) {
+      settings = (res && res.ok && res.status) || {};
+      renderSettings();
+    }).catch(function () { settings = {}; renderSettings(); });
+  }
+  function renderSettings() {
+    var s = settings, k = s.knowledge || {};
+    var zhBtn = document.getElementById("lang-zh"), enBtn = document.getElementById("lang-en");
+    if (zhBtn) zhBtn.className = "btn" + (s.language === "zh" ? " btn-primary" : "");
+    if (enBtn) enBtn.className = "btn" + (s.language === "en" ? " btn-primary" : "");
+    var st = document.getElementById("settings-status");
+    if (st) {
+      st.textContent = s.version
+        ? "Engram v" + s.version + " · 库内 " + (k.total || 0) + " 条知识 · 治理 " +
+          (s.governance_enabled ? "已开" : "未开") + " · 遥测 " +
+          (s.telemetry_enabled ? "已开" : "未开（默认）")
+        : "";
+    }
+  }
+  function setLanguage(lang) {
+    var msg = document.getElementById("settings-msg");
+    post("/api/dock-set-lang", { lang: lang }).then(function (res) {
+      if (res.status === 200 && res.body.ok) {
+        if (msg) { msg.textContent = "已切换语言偏好"; msg.className = "detail-msg ok"; }
+        loadSettings();
+      } else if (msg) {
+        msg.textContent = "切换失败：" + (res.body.error || res.status);
+        msg.className = "detail-msg err";
+      }
+    }).catch(function () {
+      if (msg) { msg.textContent = "切换失败（网络）"; msg.className = "detail-msg err"; }
+    });
+  }
+
   // 接续 (the soul): one-click cross-tool context to paste into the AI tool you're using.
   function loadResume() {
     var out = document.getElementById("resume-out");
@@ -376,6 +414,10 @@
   if (bulkBtn) bulkBtn.onclick = bulkArchive;
   var pbSearch = document.getElementById("pb-search");
   if (pbSearch) pbSearch.oninput = renderPlaybooks;
+  var lz = document.getElementById("lang-zh");
+  if (lz) lz.onclick = function () { setLanguage("zh"); };
+  var le = document.getElementById("lang-en");
+  if (le) le.onclick = function () { setLanguage("en"); };
 
   loadMemory();
   loadStatus();

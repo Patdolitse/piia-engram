@@ -74,7 +74,22 @@
         </div>
       </section>
       <section data-view="rules" class="view"><h1>规则与权限</h1><p class="muted">即将推出。</p></section>
-      <section data-view="settings" class="view"><h1>设置</h1><p class="muted">即将推出。</p></section>
+      <section data-view="settings" class="view">
+        <h1>设置</h1>
+        <div class="set-row">
+          <div>
+            <div class="set-label">Engram 语言偏好</div>
+            <div class="muted set-hint">影响接续简报 / 画像 / CLI 文本的语言（不改这个 Dock 界面本身）。</div>
+          </div>
+          <div class="set-control">
+            <button id="lang-zh" class="btn">中文</button>
+            <button id="lang-en" class="btn">English</button>
+          </div>
+        </div>
+        <div id="settings-msg" class="detail-msg"></div>
+        <div id="settings-status" class="set-status muted"></div>
+        <p class="muted set-hint" style="margin-top:18px">治理、遥测等开关属于运行时配置（需重启或设环境变量），这里只读展示当前状态。所有数据都在本机，不上云。</p>
+      </section>
       <section data-view="trash" class="view">
         <h1>回收站</h1>
         <p class="muted">已归档的记忆放在这里，可一键恢复，不会被删除。</p>
