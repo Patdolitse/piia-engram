@@ -305,6 +305,8 @@ _SECRET_VALUE_RE = re.compile(
     r"|ya29\.[0-9A-Za-z_\-]{20,}"             # Google OAuth access token
     r"|xox[baprs]-[0-9A-Za-z\-]{10,}"         # Slack token (bot/user/app/refresh)
     r"|xapp-[0-9A-Za-z\-]{10,}"               # Slack app-level token
+    r"|pypi-[A-Za-z0-9_\-]{20,}"              # PyPI upload token
+    r"|cfut_[A-Za-z0-9_\-]{20,}"              # Cloudflare API token
     r"|eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"  # JWT
     r"|-----BEGIN[ A-Z]*PRIVATE KEY-----"     # PEM private key block
 )

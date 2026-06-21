@@ -635,6 +635,19 @@ def test_value_scanner_detects_gitlab_and_slack_app_tokens_round10():
     assert sv.classify_value("glpat-1234567890abcdefghij") == "secret"
     assert sv.classify_value("xapp-1-A1234567890-abcdefghij") == "secret"
 
+def test_value_scanner_detects_pypi_and_cloudflare_tokens():
+    # pypi upload token and Cloudflare API token (cfut_) are real credential
+    # shapes the release scanner already (will) flag — the runtime value floor
+    # must agree so an export surface never under-classifies them.
+    pypi = "pypi-" + "AgEIcHlwaS" + "1234567890" + "abcd"
+    cfut = "cfut_" + "A1b2C3d4E5" + "f6G7h8I9j0"
+    assert sv.classify_value(pypi) == "secret", pypi
+    assert sv.classify_value(cfut) == "secret", cfut
+
+def test_ark_api_key_field_name_is_secret():
+    # ARK has no reliable VALUE shape; the field NAME carries the signal.
+    assert sv.classify_field("ARK_API_KEY") == "secret"
+
 
 # ── Codex round-11 FAIL regressions: value-side Unicode hygiene + CN-ID X ──
 

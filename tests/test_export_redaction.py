@@ -158,3 +158,25 @@ class TestIdentityCardWiring:
         card = store.export_identity_card()
         # after the product scrub, the linter must find no high-severity leak
         assert er.is_export_clean(card)
+
+
+class TestAllDriveAndNewCredentialShapes:
+    """Round-1 leakage-guard maturation: forward-slash home paths and the
+    pypi-/cfut_ credential shapes must be caught on the export surface too,
+    keeping it in lockstep with the release scanner."""
+
+    def test_win_home_re_matches_forward_slash(self):
+        assert er._WIN_HOME_RE.search("C:/Users/alice/proj") is not None
+        assert er._WIN_HOME_RE.search(r"D:\Users\alice\proj") is not None
+
+    def test_win_home_re_ignores_non_users_paths(self):
+        # system font path is forward-slash C:/ but not a user home → no flag
+        assert er._WIN_HOME_RE.search("C:/Windows/Fonts/msyh.ttc") is None
+
+    def test_scan_export_flags_cloudflare_and_pypi_secrets(self):
+        cfut = "cfut_" + "A1b2C3d4E5" + "f6G7h8I9j0" + "K1l2"
+        pypi = "pypi-" + "AgEIcHlwaS" + "1234567890" + "abcd"
+        for tok in (cfut, pypi):
+            findings = er.scan_export_text(f"leaked {tok} in a note")
+            assert any(f["category"] == "secret" and f["severity"] == "high"
+                       for f in findings), tok

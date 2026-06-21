@@ -48,11 +48,18 @@ _BUILT_IN_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     ("AWS access key", re.compile(r"AKIA[0-9A-Z]{16}"),                   "high"),
     ("Slack token",    re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"),       "high"),
     ("PEM private",    re.compile(r"BEGIN [A-Z ]*PRIVATE KEY"),           "high"),
-    # Match one-or-more backslashes so BOTH the source-escaped form
-    # (``C:\\Users\\name`` in .py) and the literal single-backslash form
-    # (``C:\Users\name`` in markdown / plain text) are caught. The old
-    # ``\\\\`` (exactly two) regex missed single-backslash paths in docs.
-    ("Windows path",   re.compile(r"C:\\+Users\\+[A-Za-z0-9_.-]+",
+    # ARK (Volcengine/ByteDance) keys have no stable value prefix, so anchor on
+    # the field NAME with a non-empty value; the {20,} value floor keeps doc
+    # placeholders (``ARK_API_KEY=your-key`` / ``ARK_API_KEY=""``) from tripping.
+    ("ARK API key",    re.compile(r"ARK_API_KEY\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{20,}",
+                                  re.IGNORECASE),                         "high"),
+    # Any drive letter + either separator, anchored on the ``Users`` home dir.
+    # Catches source-escaped (``C:\\Users\\name`` in .py), literal
+    # single-backslash (``D:\Users\name`` in markdown), and forward-slash
+    # (``E:/Users/name``) forms alike. Anchoring on ``Users`` (not a bare drive
+    # root) keeps system paths like ``C:/Windows/Fonts/...`` and bare
+    # ``C:\Users`` from tripping it.
+    ("Windows path",   re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[A-Za-z0-9_.-]+",
                                   re.IGNORECASE),                         "warn"),
     ("POSIX home",     re.compile(r"/home/[a-z][a-z0-9_-]+(?:/|$)"),      "warn"),
     ("password=",      re.compile(r"(?<![a-z_])password\s*[:=]\s*['\"][^'\"]+",
@@ -86,6 +93,7 @@ _LIVE_CREDENTIAL_RE = re.compile(
     r"|xapp-[0-9A-Za-z\-]{10,}"               # Slack app-level token
     r"|hf_[A-Za-z0-9]{20,}"                   # HuggingFace
     r"|pypi-[A-Za-z0-9_\-]{20,}"              # PyPI upload token
+    r"|cfut_[A-Za-z0-9_\-]{20,}"              # Cloudflare API token
 )
 
 # Intentional FAKE credentials that legitimately live in tracked fixtures /
