@@ -429,6 +429,154 @@ class TestSearchTools:
         ]
 
 
+class TestSearchKnowledgeResultSize:
+    """Round 2: result-size discipline for the search_knowledge MCP wrapper.
+
+    A few large knowledge bodies must not blow up the MCP client (this dev
+    session hit a ~68 KB result twice). Truncation lives at the MCP boundary
+    only — ``Engram.search_knowledge`` (reused by the CLI and recall_service)
+    stays full-fidelity. ``max_field_chars=0`` is a same-tier escape hatch.
+    """
+
+    # ---- pure helper unit tests ----
+
+    def test_truncate_helper_leaves_short_strings(self):
+        from piia_engram import mcp_tools_read as m
+        obj = {"summary": "short", "n": 3, "ok": True}
+        assert m._truncate_long_strings(obj, 400) == obj
+
+    def test_truncate_helper_clips_long_string_with_marker(self):
+        from piia_engram import mcp_tools_read as m
+        body = "x" * 5000
+        out = m._truncate_long_strings({"detail": body}, 400)
+        assert out["detail"] != body
+        assert len(out["detail"]) < 600          # 400 head + short marker
+        assert "truncated" in out["detail"]
+        assert out["detail"].startswith("x" * 400)
+
+    def test_truncate_helper_recurses_lists_and_nested_dicts(self):
+        from piia_engram import mcp_tools_read as m
+        body = "y" * 5000
+        out = m._truncate_long_strings(
+            {"steps": [{"action": body}, body], "meta": {"note": body}}, 400
+        )
+        assert "truncated" in out["steps"][0]["action"]
+        assert "truncated" in out["steps"][1]
+        assert "truncated" in out["meta"]["note"]
+
+    def test_truncate_helper_preserves_dict_keys(self):
+        from piia_engram import mcp_tools_read as m
+        long_key = "k" * 5000          # key itself is long
+        body = "z" * 5000
+        out = m._truncate_long_strings({long_key: body}, 400)
+        assert long_key in out                    # key untouched, never truncated
+        assert "truncated" in out[long_key]       # only the value is clipped
+
+    def test_truncate_helper_zero_means_unlimited(self):
+        from piia_engram import mcp_tools_read as m
+        obj = {"detail": "w" * 5000}
+        assert m._truncate_long_strings(obj, 0) == obj
+
+    def test_truncate_helper_does_not_mutate_input(self):
+        from piia_engram import mcp_tools_read as m
+        body = "x" * 5000
+        original = {"detail": body, "steps": [{"action": body}]}
+        out = m._truncate_long_strings(original, 400)
+        # input untouched at every depth; output is a fresh, clipped structure
+        assert original["detail"] == body
+        assert original["steps"][0]["action"] == body
+        assert out is not original
+        assert "truncated" in out["detail"]
+        assert "truncated" in out["steps"][0]["action"]
+
+    # ---- integration via the MCP wrapper ----
+
+    def test_search_knowledge_truncates_long_detail_by_default(
+        self, isolated_engram: Engram
+    ):
+        isolated_engram.add_lesson({
+            "summary": "huge body lesson about pytest",
+            "detail": "D" * 8000,
+            "domain": "pytest",
+        })
+        result = json.loads(_run(mcp_server.search_knowledge("pytest")))
+        lesson = result["lessons"][0]
+        assert lesson["summary"] == "huge body lesson about pytest"   # headline kept
+        assert "truncated" in lesson["detail"]                        # body clipped
+        assert len(lesson["detail"]) < 1000
+
+    def test_search_knowledge_escape_hatch_returns_full_body(
+        self, isolated_engram: Engram
+    ):
+        isolated_engram.add_lesson({
+            "summary": "huge body lesson about pytest",
+            "detail": "D" * 8000,
+            "domain": "pytest",
+        })
+        result = json.loads(_run(
+            mcp_server.search_knowledge("pytest", max_field_chars=0)
+        ))
+        assert result["lessons"][0]["detail"] == "D" * 8000          # full fidelity
+
+    def test_search_knowledge_truncates_playbook_steps(
+        self, isolated_engram: Engram
+    ):
+        isolated_engram.add_playbook({
+            "title": "Release checklist",
+            "triggers": ["release"],
+            "steps": ["S" * 4000, "T" * 4000],
+        })
+        result = json.loads(_run(
+            mcp_server.search_knowledge("release", scope="playbooks")
+        ))
+        steps = result["playbooks"][0]["steps"]
+        assert steps
+        # steps are stored as list[dict] ({order, action, detail}); assert on
+        # the serialized step so the check is robust to that shape — each long
+        # step content must be clipped and the whole step bounded.
+        for step in steps:
+            blob = json.dumps(step, ensure_ascii=False)
+            assert "truncated" in blob
+            assert len(blob) < 1000
+        # usage_policy is injected AFTER truncation → must survive verbatim
+        assert "Do not auto-drive" in result["playbooks"][0]["usage_policy"]
+
+    def test_search_knowledge_default_result_bytes_bounded(
+        self, isolated_engram: Engram
+    ):
+        # Fill all three buckets with large bodies — the real 68 KB failure mode.
+        for i in range(8):
+            isolated_engram.add_lesson({
+                "summary": f"perf lesson {i}",
+                "detail": "L" * 6000,
+                "domain": "perf",
+            })
+            isolated_engram.add_decision({
+                "question": f"perf decision {i}",
+                "choice": "do it",
+                "reasoning": "R" * 6000,
+                "domain": "perf",
+            })
+        isolated_engram.add_playbook({
+            "title": "perf playbook",
+            "triggers": ["perf"],
+            "steps": ["P" * 3000, "Q" * 3000, "U" * 3000],
+            "description": "B" * 6000,
+        })
+        truncated = _run(mcp_server.search_knowledge("perf"))
+        full = _run(mcp_server.search_knowledge("perf", max_field_chars=0))
+        # measure real UTF-8 bytes (bilingual usage_policy makes char count
+        # underestimate the wire size the MCP client must absorb)
+        truncated_bytes = len(truncated.encode("utf-8"))
+        full_bytes = len(full.encode("utf-8"))
+        assert truncated_bytes < full_bytes * 0.5   # discipline shrinks the result
+        assert truncated_bytes < 50_000             # well under the 68 KB pain point
+        td = json.loads(truncated)
+        assert td["lessons"] and td["decisions"] and td["playbooks"]
+        assert "_caller_permissions" in td          # metadata preserved
+        assert all("id" in item for item in td["lessons"])
+
+
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------

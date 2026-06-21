@@ -473,10 +473,35 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
     return S._json(pack)
 
 
+_DEFAULT_MAX_FIELD_CHARS = 400
+
+
+def _truncate_long_strings(obj, max_chars):
+    """Recursively bound the size of string VALUES in a JSON-able structure.
+
+    Any ``str`` longer than ``max_chars`` is clipped to its first ``max_chars``
+    characters plus a ``" [+N chars truncated]"`` marker. Dict keys, numbers,
+    booleans, and short strings are left untouched, so item shape, ids, and
+    headlines survive. ``max_chars <= 0`` disables truncation (escape hatch).
+    Never mutates ``obj``: the truncating path builds fresh dict/list containers;
+    the ``max_chars <= 0`` escape hatch returns ``obj`` unchanged.
+    """
+    if max_chars <= 0:
+        return obj
+    if isinstance(obj, dict):
+        return {k: _truncate_long_strings(v, max_chars) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_truncate_long_strings(v, max_chars) for v in obj]
+    if isinstance(obj, str) and len(obj) > max_chars:
+        return obj[:max_chars] + f" [+{len(obj) - max_chars} chars truncated]"
+    return obj
+
+
 @S.mcp.tool()
 async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
                            filters_json: str = "", project_folder: str = "",
-                           include_freshness: bool = False) -> str:
+                           include_freshness: bool = False,
+                           max_field_chars: int = _DEFAULT_MAX_FIELD_CHARS) -> str:
     r"""搜索知识库（lessons/decisions/playbooks）。 / Search lessons, decisions, and playbooks by keyword.
 
     **Lifecycle: retrieval** — 在对话中需要检索历史知识时调用。
@@ -499,6 +524,11 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             Example: '{"tier": "verified", "domain": "python"}'
         include_freshness: Attach a per-item freshness hint (fresh/aging/stale)
             to each returned item. Default False keeps the response unchanged.
+        max_field_chars: Per-field size cap. Every string field in each returned
+            item (detail/reasoning/description/steps/...) longer than this is
+            clipped with a "[+N chars truncated]" marker so a few large bodies
+            cannot blow up the client. Item shape, ids, and headlines are kept.
+            Set 0 for full untruncated bodies (default 400).
     """
     filters = None
     if filters_json:
@@ -543,6 +573,20 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
                 items = result.get(_bucket)
                 if isinstance(items, list):
                     result[_bucket] = S._provenance.annotate_freshness(items)
+        # Result-size discipline: a few large knowledge bodies must not blow up
+        # the MCP client. Bound each item's string fields HERE, at the MCP
+        # boundary, BEFORE usage_policy / _caller_permissions are injected so
+        # that policy and permission metadata are never clipped regardless of
+        # the cap. Engram.search_knowledge (reused by the CLI and recall_service)
+        # is untouched, so internal consumers keep full fidelity.
+        if isinstance(result, dict) and max_field_chars > 0:
+            for _bucket in ("lessons", "decisions", "playbooks"):
+                items = result.get(_bucket)
+                if isinstance(items, list):
+                    result[_bucket] = [
+                        _truncate_long_strings(item, max_field_chars)
+                        for item in items
+                    ]
         if isinstance(result, dict):
             playbooks = result.get("playbooks")
             if isinstance(playbooks, list):
