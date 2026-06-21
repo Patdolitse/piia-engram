@@ -44,7 +44,9 @@
     "version_bearing": [
       { "file": ".mcp/server.json", "pattern": "\"version\":\\s*\"([0-9][^\"]*)\"" },
       { "file": ".claude-plugin/plugin.json", "pattern": "\"version\":\\s*\"([0-9][^\"]*)\"" },
-      { "file": "glama.yaml", "pattern": "(?m)^\\s*version:\\s*([0-9][^\\s]*)" }
+      { "file": "glama.yaml", "pattern": "(?m)^\\s*version:\\s*([0-9][^\\s]*)" },
+      { "file": "README.md", "pattern": "Version frame \\| \\*\\*v([0-9][^*]*)\\*\\*" },
+      { "file": "README.zh-CN.md", "pattern": "版本口径 \\| \\*\\*v([0-9][^*]*)\\*\\*" }
     ],
     "test_count_patterns": [
       { "file": "README.md", "pattern": "Tests passing \\| \\*\\*(\\d+)\\*\\*" },
@@ -91,6 +93,14 @@
       {
         "pattern": "\\*\\*Version\\*\\*: v[0-3]\\.",
         "reason": "doc version header lagging the v4 major (docs/architecture.md shipped '**Version**: v3.55.0' in the v4.0.0 release)"
+      },
+      {
+        "pattern": "70 advanced tools",
+        "reason": "pre-v4.0.0 advanced tool count (now 40); shipped stale in quickstart-first-value.md through v4.9.x"
+      },
+      {
+        "pattern": "70 个高级工具",
+        "reason": "zh-CN twin of the pre-v4.0.0 '70 advanced tools' phrasing (now 40)"
       }
     ]
   }
