@@ -1802,6 +1802,33 @@ class TestColdStartBootstrap:
             or "身份画像未设置" in result
         )
 
+    def test_get_resume_brief_imports_rule_files_on_cold_start(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        # get_resume_brief is the OTHER cold-start entry. The original bug was the
+        # two entries behaving inconsistently (get_user_context unreachable while
+        # get_resume_brief reached bootstrap); lock that this entry keeps surfacing
+        # the import so it can't silently regress to an empty brief.
+        (isolated_engram.root / ".bootstrap_done").unlink()
+        fake = tmp_path / "fake_CLAUDE.md"
+        fake.write_text(
+            "# Rules\n所有沟通使用中文。\n我是一名独立开发者。\n这个 repo 用 pytest 测试。\n",
+            encoding="utf-8",
+        )
+        import piia_engram.bootstrap as bs
+        monkeypatch.setattr(bs, "_scan_rule_files", lambda: [
+            {"path": fake, "scope": "global",
+             "lines": fake.read_text(encoding="utf-8").splitlines()},
+        ])
+
+        result = _run(mcp_server.get_resume_brief())
+
+        # Real entry must trigger bootstrap: detected language surfaces in the brief…
+        assert "zh-CN" in result
+        # …and the store actually received the imported rules (reachability proof).
+        lessons = isolated_engram.get_lessons(limit=10, _update_access=False)
+        assert any("首次连接自动导入" in l.get("summary", "") for l in lessons)
+
 
 class TestRecallWrapper:
     def test_mcp_get_recall_wrapper_returns_recall_payload(
