@@ -569,19 +569,38 @@ def test_ark_api_key_placeholder_not_flagged(sc, tmp_path):
 
 def test_credential_shapes_in_sync_with_sensitivity(sc):
     """Drift guard: the release scanner's _LIVE_CREDENTIAL_RE and the audited
-    sensitivity._SECRET_VALUE_RE are hand-synced copies — they must agree on
-    the shared vendor shapes. Samples built at runtime so this file carries no
-    literal credential token."""
+    sensitivity._SECRET_VALUE_RE are hand-synced copies — EVERY vendor-prefixed
+    shape must live in BOTH. Samples are built at runtime so this file carries
+    no literal credential token.
+
+    Two shapes are intentionally asymmetric and excluded from the parity set:
+      * JWT (``eyJ.eyJ.sig``) is sensitivity-only. Adding it to the
+        run-on-every-file scanner would flag legitimate fake-JWT test fixtures
+        (e.g. tests/test_sensitivity.py) and force allowlist churn; runtime
+        classification stays conservative instead.
+      * PEM private-key blocks are covered by the scanner's fixture-exempt
+        built-in layer (_BUILT_IN_PATTERNS), not _LIVE_CREDENTIAL_RE, so both
+        surfaces detect them — via different layers.
+    """
     from piia_engram import sensitivity as sv
 
     samples = {
-        "openai":     "sk-" + "abcdefghij" + "klmnop1234",
-        "github":     "ghp_" + "0123456789" + "abcdefghij" + "0123",
-        "pypi":       "pypi-" + "AgEIcHlwaS" + "1234567890" + "abcd",
-        "cloudflare": "cfut_" + "A1b2C3d4E5" + "f6G7h8I9j0",
-        "gitlab":     "glpat-" + "1234567890" + "abcdefghij",
-        "slack_app":  "xapp-1-" + "A123456789" + "0-abcdefgh",
+        "openai":             "sk-" + "abcdefghij" + "klmnop1234",
+        "stripe_secret":      "sk_live_" + "abcdefghij" + "1234567890",
+        "stripe_restricted":  "rk_test_" + "abcdefghij" + "1234567890",
+        "github_pat":         "ghp_" + "0123456789" + "abcdefghij" + "0123",
+        "github_oauth":       "gho_" + "0123456789" + "abcdefghij" + "0123",
+        "github_finegrained": "github_pat_" + "0123456789" + "abcdefghij" + "0123",
+        "gitlab":             "glpat-" + "1234567890" + "abcdefghij",
+        "aws_access_key":     "AKIA" + "IOSFODNN7EXAMPLE",
+        "google_api":         "AIza" + "0123456789" * 3 + "ABCDE",
+        "google_oauth":       "ya29." + "a0" + "0123456789" * 2,
+        "slack":              "xoxb-" + "1234567890" + "abcdefghij",
+        "slack_app":          "xapp-1-" + "A123456789" + "0-abcdefgh",
+        "huggingface":        "hf_" + "0123456789" + "abcdefghij",
+        "pypi":               "pypi-" + "AgEIcHlwaS" + "1234567890" + "abcd",
+        "cloudflare":         "cfut_" + "A1b2C3d4E5" + "f6G7h8I9j0",
     }
     for name, tok in samples.items():
-        assert sc._LIVE_CREDENTIAL_RE.search(tok), f"scanner misses {name}"
-        assert sv._SECRET_VALUE_RE.search(tok), f"sensitivity misses {name}"
+        assert sc._LIVE_CREDENTIAL_RE.search(tok), f"scanner misses {name}: {tok}"
+        assert sv._SECRET_VALUE_RE.search(tok), f"sensitivity misses {name}: {tok}"
