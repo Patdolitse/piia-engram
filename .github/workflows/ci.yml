@@ -49,6 +49,9 @@ jobs:
       - name: Public trust claim gate
         run: python scripts/check_public_trust_claims.py
 
+      - name: Release version-consistency preflight
+        run: python scripts/check_release_preflight.py
+
       - name: Pre-release sanitization scan
         run: python scripts/release_sanitize_check.py --internal --strict
 
@@ -102,6 +105,9 @@ jobs:
 
       - name: Public trust claim gate
         run: python scripts/check_public_trust_claims.py
+
+      - name: Release version-consistency preflight
+        run: python scripts/check_release_preflight.py
 
       - name: Pre-release sanitization scan
         run: python scripts/release_sanitize_check.py --internal --strict
