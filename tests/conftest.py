@@ -1,8 +1,27 @@
 """Shared pytest fixtures for the Engram test suite."""
 
 import os
+from pathlib import Path
 
 import pytest
+
+_SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _subprocess_pythonpath() -> None:
+    """Ensure subprocesses can import piia_engram even without pip install.
+
+    pytest's ``pythonpath = ["src"]`` only adds to sys.path inside the test
+    process.  Subprocesses (e.g. the MCP launch probe in doctor, the atexit
+    integration test) inherit the *environment*, not sys.path — so they need
+    PYTHONPATH set.
+    """
+    existing = os.environ.get("PYTHONPATH", "")
+    if _SRC_DIR not in existing.split(os.pathsep):
+        os.environ["PYTHONPATH"] = (
+            f"{_SRC_DIR}{os.pathsep}{existing}" if existing else _SRC_DIR
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)
