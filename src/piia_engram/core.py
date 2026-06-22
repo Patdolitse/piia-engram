@@ -748,39 +748,41 @@ class Engram(
         if not updates:
             return
         updates = self._repair_incoming_text(dict(updates))
-        profile = self.get_profile()
+        path = self._identity_dir / "profile.json"
 
-        # Description: append-merge to preserve multi-tool markers
-        if "description" in updates and profile.get("description"):
-            old_desc = profile["description"]
-            new_desc = updates["description"]
-            if not new_desc:
-                # Empty update — keep existing
-                updates["description"] = old_desc
-            else:
-                existing_parts = set(old_desc.split())
-                new_parts = [p for p in new_desc.split() if p not in existing_parts]
-                if new_parts:
-                    updates["description"] = old_desc + " " + " ".join(new_parts)
-                else:
-                    # All tokens already present — keep existing unchanged
+        def _mutate(profile):
+            if not isinstance(profile, dict):
+                profile = {}
+            profile = self._crypto.decrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
+
+            if "description" in updates and profile.get("description"):
+                old_desc = profile["description"]
+                new_desc = updates["description"]
+                if not new_desc:
                     updates["description"] = old_desc
+                else:
+                    existing_parts = set(old_desc.split())
+                    new_parts = [p for p in new_desc.split() if p not in existing_parts]
+                    if new_parts:
+                        updates["description"] = old_desc + " " + " ".join(new_parts)
+                    else:
+                        updates["description"] = old_desc
 
-        now = _now_iso()
+            now = _now_iso()
 
-        # Track field-level provenance
-        provenance = profile.get("_provenance", {})
-        for key in updates:
-            if key not in ("updated_at",):
-                provenance[key] = {"by": source_tool or "unknown", "at": now}
+            provenance = profile.get("_provenance", {})
+            for key in updates:
+                if key not in ("updated_at",):
+                    provenance[key] = {"by": source_tool or "unknown", "at": now}
 
-        profile.update(updates)
-        profile["updated_at"] = now
-        profile["_provenance"] = provenance
-        if source_tool:
-            profile["_last_updated_by"] = source_tool
-        encrypted = self._crypto.encrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
-        _write_json(self._identity_dir / "profile.json", encrypted)
+            profile.update(updates)
+            profile["updated_at"] = now
+            profile["_provenance"] = provenance
+            if source_tool:
+                profile["_last_updated_by"] = source_tool
+            return self._crypto.encrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
+
+        _update_json(path, _mutate, default={})
         self._audit.log("write", "identity/profile", detail=str(list(updates.keys())))
 
     def get_work_style(self) -> dict:
@@ -818,10 +820,16 @@ class Engram(
         if not updates:
             return
         updates = self._repair_incoming_text(dict(updates))
-        prefs = self.get_preferences()
-        prefs.update(updates)
-        prefs["updated_at"] = _now_iso()
-        _write_json(self._identity_dir / "preferences.json", prefs)
+        path = self._identity_dir / "preferences.json"
+
+        def _mutate(prefs):
+            if not isinstance(prefs, dict):
+                prefs = self.get_preferences()
+            prefs.update(updates)
+            prefs["updated_at"] = _now_iso()
+            return prefs
+
+        _update_json(path, _mutate, default={})
 
     # -- Trust Boundaries (v2.0, new) --
 
@@ -835,10 +843,16 @@ class Engram(
                             detail=f"rejected unknown fields: {rejected}")
         if not updates:
             return
-        tb = self.get_trust_boundaries()
-        tb.update(updates)
-        tb["updated_at"] = _now_iso()
-        _write_json(self._identity_dir / "trust_boundaries.json", tb)
+        path = self._identity_dir / "trust_boundaries.json"
+
+        def _mutate(tb):
+            if not isinstance(tb, dict):
+                tb = {}
+            tb.update(updates)
+            tb["updated_at"] = _now_iso()
+            return tb
+
+        _update_json(path, _mutate, default={})
 
     def get_quality_standards(self) -> dict:
         return _read_json(self._identity_dir / "quality_standards.json")
@@ -851,10 +865,16 @@ class Engram(
         if not updates:
             return
         updates = self._repair_incoming_text(dict(updates))
-        standards = self.get_quality_standards()
-        standards.update(updates)
-        standards["updated_at"] = _now_iso()
-        _write_json(self._identity_dir / "quality_standards.json", standards)
+        path = self._identity_dir / "quality_standards.json"
+
+        def _mutate(standards):
+            if not isinstance(standards, dict):
+                standards = {}
+            standards.update(updates)
+            standards["updated_at"] = _now_iso()
+            return standards
+
+        _update_json(path, _mutate, default={})
 
     # =====================================================================
     # Knowledge — what you've learned
@@ -1910,14 +1930,17 @@ class Engram(
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""
         path = self._knowledge_dir / "domains.json"
-        domains = _read_json(path)
-        if not isinstance(domains, dict):
-            domains = {}
-        if domain not in domains:
-            domains[domain] = {"first_seen": _now_iso(), "project_count": 0}
-        domains[domain].update(updates)
-        domains[domain]["updated_at"] = _now_iso()
-        _write_json(path, domains)
+
+        def _mutate(domains):
+            if not isinstance(domains, dict):
+                domains = {}
+            if domain not in domains:
+                domains[domain] = {"first_seen": _now_iso(), "project_count": 0}
+            domains[domain].update(updates)
+            domains[domain]["updated_at"] = _now_iso()
+            return domains
+
+        _update_json(path, _mutate, default={})
 
     def get_domains(self) -> dict:
         path = self._knowledge_dir / "domains.json"
@@ -1948,14 +1971,17 @@ class Engram(
     def increment_domain_usage(self, domain: str) -> None:
         """Increment project count for a domain."""
         path = self._knowledge_dir / "domains.json"
-        domains = _read_json(path)
-        if not isinstance(domains, dict):
-            domains = {}
-        entry = domains.get(domain, {"first_seen": _now_iso(), "project_count": 0})
-        entry["project_count"] = entry.get("project_count", 0) + 1
-        entry["last_used"] = _now_iso()
-        domains[domain] = entry
-        _write_json(path, domains)
+
+        def _mutate(domains):
+            if not isinstance(domains, dict):
+                domains = {}
+            entry = domains.get(domain, {"first_seen": _now_iso(), "project_count": 0})
+            entry["project_count"] = entry.get("project_count", 0) + 1
+            entry["last_used"] = _now_iso()
+            domains[domain] = entry
+            return domains
+
+        _update_json(path, _mutate, default={})
 
     # =====================================================================
     # Projects — per-project knowledge
@@ -1965,14 +1991,19 @@ class Engram(
         """Save/update knowledge for a specific project."""
         pid = _project_id(project_folder)
         path = self._projects_dir / f"{pid}.json"
-        existing = _read_json(path)
         data = self._repair_incoming_text(dict(data))
-        existing.update(data)
-        existing["project_folder"] = project_folder
-        existing["updated_at"] = _now_iso()
-        if "created_at" not in existing:
-            existing["created_at"] = _now_iso()
-        _write_json(path, existing)
+
+        def _mutate(existing):
+            if not isinstance(existing, dict):
+                existing = {}
+            existing.update(data)
+            existing["project_folder"] = project_folder
+            existing["updated_at"] = _now_iso()
+            if "created_at" not in existing:
+                existing["created_at"] = _now_iso()
+            return existing
+
+        _update_json(path, _mutate, default={})
 
     def get_project_snapshot(self, project_folder: str) -> dict:
         pid = _project_id(project_folder)

@@ -2616,6 +2616,89 @@ def test_increment_domain_usage_multiple_domains(tmp_path: Path):
     assert data["javascript"]["project_count"] == 1
 
 
+def test_concurrent_increment_domain_no_lost_updates(tmp_path: Path):
+    """Two threads incrementing the same domain must not lose updates.
+
+    This catches the read-outside-lock / write-inside-lock TOCTOU pattern:
+    without _update_json, two threads can both read count=0 and both write
+    count=1, losing one increment.
+    """
+    import threading
+
+    engram = make_engram(tmp_path)
+    n_per_thread = 20
+    barrier = threading.Barrier(2)
+
+    def _inc():
+        barrier.wait()
+        for _ in range(n_per_thread):
+            engram.increment_domain_usage("concurrent_test")
+
+    t1 = threading.Thread(target=_inc)
+    t2 = threading.Thread(target=_inc)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    domains_path = tmp_path / "knowledge" / "domains.json"
+    data = json.loads(domains_path.read_text(encoding="utf-8"))
+    assert data["concurrent_test"]["project_count"] == n_per_thread * 2
+
+
+def test_concurrent_update_domain_no_lost_fields(tmp_path: Path):
+    """Two threads updating different fields of the same domain must not
+    overwrite each other's changes."""
+    import threading
+
+    engram = make_engram(tmp_path)
+    barrier = threading.Barrier(2)
+
+    def _update_a():
+        barrier.wait()
+        engram.update_domain("shared", {"skill_level": "expert"})
+
+    def _update_b():
+        barrier.wait()
+        engram.update_domain("shared", {"last_project": "engram"})
+
+    t1 = threading.Thread(target=_update_a)
+    t2 = threading.Thread(target=_update_b)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    domains_path = tmp_path / "knowledge" / "domains.json"
+    data = json.loads(domains_path.read_text(encoding="utf-8"))
+    assert data["shared"].get("skill_level") == "expert"
+    assert data["shared"].get("last_project") == "engram"
+
+
+def test_concurrent_save_project_snapshot_no_lost_keys(tmp_path: Path):
+    """Two threads saving different keys to the same project must not
+    overwrite each other."""
+    import threading
+
+    engram = make_engram(tmp_path)
+    barrier = threading.Barrier(2)
+
+    def _save_a():
+        barrier.wait()
+        engram.save_project_snapshot("/test/project", {"lang": "python"})
+
+    def _save_b():
+        barrier.wait()
+        engram.save_project_snapshot("/test/project", {"framework": "fastapi"})
+
+    t1 = threading.Thread(target=_save_a)
+    t2 = threading.Thread(target=_save_b)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    pid = _project_id("/test/project")
+    path = tmp_path / "projects" / f"{pid}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data.get("lang") == "python"
+    assert data.get("framework") == "fastapi"
+
+
 # =====================================================================
 # migrate_from_oca_memory
 # =====================================================================
