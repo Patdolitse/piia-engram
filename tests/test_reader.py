@@ -60,7 +60,7 @@ class TestBuiltinReader:
             return {
                 "title": "Hello World",
                 "text": "the quick brown fox " * 30,
-                "metadata": {"author": "Ada", "site_name": "Example"},
+                "metadata": {"author": "Ada", "sitename": "Example"},
             }
 
         monkeypatch.setattr(reader, "_fetch_html", fake_fetch)
@@ -79,6 +79,7 @@ class TestBuiltinReader:
         assert wc.source == "builtin"
         assert wc.fetched_at  # ISO timestamp present
         assert wc.metadata.get("author") == "Ada"
+        assert wc.metadata.get("sitename") == "Example"
 
     def test_extract_unreachable_url(self, monkeypatch: pytest.MonkeyPatch):
         """Network failure becomes an error field, not a raised exception."""
