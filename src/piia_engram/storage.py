@@ -27,6 +27,18 @@ _ENGRAM_DIR_NAME = ".engram"
 _LEGACY_DIR_NAME = ".piia"
 SIMILARITY_THRESHOLD = 0.55          # below this: pass; above: related or duplicate
 SIMILARITY_DUPLICATE_THRESHOLD = 0.95  # at or above: exact duplicate, reject
+# Non-destructive semantic near-duplicate surfacing on write (Round-3): when the
+# lexical tier PASSES (bigram < SIMILARITY_THRESHOLD) but an embedding neighbor's
+# cosine similarity is >= this, the new item is still ADDED and merely cross-linked
+# (related_ids + _dedup_note). This NEVER rejects — it only governs cross-linking,
+# so a slightly-off value over/under-links but can never lose knowledge.
+#
+# Calibrated leaning precision: with the default CJK model (bge-small-zh-v1.5) the
+# cosine bands for "same insight, different words" and "same topic, different
+# insight" overlap, so this sits at the conservative zero-false-link point — it
+# surfaces only unambiguous near-duplicates and abstains otherwise (a missed link
+# costs nothing; a wrong link erodes related_ids). Override with ENGRAM_SEMANTIC_THRESHOLD.
+SEMANTIC_NEIGHBOR_THRESHOLD = float(os.environ.get("ENGRAM_SEMANTIC_THRESHOLD", "0.72"))
 # Keywords that signal supplement/extension, NOT duplication — demote to "related"
 _SUPPLEMENT_MARKERS = frozenset({
     "补充", "案例", "更新", "反例", "边界", "延伸", "扩展", "修正",

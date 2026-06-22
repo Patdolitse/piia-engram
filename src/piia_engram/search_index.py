@@ -441,6 +441,72 @@ class SearchIndex:
         finally:
             con.close()
 
+    def semantic_neighbors(
+        self,
+        text: str,
+        limit: int = 5,
+        min_similarity: float = 0.0,
+    ) -> list[tuple[str, float]]:
+        """Return ``(eid, cosine_similarity)`` neighbors of ``text``, best first.
+
+        Pure additive primitive for non-destructive semantic near-duplicate
+        surfacing on write (Round-3). Unlike :meth:`vector_search` (eids only),
+        this exposes a calibrated score so the write path can threshold it.
+
+        Similarity is computed via sqlite-vec's ``vec_distance_cosine`` over a
+        full scan of the vec0 table (``similarity = 1 - cosine_distance``). This
+        is deliberately metric-agnostic: it does NOT depend on the vec0 table's
+        KNN distance metric (default L2) and is scale-invariant, so it is safe
+        even though :func:`_embed` does not normalise embeddings. The corpus is
+        capped at a few hundred active rows, so the full scan is trivial.
+
+        Returns ``[]`` on ANY unavailability — vector backend absent, the index
+        db does not exist yet (a read-only probe must never *create* it), no vec
+        table, empty index, or an embed error — so the caller's lexical-only
+        path runs unchanged.
+        """
+        if not self.vector_enabled:
+            return []
+        if not text or not text.strip():
+            return []
+        # Gap-2 guard: never materialise search_index.db from a neighbor probe.
+        # _connect() would mkdir+create the file; bail out before that when the
+        # index has not been built (keyword-only / encrypted / fresh root).
+        if not self.db_path.exists():
+            return []
+        try:
+            import sqlite_vec
+
+            qv = sqlite_vec.serialize_float32(_embed([text])[0])
+        except Exception:
+            return []
+        limit = max(1, int(limit))
+        con = self._connect()
+        try:
+            try:
+                rows = con.execute(
+                    "SELECT m.eid, vec_distance_cosine(v.embedding, ?) AS cdist "
+                    "FROM vec v JOIN vec_map m ON m.rowid = v.rowid "
+                    "ORDER BY cdist ASC LIMIT ?",
+                    (qv, limit),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return []  # no vec table built yet
+            out: list[tuple[str, float]] = []
+            for eid, cdist in rows:
+                if eid is None or cdist is None:
+                    continue
+                sim = 1.0 - float(cdist)
+                if sim < 0.0:
+                    sim = 0.0
+                elif sim > 1.0:
+                    sim = 1.0
+                if sim >= min_similarity:
+                    out.append((eid, sim))
+            return out
+        finally:
+            con.close()
+
     def hybrid_search(
         self,
         query: str,

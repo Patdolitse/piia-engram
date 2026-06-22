@@ -26,6 +26,23 @@ vec_only = pytest.mark.skipif(
 )
 
 
+def _sqlite_vec_available() -> bool:
+    try:
+        import sqlite_vec  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+# The cosine-math / ordering tests only need the sqlite-vec extension (the
+# query embedding is monkeypatched), NOT the heavy FastEmbed model. Gating on
+# sqlite-vec alone lets them run wherever the extension is installed.
+vec_ext_only = pytest.mark.skipif(
+    not _sqlite_vec_available(), reason="sqlite_vec extension not installed"
+)
+
+
 # ── RRF fusion (pure, no deps) ──────────────────────────────────────────
 
 
@@ -279,3 +296,103 @@ def test_hybrid_includes_vector_signal_with_no_lexical_overlap(tmp_path):
 def test_vector_search_empty_before_build(tmp_path):
     idx = _vidx(tmp_path)
     assert idx.vector_search("anything") == []
+
+
+# ── semantic_neighbors: scored near-duplicate primitive (Round 3) ─────────
+
+
+def test_semantic_neighbors_disabled_returns_empty(tmp_path):
+    """No vector backend → empty, never raises."""
+    idx = SearchIndex(tmp_path / "search_index.db", enable_vector=False)
+    assert idx.semantic_neighbors("anything") == []
+
+
+def test_semantic_neighbors_missing_db_returns_empty_no_create(tmp_path):
+    """Querying neighbors must NOT create the index file (no write-path side
+    effect). With the backend 'enabled' but no index on disk, return []."""
+    db = tmp_path / "search_index.db"
+    idx = SearchIndex(db, enable_vector=True)
+    assert idx.semantic_neighbors("anything") == []
+    assert not db.exists()
+
+
+@vec_ext_only
+def test_semantic_neighbors_cosine_known_vectors(tmp_path, monkeypatch):
+    """Pin the distance→similarity contract with hand-crafted vectors:
+    identical direction → 1.0, orthogonal → 0.0, best-first ordering."""
+    import piia_engram.search_index as si
+
+    monkeypatch.setattr(si, "EMBED_DIM", 4)
+
+    def fake_embed(texts):
+        out = []
+        for t in texts:
+            if "ALPHA" in t:
+                out.append([1.0, 0.0, 0.0, 0.0])
+            elif "BETA" in t:
+                out.append([0.0, 1.0, 0.0, 0.0])
+            else:
+                out.append([0.0, 0.0, 1.0, 0.0])
+        return out
+
+    monkeypatch.setattr(si, "_embed", fake_embed)
+
+    idx = SearchIndex(tmp_path / "search_index.db", enable_vector=True)
+    idx.rebuild([
+        {"id": "alpha", "summary": "ALPHA topic"},
+        {"id": "beta", "summary": "BETA topic"},
+    ])
+    res = idx.semantic_neighbors("ALPHA query", limit=5, min_similarity=0.0)
+    scored = dict(res)
+    assert abs(scored["alpha"] - 1.0) < 1e-6   # cos of identical direction
+    assert abs(scored["beta"] - 0.0) < 1e-6    # orthogonal
+    assert res[0][0] == "alpha"                # best first
+
+
+@vec_ext_only
+def test_semantic_neighbors_filters_below_threshold(tmp_path, monkeypatch):
+    import piia_engram.search_index as si
+
+    monkeypatch.setattr(si, "EMBED_DIM", 4)
+
+    def fake_embed(texts):
+        out = []
+        for t in texts:
+            if "ALPHA" in t:
+                out.append([1.0, 0.0, 0.0, 0.0])
+            elif "BETA" in t:
+                out.append([0.0, 1.0, 0.0, 0.0])
+            else:
+                out.append([0.0, 0.0, 1.0, 0.0])
+        return out
+
+    monkeypatch.setattr(si, "_embed", fake_embed)
+
+    idx = SearchIndex(tmp_path / "search_index.db", enable_vector=True)
+    idx.rebuild([
+        {"id": "alpha", "summary": "ALPHA topic"},
+        {"id": "beta", "summary": "BETA topic"},
+    ])
+    res = idx.semantic_neighbors("ALPHA query", limit=5, min_similarity=0.5)
+    ids = [eid for eid, _ in res]
+    assert "alpha" in ids
+    assert "beta" not in ids   # cos 0.0 < 0.5 → filtered out
+
+
+@vec_ext_only
+def test_semantic_neighbors_empty_index_returns_empty(tmp_path, monkeypatch):
+    import piia_engram.search_index as si
+
+    monkeypatch.setattr(si, "EMBED_DIM", 4)
+    monkeypatch.setattr(si, "_embed", lambda texts: [[1.0, 0.0, 0.0, 0.0] for _ in texts])
+    idx = SearchIndex(tmp_path / "search_index.db", enable_vector=True)
+    idx.rebuild([])   # vec table exists but holds nothing
+    assert idx.semantic_neighbors("anything") == []
+
+
+@vec_ext_only
+def test_semantic_neighbors_no_vec_table_returns_empty(tmp_path):
+    """A pre-vector (FTS-only) index on disk → no vec table → []."""
+    db = tmp_path / "search_index.db"
+    SearchIndex(db, enable_vector=False).rebuild([{"id": "1", "summary": "x"}])
+    assert SearchIndex(db, enable_vector=True).semantic_neighbors("x") == []

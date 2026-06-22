@@ -31,7 +31,7 @@ from .sensitivity import _EMAIL_RE, _SECRET_VALUE_RE
 # Absolute user-home paths that must never appear in a committable / shared
 # export artifact. Kept narrow (home directories only) so ordinary repo-relative
 # paths in a lesson ("see src/foo.py") are not flagged.
-_WIN_HOME_RE = re.compile(r"[A-Za-z]:\\Users\\[^\\/:*?\"<>|\r\n]+", re.IGNORECASE)
+_WIN_HOME_RE = re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[^\\/:*?\"<>|\r\n]+", re.IGNORECASE)
 _POSIX_HOME_RE = re.compile(r"/(?:home|Users)/[^/\s:]+")
 
 # Ordered so the most specific / most severe categories win when ranges overlap.

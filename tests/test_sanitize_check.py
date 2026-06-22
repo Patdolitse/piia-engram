@@ -499,3 +499,108 @@ def test_private_path_scan_flags_drive_temp_tool_path(sc, tmp_path):
     hits = sc._scan_private_local_paths(f)
 
     assert any(label == "private local path" and sev == "warn" for label, sev, *_ in hits)
+
+
+# ── home-path parity (all drives + both separators) & new credential shapes ──
+
+
+def test_windows_path_matches_all_drives_and_separators(sc, tmp_path):
+    """The built-in home-path pattern must flag a user-home leak on ANY drive
+    and with EITHER separator, reaching parity with export_redaction._WIN_HOME_RE
+    (all-drive) and covering the forward-slash form common in configs/logs.
+    Built-ins are fixture-exempt, so widening here adds no test-fixture noise."""
+    for case in (r"D:\Users\someone\proj",
+                 "E:/Users/someone/proj",
+                 "C:/Users/someone/proj"):
+        f = tmp_path / "doc.md"
+        f.write_text(f"artifact under {case}\n", encoding="utf-8")
+        hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
+        assert any(label == "Windows path" for label, *_ in hits), case
+
+
+def test_home_path_pattern_does_not_flag_non_users_paths(sc, tmp_path):
+    """Anchoring on ``Users`` keeps legit non-home drive paths clean: Windows
+    system font paths (assets/xiaohongshu), bare ``C:\\Users`` redaction
+    markers, and ``<placeholder>`` doc paths must NOT trip the pattern."""
+    for case in ("C:/Windows/Fonts/msyh.ttc",
+                 r"C:\Users",
+                 "C:/Users",
+                 r"C:\Users\<you>"):
+        f = tmp_path / "doc.md"
+        f.write_text(f"path: {case}\n", encoding="utf-8")
+        hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
+        assert not any(label == "Windows path" for label, *_ in hits), case
+
+
+def test_live_credential_scan_flags_cloudflare_cfut(sc, tmp_path):
+    """Cloudflare ``cfut_`` token shape is currently zero-coverage. Build the
+    token at runtime so this test's own source carries no literal token."""
+    fake = "cfut_" + "A1b2C3d4E5" + "f6G7h8I9j0" + "K1l2M3n4O5"
+    f = tmp_path / "deploy.py"
+    f.write_text(f'CF = "{fake}"\n', encoding="utf-8")
+    hits = sc._scan_live_credentials(f)
+    assert any(sev == "high" and label == "live credential"
+               for label, sev, _ln, _p in hits)
+    assert all(fake not in preview for _l, _s, _ln, preview in hits)
+
+
+def test_ark_api_key_assignment_flagged_high(sc, tmp_path):
+    """A committed ``ARK_API_KEY = "<real-length token>"`` is a near-certain
+    key leak -> HIGH. Name-anchored like the ``password=`` built-in, but high
+    severity given the value-length filter makes a false positive unlikely."""
+    secret = "b8" + "f3a1c2d4" + "e5f6a7b8" + "c9d0e1f2"
+    f = tmp_path / "config.py"
+    f.write_text(f'ARK_API_KEY = "{secret}"\n', encoding="utf-8")
+    hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
+    assert any(label == "ARK API key" and sev == "high"
+               for label, sev, *_ in hits)
+
+
+def test_ark_api_key_placeholder_not_flagged(sc, tmp_path):
+    """Short placeholders / bare mentions must NOT trip the ARK pattern."""
+    for line in ('ARK_API_KEY = ""\n',
+                 'ARK_API_KEY=your-key\n',
+                 '# set ARK_API_KEY in your environment\n'):
+        f = tmp_path / "doc.md"
+        f.write_text(line, encoding="utf-8")
+        hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
+        assert not any(label == "ARK API key" for label, *_ in hits), line
+
+
+def test_credential_shapes_in_sync_with_sensitivity(sc):
+    """Drift guard: the release scanner's _LIVE_CREDENTIAL_RE and the audited
+    sensitivity._SECRET_VALUE_RE are hand-synced copies — EVERY vendor-prefixed
+    shape must live in BOTH. Samples are built at runtime so this file carries
+    no literal credential token.
+
+    Two shapes are intentionally asymmetric and excluded from the parity set:
+      * JWT (``eyJ.eyJ.sig``) is sensitivity-only. Adding it to the
+        run-on-every-file scanner would flag legitimate fake-JWT test fixtures
+        (e.g. tests/test_sensitivity.py) and force allowlist churn; runtime
+        classification stays conservative instead.
+      * PEM private-key blocks are covered by the scanner's fixture-exempt
+        built-in layer (_BUILT_IN_PATTERNS), not _LIVE_CREDENTIAL_RE, so both
+        surfaces detect them — via different layers.
+    """
+    from piia_engram import sensitivity as sv
+
+    samples = {
+        "openai":             "sk-" + "abcdefghij" + "klmnop1234",
+        "stripe_secret":      "sk_live_" + "abcdefghij" + "1234567890",
+        "stripe_restricted":  "rk_test_" + "abcdefghij" + "1234567890",
+        "github_pat":         "ghp_" + "0123456789" + "abcdefghij" + "0123",
+        "github_oauth":       "gho_" + "0123456789" + "abcdefghij" + "0123",
+        "github_finegrained": "github_pat_" + "0123456789" + "abcdefghij" + "0123",
+        "gitlab":             "glpat-" + "1234567890" + "abcdefghij",
+        "aws_access_key":     "AKIA" + "IOSFODNN7EXAMPLE",
+        "google_api":         "AIza" + "0123456789" * 3 + "ABCDE",
+        "google_oauth":       "ya29." + "a0" + "0123456789" * 2,
+        "slack":              "xoxb-" + "1234567890" + "abcdefghij",
+        "slack_app":          "xapp-1-" + "A123456789" + "0-abcdefgh",
+        "huggingface":        "hf_" + "0123456789" + "abcdefghij",
+        "pypi":               "pypi-" + "AgEIcHlwaS" + "1234567890" + "abcd",
+        "cloudflare":         "cfut_" + "A1b2C3d4E5" + "f6G7h8I9j0",
+    }
+    for name, tok in samples.items():
+        assert sc._LIVE_CREDENTIAL_RE.search(tok), f"scanner misses {name}: {tok}"
+        assert sv._SECRET_VALUE_RE.search(tok), f"sensitivity misses {name}: {tok}"

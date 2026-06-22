@@ -1379,6 +1379,13 @@ class Engram(
         new_lesson = self._ensure_fields(new_lesson, "lesson")
         _gate_note = self._apply_write_risk_gate(new_lesson, tier_explicit=tier_explicit)
 
+        # Round-3: embedding neighbors of the identity text, computed BEFORE the
+        # write lock (gated; [] unless hybrid+backend+not-encrypted). Used only
+        # to cross-link when the lexical tier passes — never to reject.
+        semantic_neighbors = self._semantic_neighbors_for_write(
+            new_lesson.get("summary", ""), exclude_id=new_lesson.get("id", "")
+        )
+
         result_box: dict[str, dict] = {}
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
@@ -1428,6 +1435,13 @@ class Engram(
                 if new_id and new_id != existing_id and new_id not in best_match.get("related_ids", []):
                     best_match.setdefault("related_ids", []).append(new_id)
                 new_lesson["_dedup_note"] = f"related to {existing_id} (sim={best_sim:.0%})"
+
+            # Round-3 additive hook: when lexical passed (best_sim < threshold),
+            # surface a close embedding neighbor by cross-linking only. Re-verifies
+            # the neighbor against this fresh active list inside the lock.
+            self._semantic_crosslink_in_lock(
+                new_lesson, lessons, semantic_neighbors, best_sim
+            )
 
             lessons.append(new_lesson)
             if len(lessons) > MAX_KNOWLEDGE_ENTRIES:
@@ -1656,6 +1670,14 @@ class Engram(
         _gate_note = self._apply_write_risk_gate(new_decision, tier_explicit=tier_explicit)
 
         new_title = self._entry_identity_text(new_decision, "decision")
+
+        # Round-3: embedding neighbors of the identity text, computed BEFORE the
+        # write lock (gated; [] unless hybrid+backend+not-encrypted). Used only
+        # to cross-link when the lexical tier passes — never to reject.
+        semantic_neighbors = self._semantic_neighbors_for_write(
+            new_title, exclude_id=new_decision.get("id", "")
+        )
+
         result_box: dict[str, dict] = {}
         supersedes_box: dict[str, str | None] = {}
 
@@ -1718,6 +1740,13 @@ class Engram(
                 if new_id and new_id != existing_id and new_id not in best_match.get("related_ids", []):
                     best_match.setdefault("related_ids", []).append(new_id)
                 new_decision["_dedup_note"] = f"related to {existing_id} (sim={best_sim:.0%})"
+
+            # Round-3 additive hook: when lexical passed (best_sim < threshold),
+            # surface a close embedding neighbor by cross-linking only. Re-verifies
+            # the neighbor against this fresh active list inside the lock.
+            self._semantic_crosslink_in_lock(
+                new_decision, decisions, semantic_neighbors, best_sim
+            )
 
             decisions.append(new_decision)
             if len(decisions) > MAX_KNOWLEDGE_ENTRIES:
