@@ -164,6 +164,26 @@ def check_version_consistency(root: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+_ALL_ZEROS = re.compile(r"^0+$")
+
+
+def _resolve_base(root: Path, since: str) -> str | None:
+    """Resolve the comparison base for --since to a readable ref, or None.
+
+    An all-zeros SHA (git's "no parent" sentinel on a first push) falls back to
+    the main branch tip so a first push of a new branch still compares against
+    main rather than skipping the guard.
+    """
+    if _ALL_ZEROS.match(since):
+        for candidate in ("origin/main", "main"):
+            if version_at_ref(root, candidate) is not None:
+                return candidate
+        return None
+    if version_at_ref(root, since) is not None:
+        return since
+    return None
+
+
 def version_at_ref(root: Path, ref: str) -> str | None:
     """Read [project].version from pyproject.toml as it exists at ``ref``.
 
@@ -194,12 +214,17 @@ def _evidence_tracked(root: Path, version: str) -> bool:
 
 
 def _evidence_allowlisted(root: Path, version: str) -> bool:
+    rel = f"release-evidence/v{version}.md"
+    # Bind to the HEAD tree (like evidence_in_head) so a dirty local working
+    # copy can't make an un-committed allowlist entry look present.
+    proc = _git(root, "show", "HEAD:.publishallow")
+    if proc.returncode == 0:
+        return rel in [line.strip() for line in proc.stdout.splitlines()]
+    # Fallback: non-git context / no HEAD — read the working tree.
     allow = root / ".publishallow"
     if not allow.is_file():
         return False
-    rel = f"release-evidence/v{version}.md"
-    lines = [line.strip() for line in allow.read_text(encoding="utf-8").splitlines()]
-    return rel in lines
+    return rel in [line.strip() for line in allow.read_text(encoding="utf-8").splitlines()]
 
 
 def _local_tag_exists(root: Path, tag: str) -> bool:
@@ -254,6 +279,7 @@ def preflight(
     *,
     tag: str | None = None,
     since: str | None = None,
+    base_required: bool = False,
     require_clean: bool = True,
 ) -> Result:
     root = Path(root)
@@ -262,15 +288,27 @@ def preflight(
 
     # CI release-commit guard: if THIS commit bumped the version vs `since`,
     # the bump must ship with its evidence (so tagging HEAD can't miss it).
-    if since is not None and version:
-        base_version = version_at_ref(root, since)
-        if base_version is not None and version != base_version:
-            if not SEMVER_FINAL.match(version):
-                errors.append(
-                    f"version bumped to {version!r} (from {base_version!r}) "
-                    "which is not a final SemVer X.Y.Z"
-                )
-            errors += _evidence_errors(root, version)
+    if since is not None:
+        if since == "":
+            errors.append("--since was given an empty ref")
+        else:
+            base_ref = _resolve_base(root, since)
+            if base_ref is None:
+                if base_required:
+                    errors.append(
+                        f"--since base {since!r} is unreadable and --base-required is set; "
+                        "cannot verify the version-bump evidence guard (fail closed)"
+                    )
+                # else: lenient (local convenience) — main() warns on stderr
+            elif version:
+                base_version = version_at_ref(root, base_ref)
+                if base_version is not None and version != base_version:
+                    if not SEMVER_FINAL.match(version):
+                        errors.append(
+                            f"version bumped to {version!r} (from {base_version!r}) "
+                            "which is not a final SemVer X.Y.Z"
+                        )
+                    errors += _evidence_errors(root, version)
 
     if tag is not None:
         if not version or not SEMVER_FINAL.match(version):
@@ -297,10 +335,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".", help="repository root (default: .)")
     parser.add_argument("--tag", default=None, help="intended tag, e.g. v4.12.0 — enables the full pre-tag gate")
     parser.add_argument("--since", default=None, help="base ref; if HEAD bumped the version vs <ref>, require evidence in HEAD (CI release-commit guard)")
+    parser.add_argument("--base-required", action="store_true", help="fail closed if the --since base is unreadable (use in CI)")
     parser.add_argument("--allow-dirty", action="store_true", help="skip the clean-worktree check (NOT for real releases)")
     args = parser.parse_args(argv)
 
-    result = preflight(Path(args.root), tag=args.tag, since=args.since, require_clean=not args.allow_dirty)
+    # Make leniency visible: if --since can't resolve a base and we're NOT
+    # failing closed, the bump guard is skipped — say so on stderr.
+    if args.since and not args.base_required and _resolve_base(Path(args.root), args.since) is None:
+        print(
+            f"[warn] --since base {args.since!r} is unreadable; "
+            "skipping the version-bump evidence guard (pass --base-required to fail closed)",
+            file=sys.stderr,
+        )
+
+    result = preflight(
+        Path(args.root),
+        tag=args.tag,
+        since=args.since,
+        base_required=args.base_required,
+        require_clean=not args.allow_dirty,
+    )
     if result.ok:
         if args.tag:
             scope = f"for {args.tag}"

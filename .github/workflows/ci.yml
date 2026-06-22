@@ -223,4 +223,4 @@ jobs:
       - name: Version bump must ship its release evidence
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: python scripts/check_release_preflight.py --since "$BASE_SHA"
+        run: python scripts/check_release_preflight.py --since "$BASE_SHA" --base-required

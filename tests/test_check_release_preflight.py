@@ -300,9 +300,38 @@ class TestSinceMode:
         assert result.ok, result.errors
 
     def test_unknown_base_ref_is_lenient(self, tmp_path: Path):
-        # Cannot read base (shallow clone / first release) -> do not block.
+        # Cannot read base (shallow clone / first release) -> do not block by default.
         repo = make_repo(tmp_path, "4.12.0")
         result = preflight.preflight(repo, since="does-not-exist")
+        assert result.ok, result.errors
+
+    def test_empty_since_is_rejected(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")
+        result = preflight.preflight(repo, since="")
+        assert not result.ok
+        assert any("empty" in e.lower() for e in result.errors)
+
+    def test_unreadable_base_with_required_fails_closed(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")
+        result = preflight.preflight(repo, since="deadbeefdeadbeef", base_required=True)
+        assert not result.ok
+        assert any("base" in e.lower() for e in result.errors)
+
+    def test_all_zeros_base_falls_back_to_main_and_catches_bump(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")  # commit A
+        head_a = _git(repo, "rev-parse", "HEAD")
+        _git(repo, "update-ref", "refs/remotes/origin/main", head_a)
+        self._bump_to(repo, "4.13.0", with_evidence=False)  # commit B (HEAD)
+        result = preflight.preflight(repo, since="0" * 40, base_required=True)
+        assert not result.ok  # fallback origin/main (4.12.0) sees the bump, no evidence
+        assert any("4.13.0" in e for e in result.errors)
+
+    def test_all_zeros_base_fallback_passes_with_evidence(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")
+        head_a = _git(repo, "rev-parse", "HEAD")
+        _git(repo, "update-ref", "refs/remotes/origin/main", head_a)
+        self._bump_to(repo, "4.13.0", with_evidence=True)
+        result = preflight.preflight(repo, since="0" * 40, base_required=True)
         assert result.ok, result.errors
 
     def test_version_at_ref_reads_old_version(self, tmp_path: Path):
@@ -337,3 +366,9 @@ class TestCli:
     def test_main_exit1_on_bad_tag(self, tmp_path: Path):
         repo = make_repo(tmp_path, "4.12.0")
         assert preflight.main(["--root", str(repo), "--tag", "v9.9.9"]) == 1
+
+    def test_main_base_required_unreadable_exit1(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")
+        assert preflight.main(
+            ["--root", str(repo), "--since", "deadbeef", "--base-required"]
+        ) == 1
