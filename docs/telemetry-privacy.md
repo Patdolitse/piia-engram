@@ -22,9 +22,8 @@ and the worker allowlists (`worker/src/index.js`), all pinned by the tests under
   report is gated on its own consent (`is_feedback_enabled()`, also gated on
   `is_enabled()`, default `False`).
 - **Remote activation stays user-gated.** Standing up / migrating the remote D1
-  and deploying the worker are explicit owner actions (see
-  [`runbooks/telemetry-contract-remote-closeout.md`](runbooks/telemetry-contract-remote-closeout.md)).
-  No assistant pass performs them.
+  and deploying the worker are explicit owner actions. No assistant pass
+  performs them.
 - **Dashboard access is operator-controlled.** The worker's `/` dashboard and
   `/v1/stats` JSON API are gated by the `DASH_PASSWORD` secret. Auth **fails
   open**: with `DASH_PASSWORD` unset, both surfaces are public. Only anonymous,

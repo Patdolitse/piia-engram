@@ -49,6 +49,9 @@ jobs:
       - name: Public trust claim gate
         run: python scripts/check_public_trust_claims.py
 
+      - name: Public reference truth gate
+        run: python scripts/check_public_reference_truth.py
+
       - name: Release version-consistency preflight
         run: python scripts/check_release_preflight.py
 
@@ -105,6 +108,9 @@ jobs:
 
       - name: Public trust claim gate
         run: python scripts/check_public_trust_claims.py
+
+      - name: Public reference truth gate
+        run: python scripts/check_public_reference_truth.py
 
       - name: Release version-consistency preflight
         run: python scripts/check_release_preflight.py
