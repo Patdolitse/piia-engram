@@ -13,7 +13,13 @@ import platform
 import re
 from pathlib import Path
 
-from . import setup_wizard as W
+# ``setup_wizard`` is imported as ``W`` at the BOTTOM of this module (not here)
+# to avoid a circular import: setup_wizard re-exports cli_commands' names at its
+# own bottom, so importing cli_commands FIRST would otherwise hit a
+# half-initialized module. W.<name> is only ever read at call time, so binding it
+# after all defs is behaviour-preserving and keeps monkeypatches on
+# ``piia_engram.setup_wizard`` intercepting.
+
 
 def _format_session_size(size_bytes: int) -> str:
     """Human-readable byte count for the small sessions table."""
@@ -5302,3 +5308,10 @@ def run_management(argv: list[str] | None = None) -> int:
     else:
         print(render_management_text(view), end="")
     return 0
+
+
+# Late, bottom-of-module import (see top-of-file note): bind ``W`` to the
+# setup_wizard module only after every cli_commands name is defined, so this
+# module imports cleanly whether it or setup_wizard is imported first. W.<name>
+# is resolved at call time, preserving the late-binding / monkeypatch contract.
+from . import setup_wizard as W  # noqa: E402
