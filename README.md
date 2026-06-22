@@ -625,7 +625,7 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `request_outline_review` | Owner-gated export: generate an interactive local HTML review page |
 | `export_engram` | Owner-gated export: write a full backup (`format="openclaw"` for OpenClaw-compatible files) |
 | `import_engram` | Owner/admin import: use `dry_run=True` first for a metadata-only merge/conflict preview (`format="openclaw"` supported) |
-| `read_web_content` | Optional local Reader integration: fetch a user-provided URL through the Reader service |
+| `read_web_content` | Fetch a user-provided URL: prefers a local sidecar if running, otherwise uses the self-contained built-in reader (`pip install "piia-engram[reader]"`) |
 | `get_audit_log` | Get recent audit log entries |
 | `start_project` | Start a project with inherited knowledge |
 | `get_permission_profile` | View all callers' trust levels and access boundaries |

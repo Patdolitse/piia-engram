@@ -593,7 +593,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `onboard_accept` | owner-only 接受：校验 anchor 并升级为 verified |
 | `export_engram` | owner-gated 导出：写出完整备份（`format="openclaw"` 可导出 OpenClaw 格式文件） |
 | `import_engram` | owner/admin 导入：先用 `dry_run=True` 做元数据级合并/冲突预览（支持 `format="openclaw"`）；CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
-| `read_web_content` | 可选本地 Reader 集成：通过 Reader 服务读取用户提供的 URL |
+| `read_web_content` | 读取用户提供的 URL：本地边车运行时优先用边车，否则用包内自足的内置 reader（`pip install "piia-engram[reader]"`） |
 | `get_audit_log` | 查询审计日志 |
 | `start_project` | 新项目启动（继承知识 + 建档） |
 | `get_permission_profile` | 查看所有调用方的信任等级、自动分类规则和已撤销列表 |

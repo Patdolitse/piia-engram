@@ -44,7 +44,7 @@ All files are plain JSON. You can open, edit, back up, or delete them at any tim
 
 With default settings, identity, knowledge, search, review, and governance tools operate on local files. They make **no network requests** — no API calls, no analytics, no phone-home.
 
-The only exception is the optional `read_web_content` tool, which fetches a URL you explicitly provide.
+The only exception is the optional `read_web_content` tool, which fetches a URL you explicitly provide — either through a local sidecar (if you run one) or the self-contained built-in reader. Both paths fetch only the URL you pass in; no other data leaves your machine.
 
 ### Optional anonymous usage statistics
 
