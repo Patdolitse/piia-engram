@@ -63,16 +63,7 @@
         "pattern": "版本口径 \\| \\*\\*v([0-9][^*]*)\\*\\*"
       }
     ],
-    "test_count_patterns": [
-      {
-        "file": "README.md",
-        "pattern": "Tests passing \\| \\*\\*(\\d+)\\*\\*"
-      },
-      {
-        "file": "README.zh-CN.md",
-        "pattern": "测试通过 \\| \\*\\*(\\d+)\\*\\*"
-      }
-    ],
+    "test_count_patterns": [],
     "required_substrings": [
       {
         "file": "README.md",
