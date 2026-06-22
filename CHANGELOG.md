@@ -6,7 +6,14 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.11.0] - 2026-06-22
+
+### Added
+- Self-contained web reader: `read_web_content` can now extract article text on its own, without the external sidecar. Install with `pip install "piia-engram[reader]"`. It prefers a local sidecar when one is running (YouTube subtitles, Bilibili, WeChat, ...), falls back to the built-in reader for standard pages, and otherwise returns an actionable install hint.
+
 ## [4.10.0] - 2026-06-22
+
+> Note: 4.10.0 was tagged on GitHub but not published to PyPI; its changes ship to PyPI as part of 4.11.0.
 
 ### Added
 - Leakage guard widened to detect all-drive paths (any `X:\...` pattern) plus `cfut_`, `ARK_API_KEY`, and PyPI token shapes in tracked files.

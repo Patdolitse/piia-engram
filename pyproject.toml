@@ -1,6 +1,6 @@
 [project]
 name = "piia-engram"
-version = "4.10.0"
+version = "4.11.0"
 description = "Local-first personal AI identity and memory for MCP-compatible coding tools — lessons, decisions, playbooks, and project context you can see, edit, and override."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -62,12 +62,21 @@ vector = [
     "sqlite-vec>=0.1.0",
     "fastembed>=0.3.0",
 ]
+# Self-contained web reader (Round 4): `read_web_content` extracts article text
+# without the external sidecar. trafilatura pulls a parsing stack (lxml, etc.);
+# absent install => read_web_content uses the sidecar or returns an install hint.
+reader = [
+    "httpx>=0.27,<1",
+    "trafilatura>=2.0,<3",
+]
 all = [
     "starlette>=0.40",
     "uvicorn>=0.20",
     "cryptography>=41.0",
     "sqlite-vec>=0.1.0",
     "fastembed>=0.3.0",
+    "httpx>=0.27,<1",
+    "trafilatura>=2.0,<3",
 ]
 
 [build-system]

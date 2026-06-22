@@ -109,11 +109,11 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 
 | | Current repo / development facts |
 |---|---|
-| Version frame | **v4.10.0** (verified 2026-06-22; check PyPI and GitHub Releases for the latest published package) |
+| Version frame | **v4.11.0** (verified 2026-06-22; check PyPI and GitHub Releases for the latest published package) |
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **40 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
-| Tests passing | **3860** (unit + integration; 2 skipped, 3862 collected) |
+| Tests passing | **3888** (unit + integration; 3 skipped, 3891 collected) |
 | Code coverage | **86%** total |
 | Lines in `core.py` | **1770** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
@@ -625,7 +625,7 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `request_outline_review` | Owner-gated export: generate an interactive local HTML review page |
 | `export_engram` | Owner-gated export: write a full backup (`format="openclaw"` for OpenClaw-compatible files) |
 | `import_engram` | Owner/admin import: use `dry_run=True` first for a metadata-only merge/conflict preview (`format="openclaw"` supported) |
-| `read_web_content` | Optional local Reader integration: fetch a user-provided URL through the Reader service |
+| `read_web_content` | Fetch a user-provided URL: prefers a local sidecar if running, otherwise uses the self-contained built-in reader (`pip install "piia-engram[reader]"`) |
 | `get_audit_log` | Get recent audit log entries |
 | `start_project` | Start a project with inherited knowledge |
 | `get_permission_profile` | View all callers' trust levels and access boundaries |

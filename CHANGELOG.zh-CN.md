@@ -6,7 +6,14 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.11.0] - 2026-06-22
+
+### 新增
+- 包内自足网页 reader：`read_web_content` 现在无需外部边车即可提取正文。装 `pip install "piia-engram[reader]"` 即用。本地边车运行时优先用边车（YouTube 字幕、B 站、公众号等），否则降级到内置 reader 处理标准网页，再不行返回可操作的安装提示。
+
 ## [4.10.0] - 2026-06-22
+
+> 注：4.10.0 已在 GitHub 打 tag，但未发布到 PyPI；其改动随 4.11.0 一并发到 PyPI。
 
 ### 新增
 - 泄漏守卫扩展到全盘路径检测（任何 `X:\...` 模式）及 `cfut_`、`ARK_API_KEY`、PyPI token 形态。

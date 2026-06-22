@@ -264,43 +264,60 @@ async def user_portrait(action: str = "get") -> str:
 # WEB CONTENT TOOL (1)
 # ===========================================================================
 
+# Output length cap for the formatted MCP string. Web articles legitimately
+# need more room than the per-field search cap, but unbounded bodies blow up
+# the client context — so we clip with a visible marker.
+_READER_MAX_OUTPUT_CHARS = 8000
+
+
+def _clip_reader_output(text: str) -> str:
+    """Bound any reader output string (success body, error, or exception)."""
+    if len(text) <= _READER_MAX_OUTPUT_CHARS:
+        return text
+    removed = len(text) - _READER_MAX_OUTPUT_CHARS
+    return (
+        f"{text[:_READER_MAX_OUTPUT_CHARS]}\n\n"
+        f"[+{removed} chars truncated / 已截断 {removed} 字]"
+    )
+
+
+def _format_web_content(wc) -> str:
+    """Render a reader.WebContent into a bounded, user-facing string."""
+    if wc.error:
+        return _clip_reader_output(wc.error)
+    parts = [f"[来源 / source: {wc.source}]"]
+    if wc.title:
+        parts.append(f"# {wc.title}")
+    parts.append(wc.content)
+    return _clip_reader_output("\n\n".join(parts))
+
 
 @S.mcp.tool()
 async def read_web_content(url: str) -> str:
-    """读取网页、视频或文章的文本内容（通过 Engram Reader 本地服务）。 / Read text content from a web page, video, or article through the local Engram Reader service.
+    """读取网页、视频或文章的文本内容。 / Read text content from a web page, video, or article.
 
     用途：用户发链接并要求分析、看看或读一下时调用。
     Purpose: Call when the user sends a URL and asks to analyze, inspect, or read it.
 
-    注意：需要 Engram Reader 本地服务运行在 localhost:7890；支持 YouTube 字幕、B 站、公众号文章、知乎和通用网页。
-    Note: Requires the local Engram Reader service on localhost:7890; supports YouTube subtitles, Bilibili, WeChat articles, Zhihu, and general web pages.
+    工作方式：优先使用本地边车（localhost:7890，覆盖 YouTube 字幕、B 站、公众号等），
+    边车不可用时自动降级到包内内置 reader（需 `pip install "piia-engram[reader]"`）。
+    How it works: prefers the local sidecar (localhost:7890; YouTube subtitles,
+    Bilibili, WeChat, ...), and falls back to the self-contained built-in reader
+    (install with `pip install "piia-engram[reader]"`) when no sidecar is running.
 
     Args:
         url: 要提取内容的网页链接。 / URL to extract content from.
     """
-    import urllib.request
-    import urllib.error
+    try:
+        from . import reader
+    except ImportError:  # plain-script mode (no package context)
+        import reader  # type: ignore[no-redef]
 
     try:
-        payload = json.dumps({"url": url}).encode("utf-8")
-        req = urllib.request.Request(
-            "http://localhost:7890/extract",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if data.get("error"):
-                return f"提取失败: {data['error']}"
-            content = data.get("content", "")
-            source = data.get("source", "unknown")
-            if not content:
-                return "未能提取到内容。请确认链接可访问，或在浏览器中打开后用插件提取。"
-            return f"[来源: {source}]\n\n{content}"
-    except urllib.error.URLError:
-        return "Engram Reader 服务未运行。请先启动: python reader_server.py"
+        wc = await reader.extract_web_content(url)
     except Exception as e:
-        return f"读取失败: {S._safe_err(e)}"
+        return _clip_reader_output(f"读取失败 / read failed: {S._safe_err(e)}")
+    return _format_web_content(wc)
 
 
 # ===========================================================================
