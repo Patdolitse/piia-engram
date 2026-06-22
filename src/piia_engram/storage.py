@@ -519,11 +519,14 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
             tmp_path = Path(tmp_name)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    fd = -1  # os.fdopen owns the fd now
                     f.write(candidate_text)
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(tmp_path, path)
             except Exception:
+                if fd != -1:
+                    os.close(fd)
                 if tmp_path.exists():
                     tmp_path.unlink()
                 raise

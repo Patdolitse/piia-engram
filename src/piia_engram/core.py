@@ -57,6 +57,7 @@ from .storage import (  # noqa: F401 — re-exports
     _update_json,
     _write_json,
     DataCorruptionError,
+    SkipWrite,
     strip_untrusted_trust_fields,
 )
 from .retrieval import RetrievalMixin
@@ -1290,7 +1291,20 @@ class Engram(
         # this guard a legacy entry needing backfill would be rewritten even under
         # read_only=True (dock-resume / dock-search / preview --read-only).
         if changed and migrate and not self._read_only:
-            _write_json(path, ensured)  # preserves encrypted fields as-is
+            # Re-read and migrate under the write lock to avoid overwriting
+            # concurrent additions (a bare _write_json here would use a stale
+            # snapshot and silently drop entries added since our read above).
+            _entry_type = entry_type
+
+            def _migrate_locked(current):
+                if not isinstance(current, list):
+                    raise SkipWrite()
+                migrated = [self._ensure_fields(e, _entry_type) for e in current]
+                if all(a == b for a, b in zip(current, migrated)):
+                    raise SkipWrite()
+                return migrated
+
+            _update_json(path, _migrate_locked, default=[])
 
         # Decrypt content fields for in-memory use
         if self._corpus_key:
