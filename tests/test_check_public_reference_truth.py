@@ -155,6 +155,24 @@ class TestScan:
         errors = guard.scan(tmp_path)
         assert any("secret-runbook.md" in e for e in errors)
 
+    def test_case_mismatch_link_is_dead_in_git_mode(self, tmp_path: Path):
+        # git is case-sensitive; a wrong-case link is a 404 on Linux/clones even
+        # though Windows resolve() would canonicalize it. Must be flagged.
+        import subprocess
+
+        def g(*a):
+            subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+        g("init", "-q")
+        g("config", "user.email", "t@example.com")
+        g("config", "user.name", "t")
+        _doc(tmp_path, "docs/Trust.md", "# Trust")
+        _doc(tmp_path, "README.md", "see [t](docs/trust.md)")  # wrong case
+        g("add", "-A")
+        g("commit", "-qm", "init")
+        errors = guard.scan(tmp_path)
+        assert any("docs/trust.md" in e for e in errors)
+
     def test_main_exit_codes(self, tmp_path: Path):
         _doc(tmp_path, "README.md", "ok, no links")
         assert guard.main(["--root", str(tmp_path)]) == 0

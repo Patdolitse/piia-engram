@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
 import subprocess
 import sys
@@ -99,14 +100,17 @@ def published_checker(root: Path):
 
 
 def _present(root: Path, base_dir: Path, target: str, is_published) -> bool:
-    resolved = base_dir / target
     if is_published is None:
-        return resolved.exists()
-    try:
-        rel = resolved.resolve().relative_to(root.resolve()).as_posix()
-    except (ValueError, OSError):
-        return resolved.exists()  # escapes repo root; fall back
-    return is_published(rel)
+        # Non-git fallback (e.g. unit tests / sdist): filesystem existence.
+        return (base_dir / target).exists()
+    # Normalize WITHOUT touching the filesystem so case is preserved — git is
+    # case-sensitive, and Path.resolve() would canonicalize case on Windows and
+    # let a wrong-case link (dead on Linux/clones) pass.
+    base_rel = _rel(base_dir, root)
+    joined = posixpath.normpath(posixpath.join(base_rel, target))
+    if joined.startswith("..") or joined == ".":
+        return False  # outside the published tree
+    return is_published(joined)
 
 
 def check_markdown(path: Path, root: Path, is_published=None) -> list[str]:
