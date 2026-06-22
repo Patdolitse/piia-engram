@@ -443,8 +443,8 @@ def test_clean_identifier_accepts_namespaced_identifiers():
         ":agent",
         "agent:",
         "C:",
-        "C:/Users/pp3x3",
-        "C:\\Users\\pp3x3",
+        "C:/Users/someone",
+        "C:\\Users\\someone",
         "..",
         "../secrets",
         "a/../b",
@@ -462,7 +462,7 @@ def test_clean_identifier_rejects_overlong_and_non_strings():
     assert P._clean_identifier(None) is None
     assert P._clean_identifier("agent\\name") is None
     assert P._clean_identifier("agent:name") is None
-    assert P._clean_identifier("C:\\Users\\pp3x3") is None
+    assert P._clean_identifier("C:\\Users\\someone") is None
     assert P._clean_identifier("..\\secrets") is None
     assert P._clean_identifier("../secrets") is None
     assert P._clean_identifier("codex") == "codex"
