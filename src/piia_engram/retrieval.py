@@ -21,6 +21,7 @@ from .search_index import (
     _content_hash,
     _entry_document,
     reciprocal_rank_fusion,
+    vector_backend_available,
 )
 from .storage import (
     CONFLICT_C_CEILING,
@@ -30,6 +31,7 @@ from .storage import (
     HYBRID_RELEVANCE_THRESHOLD,
     MAX_KNOWLEDGE_ENTRIES,
     SEARCH_RELEVANCE_THRESHOLD,
+    SEMANTIC_NEIGHBOR_THRESHOLD,
     SIMILARITY_THRESHOLD,
     _AFFIRMATION_MARKERS,
     _ALIAS_LOOKUP,
@@ -283,6 +285,101 @@ class RetrievalMixin:
     def _corpus_encrypted(self) -> bool:
         """True when corpus encryption is active for this engram."""
         return bool(getattr(self, "_corpus_key", b""))
+
+    # ------------------------------------------------------------------
+    # Round-3: non-destructive semantic near-duplicate surfacing on write
+    # ------------------------------------------------------------------
+
+    def _semantic_neighbors_for_write(
+        self,
+        text: str,
+        *,
+        exclude_id: str = "",
+        limit: int = 5,
+        min_similarity: float = SEMANTIC_NEIGHBOR_THRESHOLD,
+    ) -> list[tuple[str, float]]:
+        """Embedding neighbors of a to-be-written item's identity text.
+
+        Computed BEFORE the JSON write lock so embedding latency never extends
+        the lock. Returns ``[]`` — today's lexical-only write path runs
+        unchanged — unless ALL gates hold:
+
+        * ``ENGRAM_SEARCH=hybrid`` (opt-in; default keyword), AND
+        * the corpus is NOT encrypted (fail-closed: never read/derive a
+          cleartext index under encryption), AND
+        * the vector backend is installed.
+
+        The neighbor source itself (:meth:`SearchIndex.semantic_neighbors`) is
+        read-only and will not create the index file. The new item's own id is
+        excluded (it is not in the index yet, but guard anyway).
+        """
+        if not text or not text.strip():
+            return []
+        if not self._hybrid_enabled():
+            return []
+        if self._corpus_encrypted():
+            return []
+        if not vector_backend_available():
+            return []
+        try:
+            neighbors = self._hybrid_index().semantic_neighbors(
+                text, limit=limit, min_similarity=min_similarity
+            )
+        except Exception:
+            return []
+        if exclude_id:
+            neighbors = [(eid, sim) for eid, sim in neighbors if eid != exclude_id]
+        return neighbors
+
+    def _semantic_crosslink_in_lock(
+        self,
+        new_entry: dict,
+        entries: list[dict],
+        neighbors: list[tuple[str, float]],
+        best_sim: float,
+    ) -> None:
+        """Cross-link ``new_entry`` to its top semantic neighbor — never reject.
+
+        Runs INSIDE the write lock (where ``entries`` is the authoritative
+        same-type active list) so the neighbor can be re-verified against fresh
+        state. Fires only when:
+
+        * the lexical tier PASSED (``best_sim < SIMILARITY_THRESHOLD``) — so a
+          lexical "related"/"duplicate" decision is never overridden, AND
+        * the lexical path did not already attach a ``_dedup_note``.
+
+        The top neighbor is re-verified in-lock — it must be a *current,
+        active, same-type, non-self* entry — else it is dropped (stale index /
+        cross-type / archived id never pollutes ``related_ids``). Only the
+        single best verified neighbor is linked (over-linking guard). The link
+        is bidirectional; the item is always ADDED (no semantic reject, ever).
+        """
+        if best_sim >= SIMILARITY_THRESHOLD:
+            return
+        if not neighbors:
+            return
+        if new_entry.get("_dedup_note"):
+            return
+        new_id = new_entry.get("id", "")
+        by_id = {
+            e.get("id"): e
+            for e in entries
+            if e.get("status") == "active" and e.get("id")
+        }
+        for neighbor_id, sim in neighbors:
+            if not neighbor_id or neighbor_id == new_id:
+                continue
+            match = by_id.get(neighbor_id)
+            if match is None:
+                continue  # stale / cross-type / archived — not verifiable
+            if neighbor_id not in new_entry.get("related_ids", []):
+                new_entry.setdefault("related_ids", []).append(neighbor_id)
+            if new_id and new_id not in match.get("related_ids", []):
+                match.setdefault("related_ids", []).append(new_id)
+            new_entry["_dedup_note"] = (
+                f"semantically related to {neighbor_id} (cos={sim:.2f})"
+            )
+            return  # top-1 only
 
     def purge_search_index(self) -> bool:
         """Delete any persisted hybrid search index from disk.
