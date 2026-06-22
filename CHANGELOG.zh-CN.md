@@ -6,6 +6,17 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.10.0] - 2026-06-22
+
+### 新增
+- 泄漏守卫扩展到全盘路径检测（任何 `X:\...` 模式）及 `cfut_`、`ARK_API_KEY`、PyPI token 形态。
+- MCP `search_knowledge` 结果在协议边界施加体量上限——防止超大载荷淹没客户端上下文窗口。
+- 知识写入时语义近重复 surfacing——新增经验/决策时若已有语义近似条目，会返回警告而非静默丢弃或合并。
+
+### 修复
+- `hf_` token 模式扫描器 ↔ sensitivity 配置漂移修复；新增全厂商平价守卫。
+- `cli_commands` ↔ `setup_wizard` 循环引入已断开。
+
 ## [4.9.1] - 2026-06-20
 
 ### 修复

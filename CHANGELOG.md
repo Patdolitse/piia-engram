@@ -6,6 +6,17 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.10.0] - 2026-06-22
+
+### Added
+- Leakage guard widened to detect all-drive paths (any `X:\...` pattern) plus `cfut_`, `ARK_API_KEY`, and PyPI token shapes in tracked files.
+- MCP `search_knowledge` results bounded at the protocol boundary — prevents oversized payloads from overwhelming client context windows.
+- Semantic near-duplicate surfacing on knowledge write — when you add a lesson or decision, Engram now warns if a semantically similar entry already exists, without silently dropping or merging.
+
+### Fixed
+- `hf_` token pattern scanner ↔ sensitivity configuration drift closed; full vendor-parity guard added.
+- Circular import between `cli_commands` ↔ `setup_wizard` broken.
+
 ## [4.9.1] - 2026-06-20
 
 ### Fixed
