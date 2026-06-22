@@ -254,6 +254,76 @@ class TestTagMode:
 # ---------------------------------------------------------------------------
 
 
+class TestSinceMode:
+    """--since <ref>: a commit that bumps the version must carry its evidence.
+
+    This is the CI-enforced structural guarantee — by the time main HEAD has
+    version V, release-evidence/vV.md is in that same commit, so tagging main
+    HEAD can never miss it (the v4.10.0 failure mode).
+    """
+
+    def _bump_to(self, repo: Path, version: str, *, with_evidence: bool) -> None:
+        _write_version_files(repo, version)
+        if with_evidence:
+            (repo / "release-evidence" / f"v{version}.md").write_text(
+                _REQUIRED_EVIDENCE.format(v=version), encoding="utf-8"
+            )
+            allow = (repo / ".publishallow").read_text(encoding="utf-8")
+            (repo / ".publishallow").write_text(
+                allow + f"release-evidence/v{version}.md\n", encoding="utf-8"
+            )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", f"bump {version}")
+
+    def test_no_version_change_passes_without_evidence(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")
+        # a non-version commit on top
+        (repo / "README.md").write_text(
+            (repo / "README.md").read_text(encoding="utf-8") + "\nedit\n", encoding="utf-8"
+        )
+        _git(repo, "commit", "-aqm", "docs tweak")
+        result = preflight.preflight(repo, since="HEAD~1")
+        assert result.ok, result.errors
+
+    def test_version_bump_without_evidence_fails(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")
+        self._bump_to(repo, "4.13.0", with_evidence=False)
+        result = preflight.preflight(repo, since="HEAD~1")
+        assert not result.ok
+        assert any("4.13.0" in e and ("evidence" in e.lower() or "HEAD" in e)
+                   for e in result.errors)
+
+    def test_version_bump_with_evidence_passes(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")
+        self._bump_to(repo, "4.13.0", with_evidence=True)
+        result = preflight.preflight(repo, since="HEAD~1")
+        assert result.ok, result.errors
+
+    def test_unknown_base_ref_is_lenient(self, tmp_path: Path):
+        # Cannot read base (shallow clone / first release) -> do not block.
+        repo = make_repo(tmp_path, "4.12.0")
+        result = preflight.preflight(repo, since="does-not-exist")
+        assert result.ok, result.errors
+
+    def test_version_at_ref_reads_old_version(self, tmp_path: Path):
+        repo = make_repo(tmp_path, "4.12.0")
+        self._bump_to(repo, "4.13.0", with_evidence=True)
+        assert preflight.version_at_ref(repo, "HEAD~1") == "4.12.0"
+        assert preflight.version_at_ref(repo, "HEAD") == "4.13.0"
+
+    def test_version_at_ref_handles_non_ascii_pyproject(self, tmp_path: Path):
+        # Regression: `git show` output must be decoded as UTF-8, not the locale
+        # codec (GBK on a zh Windows box choked on the em-dash before the fix).
+        repo = make_repo(tmp_path, "4.12.0")
+        pp = repo / "pyproject.toml"
+        pp.write_text(
+            pp.read_text(encoding="utf-8") + 'description = "local — memory"\n',
+            encoding="utf-8",
+        )
+        _git(repo, "commit", "-aqm", "non-ascii description")
+        assert preflight.version_at_ref(repo, "HEAD") == "4.12.0"
+
+
 class TestCli:
     def test_main_exit0_on_clean_repo_default_mode(self, tmp_path: Path):
         repo = make_repo(tmp_path, "4.12.0")

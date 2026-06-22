@@ -48,8 +48,15 @@ class Result:
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    # Decode as UTF-8 explicitly: git emits UTF-8, but text=True would otherwise
+    # use the locale codec (e.g. GBK on a zh Windows box) and choke on it.
     return subprocess.run(
-        ["git", *args], cwd=str(root), capture_output=True, text=True
+        ["git", *args],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 
@@ -157,6 +164,20 @@ def check_version_consistency(root: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def version_at_ref(root: Path, ref: str) -> str | None:
+    """Read [project].version from pyproject.toml as it exists at ``ref``.
+
+    Returns None if the ref (or the file at that ref) cannot be read — callers
+    treat that as "cannot determine" and do not block (shallow clone / first
+    release).
+    """
+    proc = _git(root, "show", f"{ref}:pyproject.toml")
+    if proc.returncode != 0:
+        return None
+    m = re.search(r'(?m)^\s*version\s*=\s*"(' + _SEMVERISH + r')"', proc.stdout)
+    return m.group(1) if m else None
+
+
 def evidence_in_head(root: Path, version: str) -> bool:
     """True iff release-evidence/v<version>.md exists in the HEAD commit tree.
 
@@ -198,6 +219,8 @@ def run_release_gate(root: Path, version: str) -> tuple[int, str]:
         cwd=str(root),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 
@@ -207,10 +230,47 @@ def run_release_gate(root: Path, version: str) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 
 
-def preflight(root: str | Path, *, tag: str | None = None, require_clean: bool = True) -> Result:
+def _evidence_errors(root: Path, version: str) -> list[str]:
+    """Evidence must be IN the HEAD tree, tracked, allowlisted, and gate-clean."""
+    if not evidence_in_head(root, version):
+        return [
+            f"release-evidence/v{version}.md is not in the HEAD tree — "
+            "commit it BEFORE tagging (a tag freezes the tree)"
+        ]
+    errors: list[str] = []
+    if not _evidence_tracked(root, version):
+        errors.append(f"release-evidence/v{version}.md is not git-tracked")
+    if not _evidence_allowlisted(root, version):
+        errors.append(f"release-evidence/v{version}.md is not listed in .publishallow")
+    rc, out = run_release_gate(root, version)
+    if rc != 0:
+        last = out.splitlines()[-1] if out else "see check_release_gate.py"
+        errors.append(f"release gate failed for v{version}: {last}")
+    return errors
+
+
+def preflight(
+    root: str | Path,
+    *,
+    tag: str | None = None,
+    since: str | None = None,
+    require_clean: bool = True,
+) -> Result:
     root = Path(root)
     errors: list[str] = list(check_version_consistency(root))
     version = _pyproject_version(root)
+
+    # CI release-commit guard: if THIS commit bumped the version vs `since`,
+    # the bump must ship with its evidence (so tagging HEAD can't miss it).
+    if since is not None and version:
+        base_version = version_at_ref(root, since)
+        if base_version is not None and version != base_version:
+            if not SEMVER_FINAL.match(version):
+                errors.append(
+                    f"version bumped to {version!r} (from {base_version!r}) "
+                    "which is not a final SemVer X.Y.Z"
+                )
+            errors += _evidence_errors(root, version)
 
     if tag is not None:
         if not version or not SEMVER_FINAL.match(version):
@@ -227,20 +287,7 @@ def preflight(root: str | Path, *, tag: str | None = None, require_clean: bool =
                 errors.append("working tree is not clean — commit or stash so HEAD is exactly what gets tagged")
             if _local_tag_exists(root, tag):
                 errors.append(f"local tag {tag} already exists")
-            if not evidence_in_head(root, version):
-                errors.append(
-                    f"release-evidence/v{version}.md is not in the HEAD tree — "
-                    "commit it BEFORE tagging (a tag freezes the tree)"
-                )
-            else:
-                if not _evidence_tracked(root, version):
-                    errors.append(f"release-evidence/v{version}.md is not git-tracked")
-                if not _evidence_allowlisted(root, version):
-                    errors.append(f"release-evidence/v{version}.md is not listed in .publishallow")
-                rc, out = run_release_gate(root, version)
-                if rc != 0:
-                    last = out.splitlines()[-1] if out else "see check_release_gate.py"
-                    errors.append(f"release gate failed for v{version}: {last}")
+            errors += _evidence_errors(root, version)
 
     return Result(ok=not errors, errors=errors)
 
@@ -249,12 +296,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Structural release preflight (no remote actions).")
     parser.add_argument("--root", default=".", help="repository root (default: .)")
     parser.add_argument("--tag", default=None, help="intended tag, e.g. v4.12.0 — enables the full pre-tag gate")
+    parser.add_argument("--since", default=None, help="base ref; if HEAD bumped the version vs <ref>, require evidence in HEAD (CI release-commit guard)")
     parser.add_argument("--allow-dirty", action="store_true", help="skip the clean-worktree check (NOT for real releases)")
     args = parser.parse_args(argv)
 
-    result = preflight(Path(args.root), tag=args.tag, require_clean=not args.allow_dirty)
+    result = preflight(Path(args.root), tag=args.tag, since=args.since, require_clean=not args.allow_dirty)
     if result.ok:
-        scope = f"for {args.tag}" if args.tag else "(version consistency)"
+        if args.tag:
+            scope = f"for {args.tag}"
+        elif args.since:
+            scope = f"(release-commit guard vs {args.since})"
+        else:
+            scope = "(version consistency)"
         print(f"[OK] release preflight passed {scope}")
         return 0
     print("[FAIL] release preflight blocked:", file=sys.stderr)
