@@ -49,7 +49,7 @@ Requires Python 3.10+. The optional `[secure]` extra adds encryption support, `[
 python -m pytest tests/ -v
 ```
 
-Current baseline: **3,000+ tests passing, 0 failures**. All PRs must maintain a passing suite.
+All PRs must maintain a passing suite with zero failures.
 
 For retrieval quality benchmarks (requires test data setup):
 ```bash
@@ -64,15 +64,6 @@ python experiments/benchmarks/run_benchmarks.py
 - **Test behavioral changes** — add or update tests when logic changes
 - **No external calls in core operations** — piia-engram must never make network requests in core identity, knowledge, search, review, or governance operations. Local telemetry logging makes no network requests; remote telemetry and feedback reports require separate explicit opt-ins and send metadata-only counts. `read_web_content` is optional and makes outbound HTTP only when explicitly invoked for a URL
 - **Bilingual content** — user-facing strings should support both Chinese and English
-
-## Planning-First Long Tasks
-
-For large AI-assisted workstreams, use the
-[Planning-First Long Task Development Mechanism](docs/development/planning-first-long-task-mechanism.md)
-before implementation. The mechanism defines the planning packet, Codex/Claude
-role modes, anti-overdevelopment guard, verification expectations, and stop
-conditions for work that should not grow into unnecessary rules, boundary
-documents, or self-proof artifacts.
 
 ## Security Guidelines
 

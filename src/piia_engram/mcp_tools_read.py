@@ -56,9 +56,9 @@ async def get_user_context(
     # read would still land a write on disk (beta_events.jsonl), the recurring
     # "side-effect-before-govern" bug class. Owner-OFF governance → True here,
     # so the normal path is unchanged when governance is disabled.
-    if not S._gov_rt.caller_is_owner(S._engram.root):
+    if not S._gov_rt.caller_is_owner(S._get_engram().root):
         return S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, "", tool="get_user_context"
+            S._get_engram().root, "", tool="get_user_context"
         )
     # Auto-bootstrap on first call to an empty store: import discoverable rule
     # files (CLAUDE.md / AGENTS.md / .cursorrules) so cold-start delivers "it
@@ -73,13 +73,13 @@ async def get_user_context(
     from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
 
     imported_rules = 0
-    if needs_bootstrap(S._engram):
-        boot = run_bootstrap(S._engram)
+    if needs_bootstrap(S._get_engram()):
+        boot = run_bootstrap(S._get_engram())
         imported_rules = (
             boot.get("user_rules_imported", 0) + boot.get("project_rules_imported", 0)
         )
     try:
-        context = S._engram.generate_context(
+        context = S._get_engram().generate_context(
             project_folder, level=level, max_tokens=token_budget,
         )
         S._track("get_user_context", success=True)
@@ -131,7 +131,7 @@ async def get_user_context(
                 render_matched_section,
             )
 
-            candidates = S._engram.get_playbooks(
+            candidates = S._get_engram().get_playbooks(
                 limit=S._PLAYBOOK_MATCH_SCAN_LIMIT,
                 project_folder=project_folder or S._session.project_folder or None,
                 _update_access=False,
@@ -152,13 +152,13 @@ async def get_user_context(
     # from the first message. The section is appended BEFORE the governance
     # gate so owner callers see it in the full context; non-owner callers
     # get the gate's refusal string (they can use get_permission_profile).
-    perms = S._gov_rt.describe_caller_permissions(S._engram.root)
+    perms = S._gov_rt.describe_caller_permissions(S._get_engram().root)
     context += S._format_permissions_section(perms)
 
     # Cold-start context is a rendered string bundling identity + top
     # lessons/decisions + snapshot — unfilterable by field. Gate owner-only.
     return S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, context, tool="get_user_context"
+        S._get_engram().root, context, tool="get_user_context"
     )
 
 
@@ -186,11 +186,11 @@ async def refresh_quick_context(level: str = "standard") -> str:
     # but the FILE lands on disk for any caller — same two-step exfil as
     # export_engram. Gate BEFORE writing: a non-owner gets a refusal and no
     # snapshot file is produced.
-    refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="refresh_quick_context")
+    refusal = S._gov_rt.maybe_refuse_export(S._get_engram().root, tool="refresh_quick_context")
     if refusal is not None:
         return refusal
     try:
-        path = S._engram.refresh_quick_context(level=level)
+        path = S._get_engram().refresh_quick_context(level=level)
         S._track("refresh_quick_context", success=True)
         return f"已写入快照: {path} (level={level})"
     except Exception as exc:
@@ -216,11 +216,11 @@ async def get_identity_card() -> str:
     # allowlist exemption; round-17 P1-2 showed gating only the RETURN still
     # leaks the file). Gate BEFORE the writer runs: a non-owner gets a refusal
     # and no identity_card.md is produced. Owner gets the full card.
-    refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="get_identity_card")
+    refusal = S._gov_rt.maybe_refuse_export(S._get_engram().root, tool="get_identity_card")
     if refusal is not None:
         return refusal
     try:
-        card = S._engram.export_identity_card()
+        card = S._get_engram().export_identity_card()
         S._track("get_identity_card", success=True)
     except Exception as exc:
         S._track("get_identity_card", success=False)
@@ -245,13 +245,19 @@ async def get_identity_facets(facet: str = "all", safe: bool = True) -> str:
         facet: all | profile | preferences | trust_boundaries | work_style | quality_standards | domains，默认 all 聚合全部。 / One facet name, or "all" (default) for the aggregate of every facet.
         safe: 仅作用于 profile 切面：默认 True，按 trust_boundaries 过滤敏感字段；设 False 仅在用户明确要求时使用。 / Applies to the profile facet only; default True filters sensitive fields per trust_boundaries. Set False only when the user explicitly requests full profile access.
     """
+    # A non-owner caller must not be able to opt out of the profile redaction by
+    # passing safe=False. Under governance, force safe=True for anyone below the
+    # private-self owner; the owner (and the byte-identical flag-off path, where
+    # caller_is_owner is always True) keeps the caller-supplied value. (Code
+    # review 2026-06-23 S2-1/A1-1: caller-controlled safe= leaked decrypted PII.)
+    effective_safe = safe or not S._gov_rt.caller_is_owner(S._get_engram().root)
     readers = {
-        "profile": lambda: S._engram.get_profile(safe=safe),
-        "preferences": lambda: S._engram.get_preferences(),
-        "trust_boundaries": lambda: S._engram.get_trust_boundaries(),
-        "work_style": lambda: S._engram.get_work_style(),
-        "quality_standards": lambda: S._engram.get_quality_standards(),
-        "domains": lambda: S._engram.get_domains(),
+        "profile": lambda: S._get_engram().get_profile(safe=effective_safe),
+        "preferences": lambda: S._get_engram().get_preferences(),
+        "trust_boundaries": lambda: S._get_engram().get_trust_boundaries(),
+        "work_style": lambda: S._get_engram().get_work_style(),
+        "quality_standards": lambda: S._get_engram().get_quality_standards(),
+        "domains": lambda: S._get_engram().get_domains(),
     }
     if facet == "all":
         return S._json({name: read() for name, read in readers.items()})
@@ -291,11 +297,11 @@ async def get_lessons(
     # last_reviewed — that is a low-trust write to data files, and (since the
     # bump happens before governance filtering) it would also touch entries
     # above the caller's sensitivity ceiling.
-    lessons = S._engram.get_lessons(
+    lessons = S._get_engram().get_lessons(
         domain=domain, source_tool=source_tool, limit=limit,
-        _update_access=S._gov_rt.caller_is_owner(S._engram.root),
+        _update_access=S._gov_rt.caller_is_owner(S._get_engram().root),
     )
-    lessons = S._gov_rt.maybe_govern_list(S._engram.root, lessons, tool="get_lessons")
+    lessons = S._gov_rt.maybe_govern_list(S._get_engram().root, lessons, tool="get_lessons")
     if not lessons:
         return "尚无经验教训记录。"
     return S._json(lessons)
@@ -332,31 +338,31 @@ async def get_decisions(
         history_threshold: 修订历史的相似度阈值（0-1，默认 0.6）。 / Similarity threshold for history matching (0-1, default 0.6).
     """
     if thread_seed_id:
-        thread = S._engram.get_decision_thread(thread_seed_id)
+        thread = S._get_engram().get_decision_thread(thread_seed_id)
         # 'order' rows are derived previews ({id, status, summary}) that do not
         # carry the source item's sensitivity label, so content-only gating
         # would be partial. Gate the derived thread view owner-only.
         thread = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, thread, tool="get_decisions"
+            S._get_engram().root, thread, tool="get_decisions"
         )
         return S._json(thread)
     if history_question:
-        result = S._engram.get_decision_history(
+        result = S._get_engram().get_decision_history(
             history_question, threshold=history_threshold
         )
         result = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, result, tool="get_decisions"
+            S._get_engram().root, result, tool="get_decisions"
         )
         return S._json(result)
     # Read-path side-effect gate (Codex round-6): owner-only access bookkeeping.
-    decisions = S._engram.get_decisions(
+    decisions = S._get_engram().get_decisions(
         limit=limit,
         source_tool=source_tool,
         project=project,
         domain=domain,
-        _update_access=S._gov_rt.caller_is_owner(S._engram.root),
+        _update_access=S._gov_rt.caller_is_owner(S._get_engram().root),
     )
-    decisions = S._gov_rt.maybe_govern_list(S._engram.root, decisions, tool="get_decisions")
+    decisions = S._gov_rt.maybe_govern_list(S._get_engram().root, decisions, tool="get_decisions")
     if not decisions:
         return "尚无决策记录。"
     return S._json(decisions)
@@ -377,9 +383,9 @@ async def get_project_context(project_folder: str) -> str:
     """
     S._session.detect_project(project_folder)
     try:
-        snapshot = S._engram.get_project_snapshot(project_folder)
+        snapshot = S._get_engram().get_project_snapshot(project_folder)
         snapshot = S._gov_rt.maybe_govern_one(
-            S._engram.root, snapshot, tool="get_project_context"
+            S._get_engram().root, snapshot, tool="get_project_context"
         )
         S._track("get_project_context", success=True)
     except Exception as exc:
@@ -400,7 +406,7 @@ async def list_projects() -> str:
     注意：读取单个项目详情用 get_project_context。
     Note: Use get_project_context to read details for one project.
     """
-    projects = S._engram.list_projects()
+    projects = S._get_engram().list_projects()
     if not projects:
         return "尚无项目记录。"
     return S._json(projects)
@@ -427,13 +433,13 @@ async def get_relevant_knowledge(
         include_freshness: 为每条结果附加 freshness/新鲜度提示（默认 False，保持旧输出不变）。 / Attach a per-item freshness hint (default False; output is unchanged when omitted).
     """
     try:
-        lessons = S._engram.get_relevant_lessons(
+        lessons = S._get_engram().get_relevant_lessons(
             project_folder=project_folder, limit=limit,
-            _update_access=S._gov_rt.caller_is_owner(S._engram.root),
+            _update_access=S._gov_rt.caller_is_owner(S._get_engram().root),
         )
         # governance gate (opt-in; OFF => byte-identical to the line above).
         lessons = S._gov_rt.maybe_govern_list(
-            S._engram.root, lessons, tool="get_relevant_knowledge"
+            S._get_engram().root, lessons, tool="get_relevant_knowledge"
         )
         # Freshness annotation is opt-in and applied AFTER governance filtering so
         # it can only ever annotate items the caller is already allowed to see
@@ -444,7 +450,7 @@ async def get_relevant_knowledge(
     except Exception as exc:
         S._track("get_relevant_knowledge", success=False)
         raise
-    perms = S._gov_rt.describe_caller_permissions(S._engram.root)
+    perms = S._gov_rt.describe_caller_permissions(S._get_engram().root)
     if not lessons:
         return S._json({"items": [], "_caller_permissions": perms,
                        "note": "尚无相关经验教训。"})
@@ -466,9 +472,9 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
         limit: 最多返回多少条（默认 10，上限 20）。 / Maximum number of items to return in total (default 10, max 20).
     """
     limit = min(int(limit), 20)
-    pack = S._engram.get_knowledge_inheritance(description, limit=limit)
+    pack = S._get_engram().get_knowledge_inheritance(description, limit=limit)
     pack = S._gov_rt.maybe_govern_result(
-        S._engram.root, pack, tool="get_knowledge_inheritance", list_fields=("items",)
+        S._get_engram().root, pack, tool="get_knowledge_inheritance", list_fields=("items",)
     )
     return S._json(pack)
 
@@ -556,14 +562,14 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
         # readable in the FTS index file (Codex round-19 file-side-effect leak).
         # Suppress that persisted index for non-owners; caller_is_owner is True
         # when governance is OFF, so the disabled/owner path is unchanged.
-        allow_index = S._gov_rt.caller_is_owner(S._engram.root)
-        result = S._engram.search_knowledge(
+        allow_index = S._gov_rt.caller_is_owner(S._get_engram().root)
+        result = S._get_engram().search_knowledge(
             query, scope=scope, limit=limit, filters=filters,
             allow_hybrid_index=allow_index,
             project_folder=effective_project,
         )
         # governance gate (opt-in; OFF => byte-identical to the line above).
-        result = S._gov_rt.maybe_govern_buckets(S._engram.root, result, tool="search_knowledge")
+        result = S._gov_rt.maybe_govern_buckets(S._get_engram().root, result, tool="search_knowledge")
         # Opt-in freshness annotation, applied AFTER governance filtering so it
         # only ever annotates items the caller may already see (Provenance &
         # Freshness Contract v1, follow-up B). Pure/non-destructive; default OFF
@@ -596,7 +602,7 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
     except Exception as exc:
         S._track("search_knowledge", success=False)
         return f"搜索失败: {S._safe_err(exc)}"
-    perms = S._gov_rt.describe_caller_permissions(S._engram.root)
+    perms = S._gov_rt.describe_caller_permissions(S._get_engram().root)
     result["_caller_permissions"] = perms
     return S._json(result)
 
@@ -615,13 +621,13 @@ async def get_knowledge_overview(section: str = "all", stale_days: int = 30) -> 
         section: 概览部分：'all'、'digest'、'health' 或 'stale'。 / Overview section: 'all', 'digest', 'health', or 'stale'.
         stale_days: 超过多少天算过期知识。 / Number of days after which knowledge is considered stale.
     """
-    overview = S._engram.get_knowledge_overview(section, stale_days=stale_days)
+    overview = S._get_engram().get_knowledge_overview(section, stale_days=stale_days)
     # digest embeds FULL top_lessons/top_decisions plus label-stripped preview
     # rows nested several levels down (recent_items, stale.{lessons,decisions});
     # field-by-field gating across those derived rows is error-prone and loses
     # the original sensitivity label. Gate the aggregate view owner-only.
     overview = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, overview, tool="get_knowledge_overview"
+        S._get_engram().root, overview, tool="get_knowledge_overview"
     )
     return S._json(overview)
 
@@ -649,11 +655,11 @@ async def explore_knowledge(
         threshold: merge_candidates 模式的相似度阈值（0.2–1.0，默认 0.45）。 / Similarity threshold for merge_candidates (0.2–1.0, default 0.45).
     """
     if mode == "merge_candidates":
-        merges = S._engram.suggest_merges(threshold=threshold, limit=limit or 10)
+        merges = S._get_engram().suggest_merges(threshold=threshold, limit=limit or 10)
         # Each suggestion embeds item summaries from a full-library scan; gate
         # the aggregate maintenance view owner-only.
         merges = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, merges, tool="explore_knowledge"
+            S._get_engram().root, merges, tool="explore_knowledge"
         )
         return S._json(merges)
     if mode not in ("related", "similar"):
@@ -664,15 +670,15 @@ async def explore_knowledge(
     if not item_id:
         return "item_id is required for mode='related' / mode='similar'"
     if mode == "related":
-        related = S._engram.get_related_knowledge(item_id)
+        related = S._get_engram().get_related_knowledge(item_id)
         related = S._gov_rt.maybe_govern_result(
-            S._engram.root, related, tool="explore_knowledge",
+            S._get_engram().root, related, tool="explore_knowledge",
             list_fields=("related",), item_fields=("source",),
         )
         return S._json(related)
-    similar = S._engram.find_similar_knowledge(item_id, limit=limit or 5)
+    similar = S._get_engram().find_similar_knowledge(item_id, limit=limit or 5)
     similar = S._gov_rt.maybe_govern_result(
-        S._engram.root, similar, tool="explore_knowledge",
+        S._get_engram().root, similar, tool="explore_knowledge",
         list_fields=("similar",), item_fields=("source",),
     )
     return S._json(similar)
@@ -695,10 +701,10 @@ async def export_knowledge_report() -> str:
     # left the full Markdown report — with secret summaries/details — on disk for
     # a non-owner (Codex round-17 P1-3). Gate BEFORE the writer: a non-owner gets
     # a refusal and no report file is produced. Owner gets the full report.
-    refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="export_knowledge_report")
+    refusal = S._gov_rt.maybe_refuse_export(S._get_engram().root, tool="export_knowledge_report")
     if refusal is not None:
         return refusal
-    return S._engram.export_knowledge_report()
+    return S._get_engram().export_knowledge_report()
 
 
 # ===========================================================================

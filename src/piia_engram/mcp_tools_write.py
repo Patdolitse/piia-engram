@@ -38,7 +38,7 @@ async def memory_store(
         items_json: 条目 JSON 数组；给了就走批量写入（一次导入多条 lesson/decision）。 / JSON array of items; when provided, batch-writes multiple lessons/decisions in one call.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="memory_store")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="memory_store")
     if refusal is not None:
         S._track("memory_store", success=False)
         return refusal
@@ -61,7 +61,7 @@ async def memory_store(
         for _item in items:
             S.strip_untrusted_trust_fields(_item)
         return S._json(S._locked_engram_call(
-            S._engram.bulk_add_knowledge,
+            S._get_engram().bulk_add_knowledge,
             items,
             item_type=kind or "lesson",
             source_tool=source_tool,
@@ -105,25 +105,25 @@ async def memory_store(
 
     try:
         if kind == "lesson":
-            result = S._locked_engram_call(S._engram.add_lesson, content)
+            result = S._locked_engram_call(S._get_engram().add_lesson, content)
             label = content.get("summary", "")[:60]
             S._track("memory_store", success=True)
             if result.get("status") == "duplicate":
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
-                return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="memory_store"))
+                return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
             tier = result.get("tier", "staging")
             return f"[Engram] 教训已记录 · tier={tier} · 可召回: {label}"
         elif kind == "decision":
-            result = S._locked_engram_call(S._engram.add_decision, content)
+            result = S._locked_engram_call(S._get_engram().add_decision, content)
             label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
             S._track("memory_store", success=True)
             if result.get("status") == "duplicate":
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
-                return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="memory_store"))
+                return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
             tier = result.get("tier", "staging")
             return f"[Engram] 决策已记录 · tier={tier} · 可召回: {label}"
         else:  # playbook
-            result = S._locked_engram_call(S._engram.add_playbook, content)
+            result = S._locked_engram_call(S._get_engram().add_playbook, content)
             label = content.get("title", "")[:60]
             S._track("memory_store", success=True)
             tier = result.get("tier", "staging")
@@ -166,7 +166,7 @@ async def add_lesson(
         last_validated_at: 人/agent 最近确认此条目仍然成立的 ISO-8601 时间（可选）。 / ISO-8601 time this entry was last confirmed to still hold (optional).
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="add_lesson")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_lesson")
     if refusal is not None:
         S._track("add_lesson", success=False)
         return refusal
@@ -185,7 +185,7 @@ async def add_lesson(
         last_validated_at=last_validated_at,
     )
     try:
-        result = S._locked_engram_call(S._engram.add_lesson, lesson)
+        result = S._locked_engram_call(S._get_engram().add_lesson, lesson)
         S._track("add_lesson", success=True)
         S._beta("knowledge_created", kind="lesson",
               domain=domain[:80] if domain else "",
@@ -200,7 +200,7 @@ async def add_lesson(
         # agent could submit a near-duplicate to read back a work/secret lesson.
         # Gate it like any write-echo: owner sees it, lower tiers get a
         # title/body-free confirmation.
-        return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="add_lesson"))
+        return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_lesson"))
     tier = result.get("tier", "staging")
     return f"[Engram] 教训已记录 · tier={tier} · 可召回: {summary}"
 
@@ -247,7 +247,7 @@ async def add_decision(
         last_validated_at: 最近确认此决策仍然成立的 ISO-8601 时间（可选）。 / ISO-8601 time this decision was last confirmed to still hold (optional).
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="add_decision")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_decision")
     if refusal is not None:
         S._track("add_decision", success=False)
         return refusal
@@ -268,7 +268,7 @@ async def add_decision(
         last_validated_at=last_validated_at,
     )
     try:
-        result = S._locked_engram_call(S._engram.add_decision, decision)
+        result = S._locked_engram_call(S._get_engram().add_decision, decision)
         S._track("add_decision", success=True)
         S._beta("knowledge_created", kind="decision",
               domain=domain[:80] if domain else "",
@@ -280,7 +280,7 @@ async def add_decision(
     if result.get("status") == "duplicate":
         # Dedup-reject echoes the matched stored decision's ``existing_title`` —
         # gate it like any write-echo (see add_lesson).
-        return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="add_decision"))
+        return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_decision"))
     tier = result.get("tier", "staging")
     return f"[Engram] 决策已记录 · tier={tier} · 可召回: {question} → {choice}"
 
@@ -328,7 +328,7 @@ async def add_playbook(
         source_tool: 来源工具（可选）。 / Source tool (optional).
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="add_playbook")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_playbook")
     if refusal is not None:
         S._track("add_playbook", success=False)
         return refusal
@@ -379,7 +379,7 @@ async def add_playbook(
         last_validated_at=last_validated_at,
     )
     try:
-        result = S._locked_engram_call(S._engram.add_playbook, playbook)
+        result = S._locked_engram_call(S._get_engram().add_playbook, playbook)
         S._track("add_playbook", success=True)
     except Exception as exc:
         S._track("add_playbook", success=False)
@@ -387,7 +387,7 @@ async def add_playbook(
     if result.get("status") == "duplicate":
         # Dedup-reject echoes the matched stored playbook's ``existing_title`` —
         # gate it like any write-echo (see add_lesson).
-        return S._json(S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="add_playbook"))
+        return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_playbook"))
     if result.get("error"):
         return S._json(result)
     tier = result.get("tier", "staging")
@@ -479,13 +479,13 @@ async def get_playbooks(
             if project_folder:
                 S._session.detect_project(project_folder)
             effective_project = project_folder or S._session.project_folder or None
-            result = S._engram.get_playbook(
+            result = S._get_engram().get_playbook(
                 playbook_id,
-                _update_access=S._gov_rt.caller_is_owner(S._engram.root),
+                _update_access=S._gov_rt.caller_is_owner(S._get_engram().root),
                 project_folder=effective_project,
                 confirm_cross_project=confirm_cross_project,
             )
-            result = S._gov_rt.maybe_govern_one(S._engram.root, result, tool="get_playbooks")
+            result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="get_playbooks")
             S._track("get_playbooks", success=True)
         except Exception as exc:
             S._track("get_playbooks", success=False)
@@ -499,9 +499,9 @@ async def get_playbooks(
             if project_folder:
                 S._session.detect_project(project_folder)
             effective_project = project_folder or S._session.project_folder or None
-            result = S._engram.get_recent_playbooks(limit=limit, project_folder=effective_project)
+            result = S._get_engram().get_recent_playbooks(limit=limit, project_folder=effective_project)
             result = S._gov_rt.maybe_govern_list(
-                S._engram.root, result, tool="get_playbooks"
+                S._get_engram().root, result, tool="get_playbooks"
             )
             S._track("get_playbooks", success=True)
         except Exception as exc:
@@ -514,7 +514,7 @@ async def get_playbooks(
         return S._json(result)
     if mode == "management":
         try:
-            result = S._engram.list_playbooks_for_management(
+            result = S._get_engram().list_playbooks_for_management(
                 status=status,
                 project_folder=project_folder or None,
                 scope_type=scope_type,
@@ -526,19 +526,19 @@ async def get_playbooks(
             S._track("get_playbooks", success=False)
             return f"List Playbooks for management failed: {S._safe_err(exc)}"
         result = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, result, tool="get_playbooks"
+            S._get_engram().root, result, tool="get_playbooks"
         )
         return S._json(result)
     try:
         if project_folder:
             S._session.detect_project(project_folder)
         effective_project = project_folder or S._session.project_folder or None
-        result = S._engram.get_playbooks(
+        result = S._get_engram().get_playbooks(
             domain=domain or None, limit=limit,
             project_folder=effective_project,
-            _update_access=S._gov_rt.caller_is_owner(S._engram.root),
+            _update_access=S._gov_rt.caller_is_owner(S._get_engram().root),
         )
-        result = S._gov_rt.maybe_govern_list(S._engram.root, result, tool="get_playbooks")
+        result = S._gov_rt.maybe_govern_list(S._get_engram().root, result, tool="get_playbooks")
         S._track("get_playbooks", success=True)
     except Exception as exc:
         S._track("get_playbooks", success=False)
@@ -602,7 +602,7 @@ async def manage_playbook(
     # a4: write-path governance gate — must run unconditionally BEFORE action
     # validation so a low-trust caller gets a governance refusal, never an
     # "unknown action" hint (writer-spy matrix).
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="manage_playbook")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="manage_playbook")
     if refusal is not None:
         S._track("manage_playbook", success=False)
         return refusal
@@ -646,7 +646,7 @@ async def manage_playbook(
         if not updates:
             return "未提供任何更新字段。 / No update fields provided."
         try:
-            result = S._locked_engram_call(S._engram.update_playbook, playbook_id, updates)
+            result = S._locked_engram_call(S._get_engram().update_playbook, playbook_id, updates)
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
@@ -656,10 +656,10 @@ async def manage_playbook(
         # The ack echoes the stored title when the caller omitted the title arg —
         # gate so a low-trust caller can't read a secret title back (round-16).
         ack = f"Playbook 已更新: {result.get('title', playbook_id)} (v{result.get('version', '?')})"
-        return S._gov_rt.maybe_govern_write_ack(S._engram.root, ack, tool="manage_playbook")
+        return S._gov_rt.maybe_govern_write_ack(S._get_engram().root, ack, tool="manage_playbook")
     if action == "archive":
         try:
-            result = S._locked_engram_call(S._engram.archive_playbook, playbook_id)
+            result = S._locked_engram_call(S._get_engram().archive_playbook, playbook_id)
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
@@ -667,11 +667,11 @@ async def manage_playbook(
         if result.get("error"):
             return S._json(result)
         ack = f"Playbook archived: {playbook_id}"
-        return S._gov_rt.maybe_govern_write_ack(S._engram.root, ack, tool="manage_playbook")
+        return S._gov_rt.maybe_govern_write_ack(S._get_engram().root, ack, tool="manage_playbook")
     if action == "delete":
         try:
             result = S._locked_engram_call(
-                S._engram.delete_playbook,
+                S._get_engram().delete_playbook,
                 playbook_id=playbook_id,
                 reason=reason,
                 dry_run=dry_run,
@@ -684,13 +684,13 @@ async def manage_playbook(
         if result.get("error"):
             return S._json(result)
         result = S._gov_rt.maybe_govern_write_ack(
-            S._engram.root, result, tool="manage_playbook"
+            S._get_engram().root, result, tool="manage_playbook"
         )
         return S._json(result)
     if action == "restore":
         try:
             result = S._locked_engram_call(
-                S._engram.restore_playbook,
+                S._get_engram().restore_playbook,
                 playbook_id=playbook_id,
                 dry_run=dry_run,
                 confirm=confirm,
@@ -702,7 +702,7 @@ async def manage_playbook(
         if result.get("error"):
             return S._json(result)
         result = S._gov_rt.maybe_govern_write_ack(
-            S._engram.root, result, tool="manage_playbook"
+            S._get_engram().root, result, tool="manage_playbook"
         )
         return S._json(result)
     return (
@@ -747,7 +747,7 @@ async def playbook_execution(
     # a4: write-path governance gate — must run unconditionally BEFORE action
     # validation so a low-trust caller gets a governance refusal, never an
     # "unknown action" hint (writer-spy matrix).
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="playbook_execution")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="playbook_execution")
     if refusal is not None:
         S._track("playbook_execution", success=False)
         return refusal
@@ -770,7 +770,7 @@ async def playbook_execution(
         # the export tools. Gate BEFORE the writer runs: a non-owner gets a
         # refusal and no execution-plan file is created. Owner proceeds and
         # gets the full plan.
-        refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="playbook_execution")
+        refusal = S._gov_rt.maybe_refuse_export(S._get_engram().root, tool="playbook_execution")
         if refusal is not None:
             S._track("playbook_execution", success=False)
             return refusal
@@ -779,7 +779,7 @@ async def playbook_execution(
                 S._session.detect_project(project_folder)
             effective_project = project_folder or S._session.project_folder or None
             result = S._locked_engram_call(
-                S._engram.prepare_playbook_execution,
+                S._get_engram().prepare_playbook_execution,
                 playbook_id,
                 params=params,
                 project_folder=effective_project,
@@ -799,7 +799,7 @@ async def playbook_execution(
             )
         try:
             result = S._locked_engram_call(
-                S._engram.update_execution_step,
+                S._get_engram().update_execution_step,
                 playbook_id,
                 step_order,
                 step_status,
@@ -812,7 +812,7 @@ async def playbook_execution(
         return S._json(result)
     if action == "status":
         try:
-            result = S._engram.get_execution_status(playbook_id)
+            result = S._get_engram().get_execution_status(playbook_id)
             S._track_read_safe("playbook_execution", success=True)
         except Exception as exc:
             S._track_read_safe("playbook_execution", success=False)
@@ -821,7 +821,7 @@ async def playbook_execution(
         # (substituted) step bodies. Gate owner-only to match, or it re-opens
         # the same bypass (Codex round-16).
         result = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, result, tool="playbook_execution"
+            S._get_engram().root, result, tool="playbook_execution"
         )
         _inject_usage_policy(result, _EXECUTION_USAGE_POLICY)
         return S._json(result)
@@ -864,7 +864,7 @@ async def register_tool(
         source_tool: 哪个 AI 工具登记的（如 'claude_code', 'codex'）。 / Which AI tool registered this.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="register_tool")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="register_tool")
     if refusal is not None:
         return refusal
 
@@ -883,7 +883,7 @@ async def register_tool(
         tool_entry["notes"] = notes
     try:
         result = S._locked_engram_call(
-            S._engram.register_tool,
+            S._get_engram().register_tool,
             tool_entry,
             registered_by=source_tool,
         )
@@ -907,7 +907,7 @@ async def find_tool(query: str) -> str:
         query: 搜索关键词（名称、分类、用途均可匹配）。 / Search keywords matching name, category, purpose, or path.
     """
     try:
-        results = S._engram.find_tool(query)
+        results = S._get_engram().find_tool(query)
         S._track("find_tool", success=True)
     except Exception as exc:
         S._track("find_tool", success=False)
@@ -928,7 +928,7 @@ async def list_tools(category: str = "") -> str:
         category: 按分类筛选（runtime, cli, library, credential, config, service, other），留空列出全部。 / Filter by category; empty lists all.
     """
     try:
-        results = S._engram.list_tools(category=category or None)
+        results = S._get_engram().list_tools(category=category or None)
         S._track("list_tools", success=True)
     except Exception as exc:
         S._track("list_tools", success=False)

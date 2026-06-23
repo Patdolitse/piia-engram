@@ -88,6 +88,8 @@ def _run_startup_auto_migrate() -> None:
 
 def _run_startup_sync() -> None:
     """Reconcile external AI memories/configs on MCP startup."""
+    if _engram is None:
+        return
     try:
         with _write_operation_lock:
             _mem = _engram.reconcile_memories()
@@ -183,10 +185,57 @@ def _argv_requests_help(
     return executable in {"mcp_server.py", "piia-engram-mcp", "piia-engram-mcp.exe"}
 
 
+def _init_engram(root: Path | None = None) -> tuple[Engram | None, str | None]:
+    """Create an Engram instance, returning (instance, None) on success or
+    (None, error_message) if the store is corrupted / unreadable."""
+    try:
+        return Engram(root=root) if root else Engram(), None
+    except Exception as exc:
+        msg = f"{type(exc).__name__}: {exc}"
+        logger.error(
+            "Engram init failed — MCP server running in degraded mode: %s", msg,
+        )
+        return None, msg
+
+
+__SENTINEL = object()
+
+
+def _require_engram(
+    _engram: Engram | None | object = __SENTINEL,
+    _init_error: str | None | object = __SENTINEL,
+) -> Engram:
+    """Return the live Engram instance or raise a clear error in degraded mode.
+
+    When called with no arguments, reads the module-level globals.  Tests can
+    pass explicit values for isolation.
+    """
+    import piia_engram.mcp_server as _self
+    eng = _self._engram if _engram is __SENTINEL else _engram
+    err = _self._init_error if _init_error is __SENTINEL else _init_error
+    if eng is not None:
+        return eng  # type: ignore[return-value]
+    detail = err or "unknown error"
+    raise RuntimeError(
+        f"Engram is running in degraded mode — all tools are unavailable. "
+        f"Original error: {detail}. "
+        f"Run 'piia-engram-mcp doctor' or check your store directory."
+    )
+
+
+def _get_engram() -> Engram:
+    """Shorthand for ``_require_engram()`` — used by tool handlers."""
+    return _require_engram()
+
+
 # argparse help should be a read-only, side-effect-free path. Initializing
 # Engram here can emit data-fragmentation warnings or touch session files
 # before argparse exits, so defer it only for the MCP help entrypoint.
-_engram = None if _argv_requests_help() else Engram()
+if _argv_requests_help():
+    _engram: Engram | None = None
+    _init_error: str | None = None
+else:
+    _engram, _init_error = _init_engram()
 
 # Anonymous usage statistics tracker (Phase 1: local log only)
 try:
@@ -703,7 +752,8 @@ def _engram_clean_shutdown() -> None:
     except Exception:
         pass
     try:
-        _engram._mark_clean_exit(last_session_id=_session.session_id)
+        if _engram is not None:
+            _engram._mark_clean_exit(last_session_id=_session.session_id)
     except Exception:
         pass
 

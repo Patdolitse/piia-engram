@@ -49,6 +49,12 @@ jobs:
       - name: Public trust claim gate
         run: python scripts/check_public_trust_claims.py
 
+      - name: Public reference truth gate
+        run: python scripts/check_public_reference_truth.py
+
+      - name: Release version-consistency preflight
+        run: python scripts/check_release_preflight.py
+
       - name: Pre-release sanitization scan
         run: python scripts/release_sanitize_check.py --internal --strict
 
@@ -102,6 +108,12 @@ jobs:
 
       - name: Public trust claim gate
         run: python scripts/check_public_trust_claims.py
+
+      - name: Public reference truth gate
+        run: python scripts/check_public_reference_truth.py
+
+      - name: Release version-consistency preflight
+        run: python scripts/check_release_preflight.py
 
       - name: Pre-release sanitization scan
         run: python scripts/release_sanitize_check.py --internal --strict
@@ -192,3 +204,29 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
             dist/piia-engram-sbom.cdx.json
+
+  release-commit-guard:
+    # If a commit BUMPS the package version, it must also carry its
+    # release-evidence/v<version>.md in the SAME commit/tree. This makes the
+    # v4.10.0 failure mode (tag created without committed evidence) structurally
+    # impossible: by the time main HEAD has version V, the evidence is already
+    # in that commit, so tagging HEAD can never miss it. No-bump commits pass
+    # trivially. Stdlib-only — no project install needed.
+    name: Release commit guard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Version bump must ship its release evidence
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: python scripts/check_release_preflight.py --since "$BASE_SHA" --base-required

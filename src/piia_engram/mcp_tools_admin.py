@@ -24,16 +24,16 @@ async def get_permission_profile() -> str:
     When governance is enabled, only the owner (private-self) can call this.
     """
     try:
-        is_owner = S._gov_rt.caller_is_owner(S._engram.root)
+        is_owner = S._gov_rt.caller_is_owner(S._get_engram().root)
     except Exception:
         is_owner = False
     if not is_owner:
         return S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, "", tool="get_permission_profile"
+            S._get_engram().root, "", tool="get_permission_profile"
         )
-    result = S._engram.get_permission_profile()
+    result = S._get_engram().get_permission_profile()
     result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="get_permission_profile"
+        S._get_engram().root, result, tool="get_permission_profile"
     )
     return S._json(result)
 
@@ -69,7 +69,7 @@ async def manage_caller_trust(
     # non-owner gets a governance refusal, never an "unknown action" hint
     # (writer-spy matrix). Keeps the grant store owner-controlled: no
     # self-escalation path re-opens here.
-    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="manage_caller_trust")
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._get_engram().root, tool="manage_caller_trust")
     if refusal is not None:
         return refusal
 
@@ -81,15 +81,15 @@ async def manage_caller_trust(
                 "（private-self / trusted-local / read-only-external）。 "
                 "/ action=grant requires trust_level."
             )
-        result = S._locked_engram_call(S._engram.set_caller_trust, agent_id, trust_level)
+        result = S._locked_engram_call(S._get_engram().set_caller_trust, agent_id, trust_level)
         result = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, result, tool="manage_caller_trust"
+            S._get_engram().root, result, tool="manage_caller_trust"
         )
         return S._json(result)
     if action == "revoke":
-        result = S._locked_engram_call(S._engram.revoke_caller, agent_id)
+        result = S._locked_engram_call(S._get_engram().revoke_caller, agent_id)
         result = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, result, tool="manage_caller_trust"
+            S._get_engram().root, result, tool="manage_caller_trust"
         )
         return S._json(result)
     return (
@@ -121,7 +121,7 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
         quality_standards: acceptance_threshold (1-5), rules (list) / acceptance_threshold（1-5）、rules（列表）。
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="update_identity")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="update_identity")
     if refusal is not None:
         return refusal
 
@@ -132,11 +132,11 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
     except json.JSONDecodeError:
         return S._json({"error": "updates_json must be valid JSON"})
     dispatch = {
-        "profile": S._engram.update_profile,
-        "preferences": S._engram.update_preferences,
-        "trust_boundaries": S._engram.update_trust_boundaries,
-        "work_style": S._engram.update_work_style,
-        "quality_standards": S._engram.update_quality_standards,
+        "profile": S._get_engram().update_profile,
+        "preferences": S._get_engram().update_preferences,
+        "trust_boundaries": S._get_engram().update_trust_boundaries,
+        "work_style": S._get_engram().update_work_style,
+        "quality_standards": S._get_engram().update_quality_standards,
     }
     try:
         fn = dispatch[field]
@@ -171,7 +171,7 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
         data_json: JSON 字符串，支持字段 title、tech_stack、known_issues、notes。 / JSON string supporting fields: title, tech_stack, known_issues, and notes.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="save_project_snapshot")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="save_project_snapshot")
     if refusal is not None:
         return refusal
 
@@ -184,7 +184,7 @@ async def save_project_snapshot(project_folder: str, data_json: str) -> str:
         return "错误: data_json 必须是合法的 JSON。"
     if not isinstance(data, dict):
         return "错误: data_json 应为 JSON 对象（{}），不能是数组或标量。"
-    S._locked_engram_call(S._engram.save_project_snapshot, project_folder, data)
+    S._locked_engram_call(S._get_engram().save_project_snapshot, project_folder, data)
     S._track("save_project_snapshot", success=True)
     return f"项目快照已保存: {project_folder}"
 
@@ -215,24 +215,24 @@ async def user_portrait(action: str = "get") -> str:
     # validation (writer-spy matrix). Web/low-trust callers are refused here;
     # trusted-local callers passing this gate still hit the owner-only result
     # gates in the get/compare branches, matching the old per-tool behavior.
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="user_portrait")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="user_portrait")
     if refusal is not None:
         return refusal
 
     action = action.strip().lower()
     if action == "get":
-        portrait = S._engram.build_user_portrait()
+        portrait = S._get_engram().build_user_portrait()
         portrait = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, portrait, tool="user_portrait"
+            S._get_engram().root, portrait, tool="user_portrait"
         )
         S._track_read_safe("user_portrait", success=True)
         return S._json(portrait)
     if action == "compare":
-        previous = S._engram.get_previous_portrait()
-        latest = S._engram.get_latest_portrait()
+        previous = S._get_engram().get_previous_portrait()
+        latest = S._get_engram().get_latest_portrait()
         if latest is None:
             # No stored snapshots at all — build a fresh (unsaved) one to show.
-            latest = S._engram.build_user_portrait()
+            latest = S._get_engram().build_user_portrait()
         if previous is None:
             payload = {
                 "growth": None,
@@ -241,16 +241,16 @@ async def user_portrait(action: str = "get") -> str:
                 "latest": latest,
             }
         else:
-            payload = {"growth": S._engram.compare_user_portraits(previous, latest)}
+            payload = {"growth": S._get_engram().compare_user_portraits(previous, latest)}
         payload = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, payload, tool="user_portrait"
+            S._get_engram().root, payload, tool="user_portrait"
         )
         S._track_read_safe("user_portrait", success=True)
         return S._json(payload)
     if action == "save":
-        saved = S._locked_engram_call(S._engram.save_user_portrait, None)
+        saved = S._locked_engram_call(S._get_engram().save_user_portrait, None)
         saved = S._gov_rt.maybe_govern_owner_only(
-            S._engram.root, saved, tool="user_portrait"
+            S._get_engram().root, saved, tool="user_portrait"
         )
         S._track("user_portrait", success=True)
         return S._json(saved)
@@ -356,14 +356,14 @@ async def export_engram(
     # gets a refusal and no file is produced. Also runs BEFORE format
     # validation so a non-owner never sees an "unknown format" hint
     # (writer-spy matrix).
-    refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="export_engram")
+    refusal = S._gov_rt.maybe_refuse_export(S._get_engram().root, tool="export_engram")
     if refusal is not None:
         return refusal
     format = format.strip().lower()
     if format == "openclaw":
         try:
-            target_dir = output_dir or str(S._engram.root / "compat" / "openclaw")
-            result = S.export_to_openclaw(S._engram, target_dir)
+            target_dir = output_dir or str(S._get_engram().root / "compat" / "openclaw")
+            result = S.export_to_openclaw(S._get_engram(), target_dir)
             files = result.get("files", [])
             if result.get("status") == "success":
                 return S._json(files)
@@ -379,7 +379,7 @@ async def export_engram(
     if err:
         return f"错误: {err}"
     try:
-        path = S._engram.export_all(output_path)
+        path = S._get_engram().export_all(output_path)
         return f"导出成功: {path}"
     except Exception as e:
         return f"导出失败: {S._safe_err(e)}"
@@ -420,13 +420,13 @@ async def import_engram(
     """
     # Whole-store import/overwrite — owner-only, gated before any side effect
     # and BEFORE format/path validation (writer-spy matrix).
-    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="import_engram")
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._get_engram().root, tool="import_engram")
     if refusal is not None:
         return refusal
     format = format.strip().lower()
     if format == "openclaw":
         try:
-            result = S.import_from_openclaw(S._engram, soul_path, memory_path, user_path)
+            result = S.import_from_openclaw(S._get_engram(), soul_path, memory_path, user_path)
             return S._json(result)
         except Exception as e:
             return f"从 OpenClaw 兼容格式导入失败: {S._safe_err(e)}"
@@ -442,7 +442,7 @@ async def import_engram(
     err = S._validate_path(input_path)
     if err:
         return S._json({"error": err})
-    result = S._engram.import_all(input_path, merge=merge, dry_run=dry_run)
+    result = S._get_engram().import_all(input_path, merge=merge, dry_run=dry_run)
     return S._json(result)
 
 
@@ -461,7 +461,7 @@ async def get_audit_log(limit: int = 50) -> str:
     """
     _MAX_AUDIT_ENTRIES = 200
     limit = max(1, min(limit, _MAX_AUDIT_ENTRIES))
-    log_path = S._engram.root / "audit.log"
+    log_path = S._get_engram().root / "audit.log"
     if not log_path.is_file():
         return S._json({"entries": [], "total": 0, "message": "No audit entries yet. Audit logging is on by default; opt out with ENGRAM_AUDIT=0."})
 
@@ -492,14 +492,14 @@ async def get_audit_log(limit: int = 50) -> str:
         if len(entries) >= limit:
             break
 
-    S._engram._audit.log("read", "audit_log", detail=f"returned {len(entries)}")
+    S._get_engram()._audit.log("read", "audit_log", detail=f"returned {len(entries)}")
     # The raw ledger entries carry a ``detail`` field that stores the first 100
     # chars of a written lesson summary / decision/playbook title (core.py audit
     # writes), i.e. stored knowledge body at ANY sensitivity level. The audit log
     # is an aggregate diagnostic surface that cannot be cleanly per-item filtered,
     # so it is private-self only — a low-trust agent must not read it back.
     return S._json(S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, {"entries": entries, "total": len(entries)}, tool="get_audit_log"))
+        S._get_engram().root, {"entries": entries, "total": len(entries)}, tool="get_audit_log"))
 
 
 # ===========================================================================
@@ -541,7 +541,7 @@ async def wrap_up_session(
     # a4: write-path governance gate — wrap_up_session fans out into many writes
     # (extract insights/playbook, save snapshot, daily log, evaluate_tiers), so
     # gate the whole entry. read-only-external is refused before any side effect.
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="wrap_up_session")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="wrap_up_session")
     if refusal is not None:
         return refusal
 
@@ -554,7 +554,7 @@ async def wrap_up_session(
     # Step 1: Extract insights
     try:
         insights = S._locked_engram_call(
-            S._engram.extract_session_insights,
+            S._get_engram().extract_session_insights,
             summary,
             source_tool=source_tool,
         )
@@ -566,7 +566,7 @@ async def wrap_up_session(
     # Step 1.5: Auto-extract Playbook if session looks like a procedure
     try:
         playbook = S._locked_engram_call(
-            S._engram.extract_playbook_from_session,
+            S._get_engram().extract_playbook_from_session,
             summary,
             source_tool=source_tool,
             project_folder=project_folder,
@@ -609,7 +609,7 @@ async def wrap_up_session(
                 snapshot_data.update(S._attach_current_state(
                     project_info, verified_at=verified_at
                 ))
-            S._locked_engram_call(S._engram.save_project_snapshot, project_folder, snapshot_data)
+            S._locked_engram_call(S._get_engram().save_project_snapshot, project_folder, snapshot_data)
             results["project_snapshot"] = {"saved": True, "folder": project_folder}
         except Exception as exc:
             S.logger.warning("save_project_snapshot failed: %s", exc)
@@ -637,7 +637,7 @@ async def wrap_up_session(
             body = body[:600].rstrip() + "…"
         daily_content = f"_{tally}_\n\n{body}"
         daily_result = S._locked_engram_call(
-            S._engram.append_daily_log,
+            S._get_engram().append_daily_log,
             project_folder=daily_target,
             content=daily_content,
             event_type="session",
@@ -653,7 +653,7 @@ async def wrap_up_session(
     # Step 3: Auto-reconcile external AI memories and configs
     _reconcile_imported = 0
     try:
-        reconcile = S._locked_engram_call(S._engram.reconcile_memories)
+        reconcile = S._locked_engram_call(S._get_engram().reconcile_memories)
         if reconcile["imported"] > 0:
             results["memory_sync"] = reconcile
             _reconcile_imported += reconcile["imported"]
@@ -661,7 +661,7 @@ async def wrap_up_session(
         S.logger.warning("reconcile_memories failed: %s", exc)
 
     try:
-        cfg_sync = S._locked_engram_call(S._engram.reconcile_ai_configs)
+        cfg_sync = S._locked_engram_call(S._get_engram().reconcile_ai_configs)
         if cfg_sync["imported"] > 0:
             results["config_sync"] = cfg_sync
             _reconcile_imported += cfg_sync["imported"]
@@ -673,7 +673,7 @@ async def wrap_up_session(
 
     # Step 4: Evaluate staging items and surface promotion suggestions.
     try:
-        tier_result = S._locked_engram_call(S._engram.evaluate_tiers)
+        tier_result = S._locked_engram_call(S._get_engram().evaluate_tiers)
         if tier_result.get("suggested", 0) > 0:
             results["promotion_suggestions"] = tier_result
     except Exception as exc:
@@ -681,7 +681,7 @@ async def wrap_up_session(
 
     # Step 5: Report staging backlog
     try:
-        staging = S._engram.get_staging_summary()
+        staging = S._get_engram().get_staging_summary()
         if staging["total_staging"] > 0:
             _zh = S._user_lang() == "zh"
             if _zh:
@@ -725,9 +725,9 @@ async def wrap_up_session(
                 _ver = "dev"
             k_counts = {}
             try:
-                k_counts["lessons"] = len(S._engram.get_lessons(limit=None, _update_access=False))
-                k_counts["decisions"] = len(S._engram.get_decisions(limit=None, _update_access=False))
-                k_counts["domains"] = len(S._engram.get_domains())
+                k_counts["lessons"] = len(S._get_engram().get_lessons(limit=None, _update_access=False))
+                k_counts["decisions"] = len(S._get_engram().get_decisions(limit=None, _update_access=False))
+                k_counts["domains"] = len(S._get_engram().get_domains())
             except Exception:
                 pass
             _tier = os.environ.get("ENGRAM_TOOLS", "core")
@@ -783,7 +783,7 @@ async def doctor(output_format: str = "markdown") -> str:
     checks: list[dict] = []
 
     # 1. Identity completeness
-    profile = S._engram.get_profile()
+    profile = S._get_engram().get_profile()
     missing_identity = [f for f in ("role", "language", "description") if not profile.get(f)]
     checks.append({
         "name": "identity_completeness",
@@ -816,7 +816,7 @@ async def doctor(output_format: str = "markdown") -> str:
         "/nfs/": "NFS mount",
         "/smb/": "SMB/CIFS mount",
     }
-    engram_dir_str = str(S._engram.root).replace("\\", "/").lower()
+    engram_dir_str = str(S._get_engram().root).replace("\\", "/").lower()
     cloud_hit = None
     for marker, label in _cloud_markers.items():
         if marker in engram_dir_str:
@@ -826,7 +826,7 @@ async def doctor(output_format: str = "markdown") -> str:
     if not cloud_hit and hasattr(os, "name") and os.name == "nt":
         try:
             import subprocess
-            drive = str(S._engram.root)[:2]  # e.g. "Z:"
+            drive = str(S._get_engram().root)[:2]  # e.g. "Z:"
             result = subprocess.run(
                 ["net", "use", drive],
                 capture_output=True, text=True, timeout=3,
@@ -845,13 +845,13 @@ async def doctor(output_format: str = "markdown") -> str:
             f" / ENGRAM_DIR is inside a {cloud_hit} directory. "
             "Concurrent sync may corrupt JSON files."
         ) if cloud_hit else (
-            f"ENGRAM_DIR={S._engram.root} — 本地目录，无云同步风险"
+            f"ENGRAM_DIR={S._get_engram().root} — 本地目录，无云同步风险"
         ),
     })
 
     # 3. Knowledge counts
-    lessons = S._engram.get_lessons(limit=None, _update_access=False)
-    decisions = S._engram.get_decisions(limit=None, _update_access=False)
+    lessons = S._get_engram().get_lessons(limit=None, _update_access=False)
+    decisions = S._get_engram().get_decisions(limit=None, _update_access=False)
     checks.append({
         "name": "knowledge_volume",
         "status": "PASS",
@@ -865,7 +865,7 @@ async def doctor(output_format: str = "markdown") -> str:
     # of doctor read overview["lifecycle"] / overview["health_score"] directly,
     # which silently returned defaults and produced health_score=0 with empty
     # stale/archive lists (regression flagged in v3.29.4, lesson 81d05b09c8ee).
-    overview = S._engram.get_knowledge_overview()
+    overview = S._get_engram().get_knowledge_overview()
     health_report = overview.get("health", {}) if isinstance(overview, dict) else {}
     stale = health_report.get("items_needing_review", [])
     archive = health_report.get("items_to_archive", [])
@@ -880,7 +880,7 @@ async def doctor(output_format: str = "markdown") -> str:
     dup_count = 0
     for i, a in enumerate(lessons):
         for b in lessons[i + 1:]:
-            sim = S._engram._bigram_similarity(a.get("summary", ""), b.get("summary", ""))
+            sim = S._get_engram()._bigram_similarity(a.get("summary", ""), b.get("summary", ""))
             if sim >= SIMILARITY_THRESHOLD:
                 dup_count += 1
         if dup_count > 20:
@@ -895,7 +895,7 @@ async def doctor(output_format: str = "markdown") -> str:
     try:
         from piia_engram.conflict_governance import sample_conflicts, split_conflicts
 
-        all_conflicts = S._engram.detect_active_decision_conflicts(
+        all_conflicts = S._get_engram().detect_active_decision_conflicts(
             decisions,
             include_suppressed=True,
         )
@@ -932,7 +932,7 @@ async def doctor(output_format: str = "markdown") -> str:
 
     # 8.5 v3.30 mechanism (1): unclean-exit detection
     try:
-        unclean = getattr(S._engram, "_prev_unclean", None) or S._engram.get_unclean_exit_marker()
+        unclean = getattr(S._get_engram(), "_prev_unclean", None) or S._get_engram().get_unclean_exit_marker()
     except Exception:
         unclean = None
     if unclean:
@@ -958,7 +958,7 @@ async def doctor(output_format: str = "markdown") -> str:
         })
 
     # 8. Quick context freshness
-    qc_path = S._engram.root / "quick_context.md"
+    qc_path = S._get_engram().root / "quick_context.md"
     if qc_path.exists():
         age_hours = (datetime.now().timestamp() - qc_path.stat().st_mtime) / 3600
         checks.append({
@@ -1047,7 +1047,7 @@ async def start_project(
         limit: 最多继承多少条经验（默认 10，上限 20）。 / Maximum number of knowledge items to inherit (default 10, max 20).
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="start_project")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="start_project")
     if refusal is not None:
         return refusal
 
@@ -1055,13 +1055,13 @@ async def start_project(
 
     # Step 1: Knowledge inheritance
     limit = min(int(limit), 20)
-    inheritance = S._engram.get_knowledge_inheritance(description, limit=limit)
+    inheritance = S._get_engram().get_knowledge_inheritance(description, limit=limit)
     # start_project embeds the SAME inheritance bundle get_knowledge_inheritance
     # returns; gate its items identically or this becomes an ungoverned sibling
     # read tool (Codex round-16 P1-1). The ``start_`` prefix kept it out of the
     # earlier prefix-based coverage check — now caught by all-tool classification.
     inheritance = S._gov_rt.maybe_govern_result(
-        S._engram.root, inheritance, tool="start_project", list_fields=("items",)
+        S._get_engram().root, inheritance, tool="start_project", list_fields=("items",)
     )
     results["inherited_knowledge"] = inheritance
 
@@ -1073,7 +1073,7 @@ async def start_project(
         snapshot_data["title"] = description[:80]
     if tech_stack:
         snapshot_data["tech_stack"] = [s.strip() for s in tech_stack.split(",") if s.strip()]
-    S._locked_engram_call(S._engram.save_project_snapshot, project_folder, snapshot_data)
+    S._locked_engram_call(S._get_engram().save_project_snapshot, project_folder, snapshot_data)
     results["project_snapshot"] = {"created": True, "folder": project_folder}
 
     return S._json(results)

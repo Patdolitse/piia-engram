@@ -57,6 +57,7 @@ from .storage import (  # noqa: F401 — re-exports
     _update_json,
     _write_json,
     DataCorruptionError,
+    SkipWrite,
     strip_untrusted_trust_fields,
 )
 from .retrieval import RetrievalMixin
@@ -143,10 +144,20 @@ class Engram(
             salt = b""
             if salt_path.is_file():
                 salt = salt_path.read_bytes()
+                if len(salt) != 16:
+                    if self._has_existing_ciphertext():
+                        raise RuntimeError(
+                            f".corpus_salt in {self.root} is corrupted "
+                            f"({len(salt)} bytes, expected 16). Encrypted "
+                            "corpus data (enc:v2c:) exists — restore the "
+                            "original .corpus_salt from backup."
+                        )
+                    if not read_only:
+                        salt = os.urandom(16)
+                        self._atomic_write_bytes(salt_path, salt)
+                    else:
+                        salt = b""
             else:
-                # Fail-closed: if corpus files already contain enc:v2c: data
-                # but the salt is missing, refuse to create a new salt — that
-                # would make existing data permanently unreadable.
                 if self._has_existing_ciphertext():
                     raise RuntimeError(
                         f".corpus_salt is missing from {self.root} but encrypted "
@@ -154,13 +165,10 @@ class Engram(
                         ".corpus_salt file to recover your data. Creating a new "
                         "salt would make existing data permanently unreadable."
                     )
-                # A read_only open is a guaranteed zero-write: never mint a salt
-                # or create the root. With no existing ciphertext there is
-                # nothing to decrypt, so plaintext-only reading is correct.
                 if not read_only:
                     salt = os.urandom(16)
                     self.root.mkdir(parents=True, exist_ok=True)
-                    salt_path.write_bytes(salt)
+                    self._atomic_write_bytes(salt_path, salt)
             if salt:
                 self._corpus_key = self._crypto.derive_corpus_key(salt)
             # A plaintext hybrid search index left over from a pre-encryption
@@ -571,6 +579,26 @@ class Engram(
         except Exception:
             pass
 
+    @staticmethod
+    def _atomic_write_bytes(path: Path, data: bytes) -> None:
+        """Write bytes atomically via temp file + fsync + rename."""
+        import tempfile
+        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            Path(tmp).replace(path)
+        except BaseException:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
     def _has_existing_ciphertext(self) -> bool:
         """Quick check: do any corpus files contain enc:v2c: data?
 
@@ -713,10 +741,17 @@ class Engram(
         profile = _read_json(self._identity_dir / "profile.json")
         profile = self._crypto.decrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
         if safe:
+            # The safe projection must NEVER surface the inherently-sensitive
+            # encrypted PII fields (email/phone/real_name/id_number/...), even
+            # when the user has not configured restricted_fields (which defaults
+            # to []). These fields are encrypted at rest precisely because they
+            # are private, so a "safe" read — used by resource_profile, shareable
+            # reports, and the non-owner facet path — strips them unconditionally,
+            # unioned with any user-configured restricted_fields. (Code review
+            # 2026-06-23 S2-1/A1-1: empty restricted_fields let safe=True leak PII.)
             tb = self.get_trust_boundaries()
-            restricted = set(tb.get("restricted_fields", []))
-            if restricted:
-                profile = {key: value for key, value in profile.items() if key not in restricted}
+            restricted = set(tb.get("restricted_fields", [])) | set(ENCRYPTED_PROFILE_FIELDS)
+            profile = {key: value for key, value in profile.items() if key not in restricted}
         self._audit.log("read", "identity/profile")
         return profile
 
@@ -748,39 +783,41 @@ class Engram(
         if not updates:
             return
         updates = self._repair_incoming_text(dict(updates))
-        profile = self.get_profile()
+        path = self._identity_dir / "profile.json"
 
-        # Description: append-merge to preserve multi-tool markers
-        if "description" in updates and profile.get("description"):
-            old_desc = profile["description"]
-            new_desc = updates["description"]
-            if not new_desc:
-                # Empty update — keep existing
-                updates["description"] = old_desc
-            else:
-                existing_parts = set(old_desc.split())
-                new_parts = [p for p in new_desc.split() if p not in existing_parts]
-                if new_parts:
-                    updates["description"] = old_desc + " " + " ".join(new_parts)
-                else:
-                    # All tokens already present — keep existing unchanged
+        def _mutate(profile):
+            if not isinstance(profile, dict):
+                profile = {}
+            profile = self._crypto.decrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
+
+            if "description" in updates and profile.get("description"):
+                old_desc = profile["description"]
+                new_desc = updates["description"]
+                if not new_desc:
                     updates["description"] = old_desc
+                else:
+                    existing_parts = set(old_desc.split())
+                    new_parts = [p for p in new_desc.split() if p not in existing_parts]
+                    if new_parts:
+                        updates["description"] = old_desc + " " + " ".join(new_parts)
+                    else:
+                        updates["description"] = old_desc
 
-        now = _now_iso()
+            now = _now_iso()
 
-        # Track field-level provenance
-        provenance = profile.get("_provenance", {})
-        for key in updates:
-            if key not in ("updated_at",):
-                provenance[key] = {"by": source_tool or "unknown", "at": now}
+            provenance = profile.get("_provenance", {})
+            for key in updates:
+                if key not in ("updated_at",):
+                    provenance[key] = {"by": source_tool or "unknown", "at": now}
 
-        profile.update(updates)
-        profile["updated_at"] = now
-        profile["_provenance"] = provenance
-        if source_tool:
-            profile["_last_updated_by"] = source_tool
-        encrypted = self._crypto.encrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
-        _write_json(self._identity_dir / "profile.json", encrypted)
+            profile.update(updates)
+            profile["updated_at"] = now
+            profile["_provenance"] = provenance
+            if source_tool:
+                profile["_last_updated_by"] = source_tool
+            return self._crypto.encrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
+
+        _update_json(path, _mutate, default={})
         self._audit.log("write", "identity/profile", detail=str(list(updates.keys())))
 
     def get_work_style(self) -> dict:
@@ -818,10 +855,16 @@ class Engram(
         if not updates:
             return
         updates = self._repair_incoming_text(dict(updates))
-        prefs = self.get_preferences()
-        prefs.update(updates)
-        prefs["updated_at"] = _now_iso()
-        _write_json(self._identity_dir / "preferences.json", prefs)
+        path = self._identity_dir / "preferences.json"
+
+        def _mutate(prefs):
+            if not isinstance(prefs, dict):
+                prefs = self.get_preferences()
+            prefs.update(updates)
+            prefs["updated_at"] = _now_iso()
+            return prefs
+
+        _update_json(path, _mutate, default={})
 
     # -- Trust Boundaries (v2.0, new) --
 
@@ -835,10 +878,16 @@ class Engram(
                             detail=f"rejected unknown fields: {rejected}")
         if not updates:
             return
-        tb = self.get_trust_boundaries()
-        tb.update(updates)
-        tb["updated_at"] = _now_iso()
-        _write_json(self._identity_dir / "trust_boundaries.json", tb)
+        path = self._identity_dir / "trust_boundaries.json"
+
+        def _mutate(tb):
+            if not isinstance(tb, dict):
+                tb = {}
+            tb.update(updates)
+            tb["updated_at"] = _now_iso()
+            return tb
+
+        _update_json(path, _mutate, default={})
 
     def get_quality_standards(self) -> dict:
         return _read_json(self._identity_dir / "quality_standards.json")
@@ -851,10 +900,16 @@ class Engram(
         if not updates:
             return
         updates = self._repair_incoming_text(dict(updates))
-        standards = self.get_quality_standards()
-        standards.update(updates)
-        standards["updated_at"] = _now_iso()
-        _write_json(self._identity_dir / "quality_standards.json", standards)
+        path = self._identity_dir / "quality_standards.json"
+
+        def _mutate(standards):
+            if not isinstance(standards, dict):
+                standards = {}
+            standards.update(updates)
+            standards["updated_at"] = _now_iso()
+            return standards
+
+        _update_json(path, _mutate, default={})
 
     # =====================================================================
     # Knowledge — what you've learned
@@ -1270,7 +1325,20 @@ class Engram(
         # this guard a legacy entry needing backfill would be rewritten even under
         # read_only=True (dock-resume / dock-search / preview --read-only).
         if changed and migrate and not self._read_only:
-            _write_json(path, ensured)  # preserves encrypted fields as-is
+            # Re-read and migrate under the write lock to avoid overwriting
+            # concurrent additions (a bare _write_json here would use a stale
+            # snapshot and silently drop entries added since our read above).
+            _entry_type = entry_type
+
+            def _migrate_locked(current):
+                if not isinstance(current, list):
+                    raise SkipWrite()
+                migrated = [self._ensure_fields(e, _entry_type) for e in current]
+                if all(a == b for a, b in zip(current, migrated)):
+                    raise SkipWrite()
+                return migrated
+
+            _update_json(path, _migrate_locked, default=[])
 
         # Decrypt content fields for in-memory use
         if self._corpus_key:
@@ -1910,14 +1978,17 @@ class Engram(
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""
         path = self._knowledge_dir / "domains.json"
-        domains = _read_json(path)
-        if not isinstance(domains, dict):
-            domains = {}
-        if domain not in domains:
-            domains[domain] = {"first_seen": _now_iso(), "project_count": 0}
-        domains[domain].update(updates)
-        domains[domain]["updated_at"] = _now_iso()
-        _write_json(path, domains)
+
+        def _mutate(domains):
+            if not isinstance(domains, dict):
+                domains = {}
+            if domain not in domains:
+                domains[domain] = {"first_seen": _now_iso(), "project_count": 0}
+            domains[domain].update(updates)
+            domains[domain]["updated_at"] = _now_iso()
+            return domains
+
+        _update_json(path, _mutate, default={})
 
     def get_domains(self) -> dict:
         path = self._knowledge_dir / "domains.json"
@@ -1948,14 +2019,17 @@ class Engram(
     def increment_domain_usage(self, domain: str) -> None:
         """Increment project count for a domain."""
         path = self._knowledge_dir / "domains.json"
-        domains = _read_json(path)
-        if not isinstance(domains, dict):
-            domains = {}
-        entry = domains.get(domain, {"first_seen": _now_iso(), "project_count": 0})
-        entry["project_count"] = entry.get("project_count", 0) + 1
-        entry["last_used"] = _now_iso()
-        domains[domain] = entry
-        _write_json(path, domains)
+
+        def _mutate(domains):
+            if not isinstance(domains, dict):
+                domains = {}
+            entry = domains.get(domain, {"first_seen": _now_iso(), "project_count": 0})
+            entry["project_count"] = entry.get("project_count", 0) + 1
+            entry["last_used"] = _now_iso()
+            domains[domain] = entry
+            return domains
+
+        _update_json(path, _mutate, default={})
 
     # =====================================================================
     # Projects — per-project knowledge
@@ -1965,14 +2039,19 @@ class Engram(
         """Save/update knowledge for a specific project."""
         pid = _project_id(project_folder)
         path = self._projects_dir / f"{pid}.json"
-        existing = _read_json(path)
         data = self._repair_incoming_text(dict(data))
-        existing.update(data)
-        existing["project_folder"] = project_folder
-        existing["updated_at"] = _now_iso()
-        if "created_at" not in existing:
-            existing["created_at"] = _now_iso()
-        _write_json(path, existing)
+
+        def _mutate(existing):
+            if not isinstance(existing, dict):
+                existing = {}
+            existing.update(data)
+            existing["project_folder"] = project_folder
+            existing["updated_at"] = _now_iso()
+            if "created_at" not in existing:
+                existing["created_at"] = _now_iso()
+            return existing
+
+        _update_json(path, _mutate, default={})
 
     def get_project_snapshot(self, project_folder: str) -> dict:
         pid = _project_id(project_folder)

@@ -32,7 +32,7 @@ async def save_agent_context(
         actions_json: 结构化动作日志（可选），JSON 数组，每个元素含 tool_called, arguments_summary, result_summary。用于 Playbook 自动提取。 / Structured action log (optional), JSON array of {tool_called, arguments_summary, result_summary}. Used for higher-fidelity Playbook extraction.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="save_agent_context")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="save_agent_context")
     if refusal is not None:
         return refusal
 
@@ -48,7 +48,7 @@ async def save_agent_context(
         except json.JSONDecodeError:
             pass
     result = S._locked_engram_call(
-        S._engram.save_agent_context,
+        S._get_engram().save_agent_context,
         tool=tool,
         content=content,
         session_id=session_id,
@@ -76,9 +76,9 @@ async def get_recent_context(
         tool: 工具名（可选）。留空则搜索所有工具的上下文。 / Tool name (optional). Empty searches all tools.
         limit: 最多返回几个会话（默认 1 = 最近一次）。 / Max sessions to return (default 1 = most recent).
     """
-    sessions = S._engram.get_recent_context(tool=tool, limit=limit)
+    sessions = S._get_engram().get_recent_context(tool=tool, limit=limit)
     sessions = S._gov_rt.maybe_govern_list(
-        S._engram.root, sessions, tool="get_recent_context"
+        S._get_engram().root, sessions, tool="get_recent_context"
     )
     S._track("get_recent_context", success=True)
     if not sessions:
@@ -100,7 +100,7 @@ async def list_agent_sessions(
         tool: 工具名（可选）。留空则列出所有工具。 / Tool name (optional). Empty lists all tools.
         limit: 最多返回多少条（默认 20）。 / Max entries to return (default 20).
     """
-    sessions = S._engram.list_agent_sessions(tool=tool, limit=limit)
+    sessions = S._get_engram().list_agent_sessions(tool=tool, limit=limit)
     S._track("list_agent_sessions", success=True)
     return S._json({"sessions": sessions, "total": len(sessions)})
 
@@ -139,16 +139,16 @@ async def get_resume_brief(
     # Auto-bootstrap on first ever call when store is empty.
     from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
 
-    if needs_bootstrap(S._engram):
-        run_bootstrap(S._engram)
+    if needs_bootstrap(S._get_engram()):
+        run_bootstrap(S._get_engram())
 
-    brief = S._engram.get_resume_brief(
+    brief = S._get_engram().get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
     )
     # a2: embed caller permissions into the brief's markdown body
     # (same pattern as a1 in get_user_context, but targeting the dict)
-    perms = S._gov_rt.describe_caller_permissions(S._engram.root)
+    perms = S._gov_rt.describe_caller_permissions(S._get_engram().root)
     perm_section = S._format_permissions_section(perms)
     if isinstance(brief, dict) and "markdown" in brief:
         md = brief["markdown"]
@@ -161,7 +161,7 @@ async def get_resume_brief(
             brief["markdown"] = md + perm_section
     # Resume brief bundles top lessons/decisions + recent context; owner-only.
     brief = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, brief, tool="get_resume_brief"
+        S._get_engram().root, brief, tool="get_resume_brief"
     )
     S._track("get_resume_brief", success=True)
     return S._json(brief)
@@ -199,11 +199,11 @@ async def get_recall(
         collapse_versions: 是否折叠版本链到当前 HEAD。 / Collapse version chains to current heads.
     """
     try:
-        is_owner = S._gov_rt.caller_is_owner(S._engram.root)
+        is_owner = S._gov_rt.caller_is_owner(S._get_engram().root)
     except Exception:
         is_owner = False
     if not is_owner:
-        return S._gov_rt.maybe_govern_owner_only(S._engram.root, "", tool="get_recall")
+        return S._gov_rt.maybe_govern_owner_only(S._get_engram().root, "", tool="get_recall")
 
     try:
         if project_folder:
@@ -211,7 +211,7 @@ async def get_recall(
         safe_limit = max(1, min(int(limit), 20))
         safe_budget = max(0, int(token_budget))
         payload = S._recall_service.gather_recall(
-            S._engram,
+            S._get_engram(),
             project_folder=project_folder,
             query=query,
             limit=safe_limit,
@@ -235,7 +235,7 @@ async def get_recall(
             )
         except Exception:
             pass
-        perms = S._gov_rt.describe_caller_permissions(S._engram.root)
+        perms = S._gov_rt.describe_caller_permissions(S._get_engram().root)
         meta = payload.setdefault("meta", {})
         governance = meta.setdefault("governance", {})
         if isinstance(governance, dict):
@@ -271,12 +271,12 @@ async def preview_context_governance(
         options_json: Optional JSON object for mode-specific options such as max_chars, lockdown, compact_summary, title, project_folder, query, limit, or token_budget.
     """
     try:
-        is_owner = S._gov_rt.caller_is_owner(S._engram.root)
+        is_owner = S._gov_rt.caller_is_owner(S._get_engram().root)
     except Exception:
         is_owner = False
     if not is_owner:
         return S._gov_rt.maybe_govern_owner_only(
-            S._engram.root,
+            S._get_engram().root,
             "",
             tool="preview_context_governance",
         )
@@ -297,7 +297,7 @@ async def preview_context_governance(
         options = _parse_object(options_json, "options_json")
         result = S._context_governance.build_context_governance_preview(
             mode,
-            engram=S._engram,
+            engram=S._get_engram(),
             payload=payload,
             options=options,
         )
@@ -328,13 +328,13 @@ async def get_daily_log(
         project_folder: 项目文件夹路径。 / Project folder path.
         date: ISO 日期 ``YYYY-MM-DD``（可选，默认今天）。 / ISO date (optional, defaults to today).
     """
-    log = S._engram.get_daily_log(
+    log = S._get_engram().get_daily_log(
         project_folder=project_folder,
         date=date or None,
     )
     # Daily log embeds per-session summaries (first ~600 chars); owner-only.
     log = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, log, tool="get_daily_log"
+        S._get_engram().root, log, tool="get_daily_log"
     )
     S._track("get_daily_log", success=True)
     return S._json(log)

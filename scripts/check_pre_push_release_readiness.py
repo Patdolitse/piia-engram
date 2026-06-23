@@ -37,6 +37,8 @@ CI_TEST_JOB_CHECKS = (
     ("public_fact_sync", [sys.executable, "scripts/check_public_fact_sync.py"]),
     ("public_claim_drift", [sys.executable, "scripts/check_public_claim_drift.py"]),
     ("public_trust_claims", [sys.executable, "scripts/check_public_trust_claims.py"]),
+    ("public_reference_truth", [sys.executable, "scripts/check_public_reference_truth.py"]),
+    ("release_preflight", [sys.executable, "scripts/check_release_preflight.py"]),
     ("release_sanitize",
      [sys.executable, "scripts/release_sanitize_check.py", "--internal", "--strict"]),
     ("worker_public_config", [sys.executable, "scripts/check_worker_public_config.py"]),
