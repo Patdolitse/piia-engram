@@ -85,6 +85,38 @@ def _is_http_url(url: str) -> bool:
     return isinstance(url, str) and url.lower().startswith(("http://", "https://"))
 
 
+import ipaddress
+from urllib.parse import urlparse
+
+_BLOCKED_HOSTNAMES = frozenset({
+    "localhost",
+    "metadata.google.internal",
+})
+
+
+def _is_private_url(url: str) -> bool:
+    """Return True if the URL targets a private, loopback, or cloud-metadata address."""
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower().strip("[]")
+    except Exception:
+        return True
+
+    if hostname in _BLOCKED_HOSTNAMES:
+        return True
+
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            return True
+        if str(addr) == "0.0.0.0":
+            return True
+    except ValueError:
+        pass
+
+    return False
+
+
 def _make_excerpt(text: str, limit: int = _EXCERPT_CHARS) -> str:
     collapsed = " ".join(text.split())
     return collapsed[:limit]
@@ -380,6 +412,11 @@ async def extract_web_content(
     url: str, *, timeout: int = _DEFAULT_TIMEOUT, prefer_sidecar: bool = True
 ) -> WebContent:
     """Sidecar (when alive) → built-in → error. Returns a :class:`WebContent`."""
+    if _is_private_url(url):
+        return WebContent(
+            url=url,
+            error="Refused: URL targets a private, loopback, or cloud-metadata address.",
+        )
     if prefer_sidecar and sidecar_available():
         try:
             result = await extract_sidecar(url, timeout=timeout)

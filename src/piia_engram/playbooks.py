@@ -681,9 +681,15 @@ class PlaybookMixin:
         if _update_access and result:
             now = _now_iso()
             for pb in result:
-                pb["last_reviewed"] = now
-                pb["access_count"] = pb.get("access_count", 0) + 1
-                self._write_playbook_file(self._playbooks_dir / f"{pb['id']}.json", pb)
+                def _bump_access(p, _now=now):
+                    if p.get("status", "active") != "active":
+                        return p
+                    p["last_reviewed"] = _now
+                    p["access_count"] = p.get("access_count", 0) + 1
+                    return p
+                updated = self._update_playbook_file_by_id(pb["id"], _bump_access)
+                if updated:
+                    pb.update(updated)
 
         self._audit.log("read", "playbooks", detail=f"returned {len(result)} items")
         if _update_access:
@@ -720,12 +726,14 @@ class PlaybookMixin:
                 }
 
         if _update_access:
-            pb["last_reviewed"] = _now_iso()
-            pb["access_count"] = pb.get("access_count", 0) + 1
-            self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
-            # Write-back above used the raw (still-encrypted) object; from here
-            # on operate on a display-safe copy so leaked ciphertext is never
-            # surfaced as content.
+            now = _now_iso()
+            def _bump_single(p, _now=now):
+                p["last_reviewed"] = _now
+                p["access_count"] = p.get("access_count", 0) + 1
+                return p
+            updated = self._update_playbook_file_by_id(playbook_id, _bump_single)
+            if updated:
+                pb = updated
             pb = self._display_sanitize_one(pb, "playbook")
 
         # Always include dynamic parameters extraction
@@ -1807,6 +1815,28 @@ class PlaybookMixin:
     def _execution_path(self, playbook_id: str) -> Path:
         return self._executions_dir() / f"{playbook_id}.json"
 
+    def _update_execution_plan_file(self, playbook_id: str, mutator, *, allow_create: bool = False):
+        """Apply ``mutator`` to execution plan under file lock."""
+        path = self._execution_path(playbook_id)
+
+        result_box: dict = {}
+
+        def _locked(current):
+            if not isinstance(current, dict):
+                current = {}
+            if not current and not allow_create:
+                result_box["result"] = None
+                return {}
+            plan = self._decrypt_execution_plan(current) if current else current
+            updated = mutator(plan)
+            if updated is None:
+                updated = plan
+            result_box["result"] = updated
+            return self._encrypt_execution_plan(updated)
+
+        _update_json(path, _locked, default={})
+        return result_box.get("result")
+
     @staticmethod
     def _execution_outcome(steps: list[dict]) -> dict:
         """Summarize step states without treating skipped work as success."""
@@ -1891,7 +1921,11 @@ class PlaybookMixin:
             return {"error": "missing playbook_id"}
         plan["started_at"] = _now_iso()
         plan["updated_at"] = _now_iso()
-        _write_json(self._execution_path(pid), self._encrypt_execution_plan(plan))
+
+        def _init(current):
+            return plan
+
+        self._update_execution_plan_file(pid, _init, allow_create=True)
         return {"status": "saved", "playbook_id": pid}
 
     def update_execution_step(
@@ -1916,51 +1950,49 @@ class PlaybookMixin:
         if status not in valid:
             return {"error": f"status must be one of {valid}"}
 
-        path = self._execution_path(playbook_id)
-        plan = _read_json(path)
-        if not plan:
+        result_box: dict = {}
+
+        def _apply_step(plan):
+            found = False
+            for step in plan.get("execution_plan", []):
+                if step.get("order") == step_order:
+                    step["status"] = status
+                    if notes:
+                        step["notes"] = notes
+                    step["updated_at"] = _now_iso()
+                    found = True
+                    break
+            if not found:
+                result_box["error"] = f"step {step_order} not found in execution plan"
+                return plan
+
+            plan["updated_at"] = _now_iso()
+            steps = plan.get("execution_plan", [])
+            outcome = self._execution_outcome(steps)
+            completed = outcome["completed"] + outcome["skipped"]
+            total = outcome["total"]
+            if outcome["status"] == "succeeded":
+                plan["completed_at"] = plan.get("completed_at") or _now_iso()
+            else:
+                plan.pop("completed_at", None)
+
+            result_box["result"] = {
+                "status": "updated",
+                "step_order": step_order,
+                "step_status": status,
+                "playbook_id": playbook_id,
+                "completed": completed,
+                "total": total,
+                "outcome": outcome,
+            }
+            return plan
+
+        updated_plan = self._update_execution_plan_file(playbook_id, _apply_step)
+        if updated_plan is None:
             return {"error": f"no execution plan found for {playbook_id}"}
-        # Decrypt the at-rest plan before mutating it, then re-encrypt on
-        # write-back. Operating on the raw (encrypted) plan and assigning
-        # plaintext ``notes`` directly would leak the note in cleartext, since
-        # the surrounding ciphertext fields are never re-encrypted on this path
-        # (Codex a5 round-2 P1-4).
-        plan = self._decrypt_execution_plan(plan)
-
-        updated = False
-        for step in plan.get("execution_plan", []):
-            if step.get("order") == step_order:
-                step["status"] = status
-                if notes:
-                    step["notes"] = notes
-                step["updated_at"] = _now_iso()
-                updated = True
-                break
-
-        if not updated:
-            return {"error": f"step {step_order} not found in execution plan"}
-
-        plan["updated_at"] = _now_iso()
-
-        steps = plan.get("execution_plan", [])
-        outcome = self._execution_outcome(steps)
-        completed = outcome["completed"] + outcome["skipped"]
-        total = outcome["total"]
-        if outcome["status"] == "succeeded":
-            plan["completed_at"] = plan.get("completed_at") or _now_iso()
-        else:
-            plan.pop("completed_at", None)
-
-        _write_json(path, self._encrypt_execution_plan(plan))
-        return {
-            "status": "updated",
-            "step_order": step_order,
-            "step_status": status,
-            "playbook_id": playbook_id,
-            "completed": completed,
-            "total": total,
-            "outcome": outcome,
-        }
+        if "error" in result_box:
+            return {"error": result_box["error"]}
+        return result_box.get("result", {"error": "unexpected"})
 
     def get_execution_status(self, playbook_id: str) -> dict:
         """Return the current execution state for a playbook."""

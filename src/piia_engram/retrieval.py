@@ -825,10 +825,23 @@ class RetrievalMixin:
             results["decisions"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
 
         if scope in ("all", "playbooks"):
+            index_entries = [
+                e for e in self._read_playbook_index()
+                if e.get("status") == "active"
+            ]
+            if terms:
+                lower_terms = [t.lower() for t in terms]
+                def _index_matches(entry):
+                    title = (entry.get("title") or "").lower()
+                    domain = (entry.get("domain") or "").lower()
+                    text = f"{title} {domain}"
+                    return any(t in text for t in lower_terms)
+                matched = [e for e in index_entries if _index_matches(e)]
+                unmatched = [e for e in index_entries if not _index_matches(e)]
+                index_entries = matched + unmatched[: max(0, (limit or 10) * 2 - len(matched))]
+
             candidates = []
-            for entry in self._read_playbook_index():
-                if entry.get("status") != "active":
-                    continue
+            for entry in index_entries:
                 pb = self._read_playbook_by_id(entry.get("id", ""))
                 if (
                     pb

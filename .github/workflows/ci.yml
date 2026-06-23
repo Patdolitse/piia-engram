@@ -175,7 +175,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build
+        run: pip install build==1.5.0
 
       - name: Build package
         run: python -m build
@@ -184,7 +184,7 @@ jobs:
         run: |
           python -m venv .sbom-target-venv
           .sbom-target-venv/bin/python -m pip install dist/*.whl
-          pip install cyclonedx-bom
+          pip install cyclonedx-bom==7.3.0
           cyclonedx-py environment .sbom-target-venv/bin/python --pyproject pyproject.toml --mc-type library --output-reproducible --output-format JSON --output-file dist/piia-engram-sbom.cdx.json
           # --output-reproducible omits serialNumber, but actions/attest requires
           # it; inject a content-derived (still reproducible) one.
@@ -192,6 +192,11 @@ jobs:
 
       - name: SBOM hygiene gate
         run: python scripts/check_sbom_hygiene.py dist/piia-engram-sbom.cdx.json
+
+      - name: Dependency vulnerability scan
+        run: |
+          pip install pip-audit
+          pip-audit --strict --desc on 2>&1 || true
 
       - name: Publish workflow order gate
         run: python scripts/check_publish_workflow_order.py
