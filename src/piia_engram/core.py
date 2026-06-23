@@ -144,10 +144,20 @@ class Engram(
             salt = b""
             if salt_path.is_file():
                 salt = salt_path.read_bytes()
+                if len(salt) != 16:
+                    if self._has_existing_ciphertext():
+                        raise RuntimeError(
+                            f".corpus_salt in {self.root} is corrupted "
+                            f"({len(salt)} bytes, expected 16). Encrypted "
+                            "corpus data (enc:v2c:) exists — restore the "
+                            "original .corpus_salt from backup."
+                        )
+                    if not read_only:
+                        salt = os.urandom(16)
+                        self._atomic_write_bytes(salt_path, salt)
+                    else:
+                        salt = b""
             else:
-                # Fail-closed: if corpus files already contain enc:v2c: data
-                # but the salt is missing, refuse to create a new salt — that
-                # would make existing data permanently unreadable.
                 if self._has_existing_ciphertext():
                     raise RuntimeError(
                         f".corpus_salt is missing from {self.root} but encrypted "
@@ -155,13 +165,10 @@ class Engram(
                         ".corpus_salt file to recover your data. Creating a new "
                         "salt would make existing data permanently unreadable."
                     )
-                # A read_only open is a guaranteed zero-write: never mint a salt
-                # or create the root. With no existing ciphertext there is
-                # nothing to decrypt, so plaintext-only reading is correct.
                 if not read_only:
                     salt = os.urandom(16)
                     self.root.mkdir(parents=True, exist_ok=True)
-                    salt_path.write_bytes(salt)
+                    self._atomic_write_bytes(salt_path, salt)
             if salt:
                 self._corpus_key = self._crypto.derive_corpus_key(salt)
             # A plaintext hybrid search index left over from a pre-encryption
@@ -571,6 +578,26 @@ class Engram(
             _write_json(self._session_state_path, data)
         except Exception:
             pass
+
+    @staticmethod
+    def _atomic_write_bytes(path: Path, data: bytes) -> None:
+        """Write bytes atomically via temp file + fsync + rename."""
+        import tempfile
+        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            Path(tmp).replace(path)
+        except BaseException:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def _has_existing_ciphertext(self) -> bool:
         """Quick check: do any corpus files contain enc:v2c: data?
