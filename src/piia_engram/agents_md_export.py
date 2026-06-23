@@ -28,6 +28,16 @@ from .export_redaction import redact_export_text
 from .sensitivity import SENSITIVITY_ORDER, classify_item
 
 _DEFAULT_MAX_SENSITIVITY = "work"
+_EXPORT_ALLOWED_LEVELS = frozenset({"public", "work", "private"})
+
+
+def _validate_max_sensitivity(level: str) -> None:
+    if level not in _EXPORT_ALLOWED_LEVELS:
+        raise ValueError(
+            f"Invalid max_sensitivity={level!r} for export. "
+            f"Allowed: {sorted(_EXPORT_ALLOWED_LEVELS)}. "
+            "'secret' is not allowed — secret items must not be exported."
+        )
 
 
 def _rank(level: str) -> int:
@@ -75,6 +85,7 @@ def select_exportable(
     max_sensitivity: str = _DEFAULT_MAX_SENSITIVITY,
 ) -> list[dict[str, Any]]:
     """Return the subset of entries eligible for AGENTS.md/CLAUDE.md export."""
+    _validate_max_sensitivity(max_sensitivity)
     max_rank = _rank(max_sensitivity)
     selected: list[dict[str, Any]] = []
     for entry in entries or []:

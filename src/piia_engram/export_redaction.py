@@ -26,7 +26,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .sensitivity import _EMAIL_RE, _SECRET_VALUE_RE
+from .sensitivity import (
+    _CARD_RE,
+    _CN_ID_RE,
+    _CN_PHONE_RE,
+    _EMAIL_RE,
+    _SECRET_VALUE_RE,
+    _luhn_ok,
+)
 
 # Absolute user-home paths that must never appear in a committable / shared
 # export artifact. Kept narrow (home directories only) so ordinary repo-relative
@@ -35,11 +42,15 @@ _WIN_HOME_RE = re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[^\\/:*?\"<>|\r\n]+", re.I
 _POSIX_HOME_RE = re.compile(r"/(?:home|Users)/[^/\s:]+")
 
 # Ordered so the most specific / most severe categories win when ranges overlap.
-_SCANNERS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
+# 4th element is an optional per-match validator (returns True to keep).
+_SCANNERS: tuple[tuple[str, str, re.Pattern[str], ...], ...] = (
     ("secret", "high", _SECRET_VALUE_RE),
     ("user_path", "warn", _WIN_HOME_RE),
     ("user_path", "warn", _POSIX_HOME_RE),
     ("email", "warn", _EMAIL_RE),
+    ("phone", "warn", _CN_PHONE_RE),
+    ("id_number", "warn", _CN_ID_RE),
+    ("card", "warn", _CARD_RE, _luhn_ok),
 )
 
 
@@ -68,11 +79,13 @@ def scan_export_text(text: str) -> list[dict[str, Any]]:
         return []
     findings: list[dict[str, Any]] = []
     seen: set[tuple[int, int]] = set()  # de-dup overlapping ranges, first wins
-    for category, severity, pattern in _SCANNERS:
+    for entry in _SCANNERS:
+        category, severity, pattern = entry[0], entry[1], entry[2]
+        validator = entry[3] if len(entry) > 3 else None
         for m in pattern.finditer(text):
+            if validator and not validator(m.group()):
+                continue
             span = (m.start(), m.end())
-            # Skip if this exact range was already claimed by a higher-priority
-            # scanner (e.g. an email inside a path is reported once, as the path).
             if any(span[0] >= s and span[1] <= e for s, e in seen):
                 continue
             seen.add(span)
@@ -112,8 +125,12 @@ def redact_export_text(text: str, *, placeholder: str = "[REDACTED]") -> str:
     if not isinstance(text, str) or not text:
         return text or ""
     spans: list[tuple[int, int]] = []
-    for _category, _severity, pattern in _SCANNERS:
+    for entry in _SCANNERS:
+        pattern = entry[2]
+        validator = entry[3] if len(entry) > 3 else None
         for m in pattern.finditer(text):
+            if validator and not validator(m.group()):
+                continue
             spans.append((m.start(), m.end()))
     if not spans:
         return text
