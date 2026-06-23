@@ -274,3 +274,138 @@ def test_lock_timeout_message_hides_full_path(tmp_path):
             _atomic_write_json(path, {"data": 1})
         # Should NOT contain the full directory path
         assert str(tmp_path) not in str(exc_info.value)
+
+
+# ── _update_json corruption fail-closed tests ─────────────────────
+
+
+class TestUpdateJsonCorruptionFailClosed:
+    """_update_json must propagate DataCorruptionError on corrupt input,
+    never silently overwrite with defaults. (X2-4 / security-critical)"""
+
+    def test_corrupt_json_raises_and_preserves_file(self, tmp_path):
+        """Corrupt file → DataCorruptionError, original bytes untouched."""
+        path = tmp_path / "data.json"
+        bad_bytes = b"{{not json at all!!"
+        path.write_bytes(bad_bytes)
+
+        with pytest.raises(DataCorruptionError):
+            _update_json(path, lambda cur: {**cur, "new": True})
+
+        assert path.read_bytes() == bad_bytes
+
+    def test_corrupt_json_creates_backup(self, tmp_path):
+        """Corrupt file → .corrupt.* backup created."""
+        path = tmp_path / "data.json"
+        path.write_text("truncated{", encoding="utf-8")
+
+        with pytest.raises(DataCorruptionError):
+            _update_json(path, lambda cur: cur)
+
+        backups = list(tmp_path.glob("data.corrupt.*.json"))
+        assert len(backups) >= 1
+
+    def test_empty_file_raises_not_overwrites(self, tmp_path):
+        """0-byte file → DataCorruptionError, NOT silently replaced by default."""
+        path = tmp_path / "data.json"
+        path.write_bytes(b"")
+
+        with pytest.raises(DataCorruptionError):
+            _update_json(path, lambda cur: {"replaced": True})
+
+        assert path.read_bytes() == b""
+
+    def test_binary_garbage_raises(self, tmp_path):
+        """Random binary bytes → DataCorruptionError."""
+        path = tmp_path / "data.json"
+        path.write_bytes(bytes(range(256)))
+
+        with pytest.raises(DataCorruptionError):
+            _update_json(path, lambda cur: {"replaced": True})
+
+        assert len(path.read_bytes()) == 256
+
+    def test_mutator_never_called_on_corrupt(self, tmp_path):
+        """Mutator must NOT execute when the file is corrupt."""
+        path = tmp_path / "data.json"
+        path.write_text("not valid json", encoding="utf-8")
+        called = {"n": 0}
+
+        def mutator(cur):
+            called["n"] += 1
+            return cur
+
+        with pytest.raises(DataCorruptionError):
+            _update_json(path, mutator)
+
+        assert called["n"] == 0
+
+
+class TestGrantStoreCorruptionPropagation:
+    """GrantStore methods must propagate DataCorruptionError from storage,
+    never fall back to empty grants (would erase trust state)."""
+
+    def test_set_grant_on_corrupt_file(self, tmp_path):
+        from piia_engram.governance_store import GrantStore
+
+        store = GrantStore(tmp_path)
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text("not json!", encoding="utf-8")
+
+        with pytest.raises(DataCorruptionError):
+            store.set_grant("agent-1", "private-self")
+
+    def test_revoke_on_corrupt_file(self, tmp_path):
+        from piia_engram.governance_store import GrantStore
+
+        store = GrantStore(tmp_path)
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text("truncated{", encoding="utf-8")
+
+        with pytest.raises(DataCorruptionError):
+            store.revoke("agent-1")
+
+    def test_load_on_corrupt_file(self, tmp_path):
+        from piia_engram.governance_store import GrantStore
+
+        store = GrantStore(tmp_path)
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text("{bad", encoding="utf-8")
+
+        with pytest.raises(DataCorruptionError):
+            store._load()
+
+
+class TestRelationStoreCorruptionPropagation:
+    """RelationStore must propagate DataCorruptionError, never silently
+    return empty edges (would erase decision threads)."""
+
+    def test_add_relation_on_corrupt_file(self, tmp_path):
+        from piia_engram.governance_store import RelationStore
+
+        store = RelationStore(tmp_path)
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text("not json!", encoding="utf-8")
+
+        with pytest.raises(DataCorruptionError):
+            store.add_relation("id-a", "supersedes", "id-b")
+
+    def test_remove_relation_on_corrupt_file(self, tmp_path):
+        from piia_engram.governance_store import RelationStore
+
+        store = RelationStore(tmp_path)
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text("{{bad", encoding="utf-8")
+
+        with pytest.raises(DataCorruptionError):
+            store.remove_relation("id-a", "supersedes", "id-b")
+
+    def test_load_on_corrupt_file(self, tmp_path):
+        from piia_engram.governance_store import RelationStore
+
+        store = RelationStore(tmp_path)
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text("corrupted!", encoding="utf-8")
+
+        with pytest.raises(DataCorruptionError):
+            store._load()

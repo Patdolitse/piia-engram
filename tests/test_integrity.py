@@ -144,3 +144,58 @@ def test_no_repair_side_effects(root):
     after = {p.name: p.read_bytes() for p in (root / "knowledge").iterdir()}
     assert before == after
     assert set(os.listdir(root)) == files_before
+
+
+# -- Playbook split-file orphan / dangling detection (1-1) -------------------
+
+
+def _setup_split_playbooks(root):
+    """Create a split playbooks/ layout with body files + _index.json."""
+    pb_dir = root / "playbooks"
+    pb_dir.mkdir(parents=True, exist_ok=True)
+    # Body files
+    _write_json(pb_dir / "aaa111.json", {"id": "aaa111", "title": "Alpha"})
+    _write_json(pb_dir / "bbb222.json", {"id": "bbb222", "title": "Beta"})
+    _write_json(pb_dir / "ccc333.json", {"id": "ccc333", "title": "Gamma"})
+    # Index only references aaa111 and bbb222 — ccc333 is orphaned
+    _write_json(pb_dir / "_index.json", [
+        {"id": "aaa111", "title": "Alpha", "status": "active"},
+        {"id": "bbb222", "title": "Beta", "status": "active"},
+        {"id": "ddd444", "title": "Delta", "status": "active"},  # dangling: no body
+    ])
+
+
+def test_orphaned_playbook_body_detected(tmp_path):
+    """Body file without index entry should be flagged as orphan."""
+    _setup_split_playbooks(tmp_path)
+    report = integrity.scan_integrity(tmp_path)
+    problems = [p for p in report.get("problems", [])
+                if p.get("type") == "orphaned_playbook_body"]
+    assert len(problems) >= 1
+    orphan_ids = {p.get("playbook_id") for p in problems}
+    assert "ccc333" in orphan_ids
+
+
+def test_dangling_index_entry_detected(tmp_path):
+    """Index entry without body file should be flagged as dangling."""
+    _setup_split_playbooks(tmp_path)
+    report = integrity.scan_integrity(tmp_path)
+    problems = [p for p in report.get("problems", [])
+                if p.get("type") == "dangling_playbook_index"]
+    assert len(problems) >= 1
+    dangling_ids = {p.get("playbook_id") for p in problems}
+    assert "ddd444" in dangling_ids
+
+
+def test_consistent_playbooks_no_problems(tmp_path):
+    """Fully consistent split playbooks should report zero orphan/dangling."""
+    pb_dir = tmp_path / "playbooks"
+    pb_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(pb_dir / "aaa111.json", {"id": "aaa111", "title": "Alpha"})
+    _write_json(pb_dir / "_index.json", [
+        {"id": "aaa111", "title": "Alpha", "status": "active"},
+    ])
+    report = integrity.scan_integrity(tmp_path)
+    pb_problems = [p for p in report.get("problems", [])
+                   if p.get("type") in ("orphaned_playbook_body", "dangling_playbook_index")]
+    assert len(pb_problems) == 0

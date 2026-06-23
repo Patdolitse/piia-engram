@@ -519,12 +519,18 @@ class RetrievalMixin:
         relations are rejected (returns added=False). This is the explicit
         edge-building path (v1); semi-automatic supersedes suggestions land
         later.
+
+        Staging-tier items are excluded: relations must only link verified
+        knowledge so that decision threads and version chains are not
+        polluted with unconfirmed items.
         """
         from .governance_store import RelationStore
 
-        # Validate both endpoints exist, so threads aren't polluted with edges
-        # to unknown ids.
-        known = {str(e["id"]) for e in self._all_indexable_entries() if e.get("id")}
+        known = {
+            str(e["id"])
+            for e in self._all_indexable_entries()
+            if e.get("id") and e.get("tier", "verified") != "staging"
+        }
         if str(src_id) not in known or str(dst_id) not in known:
             return {"added": False, "reason": "unknown_id",
                     "src": str(src_id), "rel": rel, "dst": str(dst_id)}
