@@ -150,7 +150,6 @@ class ContextStoreMixin:
 
         file_path = tool_dir / f"{session_id}.md"
         timestamp = now.strftime("%H:%M")
-        appended = file_path.exists()
 
         # Build checkpoint body
         body = repair_text(content).text
@@ -167,16 +166,19 @@ class ContextStoreMixin:
                     body += f" → {result_summary}"
                 body += "\n"
 
-        if appended:
-            existing = file_path.read_text(encoding="utf-8")
-            entry = f"\n### {timestamp}\n{body}\n"
-            file_path.write_text(existing + entry, encoding="utf-8")
-        else:
-            header = f"# Session: {tool} @ {now.strftime('%Y-%m-%d %H:%M')}\n"
-            if project_folder:
-                header += f"## Project: {project_folder}\n"
-            header += f"\n### {timestamp}\n{body}\n"
-            file_path.write_text(header, encoding="utf-8")
+        import portalocker
+        lock_path = tool_dir / ".engram-write.lock"
+        with portalocker.Lock(lock_path, "a", timeout=5):
+            appended = file_path.exists()
+            if appended:
+                with open(file_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n### {timestamp}\n{body}\n")
+            else:
+                header = f"# Session: {tool} @ {now.strftime('%Y-%m-%d %H:%M')}\n"
+                if project_folder:
+                    header += f"## Project: {project_folder}\n"
+                header += f"\n### {timestamp}\n{body}\n"
+                file_path.write_text(header, encoding="utf-8")
 
         return {
             "session_id": session_id,

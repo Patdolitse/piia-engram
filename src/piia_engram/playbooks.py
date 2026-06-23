@@ -1322,21 +1322,34 @@ class PlaybookMixin:
 
     def update_playbook(self, playbook_id: str, updates: dict) -> dict:
         """Update fields on a playbook entry."""
-        pb = self._read_playbook_by_id(playbook_id)
-        if pb is None:
+        updates = self._repair_incoming_text(dict(updates))
+
+        def _apply(pb: dict) -> dict:
+            for key, value in updates.items():
+                if key in _ALLOWED_PLAYBOOK_UPDATE_FIELDS:
+                    pb[key] = value
+            pb["last_updated"] = _now_iso()
+            pb["version"] = pb.get("version", 1) + 1
+            return self._ensure_playbook_fields(pb)
+
+        result = self._update_playbook_file_by_id(playbook_id, _apply)
+        if result is None:
             return {"error": f"Playbook not found: {playbook_id}"}
 
-        updates = self._repair_incoming_text(dict(updates))
-        for key, value in updates.items():
-            if key in _ALLOWED_PLAYBOOK_UPDATE_FIELDS:
-                pb[key] = value
-        pb["last_updated"] = _now_iso()
-        pb["version"] = pb.get("version", 1) + 1
-        pb = self._ensure_playbook_fields(pb)
-        self._write_playbook_and_index(pb)
+        idx_entry = self._playbook_index_entry(result)
 
+        def _upsert(index: list[dict]) -> list[dict]:
+            for i, entry in enumerate(index):
+                if entry.get("id") == playbook_id:
+                    index[i] = idx_entry
+                    break
+            else:
+                index.append(idx_entry)
+            return index
+
+        self._update_playbook_index(_upsert)
         self._audit.log("write", "playbooks", detail=f"updated {playbook_id}")
-        return pb
+        return result
 
     def archive_playbook(self, playbook_id: str) -> dict:
         """Mark a playbook as outdated without deleting it."""
