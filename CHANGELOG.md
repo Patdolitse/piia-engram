@@ -6,6 +6,19 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.12.0] - 2026-06-23
+
+### Fixed
+- Playbook writes are now atomic: body file and shared index are committed together under a single lock, with automatic rollback on partial failure.
+- Playbook access-count bumps run inside the file lock, closing a race where concurrent reads could lose increments.
+- `save_execution_plan` no longer overwrites in-progress step states — a second save merges with existing step progress instead of replacing it.
+- Watcher file-state persistence uses deep merge with monotonic watermarks, preventing concurrent scans from silently dropping sibling file entries.
+- Web reader SSRF defense now resolves DNS before allowing a request, blocking domains whose A record points to a private IP (DNS-rebinding defense). Redirect hops are re-validated against the private-IP blocklist.
+- Staging-tier knowledge items are excluded from the relation surface — `add_relation` no longer accepts unverified items as endpoints.
+- JSON corruption from concurrent `_update_json` writes is caught fail-closed instead of silently proceeding.
+- Cross-process file locking hardened with `portalocker` across all mutable stores.
+- Timezone handling normalized to UTC throughout.
+
 ## [4.11.0] - 2026-06-22
 
 ### Added
