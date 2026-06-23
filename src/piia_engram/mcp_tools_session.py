@@ -109,6 +109,7 @@ async def list_agent_sessions(
 async def get_resume_brief(
     project_folder: str = "",
     token_budget: int = 2000,
+    include_resume_pack: bool = False,
 ) -> str:
     """跨会话/跨工具接续简报（v3.30 新增）。 / Cross-session, cross-tool resume brief.
 
@@ -135,6 +136,8 @@ async def get_resume_brief(
             Project folder (optional). Empty returns identity-only.
         token_budget: 输出 token 软上限（默认 2000，约 8000 字符）。 /
             Soft cap for output tokens (default 2000 ≈ 8000 chars).
+        include_resume_pack: Include structured ``project_resume_pack.v1`` in
+            the JSON response. Defaults to false to preserve existing output.
     """
     # Auto-bootstrap on first ever call when store is empty.
     from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
@@ -145,6 +148,7 @@ async def get_resume_brief(
     brief = S._get_engram().get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
+        include_resume_pack=include_resume_pack,
     )
     # a2: embed caller permissions into the brief's markdown body
     # (same pattern as a1 in get_user_context, but targeting the dict)

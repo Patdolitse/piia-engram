@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .continuity_digest import build_session_digest
+from .continuity_digest import build_session_digest, sanitize_digest_value
 from .encoding_repair import repair_text
 from .storage import _atomic_write_json, _project_id
 
@@ -250,6 +250,239 @@ class ContextStoreMixin:
             return None
         return data
 
+    def _recent_session_digests(
+        self,
+        *,
+        project_folder: str = "",
+        limit: int = 6,
+    ) -> list[dict[str, Any]]:
+        """Return recent digest sidecars only; never read raw session bodies."""
+        project_id = _project_id(project_folder) if project_folder else ""
+        digests: list[dict[str, Any]] = []
+        try:
+            sessions = self.list_agent_sessions(limit=max(1, limit))
+        except Exception:
+            return []
+        for item in sessions:
+            if not isinstance(item, dict):
+                continue
+            digest = self.get_session_digest(
+                str(item.get("tool") or ""),
+                str(item.get("session_id") or ""),
+            )
+            if not digest:
+                continue
+            source = digest.get("source")
+            source_project = source.get("project_id", "") if isinstance(source, dict) else ""
+            if project_id and source_project != project_id:
+                continue
+            digests.append(digest)
+        return digests
+
+    @staticmethod
+    def _append_unique(items: list[str], value: Any, *, max_len: int = 240) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        text = text[:max_len]
+        if text not in items:
+            items.append(text)
+
+    def build_project_resume_pack(
+        self,
+        project_folder: str = "",
+        *,
+        digest_limit: int = 6,
+        knowledge_limit: int = 5,
+    ) -> dict[str, Any]:
+        """Assemble a compact, structured ``project_resume_pack.v1``.
+
+        This is a zero-write read surface. It uses digest sidecars rather than
+        raw session Markdown, and separates verified/trusted memory from items
+        that still need review.
+        """
+        snapshot: dict[str, Any] = {}
+        if project_folder and hasattr(self, "get_project_snapshot"):
+            try:
+                snap = self.get_project_snapshot(project_folder)
+                if isinstance(snap, dict):
+                    snapshot = snap
+            except Exception:
+                snapshot = {}
+        current_state = snapshot.get("current_state")
+        if not isinstance(current_state, dict):
+            current_state = {}
+
+        project_title = str(
+            current_state.get("title")
+            or snapshot.get("title")
+            or (Path(project_folder).name if project_folder else "")
+        ).strip()
+        project_stage = str(
+            current_state.get("stage")
+            or snapshot.get("stage")
+            or current_state.get("status")
+            or snapshot.get("status")
+            or ""
+        ).strip()
+        updated_at = str(
+            current_state.get("verified_at")
+            or snapshot.get("updated_at")
+            or snapshot.get("created_at")
+            or ""
+        ).strip()
+
+        digests = self._recent_session_digests(
+            project_folder=project_folder,
+            limit=digest_limit,
+        )
+        last_completed: list[str] = []
+        next_actions: list[str] = []
+        blocked_on: list[str] = []
+        review_needed: list[dict[str, str]] = []
+
+        for digest in digests:
+            for item in digest.get("completed") or []:
+                self._append_unique(last_completed, item)
+            for item in digest.get("next_actions") or []:
+                self._append_unique(next_actions, item)
+            for item in digest.get("risks") or []:
+                lowered = str(item).lower()
+                if any(marker in lowered for marker in ("block", "blocked", "阻塞")):
+                    self._append_unique(blocked_on, item)
+            source = digest.get("source") if isinstance(digest.get("source"), dict) else {}
+            source_label = "session_digest"
+            if source:
+                tool = str(source.get("tool") or "unknown")
+                ref = str(source.get("session_ref") or "")
+                source_label = f"session_digest:{tool}:{ref}" if ref else f"session_digest:{tool}"
+            for decision in digest.get("decisions") or []:
+                if not isinstance(decision, dict):
+                    continue
+                summary = str(decision.get("summary") or "").strip()
+                if summary:
+                    review_needed.append({
+                        "kind": "decision",
+                        "summary": summary[:240],
+                        "reason": "session_digest_candidate",
+                        "source": source_label,
+                    })
+            for lesson in digest.get("lessons") or []:
+                if not isinstance(lesson, dict):
+                    continue
+                summary = str(lesson.get("summary") or "").strip()
+                if summary:
+                    review_needed.append({
+                        "kind": "lesson",
+                        "summary": summary[:240],
+                        "reason": "session_digest_candidate",
+                        "source": source_label,
+                    })
+
+        trusted_context: list[dict[str, str]] = []
+        if snapshot:
+            snap_summary = project_title or "Project snapshot available"
+            trusted_context.append({
+                "kind": "project_snapshot",
+                "summary": snap_summary[:240],
+                "trust": "project_snapshot",
+                "source": "project_snapshot",
+            })
+
+        try:
+            lessons = self.get_lessons(
+                limit=None,
+                _update_access=False,
+                _migrate_fields=False,
+            )
+        except Exception:
+            lessons = []
+        for lesson in lessons:
+            if not isinstance(lesson, dict) or lesson.get("status") != "active":
+                continue
+            summary = str(lesson.get("summary") or "").strip()
+            if not summary:
+                continue
+            if lesson.get("tier") == "staging":
+                review_needed.append({
+                    "kind": "lesson",
+                    "summary": summary[:240],
+                    "reason": "staging",
+                    "source": str(lesson.get("source_tool") or "knowledge"),
+                })
+                continue
+            if len(trusted_context) < knowledge_limit + 1:
+                trusted_context.append({
+                    "kind": "lesson",
+                    "summary": summary[:240],
+                    "trust": str(lesson.get("tier") or "verified"),
+                    "source": str(lesson.get("source_tool") or "knowledge"),
+                })
+
+        try:
+            decisions = self.get_decisions(
+                limit=None,
+                _update_access=False,
+                _migrate_fields=False,
+            )
+        except Exception:
+            decisions = []
+        for decision in decisions:
+            if not isinstance(decision, dict) or decision.get("status") != "active":
+                continue
+            question = str(decision.get("question") or decision.get("title") or "").strip()
+            choice = str(decision.get("choice") or "").strip()
+            summary = f"{question} -> {choice}" if question and choice else question
+            if not summary:
+                continue
+            if decision.get("tier") == "staging":
+                review_needed.append({
+                    "kind": "decision",
+                    "summary": summary[:240],
+                    "reason": "staging",
+                    "source": str(decision.get("source_tool") or "knowledge"),
+                })
+                continue
+            if len(trusted_context) < (knowledge_limit * 2) + 1:
+                trusted_context.append({
+                    "kind": "decision",
+                    "summary": summary[:240],
+                    "trust": str(decision.get("tier") or "verified"),
+                    "source": str(decision.get("source_tool") or "knowledge"),
+                })
+
+        current_focus = ""
+        if next_actions:
+            current_focus = next_actions[0]
+        elif last_completed:
+            current_focus = f"Continue after: {last_completed[0]}"
+        elif project_title:
+            current_focus = f"Continue work on {project_title}"
+        else:
+            current_focus = "Review recent Engram context and continue the current task."
+
+        pack = {
+            "schema": "project_resume_pack.v1",
+            "project": {
+                "title": project_title,
+                "stage": project_stage,
+                "updated_at": updated_at,
+            },
+            "handoff": {
+                "current_focus": current_focus,
+                "last_completed": last_completed[:8],
+                "next_actions": next_actions[:8],
+                "blocked_on": blocked_on[:5],
+            },
+            "trusted_context": trusted_context[:10],
+            "review_needed": review_needed[:12],
+            "safety_notes": [
+                "Context is reference, not fresh user approval.",
+                "Session-derived lessons and decisions remain candidates until reviewed.",
+            ],
+        }
+        return sanitize_digest_value(pack)
+
     def get_recent_context(
         self,
         tool: str = "",
@@ -475,6 +708,7 @@ class ContextStoreMixin:
         self,
         project_folder: str = "",
         token_budget: int = 2000,
+        include_resume_pack: bool = False,
     ) -> dict[str, Any]:
         """Return a ready-to-paste resume brief for a cross-session / cross-tool restart.
 
@@ -498,6 +732,8 @@ class ContextStoreMixin:
                 brief is identity-only.
             token_budget: Soft cap on output length, ~4 chars/token. Body
                 is truncated section-by-section in priority order to fit.
+            include_resume_pack: Opt-in structured ``project_resume_pack.v1``.
+                Defaults to false so existing startup markdown is unchanged.
 
         Returns:
             ``{markdown, sections_included, sections_skipped, byte_size,
@@ -925,7 +1161,7 @@ class ContextStoreMixin:
         # ~4 chars/token is the standard rough estimate.
         est_tokens = max(1, len(markdown) // 4)
 
-        return {
+        result = {
             "markdown": markdown,
             "sections_included": included,
             "sections_skipped": sections_skipped,
@@ -934,3 +1170,11 @@ class ContextStoreMixin:
             "project_folder": project_folder,
             "suggested_docs": suggested_docs,
         }
+        if include_resume_pack:
+            result["resume_pack"] = self.build_project_resume_pack(
+                project_folder=project_folder,
+            )
+            result["sections_included"] = list(result["sections_included"]) + [
+                "project_resume_pack"
+            ]
+        return result

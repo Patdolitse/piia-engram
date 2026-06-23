@@ -1795,6 +1795,19 @@ class TestResumeBriefWrapper:
         )
 
 
+    def test_mcp_get_resume_brief_can_include_project_resume_pack(
+        self, isolated_engram: Engram, tmp_path: Path,
+    ):
+        result = _run(
+            mcp_server.get_resume_brief(
+                project_folder=str(tmp_path),
+                include_resume_pack=True,
+            )
+        )
+        payload = json.loads(result)
+        assert payload["resume_pack"]["schema"] == "project_resume_pack.v1"
+
+
 class TestColdStartBootstrap:
     """Cold-start regression: bootstrap must be REACHABLE via get_user_context,
     not just unit-tested in isolation. The bug: bootstrap was gated behind
