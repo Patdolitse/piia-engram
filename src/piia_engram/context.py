@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
+from .continuity_digest import build_session_digest, sanitize_digest_value
 from .storage import (
     DECISION_TRIGGERS,
     DOMAIN_KEYWORDS,
@@ -68,6 +69,63 @@ def _make_extraction_metadata(
         metadata["quality_flags"] = list(quality.get("flags", []))
         metadata["quality_reason"] = quality.get("reason", "")
     return metadata
+
+
+def _verification_status_from_digest(digest: dict) -> str:
+    verification = digest.get("verification")
+    if not isinstance(verification, list) or not verification:
+        return "not_run"
+    statuses = {
+        str(item.get("status") or "not_run")
+        for item in verification
+        if isinstance(item, dict)
+    }
+    statuses.discard("not_run")
+    if not statuses:
+        return "not_run"
+    if len(statuses) == 1:
+        return next(iter(statuses))
+    return "mixed"
+
+
+def _confidence_label(quality: dict | None, confidence: object = 0.75) -> str:
+    score = 0.0
+    if quality:
+        try:
+            score = float(quality.get("score", 0.0))
+        except (TypeError, ValueError):
+            score = 0.0
+    conf = _confidence_float(confidence)
+    combined = max(score, conf)
+    if combined >= 0.85:
+        return "high"
+    if combined >= 0.55:
+        return "medium"
+    return "low"
+
+
+def _make_session_candidate_evidence(
+    summary: str,
+    *,
+    source_tool: str = "",
+    source_ref: str = "",
+    confidence: object = 0.75,
+    quality: dict | None = None,
+) -> dict:
+    digest = build_session_digest(
+        summary or "",
+        tool=source_tool or "unknown",
+        session_ref=source_ref or "",
+    )
+    evidence = {
+        "source_type": "session_digest",
+        "source_tool": source_tool or "unknown",
+        "source_ref": source_ref or "",
+        "verification_status": _verification_status_from_digest(digest),
+        "confidence": _confidence_label(quality, confidence),
+        "promotion_hint": "needs_owner_review",
+    }
+    return sanitize_digest_value(evidence)
 
 
 def _confidence_float(confidence: object = 0.7) -> float:
@@ -645,6 +703,7 @@ class ContextMixin:
         self,
         summary: str,
         source_tool: str = "",
+        source_ref: str = "",
         force_staging: bool = False,
     ) -> dict:
         """Extract lessons and decisions from a free-form session summary.
@@ -727,6 +786,13 @@ class ContextMixin:
                     "choice": "",
                     "domain": item_domain,
                     "source_tool": source_tool,
+                    "evidence": _make_session_candidate_evidence(
+                        summary,
+                        source_tool=source_tool,
+                        source_ref=source_ref,
+                        confidence=0.75,
+                        quality=quality,
+                    ),
                     # tier decided by risk gate: low/medium auto-absorb, high->staging
                     "extraction": _make_extraction_metadata(
                         "session_insights", sentence, trigger_reason, source_tool, 0.75, quality,
@@ -757,6 +823,13 @@ class ContextMixin:
                     "summary": sentence,
                     "domain": item_domain,
                     "source_tool": source_tool,
+                    "evidence": _make_session_candidate_evidence(
+                        summary,
+                        source_tool=source_tool,
+                        source_ref=source_ref,
+                        confidence=0.75,
+                        quality=quality,
+                    ),
                     # tier decided by risk gate: low/medium auto-absorb, high->staging
                     "extraction": _make_extraction_metadata(
                         "session_insights", sentence, trigger_reason, source_tool, 0.75, quality,
