@@ -6,6 +6,19 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.12.0] - 2026-06-23
+
+### 修复
+- Playbook 写入改为原子操作：body 文件与共享索引在同一把锁内提交，部分失败自动回滚。
+- Playbook 访问计数在文件锁内递增，修复并发读丢失增量的竞态。
+- `save_execution_plan` 不再覆盖进行中的步骤状态——二次保存会与已有步骤进度合并，而非替换。
+- Watcher 文件状态持久化改用深合并 + 单调水位线，防止并发扫描静默丢失 sibling 文件条目。
+- Web reader SSRF 防御增加 DNS 解析检查，阻断 A 记录指向内网 IP 的域名（DNS 重绑定防御）；重定向跳转后再次校验 private-IP 黑名单。
+- Staging 层级知识条目被排除出关系面——`add_relation` 不再接受未验证条目作为端点。
+- `_update_json` 并发写导致的 JSON 损坏现以 fail-closed 处理，而非静默继续。
+- 跨进程文件锁通过 `portalocker` 在所有可变存储上加固。
+- 时区处理全面统一为 UTC。
+
 ## [4.11.0] - 2026-06-22
 
 ### 新增
