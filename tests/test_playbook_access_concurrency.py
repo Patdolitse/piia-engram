@@ -86,3 +86,58 @@ class TestAccessCountConcurrency:
             assert final.get("status") != "active", (
                 "Deleted playbook was resurrected by concurrent access bump"
             )
+
+    def test_get_playbook_does_not_bump_deleted(self, tmp_path):
+        """get_playbook must not bump access_count / last_reviewed on deleted playbooks."""
+        eng = Engram(root=tmp_path)
+        eng.add_playbook({
+            "title": "Deletable playbook for status check",
+            "description": "Will be deleted then accessed",
+            "steps": [{"action": "Step 1", "detail": "do it"}],
+        })
+        pbs = eng.get_playbooks(_update_access=False)
+        assert len(pbs) >= 1
+        pb_id = pbs[0]["id"]
+
+        before = eng._read_playbook_by_id(pb_id)
+        before_count = before["access_count"]
+        before_reviewed = before["last_reviewed"]
+
+        eng.delete_playbook(pb_id, dry_run=False, confirm=True)
+
+        eng.get_playbook(pb_id, _update_access=True)
+
+        after = eng._read_playbook_by_id(pb_id)
+        assert after is not None
+        assert after["access_count"] == before_count, (
+            f"Deleted playbook access_count changed: {before_count} → {after['access_count']}"
+        )
+        assert after["last_reviewed"] == before_reviewed, (
+            "Deleted playbook last_reviewed was modified"
+        )
+
+    def test_get_playbook_does_not_bump_outdated(self, tmp_path):
+        """get_playbook must not bump access_count on outdated playbooks."""
+        eng = Engram(root=tmp_path)
+        eng.add_playbook({
+            "title": "Outdatable playbook for status check",
+            "description": "Will be outdated then accessed",
+            "steps": [{"action": "Step 1", "detail": "do it"}],
+        })
+        pbs = eng.get_playbooks(_update_access=False)
+        assert len(pbs) >= 1
+        pb_id = pbs[0]["id"]
+
+        eng._update_playbook_file_by_id(
+            pb_id, lambda p: {**p, "status": "outdated"}
+        )
+
+        before = eng._read_playbook_by_id(pb_id)
+        before_count = before["access_count"]
+
+        eng.get_playbook(pb_id, _update_access=True)
+
+        after = eng._read_playbook_by_id(pb_id)
+        assert after["access_count"] == before_count, (
+            f"Outdated playbook access_count changed: {before_count} → {after['access_count']}"
+        )

@@ -932,17 +932,28 @@ class ImportExportMixin:
 
         if knowledge.get("playbooks"):
             new_count = 0
+            new_body_paths: list[Path] = []
             existing_index = self._read_playbook_index()
             existing_titles = {e.get("title", "") for e in existing_index}
             for pb in knowledge["playbooks"]:
                 if pb.get("title") not in existing_titles:
                     pb = self._ensure_playbook_fields(pb)
-                    self._write_playbook_file(self._playbooks_dir / f"{pb['id']}.json", pb)
+                    body_path = self._playbooks_dir / f"{pb['id']}.json"
+                    self._write_playbook_file(body_path, pb)
+                    new_body_paths.append(body_path)
                     existing_index.append(self._playbook_index_entry(pb))
                     existing_titles.add(pb.get("title", ""))
                     new_count += 1
             if new_count:
-                self._write_playbook_index(existing_index)
+                try:
+                    self._write_playbook_index(existing_index)
+                except Exception:
+                    for p in new_body_paths:
+                        try:
+                            p.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    raise
             imported.append(f"playbooks(+{new_count})" if merge else f"playbooks({len(knowledge['playbooks'])})")
 
         if "relations" in knowledge:

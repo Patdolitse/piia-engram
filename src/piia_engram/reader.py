@@ -94,8 +94,26 @@ _BLOCKED_HOSTNAMES = frozenset({
 })
 
 
+def _is_private_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True if an already-parsed IP is private/loopback/link-local/reserved."""
+    return bool(
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or str(addr) == "0.0.0.0"
+    )
+
+
 def _is_private_url(url: str) -> bool:
-    """Return True if the URL targets a private, loopback, or cloud-metadata address."""
+    """Return True if the URL targets a private, loopback, or cloud-metadata address.
+
+    Performs DNS resolution on non-IP hostnames so that a public-looking
+    domain whose A record points to a private IP is still blocked
+    (DNS-rebinding defense).  DNS failure is fail-closed (returns True).
+    """
+    import socket
+
     try:
         parsed = urlparse(url)
         hostname = (parsed.hostname or "").lower().strip("[]")
@@ -107,12 +125,22 @@ def _is_private_url(url: str) -> bool:
 
     try:
         addr = ipaddress.ip_address(hostname)
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            return True
-        if str(addr) == "0.0.0.0":
-            return True
+        return _is_private_ip(addr)
     except ValueError:
         pass
+
+    try:
+        infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, OSError):
+        return True
+
+    for family, _type, _proto, _canon, sockaddr in infos:
+        try:
+            addr = ipaddress.ip_address(sockaddr[0])
+            if _is_private_ip(addr):
+                return True
+        except ValueError:
+            continue
 
     return False
 
@@ -201,7 +229,11 @@ def _mark_sidecar_dead() -> None:
 
 
 async def _fetch_html(url: str, *, timeout: int) -> str:
-    """GET ``url`` and return the response body. Lazy-imports ``httpx``."""
+    """GET ``url`` and return the response body. Lazy-imports ``httpx``.
+
+    After following redirects, the effective URL is re-checked against
+    ``_is_private_url`` so a public→private redirect chain is caught.
+    """
     import httpx  # lazy — keeps MCP server importable without the [reader] extra
 
     headers = {"User-Agent": _USER_AGENT}
@@ -210,6 +242,11 @@ async def _fetch_html(url: str, *, timeout: int) -> str:
     ) as client:
         resp = await client.get(url)
         resp.raise_for_status()
+        final_url = str(resp.url)
+        if final_url != url and _is_private_url(final_url):
+            raise ValueError(
+                "Refused: redirect landed on a private/loopback/metadata address."
+            )
         return resp.text
 
 

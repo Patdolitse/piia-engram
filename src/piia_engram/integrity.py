@@ -138,6 +138,51 @@ def _scan_relations(root: Path, store_ids: set[str]) -> dict[str, Any]:
             "dangling_edges": dangling, "cycles": report["totals"]["cycles"]}
 
 
+def _scan_split_playbooks(root_path: Path) -> list[dict[str, Any]]:
+    """Cross-check playbooks/{id}.json body files against _index.json."""
+    pb_dir = root_path / "playbooks"
+    index_path = pb_dir / "_index.json"
+    problems: list[dict[str, Any]] = []
+
+    if not pb_dir.is_dir():
+        return problems
+
+    body_ids: set[str] = set()
+    for f in pb_dir.iterdir():
+        if f.name.endswith(".json") and f.name != "_index.json" and f.is_file():
+            body_ids.add(f.stem)
+
+    index_ids: set[str] = set()
+    if index_path.is_file():
+        data, status = _read_json_file(index_path)
+        if status == "ok" and isinstance(data, list):
+            for entry in data:
+                if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+                    index_ids.add(entry["id"])
+
+    for orphan_id in sorted(body_ids - index_ids):
+        problems.append({
+            "severity": "medium",
+            "code": "orphaned_playbook_body",
+            "type": "orphaned_playbook_body",
+            "target": f"playbooks/{orphan_id}.json",
+            "playbook_id": orphan_id,
+            "detail": "body file exists without index entry",
+        })
+
+    for dangling_id in sorted(index_ids - body_ids):
+        problems.append({
+            "severity": "medium",
+            "code": "dangling_playbook_index",
+            "type": "dangling_playbook_index",
+            "target": "playbooks/_index.json",
+            "playbook_id": dangling_id,
+            "detail": "index entry references missing body file",
+        })
+
+    return problems
+
+
 def scan_integrity(root: str | Path, *, now: datetime | None = None) -> dict[str, Any]:
     """Run the full metadata-only integrity scan over an Engram ``root``.
 
@@ -183,6 +228,8 @@ def scan_integrity(root: str | Path, *, now: datetime | None = None) -> dict[str
         problems.append({"severity": "medium", "code": "relation_cycle",
                          "target": "relations.json",
                          "detail": f"{relations['cycles']} cycle(s) in version chain"})
+
+    problems.extend(_scan_split_playbooks(root_path))
 
     return {
         "root": str(root_path),

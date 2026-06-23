@@ -728,6 +728,8 @@ class PlaybookMixin:
         if _update_access:
             now = _now_iso()
             def _bump_single(p, _now=now):
+                if p.get("status", "active") != "active":
+                    return p
                 p["last_reviewed"] = _now
                 p["access_count"] = p.get("access_count", 0) + 1
                 return p
@@ -886,11 +888,17 @@ class PlaybookMixin:
         }
 
     def _write_playbook_and_index(self, pb: dict) -> None:
-        """Persist a playbook and keep the lightweight index in sync."""
+        """Persist a playbook and keep the lightweight index in sync.
+
+        Body is written first; if the index update fails the body file is
+        removed so no orphaned body can accumulate without an index entry.
+        """
         playbook_id = str(pb.get("id") or "")
         if not playbook_id:
             raise ValueError("missing playbook id")
-        self._write_playbook_file(self._playbooks_dir / f"{playbook_id}.json", pb)
+
+        body_path = self._playbooks_dir / f"{playbook_id}.json"
+        self._write_playbook_file(body_path, pb)
 
         idx_entry = self._playbook_index_entry(pb)
 
@@ -903,7 +911,15 @@ class PlaybookMixin:
                 index.append(idx_entry)
             return index
 
-        self._update_playbook_index(_upsert)
+        try:
+            self._update_playbook_index(_upsert)
+        except Exception:
+            # Roll back body file to prevent orphaned body without index entry
+            try:
+                body_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     @staticmethod
     def _scope_impact_summary(
@@ -1915,7 +1931,13 @@ class PlaybookMixin:
         return result
 
     def save_execution_plan(self, plan: dict) -> dict:
-        """Persist an execution plan returned by prepare_playbook_execution."""
+        """Persist an execution plan returned by prepare_playbook_execution.
+
+        If a plan already exists for this playbook, step statuses that have
+        progressed beyond ``"pending"`` are preserved (merged from the existing
+        plan into the new one).  This prevents a second ``save_execution_plan``
+        call from silently wiping in-progress step states.
+        """
         pid = plan.get("playbook_id", "")
         if not pid:
             return {"error": "missing playbook_id"}
@@ -1923,6 +1945,22 @@ class PlaybookMixin:
         plan["updated_at"] = _now_iso()
 
         def _init(current):
+            if not current:
+                return plan
+            old_steps = {
+                s.get("order"): s
+                for s in current.get("execution_plan", [])
+                if isinstance(s, dict)
+            }
+            for step in plan.get("execution_plan", []):
+                order = step.get("order")
+                old = old_steps.get(order)
+                if old and old.get("status", "pending") != "pending":
+                    step["status"] = old["status"]
+                    if old.get("notes"):
+                        step["notes"] = old["notes"]
+                    if old.get("updated_at"):
+                        step["updated_at"] = old["updated_at"]
             return plan
 
         self._update_execution_plan_file(pid, _init, allow_create=True)

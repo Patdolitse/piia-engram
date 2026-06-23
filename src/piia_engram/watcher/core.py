@@ -102,7 +102,31 @@ def _load_state() -> dict[str, Any]:
         return {}
 
 
-def _save_state(state: dict[str, Any]) -> None:
+def _monotonic_merge_entry(old: dict, new: dict) -> dict:
+    """Merge a per-file watcher entry, never regressing watermarks."""
+    merged = dict(old)
+    merged.update(new)
+    for key in ("offset", "mtime"):
+        old_val = old.get(key)
+        new_val = new.get(key)
+        if isinstance(old_val, (int, float)) and isinstance(new_val, (int, float)):
+            merged[key] = max(old_val, new_val)
+    return merged
+
+
+def _save_state(
+    state: dict[str, Any],
+    *,
+    scanned_tools: set[str] | None = None,
+) -> None:
+    """Persist watcher state with deep merge and monotonic watermarks.
+
+    For tools listed in *scanned_tools* (those that were authoritatively
+    scanned this cycle), file keys absent from *state* are pruned from the
+    persisted copy.  For all other tool keys, entries are only added/updated
+    (never removed), so a concurrent save for a different tool cannot delete
+    another scan's file keys.
+    """
     try:
         import portalocker
 
@@ -111,7 +135,21 @@ def _save_state(state: dict[str, Any]) -> None:
         lock_path = _state_lock_path()
         with portalocker.Lock(lock_path, "a", timeout=5):
             existing = _load_state()
-            existing.update(state)
+            _scanned = scanned_tools or set()
+            for key, value in state.items():
+                if isinstance(value, dict) and isinstance(existing.get(key), dict):
+                    old_tool = existing[key]
+                    for fk, fv in value.items():
+                        if isinstance(fv, dict) and isinstance(old_tool.get(fk), dict):
+                            old_tool[fk] = _monotonic_merge_entry(old_tool[fk], fv)
+                        else:
+                            old_tool[fk] = fv
+                    if key in _scanned:
+                        for fk in list(old_tool):
+                            if fk not in value:
+                                del old_tool[fk]
+                else:
+                    existing[key] = value
             (directory / _STATE_FILE).write_text(
                 json.dumps(existing, ensure_ascii=True, indent=0), encoding="utf-8"
             )
@@ -353,5 +391,5 @@ def scan_once(
             if key not in live:
                 del tool_state[key]
 
-    _save_state(state)
+    _save_state(state, scanned_tools=set(names))
     return counters

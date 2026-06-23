@@ -89,3 +89,73 @@ class TestUpdatePlaybookConcurrency:
         assert final["version"] == initial_version + 2, (
             f"Expected version {initial_version + 2}, got {final['version']}"
         )
+
+
+class TestPlaybookBodyIndexAtomicity:
+    """Body + index writes must be transactional: either both succeed or
+    neither is modified. (1-1 crash-safety fix)"""
+
+    def test_failed_index_update_rolls_back_body(self, tmp_path):
+        """If the index update fails, the body file must not be orphaned."""
+        from unittest.mock import patch
+
+        eng = Engram(root=tmp_path)
+        pb_dir = tmp_path / "playbooks"
+
+        body_files_before = set(pb_dir.glob("*.json")) if pb_dir.exists() else set()
+        idx_before = set()
+        if (pb_dir / "_index.json").exists():
+            import json
+            idx_before = {
+                e.get("id") for e in
+                json.loads((pb_dir / "_index.json").read_text(encoding="utf-8"))
+            }
+
+        original_update = eng._update_playbook_index
+
+        def _boom(mutator):
+            raise OSError("simulated index write failure")
+
+        with patch.object(eng, "_update_playbook_index", side_effect=_boom):
+            with pytest.raises(OSError, match="simulated"):
+                eng.add_playbook({
+                    "title": "Orphan candidate playbook",
+                    "trigger": "should not persist",
+                    "steps": [{"action": "noop"}],
+                })
+
+        body_files_after = set(pb_dir.glob("*.json")) if pb_dir.exists() else set()
+        new_bodies = body_files_after - body_files_before - {pb_dir / "_index.json"}
+        assert not new_bodies, (
+            f"Orphaned body file(s) without index entry: {[f.name for f in new_bodies]}"
+        )
+
+        if (pb_dir / "_index.json").exists():
+            import json
+            idx_after = {
+                e.get("id") for e in
+                json.loads((pb_dir / "_index.json").read_text(encoding="utf-8"))
+            }
+            assert idx_after == idx_before, "Index was modified despite failure"
+
+    def test_successful_add_writes_both_body_and_index(self, tmp_path):
+        """Normal add must create both body file and index entry."""
+        import json
+
+        eng = Engram(root=tmp_path)
+        result = eng.add_playbook({
+            "title": "Valid playbook for atomicity check",
+            "trigger": "manual",
+            "steps": [{"action": "deploy"}],
+        })
+        pb_id = result.get("id")
+        assert pb_id
+
+        body_path = tmp_path / "playbooks" / f"{pb_id}.json"
+        assert body_path.exists(), "Body file not created"
+
+        idx_path = tmp_path / "playbooks" / "_index.json"
+        assert idx_path.exists(), "Index not created"
+        idx = json.loads(idx_path.read_text(encoding="utf-8"))
+        idx_ids = {e.get("id") for e in idx}
+        assert pb_id in idx_ids, f"Playbook {pb_id} not in index"
