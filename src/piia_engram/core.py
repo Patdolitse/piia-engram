@@ -714,10 +714,17 @@ class Engram(
         profile = _read_json(self._identity_dir / "profile.json")
         profile = self._crypto.decrypt_fields(profile, ENCRYPTED_PROFILE_FIELDS)
         if safe:
+            # The safe projection must NEVER surface the inherently-sensitive
+            # encrypted PII fields (email/phone/real_name/id_number/...), even
+            # when the user has not configured restricted_fields (which defaults
+            # to []). These fields are encrypted at rest precisely because they
+            # are private, so a "safe" read — used by resource_profile, shareable
+            # reports, and the non-owner facet path — strips them unconditionally,
+            # unioned with any user-configured restricted_fields. (Code review
+            # 2026-06-23 S2-1/A1-1: empty restricted_fields let safe=True leak PII.)
             tb = self.get_trust_boundaries()
-            restricted = set(tb.get("restricted_fields", []))
-            if restricted:
-                profile = {key: value for key, value in profile.items() if key not in restricted}
+            restricted = set(tb.get("restricted_fields", [])) | set(ENCRYPTED_PROFILE_FIELDS)
+            profile = {key: value for key, value in profile.items() if key not in restricted}
         self._audit.log("read", "identity/profile")
         return profile
 

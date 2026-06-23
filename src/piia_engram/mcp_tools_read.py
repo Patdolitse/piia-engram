@@ -245,8 +245,14 @@ async def get_identity_facets(facet: str = "all", safe: bool = True) -> str:
         facet: all | profile | preferences | trust_boundaries | work_style | quality_standards | domains，默认 all 聚合全部。 / One facet name, or "all" (default) for the aggregate of every facet.
         safe: 仅作用于 profile 切面：默认 True，按 trust_boundaries 过滤敏感字段；设 False 仅在用户明确要求时使用。 / Applies to the profile facet only; default True filters sensitive fields per trust_boundaries. Set False only when the user explicitly requests full profile access.
     """
+    # A non-owner caller must not be able to opt out of the profile redaction by
+    # passing safe=False. Under governance, force safe=True for anyone below the
+    # private-self owner; the owner (and the byte-identical flag-off path, where
+    # caller_is_owner is always True) keeps the caller-supplied value. (Code
+    # review 2026-06-23 S2-1/A1-1: caller-controlled safe= leaked decrypted PII.)
+    effective_safe = safe or not S._gov_rt.caller_is_owner(S._engram.root)
     readers = {
-        "profile": lambda: S._engram.get_profile(safe=safe),
+        "profile": lambda: S._engram.get_profile(safe=effective_safe),
         "preferences": lambda: S._engram.get_preferences(),
         "trust_boundaries": lambda: S._engram.get_trust_boundaries(),
         "work_style": lambda: S._engram.get_work_style(),
