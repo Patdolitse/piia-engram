@@ -228,6 +228,7 @@ def render_session_digest_markdown(digest: dict, *, max_chars: int = 2000) -> st
     """Render a digest to compact markdown, bounded by ``max_chars``."""
     if not isinstance(digest, dict):
         return ""
+    digest = sanitize_digest_value(digest)
     lines = ["## Session digest"]
     goal = digest.get("goal") or ""
     if goal:

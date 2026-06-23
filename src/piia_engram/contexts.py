@@ -15,13 +15,15 @@ v3.30 additions (mechanism 5):
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .continuity_digest import build_session_digest
 from .encoding_repair import repair_text
-from .storage import _project_id
+from .storage import _atomic_write_json, _project_id
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,30 @@ class ContextStoreMixin:
     def _contexts_dir(self) -> Path:
         return self.root / "contexts"
 
+    def _session_digest_path(self, tool: str, session_id: str) -> Path:
+        tool_safe = _sanitize_tool_name(tool)
+        return self._contexts_dir / tool_safe / f"{session_id}.digest.json"
+
+    @staticmethod
+    def _digest_has_session_signal(digest: dict[str, Any]) -> bool:
+        signal_keys = (
+            "goal",
+            "completed",
+            "changed_files",
+            "verification",
+            "decisions",
+            "lessons",
+            "risks",
+            "next_actions",
+        )
+        for key in signal_keys:
+            value = digest.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, list) and value:
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
@@ -180,6 +206,15 @@ class ContextStoreMixin:
                 header += f"\n### {timestamp}\n{body}\n"
                 file_path.write_text(header, encoding="utf-8")
 
+        digest = build_session_digest(
+            body,
+            tool=tool_safe,
+            project_id=_project_id(project_folder) if project_folder else "",
+            session_ref=session_id,
+        )
+        if self._digest_has_session_signal(digest):
+            _atomic_write_json(self._session_digest_path(tool_safe, session_id), digest)
+
         return {
             "session_id": session_id,
             "file": str(file_path),
@@ -190,6 +225,30 @@ class ContextStoreMixin:
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
+
+    def get_session_digest(self, tool: str, session_id: str) -> dict[str, Any] | None:
+        """Return a saved ``session_digest.v1`` sidecar, if one exists.
+
+        Legacy context sessions are plain Markdown files with no digest sidecar;
+        callers should treat ``None`` as an expected backward-compatible result.
+        This read path is intentionally zero-write and never backfills old files.
+        """
+        session_ref = str(session_id or "").strip()
+        if not session_ref:
+            return None
+        path = self._session_digest_path(tool, session_ref)
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            logger.warning("failed to read session digest sidecar: %s", path.name)
+            return None
+        if not isinstance(data, dict):
+            return None
+        if data.get("schema") != "session_digest.v1":
+            return None
+        return data
 
     def get_recent_context(
         self,
