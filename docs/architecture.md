@@ -81,6 +81,15 @@ After the v3.14.1 refactor, the v3.16.0 reports split, and the v3.55.0 monolith 
 | [`reports_analytics.py`](../src/piia_engram/reports_analytics.py) | ~417 | `AnalyticsMixin` — `get_health_report`, `get_stale_knowledge`, `get_knowledge_digest`, `get_knowledge_overview`, `get_stats`, `export_knowledge_report` |
 | [`compat.py`](../src/piia_engram/compat.py) | ~320 | Migration adapters — `migrate_from_oca_memory` (legacy OCA tool), `export_to_openclaw` / `import_from_openclaw` (SOUL.md / MEMORY.md / USER.md format) |
 
+### Continuity additions
+
+The cross-session continuity layer is split deliberately:
+
+- [`contexts.py`](../src/piia_engram/contexts.py) owns local session checkpoints, daily logs, `get_resume_brief`, `session_digest.v1` sidecar writes, and opt-in `project_resume_pack.v1` assembly.
+- [`continuity_digest.py`](../src/piia_engram/continuity_digest.py) owns pure deterministic digest helpers for session summaries. It performs no file I/O, no network access, and no provider/model calls.
+
+Session Markdown remains the human-readable local record. The digest sidecar is the compact, redacted, machine-readable handoff surface used by resume packs.
+
 ### Supporting modules
 
 | Module | Lines | Responsibility |
@@ -202,6 +211,8 @@ Everything lives under `~/.engram/` (override with `ENGRAM_DIR` env var; legacy 
 │   └── engram_backup_<date>.json
 └── compat/                  empty in current schema (reserved for future migrations)
 ```
+
+Session checkpoints live under `~/.engram/contexts/<tool>/`. A meaningful saved session can have both `<session>.md` and an adjacent `<session>.digest.json` sidecar. The sidecar uses `session_digest.v1` and is safe to read without loading the raw Markdown body.
 
 ### Sensitive fields are encrypted in place
 

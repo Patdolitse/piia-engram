@@ -111,7 +111,25 @@ This is the recommended first call when moving between Claude Code, Codex, Curso
 2. The next tool starts by calling `get_resume_brief()`.
 3. The agent reads the handoff and suggested docs before asking the user to repeat context.
 
-### 3.3 Metadata-only continuity proof
+### 3.3 Structured continuity layer
+
+When `save_agent_context()` receives a meaningful session summary, Engram also writes a local `session_digest.v1` sidecar next to the Markdown context record. The digest is deterministic, redacted, and heuristic-based; it does not call a model and does not store raw transcripts in the digest.
+
+For startup flows that need a machine-readable handoff, call:
+
+```python
+get_resume_brief(project_folder="...", include_resume_pack=True)
+```
+
+This adds a `project_resume_pack.v1` field to the response. The pack separates:
+
+- recent completed work and next actions from session digests;
+- trusted context from verified/project-snapshot memory;
+- review-needed items from staging memory or session-derived candidates.
+
+Session-derived lessons and decisions may carry evidence metadata, but that metadata is for review. It does not make a memory verified and does not replace owner approval.
+
+### 3.4 Metadata-only continuity proof
 
 Use `engram continuity` when you want local proof that the handoff loop is ready without printing private memory bodies:
 
@@ -122,14 +140,14 @@ engram continuity --project /path/to/project --json
 
 The report includes session counts, contributing tool names, whether at least two tools have saved context, whether `get_resume_brief()` can build, and aggregate recall-loop signals from local telemetry / beta event counters. It does not print session bodies, lesson text, decision reasoning, raw telemetry events, session IDs, or local project paths.
 
-### 3.4 Client validation protocol
+### 3.5 Client validation protocol
 
 Use the [agent client validation runbook](runbooks/agent-client-validation.md) before describing a client as verified.
 It defines the shared purpose-first test pack for Cursor Agent, Hermes, OpenClaw-compatible file bridges, and future
 MCP hosts. Each run should state the test purpose, hypothesis, only variable, evidence, decision use, and what the
 test does not prove.
 
-### 3.5 Session Saving
+### 3.6 Session Saving
 
 At the end of each important conversation, the AI tool should call:
 ```
@@ -138,7 +156,7 @@ save_agent_context(tool="claude_code", content="session summary...", project_fol
 
 This saves the conversation's key context as a persistent record, available for recovery next time.
 
-### 3.6 Wrap-up Automatic Extraction
+### 3.7 Wrap-up Automatic Extraction
 
 When `wrap_up_session` is called, Engram automatically:
 1. Extracts lessons from the conversation content (marked as `tier: "staging"`)
