@@ -698,8 +698,8 @@ class Engram(
     def _migrate_v1_to_v2(self) -> None:
         """Migrate from schema v1.0 to v2.0 (idempotent)."""
         ver_path = self.root / "schema_version.json"
-        ver_data = _read_json(ver_path)
-        current = ver_data.get("schema_version", "1.0")
+        ver_data = _read_json(ver_path, allow_corrupt=True)
+        current = ver_data.get("schema_version", "1.0") if isinstance(ver_data, dict) else "1.0"
         if self._parse_schema_version(current) >= (2, 0):
             return
 
@@ -729,6 +729,8 @@ class Engram(
             })
 
         # 3) Bump schema version
+        if not isinstance(ver_data, dict):
+            ver_data = {}
         ver_data["schema_version"] = "2.0"
         ver_data["migrated_at"] = _now_iso()
         _write_json(ver_path, ver_data)
@@ -1424,6 +1426,9 @@ class Engram(
 
         if isinstance(lesson, dict):
             new_lesson = dict(lesson)
+            for k in ("summary", "detail", "domain"):
+                if k in new_lesson and not isinstance(new_lesson[k], str):
+                    new_lesson[k] = str(new_lesson[k])
         else:
             new_lesson = {"summary": str(lesson)}
             if domain:

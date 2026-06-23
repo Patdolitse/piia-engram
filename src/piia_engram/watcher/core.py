@@ -89,6 +89,10 @@ def _log(message: str) -> None:
         pass
 
 
+def _state_lock_path() -> Path:
+    return _state_dir() / ".engram-watcher.lock"
+
+
 def _load_state() -> dict[str, Any]:
     try:
         raw = (_state_dir() / _STATE_FILE).read_text(encoding="utf-8")
@@ -100,11 +104,17 @@ def _load_state() -> dict[str, Any]:
 
 def _save_state(state: dict[str, Any]) -> None:
     try:
+        import portalocker
+
         directory = _state_dir()
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / _STATE_FILE).write_text(
-            json.dumps(state, ensure_ascii=True, indent=0), encoding="utf-8"
-        )
+        lock_path = _state_lock_path()
+        with portalocker.Lock(lock_path, "a", timeout=5):
+            existing = _load_state()
+            existing.update(state)
+            (directory / _STATE_FILE).write_text(
+                json.dumps(existing, ensure_ascii=True, indent=0), encoding="utf-8"
+            )
     except Exception:
         pass
 

@@ -43,6 +43,9 @@ async def memory_store(
         S._track("memory_store", success=False)
         return refusal
 
+    if not isinstance(kind, str):
+        S._track("memory_store", success=False)
+        return "kind 必须是字符串。可用: lesson, decision, playbook"
     kind = kind.strip().lower()
 
     if items_json:
@@ -83,18 +86,33 @@ async def memory_store(
     if source_tool:
         content["source_tool"] = source_tool
 
-    kind = kind.strip().lower()
-
     # Schema validation per kind
+    def _str_field(d: dict, key: str) -> str:
+        v = d.get(key, "")
+        if not isinstance(v, str):
+            return ""
+        return v.strip()
+
     if kind == "lesson":
-        if not content.get("summary", "").strip():
+        if not isinstance(content.get("summary"), str):
+            return "lesson 的 summary 字段必须是字符串"
+        if not _str_field(content, "summary"):
             return "lesson 必须包含非空的 summary 字段"
     elif kind == "decision":
-        q = content.get("question", "") or content.get("title", "")
-        if not q.strip() or not content.get("choice", "").strip():
+        q = content.get("question") or content.get("title")
+        if q is not None and not isinstance(q, str):
+            return "decision 的 question/title 字段必须是字符串"
+        choice = content.get("choice")
+        if choice is not None and not isinstance(choice, str):
+            return "decision 的 choice 字段必须是字符串"
+        if not _str_field(content, "question") and not _str_field(content, "title"):
+            return "decision 必须包含非空的 question（或 title）和 choice 字段"
+        if not _str_field(content, "choice"):
             return "decision 必须包含非空的 question（或 title）和 choice 字段"
     elif kind == "playbook":
-        if not content.get("title", "").strip():
+        if not isinstance(content.get("title"), str):
+            return "playbook 的 title 字段必须是字符串"
+        if not _str_field(content, "title"):
             return "playbook 必须包含非空的 title 字段"
     elif kind:
         S._track("memory_store", success=False)

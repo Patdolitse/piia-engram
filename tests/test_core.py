@@ -791,8 +791,11 @@ def test_last_reviewed_updated_on_read(tmp_path: Path):
     lessons = engram.get_lessons()
 
     assert lessons[0]["last_reviewed"] != old_review
-    reviewed_at = datetime.fromisoformat(lessons[0]["last_reviewed"])
-    assert reviewed_at > datetime.now() - timedelta(minutes=1)
+    reviewed_at = datetime.fromisoformat(lessons[0]["last_reviewed"].replace("Z", "+00:00"))
+    if reviewed_at.tzinfo is not None:
+        reviewed_at = reviewed_at.replace(tzinfo=None)
+    from datetime import timezone as _tz
+    assert reviewed_at > datetime.now(_tz.utc).replace(tzinfo=None) - timedelta(minutes=1)
     assert lessons[0]["access_count"] == 1
 
 
@@ -828,7 +831,11 @@ def test_review_knowledge_updates_review_metadata(tmp_path: Path):
 
     assert reviewed["id"] == lesson["id"]
     assert reviewed["last_reviewed"] != old_review
-    assert datetime.fromisoformat(reviewed["last_reviewed"]) > datetime.now() - timedelta(minutes=1)
+    reviewed_ts = datetime.fromisoformat(reviewed["last_reviewed"].replace("Z", "+00:00"))
+    if reviewed_ts.tzinfo is not None:
+        reviewed_ts = reviewed_ts.replace(tzinfo=None)
+    from datetime import timezone as _tz
+    assert reviewed_ts > datetime.now(_tz.utc).replace(tzinfo=None) - timedelta(minutes=1)
     assert reviewed["access_count"] == 2
 
 

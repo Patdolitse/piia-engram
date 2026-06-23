@@ -6,7 +6,7 @@ class at runtime via ``ReportsMixin``.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from . import provenance as _provenance
 from .export_redaction import redact_export_text
@@ -76,7 +76,7 @@ class AnalyticsMixin:
         if outdated_lessons:
             warnings.append(f"{len(outdated_lessons)} 条教训已标记过时，可考虑清理")
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         lifecycle_items = [
             ("lesson", item)
             for item in active_lessons
@@ -169,7 +169,7 @@ class AnalyticsMixin:
         if total_active == 0:
             freshness = 100
         else:
-            review_cutoff = datetime.now() - timedelta(days=STALE_KNOWLEDGE_DAYS)
+            review_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=STALE_KNOWLEDGE_DAYS)
             fresh_count = 0
             for item in active_lessons + active_decisions:
                 if self._freshness_skip_decay(item):
@@ -258,7 +258,7 @@ class AnalyticsMixin:
     def get_stale_knowledge(self, days: int = STALE_KNOWLEDGE_DAYS, limit: int | None = 20) -> dict:
         """Return active lessons and decisions not reviewed for more than days."""
         days = max(0, int(days))
-        cutoff = datetime.now() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
         lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
         decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
 
@@ -395,7 +395,7 @@ class AnalyticsMixin:
         active_lessons = [l for l in lessons if l.get("status") == "active"]
         active_decisions = [d for d in decisions if d.get("status") == "active"]
 
-        recent_cutoff = datetime.now() - timedelta(days=7)
+        recent_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
         recent_items = []
         for lesson in active_lessons:
             created_at = lesson.get("created_at") or lesson.get("timestamp", "")
