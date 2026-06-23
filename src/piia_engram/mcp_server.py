@@ -223,6 +223,11 @@ def _require_engram(
     )
 
 
+def _get_engram() -> Engram:
+    """Shorthand for ``_require_engram()`` — used by tool handlers."""
+    return _require_engram()
+
+
 # argparse help should be a read-only, side-effect-free path. Initializing
 # Engram here can emit data-fragmentation warnings or touch session files
 # before argparse exits, so defer it only for the MCP help entrypoint.

@@ -24,11 +24,11 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
         domain: 默认领域（可填多个，逗号分隔），未命中关键词推断时使用。 / Default domain, optionally comma-separated; used when keyword inference does not find a domain.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="ingest_notes")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="ingest_notes")
     if refusal is not None:
         return refusal
     return S._json(S._locked_engram_call(
-        S._engram.ingest_notes,
+        S._get_engram().ingest_notes,
         text,
         source_tool=source_tool,
         domain=domain,
@@ -53,11 +53,11 @@ async def extract_session_insights(summary: str, source_tool: str = "") -> str:
         source_tool: 调用来源工具，如 'claude_code', 'codex'。 / Calling source tool, such as 'claude_code' or 'codex'.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="extract_session_insights")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="extract_session_insights")
     if refusal is not None:
         return refusal
     return S._json(S._locked_engram_call(
-        S._engram.extract_session_insights,
+        S._get_engram().extract_session_insights,
         summary,
         source_tool=source_tool,
     ))
@@ -78,7 +78,7 @@ async def update_knowledge(item_id: str, updates_json: str) -> str:
         updates_json: 要更新字段的 JSON 字符串。 / JSON string containing fields to update.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="update_knowledge")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="update_knowledge")
     if refusal is not None:
         return refusal
 
@@ -89,8 +89,8 @@ async def update_knowledge(item_id: str, updates_json: str) -> str:
     # Returns the FULL stored item; an attacker who guesses an id can no-op
     # update and read a secret item back through this "write" tool (Codex
     # round-16 P1-3). Gate the returned item — over-ceiling → withheld stub.
-    result = S._locked_engram_call(S._engram.update_knowledge, item_id, updates)
-    result = S._gov_rt.maybe_govern_one(S._engram.root, result, tool="update_knowledge")
+    result = S._locked_engram_call(S._get_engram().update_knowledge, item_id, updates)
+    result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="update_knowledge")
     return S._json(result)
 
 
@@ -108,15 +108,15 @@ async def archive_knowledge(item_id: str) -> str:
         item_id: 要归档的 lesson 或 decision ID。 / ID of the lesson or decision to archive.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="archive_knowledge")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="archive_knowledge")
     if refusal is not None:
         return refusal
 
-    result = S._locked_engram_call(S._engram.archive_knowledge, item_id)
+    result = S._locked_engram_call(S._get_engram().archive_knowledge, item_id)
     S._beta("knowledge_rejected", action="archive")
     # Returns the full stored item (delegates to update_*) — same read-back
     # bypass as update_knowledge; gate the returned item (Codex round-16 P1-3).
-    result = S._gov_rt.maybe_govern_one(S._engram.root, result, tool="archive_knowledge")
+    result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="archive_knowledge")
     return S._json(result)
 
 
@@ -141,7 +141,7 @@ async def confirm_knowledge(
         anchor_ref: by=anchor 时必填的锚点字符串，如 dep:jest 或 file:package.json。 / Required when by=anchor.
         project_root: by=anchor 时可选的当前仓库根目录，用于捕获 anchor_project_id。 / Optional current repository root for anchor project binding.
     """
-    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="confirm_knowledge")
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._get_engram().root, tool="confirm_knowledge")
     if refusal is not None:
         return refusal
 
@@ -152,14 +152,14 @@ async def confirm_knowledge(
         anchor_project_id = freshness_anchors.read_project_id(project_root)
 
     result = S._locked_engram_call(
-        S._engram.confirm_knowledge,
+        S._get_engram().confirm_knowledge,
         item_id,
         by=by,
         anchor_ref=anchor_ref or None,
         anchor_project_id=anchor_project_id,
     )
     result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="confirm_knowledge"
+        S._get_engram().root, result, tool="confirm_knowledge"
     )
     return S._json(result)
 
@@ -179,16 +179,16 @@ async def onboard_repo(project_root: str = "") -> str:
     Args:
         project_root: 仓库根目录；留空时使用当前工作目录。 / Repository root; defaults to cwd.
     """
-    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="onboard_repo")
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._get_engram().root, tool="onboard_repo")
     if refusal is not None:
         return refusal
 
     import os as _os
 
     root = project_root.strip() or _os.getcwd()
-    result = S._locked_engram_call(S._engram.onboard_repo, root)
+    result = S._locked_engram_call(S._get_engram().onboard_repo, root)
     result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="onboard_repo"
+        S._get_engram().root, result, tool="onboard_repo"
     )
     return S._json(result)
 
@@ -209,7 +209,7 @@ async def onboard_accept(item_id: str, project_root: str = "") -> str:
         item_id: onboard 候选的 ID。 / The onboard candidate id.
         project_root: 仓库根目录；留空时使用当前工作目录。 / Repository root; defaults to cwd.
     """
-    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="onboard_accept")
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._get_engram().root, tool="onboard_accept")
     if refusal is not None:
         return refusal
 
@@ -217,10 +217,10 @@ async def onboard_accept(item_id: str, project_root: str = "") -> str:
 
     root = project_root.strip() or _os.getcwd()
     result = S._locked_engram_call(
-        S._engram.accept_onboard_candidate, item_id, project_root=root
+        S._get_engram().accept_onboard_candidate, item_id, project_root=root
     )
     result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="onboard_accept"
+        S._get_engram().root, result, tool="onboard_accept"
     )
     return S._json(result)
 
@@ -242,17 +242,17 @@ async def check_anchors(
         project_root: 当前仓库根目录。 / Current repository root.
         adopt_legacy: 是否为旧 anchor 绑定当前 project id，但不重新判定状态。 / Whether to bind legacy anchors to the current project id without changing status.
     """
-    refusal = S._gov_rt.maybe_refuse_owner_write(S._engram.root, tool="check_anchors")
+    refusal = S._gov_rt.maybe_refuse_owner_write(S._get_engram().root, tool="check_anchors")
     if refusal is not None:
         return refusal
 
     result = S._locked_engram_call(
-        S._engram.revalidate_anchors,
+        S._get_engram().revalidate_anchors,
         project_root,
         adopt_legacy=adopt_legacy,
     )
     result = S._gov_rt.maybe_govern_owner_only(
-        S._engram.root, result, tool="check_anchors"
+        S._get_engram().root, result, tool="check_anchors"
     )
     return S._json(result)
 
@@ -301,7 +301,7 @@ async def review_staging(
     # "unknown action" hint (writer-spy matrix). Note: this is tighter than the
     # old read-only list_pending_staging — web callers are now refused even for
     # action="list" (documented in the v4 migration guide).
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="review_staging")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="review_staging")
     if refusal is not None:
         return refusal
 
@@ -317,7 +317,7 @@ async def review_staging(
 
         result = S._locked_engram_call(
             _list_pending,
-            S._engram,
+            S._get_engram(),
             filters=filters,
             limit=limit,
             offset=offset,
@@ -341,7 +341,7 @@ async def review_staging(
 
         result = S._locked_engram_call(
             _batch_review,
-            S._engram,
+            S._get_engram(),
             actions,
             confirm=confirm,
             dry_run=dry_run,
@@ -351,7 +351,7 @@ async def review_staging(
             offset=offset,
         )
         return S._json(S._gov_rt.maybe_govern_write_ack(
-            S._engram.root, result, tool="review_staging",
+            S._get_engram().root, result, tool="review_staging",
         ))
     if action == "review_item":
         if not knowledge_id:
@@ -359,11 +359,11 @@ async def review_staging(
                 "action=review_item 需要提供 knowledge_id。 "
                 "/ action=review_item requires knowledge_id."
             )
-        result = S._locked_engram_call(S._engram.review_knowledge, knowledge_id)
+        result = S._locked_engram_call(S._get_engram().review_knowledge, knowledge_id)
         S._beta("knowledge_reviewed")
         # Pure read-disguised-as-write: only bumps last_reviewed yet returns the
         # full stored item. Gate the returned item (Codex round-16 P1-3).
-        result = S._gov_rt.maybe_govern_one(S._engram.root, result, tool="review_staging")
+        result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="review_staging")
         return S._json(result)
     if action == "apply_text":
         if not review_text:
@@ -375,12 +375,12 @@ async def review_staging(
         try:
             data = json.loads(review_text)
             if isinstance(data, dict) and "archive" in data:
-                result = S._locked_engram_call(S._engram.apply_review, data)
+                result = S._locked_engram_call(S._get_engram().apply_review, data)
                 return S._json(result)
         except (ValueError, TypeError):
             pass
         # Treat as text format
-        result = S._locked_engram_call(S._engram.apply_review, review_text)
+        result = S._locked_engram_call(S._get_engram().apply_review, review_text)
         return S._json(result)
     return (
         f"未知 action: {action}。可用: list / batch / review_item / apply_text。 "
@@ -402,10 +402,10 @@ async def get_stale_knowledge(days: int = 30, limit: int = 20) -> str:
         days: 超过多少天算过期（默认 30）。 / Number of days after which an item is stale (default 30).
         limit: 最多返回多少条（默认 20）。 / Maximum number of items to return (default 20).
     """
-    stale = S._engram.get_stale_knowledge(days=days, limit=limit)
+    stale = S._get_engram().get_stale_knowledge(days=days, limit=limit)
     # dict of {days, limit, lessons:[...], decisions:[...]} — buckets filters the
     # two item lists (titles can themselves carry sensitive text), scalars pass.
-    stale = S._gov_rt.maybe_govern_buckets(S._engram.root, stale, tool="get_stale_knowledge")
+    stale = S._gov_rt.maybe_govern_buckets(S._get_engram().root, stale, tool="get_stale_knowledge")
     return S._json(stale)
 
 
@@ -427,10 +427,10 @@ async def request_outline_review(lang: str = "zh") -> str:
     # The review HTML embeds profile + all lessons + key decisions; path-only
     # return still writes the full bodies to disk (Codex round-16 P2-1). Gate
     # before generating — a non-owner gets a refusal and no page is written.
-    refusal = S._gov_rt.maybe_refuse_export(S._engram.root, tool="request_outline_review")
+    refusal = S._gov_rt.maybe_refuse_export(S._get_engram().root, tool="request_outline_review")
     if refusal is not None:
         return refusal
-    path = S._engram.export_review_page(lang=lang)
+    path = S._get_engram().export_review_page(lang=lang)
     return S._json({
         "status": "review_page_generated",
         "path": str(path),
@@ -455,15 +455,15 @@ async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
         secondary_id: 要合并并归档的次要条目 ID。 / ID of the secondary item to merge and archive.
     """
     # a4: write-path governance gate
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="merge_knowledge")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="merge_knowledge")
     if refusal is not None:
         return refusal
 
     # Returns {primary_title, secondary_title} — stored titles the caller only
     # referenced by id. Gate the ack so lower tiers don't read titles back
     # (Codex round-16 write-echo class).
-    result = S._locked_engram_call(S._engram.merge_knowledge, primary_id, secondary_id)
-    result = S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="merge_knowledge")
+    result = S._locked_engram_call(S._get_engram().merge_knowledge, primary_id, secondary_id)
+    result = S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="merge_knowledge")
     return S._json(result)
 
 
@@ -499,7 +499,7 @@ async def manage_relation(
     # a4: write-path governance gate — must run unconditionally BEFORE action
     # validation so a low-trust caller gets a governance refusal, never an
     # "unknown action" hint (writer-spy matrix).
-    refusal = S._gov_rt.maybe_refuse_write(S._engram.root, tool="manage_relation")
+    refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="manage_relation")
     if refusal is not None:
         return refusal
 
@@ -517,16 +517,16 @@ async def manage_relation(
                 "or empty for an untyped bidirectional link."
             )
         if action == "link":
-            return S._json(S._locked_engram_call(S._engram.add_relation, src_id, rel, dst_id))
-        return S._json(S._locked_engram_call(S._engram.remove_relation, src_id, rel, dst_id))
+            return S._json(S._locked_engram_call(S._get_engram().add_relation, src_id, rel, dst_id))
+        return S._json(S._locked_engram_call(S._get_engram().remove_relation, src_id, rel, dst_id))
     # Untyped bidirectional link/unlink. Ack message embeds both item titles
     # ("Linked: <title> ↔ <title>") — gate so a low-trust caller can't read a
     # secret title back (round-16 write-echo).
     if action == "link":
-        result = S._locked_engram_call(S._engram.link_knowledge, src_id, dst_id)
+        result = S._locked_engram_call(S._get_engram().link_knowledge, src_id, dst_id)
     else:
-        result = S._locked_engram_call(S._engram.unlink_knowledge, src_id, dst_id)
-    result = S._gov_rt.maybe_govern_write_ack(S._engram.root, result, tool="manage_relation")
+        result = S._locked_engram_call(S._get_engram().unlink_knowledge, src_id, dst_id)
+    result = S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="manage_relation")
     return S._json(result)
 
 
