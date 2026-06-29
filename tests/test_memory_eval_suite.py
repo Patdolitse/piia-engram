@@ -54,6 +54,29 @@ def test_memory_eval_suite_allows_targeted_agent_context_run() -> None:
     assert summary["agent_context_pack"]["overall_passed"] is True
 
 
+def test_memory_eval_suite_agent_context_pack_ignores_live_engram_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    live_store = tmp_path / "live-engram-store"
+    live_store.mkdir()
+    sentinel = live_store / "sentinel.txt"
+    sentinel.write_text("LIVE_MEMORY_SUITE_SENTINEL", encoding="utf-8")
+    before_files = sorted(path.relative_to(live_store).as_posix() for path in live_store.rglob("*"))
+    monkeypatch.setenv("ENGRAM_DIR", str(live_store))
+
+    summary = memory_evals.run_suite(recall_fixtures=[], admission_fixtures=[])
+
+    after_files = sorted(path.relative_to(live_store).as_posix() for path in live_store.rglob("*"))
+    summary_blob = json.dumps(summary, ensure_ascii=False)
+
+    assert summary["overall_passed"] is True
+    assert summary["agent_context_pack"]["store_isolated"] is True
+    assert before_files == after_files == ["sentinel.txt"]
+    assert sentinel.read_text(encoding="utf-8") == "LIVE_MEMORY_SUITE_SENTINEL"
+    assert "LIVE_MEMORY_SUITE_SENTINEL" not in summary_blob
+
+
 def test_memory_eval_suite_summary_is_metadata_only() -> None:
     summary = run_suite()
     blob = json.dumps(summary, ensure_ascii=False)

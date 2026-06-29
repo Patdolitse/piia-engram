@@ -64,3 +64,25 @@ def test_run_eval_uses_isolated_temp_store(tmp_path: Path) -> None:
     assert payload["overall_passed"] is True
     assert before == []
     assert after == []
+
+
+def test_agent_context_pack_eval_uses_isolated_store_and_not_live_engram_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    live_store = tmp_path / "live-engram-store"
+    live_store.mkdir()
+    sentinel = live_store / "sentinel.txt"
+    sentinel.write_text("LIVE_AGENT_CONTEXT_STORE_SENTINEL", encoding="utf-8")
+    before_files = sorted(path.relative_to(live_store).as_posix() for path in live_store.rglob("*"))
+    monkeypatch.setenv("ENGRAM_DIR", str(live_store))
+
+    payload = eval_agent_context_pack.run_eval()
+
+    after_files = sorted(path.relative_to(live_store).as_posix() for path in live_store.rglob("*"))
+    payload_blob = json.dumps(payload, ensure_ascii=False)
+
+    assert payload["overall_passed"] is True
+    assert before_files == after_files == ["sentinel.txt"]
+    assert sentinel.read_text(encoding="utf-8") == "LIVE_AGENT_CONTEXT_STORE_SENTINEL"
+    assert "LIVE_AGENT_CONTEXT_STORE_SENTINEL" not in payload_blob
