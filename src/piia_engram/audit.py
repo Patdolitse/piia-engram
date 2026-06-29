@@ -8,8 +8,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
+from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +20,25 @@ logger = logging.getLogger(__name__)
 class AuditLogger:
     """Lightweight audit logger."""
 
+    _read_suppression_depth: ContextVar[int] = ContextVar(
+        "piia_engram_audit_read_suppression_depth",
+        default=0,
+    )
+
     def __init__(self, log_path: Path | None = None, enabled: bool = True):
         self.enabled = enabled
         self.log_path = log_path
+
+    @contextmanager
+    def suppress_reads(self) -> Iterator[None]:
+        """Suppress read audit entries in the current execution context only."""
+        token = self._read_suppression_depth.set(
+            self._read_suppression_depth.get() + 1
+        )
+        try:
+            yield
+        finally:
+            self._read_suppression_depth.reset(token)
 
     def log(
         self,
@@ -37,6 +56,8 @@ class AuditLogger:
             source_tool: Calling tool identifier
         """
         if not self.enabled or not self.log_path:
+            return
+        if action == "read" and self._read_suppression_depth.get() > 0:
             return
         if action == "read":
             try:
