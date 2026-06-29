@@ -109,6 +109,58 @@ def _session_header_project(content: str) -> str:
     return ""
 
 
+def _looks_like_project_path(value: Any) -> bool:
+    text = str(value or "")
+    return bool(text) and (
+        "/" in text or "\\" in text or (len(text) > 2 and text[1] == ":")
+    )
+
+
+def _context_entry_project_id(entry: dict[str, Any]) -> str:
+    value = entry.get("project_id")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    for key in ("project_folder", "source_project_folder", "source_project"):
+        raw = entry.get(key)
+        if isinstance(raw, str) and raw.strip() and _looks_like_project_path(raw):
+            return _project_id(raw)
+    return ""
+
+
+def _context_project_label(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if _looks_like_project_path(text):
+        from pathlib import PureWindowsPath
+
+        text = PureWindowsPath(text).name or text
+    return text.strip().lower()
+
+
+def _context_entry_project_label(entry: dict[str, Any]) -> str:
+    for key in ("source_project", "project"):
+        raw = entry.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return _context_project_label(raw)
+    return ""
+
+
+def _context_entry_visible_for_project(
+    entry: dict[str, Any],
+    project_folder: str,
+) -> bool:
+    entry_project_id = _context_entry_project_id(entry)
+    entry_project_label = _context_entry_project_label(entry)
+    if not project_folder:
+        return not entry_project_id and not entry_project_label
+    if not entry_project_id:
+        if entry_project_label:
+            return entry_project_label == _context_project_label(project_folder)
+        return True
+    return entry_project_id == _project_id(project_folder)
+
+
 class ContextStoreMixin:
     """Mixin: agent context auto-save and recovery.
 
@@ -423,18 +475,25 @@ class ContextStoreMixin:
         limit: int = 6,
     ) -> list[dict[str, Any]]:
         """Return recent digest sidecars only; never read raw session bodies."""
+        if int(limit or 0) <= 0:
+            return []
         project_id = _project_id(project_folder) if project_folder else ""
         digests: list[dict[str, Any]] = []
+        session_files: list[tuple[float, str, str]] = []
+        if not self._contexts_dir.exists():
+            return []
         try:
-            sessions = self.list_agent_sessions(limit=max(1, limit))
+            tool_dirs = [d for d in self._contexts_dir.iterdir() if d.is_dir()]
+            for tool_dir in tool_dirs:
+                for path in tool_dir.glob("*.md"):
+                    session_files.append((path.stat().st_mtime, tool_dir.name, path.stem))
         except Exception:
             return []
-        for item in sessions:
-            if not isinstance(item, dict):
-                continue
+        session_files.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        for _mtime, tool_name, session_id in session_files:
             digest = self.get_session_digest(
-                str(item.get("tool") or ""),
-                str(item.get("session_id") or ""),
+                tool_name,
+                session_id,
             )
             if not digest:
                 continue
@@ -443,6 +502,8 @@ class ContextStoreMixin:
             if project_id and source_project != project_id:
                 continue
             digests.append(digest)
+            if len(digests) >= limit:
+                break
         return digests
 
     @staticmethod
@@ -467,6 +528,8 @@ class ContextStoreMixin:
         raw session Markdown, and separates verified/trusted memory from items
         that still need review.
         """
+        digest_limit = max(0, int(digest_limit or 0))
+        knowledge_limit = max(0, int(knowledge_limit or 0))
         snapshot: dict[str, Any] = {}
         if project_folder and hasattr(self, "get_project_snapshot"):
             try:
@@ -506,6 +569,26 @@ class ContextStoreMixin:
         next_actions: list[str] = []
         blocked_on: list[str] = []
         review_needed: list[dict[str, str]] = []
+        omitted: list[dict[str, str]] = []
+
+        def _omit(kind: str, reason: str, source: str) -> None:
+            record = {
+                "kind": kind,
+                "reason": reason,
+                "source": source,
+            }
+            if record not in omitted and len(omitted) < 8:
+                omitted.append(record)
+
+        def _append_review_needed(item: dict[str, str]) -> None:
+            if len(review_needed) < 12:
+                review_needed.append(item)
+            else:
+                _omit(
+                    str(item.get("kind") or "candidate"),
+                    "review_needed_limit",
+                    str(item.get("source") or "knowledge"),
+                )
 
         for digest in digests:
             for item in digest.get("completed") or []:
@@ -527,7 +610,7 @@ class ContextStoreMixin:
                     continue
                 summary = str(decision.get("summary") or "").strip()
                 if summary:
-                    review_needed.append({
+                    _append_review_needed({
                         "kind": "decision",
                         "summary": summary[:240],
                         "reason": "session_digest_candidate",
@@ -538,7 +621,7 @@ class ContextStoreMixin:
                     continue
                 summary = str(lesson.get("summary") or "").strip()
                 if summary:
-                    review_needed.append({
+                    _append_review_needed({
                         "kind": "lesson",
                         "summary": summary[:240],
                         "reason": "session_digest_candidate",
@@ -556,45 +639,71 @@ class ContextStoreMixin:
             })
 
         try:
-            lessons = self.get_lessons(
-                limit=None,
-                _update_access=False,
-                _migrate_fields=False,
-            )
+            try:
+                lessons = self.get_lessons(
+                    limit=None,
+                    project_folder=project_folder or None,
+                    _update_access=False,
+                    _migrate_fields=False,
+                )
+            except TypeError:
+                lessons = self.get_lessons(
+                    limit=None,
+                    _update_access=False,
+                    _migrate_fields=False,
+                )
         except Exception:
             lessons = []
-        for lesson in lessons:
+        for lesson in reversed(lessons):
             if not isinstance(lesson, dict) or lesson.get("status") != "active":
+                continue
+            if not _context_entry_visible_for_project(lesson, project_folder):
                 continue
             summary = str(lesson.get("summary") or "").strip()
             if not summary:
                 continue
             if lesson.get("tier") == "staging":
-                review_needed.append({
+                _append_review_needed({
                     "kind": "lesson",
                     "summary": summary[:240],
                     "reason": "staging",
                     "source": str(lesson.get("source_tool") or "knowledge"),
                 })
                 continue
-            if len(trusted_context) < knowledge_limit + 1:
+            trusted_knowledge_count = sum(
+                1 for item in trusted_context
+                if item.get("kind") in {"lesson", "decision"}
+            )
+            if trusted_knowledge_count < knowledge_limit and len(trusted_context) < 10:
                 trusted_context.append({
                     "kind": "lesson",
                     "summary": summary[:240],
                     "trust": str(lesson.get("tier") or "verified"),
                     "source": str(lesson.get("source_tool") or "knowledge"),
                 })
+            else:
+                _omit("lesson", "knowledge_limit", "knowledge")
 
         try:
-            decisions = self.get_decisions(
-                limit=None,
-                _update_access=False,
-                _migrate_fields=False,
-            )
+            try:
+                decisions = self.get_decisions(
+                    limit=None,
+                    project_folder=project_folder or None,
+                    _update_access=False,
+                    _migrate_fields=False,
+                )
+            except TypeError:
+                decisions = self.get_decisions(
+                    limit=None,
+                    _update_access=False,
+                    _migrate_fields=False,
+                )
         except Exception:
             decisions = []
-        for decision in decisions:
+        for decision in reversed(decisions):
             if not isinstance(decision, dict) or decision.get("status") != "active":
+                continue
+            if not _context_entry_visible_for_project(decision, project_folder):
                 continue
             question = str(decision.get("question") or decision.get("title") or "").strip()
             choice = str(decision.get("choice") or "").strip()
@@ -602,20 +711,26 @@ class ContextStoreMixin:
             if not summary:
                 continue
             if decision.get("tier") == "staging":
-                review_needed.append({
+                _append_review_needed({
                     "kind": "decision",
                     "summary": summary[:240],
                     "reason": "staging",
                     "source": str(decision.get("source_tool") or "knowledge"),
                 })
                 continue
-            if len(trusted_context) < (knowledge_limit * 2) + 1:
+            trusted_knowledge_count = sum(
+                1 for item in trusted_context
+                if item.get("kind") in {"lesson", "decision"}
+            )
+            if trusted_knowledge_count < knowledge_limit and len(trusted_context) < 10:
                 trusted_context.append({
                     "kind": "decision",
                     "summary": summary[:240],
                     "trust": str(decision.get("tier") or "verified"),
                     "source": str(decision.get("source_tool") or "knowledge"),
                 })
+            else:
+                _omit("decision", "knowledge_limit", "knowledge")
 
         current_focus = ""
         if next_actions:
@@ -627,12 +742,33 @@ class ContextStoreMixin:
         else:
             current_focus = "Review recent Engram context and continue the current task."
 
+        quality_signals: list[str] = []
+        if snapshot:
+            quality_signals.append("has_project_snapshot")
+        if digests:
+            quality_signals.append("has_recent_digest")
+        if next_actions:
+            quality_signals.append("has_next_action")
+        if review_needed:
+            quality_signals.append("has_review_candidates")
+
         pack = {
             "schema": "project_resume_pack.v1",
             "project": {
                 "title": project_title,
                 "stage": project_stage,
                 "updated_at": updated_at,
+            },
+            "pack_meta": {
+                "digest_count": len(digests),
+                "trusted_count": len(trusted_context[:10]),
+                "review_needed_count": len(review_needed[:12]),
+                "omitted_count": len(omitted),
+                "selection_policy": "recency_then_review_state_then_limit",
+                "budget": {
+                    "digest_limit": digest_limit,
+                    "knowledge_limit": knowledge_limit,
+                },
             },
             "handoff": {
                 "current_focus": current_focus,
