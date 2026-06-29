@@ -1364,6 +1364,9 @@ class ContextStoreMixin:
         project_folder: str = "",
         token_budget: int = 2000,
         include_resume_pack: bool = False,
+        include_agent_context_pack: bool = False,
+        agent_role: str = "orchestrator",
+        task_summary: str = "",
     ) -> dict[str, Any]:
         """Return a ready-to-paste resume brief for a cross-session / cross-tool restart.
 
@@ -1389,6 +1392,11 @@ class ContextStoreMixin:
                 is truncated section-by-section in priority order to fit.
             include_resume_pack: Opt-in structured ``project_resume_pack.v1``.
                 Defaults to false so existing startup markdown is unchanged.
+            include_agent_context_pack: Opt-in structured
+                ``agent_context_pack.v1`` for delegated sub-agent briefing.
+            agent_role: Role used to shape the optional agent context pack.
+            task_summary: Current delegated task summary for agent-pack
+                selection. Ignored unless ``include_agent_context_pack`` is true.
 
         Returns:
             ``{markdown, sections_included, sections_skipped, byte_size,
@@ -1834,5 +1842,14 @@ class ContextStoreMixin:
             )
             result["sections_included"] = list(result["sections_included"]) + [
                 "project_resume_pack"
+            ]
+        if include_agent_context_pack:
+            result["agent_context_pack"] = self.build_agent_context_pack(
+                project_folder=project_folder,
+                agent_role=agent_role,
+                task_summary=task_summary,
+            )
+            result["sections_included"] = list(result["sections_included"]) + [
+                "agent_context_pack"
             ]
         return result

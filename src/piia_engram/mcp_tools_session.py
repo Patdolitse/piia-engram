@@ -118,6 +118,9 @@ async def get_resume_brief(
     project_folder: str = "",
     token_budget: int = 2000,
     include_resume_pack: bool = False,
+    include_agent_context_pack: bool = False,
+    agent_role: str = "orchestrator",
+    task_summary: str = "",
 ) -> str:
     """跨会话/跨工具接续简报（v3.30 新增）。 / Cross-session, cross-tool resume brief.
 
@@ -146,6 +149,11 @@ async def get_resume_brief(
             Soft cap for output tokens (default 2000 ≈ 8000 chars).
         include_resume_pack: Include structured ``project_resume_pack.v1`` in
             the JSON response. Defaults to false to preserve existing output.
+        include_agent_context_pack: Include structured
+            ``agent_context_pack.v1`` for delegated sub-agent briefing.
+            Defaults to false to preserve existing output.
+        agent_role: Role used to shape the optional agent context pack.
+        task_summary: Current delegated task summary for agent-pack selection.
     """
     # Auto-bootstrap on first ever call when store is empty.
     from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
@@ -157,6 +165,9 @@ async def get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
         include_resume_pack=include_resume_pack,
+        include_agent_context_pack=include_agent_context_pack,
+        agent_role=agent_role,
+        task_summary=task_summary,
     )
     # a2: embed caller permissions into the brief's markdown body
     # (same pattern as a1 in get_user_context, but targeting the dict)

@@ -1886,6 +1886,64 @@ class TestResumeBriefWrapper:
         payload = json.loads(result)
         assert payload["resume_pack"]["schema"] == "project_resume_pack.v1"
 
+    def test_mcp_get_resume_brief_default_excludes_agent_context_pack(
+        self,
+        isolated_engram: Engram,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        def fail_agent_pack(**_: object) -> dict:
+            raise AssertionError("agent context pack should be opt-in")
+
+        monkeypatch.setattr(
+            isolated_engram,
+            "build_agent_context_pack",
+            fail_agent_pack,
+        )
+
+        result = _run(mcp_server.get_resume_brief(project_folder=str(tmp_path)))
+        payload = json.loads(result)
+
+        assert "agent_context_pack" not in payload
+        assert "agent_context_pack" not in payload["sections_included"]
+
+    def test_mcp_get_resume_brief_can_include_agent_context_pack(
+        self,
+        isolated_engram: Engram,
+        tmp_path: Path,
+    ):
+        project = tmp_path / "project-a"
+        project.mkdir()
+        isolated_engram.save_project_snapshot(
+            str(project),
+            {"title": "Synthetic Project", "stage": "M6"},
+        )
+        isolated_engram.add_decision({
+            "question": "How should writes be handled?",
+            "choice": "preview first",
+            "project_folder": str(project),
+            "tier": "verified",
+        })
+
+        result = _run(
+            mcp_server.get_resume_brief(
+                project_folder=str(project),
+                include_resume_pack=True,
+                include_agent_context_pack=True,
+                agent_role="reviewer",
+                task_summary="Review memory write gate changes",
+            )
+        )
+        payload = json.loads(result)
+        pack = payload["agent_context_pack"]
+
+        assert payload["resume_pack"]["schema"] == "project_resume_pack.v1"
+        assert pack["schema"] == "agent_context_pack.v1"
+        assert pack["role"] == "reviewer"
+        assert pack["task"]["summary"] == "Review memory write gate changes"
+        assert "preview first" in repr(pack["context"]["trusted"])
+        assert "agent_context_pack" in payload["sections_included"]
+
 
 class TestColdStartBootstrap:
     """Cold-start regression: bootstrap must be REACHABLE via get_user_context,
