@@ -330,6 +330,32 @@ AI config reconciliation should be requested explicitly with
 `run_reconcile=True` or run through dedicated owner maintenance flows. This
 keeps session closeout predictable for MCP hosts with fixed tool timeouts.
 
+Normal closeout:
+
+```python
+wrap_up_session(
+    summary="Implemented the entrypoint smoke tests and recorded remaining risks.",
+    source_tool="codex",
+    project_folder="E:/Example/Project",
+    user_confirmed=True,
+)
+```
+
+Explicit maintenance reconcile:
+
+```python
+wrap_up_session(
+    summary="Owner-approved maintenance closeout.",
+    source_tool="codex",
+    project_folder="E:/Example/Project",
+    user_confirmed=True,
+    run_reconcile=True,
+)
+```
+
+Use the explicit form only when the owner wants reconciliation work during
+closeout.
+
 The returned `timing` block is metadata-only. It reports stage durations in
 milliseconds and must not be treated as user approval, release evidence, or a
 live-agent benchmark.
