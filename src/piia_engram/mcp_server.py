@@ -1217,7 +1217,8 @@ def _safe_err(exc: Exception) -> str:
     """Return a sanitized error message without internal filesystem paths."""
     msg = str(exc)
     # Strip any Windows/Unix absolute paths from the message
-    msg = re.sub(r'[A-Za-z]:\\[\w\\. -]+', '<path>', msg)
+    msg = re.sub(r'\\\\[^\\\r\n]+\\[^\\\r\n]+(?:\\[^\\\r\n]+)*', '<path>', msg)
+    msg = re.sub(r'[A-Za-z]:\\[^\\\r\n]+(?:\\[^\\\r\n]+)*', '<path>', msg)
     msg = re.sub(r'/[\w/. -]{3,}', '<path>', msg)
     return msg
 

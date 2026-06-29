@@ -615,6 +615,36 @@ class TestSafeErr:
         assert r"C:\Users" not in _safe_err(err)
         assert "<path>" in _safe_err(err)
 
+    def test_strips_full_windows_path_tail(self):
+        from piia_engram.mcp_server import _safe_err
+
+        path = "E:" + "\\" + "\\".join([
+            "Workspace With Spaces",
+            "project",
+            "secret",
+            "config.json",
+        ])
+        err = Exception(f"failed to read {path}")
+
+        sanitized = _safe_err(err)
+        assert "Workspace With Spaces" not in sanitized
+        assert "project" not in sanitized
+        assert "secret" not in sanitized
+        assert "config.json" not in sanitized
+        assert "<path>" in sanitized
+
+    def test_strips_unc_and_unicode_windows_paths(self):
+        from piia_engram.mcp_server import _safe_err
+
+        err = Exception(r"open \\server\share\项目\秘密.json failed")
+
+        sanitized = _safe_err(err)
+        assert "server" not in sanitized
+        assert "share" not in sanitized
+        assert "项目" not in sanitized
+        assert "秘密.json" not in sanitized
+        assert "<path>" in sanitized
+
     def test_strips_unix_path(self):
         """Unix 绝对路径应被替换为 <path>。"""
         from piia_engram.mcp_server import _safe_err
