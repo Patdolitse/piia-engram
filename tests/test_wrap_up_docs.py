@@ -77,3 +77,12 @@ def test_cross_tool_guide_documents_telemetry_as_separate_opt_in_boundary() -> N
     assert "Telemetry and feedback are separate opt-in metadata paths" in text
     assert "They are not reconciliation" in text
     assert "Default non-opt-in closeout sends no remote feedback" in text
+
+
+def test_operator_docs_define_reconcile_as_owner_maintenance() -> None:
+    text = (ROOT / "docs" / "operator-mcp-cheatsheet.md").read_text(encoding="utf-8")
+
+    assert "Reconciliation is an owner maintenance action" in text
+    assert "Default session closeout does not scan external AI memory or config files" in text
+    assert "wrap_up_session(..., run_reconcile=True, user_confirmed=True)" in text
+    assert "staging-tier candidates" in text

@@ -79,6 +79,12 @@ checks, owner gates, or the need to confirm public actions.
 Legacy Playbook scope migration is not an MCP surface: it lives in the
 owner-only local CLI (`engram playbook scope classify|apply|rollback|queue|resolve`).
 
+## Maintenance Reconcile
+
+Reconciliation is an owner maintenance action. Default session closeout does not scan external AI memory or config files. To request reconciliation during closeout, call `wrap_up_session(..., run_reconcile=True, user_confirmed=True)`.
+
+Imported items remain staging-tier candidates until reviewed. Reconcile results should stay metadata-only: counts, source labels, scan status, and budget flags are appropriate; raw external memory bodies and config file contents are not.
+
 ## Decision conflict governance
 
 `engram conflicts list [--json]` is the owner-only read view for active decision
