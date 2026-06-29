@@ -23,6 +23,7 @@ for path in (ROOT, SRC):
         sys.path.insert(0, path_str)
 
 from scripts.check_admission import evaluate_fixture, load_fixture as load_admission_fixture  # noqa: E402
+from scripts.eval_agent_context_pack import run_eval as run_agent_context_pack_eval  # noqa: E402
 from scripts.eval_recall import evaluate_corpus, load_corpus  # noqa: E402
 
 
@@ -77,21 +78,45 @@ def _admission_summary(path: Path) -> dict[str, Any]:
     }
 
 
+def _agent_context_pack_summary() -> dict[str, Any]:
+    summary = run_agent_context_pack_eval()
+    cases = list(summary.get("cases") or [])
+    case_count = len(cases)
+    passed_count = sum(1 for case in cases if case.get("passed"))
+    failed_count = case_count - passed_count
+    public_safe = case_count > 0 and all(
+        (case.get("checks") or {}).get("no_forbidden_substrings") is True for case in cases
+    )
+    overall_passed = case_count > 0 and bool(summary.get("overall_passed")) and failed_count == 0
+    return {
+        "schema": summary.get("schema"),
+        "public_safe": public_safe,
+        "store_isolated": True,
+        "overall_passed": overall_passed,
+        "case_count": case_count,
+        "passed_count": passed_count,
+        "failed_count": failed_count,
+    }
+
+
 def run_suite(
     recall_fixtures: list[str | Path] | None = None,
     admission_fixtures: list[str | Path] | None = None,
 ) -> dict[str, Any]:
-    recalls = [_recall_summary(Path(path)) for path in (recall_fixtures or DEFAULT_RECALL_FIXTURES)]
-    admissions = [
-        _admission_summary(Path(path)) for path in (admission_fixtures or DEFAULT_ADMISSION_FIXTURES)
-    ]
+    recall_paths = DEFAULT_RECALL_FIXTURES if recall_fixtures is None else recall_fixtures
+    admission_paths = DEFAULT_ADMISSION_FIXTURES if admission_fixtures is None else admission_fixtures
+    recalls = [_recall_summary(Path(path)) for path in recall_paths]
+    admissions = [_admission_summary(Path(path)) for path in admission_paths]
+    agent_context_pack = _agent_context_pack_summary()
+    sections = [*recalls, *admissions, agent_context_pack]
     return {
         "schema": 1,
         "suite": "memory_eval_suite_v1",
-        "public_safe": all(item["public_safe"] for item in [*recalls, *admissions]),
-        "overall_passed": all(item["overall_passed"] for item in [*recalls, *admissions]),
+        "public_safe": all(item["public_safe"] for item in sections),
+        "overall_passed": all(item["overall_passed"] for item in sections),
         "recall": recalls,
         "admission": admissions,
+        "agent_context_pack": agent_context_pack,
     }
 
 
@@ -126,6 +151,20 @@ def render_markdown(summary: dict[str, Any]) -> str:
             f"| {item.get('guard')} | {item.get('candidate_count')} | "
             f"{actions} | {item.get('failed_expectation_count')} |"
         )
+    agent_context_pack = summary.get("agent_context_pack") or {}
+    lines.extend([
+        "",
+        "## Agent Context Pack",
+        "",
+        "| Schema | Cases | Public safe | Store isolated |",
+        "|---|---:|---:|---:|",
+        (
+            f"| {agent_context_pack.get('schema')} | "
+            f"{agent_context_pack.get('passed_count')}/{agent_context_pack.get('case_count')} | "
+            f"{agent_context_pack.get('public_safe')} | "
+            f"{agent_context_pack.get('store_isolated')} |"
+        ),
+    ])
     return "\n".join(lines) + "\n"
 
 
