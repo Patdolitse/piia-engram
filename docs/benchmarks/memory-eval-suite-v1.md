@@ -41,6 +41,20 @@ The eval uses synthetic fixtures and a temporary isolated Engram store. It does
 not read or write the user's live Engram store, and it is not a live-agent
 benchmark.
 
+## Agent Context Pack Eval
+
+The agent-context eval checks whether `agent_context_pack.v1` can provide
+bounded, role-specific context for synthetic sub-agent handoffs without leaking
+forbidden strings or treating memory as user approval.
+
+```powershell
+python scripts/eval_agent_context_pack.py --json
+```
+
+The eval uses synthetic fixtures and temporary isolated Engram stores. It does
+not read or write the user's live Engram store, and it is not a live-agent
+benchmark or autonomous-agent claim.
+
 ## Coverage
 
 | Set | Fixture | Scope |
