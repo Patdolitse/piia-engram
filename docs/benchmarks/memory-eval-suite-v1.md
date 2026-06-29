@@ -26,6 +26,21 @@ The suite uses temporary isolated stores for recall evaluation and synthetic
 candidate fixtures for admission evaluation. It does not read or write the
 user's live Engram store.
 
+## Resume Pack Eval
+
+The resume-pack eval checks whether `project_resume_pack.v1` can recover a
+synthetic next action, keep verified project context in trusted context, keep
+session-derived candidates in review-needed context, and avoid forbidden raw
+fields.
+
+```powershell
+python scripts/eval_resume_pack.py --json
+```
+
+The eval uses synthetic fixtures and a temporary isolated Engram store. It does
+not read or write the user's live Engram store, and it is not a live-agent
+benchmark.
+
 ## Coverage
 
 | Set | Fixture | Scope |
