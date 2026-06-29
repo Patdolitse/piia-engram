@@ -18,6 +18,7 @@ def _run(coro):
 def isolated_mcp_engram(tmp_path: Path, monkeypatch) -> Engram:
     eng = Engram(root=tmp_path)
     monkeypatch.setattr(mcp_server, "_engram", eng)
+    monkeypatch.setattr(mcp_server, "_tracker", None)
     return eng
 
 
@@ -125,3 +126,30 @@ def test_wrap_up_session_daily_tally_handles_numeric_counts(
     assert "lessons=2" in captured["content"]
     assert "decisions=1" in captured["content"]
     assert payload["daily_log"]["file"] == "daily.md"
+
+
+def test_wrap_up_session_default_without_opt_in_does_not_send_remote_feedback(
+    isolated_mcp_engram: Engram,
+    monkeypatch,
+) -> None:
+    sent: list[str] = []
+
+    monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
+    monkeypatch.delenv("ENGRAM_FEEDBACK", raising=False)
+
+    import piia_engram.telemetry as telemetry
+
+    def fail_urlopen(*args, **kwargs):
+        sent.append("urlopen")
+        raise AssertionError("default closeout should not send remote data")
+
+    monkeypatch.setattr(telemetry, "urlopen", fail_urlopen)
+
+    payload = json.loads(_run(mcp_server.wrap_up_session(
+        summary="Finished local-only boundary smoke.",
+        source_tool="codex",
+        user_confirmed=True,
+    )))
+
+    assert sent == []
+    assert payload["maintenance"]["reconcile_memories"]["status"] == "skipped"

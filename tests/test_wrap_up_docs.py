@@ -69,3 +69,11 @@ def test_public_docs_name_explicit_reconcile_boundary() -> None:
     assert "run_reconcile=True" in text
     assert "does not run full reconciliation by default" in text
     assert "`wrap_up_session` 是轻量的会话结束保存" in text
+
+
+def test_cross_tool_guide_documents_telemetry_as_separate_opt_in_boundary() -> None:
+    text = (ROOT / "docs" / "cross-tool-guide.md").read_text(encoding="utf-8")
+
+    assert "Telemetry and feedback are separate opt-in metadata paths" in text
+    assert "They are not reconciliation" in text
+    assert "Default non-opt-in closeout sends no remote feedback" in text

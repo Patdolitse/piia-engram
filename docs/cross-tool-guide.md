@@ -356,6 +356,8 @@ wrap_up_session(
 Use the explicit form only when the owner wants reconciliation work during
 closeout.
 
+Telemetry and feedback are separate opt-in metadata paths. They are not reconciliation, do not contain knowledge bodies, and are controlled by the telemetry/feedback opt-in settings rather than `run_reconcile`. Default non-opt-in closeout sends no remote feedback.
+
 The returned `timing` block is metadata-only. It reports stage durations in
 milliseconds and must not be treated as user approval, release evidence, or a
 live-agent benchmark.
