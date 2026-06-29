@@ -705,6 +705,7 @@ class ContextMixin:
         source_tool: str = "",
         source_ref: str = "",
         force_staging: bool = False,
+        project_folder: str = "",
     ) -> dict:
         """Extract lessons and decisions from a free-form session summary.
 
@@ -786,6 +787,7 @@ class ContextMixin:
                     "choice": "",
                     "domain": item_domain,
                     "source_tool": source_tool,
+                    "project_folder": project_folder,
                     "evidence": _make_session_candidate_evidence(
                         summary,
                         source_tool=source_tool,
@@ -823,6 +825,7 @@ class ContextMixin:
                     "summary": sentence,
                     "domain": item_domain,
                     "source_tool": source_tool,
+                    "project_folder": project_folder,
                     "evidence": _make_session_candidate_evidence(
                         summary,
                         source_tool=source_tool,
@@ -1126,17 +1129,36 @@ class ContextMixin:
         checkpoint_steps: list[dict] = []
         if session_id and source_tool:
             try:
-                sessions = self.get_recent_context(tool=source_tool, limit=5)
-                for s in sessions:
-                    if s.get("session_id") == session_id:
-                        session_content = s.get("content", "")
-                        # Structured actions are highest fidelity
-                        action_steps = self._extract_steps_from_actions(session_content)
-                        if not action_steps:
-                            checkpoint_steps = self._extract_steps_from_checkpoints(
-                                session_content
-                            )
-                        break
+                session_content = ""
+                try:
+                    from .contexts import _sanitize_tool_name
+
+                    session_path = (
+                        self._contexts_dir
+                        / _sanitize_tool_name(source_tool)
+                        / f"{session_id}.md"
+                    )
+                    if session_path.exists():
+                        session_content = session_path.read_text(encoding="utf-8")
+                except Exception:
+                    session_content = ""
+                if not session_content:
+                    sessions = self.get_recent_context(
+                        tool=source_tool,
+                        project_folder=project_folder,
+                        limit=5,
+                    )
+                    for s in sessions:
+                        if s.get("session_id") == session_id:
+                            session_content = s.get("content", "")
+                            break
+                if session_content:
+                    # Structured actions are highest fidelity
+                    action_steps = self._extract_steps_from_actions(session_content)
+                    if not action_steps:
+                        checkpoint_steps = self._extract_steps_from_checkpoints(
+                            session_content
+                        )
             except Exception:
                 pass  # session data is optional
 

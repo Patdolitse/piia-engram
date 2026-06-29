@@ -277,6 +277,7 @@ async def get_identity_facets(facet: str = "all", safe: bool = True) -> str:
 async def get_lessons(
     domain: Optional[str] = None,
     source_tool: Optional[str] = None,
+    project_folder: str = "",
     limit: int = 50,
 ) -> str:
     """获取用户从过去项目中学到的经验教训。 / Get lessons the user learned from past projects.
@@ -297,8 +298,12 @@ async def get_lessons(
     # last_reviewed — that is a low-trust write to data files, and (since the
     # bump happens before governance filtering) it would also touch entries
     # above the caller's sensitivity ceiling.
+    effective_project = project_folder or S._session.project_folder or None
+    if effective_project:
+        S._session.detect_project(effective_project)
     lessons = S._get_engram().get_lessons(
         domain=domain, source_tool=source_tool, limit=limit,
+        project_folder=effective_project,
         _update_access=S._gov_rt.caller_is_owner(S._get_engram().root),
     )
     lessons = S._gov_rt.maybe_govern_list(S._get_engram().root, lessons, tool="get_lessons")
@@ -311,6 +316,7 @@ async def get_lessons(
 async def get_decisions(
     source_tool: Optional[str] = None,
     project: Optional[str] = None,
+    project_folder: str = "",
     domain: Optional[str] = None,
     limit: int = 30,
     thread_seed_id: str = "",
@@ -355,10 +361,14 @@ async def get_decisions(
         )
         return S._json(result)
     # Read-path side-effect gate (Codex round-6): owner-only access bookkeeping.
+    effective_project = project_folder or S._session.project_folder or None
+    if effective_project:
+        S._session.detect_project(effective_project)
     decisions = S._get_engram().get_decisions(
         limit=limit,
         source_tool=source_tool,
         project=project,
+        project_folder=effective_project,
         domain=domain,
         _update_access=S._gov_rt.caller_is_owner(S._get_engram().root),
     )
@@ -710,4 +720,3 @@ async def export_knowledge_report() -> str:
 # ===========================================================================
 # WRITE TOOLS (18)
 # ===========================================================================
-

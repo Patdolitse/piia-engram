@@ -171,7 +171,7 @@ class TestWriteToolsAllowOwner:
         from piia_engram import mcp_server
         mcp_server._engram = e
 
-        result = _run(mcp_server.add_lesson(summary="test lesson from owner"))
+        result = _run(mcp_server.add_lesson(summary="test lesson from owner", user_confirmed=True))
         assert "治理层" not in result
         assert "教训已记录" in result or "已记录" in result
 
@@ -185,7 +185,7 @@ class TestWriteToolsAllowOwner:
         from piia_engram import mcp_server
         mcp_server._engram = e
 
-        result = _run(mcp_server.add_decision(question="q", choice="c"))
+        result = _run(mcp_server.add_decision(question="q", choice="c", user_confirmed=True))
         assert "治理层" not in result
         assert "决策已记录" in result
 
@@ -201,7 +201,8 @@ class TestWriteToolsAllowOwner:
 
         result = _run(mcp_server.memory_store(
             kind="lesson",
-            content_json='{"summary": "test via memory_store"}'
+            content_json='{"summary": "test via memory_store"}',
+            user_confirmed=True,
         ))
         assert "治理层" not in result
 
@@ -219,7 +220,7 @@ class TestWriteToolsAllowTrustedLocal:
         from piia_engram import mcp_server
         mcp_server._engram = e
 
-        result = _run(mcp_server.add_lesson(summary="lesson from trusted agent"))
+        result = _run(mcp_server.add_lesson(summary="lesson from trusted agent", user_confirmed=True))
         assert "治理层" not in result
         assert "教训已记录" in result or "已记录" in result
 
@@ -236,7 +237,7 @@ class TestWriteToolsGovernanceOff:
         from piia_engram import mcp_server
         mcp_server._engram = e
 
-        result = _run(mcp_server.add_lesson(summary="lesson with gov off"))
+        result = _run(mcp_server.add_lesson(summary="lesson with gov off", user_confirmed=True))
         assert "治理层" not in result
         assert "教训已记录" in result
 

@@ -10,6 +10,35 @@ try:
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
 
+
+def _confirmation_detail(content) -> str:
+    return json.dumps(content, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _confirmation_required(kind: str, title: str, content) -> str:
+    return S._json({
+        "status": "confirmation_required",
+        "requires_confirmation": True,
+        "changed": False,
+        "dry_run": True,
+        "kind": kind,
+        "content_title": title,
+        "content_detail": _confirmation_detail(content),
+        "instruction": (
+            "Show content_title and content_detail to the user. Only call the "
+            "write tool again with user_confirmed=true after the user confirms."
+        ),
+    })
+
+
+def _is_user_confirmed(value) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
 @S.mcp.tool()
 async def get_permission_profile() -> str:
     """查看当前所有调用者的权限全景：谁有什么信任级别、能看到什么。 / View the permission landscape: who has what trust level and what they can access.
@@ -515,6 +544,7 @@ async def wrap_up_session(
     project_title: str = "",
     tech_stack: str = "",
     known_issues: str = "",
+    user_confirmed: bool = False,
 ) -> str:
     """会话结束一键收尾：自动提取知识、操作流程并保存项目快照。 / Wrap up a session in one step: extract knowledge, detect playbooks, and save a project snapshot.
 
@@ -545,6 +575,21 @@ async def wrap_up_session(
     if refusal is not None:
         return refusal
 
+    preview = {
+        "summary": summary,
+        "project_folder": project_folder,
+        "source_tool": source_tool,
+        "project_title": project_title,
+        "tech_stack": tech_stack,
+        "known_issues": known_issues,
+    }
+    if not _is_user_confirmed(user_confirmed):
+        return _confirmation_required(
+            "wrap_up_session",
+            "Wrap up session memory write",
+            preview,
+        )
+
     S._session.detect_tool(source_tool)
     if project_folder:
         S._session.detect_project(project_folder)
@@ -557,6 +602,7 @@ async def wrap_up_session(
             S._get_engram().extract_session_insights,
             summary,
             source_tool=source_tool,
+            project_folder=project_folder,
         )
         results["insights"] = insights
     except Exception as exc:
@@ -750,7 +796,9 @@ async def wrap_up_session(
     except Exception as exc:
         S.logger.debug("feedback send skipped: %s", exc)
 
-    return S._json(results)
+    return S._json(S._gov_rt.maybe_govern_write_ack(
+        S._get_engram().root, results, tool="wrap_up_session",
+    ))
 
 
 @S.mcp.tool()

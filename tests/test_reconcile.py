@@ -796,7 +796,12 @@ def test_wrap_up_session_reports_staging_reminder(tmp_path: Path, monkeypatch):
     e.add_lesson("Session wrap staging reminder candidate", domain="general", tier="staging")
     monkeypatch.setattr(server, "_engram", e)
 
-    raw = asyncio.run(server.wrap_up_session("Session ended with no durable new facts."))
+    raw = asyncio.run(
+        server.wrap_up_session(
+            "Session ended with no durable new facts.",
+            user_confirmed=True,
+        )
+    )
     data = json.loads(raw)
     reminder = data.get("staging_reminder", {})
     assert reminder["total_staging"] == 1

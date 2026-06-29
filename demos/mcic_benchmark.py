@@ -169,7 +169,12 @@ def _explicit_strategy_recall(root: Path) -> dict[str, Any]:
         project=PROJECT,
         tier="verified",
     )
-    result = eng.search_knowledge("cloud memory api local identity layer owner approval", scope="all", limit=5)
+    result = eng.search_knowledge(
+        "cloud memory api local identity layer owner approval",
+        scope="all",
+        limit=5,
+        project_folder=PROJECT,
+    )
     blob = _search_blob(result)
     return _scenario(
         name="explicit_strategy_recall",

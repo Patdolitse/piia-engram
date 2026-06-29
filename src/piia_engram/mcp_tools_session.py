@@ -62,6 +62,7 @@ async def save_agent_context(
 @S.mcp.tool()
 async def get_recent_context(
     tool: str = "",
+    project_folder: str = "",
     limit: int = 1,
 ) -> str:
     """找回最近的 AI 对话上下文。 / Retrieve the most recent AI conversation context.
@@ -76,7 +77,14 @@ async def get_recent_context(
         tool: 工具名（可选）。留空则搜索所有工具的上下文。 / Tool name (optional). Empty searches all tools.
         limit: 最多返回几个会话（默认 1 = 最近一次）。 / Max sessions to return (default 1 = most recent).
     """
-    sessions = S._get_engram().get_recent_context(tool=tool, limit=limit)
+    effective_project = project_folder or S._session.project_folder
+    if effective_project:
+        S._session.detect_project(effective_project)
+    sessions = S._get_engram().get_recent_context(
+        tool=tool,
+        project_folder=effective_project,
+        limit=limit,
+    )
     sessions = S._gov_rt.maybe_govern_list(
         S._get_engram().root, sessions, tool="get_recent_context"
     )

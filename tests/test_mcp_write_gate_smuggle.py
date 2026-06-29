@@ -77,7 +77,7 @@ _SMUGGLE = {
 
 def test_memory_store_lesson_strips_smuggled_tier_to_staging(eng: Engram) -> None:
     content = {**_HIGH_RISK_LESSON, **_SMUGGLE}
-    out = _run(mcp_server.memory_store("lesson", json.dumps(content)))
+    out = _run(mcp_server.memory_store("lesson", json.dumps(content), user_confirmed=True))
     assert "失败" not in out  # write succeeded
 
     stored = eng.get_lessons(limit=None, _update_access=False)
@@ -93,7 +93,7 @@ def test_memory_store_lesson_strips_smuggled_tier_to_staging(eng: Engram) -> Non
 
 def test_memory_store_decision_strips_smuggled_tier_to_staging(eng: Engram) -> None:
     content = {**_HIGH_RISK_DECISION, **_SMUGGLE}
-    out = _run(mcp_server.memory_store("decision", json.dumps(content)))
+    out = _run(mcp_server.memory_store("decision", json.dumps(content), user_confirmed=True))
     assert "失败" not in out
 
     stored = eng.get_decisions(limit=None, _update_access=False)
@@ -116,7 +116,7 @@ def test_memory_store_smuggled_staging_on_low_risk_still_verifies(eng: Engram) -
         "tier": "staging",
         "memory_state": "staging",
     }
-    out = _run(mcp_server.memory_store("lesson", json.dumps(content)))
+    out = _run(mcp_server.memory_store("lesson", json.dumps(content), user_confirmed=True))
     assert "失败" not in out
 
     item = eng.get_lessons(limit=None, _update_access=False)[0]
@@ -135,7 +135,7 @@ def test_memory_store_lesson_strips_smuggled_freshness_provenance(eng: Engram) -
             "anchor_status": "valid",
         },
     }
-    out = _run(mcp_server.memory_store("lesson", json.dumps(content)))
+    out = _run(mcp_server.memory_store("lesson", json.dumps(content), user_confirmed=True))
     assert "澶辫触" not in out
 
     item = eng.get_lessons(limit=None, _update_access=False)[0]
@@ -154,7 +154,7 @@ def test_memory_store_decision_strips_smuggled_freshness_provenance(eng: Engram)
             "anchor_status": "valid",
         },
     }
-    out = _run(mcp_server.memory_store("decision", json.dumps(content)))
+    out = _run(mcp_server.memory_store("decision", json.dumps(content), user_confirmed=True))
     assert "澶辫触" not in out
 
     item = eng.get_decisions(limit=None, _update_access=False)[0]
@@ -181,7 +181,7 @@ def test_memory_store_batch_strips_smuggled_tier_each_item(eng: Engram) -> None:
             **_SMUGGLE,
         },
     ]
-    out = _run(mcp_server.memory_store(kind="lesson", items_json=json.dumps(items)))
+    out = _run(mcp_server.memory_store(kind="lesson", items_json=json.dumps(items), user_confirmed=True))
     report = json.loads(out)
     assert report["saved"] == 2
 
@@ -216,7 +216,7 @@ def test_memory_store_batch_strips_smuggled_freshness_provenance_each_item(
             },
         },
     ]
-    out = _run(mcp_server.memory_store(kind="lesson", items_json=json.dumps(items)))
+    out = _run(mcp_server.memory_store(kind="lesson", items_json=json.dumps(items), user_confirmed=True))
     report = json.loads(out)
     assert report["saved"] == 2
 

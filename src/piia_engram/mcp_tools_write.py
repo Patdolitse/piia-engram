@@ -9,12 +9,56 @@ try:
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
 
+
+def _confirmation_detail(content) -> str:
+    return json.dumps(content, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _confirmation_required(kind: str, title: str, content) -> str:
+    return S._json({
+        "status": "confirmation_required",
+        "requires_confirmation": True,
+        "changed": False,
+        "dry_run": True,
+        "kind": kind,
+        "content_title": title,
+        "content_detail": _confirmation_detail(content),
+        "instruction": (
+            "Show content_title and content_detail to the user. Only call the "
+            "write tool again with user_confirmed=true after the user confirms."
+        ),
+    })
+
+
+def _is_user_confirmed(value) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
+def _lesson_confirmation_title(lesson: dict) -> str:
+    return f"Lesson: {str(lesson.get('summary', '')).strip()}"
+
+
+def _decision_confirmation_title(decision: dict) -> str:
+    question = str(decision.get("question") or decision.get("title") or "").strip()
+    return f"Decision: {question}"
+
+
+def _playbook_confirmation_title(playbook: dict) -> str:
+    return f"Playbook: {str(playbook.get('title', '')).strip()}"
+
+
 @S.mcp.tool()
 async def memory_store(
     kind: str,
     content_json: str = "",
     source_tool: str = "",
     items_json: str = "",
+    project_folder: str = "",
+    user_confirmed: bool = False,
 ) -> str:
     """统一知识写入入口 — 根据 kind 自动路由到 add_lesson / add_decision / add_playbook。
     Unified knowledge write endpoint — routes to add_lesson / add_decision / add_playbook based on kind.
@@ -61,13 +105,26 @@ async def memory_store(
         # An agent cannot self-certify trust: strip any tier/approval fields
         # each item smuggled through items_json so the risk-based write gate
         # stays the sole authority over tier (high-risk items -> staging).
+        effective_project = project_folder
         for _item in items:
             S.strip_untrusted_trust_fields(_item)
-        return S._json(S._locked_engram_call(
+            if effective_project and isinstance(_item, dict):
+                _item.setdefault("project_folder", effective_project)
+        if not _is_user_confirmed(user_confirmed):
+            return _confirmation_required(
+                kind or "lesson",
+                f"Batch {kind or 'lesson'} memory write: {len(items)} items",
+                items,
+            )
+        result = S._locked_engram_call(
             S._get_engram().bulk_add_knowledge,
             items,
             item_type=kind or "lesson",
             source_tool=source_tool,
+        )
+        S._track("memory_store", success=True)
+        return S._json(S._gov_rt.maybe_govern_write_ack(
+            S._get_engram().root, result, tool="memory_store",
         ))
 
     try:
@@ -85,6 +142,10 @@ async def memory_store(
 
     if source_tool:
         content["source_tool"] = source_tool
+    effective_project = project_folder
+    if effective_project:
+        S._session.detect_project(effective_project)
+        content.setdefault("project_folder", effective_project)
 
     # Schema validation per kind
     def _str_field(d: dict, key: str) -> str:
@@ -120,6 +181,15 @@ async def memory_store(
     else:
         S._track("memory_store", success=False)
         return "kind 不能为空。可用: lesson, decision, playbook"
+
+    if not _is_user_confirmed(user_confirmed):
+        if kind == "lesson":
+            title = _lesson_confirmation_title(content)
+        elif kind == "decision":
+            title = _decision_confirmation_title(content)
+        else:
+            title = _playbook_confirmation_title(content)
+        return _confirmation_required(kind, title, content)
 
     try:
         if kind == "lesson":
@@ -158,9 +228,11 @@ async def add_lesson(
     domain: str = "",
     source_tool: str = "",
     source_url: str = "",
+    project_folder: str = "",
     source_agent: str = "",
     run_id: str = "",
     last_validated_at: str = "",
+    user_confirmed: bool = False,
 ) -> str:
     """记录单条经验教训（你已经知道要记什么）。 / Record one lesson learned when you already know what to save.
 
@@ -198,10 +270,16 @@ async def add_lesson(
         lesson["source_tool"] = source_tool
     if source_url:
         lesson["source_url"] = source_url
+    effective_project = project_folder
+    if effective_project:
+        S._session.detect_project(effective_project)
+        lesson["project_folder"] = effective_project
     S._attach_provenance(
         lesson, source_agent=source_agent, run_id=run_id,
         last_validated_at=last_validated_at,
     )
+    if not _is_user_confirmed(user_confirmed):
+        return _confirmation_required("lesson", _lesson_confirmation_title(lesson), lesson)
     try:
         result = S._locked_engram_call(S._get_engram().add_lesson, lesson)
         S._track("add_lesson", success=True)
@@ -230,11 +308,13 @@ async def add_decision(
     reasoning: str = "",
     source_tool: str = "",
     project: str = "",
+    project_folder: str = "",
     domain: str = "",
     supersedes: str = "",
     source_agent: str = "",
     run_id: str = "",
     last_validated_at: str = "",
+    user_confirmed: bool = False,
 ) -> str:
     """记录单条关键决策（用户明确选了某个方案）。 / Record one key decision when the user explicitly chose an option.
 
@@ -277,6 +357,10 @@ async def add_decision(
         decision["source_tool"] = source_tool
     if project:
         decision["project"] = project
+    effective_project = project_folder
+    if effective_project:
+        S._session.detect_project(effective_project)
+        decision["project_folder"] = effective_project
     if domain:
         decision["domain"] = domain
     if supersedes:
@@ -285,6 +369,8 @@ async def add_decision(
         decision, source_agent=source_agent, run_id=run_id,
         last_validated_at=last_validated_at,
     )
+    if not _is_user_confirmed(user_confirmed):
+        return _confirmation_required("decision", _decision_confirmation_title(decision), decision)
     try:
         result = S._locked_engram_call(S._get_engram().add_decision, decision)
         S._track("add_decision", success=True)
@@ -321,6 +407,7 @@ async def add_playbook(
     source_agent: str = "",
     run_id: str = "",
     last_validated_at: str = "",
+    user_confirmed: bool = False,
 ) -> str:
     """记录操作手册（Playbook）— 结构化的多步骤流程。 / Record an operational playbook — a structured multi-step procedure.
 
@@ -396,6 +483,8 @@ async def add_playbook(
         playbook, source_agent=source_agent, run_id=run_id,
         last_validated_at=last_validated_at,
     )
+    if not _is_user_confirmed(user_confirmed):
+        return _confirmation_required("playbook", _playbook_confirmation_title(playbook), playbook)
     try:
         result = S._locked_engram_call(S._get_engram().add_playbook, playbook)
         S._track("add_playbook", success=True)

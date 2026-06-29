@@ -159,6 +159,12 @@ _MATRIX = [
     ("memory_store", "add_lesson",
      {"status": "duplicate", "existing_id": "sec-1", "existing_summary": SECRET, "similarity": 0.99},
      {"kind": "lesson", "content_json": '{"summary": "near dup"}'}, "withhold"),
+    ("memory_store", "bulk_add_knowledge",
+     {"saved": 1, "duplicates": [{"existing_summary": SECRET}]},
+     {"kind": "lesson", "items_json": '[{"summary": "near batch dup"}]'}, "withhold"),
+    ("wrap_up_session", "extract_session_insights",
+     {"saved_lessons": 0, "saved_decisions": 0, "results": [{"title": SECRET}]},
+     {"summary": "session ended", "user_confirmed": True}, "withhold"),
     # ---- owner-only aggregates / dumps / derived views (maybe_govern_owner_only) ----
     # NOTE: prepare_playbook_execution was MOVED to _EXPORT_OWNER_ONLY (round-18
     # P1): core.save_execution_plan PERSISTS the step bodies to
@@ -280,7 +286,7 @@ _SAFE_ALLOWLIST = {
     # update_execution_step / archive_playbook became actions of
     # playbook_execution / manage_playbook (classified above).
     "ingest_notes", "extract_session_insights",
-    "save_project_snapshot", "save_agent_context", "wrap_up_session",
+    "save_project_snapshot", "save_agent_context",
     "register_tool", "update_identity",
     # permission profile: governance metadata, no knowledge bodies. v4.0.0:
     # set_caller_trust + revoke_caller merged into manage_caller_trust
@@ -331,6 +337,11 @@ def gov_engram(tmp_path, monkeypatch):
 
 
 def _call(tool_name, kwargs):
+    if tool_name in {
+        "add_lesson", "add_decision", "add_playbook", "memory_store",
+        "wrap_up_session",
+    }:
+        kwargs = {**kwargs, "user_confirmed": True}
     return asyncio.run(getattr(mcp_server, tool_name)(**kwargs))
 
 
@@ -699,6 +710,8 @@ _SIDE_EFFECT_HARNESS = [
     ("add_playbook", lambda ids: {"title": "dup test pb", "triggers": "a,b"}),
     ("memory_store", lambda ids: {"kind": "lesson",
                                    "content_json": '{"summary": "near duplicate"}'}),
+    ("wrap_up_session", lambda ids: {"summary": "session ended",
+                                      "user_confirmed": True}),
 ]
 
 _SIDE_EFFECT_TOOL_NAMES = {row[0] for row in _SIDE_EFFECT_HARNESS}

@@ -937,6 +937,111 @@ class Engram(
             return name if name else project
         return project
 
+    def _normalize_project_scope_for_entry(self, entry: dict) -> dict:
+        """Bind project-specific knowledge to a stable project id.
+
+        ``project_folder`` is accepted as a local write hint but not kept as a
+        knowledge field: the durable lookup key is the hashed ``project_id`` and
+        the human-facing label is the sanitized folder name. Entries without a
+        project marker remain global reusable memory.
+        """
+        if not isinstance(entry, dict):
+            return entry
+        provenance = entry.get("provenance")
+        if isinstance(provenance, dict):
+            provenance = dict(provenance)
+            provenance.pop("project_folder", None)
+            provenance.pop("source_project_folder", None)
+            raw_source_project = provenance.get("source_project")
+            if (
+                isinstance(raw_source_project, str)
+                and raw_source_project.strip()
+                and self._looks_like_project_path(raw_source_project)
+            ):
+                provenance.pop("source_project", None)
+            raw_project = provenance.get("project")
+            if (
+                isinstance(raw_project, str)
+                and raw_project.strip()
+                and self._looks_like_project_path(raw_project)
+            ):
+                provenance["project"] = self._sanitize_project(raw_project)
+            entry["provenance"] = provenance
+        project_folder = entry.pop("project_folder", "") or entry.pop("source_project_folder", "")
+        source_project = entry.get("source_project")
+        if (
+            not project_folder
+            and isinstance(source_project, str)
+            and source_project.strip()
+            and self._looks_like_project_path(source_project)
+        ):
+            project_folder = source_project
+        if isinstance(project_folder, str) and project_folder.strip():
+            project_label = self._sanitize_project(project_folder)
+            entry["project_id"] = _project_id(project_folder)
+            entry["project"] = project_label
+            entry.pop("source_project", None)
+            provenance = entry.get("provenance")
+            if isinstance(provenance, dict):
+                provenance["project"] = project_label
+                provenance["project_id"] = entry["project_id"]
+                provenance.pop("source_project", None)
+            return entry
+        value = entry.get("project")
+        if isinstance(value, str) and value.strip():
+            entry["project"] = self._sanitize_project(value)
+        return entry
+
+    @staticmethod
+    def _looks_like_project_path(value: str) -> bool:
+        return bool(value) and (
+            "/" in value or "\\" in value or (len(value) > 2 and value[1] == ":")
+        )
+
+    def _entry_project_id(self, entry: dict) -> str:
+        value = entry.get("project_id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        for key in ("project_folder", "source_project_folder", "source_project"):
+            raw = entry.get(key)
+            if isinstance(raw, str) and raw.strip() and self._looks_like_project_path(raw):
+                return _project_id(raw)
+        return ""
+
+    def _entry_project_label(self, entry: dict) -> str:
+        for key in ("source_project", "project"):
+            raw = entry.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return self._sanitize_project(raw).strip().lower()
+        return ""
+
+    def _entry_visible_for_project(self, entry: dict, project_folder: str | None) -> bool:
+        project_folder = (project_folder or "").strip()
+        entry_pid = self._entry_project_id(entry)
+        entry_label = self._entry_project_label(entry)
+        if not project_folder:
+            return not entry_pid and not entry_label
+        target_pid = _project_id(project_folder)
+        if entry_pid:
+            return entry_pid == target_pid
+        if entry_label:
+            return entry_label == self._sanitize_project(project_folder).strip().lower()
+        return True
+
+    def _entries_share_project_scope(self, left: dict, right: dict) -> bool:
+        left_pid = self._entry_project_id(left)
+        right_pid = self._entry_project_id(right)
+        if left_pid and right_pid:
+            return left_pid == right_pid
+
+        left_label = self._entry_project_label(left)
+        right_label = self._entry_project_label(right)
+        if left_pid or right_pid:
+            return bool(left_label and right_label and left_label == right_label)
+        if left_label or right_label:
+            return bool(left_label and right_label and left_label == right_label)
+        return True
+
     def _entry_identity_text(self, entry: dict, entry_type: str) -> str:
         if entry_type == "decision":
             return str(entry.get("title") or entry.get("question") or "")
@@ -1262,6 +1367,10 @@ class Engram(
             provenance.setdefault("domain", entry.get("domain"))
         if entry.get("project"):
             provenance.setdefault("project", entry.get("project"))
+        if entry.get("source_project"):
+            provenance.setdefault("source_project", entry.get("source_project"))
+        if entry.get("project_id"):
+            provenance.setdefault("project_id", entry.get("project_id"))
         entry["provenance"] = provenance
 
         risk = self._assess_memory_risk(entry)
@@ -1451,6 +1560,8 @@ class Engram(
             if value is not None:
                 new_lesson[key] = value
 
+        new_lesson = self._normalize_project_scope_for_entry(new_lesson)
+
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_lesson)
 
@@ -1470,10 +1581,14 @@ class Engram(
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
             # Three-tier dedup: exact duplicate / semantically related / pass
+            same_scope_lessons = [
+                self._ensure_fields(existing, "lesson")
+                for existing in lessons
+                if self._entries_share_project_scope(new_lesson, existing)
+            ]
             best_sim = 0.0
             best_match = None
-            for existing in lessons:
-                existing = self._ensure_fields(existing, "lesson")
+            for existing in same_scope_lessons:
                 if existing.get("status") != "active":
                     continue
                 sim = self._bigram_similarity(
@@ -1520,7 +1635,7 @@ class Engram(
             # surface a close embedding neighbor by cross-linking only. Re-verifies
             # the neighbor against this fresh active list inside the lock.
             self._semantic_crosslink_in_lock(
-                new_lesson, lessons, semantic_neighbors, best_sim
+                new_lesson, same_scope_lessons, semantic_neighbors, best_sim
             )
 
             lessons.append(new_lesson)
@@ -1561,6 +1676,7 @@ class Engram(
         self,
         domain: str | None = None,
         source_tool: str | None = None,
+        project_folder: str | None = None,
         limit: int | None = 50,
         _update_access: bool = True,
         _migrate_fields: bool = True,
@@ -1576,6 +1692,8 @@ class Engram(
                 if domain not in lesson_domains:
                     continue
             if source_tool and lesson.get("source_tool") != source_tool:
+                continue
+            if not self._entry_visible_for_project(lesson, project_folder):
                 continue
             result.append(lesson)
         result = result[-limit:] if limit is not None else result
@@ -1737,6 +1855,8 @@ class Engram(
             if value is not None:
                 new_decision[key] = value
 
+        new_decision = self._normalize_project_scope_for_entry(new_decision)
+
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_decision)
 
@@ -1768,10 +1888,14 @@ class Engram(
             # (most recent by list position) wins. This is correct for both
             # dedup (compare against the latest) and auto-supersedes (chain
             # should target the most recent predecessor, not an older one).
+            same_scope_decisions = [
+                self._ensure_fields(existing, "decision")
+                for existing in decisions
+                if self._entries_share_project_scope(new_decision, existing)
+            ]
             best_sim = 0.0
             best_match = None
-            for existing in decisions:
-                existing = self._ensure_fields(existing, "decision")
+            for existing in same_scope_decisions:
                 if existing.get("status") != "active":
                     continue
                 sim = self._bigram_similarity(
@@ -1825,7 +1949,7 @@ class Engram(
             # surface a close embedding neighbor by cross-linking only. Re-verifies
             # the neighbor against this fresh active list inside the lock.
             self._semantic_crosslink_in_lock(
-                new_decision, decisions, semantic_neighbors, best_sim
+                new_decision, same_scope_decisions, semantic_neighbors, best_sim
             )
 
             decisions.append(new_decision)
@@ -1862,9 +1986,24 @@ class Engram(
         supersedes_id = new_decision.get("supersedes") or supersedes_box.get("target")
         if supersedes_id:
             try:
-                self.add_relation(
-                    str(new_decision["id"]), "supersedes", str(supersedes_id)
+                target_decision = next(
+                    (
+                        self._ensure_fields(existing, "decision")
+                        for existing in self._read_entries(
+                            self._knowledge_dir / "decisions.json",
+                            "decision",
+                            migrate=False,
+                        )
+                        if str(existing.get("id") or "") == str(supersedes_id)
+                    ),
+                    None,
                 )
+                if target_decision and self._entries_share_project_scope(
+                    new_decision, target_decision
+                ):
+                    self.add_relation(
+                        str(new_decision["id"]), "supersedes", str(supersedes_id)
+                    )
             except Exception:
                 pass  # edge is advisory; the decision itself is the hard write
 
@@ -1875,6 +2014,7 @@ class Engram(
         limit: int | None = 30,
         source_tool: str | None = None,
         project: str | None = None,
+        project_folder: str | None = None,
         domain: str | None = None,
         _update_access: bool = True,
         _migrate_fields: bool = True,
@@ -1886,6 +2026,10 @@ class Engram(
             if decision.get("status") != "active":
                 continue
             if source_tool and decision.get("source_tool") != source_tool:
+                continue
+            if not project and not self._entry_visible_for_project(decision, project_folder):
+                continue
+            if project and project_folder and not self._entry_visible_for_project(decision, project_folder):
                 continue
             if project:
                 decision_project = decision.get("project") or decision.get("source_project")

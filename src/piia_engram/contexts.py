@@ -119,7 +119,9 @@ def _looks_like_project_path(value: Any) -> bool:
 def _context_entry_project_id(entry: dict[str, Any]) -> str:
     value = entry.get("project_id")
     if isinstance(value, str) and value.strip():
-        return value.strip()
+        project_id = value.strip()
+        if project_id != _project_id(""):
+            return project_id
     for key in ("project_folder", "source_project_folder", "source_project"):
         raw = entry.get(key)
         if isinstance(raw, str) and raw.strip() and _looks_like_project_path(raw):
@@ -478,6 +480,7 @@ class ContextStoreMixin:
         if int(limit or 0) <= 0:
             return []
         project_id = _project_id(project_folder) if project_folder else ""
+        no_project_id = _project_id("")
         digests: list[dict[str, Any]] = []
         session_files: list[tuple[float, str, str]] = []
         if not self._contexts_dir.exists():
@@ -499,7 +502,11 @@ class ContextStoreMixin:
                 continue
             source = digest.get("source")
             source_project = source.get("project_id", "") if isinstance(source, dict) else ""
+            if source_project == no_project_id:
+                source_project = ""
             if project_id and source_project != project_id:
+                continue
+            if not project_id and source_project:
                 continue
             digests.append(digest)
             if len(digests) >= limit:
@@ -788,12 +795,15 @@ class ContextStoreMixin:
     def get_recent_context(
         self,
         tool: str = "",
+        project_folder: str = "",
         limit: int = 1,
     ) -> list[dict[str, Any]]:
         """Return the most recent context sessions.
 
         Args:
             tool: Tool name.  If empty, searches **all** tools.
+            project_folder: Optional project path. When set, only sessions
+                saved for that project are returned.
             limit: Max sessions to return (default 1 = latest only).
 
         Returns:
@@ -801,6 +811,8 @@ class ContextStoreMixin:
             sorted newest-first.
         """
         results: list[dict[str, Any]] = []
+        target_project_id = _project_id(project_folder) if project_folder else ""
+        no_project_id = _project_id("")
 
         if tool:
             tool_names = [_sanitize_tool_name(tool)]
@@ -820,11 +832,32 @@ class ContextStoreMixin:
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
-            for f in files[:limit]:
+            for f in files:
+                content = ""
+                digest = self.get_session_digest(t, f.stem)
+                if not digest:
+                    try:
+                        content = f.read_text(encoding="utf-8")
+                    except OSError:
+                        continue
+                    header_project = _session_header_project(content)
+                    source_project = _project_id(header_project) if header_project else ""
+                else:
+                    source = digest.get("source")
+                    source_project = source.get("project_id", "") if isinstance(source, dict) else ""
+                    if source_project == no_project_id:
+                        source_project = ""
+                if target_project_id:
+                    if source_project != target_project_id:
+                        continue
+                elif source_project:
+                    continue
+                if not content:
+                    content = f.read_text(encoding="utf-8")
                 results.append({
                     "tool": t,
                     "session_id": f.stem,
-                    "content": f.read_text(encoding="utf-8"),
+                    "content": content,
                     "modified_at": datetime.fromtimestamp(
                         f.stat().st_mtime,
                     ).replace(microsecond=0).isoformat(),
@@ -1181,7 +1214,7 @@ class ContextStoreMixin:
 
         # ---- 4. Recent agent contexts (cross-tool) ---------------------
         try:
-            recent = self.get_recent_context(limit=2)
+            recent = self.get_recent_context(limit=2, project_folder=project_folder)
             if recent:
                 # Newest-first: cite the most recent session's time in the brand line.
                 last_session_when = str(recent[0].get("modified_at", "") or "")
@@ -1221,6 +1254,7 @@ class ContextStoreMixin:
             if hasattr(self, "get_lessons"):
                 lessons = self.get_lessons(
                     limit=3,
+                    project_folder=project_folder,
                     _update_access=False,
                     _migrate_fields=False,
                 )
@@ -1254,6 +1288,7 @@ class ContextStoreMixin:
             if hasattr(self, "get_decisions"):
                 decs = self.get_decisions(
                     limit=3,
+                    project_folder=project_folder,
                     _update_access=False,
                     _migrate_fields=False,
                 )
@@ -1362,6 +1397,7 @@ class ContextStoreMixin:
                     continue
                 rows = getattr(self, getter)(
                     limit=None,
+                    project_folder=project_folder,
                     _update_access=False,
                     _migrate_fields=False,
                 ) or []

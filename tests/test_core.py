@@ -1131,8 +1131,12 @@ def test_ingest_notes_low_risk_auto_candidates_absorb_to_verified(tmp_path: Path
     assert result["saved_lessons"] == 1
     assert result["saved_decisions"] == 1
 
-    lessons = engram.get_lessons(limit=None, _update_access=False)
-    decisions = engram.get_decisions(limit=None, _update_access=False)
+    lessons = engram.get_lessons(
+        project_folder=str(tmp_path), limit=None, _update_access=False
+    )
+    decisions = engram.get_decisions(
+        project_folder=str(tmp_path), limit=None, _update_access=False
+    )
     lesson = next(l for l in lessons if "pytest fixtures" in l.get("summary", ""))
     decision = next(d for d in decisions if "uv" in d.get("question", d.get("title", "")))
 
@@ -2484,10 +2488,14 @@ def test_ingest_extraction_applies_lessons_and_decisions(tmp_path: Path):
     result = ingest_extraction(engram, extracted, str(tmp_path), session_id="test-session")
     assert result["items_learned"] >= 2
 
-    lessons = engram.get_lessons(limit=None, _update_access=False)
+    lessons = engram.get_lessons(
+        project_folder=str(tmp_path), limit=None, _update_access=False
+    )
     assert any("parametrize" in l.get("summary", "") for l in lessons)
 
-    decisions = engram.get_decisions(limit=None, _update_access=False)
+    decisions = engram.get_decisions(
+        project_folder=str(tmp_path), limit=None, _update_access=False
+    )
     assert any("测试框架" in d.get("question", d.get("title", "")) for d in decisions)
 
 
@@ -2520,11 +2528,15 @@ def test_ingest_extraction_cannot_self_certify_high_risk_as_verified(tmp_path: P
     ingest_extraction(engram, extracted, str(tmp_path), session_id="session-123")
 
     lesson = next(
-        l for l in engram.get_lessons(limit=None, _update_access=False)
+        l for l in engram.get_lessons(
+            project_folder=str(tmp_path), limit=None, _update_access=False
+        )
         if "api_key" in l.get("summary", "")
     )
     decision = next(
-        d for d in engram.get_decisions(limit=None, _update_access=False)
+        d for d in engram.get_decisions(
+            project_folder=str(tmp_path), limit=None, _update_access=False
+        )
         if "server_key" in d.get("question", "")
     )
 
@@ -2535,7 +2547,9 @@ def test_ingest_extraction_cannot_self_certify_high_risk_as_verified(tmp_path: P
     assert decision["tier"] == "staging"
     assert lesson["approval_status"] == "pending"
     assert decision["approval_status"] == "pending"
-    assert lesson["source_project"] == str(tmp_path)
+    assert lesson["project_id"]
+    assert lesson["project"] == tmp_path.name
+    assert lesson.get("source_project") != str(tmp_path)
     assert lesson["source_session"] == "session-123"
     assert lesson["extraction"]["method"] == "llm"
     assert decision["extraction"]["method"] == "llm"
@@ -2569,10 +2583,14 @@ def test_ingest_extraction_rejects_low_confidence_planning_candidates(tmp_path: 
     result = ingest_extraction(engram, extracted, str(tmp_path), session_id="session-123")
 
     assert result["skipped_low_quality"] == 2
-    lessons = engram.get_lessons(limit=None, _update_access=False)
+    lessons = engram.get_lessons(
+        project_folder=str(tmp_path), limit=None, _update_access=False
+    )
     assert any("twine check" in item.get("summary", "") for item in lessons)
     assert not any("graph memory later" in item.get("summary", "") for item in lessons)
-    decisions = engram.get_decisions(limit=None, _update_access=False)
+    decisions = engram.get_decisions(
+        project_folder=str(tmp_path), limit=None, _update_access=False
+    )
     assert not any("graph memory" in item.get("question", "") for item in decisions)
 
 
@@ -2781,7 +2799,11 @@ def test_migrate_from_oca_memory_near_misses(tmp_path: Path):
     )
     result = migrate_from_oca_memory(str(oca_dir), engram)
     assert any("near_misses" in m for m in result["migrated"])
-    lessons = engram.get_lessons(limit=None, _update_access=False)
+    lessons = engram.get_lessons(
+        project_folder="migrated_from_oca_memory",
+        limit=None,
+        _update_access=False,
+    )
     safety_lessons = [l for l in lessons if l.get("domain") == "safety"]
     assert len(safety_lessons) == 2
 

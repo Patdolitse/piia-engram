@@ -12,16 +12,32 @@ def _engram(root: Path) -> Engram:
     return Engram(root)
 
 
-def _knowledge_counts(engram: Engram) -> tuple[int, int]:
-    lessons = engram.get_lessons(limit=None, _update_access=False)
-    decisions = engram.get_decisions(limit=None, _update_access=False)
+def _knowledge_counts(engram: Engram, project_folder: str | None = None) -> tuple[int, int]:
+    lessons = engram.get_lessons(
+        project_folder=project_folder,
+        limit=None,
+        _update_access=False,
+    )
+    decisions = engram.get_decisions(
+        project_folder=project_folder,
+        limit=None,
+        _update_access=False,
+    )
     return len(lessons), len(decisions)
 
 
-def _assert_auto_metadata(engram: Engram) -> None:
+def _assert_auto_metadata(engram: Engram, project_folder: str | None = None) -> None:
     items = (
-        engram.get_lessons(limit=None, _update_access=False)
-        + engram.get_decisions(limit=None, _update_access=False)
+        engram.get_lessons(
+            project_folder=project_folder,
+            limit=None,
+            _update_access=False,
+        )
+        + engram.get_decisions(
+            project_folder=project_folder,
+            limit=None,
+            _update_access=False,
+        )
     )
     for item in items:
         # Risk-based write gate: high-risk content is review-gated to staging,
@@ -187,10 +203,10 @@ def test_ingest_extraction_quality_corpus(tmp_path: Path):
 
     assert result["items_learned"] == 2
     assert result["skipped_low_quality"] == 2
-    lessons, decisions = _knowledge_counts(eng)
+    lessons, decisions = _knowledge_counts(eng, project_folder=str(tmp_path))
     assert lessons == 1
     assert decisions == 1
-    _assert_auto_metadata(eng)
+    _assert_auto_metadata(eng, project_folder=str(tmp_path))
 
 
 def test_ingest_notes_rejected_quality_summary_is_metadata_only(tmp_path: Path):

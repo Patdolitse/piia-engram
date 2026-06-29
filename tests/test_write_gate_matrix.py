@@ -505,11 +505,27 @@ class TestOwnerStillWorks:
         import piia_engram.mcp_server as mcp_server
 
         mcp_server._engram = e
+        monkeypatch.setattr(
+            e,
+            "extract_session_insights",
+            lambda *a, **kw: {
+                "saved_lessons": 0,
+                "saved_decisions": 0,
+                "results": [{"title": "secret wrap-up acknowledgement"}],
+            },
+        )
 
-        result = _run(mcp_server.wrap_up_session(summary="did some work today"))
+        result = _run(mcp_server.wrap_up_session(
+            summary="did some work today",
+            user_confirmed=True,
+        ))
         assert not _is_refusal(result), (
             "trusted-local must be allowed to wrap up a session"
         )
+        assert "secret wrap-up acknowledgement" not in result
+        parsed = json.loads(result)
+        assert parsed["governance_withheld"] is True
+        assert parsed["tool"] == "wrap_up_session"
 
     def test_trusted_local_low_risk_lesson_still_direct_writes(
         self, tmp_path, monkeypatch
@@ -528,6 +544,7 @@ class TestOwnerStillWorks:
             summary="prefer small pure functions for testability",
             domain="python",
             source_tool="codex",
+            user_confirmed=True,
         ))
 
         assert not _is_refusal(result)
@@ -552,6 +569,7 @@ class TestOwnerStillWorks:
             summary="rotate api_key and run the deploy command",
             domain="ops",
             source_tool="codex",
+            user_confirmed=True,
         ))
 
         assert not _is_refusal(result)
@@ -617,7 +635,10 @@ class TestOwnerStillWorks:
 
         mcp_server._engram = e
 
-        result = _run(mcp_server.wrap_up_session(summary="work with governance off"))
+        result = _run(mcp_server.wrap_up_session(
+            summary="work with governance off",
+            user_confirmed=True,
+        ))
         assert not _is_refusal(result)
 
 
