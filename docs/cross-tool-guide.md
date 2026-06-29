@@ -319,6 +319,23 @@ Returns structured JSON for easy automated processing.
 
 ---
 
+## Lightweight Session-End Save
+
+`wrap_up_session` is a lightweight session-end save. It records the session
+summary, extracts bounded candidate knowledge, updates the project snapshot
+when a project folder is supplied, and appends a daily-log entry.
+
+It does not run full reconciliation by default. Expensive maintenance such as
+AI config reconciliation should be requested explicitly with
+`run_reconcile=True` or run through dedicated owner maintenance flows. This
+keeps session closeout predictable for MCP hosts with fixed tool timeouts.
+
+The returned `timing` block is metadata-only. It reports stage durations in
+milliseconds and must not be treated as user approval, release evidence, or a
+live-agent benchmark.
+
+---
+
 ## 6. FAQ
 
 ### Q: Will two tools writing at the same time conflict?
