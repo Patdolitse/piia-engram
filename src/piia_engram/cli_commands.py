@@ -5070,6 +5070,8 @@ def _print_continuity_usage() -> None:
         "Usage:\n"
         "  engram continuity [--project PATH] [--limit N]\n"
         "  engram continuity --json [--project PATH] [--limit N]\n"
+        "  engram continuity --digest-backfill-preview [--project PATH] [--limit N] [--json]\n"
+        "  engram continuity --digest-backfill-apply --yes [--project PATH] [--limit N] [--json]\n"
     )
 
 
@@ -5085,6 +5087,8 @@ def run_continuity(argv: list[str] | None = None) -> int:
     project_folder = os.getcwd()
     limit = 500
     json_output = False
+    digest_backfill_mode = ""
+    yes = False
     i = 0
     while i < len(args):
         arg = args[i]
@@ -5093,6 +5097,18 @@ def run_continuity(argv: list[str] | None = None) -> int:
             return 0
         if arg == "--json":
             json_output = True
+        elif arg == "--yes":
+            yes = True
+        elif arg == "--digest-backfill-preview":
+            if digest_backfill_mode and digest_backfill_mode != "preview":
+                print("Choose only one digest backfill mode")
+                return 2
+            digest_backfill_mode = "preview"
+        elif arg == "--digest-backfill-apply":
+            if digest_backfill_mode and digest_backfill_mode != "apply":
+                print("Choose only one digest backfill mode")
+                return 2
+            digest_backfill_mode = "apply"
         elif arg == "--project":
             if i + 1 >= len(args):
                 print("Missing value for --project")
@@ -5116,6 +5132,44 @@ def run_continuity(argv: list[str] | None = None) -> int:
             _print_continuity_usage()
             return 2
         i += 1
+
+    if digest_backfill_mode:
+        if digest_backfill_mode == "apply" and not yes:
+            report = {
+                "schema": "session_digest_backfill.v1",
+                "mode": "apply",
+                "candidates": 0,
+                "written": 0,
+                "skipped": [{"reason": "requires_yes", "count": 1}],
+                "items": [],
+            }
+            if json_output:
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                print("ERROR: --digest-backfill-apply requires --yes")
+            return 2
+        eng = Engram(read_only=(digest_backfill_mode == "preview"))
+        if digest_backfill_mode == "preview":
+            report = eng.preview_session_digest_backfill(
+                project_folder=project_folder,
+                limit=limit,
+            )
+        else:
+            report = eng.apply_session_digest_backfill(
+                project_folder=project_folder,
+                limit=limit,
+                yes=yes,
+            )
+        if json_output:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(
+                "Engram session digest backfill\n"
+                f"  Mode: {report.get('mode')}\n"
+                f"  Candidates: {report.get('candidates')}\n"
+                f"  Written: {report.get('written')}\n"
+            )
+        return 0
 
     report = build_continuity_report(
         Engram(),

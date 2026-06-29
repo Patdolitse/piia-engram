@@ -3013,7 +3013,7 @@ def main() -> None:
     # dry-run-by-default JSON surfaces — the reminder would write .update_check.json
     # into the store — so skip them too (`dock-quality-action` only writes after
     # an explicit --yes, never on its default dry-run). Not reached by the MCP entry.
-    if not (args and args[0] in ("doctor", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang", "dock-onboard-scan", "weekly")):
+    if not (args and args[0] in ("doctor", "continuity", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang", "dock-onboard-scan", "weekly")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 

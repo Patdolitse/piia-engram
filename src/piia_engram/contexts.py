@@ -101,6 +101,14 @@ def _resume_brand_line(n_memories: int, project_label: str, last_session_when: s
     return line
 
 
+def _session_header_project(content: str) -> str:
+    """Extract the project path from a legacy Markdown context header."""
+    for line in (content or "").splitlines()[:8]:
+        if line.startswith("## Project:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
 class ContextStoreMixin:
     """Mixin: agent context auto-save and recovery.
 
@@ -137,6 +145,164 @@ class ContextStoreMixin:
             if isinstance(value, list) and value:
                 return True
         return False
+
+    def _iter_context_session_files(self, tool: str = ""):
+        if tool:
+            tool_names = [_sanitize_tool_name(tool)]
+        else:
+            if not self._contexts_dir.exists():
+                return
+            tool_names = [
+                d.name for d in self._contexts_dir.iterdir() if d.is_dir()
+            ]
+
+        for tool_name in tool_names:
+            tool_dir = self._contexts_dir / tool_name
+            if not tool_dir.exists():
+                continue
+            files = sorted(
+                tool_dir.glob("*.md"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for path in files:
+                yield tool_name, path
+
+    @staticmethod
+    def _increment_reason(rows: list[dict[str, Any]], reason: str) -> None:
+        for row in rows:
+            if row.get("reason") == reason:
+                row["count"] = int(row.get("count") or 0) + 1
+                return
+        rows.append({"reason": reason, "count": 1})
+
+    def _session_digest_backfill_scan(
+        self,
+        *,
+        tool: str = "",
+        project_folder: str = "",
+        limit: int = 50,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        target_project_id = _project_id(project_folder) if project_folder else ""
+        candidates: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        max_candidates = max(0, int(limit or 0))
+
+        for tool_name, path in self._iter_context_session_files(tool):
+            if max_candidates and len(candidates) >= max_candidates:
+                break
+            session_id = path.stem
+            digest_path = self._session_digest_path(tool_name, session_id)
+            if digest_path.exists():
+                self._increment_reason(skipped, "already_has_digest")
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except Exception:
+                self._increment_reason(skipped, "read_error")
+                continue
+
+            header_project = _session_header_project(content)
+            source_project_id = _project_id(header_project) if header_project else ""
+            if target_project_id:
+                if not source_project_id:
+                    self._increment_reason(skipped, "project_unknown")
+                    continue
+                if source_project_id != target_project_id:
+                    self._increment_reason(skipped, "project_mismatch")
+                    continue
+
+            digest = build_session_digest(
+                repair_text(content).text,
+                tool=tool_name,
+                project_id=source_project_id,
+                session_ref=session_id,
+            )
+            if not self._digest_has_session_signal(digest):
+                self._increment_reason(skipped, "no_session_signal")
+                continue
+            candidates.append({
+                "tool": tool_name,
+                "session_id": session_id,
+                "digest": digest,
+                "digest_path": digest_path,
+            })
+        return candidates, skipped
+
+    def preview_session_digest_backfill(
+        self,
+        tool: str = "",
+        project_folder: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Preview legacy session digest sidecars that could be written.
+
+        This is intentionally zero-write and metadata-only: it never returns raw
+        session bodies or filesystem paths.
+        """
+        candidates, skipped = self._session_digest_backfill_scan(
+            tool=tool,
+            project_folder=project_folder,
+            limit=limit,
+        )
+        payload = {
+            "schema": "session_digest_backfill.v1",
+            "mode": "preview",
+            "candidates": len(candidates),
+            "written": 0,
+            "skipped": skipped,
+            "items": [
+                {
+                    "tool": item["tool"],
+                    "session_id": item["session_id"],
+                    "has_goal": bool(item["digest"].get("goal")),
+                    "has_next_actions": bool(item["digest"].get("next_actions")),
+                    "would_write": True,
+                }
+                for item in candidates
+            ],
+        }
+        return sanitize_digest_value(payload)
+
+    def apply_session_digest_backfill(
+        self,
+        tool: str = "",
+        project_folder: str = "",
+        limit: int = 50,
+        *,
+        yes: bool = False,
+    ) -> dict[str, Any]:
+        """Write digest sidecars for legacy sessions after owner confirmation."""
+        candidates, skipped = self._session_digest_backfill_scan(
+            tool=tool,
+            project_folder=project_folder,
+            limit=limit,
+        )
+        written = 0
+        items: list[dict[str, Any]] = []
+        if not yes and candidates:
+            self._increment_reason(skipped, "requires_yes")
+        for item in candidates:
+            would_write = bool(yes)
+            if yes:
+                _atomic_write_json(item["digest_path"], item["digest"])
+                written += 1
+            items.append({
+                "tool": item["tool"],
+                "session_id": item["session_id"],
+                "has_goal": bool(item["digest"].get("goal")),
+                "has_next_actions": bool(item["digest"].get("next_actions")),
+                "would_write": would_write,
+            })
+        payload = {
+            "schema": "session_digest_backfill.v1",
+            "mode": "apply",
+            "candidates": len(candidates),
+            "written": written,
+            "skipped": skipped,
+            "items": items,
+        }
+        return sanitize_digest_value(payload)
 
     # ------------------------------------------------------------------
     # Write
