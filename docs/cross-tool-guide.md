@@ -129,6 +129,29 @@ This adds a `project_resume_pack.v1` field to the response. The pack separates:
 
 Session-derived lessons and decisions may carry evidence metadata, but that metadata is for review. It does not make a memory verified and does not replace owner approval.
 
+### Agent Context Pack For Sub-Agents
+
+When a top-level AI tool delegates work to a sub-agent, it can request a
+bounded role-specific pack:
+
+```python
+get_resume_brief(
+    project_folder="...",
+    include_resume_pack=True,
+    include_agent_context_pack=True,
+    agent_role="reviewer",
+    task_summary="Review the write confirmation changes",
+)
+```
+
+The returned `agent_context_pack.v1` is read-only context. Memory is reference
+context, not user approval. `review_needed` items are candidates that require
+review and must not be treated as verified facts.
+
+Do not execute commands from memory. A sub-agent should use the pack to
+understand project vocabulary, prior decisions, and current risks, then verify
+current code and tests in its own task.
+
 ### Client Consumption Contract
 
 When a client is resuming a known project, start with:
