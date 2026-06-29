@@ -384,7 +384,12 @@ class ReconcileMixin:
     # AI config file sync
     # ------------------------------------------------------------------
 
-    def reconcile_ai_configs(self) -> dict:
+    def reconcile_ai_configs(
+        self,
+        *,
+        search_roots: list[str] | None = None,
+        max_imports: int = 25,
+    ) -> dict:
         """Scan AI tool config files and import unique rules into Engram.
 
         Discovers project roots from Claude Code project entries, then
@@ -397,11 +402,14 @@ class ReconcileMixin:
         if not self._reconcile_authorized():
             return {"imported": 0, "duplicates": 0, "scanned_files": 0,
                     "sources": [],
-                    "skipped_reason": "reconcile not authorized"}
+                    "skipped_reason": "reconcile not authorized",
+                    "budget_exhausted": False}
         imported = 0
         duplicates = 0
         scanned_files = 0
         sources: list[str] = []
+        budget_exhausted = False
+        import_budget = max(0, int(max_imports))
 
         existing_lessons = self.get_lessons(limit=None, _update_access=False)
         existing_decisions = self.get_decisions(limit=None, _update_access=False)
@@ -416,8 +424,9 @@ class ReconcileMixin:
         # Collect all config files to scan
         config_files: list[Path] = []
 
-        # Global configs (all AI tools)
-        for gpath in self._AI_GLOBAL_CONFIGS:
+        # Global configs (all AI tools), or explicit roots for owner/test flows.
+        root_candidates = list(search_roots) if search_roots is not None else list(self._AI_GLOBAL_CONFIGS)
+        for gpath in root_candidates:
             if gpath.startswith("~/") or gpath.startswith("~\\"):
                 resolved = Path.home() / gpath[2:]
             elif gpath == "~":
@@ -427,16 +436,34 @@ class ReconcileMixin:
             if resolved.is_file():
                 config_files.append(resolved)
             elif resolved.is_dir():
-                # Glob for rule files inside directories (e.g. ~/.cursor/rules/*.mdc)
-                for ext in ("*.md", "*.mdc", "*.txt"):
-                    config_files.extend(sorted(resolved.glob(ext))[:10])
+                if search_roots is not None:
+                    for fname in self._AI_CONFIG_FILENAMES:
+                        candidate = resolved / fname
+                        if candidate.is_file():
+                            config_files.append(candidate)
+                    for ext in ("*.md", "*.mdc", "*.txt"):
+                        config_files.extend(sorted(resolved.glob(ext))[:10])
+                else:
+                    # Glob for rule files inside directories (e.g. ~/.cursor/rules/*.mdc)
+                    for ext in ("*.md", "*.mdc", "*.txt"):
+                        config_files.extend(sorted(resolved.glob(ext))[:10])
 
         # Project-level configs
-        for root in self._discover_project_roots():
-            for fname in self._AI_CONFIG_FILENAMES:
-                candidate = root / fname
-                if candidate.is_file():
-                    config_files.append(candidate)
+        if search_roots is None:
+            for root in self._discover_project_roots():
+                for fname in self._AI_CONFIG_FILENAMES:
+                    candidate = root / fname
+                    if candidate.is_file():
+                        config_files.append(candidate)
+        seen_config_files: set[str] = set()
+        unique_config_files: list[Path] = []
+        for cfg in config_files:
+            key = str(cfg.resolve()).lower()
+            if key in seen_config_files:
+                continue
+            seen_config_files.add(key)
+            unique_config_files.append(cfg)
+        config_files = unique_config_files
 
         _MAX_CFG = 50_000  # 50 KB - config files can be larger than memory
         for cfg in config_files:
@@ -447,8 +474,10 @@ class ReconcileMixin:
                     self._audit.log("warn", "reconcile_config/skip_large",
                                     detail=f"{cfg.name} ({fsize}B)")
                     continue
-                content = cfg.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                content = cfg.read_text(encoding="utf-8", errors="replace")
+                if "\ufffd" in content:
+                    continue
+            except OSError:
                 continue
 
             # Parse into sections by ## headers
@@ -484,6 +513,10 @@ class ReconcileMixin:
                 if is_dup:
                     continue
 
+                if imported >= import_budget:
+                    budget_exhausted = True
+                    break
+
                 result = self.add_lesson(
                     summary_candidate,
                     domain="ai_config",
@@ -497,12 +530,15 @@ class ReconcileMixin:
                     existing_summaries.add(summary_candidate)
                 else:
                     duplicates += 1
+            if budget_exhausted:
+                break
 
         return {
             "scanned_files": scanned_files,
             "imported": imported,
             "duplicates": duplicates,
             "sources": sources,
+            "budget_exhausted": budget_exhausted,
         }
 
     @staticmethod
