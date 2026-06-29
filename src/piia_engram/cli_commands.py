@@ -13,6 +13,8 @@ import platform
 import re
 from pathlib import Path
 
+from .staging_review import _review_evidence
+
 # ``setup_wizard`` is imported as ``W`` at the BOTTOM of this module (not here)
 # to avoid a circular import: setup_wizard re-exports cli_commands' names at its
 # own bottom, so importing cli_commands FIRST would otherwise hit a
@@ -252,6 +254,46 @@ def _truncate_review_text(value: str, limit: int = 180) -> str:
     return text[: max(0, limit - 3)].rstrip() + "..."
 
 
+def _review_evidence_summary(item: dict) -> str:
+    evidence = _review_evidence(item)
+    if not evidence:
+        return ""
+    parts: list[str] = []
+    source_type = evidence.get("source_type")
+    if source_type:
+        parts.append(f"evidence={source_type}")
+    return _truncate_review_text(" ".join(parts), 24)
+
+
+def _print_review_evidence_detail(item: dict) -> None:
+    evidence = _review_evidence(item)
+    if not evidence:
+        return
+    source = evidence.get("source_type") or "unknown"
+    source_tool = evidence.get("source_tool")
+    if source_tool:
+        source = f"{source} via {source_tool}"
+    W._safe_print(f"evidence.source: {_truncate_review_text(source, 96)}")
+
+    source_ref = evidence.get("source_ref")
+    if source_ref:
+        W._safe_print(f"evidence.ref: {_truncate_review_text(source_ref, 120)}")
+
+    status_parts: list[str] = []
+    status = evidence.get("verification_status")
+    if status:
+        status_parts.append(status)
+    confidence = evidence.get("confidence")
+    if confidence:
+        status_parts.append(f"confidence={confidence}")
+    if status_parts:
+        W._safe_print("evidence.status: " + " ".join(status_parts))
+
+    promotion_hint = evidence.get("promotion_hint")
+    if promotion_hint:
+        W._safe_print(f"evidence.review: {_truncate_review_text(promotion_hint, 96)}")
+
+
 def _print_review_quality_detail(item: dict) -> None:
     extraction = item.get("extraction")
     if not isinstance(extraction, dict) or not extraction:
@@ -338,6 +380,9 @@ def _print_review_list(rows: list[dict]) -> None:
         if len(title) > 70:
             title = title[:67] + "..."
         quality = _review_quality_summary(item)
+        evidence = _review_evidence_summary(item)
+        if evidence:
+            quality = evidence if quality == "-" else f"{quality} {evidence}"
         W._safe_print(
             f"{item_type:<9}  "
             f"{str(item.get('id', '?')):<25}  "
@@ -366,6 +411,7 @@ def _print_review_item(item_type: str, item: dict) -> None:
         if item.get("detail"):
             W._safe_print(f"detail: {item.get('detail')}")
     _print_review_quality_detail(item)
+    _print_review_evidence_detail(item)
 
 
 def _require_yes(args: list[str], action: str) -> bool:

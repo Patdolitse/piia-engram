@@ -800,7 +800,7 @@ class ContextMixin:
                 }
                 if force_staging:
                     _payload["tier"] = "staging"
-                result = self.add_decision(_payload)
+                result = self.add_decision(_payload, _allow_internal_provenance=True)
                 if result.get("status") == "duplicate":
                     duplicates += 1
                     results.append({
@@ -837,7 +837,7 @@ class ContextMixin:
                 }
                 if force_staging:
                     _payload["tier"] = "staging"
-                result = self.add_lesson(_payload)
+                result = self.add_lesson(_payload, _allow_internal_provenance=True)
                 if result.get("status") == "duplicate":
                     duplicates += 1
                     results.append({

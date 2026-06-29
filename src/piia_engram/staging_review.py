@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+from .continuity_digest import sanitize_digest_value
 
 VALID_ACTIONS = {"approve", "reject", "archive"}
+_EVIDENCE_KEYS = (
+    "source_type",
+    "source_tool",
+    "source_ref",
+    "verification_status",
+    "confidence",
+    "promotion_hint",
+)
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_REVIEW_METADATA_LIMIT = 180
 
 
 def list_pending_staging(
@@ -294,7 +306,56 @@ def _pending_item(item_type: str, item: dict[str, Any]) -> dict[str, Any]:
     labeling = _project_labeling(item)
     if labeling:
         row["labeling"] = labeling
+    evidence = _review_evidence(item)
+    if evidence:
+        row["evidence"] = evidence
     return row
+
+
+def _review_evidence(item: dict[str, Any]) -> dict[str, str]:
+    evidence = item.get("evidence")
+    if not isinstance(evidence, dict):
+        return {}
+    if not _is_session_evidence_item(item, evidence):
+        return {}
+
+    out: dict[str, str] = {}
+    for key in _EVIDENCE_KEYS:
+        value = evidence.get(key)
+        if value is None:
+            continue
+        clean = _sanitize_review_metadata(value)
+        if clean:
+            out[key] = clean
+    return out
+
+
+def _is_session_evidence_item(item: dict[str, Any], evidence: dict[str, Any]) -> bool:
+    if str(evidence.get("source_type") or "").strip() != "session_digest":
+        return False
+    extraction = item.get("extraction")
+    if not isinstance(extraction, dict):
+        return False
+    if str(extraction.get("method") or "").strip() != "session_insights":
+        return False
+
+    evidence_tool = str(evidence.get("source_tool") or "").strip()
+    item_tool = str(item.get("source_tool") or "").strip()
+    extraction_tool = str(extraction.get("source_tool") or "").strip()
+    if evidence_tool and item_tool and evidence_tool != item_tool:
+        return False
+    if evidence_tool and extraction_tool and evidence_tool != extraction_tool:
+        return False
+    return True
+
+
+def _sanitize_review_metadata(value: Any) -> str:
+    safe = sanitize_digest_value(value)
+    text = _CONTROL_CHARS_RE.sub(" ", str(safe or ""))
+    text = " ".join(text.split())
+    if len(text) <= _REVIEW_METADATA_LIMIT:
+        return text
+    return text[: _REVIEW_METADATA_LIMIT - 3].rstrip() + "..."
 
 
 def _project_labeling(item: dict[str, Any]) -> dict[str, Any]:

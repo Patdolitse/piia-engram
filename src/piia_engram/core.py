@@ -82,7 +82,14 @@ from .compat import (  # noqa: F401
 
 
 def _strip_untrusted_freshness_provenance(entry: dict[str, Any]) -> None:
-    """Remove freshness-trust claims from ordinary core dict writes."""
+    """Remove trust/evidence claims from ordinary core dict writes."""
+    evidence = entry.get("evidence")
+    if (
+        isinstance(evidence, dict)
+        and str(evidence.get("source_type") or "").strip() == "session_digest"
+    ):
+        entry.pop("evidence", None)
+
     provenance = entry.get("provenance")
     if not isinstance(provenance, dict):
         return
