@@ -161,13 +161,11 @@
 
 ## Verification Evidence
 
-- Focused M12 tests: `34 passed`
-- Adjacent regression tests: `193 passed`
-- Full pytest: `4298 passed, 14 skipped, 5 warnings`
-- Collect-only: `4312 tests collected`
-- Release sanitize: `high=0 warn=0`
-- Publish allowlist: passed
-- GitHub PR checks: all visible checks passed when observed during M13 on 2026-06-30 10:37 Asia/Shanghai; re-check before marking ready or merging
+- Local focused tests were refreshed during M13; keep exact counts in local task notes rather than this public review map.
+- Local full pytest was refreshed during M13; keep exact counts in local task notes rather than this public review map.
+- Local collect-only was refreshed during M13; keep exact counts in local task notes rather than this public review map.
+- Release sanitize and publish allowlist checks passed during M13.
+- GitHub PR checks: all visible checks passed when observed during M13 on 2026-06-30 10:37 Asia/Shanghai; re-check before marking ready or merging.
 
 ## Known Follow-up
 
