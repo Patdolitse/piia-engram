@@ -89,6 +89,7 @@ README.zh-CN.md
 # NOTE: release-playbook.md is intentionally NOT here — it's an internal
 # ops runbook (reverse-disclosure risk) kept at docs/internal/ (gitignored).
 docs/architecture.md
+docs/anchor-live-smoke-weekend-evidence.md
 docs/benchmarks/context-governance-eval-v1.md
 docs/benchmarks/recall-eval-v1.md
 docs/benchmarks/memory-eval-suite-v1.md
