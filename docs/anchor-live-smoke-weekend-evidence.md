@@ -52,6 +52,34 @@ python scripts/render_anchor_forum_reply.py --evidence .engram-local-evidence/an
 
 Owner confirmation required before posting. Review the draft manually, remove any claim that is not supported by aggregate counts, and do not paste raw memory bodies, local paths, repo-private IDs, debug logs, or transcripts.
 
+## Packet Finalizer Workflow
+
+```powershell
+python scripts/build_anchor_forum_evidence_packet.py --live --allow-live --out-dir .engram-local-evidence/weekend-packet --label weekend-live-review
+python scripts/validate_anchor_live_smoke_evidence.py --evidence .engram-local-evidence/weekend-packet/anchor-live-smoke-evidence.json --json
+```
+
+Expected local files:
+
+- `.engram-local-evidence/weekend-packet/anchor-live-smoke-evidence.json`
+- `.engram-local-evidence/weekend-packet/anchor-live-smoke-metrics.md`
+- `.engram-local-evidence/weekend-packet/cursor-forum-reply-draft.md`
+- `.engram-local-evidence/weekend-packet/manifest.json`
+
+Use `--anchor-json` and `--live-smoke-json` with the builder only for already-sanitized aggregate JSON from Claude/manual notes. Do not pass raw transcripts, memory bodies, debug logs, or local file listings as inputs.
+
+Accepted aggregate input shape:
+
+```json
+{"anchors": {"checked": 12, "valid": 9, "invalid": 1, "unknown": 2, "superseded": 1, "demoted_to_staging": 1}}
+```
+
+```json
+{"live_smoke": {"runs": 7, "passed": 6, "failed": 1, "failure_classes": {"timeout": 1}}}
+```
+
+No public forum reply is sent by these commands. The owner must read `anchor-live-smoke-metrics.md`, inspect `manifest.json`, and approve the exact final text before anything is posted.
+
 ## Reply Shape
 
 - One short thanks/continuation sentence to Deanrie.

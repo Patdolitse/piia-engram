@@ -31,3 +31,15 @@ def test_anchor_live_smoke_doc_includes_reply_rendering_boundary() -> None:
     assert "render_anchor_forum_reply.py" in text
     assert "Owner confirmation required before posting" in text
     assert "Do not post raw memory bodies" in text
+
+
+def test_anchor_live_smoke_doc_includes_packet_finalizer() -> None:
+    text = DOC.read_text(encoding="utf-8")
+
+    assert "validate_anchor_live_smoke_evidence.py" in text
+    assert "build_anchor_forum_evidence_packet.py" in text
+    assert "--live --allow-live" in text
+    assert "anchor-live-smoke-metrics.md" in text
+    assert "manifest.json" in text
+    assert "Accepted aggregate input shape" in text
+    assert "No public forum reply is sent" in text
