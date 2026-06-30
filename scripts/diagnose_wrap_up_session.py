@@ -200,7 +200,50 @@ def _live_inspect_payload() -> dict[str, Any]:
             },
         },
         "errors": {},
+        "timeout": {
+            "status": "not_applied",
+            "boundary": "live_inspect",
+            "reason": "read_only_inspection",
+        },
     }
+
+
+async def _run_live_closeout_without_boundary(
+    project: Path,
+    *,
+    synthetic_error: bool,
+    synthetic_delay_ms: int,
+    timeout_ms: int,
+) -> dict[str, Any]:
+    try:
+        payload = await _run_closeout(
+            project,
+            synthetic_error=synthetic_error,
+            synthetic_delay_ms=synthetic_delay_ms,
+        )
+        return {
+            "completed": True,
+            "timeout": {
+                "status": "not_applied",
+                "boundary": "live_closeout",
+                "timeout_ms": max(1, timeout_ms),
+                "reason": "writeful_live_closeout_runs_without_background_timeout",
+            },
+            "payload": payload,
+            "errors": {},
+        }
+    except BaseException as exc:  # pragma: no cover - reported in payload
+        return {
+            "completed": False,
+            "timeout": {
+                "status": "not_applied",
+                "boundary": "live_closeout",
+                "timeout_ms": max(1, timeout_ms),
+                "reason": "writeful_live_closeout_runs_without_background_timeout",
+            },
+            "payload": {},
+            "errors": {"closeout": mcp_server._safe_err(exc)},
+        }
 
 
 async def run_diagnostic(
@@ -218,7 +261,7 @@ async def run_diagnostic(
         store = Path(os.environ.get("ENGRAM_DIR") or Path.home() / ".engram")
         project = Path.cwd()
         _install_runtime(store, write_bootstrap=False)
-        boundary = _run_closeout_with_boundary(
+        boundary = await _run_live_closeout_without_boundary(
             project,
             synthetic_error=synthetic_error,
             synthetic_delay_ms=synthetic_delay_ms,
@@ -333,8 +376,23 @@ def main() -> int:
             print(
                 f"store_mode={payload['store_mode']} "
                 f"live_store={payload['live_store']} "
-                f"writeful={payload['writeful']}"
+                f"writeful={payload['writeful']} "
+                f"completed={payload.get('completed')}"
             )
+            timeout = payload.get("timeout") or {}
+            if timeout:
+                print(
+                    f"timeout={timeout.get('status')} "
+                    f"boundary={timeout.get('boundary')} "
+                    f"timeout_ms={timeout.get('timeout_ms', '')}"
+                )
+            daily = payload.get("daily_log") or {}
+            if daily:
+                print(
+                    f"daily_log_checked={daily.get('checked')} "
+                    f"daily_log_written={daily.get('written')} "
+                    f"daily_log_bytes={daily.get('bytes', '')}"
+                )
             print(json.dumps(payload["timing"], ensure_ascii=False, indent=2))
     return 0
 

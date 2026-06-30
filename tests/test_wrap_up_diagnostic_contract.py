@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -137,3 +138,57 @@ def test_diagnostic_classifies_tool_boundary_timeout() -> None:
     assert payload["daily_log"]["checked"] is True
     assert payload["daily_log"]["written"] is False
     assert "engram-wrapup-diagnostic-" not in body
+
+
+def test_text_output_surfaces_timeout_classification() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--timeout-ms",
+            "20",
+            "--synthetic-delay-ms",
+            "200",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert "completed=False" in result.stdout
+    assert "timeout=timed_out" in result.stdout
+    assert "boundary=diagnostic_tool" in result.stdout
+    assert "daily_log_written=False" in result.stdout
+
+
+def test_live_closeout_does_not_use_background_timeout_boundary(tmp_path: Path) -> None:
+    env = {**os.environ, "ENGRAM_DIR": str(tmp_path / "live-store")}
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--json",
+            "--live-closeout",
+            "--allow-write",
+            "--timeout-ms",
+            "20",
+            "--synthetic-delay-ms",
+            "80",
+        ],
+        cwd=ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["store_mode"] == "live"
+    assert payload["writeful"] is True
+    assert payload["completed"] is True
+    assert payload["timeout"]["status"] == "not_applied"
+    assert payload["timeout"]["boundary"] == "live_closeout"
+    assert payload["daily_log"]["written"] is True
