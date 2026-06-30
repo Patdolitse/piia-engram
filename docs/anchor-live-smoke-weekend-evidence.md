@@ -34,6 +34,14 @@ python scripts/release_sanitize_check.py --internal --strict
 
 Use the bundled Codex Python path if the system `python` resolves to the WindowsApps placeholder.
 
+## Collection Command
+
+```powershell
+python scripts/collect_anchor_live_smoke_evidence.py --json --synthetic
+```
+
+Replace `--synthetic` with `--live --allow-live` only after verifying the live collector emits aggregate metadata and no raw memory bodies.
+
 ## Reply Shape
 
 - One short thanks/continuation sentence to Deanrie.
