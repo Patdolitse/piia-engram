@@ -657,3 +657,47 @@ class TestSafeErr:
         from piia_engram.mcp_server import _safe_err
         err = Exception("invalid JSON format")
         assert _safe_err(err) == "invalid JSON format"
+
+
+class TestSafeErrM9ErrorSurface:
+    def test_strips_unix_path_with_spaces(self):
+        from piia_engram.mcp_server import _safe_err
+
+        err = Exception("Permission denied: /tmp/Workspace With Spaces/project/secret file.json")
+
+        sanitized = _safe_err(err)
+        assert "Workspace With Spaces" not in sanitized
+        assert "secret file.json" not in sanitized
+        assert "<path>" in sanitized
+
+    def test_wrap_up_session_error_payloads_use_safe_err(
+        self,
+        eng: Engram,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        private_path = "E:" + "\\" + "\\".join([
+            "Workspace With Spaces",
+            "project",
+            "secret.json",
+        ])
+
+        def fail_insights(*args, **kwargs):
+            raise RuntimeError(f"cannot read {private_path}")
+
+        def fail_snapshot(*args, **kwargs):
+            raise RuntimeError(f"cannot write {private_path}")
+
+        monkeypatch.setattr(eng, "extract_session_insights", fail_insights)
+        monkeypatch.setattr(eng, "save_project_snapshot", fail_snapshot)
+
+        payload = json.loads(_run(mcp_server.wrap_up_session(
+            summary="Trigger sanitized wrap-up error payloads.",
+            source_tool="codex",
+            project_folder="/tmp/synthetic-project",
+            user_confirmed=True,
+        )))
+        body = json.dumps(payload, ensure_ascii=False)
+
+        assert "Workspace With Spaces" not in body
+        assert "secret.json" not in body
+        assert "<path>" in body

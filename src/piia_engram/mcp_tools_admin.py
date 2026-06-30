@@ -629,7 +629,7 @@ async def wrap_up_session(
         results["insights"] = insights
     except Exception as exc:
         S.logger.warning("extract_session_insights failed: %s", exc)
-        results["insights"] = {"error": str(exc)}
+        results["insights"] = {"error": S._safe_err(exc)}
     finally:
         timing["extract_session_insights_ms"] = _elapsed_ms(stage_start)
 
@@ -687,7 +687,7 @@ async def wrap_up_session(
             results["project_snapshot"] = {"saved": True, "folder": project_folder}
         except Exception as exc:
             S.logger.warning("save_project_snapshot failed: %s", exc)
-            results["project_snapshot"] = {"error": str(exc)}
+            results["project_snapshot"] = {"error": S._safe_err(exc)}
         finally:
             timing["save_project_snapshot_ms"] = _elapsed_ms(stage_start)
     else:
