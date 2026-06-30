@@ -53,3 +53,18 @@ def test_live_aggregate_mode_requires_owner_flag() -> None:
 
     assert result.returncode != 0
     assert "--allow-live" in result.stderr
+
+
+def test_live_aggregate_mode_runs_isolated_live_smoke() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json", "--live", "--allow-live"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["mode"] == "live"
+    assert payload["live_smoke"]["runs"] >= 1
+    assert payload["live_smoke"]["passed"] + payload["live_smoke"]["failed"] == payload["live_smoke"]["runs"]

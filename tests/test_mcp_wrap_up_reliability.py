@@ -172,6 +172,11 @@ def test_wrap_up_session_fast_mode_skips_extraction_and_late_optional_stages(
         "extract_playbook_from_session",
         lambda *a, **k: calls.append("playbook") or None,
     )
+    monkeypatch.setattr(
+        isolated_mcp_engram,
+        "get_staging_summary",
+        lambda: calls.append("staging") or {"total_staging": 0},
+    )
 
     payload = json.loads(_run(mcp_server.wrap_up_session(
         summary="Fast closeout should not run extraction-heavy stages.",

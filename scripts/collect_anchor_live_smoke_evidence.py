@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -92,8 +93,35 @@ def live_aggregate_payload() -> dict[str, Any]:
     return _base_payload(
         mode="live",
         anchors=anchors,
-        live_smoke=_empty_live_smoke_counts(),
+        live_smoke=_collect_live_smoke_counts(),
     )
+
+
+def _collect_live_smoke_counts() -> dict[str, Any]:
+    counts = _empty_live_smoke_counts()
+    counts["runs"] = 1
+    script = ROOT / "scripts" / "diagnose_wrap_up_session.py"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "--json"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        payload = json.loads(result.stdout)
+    except Exception:
+        counts["failed"] = 1
+        counts["failure_classes"] = {"diagnostic_failed": 1}
+        return counts
+
+    if payload.get("schema") == "wrap_up_session_diagnostic.v1":
+        counts["passed"] = 1
+    else:
+        counts["failed"] = 1
+        counts["failure_classes"] = {"unexpected_schema": 1}
+    return counts
 
 
 def _base_payload(

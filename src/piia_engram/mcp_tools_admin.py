@@ -839,8 +839,16 @@ async def wrap_up_session(
 
     # Step 5: Report staging backlog
     stage_start = perf_counter()
+    skip_staging_summary = closeout_mode == "fast" or _budget_exhausted(
+        total_start=total_start,
+        budget_ms=closeout_budget_ms,
+    )
     try:
-        staging = S._get_engram().get_staging_summary()
+        if skip_staging_summary:
+            maintenance["staging_summary"] = _skipped_stage("closeout_budget_exhausted")
+            staging = {"total_staging": 0}
+        else:
+            staging = S._get_engram().get_staging_summary()
         if staging["total_staging"] > 0:
             _zh = S._user_lang() == "zh"
             if _zh:
@@ -864,7 +872,9 @@ async def wrap_up_session(
     except Exception as exc:
         S.logger.warning("get_staging_summary failed: %s", exc)
     finally:
-        timing["staging_summary_ms"] = _elapsed_ms(stage_start)
+        timing["staging_summary_ms"] = (
+            0 if skip_staging_summary else _elapsed_ms(stage_start)
+        )
 
     # Step 6: Beta event — session end
     S._beta("session_end",
@@ -930,14 +940,6 @@ async def wrap_up_session(
             S.logger.debug("feedback send skipped: %s", exc)
         finally:
             timing["feedback_send_ms"] = _elapsed_ms(stage_start)
-
-    if closeout_mode == "fast" or _budget_exhausted(
-        total_start=total_start,
-        budget_ms=closeout_budget_ms,
-    ):
-        maintenance.setdefault("staging_summary", _skipped_stage("closeout_budget_exhausted"))
-        maintenance.setdefault("telemetry_flush", _skipped_stage("closeout_budget_exhausted"))
-        maintenance.setdefault("feedback_send", _skipped_stage("closeout_budget_exhausted"))
 
     timing["total_ms"] = _elapsed_ms(total_start)
     maintenance["budget"] = _closeout_budget_metadata(
