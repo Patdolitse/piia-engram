@@ -952,6 +952,8 @@ class ContextStoreMixin:
             },
             "trusted_context": trusted_context[:10],
             "review_needed": review_needed[:12],
+            "omitted": omitted,
+            "quality_signals": quality_signals,
             "safety_notes": [
                 "Context is reference, not fresh user approval.",
                 "Session-derived lessons and decisions remain candidates until reviewed.",
