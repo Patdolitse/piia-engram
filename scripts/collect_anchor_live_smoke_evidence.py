@@ -42,6 +42,49 @@ def _empty_live_smoke_counts() -> dict[str, Any]:
     }
 
 
+def _load_json_file(path_text: str) -> dict[str, Any]:
+    path = Path(path_text)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _non_negative_int(value: Any, default: int) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _merge_anchor_counts(base: dict[str, int], loaded: dict[str, Any]) -> dict[str, int]:
+    source = loaded.get("anchors") if isinstance(loaded.get("anchors"), dict) else loaded
+    merged = dict(base)
+    if not isinstance(source, dict):
+        return merged
+    for key, current in merged.items():
+        merged[key] = _non_negative_int(source.get(key, current), current)
+    return merged
+
+
+def _merge_live_smoke_counts(base: dict[str, Any], loaded: dict[str, Any]) -> dict[str, Any]:
+    source = loaded.get("live_smoke") if isinstance(loaded.get("live_smoke"), dict) else loaded
+    merged = dict(base)
+    if not isinstance(source, dict):
+        return merged
+    for key in ("runs", "passed", "failed"):
+        merged[key] = _non_negative_int(source.get(key, merged[key]), merged[key])
+    failures = source.get("failure_classes")
+    if isinstance(failures, dict):
+        merged["failure_classes"] = {
+            str(key): _non_negative_int(value, 0)
+            for key, value in failures.items()
+            if isinstance(key, str)
+        }
+    return merged
+
+
 def synthetic_payload() -> dict[str, Any]:
     anchors = _empty_anchor_counts()
     anchors.update({
@@ -150,6 +193,9 @@ def main() -> int:
     parser.add_argument("--synthetic", action="store_true", help="Use synthetic fixture counts.")
     parser.add_argument("--live", action="store_true", help="Collect owner-approved live aggregate counts.")
     parser.add_argument("--allow-live", action="store_true", help="Required with --live.")
+    parser.add_argument("--anchor-json", default="", help="Optional aggregate anchor JSON file.")
+    parser.add_argument("--live-smoke-json", default="", help="Optional aggregate LIVE_SMOKE JSON file.")
+    parser.add_argument("--out", default="", help="Optional path for public-safe JSON output.")
     args = parser.parse_args()
 
     if args.live and not args.allow_live:
@@ -160,6 +206,21 @@ def main() -> int:
         return 2
 
     payload = synthetic_payload() if args.synthetic else live_aggregate_payload()
+    if args.anchor_json:
+        payload["anchors"] = _merge_anchor_counts(payload["anchors"], _load_json_file(args.anchor_json))
+    if args.live_smoke_json:
+        payload["live_smoke"] = _merge_live_smoke_counts(
+            payload["live_smoke"],
+            _load_json_file(args.live_smoke_json),
+        )
+    if args.out:
+        output_path = Path(args.out)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:

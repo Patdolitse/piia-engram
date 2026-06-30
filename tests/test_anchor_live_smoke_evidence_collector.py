@@ -68,3 +68,72 @@ def test_live_aggregate_mode_runs_isolated_live_smoke() -> None:
     assert payload["mode"] == "live"
     assert payload["live_smoke"]["runs"] >= 1
     assert payload["live_smoke"]["passed"] + payload["live_smoke"]["failed"] == payload["live_smoke"]["runs"]
+
+
+def test_collector_merges_anchor_and_live_smoke_json_inputs(tmp_path: Path) -> None:
+    anchor_json = tmp_path / "anchor.json"
+    live_smoke_json = tmp_path / "live-smoke.json"
+    anchor_json.write_text(json.dumps({
+        "anchors": {
+            "checked": 12,
+            "valid": 9,
+            "invalid": 1,
+            "unknown": 2,
+            "superseded": 1,
+            "demoted_to_staging": 1,
+        },
+        "raw_memory": "must not appear",
+        "local_path": "PRIVATE_LOCAL_MARKER Workspace With Spaces secret.json",
+    }), encoding="utf-8")
+    live_smoke_json.write_text(json.dumps({
+        "live_smoke": {
+            "runs": 7,
+            "passed": 6,
+            "failed": 1,
+            "failure_classes": {"timeout": 1},
+        },
+        "debug_log": "PRIVATE_DEBUG_MARKER Workspace With Spaces debug.log",
+    }), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--json",
+            "--synthetic",
+            "--anchor-json",
+            str(anchor_json),
+            "--live-smoke-json",
+            str(live_smoke_json),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    body = result.stdout
+
+    assert payload["anchors"]["checked"] == 12
+    assert payload["anchors"]["valid"] == 9
+    assert payload["live_smoke"]["runs"] == 7
+    assert payload["live_smoke"]["failure_classes"] == {"timeout": 1}
+    assert "raw_memory" not in body
+    assert "Workspace With Spaces" not in body
+    assert "debug.log" not in body
+
+
+def test_collector_can_write_public_safe_output_file(tmp_path: Path) -> None:
+    out = tmp_path / "nested" / "evidence.json"
+
+    subprocess.run(
+        [sys.executable, str(SCRIPT), "--json", "--synthetic", "--out", str(out)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(out.read_text(encoding="utf-8"))
+
+    assert payload["schema"] == "anchor_live_smoke_evidence.v1"
+    assert payload["public_safe"] is True
