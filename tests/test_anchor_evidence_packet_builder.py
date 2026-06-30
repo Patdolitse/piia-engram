@@ -239,3 +239,34 @@ def test_packet_builder_live_mode_requires_owner_flag(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert "--allow-live" in result.stderr
+
+
+def test_packet_builder_live_mode_with_owner_flag_builds_aggregate_packet(tmp_path: Path) -> None:
+    out_dir = tmp_path / "packet"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--live",
+            "--allow-live",
+            "--out-dir",
+            str(out_dir),
+            "--label",
+            "live-review",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    evidence = json.loads((out_dir / "anchor-live-smoke-evidence.json").read_text(encoding="utf-8"))
+    manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+    metrics = (out_dir / "anchor-live-smoke-metrics.md").read_text(encoding="utf-8")
+
+    assert evidence["mode"] == "live"
+    assert manifest["source_mode"] == "live"
+    assert manifest["public_action"] is False
+    assert manifest["owner_confirmation_required"] is True
+    assert "Validation warnings:" in metrics
+    assert "small sample size; avoid statistical claims" in metrics
