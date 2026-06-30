@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "diagnose_wrap_up_session.py"
+
+
+def test_diagnostic_defaults_to_isolated_store() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["schema"] == "wrap_up_session_diagnostic.v1"
+    assert payload["store_mode"] == "isolated"
+    assert payload["live_store"] is False
+    assert payload["writeful"] is False
+    assert payload["maintenance"]["reconcile_memories"]["status"] == "skipped"
+    assert payload["maintenance"]["reconcile_ai_configs"]["status"] == "skipped"
+    assert isinstance(payload["timing"]["total_ms"], int)
+
+
+def test_diagnostic_live_write_requires_two_explicit_flags() -> None:
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "--live-inspect" in text
+    assert "--live-closeout" in text
+    assert "--allow-write" in text
+    assert "live_store" in text
+    assert "TemporaryDirectory" in text
+    assert "run_reconcile=False" in text
+
+
+def test_live_closeout_without_allow_write_is_refused() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json", "--live-closeout"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "--allow-write" in result.stderr
+
+
+def test_diagnostic_output_redacts_paths() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json", "--synthetic-error"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    body = result.stdout + result.stderr
+
+    assert "Workspace With Spaces" not in body
+    assert "secret.json" not in body
+    assert "<path>" in body
