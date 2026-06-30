@@ -22,3 +22,12 @@ def test_anchor_live_smoke_evidence_packet_tracks_weekend_merge_inputs() -> None
     assert "LIVE_SMOKE results: runs, passed, failed" in text
     assert "tests/test_mcp_entrypoint_smoke.py" in text
     assert "Project-level Claude folder checked" in text
+
+
+def test_anchor_live_smoke_doc_includes_reply_rendering_boundary() -> None:
+    text = DOC.read_text(encoding="utf-8")
+
+    assert "collect_anchor_live_smoke_evidence.py --json --live --allow-live" in text
+    assert "render_anchor_forum_reply.py" in text
+    assert "Owner confirmation required before posting" in text
+    assert "Do not post raw memory bodies" in text

@@ -42,6 +42,16 @@ python scripts/collect_anchor_live_smoke_evidence.py --json --synthetic
 
 Replace `--synthetic` with `--live --allow-live` only after verifying the live collector emits aggregate metadata and no raw memory bodies.
 
+## Weekend Workflow
+
+```powershell
+New-Item -ItemType Directory -Force .engram-local-evidence
+python scripts/collect_anchor_live_smoke_evidence.py --json --live --allow-live --out .engram-local-evidence/anchor-live-smoke-weekend.json
+python scripts/render_anchor_forum_reply.py --evidence .engram-local-evidence/anchor-live-smoke-weekend.json > .engram-local-evidence/cursor-forum-reply-draft.md
+```
+
+Owner confirmation required before posting. Review the draft manually, remove any claim that is not supported by aggregate counts, and do not paste raw memory bodies, local paths, repo-private IDs, debug logs, or transcripts.
+
 ## Reply Shape
 
 - One short thanks/continuation sentence to Deanrie.
