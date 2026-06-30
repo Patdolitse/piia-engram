@@ -7,8 +7,10 @@ import asyncio
 import json
 import logging
 import os
+import queue
 import sys
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -67,7 +69,14 @@ def _install_runtime(store: Path, *, write_bootstrap: bool = True) -> None:
     mcp_server._tracker = None
 
 
-async def _run_closeout(project: Path, synthetic_error: bool) -> dict[str, Any]:
+async def _run_closeout(
+    project: Path,
+    synthetic_error: bool,
+    synthetic_delay_ms: int = 0,
+) -> dict[str, Any]:
+    if synthetic_delay_ms > 0:
+        await asyncio.sleep(synthetic_delay_ms / 1000)
+
     eng = mcp_server._engram
     if synthetic_error:
         private_path = "E:" + "\\" + "\\".join([
@@ -91,12 +100,98 @@ async def _run_closeout(project: Path, synthetic_error: bool) -> dict[str, Any]:
     return json.loads(raw)
 
 
+def _daily_log_probe(project: Path) -> dict[str, Any]:
+    try:
+        log = mcp_server._engram.get_daily_log(str(project))
+        content = log.get("content") or ""
+        return {
+            "checked": True,
+            "exists": bool(log.get("exists")),
+            "written": "Diagnostic closeout sample" in content,
+            "bytes": len(content.encode("utf-8")),
+            "date": log.get("date", ""),
+        }
+    except Exception as exc:  # pragma: no cover - defensive diagnostic surface
+        return {
+            "checked": False,
+            "written": False,
+            "error": mcp_server._safe_err(exc),
+        }
+
+
+def _run_closeout_with_boundary(
+    project: Path,
+    *,
+    synthetic_error: bool,
+    synthetic_delay_ms: int,
+    timeout_ms: int,
+) -> dict[str, Any]:
+    result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            payload = asyncio.run(_run_closeout(
+                project,
+                synthetic_error=synthetic_error,
+                synthetic_delay_ms=synthetic_delay_ms,
+            ))
+            result_queue.put(("ok", payload))
+        except BaseException as exc:  # pragma: no cover - reported in payload
+            result_queue.put(("error", exc))
+
+    thread = threading.Thread(target=worker, name="engram-wrapup-diagnostic", daemon=True)
+    thread.start()
+
+    try:
+        kind, value = result_queue.get(timeout=max(1, timeout_ms) / 1000)
+    except queue.Empty:
+        return {
+            "completed": False,
+            "timeout": {
+                "status": "timed_out",
+                "boundary": "diagnostic_tool",
+                "timeout_ms": max(1, timeout_ms),
+            },
+            "payload": {},
+            "errors": {},
+        }
+
+    if kind == "error":
+        return {
+            "completed": False,
+            "timeout": {
+                "status": "not_timed_out",
+                "boundary": "diagnostic_tool",
+                "timeout_ms": max(1, timeout_ms),
+            },
+            "payload": {},
+            "errors": {"closeout": mcp_server._safe_err(value)},
+        }
+
+    return {
+        "completed": True,
+        "timeout": {
+            "status": "completed",
+            "boundary": "diagnostic_tool",
+            "timeout_ms": max(1, timeout_ms),
+        },
+        "payload": value,
+        "errors": {},
+    }
+
+
 def _live_inspect_payload() -> dict[str, Any]:
     return {
         "schema": "wrap_up_session_diagnostic.v1",
+        "completed": True,
         "store_mode": "live_inspect",
         "live_store": True,
         "writeful": False,
+        "daily_log": {
+            "checked": False,
+            "written": False,
+            "reason": "live_inspect_is_read_only",
+        },
         "timing": {},
         "maintenance": {
             "live_inspect": {
@@ -113,6 +208,8 @@ async def run_diagnostic(
     live_closeout: bool,
     live_inspect: bool,
     synthetic_error: bool,
+    synthetic_delay_ms: int = 0,
+    timeout_ms: int = 60_000,
 ) -> dict[str, Any]:
     if live_inspect:
         return _live_inspect_payload()
@@ -121,9 +218,15 @@ async def run_diagnostic(
         store = Path(os.environ.get("ENGRAM_DIR") or Path.home() / ".engram")
         project = Path.cwd()
         _install_runtime(store, write_bootstrap=False)
-        payload = await _run_closeout(project, synthetic_error)
+        boundary = _run_closeout_with_boundary(
+            project,
+            synthetic_error=synthetic_error,
+            synthetic_delay_ms=synthetic_delay_ms,
+            timeout_ms=timeout_ms,
+        )
         store_mode = "live"
         writeful = True
+        daily_log = _daily_log_probe(project)
     else:
         with tempfile.TemporaryDirectory(prefix="engram-wrapup-diagnostic-") as tmp:
             root = Path(tmp)
@@ -131,36 +234,51 @@ async def run_diagnostic(
             project = root / "project"
             project.mkdir()
             _install_runtime(store)
-            payload = await _run_closeout(project, synthetic_error)
+            boundary = _run_closeout_with_boundary(
+                project,
+                synthetic_error=synthetic_error,
+                synthetic_delay_ms=synthetic_delay_ms,
+                timeout_ms=timeout_ms,
+            )
+            daily_log = _daily_log_probe(project)
         store_mode = "isolated"
         writeful = False
 
+    payload = boundary.get("payload") or {}
+    errors = {
+        "insights": (payload.get("insights") or {}).get("error"),
+        "project_snapshot": (payload.get("project_snapshot") or {}).get("error"),
+    }
+    errors.update(boundary.get("errors") or {})
+
     return {
         "schema": "wrap_up_session_diagnostic.v1",
+        "completed": bool(boundary.get("completed")),
         "store_mode": store_mode,
         "live_store": bool(live_closeout),
         "writeful": writeful,
+        "daily_log": daily_log,
         "timing": payload.get("timing") or {},
         "maintenance": payload.get("maintenance") or {},
-        "errors": {
-            "insights": (payload.get("insights") or {}).get("error"),
-            "project_snapshot": (payload.get("project_snapshot") or {}).get("error"),
-        },
+        "errors": errors,
+        "timeout": boundary.get("timeout") or {},
     }
 
 
-async def run_compare_fast(*, synthetic_error: bool) -> dict[str, Any]:
+async def run_compare_fast(*, synthetic_error: bool, timeout_ms: int = 60_000) -> dict[str, Any]:
     with _temporary_env("ENGRAM_WRAP_UP_MODE", "standard"):
         standard = await run_diagnostic(
             live_closeout=False,
             live_inspect=False,
             synthetic_error=synthetic_error,
+            timeout_ms=timeout_ms,
         )
     with _temporary_env("ENGRAM_WRAP_UP_MODE", "fast"):
         fast = await run_diagnostic(
             live_closeout=False,
             live_inspect=False,
             synthetic_error=synthetic_error,
+            timeout_ms=timeout_ms,
         )
     return {
         "schema": "wrap_up_session_compare.v1",
@@ -177,6 +295,8 @@ def main() -> int:
     parser.add_argument("--live-closeout", action="store_true", help="Run a writeful live closeout diagnostic.")
     parser.add_argument("--allow-write", action="store_true", help="Required with --live-closeout.")
     parser.add_argument("--synthetic-error", action="store_true", help="Inject a sanitized synthetic path error.")
+    parser.add_argument("--synthetic-delay-ms", type=int, default=0, help="Delay closeout for timeout testing.")
+    parser.add_argument("--timeout-ms", type=int, default=60_000, help="Diagnostic boundary timeout.")
     parser.add_argument("--compare-fast", action="store_true", help="Compare isolated standard and fast closeout.")
     args = parser.parse_args()
 
@@ -191,12 +311,17 @@ def main() -> int:
         return 2
 
     if args.compare_fast:
-        payload = asyncio.run(run_compare_fast(synthetic_error=bool(args.synthetic_error)))
+        payload = asyncio.run(run_compare_fast(
+            synthetic_error=bool(args.synthetic_error),
+            timeout_ms=int(args.timeout_ms),
+        ))
     else:
         payload = asyncio.run(run_diagnostic(
             live_closeout=bool(args.live_closeout),
             live_inspect=bool(args.live_inspect),
             synthetic_error=bool(args.synthetic_error),
+            synthetic_delay_ms=max(0, int(args.synthetic_delay_ms)),
+            timeout_ms=int(args.timeout_ms),
         ))
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))

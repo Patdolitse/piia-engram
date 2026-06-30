@@ -21,9 +21,13 @@ def test_diagnostic_defaults_to_isolated_store() -> None:
     payload = json.loads(result.stdout)
 
     assert payload["schema"] == "wrap_up_session_diagnostic.v1"
+    assert payload["completed"] is True
     assert payload["store_mode"] == "isolated"
     assert payload["live_store"] is False
     assert payload["writeful"] is False
+    assert payload["daily_log"]["checked"] is True
+    assert payload["daily_log"]["written"] is True
+    assert "file" not in payload["daily_log"]
     assert payload["maintenance"]["reconcile_memories"]["status"] == "skipped"
     assert payload["maintenance"]["reconcile_ai_configs"]["status"] == "skipped"
     assert isinstance(payload["timing"]["total_ms"], int)
@@ -103,3 +107,33 @@ def test_diagnostic_compare_fast_redacts_paths() -> None:
     assert "Workspace With Spaces" not in body
     assert "secret.json" not in body
     assert "<path>" in body
+
+
+def test_diagnostic_classifies_tool_boundary_timeout() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--json",
+            "--timeout-ms",
+            "20",
+            "--synthetic-delay-ms",
+            "200",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    payload = json.loads(result.stdout)
+    body = result.stdout + result.stderr
+
+    assert payload["schema"] == "wrap_up_session_diagnostic.v1"
+    assert payload["completed"] is False
+    assert payload["timeout"]["status"] == "timed_out"
+    assert payload["timeout"]["boundary"] == "diagnostic_tool"
+    assert payload["timeout"]["timeout_ms"] == 20
+    assert payload["daily_log"]["checked"] is True
+    assert payload["daily_log"]["written"] is False
+    assert "engram-wrapup-diagnostic-" not in body
