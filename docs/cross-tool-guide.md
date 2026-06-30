@@ -362,6 +362,13 @@ The returned `timing` block is metadata-only. It reports stage durations in
 milliseconds and must not be treated as user approval, release evidence, or a
 live-agent benchmark.
 
+### Closeout diagnostics
+
+Use `python scripts/diagnose_wrap_up_session.py --json` to inspect session-end
+timing without touching the live store. Default diagnostics use an isolated temporary store. Use `--live-inspect` for read-only live metadata. Use
+`--live-closeout --allow-write` only as an owner-approved local diagnostic, and
+share only aggregate timing/stage metadata.
+
 ---
 
 ## 6. FAQ

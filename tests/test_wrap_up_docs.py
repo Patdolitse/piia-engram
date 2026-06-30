@@ -86,3 +86,15 @@ def test_operator_docs_define_reconcile_as_owner_maintenance() -> None:
     assert "Default session closeout does not scan external AI memory or config files" in text
     assert "wrap_up_session(..., run_reconcile=True, user_confirmed=True)" in text
     assert "staging-tier candidates" in text
+
+
+def test_docs_include_bounded_closeout_diagnostics() -> None:
+    cross = (ROOT / "docs" / "cross-tool-guide.md").read_text(encoding="utf-8")
+    ops = (ROOT / "docs" / "operator-mcp-cheatsheet.md").read_text(encoding="utf-8")
+
+    assert "diagnose_wrap_up_session.py" in cross
+    assert "Default diagnostics use an isolated temporary store" in cross
+    assert "--live-inspect" in cross
+    assert "--live-closeout --allow-write" in cross
+    assert "Closeout budget" in ops
+    assert "does not change the default reconcile boundary" in ops

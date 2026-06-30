@@ -85,6 +85,10 @@ Reconciliation is an owner maintenance action. Default session closeout does not
 
 Imported items remain staging-tier candidates until reviewed. Reconcile results should stay metadata-only: counts, source labels, scan status, and budget flags are appropriate; raw external memory bodies and config file contents are not.
 
+## Closeout budget
+
+The closeout budget bounds optional late session-end work and reports metadata under `maintenance.budget`. Fast closeout mode may skip extraction-heavy and late optional stages, but it does not change the default reconcile boundary: external memory/config reconciliation still requires `run_reconcile=True`.
+
 ## Decision conflict governance
 
 `engram conflicts list [--json]` is the owner-only read view for active decision
