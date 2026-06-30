@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,19 @@ from piia_engram.core import Engram  # noqa: E402
 
 logging.getLogger("piia_engram").setLevel(logging.CRITICAL)
 logging.getLogger("piia_engram.mcp_tools_admin").setLevel(logging.CRITICAL)
+
+
+@contextmanager
+def _temporary_env(name: str, value: str):
+    prior = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = prior
 
 
 def _stop_session_heartbeat() -> None:
@@ -135,6 +149,27 @@ async def run_diagnostic(
     }
 
 
+async def run_compare_fast(*, synthetic_error: bool) -> dict[str, Any]:
+    with _temporary_env("ENGRAM_WRAP_UP_MODE", "standard"):
+        standard = await run_diagnostic(
+            live_closeout=False,
+            live_inspect=False,
+            synthetic_error=synthetic_error,
+        )
+    with _temporary_env("ENGRAM_WRAP_UP_MODE", "fast"):
+        fast = await run_diagnostic(
+            live_closeout=False,
+            live_inspect=False,
+            synthetic_error=synthetic_error,
+        )
+    return {
+        "schema": "wrap_up_session_compare.v1",
+        "live_store": False,
+        "standard": standard,
+        "fast": fast,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="Print JSON payload.")
@@ -142,6 +177,7 @@ def main() -> int:
     parser.add_argument("--live-closeout", action="store_true", help="Run a writeful live closeout diagnostic.")
     parser.add_argument("--allow-write", action="store_true", help="Required with --live-closeout.")
     parser.add_argument("--synthetic-error", action="store_true", help="Inject a sanitized synthetic path error.")
+    parser.add_argument("--compare-fast", action="store_true", help="Compare isolated standard and fast closeout.")
     args = parser.parse_args()
 
     if args.live_closeout and not args.allow_write:
@@ -150,22 +186,31 @@ def main() -> int:
     if args.live_inspect and args.live_closeout:
         print("choose only one live mode", file=sys.stderr)
         return 2
+    if args.compare_fast and (args.live_inspect or args.live_closeout):
+        print("--compare-fast only runs isolated diagnostics", file=sys.stderr)
+        return 2
 
-    payload = asyncio.run(run_diagnostic(
-        live_closeout=bool(args.live_closeout),
-        live_inspect=bool(args.live_inspect),
-        synthetic_error=bool(args.synthetic_error),
-    ))
+    if args.compare_fast:
+        payload = asyncio.run(run_compare_fast(synthetic_error=bool(args.synthetic_error)))
+    else:
+        payload = asyncio.run(run_diagnostic(
+            live_closeout=bool(args.live_closeout),
+            live_inspect=bool(args.live_inspect),
+            synthetic_error=bool(args.synthetic_error),
+        ))
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print("wrap_up_session diagnostic")
-        print(
-            f"store_mode={payload['store_mode']} "
-            f"live_store={payload['live_store']} "
-            f"writeful={payload['writeful']}"
-        )
-        print(json.dumps(payload["timing"], ensure_ascii=False, indent=2))
+        if payload.get("schema") == "wrap_up_session_compare.v1":
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"store_mode={payload['store_mode']} "
+                f"live_store={payload['live_store']} "
+                f"writeful={payload['writeful']}"
+            )
+            print(json.dumps(payload["timing"], ensure_ascii=False, indent=2))
     return 0
 
 

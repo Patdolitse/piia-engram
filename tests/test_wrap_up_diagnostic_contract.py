@@ -65,3 +65,34 @@ def test_diagnostic_output_redacts_paths() -> None:
     assert "Workspace With Spaces" not in body
     assert "secret.json" not in body
     assert "<path>" in body
+
+
+def test_diagnostic_compare_fast_outputs_two_modes() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json", "--compare-fast"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["schema"] == "wrap_up_session_compare.v1"
+    assert payload["standard"]["maintenance"]["closeout_mode"] == "standard"
+    assert payload["fast"]["maintenance"]["closeout_mode"] == "fast"
+    assert payload["fast"]["maintenance"]["extract_session_insights"]["status"] == "skipped"
+
+
+def test_diagnostic_compare_fast_redacts_paths() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json", "--compare-fast", "--synthetic-error"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    body = result.stdout + result.stderr
+
+    assert "Workspace With Spaces" not in body
+    assert "secret.json" not in body
+    assert "<path>" in body
