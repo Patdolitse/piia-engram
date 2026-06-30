@@ -8,8 +8,22 @@ from time import perf_counter
 
 try:
     from . import mcp_server as S
+    from .session_closeout import (
+        budget_exhausted as _budget_exhausted,
+        budget_metadata as _closeout_budget_metadata,
+        configured_closeout_mode as _configured_closeout_mode,
+        configured_wrap_up_budget_ms as _configured_wrap_up_budget_ms,
+        skipped_stage as _skipped_stage,
+    )
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
+    from session_closeout import (  # type: ignore[no-redef]
+        budget_exhausted as _budget_exhausted,
+        budget_metadata as _closeout_budget_metadata,
+        configured_closeout_mode as _configured_closeout_mode,
+        configured_wrap_up_budget_ms as _configured_wrap_up_budget_ms,
+        skipped_stage as _skipped_stage,
+    )
 
 
 def _confirmation_detail(content) -> str:
@@ -614,34 +628,46 @@ async def wrap_up_session(
 
     results = {}
     timing: dict[str, int] = {}
-    maintenance: dict[str, dict[str, object]] = {}
+    maintenance: dict[str, object] = {}
     total_start = perf_counter()
+    closeout_budget_ms = _configured_wrap_up_budget_ms()
+    closeout_mode = _configured_closeout_mode()
+    maintenance["closeout_mode"] = closeout_mode
 
     # Step 1: Extract insights
-    stage_start = perf_counter()
-    try:
-        insights = S._locked_engram_call(
-            S._get_engram().extract_session_insights,
-            summary,
-            source_tool=source_tool,
-            project_folder=project_folder,
-        )
-        results["insights"] = insights
-    except Exception as exc:
-        S.logger.warning("extract_session_insights failed: %s", exc)
-        results["insights"] = {"error": S._safe_err(exc)}
-    finally:
-        timing["extract_session_insights_ms"] = _elapsed_ms(stage_start)
+    if closeout_mode == "fast":
+        results["insights"] = {"skipped": True}
+        maintenance["extract_session_insights"] = _skipped_stage("fast_closeout")
+        timing["extract_session_insights_ms"] = 0
+    else:
+        stage_start = perf_counter()
+        try:
+            insights = S._locked_engram_call(
+                S._get_engram().extract_session_insights,
+                summary,
+                source_tool=source_tool,
+                project_folder=project_folder,
+            )
+            results["insights"] = insights
+        except Exception as exc:
+            S.logger.warning("extract_session_insights failed: %s", exc)
+            results["insights"] = {"error": S._safe_err(exc)}
+        finally:
+            timing["extract_session_insights_ms"] = _elapsed_ms(stage_start)
 
     # Step 1.5: Auto-extract Playbook if session looks like a procedure
     stage_start = perf_counter()
     try:
-        playbook = S._locked_engram_call(
-            S._get_engram().extract_playbook_from_session,
-            summary,
-            source_tool=source_tool,
-            project_folder=project_folder,
-        )
+        if closeout_mode == "fast":
+            maintenance["extract_playbook_from_session"] = _skipped_stage("fast_closeout")
+            playbook = None
+        else:
+            playbook = S._locked_engram_call(
+                S._get_engram().extract_playbook_from_session,
+                summary,
+                source_tool=source_tool,
+                project_folder=project_folder,
+            )
         if playbook:
             pb_confidence = playbook.get("confidence", "medium")
             _zh = S._user_lang() == "zh"
@@ -663,7 +689,9 @@ async def wrap_up_session(
     except Exception as exc:
         S.logger.warning("playbook extraction failed: %s", exc)
     finally:
-        timing["extract_playbook_from_session_ms"] = _elapsed_ms(stage_start)
+        timing["extract_playbook_from_session_ms"] = (
+            0 if closeout_mode == "fast" else _elapsed_ms(stage_start)
+        )
 
     # Step 2: Save project snapshot (if project_folder provided)
     stage_start = perf_counter()
@@ -792,15 +820,22 @@ async def wrap_up_session(
         S._beta("reconcile", imported=_reconcile_imported)
 
     # Step 4: Evaluate staging items and surface promotion suggestions.
-    stage_start = perf_counter()
-    try:
-        tier_result = S._locked_engram_call(S._get_engram().evaluate_tiers)
-        if tier_result.get("suggested", 0) > 0:
-            results["promotion_suggestions"] = tier_result
-    except Exception as exc:
-        S.logger.warning("evaluate_tiers failed: %s", exc)
-    finally:
-        timing["evaluate_tiers_ms"] = _elapsed_ms(stage_start)
+    if closeout_mode == "fast" or _budget_exhausted(
+        total_start=total_start,
+        budget_ms=closeout_budget_ms,
+    ):
+        maintenance["evaluate_tiers"] = _skipped_stage("closeout_budget_exhausted")
+        timing["evaluate_tiers_ms"] = 0
+    else:
+        stage_start = perf_counter()
+        try:
+            tier_result = S._locked_engram_call(S._get_engram().evaluate_tiers)
+            if tier_result.get("suggested", 0) > 0:
+                results["promotion_suggestions"] = tier_result
+        except Exception as exc:
+            S.logger.warning("evaluate_tiers failed: %s", exc)
+        finally:
+            timing["evaluate_tiers_ms"] = _elapsed_ms(stage_start)
 
     # Step 5: Report staging backlog
     stage_start = perf_counter()
@@ -842,47 +877,73 @@ async def wrap_up_session(
 
     # Step 7: Flush anonymous usage statistics (local + optional remote)
     # force=True: wrap_up_session is the last chance before process exit
-    stage_start = perf_counter()
-    try:
-        if S._tracker is not None:
-            from importlib.metadata import version as _pkg_version
-            try:
-                _ver = _pkg_version("piia-engram")
-            except Exception:
-                _ver = "dev"
-            k_counts = {}
-            try:
-                k_counts["lessons"] = len(S._get_engram().get_lessons(limit=None, _update_access=False))
-                k_counts["decisions"] = len(S._get_engram().get_decisions(limit=None, _update_access=False))
-                k_counts["domains"] = len(S._get_engram().get_domains())
-            except Exception:
-                pass
-            _tier = os.environ.get("ENGRAM_TOOLS", "core")
-            S._tracker.flush(
-                knowledge_counts=k_counts,
-                engram_version=_ver,
-                tools_tier=_tier,
-                force=True,
-            )
-    except Exception as exc:
-        S.logger.debug("telemetry flush skipped: %s", exc)
-    finally:
-        timing["telemetry_flush_ms"] = _elapsed_ms(stage_start)
+    if closeout_mode == "fast" or _budget_exhausted(
+        total_start=total_start,
+        budget_ms=closeout_budget_ms,
+    ):
+        maintenance["telemetry_flush"] = _skipped_stage("closeout_budget_exhausted")
+        timing["telemetry_flush_ms"] = 0
+    else:
+        stage_start = perf_counter()
+        try:
+            if S._tracker is not None:
+                from importlib.metadata import version as _pkg_version
+                try:
+                    _ver = _pkg_version("piia-engram")
+                except Exception:
+                    _ver = "dev"
+                k_counts = {}
+                try:
+                    k_counts["lessons"] = len(S._get_engram().get_lessons(limit=None, _update_access=False))
+                    k_counts["decisions"] = len(S._get_engram().get_decisions(limit=None, _update_access=False))
+                    k_counts["domains"] = len(S._get_engram().get_domains())
+                except Exception:
+                    pass
+                _tier = os.environ.get("ENGRAM_TOOLS", "core")
+                S._tracker.flush(
+                    knowledge_counts=k_counts,
+                    engram_version=_ver,
+                    tools_tier=_tier,
+                    force=True,
+                )
+        except Exception as exc:
+            S.logger.debug("telemetry flush skipped: %s", exc)
+        finally:
+            timing["telemetry_flush_ms"] = _elapsed_ms(stage_start)
 
     # Step 8: Periodic anonymous feedback report (weekly, if opted in)
-    stage_start = perf_counter()
-    try:
-        from piia_engram.telemetry import is_feedback_enabled, _feedback_due, send_feedback
-        if is_feedback_enabled() and _feedback_due():
-            from piia_engram.setup_wizard import _build_feedback_report
-            report = _build_feedback_report()
-            send_feedback(report)
-    except Exception as exc:
-        S.logger.debug("feedback send skipped: %s", exc)
-    finally:
-        timing["feedback_send_ms"] = _elapsed_ms(stage_start)
+    if closeout_mode == "fast" or _budget_exhausted(
+        total_start=total_start,
+        budget_ms=closeout_budget_ms,
+    ):
+        maintenance["feedback_send"] = _skipped_stage("closeout_budget_exhausted")
+        timing["feedback_send_ms"] = 0
+    else:
+        stage_start = perf_counter()
+        try:
+            from piia_engram.telemetry import is_feedback_enabled, _feedback_due, send_feedback
+            if is_feedback_enabled() and _feedback_due():
+                from piia_engram.setup_wizard import _build_feedback_report
+                report = _build_feedback_report()
+                send_feedback(report)
+        except Exception as exc:
+            S.logger.debug("feedback send skipped: %s", exc)
+        finally:
+            timing["feedback_send_ms"] = _elapsed_ms(stage_start)
+
+    if closeout_mode == "fast" or _budget_exhausted(
+        total_start=total_start,
+        budget_ms=closeout_budget_ms,
+    ):
+        maintenance.setdefault("staging_summary", _skipped_stage("closeout_budget_exhausted"))
+        maintenance.setdefault("telemetry_flush", _skipped_stage("closeout_budget_exhausted"))
+        maintenance.setdefault("feedback_send", _skipped_stage("closeout_budget_exhausted"))
 
     timing["total_ms"] = _elapsed_ms(total_start)
+    maintenance["budget"] = _closeout_budget_metadata(
+        total_start=total_start,
+        budget_ms=closeout_budget_ms,
+    )
     results["maintenance"] = maintenance
     results["timing"] = timing
 
