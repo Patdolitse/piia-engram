@@ -67,8 +67,9 @@ def render_reply(payload: dict[str, Any]) -> str:
             "moves them back toward review instead of quiet trust."
         ),
         (
-            "- Caveats: this is a local dataset, not a broad benchmark. We are not "
-            "sharing raw data, memory bodies, local paths, or private transcripts."
+            "- Caveats: this is a local dataset from a single local run window, "
+            "not a broad benchmark and not a statistically significant result. "
+            "We are not sharing raw data, memory bodies, local paths, or private transcripts."
         ),
         "",
         "Happy to share the sanitized reproduction harness or an aggregate metrics table if useful.",

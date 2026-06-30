@@ -45,6 +45,7 @@ def test_reply_renderer_outputs_owner_review_draft(tmp_path: Path) -> None:
     assert "7 LIVE_SMOKE runs" in text
     assert "raw data" in text
     assert "local dataset" in text
+    assert "not a statistically significant result" in text
 
 
 def test_reply_renderer_redacts_input_paths_and_raw_fields(tmp_path: Path) -> None:

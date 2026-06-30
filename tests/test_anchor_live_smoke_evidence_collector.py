@@ -125,18 +125,43 @@ def test_collector_merges_anchor_and_live_smoke_json_inputs(tmp_path: Path) -> N
 
 def test_collector_can_write_public_safe_output_file(tmp_path: Path) -> None:
     out = tmp_path / "nested" / "evidence.json"
+    anchor_json = tmp_path / "anchor.json"
+    live_smoke_json = tmp_path / "live-smoke.json"
+    anchor_json.write_text(json.dumps({
+        "anchors": {"checked": 1, "valid": 1},
+        "raw_memory": "private memory body",
+    }), encoding="utf-8")
+    live_smoke_json.write_text(json.dumps({
+        "live_smoke": {"runs": 1, "passed": 1},
+        "debug_log": "PRIVATE_DEBUG_MARKER Workspace With Spaces debug.log",
+    }), encoding="utf-8")
 
     subprocess.run(
-        [sys.executable, str(SCRIPT), "--json", "--synthetic", "--out", str(out)],
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--json",
+            "--synthetic",
+            "--anchor-json",
+            str(anchor_json),
+            "--live-smoke-json",
+            str(live_smoke_json),
+            "--out",
+            str(out),
+        ],
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
     )
-    payload = json.loads(out.read_text(encoding="utf-8"))
+    body = out.read_text(encoding="utf-8")
+    payload = json.loads(body)
 
     assert payload["schema"] == "anchor_live_smoke_evidence.v1"
     assert payload["public_safe"] is True
+    assert "private memory body" not in body
+    assert "Workspace With Spaces" not in body
+    assert "debug.log" not in body
 
 
 def test_collector_sanitizes_failure_class_labels_from_inputs(tmp_path: Path) -> None:

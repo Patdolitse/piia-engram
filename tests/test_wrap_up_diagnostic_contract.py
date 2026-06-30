@@ -78,7 +78,14 @@ def test_diagnostic_compare_fast_outputs_two_modes() -> None:
     payload = json.loads(result.stdout)
 
     assert payload["schema"] == "wrap_up_session_compare.v1"
+    assert payload["live_store"] is False
+    assert payload["standard"]["store_mode"] == "isolated"
+    assert payload["standard"]["live_store"] is False
+    assert payload["standard"]["writeful"] is False
     assert payload["standard"]["maintenance"]["closeout_mode"] == "standard"
+    assert payload["fast"]["store_mode"] == "isolated"
+    assert payload["fast"]["live_store"] is False
+    assert payload["fast"]["writeful"] is False
     assert payload["fast"]["maintenance"]["closeout_mode"] == "fast"
     assert payload["fast"]["maintenance"]["extract_session_insights"]["status"] == "skipped"
 
