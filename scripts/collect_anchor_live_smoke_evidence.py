@@ -58,6 +58,13 @@ def _non_negative_int(value: Any, default: int) -> int:
         return default
 
 
+def _safe_failure_class(label: str) -> str:
+    allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_.-")
+    if 1 <= len(label) <= 64 and all(char in allowed for char in label):
+        return label
+    return "other"
+
+
 def _merge_anchor_counts(base: dict[str, int], loaded: dict[str, Any]) -> dict[str, int]:
     source = loaded.get("anchors") if isinstance(loaded.get("anchors"), dict) else loaded
     merged = dict(base)
@@ -77,11 +84,13 @@ def _merge_live_smoke_counts(base: dict[str, Any], loaded: dict[str, Any]) -> di
         merged[key] = _non_negative_int(source.get(key, merged[key]), merged[key])
     failures = source.get("failure_classes")
     if isinstance(failures, dict):
-        merged["failure_classes"] = {
-            str(key): _non_negative_int(value, 0)
-            for key, value in failures.items()
-            if isinstance(key, str)
-        }
+        clean_failures: dict[str, int] = {}
+        for key, value in failures.items():
+            if not isinstance(key, str):
+                continue
+            clean_key = _safe_failure_class(key)
+            clean_failures[clean_key] = clean_failures.get(clean_key, 0) + _non_negative_int(value, 0)
+        merged["failure_classes"] = clean_failures
     return merged
 
 

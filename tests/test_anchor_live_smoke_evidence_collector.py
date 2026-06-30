@@ -137,3 +137,38 @@ def test_collector_can_write_public_safe_output_file(tmp_path: Path) -> None:
 
     assert payload["schema"] == "anchor_live_smoke_evidence.v1"
     assert payload["public_safe"] is True
+
+
+def test_collector_sanitizes_failure_class_labels_from_inputs(tmp_path: Path) -> None:
+    live_smoke_json = tmp_path / "live-smoke.json"
+    live_smoke_json.write_text(json.dumps({
+        "live_smoke": {
+            "runs": 3,
+            "passed": 1,
+            "failed": 2,
+            "failure_classes": {
+                "timeout": 1,
+                "PRIVATE_DEBUG_MARKER Workspace With Spaces debug.log": 1,
+            },
+        },
+    }), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--json",
+            "--synthetic",
+            "--live-smoke-json",
+            str(live_smoke_json),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["live_smoke"]["failure_classes"] == {"timeout": 1, "other": 1}
+    assert "Workspace With Spaces" not in result.stdout
+    assert "debug.log" not in result.stdout
