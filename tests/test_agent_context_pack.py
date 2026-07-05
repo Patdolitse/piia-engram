@@ -129,6 +129,35 @@ def test_agent_context_pack_excludes_other_project_memory(tmp_path: Path) -> Non
     assert "Project B private rule" not in body
 
 
+def test_agent_context_pack_excludes_archived_knowledge(tmp_path: Path) -> None:
+    eng = _eng(tmp_path)
+    project = tmp_path / "project-a"
+    project.mkdir()
+    lesson = eng.add_lesson({
+        "summary": "Archived project lesson must not be trusted",
+        "project_folder": str(project),
+        "tier": "verified",
+    })
+    decision = eng.add_decision({
+        "question": "Archived project decision",
+        "choice": "must not be trusted",
+        "project_folder": str(project),
+        "tier": "verified",
+    })
+    assert eng.soft_archive_knowledge_tier(lesson["id"], allow_verified=True)["changed"] is True
+    assert eng.soft_archive_knowledge_tier(decision["id"], allow_verified=True)["changed"] is True
+
+    pack = eng.build_agent_context_pack(
+        project_folder=str(project),
+        agent_role="reviewer",
+        task_summary="Review archived memory filtering",
+    )
+    body = repr(pack)
+
+    assert "Archived project lesson must not be trusted" not in body
+    assert "Archived project decision" not in body
+
+
 def test_agent_context_pack_role_slices_review_needed(tmp_path: Path) -> None:
     eng = _eng(tmp_path)
     project = tmp_path / "project-a"

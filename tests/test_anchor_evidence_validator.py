@@ -102,6 +102,55 @@ def test_validator_rejects_private_tokens_without_echoing_them(tmp_path: Path) -
     assert "secret.json" not in body
 
 
+def test_validator_rejects_broad_private_path_shapes_without_echoing(tmp_path: Path) -> None:
+    payload = _valid_payload()
+    payload["notes"] = [
+        "Aggregate counts only.",
+        "Source artifacts stayed under Z:\\internal\\audit.log",
+        "Mirror output used \\\\server\\private-share\\artifact.json",
+        "Linux runner copied /home/alice/private/output.json",
+        "Temp runner copied /tmp/private-output.json",
+    ]
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--evidence", str(evidence), "--json"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    body = result.stdout + result.stderr
+    report = json.loads(result.stdout)
+
+    assert result.returncode == 1
+    assert "private-looking content detected" in report["errors"]
+    assert "Z:\\internal" not in body
+    assert "\\\\server\\private-share" not in body
+    assert "/home/alice" not in body
+
+
+def test_validator_rejects_private_project_codename_marker(tmp_path: Path) -> None:
+    payload = _valid_payload()
+    payload["notes"] = [
+        "Aggregate counts only.",
+        "PRIVATE_PROJECT_CODENAME_MARKER must never be part of forum evidence.",
+    ]
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--evidence", str(evidence), "--json"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(result.stdout)
+
+    assert result.returncode == 1
+    assert "private-looking content detected" in report["errors"]
+
+
 def test_validator_rejects_unsafe_failure_class_labels(tmp_path: Path) -> None:
     payload = _valid_payload()
     payload["live_smoke"]["failure_classes"] = {  # type: ignore[index]

@@ -130,6 +130,11 @@ def _context_entry_project_id(entry: dict[str, Any]) -> str:
     return ""
 
 
+def _context_entry_is_soft_archived(entry: dict[str, Any]) -> bool:
+    """Soft archive keeps status active, so read surfaces must check tier."""
+    return str(entry.get("tier") or "").strip().lower() == "archived"
+
+
 def _context_project_label(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -831,6 +836,9 @@ class ContextStoreMixin:
         for lesson in reversed(lessons):
             if not isinstance(lesson, dict) or lesson.get("status") != "active":
                 continue
+            if _context_entry_is_soft_archived(lesson):
+                _omit("lesson", "archived", "knowledge")
+                continue
             if not _context_entry_visible_for_project(lesson, project_folder):
                 continue
             summary = str(lesson.get("summary") or "").strip()
@@ -876,6 +884,9 @@ class ContextStoreMixin:
             decisions = []
         for decision in reversed(decisions):
             if not isinstance(decision, dict) or decision.get("status") != "active":
+                continue
+            if _context_entry_is_soft_archived(decision):
+                _omit("decision", "archived", "knowledge")
                 continue
             if not _context_entry_visible_for_project(decision, project_folder):
                 continue

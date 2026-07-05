@@ -36,18 +36,21 @@ PRIVATE_TOKENS = (
     "PRIVATE_LOCAL_MARKER",
     "PRIVATE_DEBUG_MARKER",
     "PRIVATE_TRANSCRIPT_MARKER",
+    "PRIVATE_PROJECT_",
+    "PRIVATE_WORKSPACE_",
     "Workspace With Spaces",
     "secret.json",
     "debug.log",
-    "E:\\",
-    "C:\\",
-    "/Users/",
 )
 PRIVATE_REGEXES = (
+    re.compile(r"(?i)\b[A-Z]:[\\/][^\s\"'<>|]+"),
+    re.compile(r"\\\\[^\\/\s\"'<>|]+[\\/][^\\/\s\"'<>|]+"),
+    re.compile(r"(?i)(^|[\s\"'=:])/(Users|home|tmp|var/tmp)/[^\s\"'<>]*"),
     re.compile(r"(?i)\bapi[_-]?key\b"),
     re.compile(r"(?i)\bpassword\b"),
     re.compile(r"(?i)\btoken\b"),
     re.compile(r"(?i)\bprivate[_-]?key\b"),
+    re.compile(r"(?i)\bprivate[_-]?(project|workspace|codename)\b"),
     re.compile(r"(?i)(^|[\\/])\.ssh([\\/]|$)"),
 )
 

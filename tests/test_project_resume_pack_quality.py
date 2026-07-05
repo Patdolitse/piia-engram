@@ -138,6 +138,27 @@ def test_review_candidates_never_enter_trusted_context(tmp_path: Path):
     assert "session-derived memory" not in trusted
 
 
+def test_archived_knowledge_never_enters_resume_trusted_or_review_needed(tmp_path: Path):
+    eng = _eng(tmp_path)
+    lesson = eng.add_lesson("Archived lesson must not reappear in handoff", tier="verified")
+    decision = eng.add_decision(
+        "Archived decision",
+        choice="must not reappear in handoff",
+        tier="verified",
+    )
+    assert eng.soft_archive_knowledge_tier(lesson["id"], allow_verified=True)["changed"] is True
+    assert eng.soft_archive_knowledge_tier(decision["id"], allow_verified=True)["changed"] is True
+
+    pack = eng.build_project_resume_pack()
+    trusted = json.dumps(pack["trusted_context"], ensure_ascii=False)
+    review = json.dumps(pack["review_needed"], ensure_ascii=False)
+
+    assert "Archived lesson must not reappear in handoff" not in trusted
+    assert "Archived decision" not in trusted
+    assert "Archived lesson must not reappear in handoff" not in review
+    assert "Archived decision" not in review
+
+
 def test_sensitive_values_absent_from_meta_omitted_and_quality_signals(tmp_path: Path):
     eng = _eng(tmp_path)
     project = _project(tmp_path)

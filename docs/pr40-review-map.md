@@ -5,11 +5,12 @@
 - PR: https://github.com/Patdolitse/piia-engram/pull/40
 - Branch: `feat/continuity-layer-m1`
 - Base: `main`
-- Draft: true
-- Merge state observed during M13: CLEAN on 2026-06-30 10:37 Asia/Shanghai; re-check before marking ready or merging
-- GitHub checks observed during M13: all visible PR checks passed on 2026-06-30 10:37 Asia/Shanghai; re-check before marking ready or merging
-- Scope: 46 commits, 83 files changed, 8988 insertions, 215 deletions
-- Public actions performed: branch push and Draft PR creation only
+- Draft: false
+- HEAD observed: `44f4826`
+- Merge state observed: MERGEABLE on 2026-07-06 Asia/Shanghai; re-check before merging
+- GitHub checks observed: 10/10 visible PR checks passed on 2026-07-06 Asia/Shanghai; re-check before merging
+- Scope observed: 51 commits, 87 files changed
+- Public actions performed: branch push, Draft PR creation, and owner-approved Ready for Review conversion
 - Public actions not performed: merge, release, tag, PyPI, MCP Registry, forum reply
 
 ## Review Order
@@ -171,4 +172,4 @@
 
 - Real weekend Anchor/LIVE_SMOKE packet still needs final data merge and owner review.
 - One live `wrap_up_session` call timed out at the MCP tool boundary after daily log write succeeded; M15 should classify whether the cause is transport, runtime, store scan, log flush, or app-side wait.
-- PR #40 is review-ready only after owner approval; M13 does not convert it out of Draft.
+- PR #40 is now Ready for Review after owner approval; merge, release, tag, registry publishing, and forum replies remain separate owner-confirmed actions.
