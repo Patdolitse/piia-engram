@@ -80,6 +80,25 @@ Accepted aggregate input shape:
 
 No public forum reply is sent by these commands. The owner must read `anchor-live-smoke-metrics.md`, inspect `manifest.json`, and approve the exact final text before anything is posted.
 
+## Continuous History Workflow
+
+Use this after daily development closeout or before preparing a new forum draft:
+
+```powershell
+python scripts/append_anchor_live_smoke_history.py --live --allow-live
+python scripts/build_anchor_forum_evidence_packet.py --history-summary .engram-local-evidence/anchor-live-smoke-history/latest.json --history-window-days 7 --out-dir .engram-local-evidence/weekend-packet-history-7d --label history-7d-review
+```
+
+Expected local history files:
+
+- `.engram-local-evidence/anchor-live-smoke-history/anchor-live-smoke-history.jsonl`
+- `.engram-local-evidence/anchor-live-smoke-history/latest.json`
+- `.engram-local-evidence/anchor-live-smoke-history/summary.md`
+
+The history appends one aggregate JSONL entry per run. It does not install a Windows scheduled task and does not post, push, tag, release, or publish anything.
+
+If a live run reports `0` anchor checks, keep that as `0` and explain that the current live store has no structured anchor records. Do not infer anchor checks from daily logs, lessons, free-text notes, transcripts, or other narrative records.
+
 ## Reply Shape
 
 - One short thanks/continuation sentence to Deanrie.

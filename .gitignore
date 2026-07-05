@@ -15,6 +15,7 @@ build/
 engram_backup_*.json
 identity_card.md
 reader_cache/
+.engram-local-evidence/
 
 # Corpus encryption salt (per-engram; derived key material — never commit)
 .corpus_salt

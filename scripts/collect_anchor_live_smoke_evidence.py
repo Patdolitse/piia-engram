@@ -22,6 +22,9 @@ os.environ.setdefault("ENGRAM_TEST", "1")
 from piia_engram.core import Engram  # noqa: E402
 
 
+ZERO_ANCHOR_REASON = "current live store has no structured anchor records"
+
+
 def _empty_anchor_counts() -> dict[str, int]:
     return {
         "checked": 0,
@@ -126,7 +129,7 @@ def _iter_knowledge_items(eng: Engram) -> list[dict[str, Any]]:
 
 
 def live_aggregate_payload() -> dict[str, Any]:
-    eng = Engram()
+    eng = Engram(read_only=True)
     anchors = _empty_anchor_counts()
     for item in _iter_knowledge_items(eng):
         provenance = item.get("provenance")
@@ -182,6 +185,12 @@ def _base_payload(
     anchors: dict[str, int],
     live_smoke: dict[str, Any],
 ) -> dict[str, Any]:
+    notes = [
+        "Aggregate counts only.",
+        "No raw memory bodies, local paths, or private identifiers.",
+    ]
+    if anchors.get("checked", 0) == 0:
+        notes.append(f"Anchor checks are 0 because {ZERO_ANCHOR_REASON}.")
     return {
         "schema": "anchor_live_smoke_evidence.v1",
         "date": date.today().isoformat(),
@@ -189,11 +198,21 @@ def _base_payload(
         "mode": mode,
         "anchors": anchors,
         "live_smoke": live_smoke,
-        "notes": [
-            "Aggregate counts only.",
-            "No raw memory bodies, local paths, or private identifiers.",
-        ],
+        "notes": notes,
     }
+
+
+def _ensure_zero_anchor_reason(payload: dict[str, Any]) -> None:
+    anchors = payload.get("anchors") if isinstance(payload.get("anchors"), dict) else {}
+    if _non_negative_int(anchors.get("checked", 0), 0) != 0:
+        return
+    notes = payload.get("notes")
+    if not isinstance(notes, list):
+        notes = []
+    reason = f"Anchor checks are 0 because {ZERO_ANCHOR_REASON}."
+    if reason not in notes:
+        notes.append(reason)
+    payload["notes"] = notes
 
 
 def main() -> int:
@@ -222,6 +241,7 @@ def main() -> int:
             payload["live_smoke"],
             _load_json_file(args.live_smoke_json),
         )
+    _ensure_zero_anchor_reason(payload)
     if args.out:
         output_path = Path(args.out)
         output_path.parent.mkdir(parents=True, exist_ok=True)

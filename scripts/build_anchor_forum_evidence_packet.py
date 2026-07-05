@@ -42,6 +42,7 @@ contains_private_content = _load_script_attr(
 EVIDENCE_FILE = "anchor-live-smoke-evidence.json"
 METRICS_FILE = "anchor-live-smoke-metrics.md"
 DRAFT_FILE = "cursor-forum-reply-draft.md"
+HUMAN_REVIEW_FILE = "cursor-forum-reply-draft-human-review.md"
 MANIFEST_FILE = "manifest.json"
 
 
@@ -51,6 +52,20 @@ def _load_json(path_text: str) -> dict[str, Any]:
     except Exception:
         raise ValueError("evidence file must be valid JSON")
     return data if isinstance(data, dict) else {}
+
+
+def _load_history_summary(path_text: str, days: int) -> dict[str, Any]:
+    loaded = _load_json(path_text)
+    if contains_private_content(loaded):
+        raise ValueError("history summary contains private-looking content")
+    if loaded.get("schema") != "anchor_live_smoke_history_summary.v1" or loaded.get("public_safe") is not True:
+        raise ValueError("history summary must be public-safe aggregate JSON")
+    windows = loaded.get("windows") if isinstance(loaded.get("windows"), dict) else {}
+    window = windows.get(f"{days}d") if isinstance(windows.get(f"{days}d"), dict) else {}
+    evidence = window.get("evidence") if isinstance(window.get("evidence"), dict) else {}
+    if not evidence:
+        raise ValueError("requested history window not found")
+    return evidence
 
 
 def _prevalidate_aggregate_input(path_text: str) -> None:
@@ -133,6 +148,51 @@ def render_metrics(payload: dict[str, Any]) -> str:
     ])
 
 
+def render_human_review(payload: dict[str, Any]) -> str:
+    checked = _count(payload, "anchors", "checked")
+    valid = _count(payload, "anchors", "valid")
+    invalid = _count(payload, "anchors", "invalid")
+    unknown = _count(payload, "anchors", "unknown")
+    demoted = _count(payload, "anchors", "demoted_to_staging")
+    runs = _count(payload, "live_smoke", "runs")
+    passed = _count(payload, "live_smoke", "passed")
+    failed = _count(payload, "live_smoke", "failed")
+    return "\n".join([
+        "# Cursor Forum Reply Human Review",
+        "",
+        "Public action: false",
+        "Owner confirmation required: true",
+        "",
+        "## Evidence Status",
+        "",
+        "- Current packet uses local aggregate history or collector evidence only.",
+        "- Current data is suitable only as a controlled harness plus small historical replay.",
+        f"- Current aggregate: {checked} anchor checks, {valid} valid, {invalid} invalid, {unknown} unknown, {demoted} demoted to staging.",
+        f"- LIVE_SMOKE aggregate: {runs} runs, {passed} passed, {failed} failed.",
+        "",
+        "## Safe Claims",
+        "",
+        "- Evidence is aggregate-only.",
+        "- Unknown is not the same as false.",
+        "- Broken or unavailable anchor evidence should move claims toward review/staging.",
+        "- Anchor reavailability should not automatically restore trust.",
+        "- Anchors check structural evidence, not semantic truth.",
+        "",
+        "## Do Not Claim",
+        "",
+        "- Do not call this a benchmark.",
+        "- Do not call this statistically significant.",
+        "- Do not describe it as organic multi-week production data.",
+        "- Do not include links unless the owner explicitly approves.",
+        "- Do not include raw memory bodies, transcripts, local paths, debug logs, API keys, private project names, or Core material.",
+        "",
+        "## Recommendation",
+        "",
+        "The draft is usable as a conservative technical reply, but waiting for 3-7 more daily history entries would make the follow-up steadier.",
+        "",
+    ])
+
+
 def _manifest(label: str, source_mode: str) -> dict[str, Any]:
     return {
         "schema": "anchor_forum_evidence_packet.v1",
@@ -145,6 +205,7 @@ def _manifest(label: str, source_mode: str) -> dict[str, Any]:
             "evidence": EVIDENCE_FILE,
             "metrics": METRICS_FILE,
             "draft": DRAFT_FILE,
+            "human_review": HUMAN_REVIEW_FILE,
         },
     }
 
@@ -161,6 +222,7 @@ def build_packet(payload: dict[str, Any], out_dir: Path, *, label: str, source_m
     )
     (out_dir / METRICS_FILE).write_text(render_metrics(payload), encoding="utf-8")
     (out_dir / DRAFT_FILE).write_text(render_reply(payload), encoding="utf-8")
+    (out_dir / HUMAN_REVIEW_FILE).write_text(render_human_review(payload), encoding="utf-8")
     (out_dir / MANIFEST_FILE).write_text(
         json.dumps(_manifest(label, source_mode), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -173,7 +235,9 @@ def main() -> int:
     source.add_argument("--evidence", default="", help="Existing aggregate evidence JSON.")
     source.add_argument("--synthetic", action="store_true", help="Build from synthetic collector data.")
     source.add_argument("--live", action="store_true", help="Build from owner-approved live aggregate collector data.")
+    source.add_argument("--history-summary", default="", help="Build from local aggregate history latest.json.")
     parser.add_argument("--allow-live", action="store_true", help="Required with --live.")
+    parser.add_argument("--history-window-days", type=int, choices=(7, 14), default=7)
     parser.add_argument("--anchor-json", default="", help="Optional aggregate anchor JSON input.")
     parser.add_argument("--live-smoke-json", default="", help="Optional aggregate LIVE_SMOKE JSON input.")
     parser.add_argument("--out-dir", required=True, help="Local output directory for packet files.")
@@ -183,16 +247,26 @@ def main() -> int:
     if args.live and not args.allow_live:
         print("--live requires --allow-live", file=sys.stderr)
         return 2
-    if args.evidence and (args.anchor_json or args.live_smoke_json):
+    if (args.evidence or args.history_summary) and (args.anchor_json or args.live_smoke_json):
         print("--anchor-json and --live-smoke-json are only used with collector modes", file=sys.stderr)
         return 2
 
     try:
-        payload = _load_json(args.evidence) if args.evidence else _collect_from_cli(args)
+        if args.evidence:
+            payload = _load_json(args.evidence)
+        elif args.history_summary:
+            payload = _load_history_summary(args.history_summary, args.history_window_days)
+        else:
+            payload = _collect_from_cli(args)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    source_mode = "evidence-file" if args.evidence else ("live" if args.live else "synthetic")
+    if args.evidence:
+        source_mode = "evidence-file"
+    elif args.history_summary:
+        source_mode = f"history-summary-{args.history_window_days}d"
+    else:
+        source_mode = "live" if args.live else "synthetic"
     try:
         build_packet(payload, Path(args.out_dir), label=args.label, source_mode=source_mode)
     except ValueError as exc:

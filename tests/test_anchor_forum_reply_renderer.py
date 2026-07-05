@@ -127,3 +127,34 @@ def test_reply_renderer_refuses_non_public_safe_evidence(tmp_path: Path) -> None
 
     assert result.returncode != 0
     assert "evidence must be public-safe aggregate JSON" in result.stderr
+
+
+def test_reply_renderer_includes_anchor_trust_boundaries(tmp_path: Path) -> None:
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(json.dumps({
+        "schema": "anchor_live_smoke_evidence.v1",
+        "public_safe": True,
+        "anchors": {
+            "checked": 2,
+            "valid": 1,
+            "invalid": 0,
+            "unknown": 1,
+            "superseded": 0,
+            "demoted_to_staging": 0,
+        },
+        "live_smoke": {"runs": 1, "passed": 1, "failed": 0, "failure_classes": {}},
+    }), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--evidence", str(evidence)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    text = result.stdout
+
+    assert "controlled harness plus a small historical replay" in text
+    assert "unknown is not the same as false" in text
+    assert "becoming reachable again does not automatically make the claim trusted" in text
+    assert "checks structural evidence, not semantic truth" in text

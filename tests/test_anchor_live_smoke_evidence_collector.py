@@ -197,3 +197,41 @@ def test_collector_sanitizes_failure_class_labels_from_inputs(tmp_path: Path) ->
     assert payload["live_smoke"]["failure_classes"] == {"timeout": 1, "other": 1}
     assert "Workspace With Spaces" not in result.stdout
     assert "debug.log" not in result.stdout
+
+
+def test_collector_explains_zero_anchor_checks_without_forging_counts(tmp_path: Path) -> None:
+    anchor_json = tmp_path / "anchor.json"
+    anchor_json.write_text(json.dumps({
+        "anchors": {
+            "checked": 0,
+            "valid": 0,
+            "invalid": 0,
+            "unknown": 0,
+            "superseded": 0,
+            "demoted_to_staging": 0,
+        },
+    }), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--json",
+            "--synthetic",
+            "--anchor-json",
+            str(anchor_json),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["anchors"]["checked"] == 0
+    assert payload["anchors"]["valid"] == 0
+    assert any(
+        "current live store has no structured anchor records" in note
+        for note in payload["notes"]
+    )
+    assert "daily log" not in result.stdout.lower()

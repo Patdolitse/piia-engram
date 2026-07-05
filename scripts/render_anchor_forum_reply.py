@@ -51,8 +51,8 @@ def render_reply(payload: dict[str, Any]) -> str:
         "Draft reply:",
         "",
         (
-            "Thanks again for the thoughtful thread. We ran a small local follow-up "
-            "over the last stretch and kept the evidence aggregate-only."
+            "Thanks again for the thoughtful thread. We ran a controlled harness plus a small historical replay "
+            "and kept the evidence aggregate-only."
         ),
         "",
         (
@@ -65,6 +65,22 @@ def render_reply(payload: dict[str, Any]) -> str:
             "- What changed in practice: an AI guess does not silently become a fact; "
             "anchor-backed facts keep an explicit evidence basis, and broken evidence "
             "moves them back toward review instead of quiet trust."
+        ),
+        (
+            "- Design rule: the system carries the confirmation source; it does not rely on the next model "
+            "remembering that something was only a guess."
+        ),
+        (
+            "- Trust rule: agent-written trust fields are not trusted just because they appear in normal writes; "
+            "the governed path has to confirm the supporting evidence."
+        ),
+        (
+            "- Failure rule: unknown is not the same as false, and an anchor becoming reachable again does not "
+            "automatically make the claim trusted."
+        ),
+        (
+            "- Scope rule: an anchor checks structural evidence, not semantic truth; it can say whether the "
+            "supporting record is still parseable/reachable, not whether the real-world claim is true forever."
         ),
         (
             "- Caveats: this is a local dataset from a single local run window, "

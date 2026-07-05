@@ -60,24 +60,29 @@ def test_packet_builder_writes_local_review_packet(tmp_path: Path) -> None:
     assert (out_dir / "anchor-live-smoke-evidence.json").exists()
     assert (out_dir / "anchor-live-smoke-metrics.md").exists()
     assert (out_dir / "cursor-forum-reply-draft.md").exists()
+    assert (out_dir / "cursor-forum-reply-draft-human-review.md").exists()
     assert (out_dir / "manifest.json").exists()
 
     manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
     metrics = (out_dir / "anchor-live-smoke-metrics.md").read_text(encoding="utf-8")
     draft = (out_dir / "cursor-forum-reply-draft.md").read_text(encoding="utf-8")
-    body = json.dumps(manifest, ensure_ascii=False) + metrics + draft
+    human_review = (out_dir / "cursor-forum-reply-draft-human-review.md").read_text(encoding="utf-8")
+    body = json.dumps(manifest, ensure_ascii=False) + metrics + draft + human_review
 
     assert manifest["schema"] == "anchor_forum_evidence_packet.v1"
     assert manifest["label"] == "weekend-dry-run"
     assert manifest["public_action"] is False
     assert manifest["owner_confirmation_required"] is True
     assert manifest["files"]["evidence"] == "anchor-live-smoke-evidence.json"
+    assert manifest["files"]["human_review"] == "cursor-forum-reply-draft-human-review.md"
     assert "12 anchor checks" in metrics
     assert "7 LIVE_SMOKE runs" in metrics
     assert "Owner confirmation required before posting" in draft
     assert "Draft reply:" in draft
     assert "Caveats:" in draft
     assert "not a statistically significant result" in draft
+    assert "Do not call this a benchmark" in human_review
+    assert "waiting for 3-7 more daily history entries" in human_review
     assert str(tmp_path) not in body
     assert "Workspace With Spaces" not in body
     assert "secret.json" not in body

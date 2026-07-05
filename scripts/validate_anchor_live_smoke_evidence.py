@@ -32,8 +32,10 @@ ANCHOR_KEYS = {
 LIVE_SMOKE_KEYS = {"runs", "passed", "failed", "failure_classes"}
 PRIVATE_TOKENS = (
     "raw_memory",
+    "raw_transcript",
     "PRIVATE_LOCAL_MARKER",
     "PRIVATE_DEBUG_MARKER",
+    "PRIVATE_TRANSCRIPT_MARKER",
     "Workspace With Spaces",
     "secret.json",
     "debug.log",

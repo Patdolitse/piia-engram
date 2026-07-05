@@ -43,3 +43,14 @@ def test_anchor_live_smoke_doc_includes_packet_finalizer() -> None:
     assert "manifest.json" in text
     assert "Accepted aggregate input shape" in text
     assert "No public forum reply is sent" in text
+
+
+def test_anchor_live_smoke_doc_includes_continuous_history_workflow() -> None:
+    text = DOC.read_text(encoding="utf-8")
+
+    assert "append_anchor_live_smoke_history.py --live --allow-live" in text
+    assert ".engram-local-evidence/anchor-live-smoke-history/anchor-live-smoke-history.jsonl" in text
+    assert ".engram-local-evidence/anchor-live-smoke-history/latest.json" in text
+    assert ".engram-local-evidence/anchor-live-smoke-history/summary.md" in text
+    assert "--history-summary .engram-local-evidence/anchor-live-smoke-history/latest.json" in text
+    assert "current live store has no structured anchor records" in text
