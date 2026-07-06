@@ -6,6 +6,20 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.13.0] - 2026-07-06
+
+### Added
+- Continuity runtime contracts: session-end closeout now records bounded, observable metadata while keeping heavy reconciliation on explicit maintenance paths.
+- Agent context packs: callers can request scoped, role-aware, read-only context with privacy-safe omission signals for subagents and orchestrators.
+- Anchor/LIVE_SMOKE evidence workflow: local aggregate evidence can be validated, bundled, and rendered into an owner-reviewed draft without posting publicly.
+
+### Fixed
+- Wrap-up diagnostics now distinguish tool-boundary timeouts from successful local daily-log writes.
+- Archived context and evidence validation paths are hardened against malformed, overclaiming, or private-looking evidence.
+
+### Documentation
+- Added a PR #40 review map and clarified that live PR state, checks, and commit counts must be read from `gh` rather than durable documentation snapshots.
+
 ## [4.12.0] - 2026-06-23
 
 ### Fixed
