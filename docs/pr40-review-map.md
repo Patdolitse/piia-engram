@@ -5,12 +5,10 @@
 - PR: https://github.com/Patdolitse/piia-engram/pull/40
 - Branch: `feat/continuity-layer-m1`
 - Base: `main`
-- Draft: false
-- HEAD observed: `44f4826`
-- Merge state observed: MERGEABLE on 2026-07-06 Asia/Shanghai; re-check before merging
-- GitHub checks observed: 10/10 visible PR checks passed on 2026-07-06 Asia/Shanghai; re-check before merging
-- Scope observed: 51 commits, 87 files changed
-- Public actions performed: branch push, Draft PR creation, and owner-approved Ready for Review conversion
+- Review state: Ready for Review after owner-approved Draft conversion
+- Live PR status source: before merging, re-run `gh pr view 40 --json headRefOid,mergeable,statusCheckRollup,isDraft,state,updatedAt` and `gh pr checks 40` to confirm live HEAD, mergeability, and checks
+- Document scope: this file is a review map and risk checklist, not the live source for PR HEAD, commit count, file count, mergeability, or current checks
+- Public actions performed: branch pushes, Draft PR creation, and owner-approved Ready for Review conversion
 - Public actions not performed: merge, release, tag, PyPI, MCP Registry, forum reply
 
 ## Review Order
@@ -162,11 +160,10 @@
 
 ## Verification Evidence
 
-- Local focused tests were refreshed during M13; keep exact counts in local task notes rather than this public review map.
-- Local full pytest was refreshed during M13; keep exact counts in local task notes rather than this public review map.
-- Local collect-only was refreshed during M13; keep exact counts in local task notes rather than this public review map.
-- Release sanitize and publish allowlist checks passed during M13.
-- GitHub PR checks: all visible checks passed when observed during M13 on 2026-06-30 10:37 Asia/Shanghai; re-check before marking ready or merging.
+- Keep exact test counts, PR HEAD, commit count, and file count in live task notes, CI output, or `gh` output rather than this review map.
+- For this review-map cleanup, the required local gates are `git diff --check`, `scripts/release_sanitize_check.py --internal --strict`, and `scripts/check_publish_allowlist.py`.
+- Release sanitize and publish allowlist remain required public-boundary gates; re-run them before any release or publishing workflow.
+- GitHub PR checks are live state; use `gh pr checks 40` before merge instead of relying on this document.
 
 ## Known Follow-up
 
