@@ -6,6 +6,20 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.13.0] - 2026-07-06
+
+### 新增
+- Continuity runtime contracts：session-end closeout 现在记录有边界、可观察的元数据，同时把较重的 reconcile 保持为显式维护路径。
+- Agent context pack：调用方可以请求按角色裁剪、只读、带来源元数据和隐私安全 omission signals 的上下文包，供 subagent 和 orchestrator 使用。
+- Anchor/LIVE_SMOKE evidence workflow：本地聚合证据可以被验证、打包并渲染成 owner-reviewed draft，但不会自动公开发布。
+
+### 修复
+- Wrap-up diagnostics 现在区分 MCP tool-boundary timeout 与本地 daily log 写入成功后的边界超时。
+- Archived context 与 evidence validation 路径加固，能拒绝 malformed、overclaiming 或 private-looking evidence。
+
+### 文档
+- 新增 PR #40 review map，并明确 live PR state、checks、commit counts 必须从 `gh` 读取，而不是依赖持久文档快照。
+
 ## [4.12.0] - 2026-06-23
 
 ### 修复
