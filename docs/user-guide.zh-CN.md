@@ -244,3 +244,11 @@ AI 可能只把它存进了自己的私有记忆，没存进 Engram。用 `searc
 - [诚实对比](honest-comparison.zh-CN.md)——Engram 在记忆数据库、仓库规则文件、
   原生工具记忆之间的定位
 - [架构](architecture.md)——内部如何运作
+
+---
+
+## M9：会话结束保存边界
+
+`wrap_up_session` 是轻量的会话结束保存。默认不会运行完整 reconcile，也不会默认执行外部 AI 记忆或配置的 full reconciliation。
+
+需要维护型同步时，必须由用户明确同意，并显式使用 `run_reconcile=True`。这一路径适合 owner-approved maintenance reconciliation；普通会话收尾继续保持 lightweight session-end save。

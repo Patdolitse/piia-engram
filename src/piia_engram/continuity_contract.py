@@ -1,4 +1,4 @@
-"""MCIC scenario definitions and Hermes A/B v2 method contract.
+"""MCIC scenario definitions and client A/B method contract.
 
 Public-safe, deterministic contract layer for cross-client identity
 continuity (MCIC) evaluation.  All scenario data is synthetic.

@@ -156,6 +156,28 @@ class TestKnowledgeReadTools:
         assert isinstance(parsed, list)
         assert any(l.get("summary") == "测试经验" for l in parsed)
 
+    def test_get_lessons_filters_by_project_folder(self, isolated_engram: Engram):
+        project_a = str(isolated_engram.root / "project-a")
+        project_b = str(isolated_engram.root / "project-b")
+        isolated_engram.add_lesson({
+            "summary": "mcp project A scoped lesson",
+            "project_folder": project_a,
+        })
+        isolated_engram.add_lesson({
+            "summary": "mcp project B scoped lesson",
+            "project_folder": project_b,
+        })
+        isolated_engram.add_lesson({"summary": "mcp global reusable lesson"})
+
+        parsed = json.loads(_run(
+            mcp_server.get_lessons(project_folder=project_a, limit=10)
+        ))
+        summaries = {item.get("summary") for item in parsed}
+
+        assert "mcp project A scoped lesson" in summaries
+        assert "mcp global reusable lesson" in summaries
+        assert "mcp project B scoped lesson" not in summaries
+
     def test_get_decisions_empty_returns_friendly_message(
         self, isolated_engram: Engram
     ):
@@ -173,6 +195,58 @@ class TestKnowledgeReadTools:
         result = _run(mcp_server.get_decisions(domain="architecture"))
         parsed = json.loads(result)
         assert all("architecture" in d.get("domain", "") for d in parsed)
+
+    def test_get_decisions_filters_by_project_folder(self, isolated_engram: Engram):
+        project_a = str(isolated_engram.root / "project-a")
+        project_b = str(isolated_engram.root / "project-b")
+        isolated_engram.add_decision({
+            "question": "mcp project A scoped decision",
+            "choice": "A",
+            "project_folder": project_a,
+        })
+        isolated_engram.add_decision({
+            "question": "mcp project B scoped decision",
+            "choice": "B",
+            "project_folder": project_b,
+        })
+        isolated_engram.add_decision("mcp global reusable decision", "global")
+
+        parsed = json.loads(_run(
+            mcp_server.get_decisions(project_folder=project_a, limit=10)
+        ))
+        questions = {item.get("question") for item in parsed}
+
+        assert "mcp project A scoped decision" in questions
+        assert "mcp global reusable decision" in questions
+        assert "mcp project B scoped decision" not in questions
+
+    def test_get_recent_context_filters_by_project_folder(self, isolated_engram: Engram):
+        project_a = str(isolated_engram.root / "project-a")
+        project_b = str(isolated_engram.root / "project-b")
+        isolated_engram.save_agent_context(
+            tool="codex",
+            content="mcp project A checkpoint",
+            session_id="mcp-a",
+            project_folder=project_a,
+        )
+        isolated_engram.save_agent_context(
+            tool="codex",
+            content="mcp project B checkpoint",
+            session_id="mcp-b",
+            project_folder=project_b,
+        )
+
+        parsed = json.loads(_run(
+            mcp_server.get_recent_context(
+                tool="codex",
+                project_folder=project_a,
+                limit=5,
+            )
+        ))
+        contents = "\n".join(item["content"] for item in parsed["sessions"])
+
+        assert "mcp project A checkpoint" in contents
+        assert "mcp project B checkpoint" not in contents
 
     def test_get_project_context_missing_returns_friendly_message(
         self, isolated_engram: Engram
@@ -234,7 +308,7 @@ class TestKnowledgeWriteTools:
     def test_add_lesson_persists(self, isolated_engram: Engram):
         result = _run(
             mcp_server.add_lesson(
-                summary="测试要点", detail="详情", domain="python"
+                summary="测试要点", detail="详情", domain="python", user_confirmed=True
             )
         )
         assert "测试要点" in result
@@ -243,15 +317,16 @@ class TestKnowledgeWriteTools:
         assert any(l.get("summary") == "测试要点" for l in lessons)
 
     def test_add_lesson_duplicate_returns_status(self, isolated_engram: Engram):
-        _run(mcp_server.add_lesson(summary="独特的测试经验内容来防止误判"))
-        result2 = _run(mcp_server.add_lesson(summary="独特的测试经验内容来防止误判"))
+        _run(mcp_server.add_lesson(summary="独特的测试经验内容来防止误判", user_confirmed=True))
+        result2 = _run(mcp_server.add_lesson(summary="独特的测试经验内容来防止误判", user_confirmed=True))
         parsed = json.loads(result2)
         assert parsed.get("status") == "duplicate"
 
     def test_add_decision_persists(self, isolated_engram: Engram):
         result = _run(
             mcp_server.add_decision(
-                question="使用什么库?", choice="library-X", reasoning="性能更好"
+                question="使用什么库?", choice="library-X", reasoning="性能更好",
+                user_confirmed=True,
             )
         )
         assert isinstance(result, str)
@@ -384,6 +459,7 @@ class TestSearchTools:
             steps_json='["Prepare", "Verify"]',
             required_tools_json='[{"name": "gh", "purpose": "GitHub release"}]',
             tool_refs="Node.js",
+            user_confirmed=True,
         ))
 
         assert "Playbook 已记录" in result
@@ -1138,7 +1214,7 @@ class TestWrapUpSessionErrors:
             raise RuntimeError("extract boom")
 
         monkeypatch.setattr(isolated_engram, "extract_session_insights", explode)
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert "error" in result["insights"]
         assert "extract boom" in result["insights"]["error"]
 
@@ -1160,7 +1236,9 @@ class TestWrapUpSessionErrors:
         result = json.loads(
             _run(
                 mcp_server.wrap_up_session(
-                    summary="test", project_folder="/some/proj"
+                    summary="test",
+                    project_folder="/some/proj",
+                    user_confirmed=True,
                 )
             )
         )
@@ -1190,6 +1268,7 @@ class TestWrapUpSessionErrors:
             summary="finished current labeling loop",
             project_folder=project,
             project_title="Piia Engram",
+            user_confirmed=True,
         )))
         snapshot = isolated_engram.get_project_snapshot(project)
 
@@ -1217,7 +1296,7 @@ class TestWrapUpSessionErrors:
 
         monkeypatch.setattr(isolated_engram, "reconcile_memories", explode)
         # Should not raise — error is logged and swallowed
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert "insights" in result
 
     def test_reconcile_ai_configs_exception(
@@ -1239,7 +1318,7 @@ class TestWrapUpSessionErrors:
             raise RuntimeError("config boom")
 
         monkeypatch.setattr(isolated_engram, "reconcile_ai_configs", explode)
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert "insights" in result
 
     def test_evaluate_tiers_exception(
@@ -1266,7 +1345,7 @@ class TestWrapUpSessionErrors:
             raise RuntimeError("tier boom")
 
         monkeypatch.setattr(isolated_engram, "evaluate_tiers", explode)
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert "insights" in result
 
     def test_get_staging_summary_exception(
@@ -1298,7 +1377,7 @@ class TestWrapUpSessionErrors:
             raise RuntimeError("staging boom")
 
         monkeypatch.setattr(isolated_engram, "get_staging_summary", explode)
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert "insights" in result
 
     def test_evaluate_tiers_suggested(
@@ -1330,7 +1409,7 @@ class TestWrapUpSessionErrors:
             "get_staging_summary",
             lambda *a, **kw: {"total_staging": 0, "staging_lessons": 0, "staging_decisions": 0},
         )
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert result["promotion_suggestions"]["suggested"] == 2
 
     def test_pkg_version_exception(
@@ -1372,7 +1451,7 @@ class TestWrapUpSessionErrors:
             lambda name: (_ for _ in ()).throw(Exception("no package")),
         )
         # The function should still succeed — _ver falls back to "dev"
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert "insights" in result
         monkeypatch.setattr(importlib.metadata, "version", original_version)
 
@@ -1411,7 +1490,7 @@ class TestWrapUpSessionErrors:
 
         monkeypatch.setattr(isolated_engram, "get_lessons", explode)
         # Should not raise — the exception is caught in the inner try
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert "insights" in result
 
     def test_flush_exception(
@@ -1453,7 +1532,7 @@ class TestWrapUpSessionErrors:
                 raise RuntimeError("flush boom")
 
         monkeypatch.setattr(mcp_server, "_tracker", ExplodingTracker())
-        result = json.loads(_run(mcp_server.wrap_up_session(summary="test")))
+        result = json.loads(_run(mcp_server.wrap_up_session(summary="test", user_confirmed=True)))
         assert "insights" in result
 
 
@@ -1793,6 +1872,77 @@ class TestResumeBriefWrapper:
         assert "<engram-resume" in result, (
             f"Expected '<engram-resume' tag in resume brief output, got: {result[:200]}"
         )
+
+
+    def test_mcp_get_resume_brief_can_include_project_resume_pack(
+        self, isolated_engram: Engram, tmp_path: Path,
+    ):
+        result = _run(
+            mcp_server.get_resume_brief(
+                project_folder=str(tmp_path),
+                include_resume_pack=True,
+            )
+        )
+        payload = json.loads(result)
+        assert payload["resume_pack"]["schema"] == "project_resume_pack.v1"
+
+    def test_mcp_get_resume_brief_default_excludes_agent_context_pack(
+        self,
+        isolated_engram: Engram,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        def fail_agent_pack(**_: object) -> dict:
+            raise AssertionError("agent context pack should be opt-in")
+
+        monkeypatch.setattr(
+            isolated_engram,
+            "build_agent_context_pack",
+            fail_agent_pack,
+        )
+
+        result = _run(mcp_server.get_resume_brief(project_folder=str(tmp_path)))
+        payload = json.loads(result)
+
+        assert "agent_context_pack" not in payload
+        assert "agent_context_pack" not in payload["sections_included"]
+
+    def test_mcp_get_resume_brief_can_include_agent_context_pack(
+        self,
+        isolated_engram: Engram,
+        tmp_path: Path,
+    ):
+        project = tmp_path / "project-a"
+        project.mkdir()
+        isolated_engram.save_project_snapshot(
+            str(project),
+            {"title": "Synthetic Project", "stage": "M6"},
+        )
+        isolated_engram.add_decision({
+            "question": "How should writes be handled?",
+            "choice": "preview first",
+            "project_folder": str(project),
+            "tier": "verified",
+        })
+
+        result = _run(
+            mcp_server.get_resume_brief(
+                project_folder=str(project),
+                include_resume_pack=True,
+                include_agent_context_pack=True,
+                agent_role="reviewer",
+                task_summary="Review memory write gate changes",
+            )
+        )
+        payload = json.loads(result)
+        pack = payload["agent_context_pack"]
+
+        assert payload["resume_pack"]["schema"] == "project_resume_pack.v1"
+        assert pack["schema"] == "agent_context_pack.v1"
+        assert pack["role"] == "reviewer"
+        assert pack["task"]["summary"] == "Review memory write gate changes"
+        assert "preview first" in repr(pack["context"]["trusted"])
+        assert "agent_context_pack" in payload["sections_included"]
 
 
 class TestColdStartBootstrap:

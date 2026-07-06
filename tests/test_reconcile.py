@@ -336,6 +336,49 @@ OK.
     assert result["imported"] == 0
 
 
+def test_reconcile_ai_configs_respects_import_budget(tmp_path: Path) -> None:
+    engram = _make_engram(tmp_path / "engram")
+    config_root = tmp_path / "project"
+    config_root.mkdir()
+    sections = [
+        "## Database migrations\nCapture rollback commands before applying schema changes.",
+        "## Design review\nCompare mobile spacing against the approved Figma frame.",
+        "## Security triage\nTrace every untrusted input from parser to storage boundary.",
+        "## Release notes\nSummarize user-visible behavior without internal branch names.",
+        "## Windows shell\nUse native PowerShell path handling for local filesystem changes.",
+        "## Browser smoke\nVerify the rendered canvas has nonblank pixels after loading.",
+        "## Memory writeback\nStore reusable lessons only after removing private project details.",
+        "## API contracts\nPin response fields with regression tests before refactoring clients.",
+        "## Documentation\nKeep operator guides conservative and avoid live-sync claims.",
+        "## Telemetry\nRecord bucketed metadata only and never include raw user content.",
+    ]
+    (config_root / "AGENTS.md").write_text("\n\n".join(sections), encoding="utf-8")
+
+    result = engram.reconcile_ai_configs(search_roots=[str(config_root)], max_imports=5)
+
+    assert result["imported"] <= 5
+    assert result["budget_exhausted"] is True
+
+
+def test_reconcile_ai_configs_preserves_utf8_text(tmp_path: Path) -> None:
+    engram = _make_engram(tmp_path / "engram")
+    config_root = tmp_path / "project"
+    config_root.mkdir()
+    (config_root / "AGENTS.md").write_text(
+        "## 中文规则\n所有沟通使用中文，并在完成任务前运行验证。",
+        encoding="utf-8",
+    )
+
+    result = engram.reconcile_ai_configs(search_roots=[str(config_root)], max_imports=10)
+    lessons = engram.get_lessons(limit=None, _update_access=False)
+    body = json.dumps(lessons, ensure_ascii=False)
+
+    assert result["imported"] == 1
+    assert "中文规则" in body
+    assert "所有沟通使用中文" in body
+    assert "盲赂" not in body
+
+
 def test_parse_config_sections():
     """_parse_config_sections should split markdown by headers."""
     from piia_engram.core import Engram
@@ -796,7 +839,12 @@ def test_wrap_up_session_reports_staging_reminder(tmp_path: Path, monkeypatch):
     e.add_lesson("Session wrap staging reminder candidate", domain="general", tier="staging")
     monkeypatch.setattr(server, "_engram", e)
 
-    raw = asyncio.run(server.wrap_up_session("Session ended with no durable new facts."))
+    raw = asyncio.run(
+        server.wrap_up_session(
+            "Session ended with no durable new facts.",
+            user_confirmed=True,
+        )
+    )
     data = json.loads(raw)
     reminder = data.get("staging_reminder", {})
     assert reminder["total_staging"] == 1

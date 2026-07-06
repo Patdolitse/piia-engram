@@ -89,6 +89,7 @@ README.zh-CN.md
 # NOTE: release-playbook.md is intentionally NOT here — it's an internal
 # ops runbook (reverse-disclosure risk) kept at docs/internal/ (gitignored).
 docs/architecture.md
+docs/anchor-live-smoke-weekend-evidence.md
 docs/benchmarks/context-governance-eval-v1.md
 docs/benchmarks/recall-eval-v1.md
 docs/benchmarks/memory-eval-suite-v1.md
@@ -108,6 +109,7 @@ docs/mcp-tool-surface.json
 docs/migration-v4.md
 docs/migration-v4.zh-CN.md
 docs/operator-mcp-cheatsheet.md
+docs/pr40-review-map.md
 docs/quickstart-first-value.md
 docs/quickstart-first-value.zh-CN.md
 docs/public-facts.json

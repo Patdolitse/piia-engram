@@ -13,6 +13,8 @@ import platform
 import re
 from pathlib import Path
 
+from .staging_review import _review_evidence
+
 # ``setup_wizard`` is imported as ``W`` at the BOTTOM of this module (not here)
 # to avoid a circular import: setup_wizard re-exports cli_commands' names at its
 # own bottom, so importing cli_commands FIRST would otherwise hit a
@@ -252,6 +254,46 @@ def _truncate_review_text(value: str, limit: int = 180) -> str:
     return text[: max(0, limit - 3)].rstrip() + "..."
 
 
+def _review_evidence_summary(item: dict) -> str:
+    evidence = _review_evidence(item)
+    if not evidence:
+        return ""
+    parts: list[str] = []
+    source_type = evidence.get("source_type")
+    if source_type:
+        parts.append(f"evidence={source_type}")
+    return _truncate_review_text(" ".join(parts), 24)
+
+
+def _print_review_evidence_detail(item: dict) -> None:
+    evidence = _review_evidence(item)
+    if not evidence:
+        return
+    source = evidence.get("source_type") or "unknown"
+    source_tool = evidence.get("source_tool")
+    if source_tool:
+        source = f"{source} via {source_tool}"
+    W._safe_print(f"evidence.source: {_truncate_review_text(source, 96)}")
+
+    source_ref = evidence.get("source_ref")
+    if source_ref:
+        W._safe_print(f"evidence.ref: {_truncate_review_text(source_ref, 120)}")
+
+    status_parts: list[str] = []
+    status = evidence.get("verification_status")
+    if status:
+        status_parts.append(status)
+    confidence = evidence.get("confidence")
+    if confidence:
+        status_parts.append(f"confidence={confidence}")
+    if status_parts:
+        W._safe_print("evidence.status: " + " ".join(status_parts))
+
+    promotion_hint = evidence.get("promotion_hint")
+    if promotion_hint:
+        W._safe_print(f"evidence.review: {_truncate_review_text(promotion_hint, 96)}")
+
+
 def _print_review_quality_detail(item: dict) -> None:
     extraction = item.get("extraction")
     if not isinstance(extraction, dict) or not extraction:
@@ -338,6 +380,9 @@ def _print_review_list(rows: list[dict]) -> None:
         if len(title) > 70:
             title = title[:67] + "..."
         quality = _review_quality_summary(item)
+        evidence = _review_evidence_summary(item)
+        if evidence:
+            quality = evidence if quality == "-" else f"{quality} {evidence}"
         W._safe_print(
             f"{item_type:<9}  "
             f"{str(item.get('id', '?')):<25}  "
@@ -366,6 +411,7 @@ def _print_review_item(item_type: str, item: dict) -> None:
         if item.get("detail"):
             W._safe_print(f"detail: {item.get('detail')}")
     _print_review_quality_detail(item)
+    _print_review_evidence_detail(item)
 
 
 def _require_yes(args: list[str], action: str) -> bool:
@@ -5070,6 +5116,8 @@ def _print_continuity_usage() -> None:
         "Usage:\n"
         "  engram continuity [--project PATH] [--limit N]\n"
         "  engram continuity --json [--project PATH] [--limit N]\n"
+        "  engram continuity --digest-backfill-preview [--project PATH] [--limit N] [--json]\n"
+        "  engram continuity --digest-backfill-apply --yes [--project PATH] [--limit N] [--json]\n"
     )
 
 
@@ -5085,6 +5133,8 @@ def run_continuity(argv: list[str] | None = None) -> int:
     project_folder = os.getcwd()
     limit = 500
     json_output = False
+    digest_backfill_mode = ""
+    yes = False
     i = 0
     while i < len(args):
         arg = args[i]
@@ -5093,6 +5143,18 @@ def run_continuity(argv: list[str] | None = None) -> int:
             return 0
         if arg == "--json":
             json_output = True
+        elif arg == "--yes":
+            yes = True
+        elif arg == "--digest-backfill-preview":
+            if digest_backfill_mode and digest_backfill_mode != "preview":
+                print("Choose only one digest backfill mode")
+                return 2
+            digest_backfill_mode = "preview"
+        elif arg == "--digest-backfill-apply":
+            if digest_backfill_mode and digest_backfill_mode != "apply":
+                print("Choose only one digest backfill mode")
+                return 2
+            digest_backfill_mode = "apply"
         elif arg == "--project":
             if i + 1 >= len(args):
                 print("Missing value for --project")
@@ -5116,6 +5178,44 @@ def run_continuity(argv: list[str] | None = None) -> int:
             _print_continuity_usage()
             return 2
         i += 1
+
+    if digest_backfill_mode:
+        if digest_backfill_mode == "apply" and not yes:
+            report = {
+                "schema": "session_digest_backfill.v1",
+                "mode": "apply",
+                "candidates": 0,
+                "written": 0,
+                "skipped": [{"reason": "requires_yes", "count": 1}],
+                "items": [],
+            }
+            if json_output:
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                print("ERROR: --digest-backfill-apply requires --yes")
+            return 2
+        eng = Engram(read_only=(digest_backfill_mode == "preview"))
+        if digest_backfill_mode == "preview":
+            report = eng.preview_session_digest_backfill(
+                project_folder=project_folder,
+                limit=limit,
+            )
+        else:
+            report = eng.apply_session_digest_backfill(
+                project_folder=project_folder,
+                limit=limit,
+                yes=yes,
+            )
+        if json_output:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(
+                "Engram session digest backfill\n"
+                f"  Mode: {report.get('mode')}\n"
+                f"  Candidates: {report.get('candidates')}\n"
+                f"  Written: {report.get('written')}\n"
+            )
+        return 0
 
     report = build_continuity_report(
         Engram(),

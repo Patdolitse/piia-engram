@@ -123,6 +123,7 @@ def test_memory_store_cannot_smuggle_mature_labeling(eng: Engram):
             kind="lesson",
             content_json=json.dumps(payload),
             source_tool="codex",
+            user_confirmed=True,
         )
     )
 
@@ -152,6 +153,7 @@ def test_memory_store_decision_cannot_smuggle_validated_labeling(eng: Engram):
             kind="decision",
             content_json=json.dumps(payload),
             source_tool="codex",
+            user_confirmed=True,
         )
     )
 
@@ -181,6 +183,7 @@ def test_memory_store_batch_items_cannot_smuggle_labeling(eng: Engram):
             kind="lesson",
             items_json=json.dumps(items),
             source_tool="codex",
+            user_confirmed=True,
         )
     )
 
@@ -211,6 +214,7 @@ def test_memory_store_batch_decisions_cannot_smuggle_labeling(eng: Engram):
             kind="decision",
             items_json=json.dumps(items),
             source_tool="codex",
+            user_confirmed=True,
         )
     )
 

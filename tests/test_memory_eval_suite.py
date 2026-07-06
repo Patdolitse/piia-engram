@@ -12,6 +12,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+import scripts.run_memory_evals as memory_evals
 from scripts.run_memory_evals import render_markdown, run_suite
 
 
@@ -35,6 +36,45 @@ def test_memory_eval_suite_runs_baseline_and_heldout_sets() -> None:
         assert item["negative_false_positive_rate"] == 0.0
     assert sum(item["case_count"] for item in summary["recall"]) == 18
     assert sum(item["candidate_count"] for item in summary["admission"]) == 15
+    agent_context_pack = summary["agent_context_pack"]
+    assert agent_context_pack["schema"] == "agent_context_pack_eval.v1"
+    assert agent_context_pack["public_safe"] is True
+    assert agent_context_pack["store_isolated"] is True
+    assert agent_context_pack["overall_passed"] is True
+    assert agent_context_pack["case_count"] == 2
+    assert agent_context_pack["passed_count"] == 2
+    assert agent_context_pack["failed_count"] == 0
+
+
+def test_memory_eval_suite_allows_targeted_agent_context_run() -> None:
+    summary = run_suite(recall_fixtures=[], admission_fixtures=[])
+
+    assert summary["recall"] == []
+    assert summary["admission"] == []
+    assert summary["agent_context_pack"]["overall_passed"] is True
+
+
+def test_memory_eval_suite_agent_context_pack_ignores_live_engram_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    live_store = tmp_path / "live-engram-store"
+    live_store.mkdir()
+    sentinel = live_store / "sentinel.txt"
+    sentinel.write_text("LIVE_MEMORY_SUITE_SENTINEL", encoding="utf-8")
+    before_files = sorted(path.relative_to(live_store).as_posix() for path in live_store.rglob("*"))
+    monkeypatch.setenv("ENGRAM_DIR", str(live_store))
+
+    summary = memory_evals.run_suite(recall_fixtures=[], admission_fixtures=[])
+
+    after_files = sorted(path.relative_to(live_store).as_posix() for path in live_store.rglob("*"))
+    summary_blob = json.dumps(summary, ensure_ascii=False)
+
+    assert summary["overall_passed"] is True
+    assert summary["agent_context_pack"]["store_isolated"] is True
+    assert before_files == after_files == ["sentinel.txt"]
+    assert sentinel.read_text(encoding="utf-8") == "LIVE_MEMORY_SUITE_SENTINEL"
+    assert "LIVE_MEMORY_SUITE_SENTINEL" not in summary_blob
 
 
 def test_memory_eval_suite_summary_is_metadata_only() -> None:
@@ -46,6 +86,10 @@ def test_memory_eval_suite_summary_is_metadata_only() -> None:
         "SYNTHETIC_OLD_AUTH_BODY",
         "without user confirmation",
         "bounded exponential backoff",
+        "MCP writes require preview before durable mutation",
+        "Governed ack wrapper",
+        "candidate should stay under review",
+        "FAKE_SK_TOKEN_SENTINEL",
     ):
         assert secret not in blob
 
@@ -78,6 +122,71 @@ def test_memory_eval_suite_goes_red_on_failed_admission_expectation(tmp_path: Pa
     assert summary["admission"][0]["failed_expectation_count"] == 1
 
 
+def test_memory_eval_suite_goes_red_when_agent_context_pack_eval_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        memory_evals,
+        "run_agent_context_pack_eval",
+        lambda: {
+            "schema": "agent_context_pack_eval.v1",
+            "overall_passed": False,
+            "cases": [
+                {"name": "passing-case", "passed": True},
+                {"name": "failing-case", "passed": False},
+            ],
+        },
+    )
+
+    summary = run_suite(recall_fixtures=[], admission_fixtures=[])
+
+    assert summary["overall_passed"] is False
+    assert summary["agent_context_pack"]["case_count"] == 2
+    assert summary["agent_context_pack"]["passed_count"] == 1
+    assert summary["agent_context_pack"]["failed_count"] == 1
+
+
+def test_memory_eval_suite_goes_red_when_agent_context_pack_eval_has_no_cases(monkeypatch) -> None:
+    monkeypatch.setattr(
+        memory_evals,
+        "run_agent_context_pack_eval",
+        lambda: {
+            "schema": "agent_context_pack_eval.v1",
+            "overall_passed": True,
+            "cases": [],
+        },
+    )
+
+    summary = run_suite(recall_fixtures=[], admission_fixtures=[])
+
+    assert summary["overall_passed"] is False
+    assert summary["agent_context_pack"]["case_count"] == 0
+    assert summary["agent_context_pack"]["passed_count"] == 0
+    assert summary["agent_context_pack"]["failed_count"] == 0
+
+
+def test_memory_eval_suite_public_safe_reflects_agent_context_forbidden_check(monkeypatch) -> None:
+    monkeypatch.setattr(
+        memory_evals,
+        "run_agent_context_pack_eval",
+        lambda: {
+            "schema": "agent_context_pack_eval.v1",
+            "overall_passed": False,
+            "cases": [
+                {
+                    "name": "forbidden-case",
+                    "passed": False,
+                    "checks": {"no_forbidden_substrings": False},
+                }
+            ],
+        },
+    )
+
+    summary = run_suite(recall_fixtures=[], admission_fixtures=[])
+
+    assert summary["public_safe"] is False
+    assert summary["agent_context_pack"]["public_safe"] is False
+    assert summary["overall_passed"] is False
+
+
 def test_memory_eval_suite_markdown_is_citable() -> None:
     report = render_markdown(run_suite())
 
@@ -86,6 +195,9 @@ def test_memory_eval_suite_markdown_is_citable() -> None:
     assert "recall_eval_heldout_v1" in report
     assert "admission_guard_heldout_v1" in report
     assert "Forbidden leak" in report
+    assert "## Agent Context Pack" in report
+    assert "agent_context_pack_eval.v1" in report
+    assert "2/2" in report
 
 
 def test_memory_eval_suite_cli_json_and_output_file(tmp_path: Path) -> None:

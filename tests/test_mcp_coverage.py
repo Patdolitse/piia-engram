@@ -150,6 +150,7 @@ class TestWriteToolsCoverage:
             domain="python",
             source_tool="claude_code",
             source_url="https://example.com",
+            user_confirmed=True,
         ))
         assert "full lesson" in result
         lessons = eng.get_lessons()
@@ -162,7 +163,7 @@ class TestWriteToolsCoverage:
         def explode(data):
             raise RuntimeError("db error")
         monkeypatch.setattr(eng, "add_lesson", explode)
-        result = _run(mcp_server.add_lesson(summary="test"))
+        result = _run(mcp_server.add_lesson(summary="test", user_confirmed=True))
         assert "失败" in result
 
     def test_add_decision_with_all_fields(self, eng: Engram):
@@ -173,9 +174,10 @@ class TestWriteToolsCoverage:
             source_tool="codex",
             project="myproj",
             domain="arch",
+            user_confirmed=True,
         ))
         assert "choice?" in result
-        decisions = eng.get_decisions()
+        decisions = eng.get_decisions(project="myproj")
         found = [d for d in decisions if d.get("question") == "choice?"]
         assert found
         assert found[0].get("source_tool") == "codex"
@@ -186,12 +188,12 @@ class TestWriteToolsCoverage:
         def explode(data):
             raise RuntimeError("db error")
         monkeypatch.setattr(eng, "add_decision", explode)
-        result = _run(mcp_server.add_decision(question="q", choice="c"))
+        result = _run(mcp_server.add_decision(question="q", choice="c", user_confirmed=True))
         assert "失败" in result
 
     def test_add_decision_duplicate(self, eng: Engram):
-        _run(mcp_server.add_decision(question="unique_q_dup_test", choice="c1"))
-        result = _run(mcp_server.add_decision(question="unique_q_dup_test", choice="c1"))
+        _run(mcp_server.add_decision(question="unique_q_dup_test", choice="c1", user_confirmed=True))
+        result = _run(mcp_server.add_decision(question="unique_q_dup_test", choice="c1", user_confirmed=True))
         parsed = json.loads(result)
         assert parsed.get("status") == "duplicate"
 
@@ -217,7 +219,9 @@ class TestWriteToolsCoverage:
 
     def test_ingest_notes(self, eng: Engram):
         text = "- 教训：不要在生产环境直接跑未测试的迁移\n- 决策：以后都用 pytest"
-        result = _run(mcp_server.ingest_notes(text, source_tool="test", domain="python"))
+        result = _run(mcp_server.ingest_notes(
+            text, source_tool="test", domain="python", user_confirmed=True,
+        ))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
@@ -225,6 +229,7 @@ class TestWriteToolsCoverage:
         result = _run(mcp_server.extract_session_insights(
             "今天完成了数据库迁移，决定用 PostgreSQL",
             source_tool="claude_code",
+            user_confirmed=True,
         ))
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
@@ -404,7 +409,10 @@ class TestImportExportCoverage:
 
 class TestWorkflowShortcuts:
     def test_wrap_up_session_minimal(self, eng: Engram):
-        result = _run(mcp_server.wrap_up_session(summary="今天完成了测试"))
+        result = _run(mcp_server.wrap_up_session(
+            summary="今天完成了测试",
+            user_confirmed=True,
+        ))
         parsed = json.loads(result)
         assert "insights" in parsed
 
@@ -416,6 +424,7 @@ class TestWorkflowShortcuts:
             project_title="TestProj",
             tech_stack="python,postgres",
             known_issues="none",
+            user_confirmed=True,
         ))
         parsed = json.loads(result)
         assert "insights" in parsed
@@ -497,6 +506,7 @@ class TestMemoryStore:
             kind="lesson",
             content_json='{"summary": "Always pin dependencies"}',
             source_tool="test_tool",
+            user_confirmed=True,
         ))
         assert "教训已记录" in result
         lessons = eng.get_lessons(limit=50)
@@ -509,6 +519,7 @@ class TestMemoryStore:
             kind="decision",
             content_json='{"question": "ORM choice", "choice": "SQLAlchemy"}',
             source_tool="test_tool",
+            user_confirmed=True,
         ))
         assert "决策已记录" in result
         decisions = eng.get_decisions(limit=50)
@@ -523,6 +534,7 @@ class TestMemoryStore:
                 "triggers": "deploy,staging",
                 "steps": [{"order": 1, "action": "build", "detail": "run build"}],
             }),
+            user_confirmed=True,
         ))
         assert "Playbook 已记录" in result
 
@@ -541,8 +553,8 @@ class TestMemoryStore:
 
     def test_memory_store_duplicate_returns_json_status(self, eng: Engram):
         content = '{"summary": "Always check return values"}'
-        _run(mcp_server.memory_store(kind="lesson", content_json=content))
-        result2 = _run(mcp_server.memory_store(kind="lesson", content_json=content))
+        _run(mcp_server.memory_store(kind="lesson", content_json=content, user_confirmed=True))
+        result2 = _run(mcp_server.memory_store(kind="lesson", content_json=content, user_confirmed=True))
         parsed = json.loads(result2)
         assert parsed.get("status") == "duplicate"
 
@@ -555,6 +567,7 @@ class TestMemoryStore:
         result = _run(mcp_server.extract_session_insights(
             summary="我们决定使用 Redis 做缓存层，因为延迟最低。",
             source_tool="test",
+            user_confirmed=True,
         ))
         parsed = json.loads(result)
         assert parsed["saved_decisions"] >= 1
@@ -602,6 +615,36 @@ class TestSafeErr:
         assert r"C:\Users" not in _safe_err(err)
         assert "<path>" in _safe_err(err)
 
+    def test_strips_full_windows_path_tail(self):
+        from piia_engram.mcp_server import _safe_err
+
+        path = "E:" + "\\" + "\\".join([
+            "Workspace With Spaces",
+            "project",
+            "secret",
+            "config.json",
+        ])
+        err = Exception(f"failed to read {path}")
+
+        sanitized = _safe_err(err)
+        assert "Workspace With Spaces" not in sanitized
+        assert "project" not in sanitized
+        assert "secret" not in sanitized
+        assert "config.json" not in sanitized
+        assert "<path>" in sanitized
+
+    def test_strips_unc_and_unicode_windows_paths(self):
+        from piia_engram.mcp_server import _safe_err
+
+        err = Exception(r"open \\server\share\项目\秘密.json failed")
+
+        sanitized = _safe_err(err)
+        assert "server" not in sanitized
+        assert "share" not in sanitized
+        assert "项目" not in sanitized
+        assert "秘密.json" not in sanitized
+        assert "<path>" in sanitized
+
     def test_strips_unix_path(self):
         """Unix 绝对路径应被替换为 <path>。"""
         from piia_engram.mcp_server import _safe_err
@@ -614,3 +657,47 @@ class TestSafeErr:
         from piia_engram.mcp_server import _safe_err
         err = Exception("invalid JSON format")
         assert _safe_err(err) == "invalid JSON format"
+
+
+class TestSafeErrM9ErrorSurface:
+    def test_strips_unix_path_with_spaces(self):
+        from piia_engram.mcp_server import _safe_err
+
+        err = Exception("Permission denied: /tmp/Workspace With Spaces/project/secret file.json")
+
+        sanitized = _safe_err(err)
+        assert "Workspace With Spaces" not in sanitized
+        assert "secret file.json" not in sanitized
+        assert "<path>" in sanitized
+
+    def test_wrap_up_session_error_payloads_use_safe_err(
+        self,
+        eng: Engram,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        private_path = "E:" + "\\" + "\\".join([
+            "Workspace With Spaces",
+            "project",
+            "secret.json",
+        ])
+
+        def fail_insights(*args, **kwargs):
+            raise RuntimeError(f"cannot read {private_path}")
+
+        def fail_snapshot(*args, **kwargs):
+            raise RuntimeError(f"cannot write {private_path}")
+
+        monkeypatch.setattr(eng, "extract_session_insights", fail_insights)
+        monkeypatch.setattr(eng, "save_project_snapshot", fail_snapshot)
+
+        payload = json.loads(_run(mcp_server.wrap_up_session(
+            summary="Trigger sanitized wrap-up error payloads.",
+            source_tool="codex",
+            project_folder="/tmp/synthetic-project",
+            user_confirmed=True,
+        )))
+        body = json.dumps(payload, ensure_ascii=False)
+
+        assert "Workspace With Spaces" not in body
+        assert "secret.json" not in body
+        assert "<path>" in body

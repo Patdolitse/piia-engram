@@ -49,7 +49,7 @@ def _run(coro):
 
 class TestBrandedSaveAck:
     def test_add_lesson_ack_branded(self, eng: Engram):
-        result = _run(mcp_server.add_lesson(summary="brand probe lesson"))
+        result = _run(mcp_server.add_lesson(summary="brand probe lesson", user_confirmed=True))
         assert result.startswith("[Engram] ")
         assert "教训已记录" in result          # Chinese kept (owner experience)
         assert "· tier=" in result            # real tier surfaced
@@ -57,7 +57,7 @@ class TestBrandedSaveAck:
         assert "brand probe lesson" in result  # caller echo kept
 
     def test_add_decision_ack_branded(self, eng: Engram):
-        result = _run(mcp_server.add_decision(question="brand q", choice="brand c"))
+        result = _run(mcp_server.add_decision(question="brand q", choice="brand c", user_confirmed=True))
         assert result.startswith("[Engram] ")
         assert "决策已记录" in result
         assert "· tier=" in result
@@ -65,7 +65,7 @@ class TestBrandedSaveAck:
         assert "brand q" in result and "brand c" in result
 
     def test_add_playbook_ack_branded(self, eng: Engram):
-        result = _run(mcp_server.add_playbook(title="brand pb", triggers="t1,t2"))
+        result = _run(mcp_server.add_playbook(title="brand pb", triggers="t1,t2", user_confirmed=True))
         assert result.startswith("[Engram] ")
         assert "Playbook 已记录" in result
         assert "· tier=" in result
@@ -77,6 +77,7 @@ class TestBrandedSaveAck:
     def test_memory_store_lesson_ack_branded(self, eng: Engram):
         result = _run(mcp_server.memory_store(
             kind="lesson", content_json=json.dumps({"summary": "ms brand lesson"}),
+            user_confirmed=True,
         ))
         assert result.startswith("[Engram] ")
         assert "教训已记录" in result
@@ -88,6 +89,7 @@ class TestBrandedSaveAck:
         result = _run(mcp_server.memory_store(
             kind="decision",
             content_json=json.dumps({"question": "ms q", "choice": "ms c"}),
+            user_confirmed=True,
         ))
         assert result.startswith("[Engram] ")
         assert "决策已记录" in result
@@ -98,6 +100,7 @@ class TestBrandedSaveAck:
         result = _run(mcp_server.memory_store(
             kind="playbook",
             content_json=json.dumps({"title": "ms pb", "triggers": "a,b"}),
+            user_confirmed=True,
         ))
         assert result.startswith("[Engram] ")
         assert "Playbook 已记录" in result

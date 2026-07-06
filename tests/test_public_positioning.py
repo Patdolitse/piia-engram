@@ -23,6 +23,32 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def test_memory_eval_suite_doc_includes_agent_context_pack_gate():
+    doc = _read("docs/benchmarks/memory-eval-suite-v1.md")
+
+    for phrase in [
+        "synthetic agent-context-pack handoff eval in one command",
+        "`tests/fixtures/agent_context_pack_eval_cases.json`",
+        "agent_context_pack_eval.v1",
+        "2/2",
+        "Store isolated",
+        "not a live-agent benchmark",
+        "does not prove that a downstream agent will correctly use the pack",
+        "not evidence of autonomous orchestration",
+        "does not read or write the user's live Engram store",
+    ]:
+        assert phrase in doc
+
+    for forbidden in [
+        "proves autonomous orchestration",
+        "live-agent benchmark claim",
+        "provider-backed reasoning",
+        "proves live model compliance",
+        "autonomous orchestration evidence",
+    ]:
+        assert forbidden not in doc
+
+
 def _mcp_tool_names() -> set[str]:
     pkg = ROOT / "src" / "piia_engram"
     files = [pkg / "mcp_server.py", *sorted(pkg.glob("mcp_tools_*.py"))]

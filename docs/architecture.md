@@ -73,13 +73,22 @@ After the v3.14.1 refactor, the v3.16.0 reports split, and the v3.55.0 monolith 
 | [`retrieval.py`](../src/piia_engram/retrieval.py) | ~639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
 | [`search_index.py`](../src/piia_engram/search_index.py) | ~461 | Optional hybrid search — rebuildable SQLite index (FTS5 + optional `[vector]` semantic layer, RRF fusion) over the JSON store. JSON stays the single source of truth; enabled via `ENGRAM_SEARCH=hybrid`. See [hybrid-search.md](hybrid-search.md) |
 | [`context.py`](../src/piia_engram/context.py) | ~811 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
-| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~473 | `ReconcileMixin` — silent import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
+| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~473 | `ReconcileMixin` — explicit or startup-controlled import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
 | [`reports.py`](../src/piia_engram/reports.py) | 20 | `ReportsMixin` — thin composition hub, inherits from 4 sub-mixins below |
 | [`reports_rarity.py`](../src/piia_engram/reports_rarity.py) | ~84 | `RarityMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `RARITY_TIERS` constant |
 | [`reports_review.py`](../src/piia_engram/reports_review.py) | ~517 | `ReviewMixin` — `generate_review_page` (interactive HTML audit), `export_review_page`, `promote_knowledge`, `apply_review` |
 | [`reports_identity.py`](../src/piia_engram/reports_identity.py) | ~101 | `IdentityCardMixin` — `export_identity_card` (portable Markdown for non-MCP tools) |
 | [`reports_analytics.py`](../src/piia_engram/reports_analytics.py) | ~417 | `AnalyticsMixin` — `get_health_report`, `get_stale_knowledge`, `get_knowledge_digest`, `get_knowledge_overview`, `get_stats`, `export_knowledge_report` |
 | [`compat.py`](../src/piia_engram/compat.py) | ~320 | Migration adapters — `migrate_from_oca_memory` (legacy OCA tool), `export_to_openclaw` / `import_from_openclaw` (SOUL.md / MEMORY.md / USER.md format) |
+
+### Continuity additions
+
+The cross-session continuity layer is split deliberately:
+
+- [`contexts.py`](../src/piia_engram/contexts.py) owns local session checkpoints, daily logs, `get_resume_brief`, `session_digest.v1` sidecar writes, and opt-in `project_resume_pack.v1` assembly.
+- [`continuity_digest.py`](../src/piia_engram/continuity_digest.py) owns pure deterministic digest helpers for session summaries. It performs no file I/O, no network access, and no provider/model calls.
+
+Session Markdown remains the human-readable local record. The digest sidecar is the compact, redacted, machine-readable handoff surface used by resume packs.
 
 ### Supporting modules
 
@@ -132,14 +141,15 @@ AI tool boots
                      ├─▶ get_relevant_lessons()      [RetrievalMixin]
                      ├─▶ get_decisions()             [core.py]
                      ├─▶ _detect_*_conflicts()       [RetrievalMixin]
-                     ├─▶ get_stale_knowledge()       [ReportsMixin]
-                     ├─▶ reconcile_memories()        [ReconcileMixin] ← silent side-effect
-                     └─▶ reconcile_ai_configs()      [ReconcileMixin] ← silent side-effect
+                     └─▶ get_stale_knowledge()       [ReportsMixin]
    ◀── returns a Markdown context block (sized to token budget)
 AI tool injects it as the first system message
 ```
 
-The cold start does light **silent reconcile** work — scanning other tools' memory dirs and CLAUDE.md files for items missing from piia-engram, importing them as `staging`-tier lessons (which require user confirmation via the review page before being trusted).
+The standard cold start is read-oriented and does not run full reconciliation.
+`get_user_context(level="full")` may surface additional diagnostics, while
+external memory/config reconciliation is a maintenance path rather than the
+default session-start contract.
 
 ### 3.2 Knowledge capture (during a session)
 
@@ -203,6 +213,8 @@ Everything lives under `~/.engram/` (override with `ENGRAM_DIR` env var; legacy 
 └── compat/                  empty in current schema (reserved for future migrations)
 ```
 
+Session checkpoints live under `~/.engram/contexts/<tool>/`. A meaningful saved session can have both `<session>.md` and an adjacent `<session>.digest.json` sidecar. The sidecar uses `session_digest.v1` and is safe to read without loading the raw Markdown body.
+
 ### Sensitive fields are encrypted in place
 
 When `ENGRAM_SECRET` is set, fields in `ENCRYPTED_PROFILE_FIELDS` (email, phone, location, company, real_name, address, id_number) are encrypted at rest with AES-256-GCM. Each value is prefixed `enc:v2:` followed by base64(salt + nonce + ciphertext). The salt is per-value, so the same plaintext encrypts to different ciphertexts on disk.
@@ -224,7 +236,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 | Tier-1 (default) | Why |
 |------------------|-----|
 | `get_user_context` | Cold-start identity + context |
-| `wrap_up_session` | Save insights + sync at session end |
+| `wrap_up_session` | Lightweight session-end save; full reconciliation is explicit via `run_reconcile=True` |
 | `memory_store` | Unified write endpoint for lessons, decisions, and playbooks |
 | `add_lesson`, `add_decision`, `add_playbook` | Capture knowledge |
 | `search_knowledge`, `get_relevant_knowledge`, `get_recall` | Retrieve knowledge and one-call recall bundles |

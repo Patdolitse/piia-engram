@@ -3174,6 +3174,22 @@ class TestMainCLI:
         assert exc_info.value.code == 0
         assert seen["argv"] == ["--json"]
 
+    def test_main_continuity_skips_update_reminder(self, monkeypatch):
+        """continuity can be a zero-write surface, so main must skip the reminder."""
+        import piia_engram.update_check as uc
+        import piia_engram.setup_wizard as sw
+
+        called: list[int] = []
+        monkeypatch.setattr(uc, "maybe_print_update_notice", lambda *a, **k: called.append(1))
+        monkeypatch.setattr(sw, "run_continuity", lambda argv: 0)
+        monkeypatch.setattr("sys.argv", ["engram", "continuity", "--digest-backfill-preview"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            sw.main()
+
+        assert exc_info.value.code == 0
+        assert called == []
+
     def test_continuity_cli_prints_metadata_only(
         self, tmp_path, monkeypatch, capsys
     ):

@@ -1,0 +1,45 @@
+[
+  {
+    "name": "reviewer_gets_risks_and_candidates",
+    "agent_role": "reviewer",
+    "task_summary": "Review write confirmation and governance ack",
+    "project_snapshot": {"title": "Synthetic Project", "stage": "M6"},
+    "lessons": [
+      {"summary": "MCP writes require preview before durable mutation", "tier": "verified"}
+    ],
+    "decisions": [
+      {"question": "How are write acks returned?", "choice": "Governed ack wrapper", "tier": "verified"}
+    ],
+    "sessions": [
+      {
+        "tool": "codex",
+        "session_id": "synthetic-review",
+        "content": "Goal: review write confirmation.\nDecided to keep candidate needs review.\nNext: inspect governance ack.\n"
+      }
+    ],
+    "expected": {
+      "required_substrings": ["preview before durable mutation", "Governed ack wrapper", "candidate_not_trusted"],
+      "forbidden_substrings": ["raw_session", "C:/Users/alice", "FAKE_SK_TOKEN_SENTINEL"]
+    }
+  },
+  {
+    "name": "implementer_does_not_receive_candidate_body",
+    "agent_role": "implementer",
+    "task_summary": "Implement write confirmation",
+    "project_snapshot": {"title": "Synthetic Project", "stage": "M6"},
+    "lessons": [
+      {"summary": "Use focused tests before broad regressions", "tier": "verified"}
+    ],
+    "sessions": [
+      {
+        "tool": "codex",
+        "session_id": "synthetic-implement",
+        "content": "Goal: implement write confirmation.\nDecided to keep candidate should stay under review.\nNext: run focused tests.\n"
+      }
+    ],
+    "expected": {
+      "required_substrings": ["Use focused tests before broad regressions", "Ask the orchestrator before acting"],
+      "forbidden_substrings": ["candidate should stay under review", "C:/Users/alice", "FAKE_SK_TOKEN_SENTINEL"]
+    }
+  }
+]

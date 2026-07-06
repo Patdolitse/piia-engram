@@ -8,8 +8,42 @@ try:
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
 
+
+def _confirmation_detail(content) -> str:
+    return json.dumps(content, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _confirmation_required(kind: str, title: str, content) -> str:
+    return S._json({
+        "status": "confirmation_required",
+        "requires_confirmation": True,
+        "changed": False,
+        "dry_run": True,
+        "kind": kind,
+        "content_title": title,
+        "content_detail": _confirmation_detail(content),
+        "instruction": (
+            "Show content_title and content_detail to the user. Only call the "
+            "write tool again with user_confirmed=true after the user confirms."
+        ),
+    })
+
+
+def _is_user_confirmed(value) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
 @S.mcp.tool()
-async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> str:
+async def ingest_notes(
+    text: str,
+    source_tool: str = "",
+    domain: str = "",
+    user_confirmed: bool = False,
+) -> str:
     """从自由文本笔记中提取经验教训和关键决策并写入知识库。 / Extract lessons and key decisions from free-form notes and save them to the knowledge base.
 
     用途：用户贴了一段笔记，希望 Engram 尝试解析其中的 lessons 和 decisions 时调用。
@@ -27,16 +61,35 @@ async def ingest_notes(text: str, source_tool: str = "", domain: str = "") -> st
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="ingest_notes")
     if refusal is not None:
         return refusal
-    return S._json(S._locked_engram_call(
+    preview = {
+        "text": text,
+        "source_tool": source_tool,
+        "domain": domain,
+    }
+    if not _is_user_confirmed(user_confirmed):
+        return _confirmation_required(
+            "ingest_notes",
+            "Ingest notes memory extraction",
+            preview,
+        )
+    result = S._locked_engram_call(
         S._get_engram().ingest_notes,
         text,
         source_tool=source_tool,
         domain=domain,
+    )
+    return S._json(S._gov_rt.maybe_govern_write_ack(
+        S._get_engram().root, result, tool="ingest_notes",
     ))
 
 
 @S.mcp.tool()
-async def extract_session_insights(summary: str, source_tool: str = "") -> str:
+async def extract_session_insights(
+    summary: str,
+    source_tool: str = "",
+    project_folder: str = "",
+    user_confirmed: bool = False,
+) -> str:
     """从会话摘要中批量自动提取经验教训和决策（你不需要自己分类）。 / Automatically extract lessons and decisions from a session summary without manually classifying them.
 
     **Lifecycle: writeback (auto)** — 自动提取的知识默认进入 staging 层，需要 review 后才升级为 verified。
@@ -56,10 +109,27 @@ async def extract_session_insights(summary: str, source_tool: str = "") -> str:
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="extract_session_insights")
     if refusal is not None:
         return refusal
-    return S._json(S._locked_engram_call(
+    preview = {
+        "summary": summary,
+        "source_tool": source_tool,
+        "project_folder": project_folder,
+    }
+    if not _is_user_confirmed(user_confirmed):
+        return _confirmation_required(
+            "extract_session_insights",
+            "Extract session insights memory write",
+            preview,
+        )
+    if project_folder:
+        S._session.detect_project(project_folder)
+    result = S._locked_engram_call(
         S._get_engram().extract_session_insights,
         summary,
         source_tool=source_tool,
+        project_folder=project_folder,
+    )
+    return S._json(S._gov_rt.maybe_govern_write_ack(
+        S._get_engram().root, result, tool="extract_session_insights",
     ))
 
 
@@ -528,6 +598,4 @@ async def manage_relation(
         result = S._locked_engram_call(S._get_engram().unlink_knowledge, src_id, dst_id)
     result = S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="manage_relation")
     return S._json(result)
-
-
 

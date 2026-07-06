@@ -110,6 +110,10 @@ work:
    naming the current project, last activity, next action, and a trust note.
 3. The agent reads the handoff before asking you to repeat context.
 
+`wrap_up_session` is a lightweight session-end save. It does not run full
+reconciliation by default. Use `run_reconcile=True` only for owner-approved
+maintenance reconciliation.
+
 Three levels of recovery, fastest first:
 
 | Level | How | Speed |

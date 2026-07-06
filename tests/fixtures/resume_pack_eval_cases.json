@@ -1,0 +1,66 @@
+[
+  {
+    "name": "next_action_from_digest",
+    "project_snapshot": {
+      "title": "Synthetic Project",
+      "stage": "M3"
+    },
+    "sessions": [
+      {
+        "tool": "codex",
+        "content": "Goal: finish handoff.\nCompleted: added digest metadata.\nNext: write evaluation harness.\n"
+      }
+    ],
+    "expected": {
+      "current_focus_contains": "write evaluation harness",
+      "trusted_context_contains": ["Synthetic Project"],
+      "review_needed_contains": [],
+      "forbidden_substrings": ["raw_session", "content"]
+    }
+  },
+  {
+    "name": "session_candidate_requires_review",
+    "project_snapshot": {
+      "title": "Review Candidate Project",
+      "stage": "M3"
+    },
+    "sessions": [
+      {
+        "tool": "codex",
+        "content": "Goal: keep memory reviewable.\nLesson: session-derived memories stay candidates until owner review.\nNext: document client contract.\n"
+      }
+    ],
+    "expected": {
+      "current_focus_contains": "document client contract",
+      "trusted_context_contains": ["Review Candidate Project"],
+      "review_needed_contains": ["session-derived memories stay candidates"],
+      "forbidden_substrings": ["raw_session", "content"]
+    }
+  },
+  {
+    "name": "verified_context_is_trusted",
+    "project_snapshot": {
+      "title": "Trusted Context Project",
+      "stage": "M3"
+    },
+    "lessons": [
+      {
+        "summary": "Verified synthetic lesson belongs in trusted context.",
+        "domain": "continuity",
+        "tier": "verified"
+      }
+    ],
+    "sessions": [
+      {
+        "tool": "cursor",
+        "content": "Goal: continue safely.\nCompleted: prepared verified memory fixture.\nNext: run resume pack eval.\n"
+      }
+    ],
+    "expected": {
+      "current_focus_contains": "run resume pack eval",
+      "trusted_context_contains": ["Verified synthetic lesson"],
+      "review_needed_contains": [],
+      "forbidden_substrings": ["raw_session", "content"]
+    }
+  }
+]

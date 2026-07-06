@@ -65,7 +65,7 @@ class TestWritePathProvenance:
         v1 fields (source_agent/run_id/last_validated_at) appear ONLY when the
         caller supplies them.
         """
-        _run(mcp_server.add_lesson(summary="a plain durable lesson"))
+        _run(mcp_server.add_lesson(summary="a plain durable lesson", user_confirmed=True))
         lessons = eng.get_lessons()
         found = [l for l in lessons if l["summary"] == "a plain durable lesson"]
         assert found
@@ -80,6 +80,7 @@ class TestWritePathProvenance:
             source_agent="claude_code",
             run_id="wf-123",
             last_validated_at="2026-05-01T10:00:00Z",
+            user_confirmed=True,
         ))
         found = [l for l in eng.get_lessons() if l["summary"] == "lesson with provenance"]
         assert found
@@ -94,6 +95,7 @@ class TestWritePathProvenance:
             summary="lesson with bad timestamp",
             source_agent="codex",
             last_validated_at="not-a-date",
+            user_confirmed=True,
         ))
         found = [l for l in eng.get_lessons() if l["summary"] == "lesson with bad timestamp"]
         assert found
@@ -105,6 +107,7 @@ class TestWritePathProvenance:
         _run(mcp_server.add_decision(
             question="cache layer?", choice="redis",
             source_agent="codex", run_id="run-9",
+            user_confirmed=True,
         ))
         found = [d for d in eng.get_decisions() if d.get("question") == "cache layer?"]
         assert found
@@ -119,6 +122,7 @@ class TestWritePathProvenance:
                 {"order": 1, "action": "build"}, {"order": 2, "action": "ship"},
             ]),
             source_agent="claude_code",
+            user_confirmed=True,
         ))
         pbs = eng.get_playbooks()
         found = [p for p in pbs if p.get("title") == "release flow"]
@@ -129,6 +133,7 @@ class TestWritePathProvenance:
         """source_tool (legacy) and source_agent (new) coexist."""
         _run(mcp_server.add_lesson(
             summary="coexist lesson", source_tool="cursor", source_agent="cursor-sub",
+            user_confirmed=True,
         ))
         found = [l for l in eng.get_lessons() if l["summary"] == "coexist lesson"]
         assert found[0]["source_tool"] == "cursor"

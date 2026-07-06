@@ -436,6 +436,28 @@ class RetrievalMixin:
                 entries.append(pb)
         return entries
 
+    def _indexable_entries_for_project(
+        self,
+        project_folder: str | None = None,
+    ) -> list[dict]:
+        """Active index entries visible from the requested project scope."""
+        entries: list[dict] = []
+        for name, typ in (("lessons.json", "lesson"), ("decisions.json", "decision")):
+            entries += [
+                e for e in self._read_entries(self._knowledge_dir / name, typ)
+                if (
+                    e.get("status") == "active"
+                    and self._entry_visible_for_project(e, project_folder)
+                )
+            ]
+        for idx_entry in self._read_playbook_index():
+            if idx_entry.get("status") != "active":
+                continue
+            pb = self._read_playbook_by_id(idx_entry.get("id", ""))
+            if pb and self._playbook_visible_for_project(pb, project_folder):
+                entries.append(pb)
+        return entries
+
     @staticmethod
     def _entries_fingerprint(entries: list[dict]) -> str:
         """Freshness fingerprint: changes iff any indexed entry's text OR the
@@ -814,19 +836,29 @@ class RetrievalMixin:
         # (Codex a5 audit finding #2). Fall back to keyword-only path.
         corpus_encrypted = self._corpus_encrypted()
         if allow_hybrid_index and self._hybrid_enabled() and not corpus_encrypted:
-            hybrid_idx = self._ensure_index_fresh(self._all_indexable_entries())
+            hybrid_idx = self._ensure_index_fresh(
+                self._indexable_entries_for_project(project_folder)
+            )
 
         if scope in ("all", "lessons"):
             candidates = [
                 lesson for lesson in self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
-                if lesson.get("status") == "active" and _matches_filters(lesson)
+                if (
+                    lesson.get("status") == "active"
+                    and self._entry_visible_for_project(lesson, project_folder)
+                    and _matches_filters(lesson)
+                )
             ]
             results["lessons"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
 
         if scope in ("all", "decisions"):
             candidates = [
                 decision for decision in self._read_entries(self._knowledge_dir / "decisions.json", "decision")
-                if decision.get("status") == "active" and _matches_filters(decision)
+                if (
+                    decision.get("status") == "active"
+                    and self._entry_visible_for_project(decision, project_folder)
+                    and _matches_filters(decision)
+                )
             ]
             results["decisions"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
 
@@ -939,7 +971,11 @@ class RetrievalMixin:
 
         Returns: 最多 limit 条教训（相关度排序）
         """
-        all_lessons = self.get_lessons(limit=MAX_KNOWLEDGE_ENTRIES, _update_access=_update_access)
+        all_lessons = self.get_lessons(
+            limit=MAX_KNOWLEDGE_ENTRIES,
+            project_folder=project_folder,
+            _update_access=_update_access,
+        )
         if not all_lessons:
             return []
 
