@@ -56,7 +56,7 @@ _UTC_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _PRIVATE_PATTERNS = (
     re.compile(r"(?i)\b[A-Z]:[\\/][^\s\"'<>|]+"),
     re.compile(r"\\\\[^\\/\s\"'<>|]+[\\/][^\\/\s\"'<>|]+"),
-    re.compile(r"(?i)(^|[\s\"'=:])/(Users|home|tmp|var/tmp)/[^\s\"'<>]*"),
+    re.compile(r"(?i)(^|[\s\"'=:])/(?!/)[A-Za-z0-9._-]+(?:/[^\s\"'<>]*)?"),
     re.compile(r"(?i)(^|[\\/])\.\.([\\/]|$)"),
     re.compile(r"(?i)\bhttps?://[^\s\"'<>]+"),
     re.compile(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"),
@@ -71,9 +71,17 @@ _PRIVATE_PATTERNS = (
     ),
 )
 _PRIVATE_KEY_RE = re.compile(
-    r"(?i)\b(authorization|api[_-]?key|access[_-]?token|auth[_-]?token|"
-    r"refresh[_-]?token|password|passwd|pwd|secret|client[_-]?secret|"
-    r"private[_-]?key)\b"
+    r"(?ix)\b("
+    r"authorization|credentials?|"
+    r"api[_-]?key|apiKey|"
+    r"access[_-]?(?:key|token)|accessKey|accessToken|"
+    r"auth[_-]?token|authToken|refresh[_-]?token|refreshToken|"
+    r"bearer[_-]?token|bearerToken|"
+    r"client[_-]?secret|clientSecret|"
+    r"secret[_-]?key|secretKey|"
+    r"private[_-]?key|privateKey|"
+    r"password|passwd|pwd|token|secret"
+    r")\b"
 )
 
 
@@ -90,7 +98,10 @@ def parse_as_of(value: str) -> datetime:
     """Parse an explicit UTC date/timestamp for deterministic artifacts."""
     text = str(value or "").strip()
     if _UTC_DATE.fullmatch(text):
-        parsed_date = date.fromisoformat(text)
+        try:
+            parsed_date = date.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError("as_of must be a UTC date or timestamp") from exc
         return datetime.combine(parsed_date, time(23, 59, 59), tzinfo=timezone.utc)
     parsed = _parse_utc_timestamp(text)
     if parsed is None:
@@ -102,8 +113,11 @@ def window_bounds(as_of: str, window_days: int) -> tuple[datetime, datetime]:
     if isinstance(window_days, bool) or not isinstance(window_days, int) or window_days <= 0:
         raise ValueError("window_days must be a positive integer")
     end = parse_as_of(as_of)
-    start_date = end.date() - timedelta(days=window_days - 1)
-    start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+    try:
+        start_date = end.date() - timedelta(days=window_days - 1)
+        start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("window bounds out of supported range") from exc
     return start, end
 
 
@@ -143,9 +157,19 @@ def _merge_problem_counts(*blocks: dict[str, int]) -> list[dict[str, int | str]]
     return [{"code": key, "count": merged[key]} for key in sorted(merged)]
 
 
-def _source_status(*, provided: bool, exists: bool, empty: bool, valid: int, invalid: int) -> str:
+def _source_status(
+    *,
+    provided: bool,
+    exists: bool,
+    empty: bool,
+    valid: int,
+    invalid: int,
+    unreadable: bool = False,
+) -> str:
     if not provided or not exists:
         return "source_missing"
+    if unreadable:
+        return "source_unreadable"
     if empty and valid == 0 and invalid == 0:
         return "empty"
     if valid > 0 and invalid > 0:
@@ -181,6 +205,10 @@ def _contains_unsafe(value: Any) -> bool:
     if isinstance(value, list):
         return any(_contains_unsafe(item) for item in value)
     return False
+
+
+def _record_unsafe_live_smoke_window_run(live_smoke: dict[str, Any]) -> None:
+    anchor_evidence._record_failed_run(live_smoke, "parse_failed", "unsafe_record")
 
 
 def _validate_first_value_record(record: Any) -> tuple[dict[str, Any] | None, str]:
@@ -257,6 +285,7 @@ def collect_real_use_first_value(
     blocked_count = 0
     outside_window_count = 0
     saw_line = False
+    unreadable = False
 
     active_dates: set[str] = set()
     event_counts: Counter[str] = Counter()
@@ -268,45 +297,51 @@ def collect_real_use_first_value(
         problem_counts["first_value.source_missing"] += 1
     else:
         try:
-            lines = Path(path).read_text(encoding="utf-8").splitlines()
+            handle = Path(path).open("r", encoding="utf-8")
         except Exception:
-            lines = []
+            unreadable = True
             problem_counts["first_value.source_unreadable"] += 1
-        for line in lines:
-            if not line.strip():
-                continue
-            saw_line = True
+        else:
             try:
-                loaded = json.loads(line)
+                with handle:
+                    for line in handle:
+                        if not line.strip():
+                            continue
+                        saw_line = True
+                        try:
+                            loaded = json.loads(line)
+                        except Exception:
+                            invalid_count += 1
+                            problem_counts["first_value.malformed_jsonl"] += 1
+                            continue
+                        clean, code = _validate_first_value_record(loaded)
+                        if clean is None:
+                            invalid_count += 1
+                            if code == "first_value.blocked_unsafe_content":
+                                blocked_count += 1
+                            problem_counts[code] += 1
+                            continue
+                        valid_source_count += 1
+                        ts = clean["ts"]
+                        if not _in_window(ts, window_start_utc, window_end_utc):
+                            outside_window_count += 1
+                            continue
+                        day = ts.date().isoformat()
+                        active_dates.add(day)
+                        event = str(clean["event"])
+                        surface = str(clean["surface"])
+                        event_counts[event] += 1
+                        surface_counts[surface] += 1
+                        client_tool = str(clean.get("client_tool") or "")
+                        if client_tool:
+                            client_tool_counts[client_tool] += 1
+                        for field, value in clean["fields"].items():
+                            event_block = field_value_counts.setdefault(event, {})
+                            field_block = event_block.setdefault(str(field), Counter())
+                            field_block[_field_value_label(value)] += 1
             except Exception:
-                invalid_count += 1
-                problem_counts["first_value.malformed_jsonl"] += 1
-                continue
-            clean, code = _validate_first_value_record(loaded)
-            if clean is None:
-                invalid_count += 1
-                if code == "first_value.blocked_unsafe_content":
-                    blocked_count += 1
-                problem_counts[code] += 1
-                continue
-            valid_source_count += 1
-            ts = clean["ts"]
-            if not _in_window(ts, window_start_utc, window_end_utc):
-                outside_window_count += 1
-                continue
-            day = ts.date().isoformat()
-            active_dates.add(day)
-            event = str(clean["event"])
-            surface = str(clean["surface"])
-            event_counts[event] += 1
-            surface_counts[surface] += 1
-            client_tool = str(clean.get("client_tool") or "")
-            if client_tool:
-                client_tool_counts[client_tool] += 1
-            for field, value in clean["fields"].items():
-                event_block = field_value_counts.setdefault(event, {})
-                field_block = event_block.setdefault(str(field), Counter())
-                field_block[_field_value_label(value)] += 1
+                unreadable = True
+                problem_counts["first_value.source_unreadable"] += 1
 
     valid_window_count = sum(event_counts.values())
     dates = sorted(active_dates)
@@ -335,6 +370,7 @@ def collect_real_use_first_value(
             empty=not saw_line,
             valid=valid_source_count,
             invalid=invalid_count,
+            unreadable=unreadable,
         ),
         "contributes_to_real_use": True,
         "contributes_to_readiness": True,
@@ -355,6 +391,12 @@ def collect_real_use_first_value(
         "deduplication_performed": False,
         "deduplication_reason": "first_value_events_jsonl_has_no_verifiable_event_id",
         "event_id_observed": False,
+        "source_authenticity_verified": False,
+        "append_only_integrity_verified": False,
+        "coverage_semantics": (
+            "owner-local closed-schema event observation; not independently "
+            "verified user behavior"
+        ),
         "problem_counts": _sorted_counter(problem_counts),
     }
 
@@ -372,6 +414,7 @@ def collect_operational_live_smoke(
     source_record_count = 0
     window_record_count = 0
     saw_line = False
+    unreadable = False
     anchors = anchor_evidence._empty_anchor_counts()
     live_smoke = anchor_evidence._empty_live_smoke_counts()
     live_smoke.setdefault("failure_classes", {})
@@ -382,47 +425,62 @@ def collect_operational_live_smoke(
         problem_counts["operational_live_smoke.source_missing"] += 1
     else:
         try:
-            lines = Path(path).read_text(encoding="utf-8").splitlines()
+            handle = Path(path).open("r", encoding="utf-8")
         except Exception:
-            lines = []
+            unreadable = True
             problem_counts["operational_live_smoke.source_unreadable"] += 1
-        for line in lines:
-            if not line.strip():
-                continue
-            saw_line = True
-            source_record_count += 1
+        else:
             try:
-                record = json.loads(line)
+                with handle:
+                    for line in handle:
+                        if not line.strip():
+                            continue
+                        saw_line = True
+                        source_record_count += 1
+                        try:
+                            record = json.loads(line)
+                        except Exception:
+                            problem_counts["operational_live_smoke.malformed_jsonl"] += 1
+                            continue
+                        if not isinstance(record, dict):
+                            problem_counts["operational_live_smoke.non_object_json"] += 1
+                            continue
+                        timestamp = _parse_utc_timestamp(record.get("timestamp"))
+                        if _contains_unsafe(record):
+                            problem_counts["operational_live_smoke.blocked_unsafe_content"] += 1
+                            if timestamp is not None:
+                                if _in_window(timestamp, window_start_utc, window_end_utc):
+                                    window_record_count += 1
+                                    _record_unsafe_live_smoke_window_run(live_smoke)
+                                else:
+                                    outside_window_count += 1
+                            continue
+                        status, failure_code = anchor_evidence._valid_run_record(record)
+                        if timestamp is None:
+                            problem_counts[
+                                f"operational_live_smoke.{failure_code or 'invalid_timestamp'}"
+                            ] += 1
+                            continue
+                        if not _in_window(timestamp, window_start_utc, window_end_utc):
+                            outside_window_count += 1
+                            continue
+                        window_record_count += 1
+                        if failure_code is not None:
+                            anchor_evidence._record_failed_run(live_smoke, status, failure_code)
+                            problem_counts[f"operational_live_smoke.{failure_code}"] += 1
+                            continue
+                        live_smoke["status_counts"][status] = live_smoke["status_counts"].get(status, 0) + 1
+                        live_smoke["runs"] = anchor_evidence._non_negative_int(live_smoke.get("runs", 0), 0) + 1
+                        if status in {"stable", "downgrade"}:
+                            live_smoke["passed"] = anchor_evidence._non_negative_int(live_smoke.get("passed", 0), 0) + 1
+                            for key in anchor_evidence.ANCHOR_KEYS:
+                                anchors[key] = (
+                                    anchor_evidence._non_negative_int(anchors.get(key, 0), 0)
+                                    + anchor_evidence._non_negative_int(record.get(key, 0), 0)
+                                )
             except Exception:
-                problem_counts["operational_live_smoke.malformed_jsonl"] += 1
-                continue
-            if not isinstance(record, dict):
-                problem_counts["operational_live_smoke.non_object_json"] += 1
-                continue
-            timestamp = _parse_utc_timestamp(record.get("timestamp"))
-            status, failure_code = anchor_evidence._valid_run_record(record)
-            if timestamp is None:
-                problem_counts[
-                    f"operational_live_smoke.{failure_code or 'invalid_timestamp'}"
-                ] += 1
-                continue
-            if not _in_window(timestamp, window_start_utc, window_end_utc):
-                outside_window_count += 1
-                continue
-            window_record_count += 1
-            if failure_code is not None:
-                anchor_evidence._record_failed_run(live_smoke, status, failure_code)
-                problem_counts[f"operational_live_smoke.{failure_code}"] += 1
-                continue
-            live_smoke["status_counts"][status] = live_smoke["status_counts"].get(status, 0) + 1
-            live_smoke["runs"] = anchor_evidence._non_negative_int(live_smoke.get("runs", 0), 0) + 1
-            if status in {"stable", "downgrade"}:
-                live_smoke["passed"] = anchor_evidence._non_negative_int(live_smoke.get("passed", 0), 0) + 1
-                for key in anchor_evidence.ANCHOR_KEYS:
-                    anchors[key] = (
-                        anchor_evidence._non_negative_int(anchors.get(key, 0), 0)
-                        + anchor_evidence._non_negative_int(record.get(key, 0), 0)
-                    )
+                unreadable = True
+                problem_counts["operational_live_smoke.source_unreadable"] += 1
 
     valid_passed = int(live_smoke.get("passed", 0) or 0)
     invalid_or_failed = int(live_smoke.get("failed", 0) or 0) + sum(
@@ -440,6 +498,7 @@ def collect_operational_live_smoke(
             empty=not saw_line,
             valid=valid_passed,
             invalid=invalid_or_failed,
+            unreadable=unreadable,
         ),
         "contributes_to_real_use": False,
         "runs": int(live_smoke.get("runs", 0) or 0),
@@ -522,6 +581,8 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
             return None, False, "synthetic_memory_eval.invalid_count"
         if passed_count + failed_count != case_count:
             return None, False, "synthetic_memory_eval.inconsistent_counts"
+        if bool(item.get("overall_passed")) != (failed_count == 0 and passed_count == case_count):
+            return None, False, "synthetic_memory_eval.inconsistent_overall"
         counts["recall_case_count"] += case_count
         counts["recall_passed_count"] += passed_count
         counts["recall_failed_count"] += failed_count
@@ -546,6 +607,8 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
         failed_expectation_count = _strict_non_negative_int(item.get("failed_expectation_count"))
         if candidate_count is None or failed_expectation_count is None:
             return None, False, "synthetic_memory_eval.invalid_count"
+        if bool(item.get("overall_passed")) != (failed_expectation_count == 0):
+            return None, False, "synthetic_memory_eval.inconsistent_overall"
         counts["admission_candidate_count"] += candidate_count
         counts["admission_failed_expectation_count"] += failed_expectation_count
 
@@ -571,9 +634,17 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
         return None, False, "synthetic_memory_eval.invalid_count"
     if passed_count + failed_count != case_count:
         return None, False, "synthetic_memory_eval.inconsistent_counts"
+    agent_context_expected = failed_count == 0 and passed_count == case_count and case_count > 0
+    if bool(agent_context.get("overall_passed")) != agent_context_expected:
+        return None, False, "synthetic_memory_eval.inconsistent_overall"
     counts["agent_context_case_count"] += case_count
     counts["agent_context_passed_count"] += passed_count
     counts["agent_context_failed_count"] += failed_count
+    nested_overall = all(bool(item.get("overall_passed")) for item in recall)
+    nested_overall = nested_overall and all(bool(item.get("overall_passed")) for item in admission)
+    nested_overall = nested_overall and bool(agent_context.get("overall_passed"))
+    if bool(snapshot.get("overall_passed")) != nested_overall:
+        return None, False, "synthetic_memory_eval.inconsistent_overall"
     return counts, bool(snapshot.get("overall_passed")), ""
 
 
@@ -739,6 +810,7 @@ def build_evidence(
                 "autonomous_learning_proven",
                 "session_conversion",
                 "user_success_rate",
+                "independently_verified_real_use",
             ],
         },
         "problems": problems,

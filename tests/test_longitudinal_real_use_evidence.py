@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "scripts" / "longitudinal_real_use_evidence.py"
@@ -130,6 +132,25 @@ def test_missing_inputs_and_empty_logs_are_insufficient_without_path_leak(tmp_pa
     assert artifact["evidence_classes"]["real_use_first_value"]["valid_record_count"] == 0
     assert "PRIVATE_PATH_SENTINEL" not in body
     assert str(tmp_path) not in body
+
+
+def test_unreadable_first_value_source_is_not_reported_as_empty(tmp_path: Path, monkeypatch) -> None:
+    mod = _load_module()
+    first_value = tmp_path / "first_value_events.jsonl"
+    first_value.write_text(json.dumps(_fv_record("2026-06-08T00:00:00Z")) + "\n", encoding="utf-8")
+    original_open = mod.Path.open
+
+    def blocked_open(self, *args, **kwargs):
+        if mod.Path(self) == first_value:
+            raise PermissionError("synthetic unreadable")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(mod.Path, "open", blocked_open)
+    artifact = mod.build_evidence(first_value_jsonl=first_value, as_of="2026-06-10", window_days=7)
+    real = artifact["evidence_classes"]["real_use_first_value"]
+
+    assert real["source_status"] == "source_unreadable"
+    assert real["problem_counts"] == {"first_value.source_unreadable": 1}
 
 
 def test_legal_multi_day_first_value_counts_active_days_and_span(tmp_path: Path) -> None:
@@ -274,6 +295,137 @@ def test_synthetic_eval_is_layered_and_never_lifts_zero_real_use_readiness(tmp_p
     assert artifact["coverage_readiness"]["status"] == "insufficient"
 
 
+def test_synthetic_eval_rejects_top_level_pass_when_nested_section_failed(tmp_path: Path) -> None:
+    mod = _load_module()
+    eval_json = tmp_path / "memory-eval.json"
+    snapshot = _memory_eval_snapshot(passed=True)
+    snapshot["recall"][0]["overall_passed"] = False
+    snapshot["recall"][0]["passed_count"] = 1
+    snapshot["recall"][0]["failed_count"] = 1
+    eval_json.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[eval_json], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 0
+    assert synthetic["passed_snapshot_count"] == 0
+    assert synthetic["invalid_snapshot_count"] == 1
+    assert synthetic["problem_counts"] == {"synthetic_memory_eval.inconsistent_overall": 1}
+
+
+def test_synthetic_eval_rejects_top_level_fail_when_nested_sections_pass(tmp_path: Path) -> None:
+    mod = _load_module()
+    eval_json = tmp_path / "memory-eval.json"
+    snapshot = _memory_eval_snapshot(passed=True)
+    snapshot["overall_passed"] = False
+    eval_json.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[eval_json], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 0
+    assert synthetic["failed_snapshot_count"] == 0
+    assert synthetic["invalid_snapshot_count"] == 1
+    assert synthetic["problem_counts"] == {"synthetic_memory_eval.inconsistent_overall": 1}
+
+
+def test_synthetic_eval_accepts_consistent_failed_snapshot_as_failed_not_invalid(tmp_path: Path) -> None:
+    mod = _load_module()
+    eval_json = tmp_path / "memory-eval.json"
+    eval_json.write_text(json.dumps(_memory_eval_snapshot(passed=False)), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[eval_json], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 1
+    assert synthetic["passed_snapshot_count"] == 0
+    assert synthetic["failed_snapshot_count"] == 1
+    assert synthetic["invalid_snapshot_count"] == 0
+
+
+def test_live_smoke_unsafe_extra_field_is_failed_without_anchor_contribution(tmp_path: Path) -> None:
+    mod = _load_module()
+    sentinel = "PRIVATE_LIVE_SMOKE_SENTINEL"
+    run_jsonl = tmp_path / "anchor-runs.jsonl"
+    unsafe = _run_record("2026-06-08T00:00:00Z", run_id="stable-unsafe", status="stable", checked=2, valid=2)
+    unsafe["debug_path"] = f"C:\\Users\\alice\\{sentinel}.json"
+    _write_jsonl(run_jsonl, [unsafe])
+
+    artifact = mod.build_evidence(anchor_run_jsonl=run_jsonl, as_of="2026-06-10", window_days=7)
+    body = json.dumps(artifact, ensure_ascii=False)
+    smoke = artifact["evidence_classes"]["operational_live_smoke"]
+
+    assert smoke["runs"] == 1
+    assert smoke["passed"] == 0
+    assert smoke["failed"] == 1
+    assert smoke["status_counts"] == {"parse_failed": 1}
+    assert smoke["failure_classes"] == {"unsafe_record": 1}
+    assert smoke["anchor_aggregate"]["checked"] == 0
+    assert smoke["problem_counts"] == {"operational_live_smoke.blocked_unsafe_content": 1}
+    assert sentinel not in body
+    assert "Users" not in body
+
+
+def test_live_smoke_unsafe_without_trusted_timestamp_stays_source_level(tmp_path: Path) -> None:
+    mod = _load_module()
+    sentinel = "PRIVATE_LIVE_SMOKE_NO_TS"
+    run_jsonl = tmp_path / "anchor-runs.jsonl"
+    unsafe = _run_record("not-a-timestamp", run_id="stable-unsafe", status="stable", checked=2, valid=2)
+    unsafe["Authorization"] = f"Bearer {sentinel}"
+    _write_jsonl(run_jsonl, [unsafe])
+
+    artifact = mod.build_evidence(anchor_run_jsonl=run_jsonl, as_of="2026-06-10", window_days=7)
+    body = json.dumps(artifact, ensure_ascii=False)
+    smoke = artifact["evidence_classes"]["operational_live_smoke"]
+
+    assert smoke["runs"] == 0
+    assert smoke["passed"] == 0
+    assert smoke["failed"] == 0
+    assert smoke["window_record_count"] == 0
+    assert smoke["problem_counts"] == {"operational_live_smoke.blocked_unsafe_content": 1}
+    assert sentinel not in body
+
+
+def test_synthetic_eval_blocks_posix_absolute_paths_but_not_relative_fixture_paths(tmp_path: Path) -> None:
+    mod = _load_module()
+    good = tmp_path / "good-memory-eval.json"
+    bad = tmp_path / "bad-memory-eval.json"
+    good.write_text(json.dumps(_memory_eval_snapshot(passed=True)), encoding="utf-8")
+    snapshot = _memory_eval_snapshot(passed=True)
+    snapshot["recall"][0]["fixture"] = "/etc/engram/private-fixture.json"
+    bad.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[good, bad], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 1
+    assert synthetic["passed_snapshot_count"] == 1
+    assert synthetic["invalid_snapshot_count"] == 1
+    assert synthetic["problem_counts"] == {"synthetic_memory_eval.blocked_unsafe_content": 1}
+
+
+def test_credential_label_variants_are_blocked_without_echo(tmp_path: Path) -> None:
+    mod = _load_module()
+    sentinel = "PRIVATE_CREDENTIAL_SENTINEL"
+    by_key = tmp_path / "by-key.json"
+    by_value = tmp_path / "by-value.json"
+    snapshot_key = _memory_eval_snapshot(passed=True)
+    snapshot_key["secret_key"] = sentinel
+    snapshot_value = _memory_eval_snapshot(passed=True)
+    snapshot_value["recall"][0]["fixture"] = f"token-key-{sentinel}"
+    by_key.write_text(json.dumps(snapshot_key), encoding="utf-8")
+    by_value.write_text(json.dumps(snapshot_value), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[by_key, by_value], as_of="2026-06-10", window_days=7)
+    body = json.dumps(artifact, ensure_ascii=False)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 0
+    assert synthetic["invalid_snapshot_count"] == 2
+    assert synthetic["problem_counts"] == {"synthetic_memory_eval.blocked_unsafe_content": 2}
+    assert sentinel not in body
+
+
 def test_readiness_thresholds_are_real_use_only_and_deterministic(tmp_path: Path) -> None:
     mod = _load_module()
     first_value = tmp_path / "first_value_events.jsonl"
@@ -317,6 +469,17 @@ def test_duplicate_first_value_rows_are_counted_without_fake_deduplication(tmp_p
     assert real["event_id_observed"] is False
 
 
+def test_first_value_source_authenticity_limits_are_explicit() -> None:
+    mod = _load_module()
+    artifact = mod.build_evidence(as_of="2026-06-10", window_days=7)
+    real = artifact["evidence_classes"]["real_use_first_value"]
+
+    assert real["source_authenticity_verified"] is False
+    assert real["append_only_integrity_verified"] is False
+    assert "owner-local closed-schema event observation" in real["coverage_semantics"]
+    assert "independently_verified_real_use" in artifact["claim_boundary"]["prohibited"]
+
+
 def test_as_of_timestamp_window_filters_by_trusted_record_time(tmp_path: Path) -> None:
     mod = _load_module()
     first_value = tmp_path / "first_value_events.jsonl"
@@ -341,6 +504,33 @@ def test_as_of_timestamp_window_filters_by_trusted_record_time(tmp_path: Path) -
     assert artifact["window_end_utc"] == "2026-06-10T12:00:00Z"
     assert real["valid_record_count"] == 2
     assert real["valid_records_outside_window_count"] == 2
+
+
+def test_window_bounds_overflow_fails_closed_without_traceback_or_value_echo(tmp_path: Path) -> None:
+    mod = _load_module()
+    with pytest.raises(ValueError):
+        mod.window_bounds("0001-01-01", 999999999)
+
+    caller_value = "0001-01-01"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--as-of",
+            caller_value,
+            "--window-days",
+            "999999999",
+            "--json",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "invalid longitudinal evidence arguments" in result.stderr
+    assert caller_value not in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_cli_json_text_and_output_are_deterministic_and_path_independent(tmp_path: Path) -> None:
