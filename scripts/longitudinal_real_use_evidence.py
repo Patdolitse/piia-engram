@@ -185,6 +185,27 @@ def _strict_non_negative_int(value: Any) -> int | None:
     return value
 
 
+def _strict_positive_int(value: Any) -> int | None:
+    parsed = _strict_non_negative_int(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
+def _strict_action_counts(value: Any) -> tuple[int | None, str]:
+    if not isinstance(value, dict):
+        return None, "synthetic_memory_eval.invalid_count"
+    total = 0
+    for key, count in value.items():
+        if not isinstance(key, str) or not key:
+            return None, "synthetic_memory_eval.invalid_count"
+        parsed = _strict_non_negative_int(count)
+        if parsed is None:
+            return None, "synthetic_memory_eval.invalid_count"
+        total += parsed
+    return total, ""
+
+
 def _unsafe_string(text: str) -> bool:
     return (
         _PRIVATE_KEY_RE.search(text) is not None
@@ -552,6 +573,8 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
     agent_context = snapshot.get("agent_context_pack")
     if not isinstance(recall, list) or not isinstance(admission, list) or not isinstance(agent_context, dict):
         return None, False, "synthetic_memory_eval.invalid_aggregate_shape"
+    if not recall or not admission:
+        return None, False, "synthetic_memory_eval.incomplete_suite"
 
     recall_keys = {
         "fixture",
@@ -574,11 +597,11 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
             return None, False, "synthetic_memory_eval.unknown_nested_field"
         if not isinstance(item.get("overall_passed"), bool):
             return None, False, "synthetic_memory_eval.invalid_overall_status"
-        case_count = _strict_non_negative_int(item.get("case_count"))
+        case_count = _strict_positive_int(item.get("case_count"))
         passed_count = _strict_non_negative_int(item.get("passed_count"))
         failed_count = _strict_non_negative_int(item.get("failed_count"))
         if case_count is None or passed_count is None or failed_count is None:
-            return None, False, "synthetic_memory_eval.invalid_count"
+            return None, False, "synthetic_memory_eval.incomplete_suite"
         if passed_count + failed_count != case_count:
             return None, False, "synthetic_memory_eval.inconsistent_counts"
         if bool(item.get("overall_passed")) and (failed_count != 0 or passed_count != case_count):
@@ -603,10 +626,15 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
             return None, False, "synthetic_memory_eval.unknown_nested_field"
         if not isinstance(item.get("overall_passed"), bool):
             return None, False, "synthetic_memory_eval.invalid_overall_status"
-        candidate_count = _strict_non_negative_int(item.get("candidate_count"))
+        candidate_count = _strict_positive_int(item.get("candidate_count"))
         failed_expectation_count = _strict_non_negative_int(item.get("failed_expectation_count"))
         if candidate_count is None or failed_expectation_count is None:
-            return None, False, "synthetic_memory_eval.invalid_count"
+            return None, False, "synthetic_memory_eval.incomplete_suite"
+        action_total, action_code = _strict_action_counts(item.get("action_counts"))
+        if action_total is None:
+            return None, False, action_code
+        if action_total != candidate_count:
+            return None, False, "synthetic_memory_eval.inconsistent_counts"
         if bool(item.get("overall_passed")) and failed_expectation_count != 0:
             return None, False, "synthetic_memory_eval.inconsistent_overall"
         counts["admission_candidate_count"] += candidate_count
@@ -623,15 +651,17 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
     }
     if set(agent_context) - agent_context_keys:
         return None, False, "synthetic_memory_eval.unknown_nested_field"
+    if agent_context.get("schema") != "agent_context_pack_eval.v1":
+        return None, False, "synthetic_memory_eval.invalid_schema"
     if agent_context.get("public_safe") is not True or agent_context.get("store_isolated") is not True:
         return None, False, "synthetic_memory_eval.not_store_isolated"
     if not isinstance(agent_context.get("overall_passed"), bool):
         return None, False, "synthetic_memory_eval.invalid_overall_status"
-    case_count = _strict_non_negative_int(agent_context.get("case_count"))
+    case_count = _strict_positive_int(agent_context.get("case_count"))
     passed_count = _strict_non_negative_int(agent_context.get("passed_count"))
     failed_count = _strict_non_negative_int(agent_context.get("failed_count"))
     if case_count is None or passed_count is None or failed_count is None:
-        return None, False, "synthetic_memory_eval.invalid_count"
+        return None, False, "synthetic_memory_eval.incomplete_suite"
     if passed_count + failed_count != case_count:
         return None, False, "synthetic_memory_eval.inconsistent_counts"
     if bool(agent_context.get("overall_passed")) and (

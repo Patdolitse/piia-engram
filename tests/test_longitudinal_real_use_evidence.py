@@ -362,6 +362,99 @@ def test_synthetic_eval_accepts_threshold_failure_with_clean_counts(tmp_path: Pa
     assert synthetic["aggregate_case_counts"]["recall_failed_count"] == 0
 
 
+def test_synthetic_eval_rejects_empty_sections_and_wrong_agent_schema(tmp_path: Path) -> None:
+    mod = _load_module()
+    eval_json = tmp_path / "memory-eval.json"
+    snapshot = _memory_eval_snapshot(passed=True)
+    snapshot["recall"] = []
+    snapshot["admission"] = []
+    snapshot["agent_context_pack"]["schema"] = "wrong-schema"
+    eval_json.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[eval_json], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 0
+    assert synthetic["passed_snapshot_count"] == 0
+    assert synthetic["invalid_snapshot_count"] == 1
+    assert synthetic["problem_counts"] == {"synthetic_memory_eval.incomplete_suite": 1}
+
+
+def test_synthetic_eval_rejects_zero_sample_sections(tmp_path: Path) -> None:
+    mod = _load_module()
+    eval_json = tmp_path / "memory-eval.json"
+    snapshot = _memory_eval_snapshot(passed=True)
+    snapshot["overall_passed"] = False
+    snapshot["recall"][0]["overall_passed"] = False
+    snapshot["recall"][0]["case_count"] = 0
+    snapshot["recall"][0]["passed_count"] = 0
+    snapshot["admission"][0]["candidate_count"] = 0
+    snapshot["admission"][0]["action_counts"] = {}
+    snapshot["agent_context_pack"]["overall_passed"] = False
+    snapshot["agent_context_pack"]["case_count"] = 0
+    snapshot["agent_context_pack"]["passed_count"] = 0
+    eval_json.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[eval_json], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 0
+    assert synthetic["invalid_snapshot_count"] == 1
+    assert synthetic["problem_counts"] == {"synthetic_memory_eval.incomplete_suite": 1}
+
+
+def test_synthetic_eval_rejects_admission_action_count_mismatch(tmp_path: Path) -> None:
+    mod = _load_module()
+    eval_json = tmp_path / "memory-eval.json"
+    snapshot = _memory_eval_snapshot(passed=True)
+    snapshot["admission"][0]["action_counts"] = {"accept": 1, "stage": 1}
+    eval_json.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[eval_json], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 0
+    assert synthetic["invalid_snapshot_count"] == 1
+    assert synthetic["problem_counts"] == {"synthetic_memory_eval.inconsistent_counts": 1}
+
+
+def test_synthetic_eval_rejects_bool_action_counts(tmp_path: Path) -> None:
+    mod = _load_module()
+    eval_json = tmp_path / "memory-eval.json"
+    snapshot = _memory_eval_snapshot(passed=True)
+    snapshot["admission"][0]["action_counts"] = {"accept": True, "stage": 2}
+    eval_json.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[eval_json], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 0
+    assert synthetic["invalid_snapshot_count"] == 1
+    assert synthetic["problem_counts"] == {"synthetic_memory_eval.invalid_count": 1}
+
+
+def test_real_memory_eval_snapshot_is_accepted(tmp_path: Path) -> None:
+    output = tmp_path / "memory-eval.json"
+    subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run_memory_evals.py"), "--json", "--output", str(output)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    mod = _load_module()
+
+    artifact = mod.build_evidence(memory_eval_jsons=[output], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 1
+    assert synthetic["passed_snapshot_count"] == 1
+    assert synthetic["invalid_snapshot_count"] == 0
+    assert synthetic["aggregate_case_counts"]["recall_case_count"] == 18
+    assert synthetic["aggregate_case_counts"]["admission_candidate_count"] == 15
+    assert synthetic["aggregate_case_counts"]["agent_context_case_count"] == 2
+
+
 def test_live_smoke_unsafe_extra_field_is_failed_without_anchor_contribution(tmp_path: Path) -> None:
     mod = _load_module()
     sentinel = "PRIVATE_LIVE_SMOKE_SENTINEL"
