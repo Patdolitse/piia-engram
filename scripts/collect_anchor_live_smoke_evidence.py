@@ -72,6 +72,12 @@ def _non_negative_int(value: Any, default: int) -> int:
         return default
 
 
+def _strict_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def _safe_failure_class(label: str) -> str:
     allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_.-")
     if 1 <= len(label) <= 64 and all(char in allowed for char in label):
@@ -115,13 +121,55 @@ def _merge_live_smoke_counts(base: dict[str, Any], loaded: dict[str, Any]) -> di
     return merged
 
 
-def _classify_run_status(status: Any, error_code: Any = None) -> str:
-    text = str(status or "").strip().lower()
-    if text in {"stable", "downgrade"}:
-        return text
-    if text == "parse_failed" or error_code == "parse_failure":
-        return "parse_failed"
-    return "failed"
+def _valid_run_record(record: dict[str, Any]) -> tuple[str, str | None]:
+    if record.get("schema") != RUN_RECORD_SCHEMA:
+        return "parse_failed", "invalid_run_record"
+    status = str(record.get("runner_status") or "").strip().lower()
+    if status not in LIVE_SMOKE_STATUS_KEYS - {"missing"}:
+        return "parse_failed", "invalid_run_record"
+
+    counts: dict[str, int] = {}
+    for key in ANCHOR_KEYS:
+        value = _strict_non_negative_int(record.get(key, 0))
+        if value is None:
+            return "parse_failed", "invalid_run_record"
+        counts[key] = value
+    if counts["valid"] + counts["invalid"] + counts["unknown"] > counts["checked"]:
+        return "parse_failed", "invalid_run_record"
+
+    subprocess_exit = record.get("subprocess_exit")
+    error_code = record.get("error_code")
+    has_error = error_code not in (None, "")
+    if status in {"stable", "downgrade"}:
+        if subprocess_exit != 0 or has_error:
+            return "failed", "invalid_run_record"
+        if status == "stable" and counts["invalid"] != 0:
+            return "failed", "invalid_run_record"
+        if status == "downgrade" and counts["invalid"] == 0:
+            return "failed", "invalid_run_record"
+        return status, None
+
+    if status == "parse_failed":
+        if has_error and error_code != "parse_failure":
+            return "failed", "invalid_run_record"
+        return "parse_failed", "parse_failure"
+
+    if status == "failed":
+        if not has_error:
+            return "failed", "invalid_run_record"
+        if subprocess_exit == 0:
+            return "failed", "invalid_run_record"
+        return "failed", str(error_code)
+
+    return "parse_failed", "invalid_run_record"
+
+
+def _record_failed_run(live_smoke: dict[str, Any], status: str, code: str) -> None:
+    live_smoke["runs"] = _non_negative_int(live_smoke.get("runs", 0), 0) + 1
+    live_smoke["failed"] = _non_negative_int(live_smoke.get("failed", 0), 0) + 1
+    live_smoke["status_counts"][status] = live_smoke["status_counts"].get(status, 0) + 1
+    clean_code = _safe_failure_class(code)
+    live_smoke["failure_classes"][clean_code] = live_smoke["failure_classes"].get(clean_code, 0) + 1
 
 
 def _merge_run_records(
@@ -134,6 +182,13 @@ def _merge_run_records(
     merged_live = dict(live_smoke)
     merged_live.setdefault("failure_classes", {})
     merged_live.setdefault("status_counts", {})
+    if not merged_live["status_counts"]:
+        existing_passed = _non_negative_int(merged_live.get("passed", 0), 0)
+        existing_failed = _non_negative_int(merged_live.get("failed", 0), 0)
+        if existing_passed:
+            merged_live["status_counts"]["stable"] = existing_passed
+        if existing_failed:
+            merged_live["status_counts"]["failed"] = existing_failed
     if not path.exists():
         merged_live["status_counts"]["missing"] = merged_live["status_counts"].get("missing", 0) + 1
         return merged_anchors, merged_live
@@ -144,22 +199,21 @@ def _merge_run_records(
         try:
             record = json.loads(line)
         except Exception:
-            merged_live["status_counts"]["parse_failed"] = merged_live["status_counts"].get("parse_failed", 0) + 1
+            _record_failed_run(merged_live, "parse_failed", "parse_failure")
             continue
-        if not isinstance(record, dict) or record.get("schema") != RUN_RECORD_SCHEMA:
-            merged_live["status_counts"]["parse_failed"] = merged_live["status_counts"].get("parse_failed", 0) + 1
+        if not isinstance(record, dict):
+            _record_failed_run(merged_live, "parse_failed", "invalid_run_record")
             continue
-        status = _classify_run_status(record.get("runner_status"), record.get("error_code"))
+        status, failure_code = _valid_run_record(record)
+        if failure_code is not None:
+            _record_failed_run(merged_live, status, failure_code)
+            continue
         merged_live["status_counts"][status] = merged_live["status_counts"].get(status, 0) + 1
         merged_live["runs"] = _non_negative_int(merged_live.get("runs", 0), 0) + 1
         if status in {"stable", "downgrade"}:
             merged_live["passed"] = _non_negative_int(merged_live.get("passed", 0), 0) + 1
             for key in ANCHOR_KEYS:
                 merged_anchors[key] = _non_negative_int(merged_anchors.get(key, 0), 0) + _non_negative_int(record.get(key, 0), 0)
-        else:
-            merged_live["failed"] = _non_negative_int(merged_live.get("failed", 0), 0) + 1
-            code = _safe_failure_class(str(record.get("error_code") or status))
-            merged_live["failure_classes"][code] = merged_live["failure_classes"].get(code, 0) + 1
     return merged_anchors, merged_live
 
 

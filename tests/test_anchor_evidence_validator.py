@@ -190,6 +190,71 @@ def test_validator_rejects_negative_counts(tmp_path: Path) -> None:
     assert "anchors.checked must be a non-negative integer" in report["errors"]
 
 
+def test_validator_rejects_bool_counts(tmp_path: Path) -> None:
+    payload = _valid_payload()
+    payload["live_smoke"]["runs"] = True  # type: ignore[index]
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--evidence", str(evidence), "--json"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(result.stdout)
+
+    assert result.returncode == 1
+    assert "live_smoke.runs must be a non-negative integer" in report["errors"]
+
+
+def test_validator_rejects_inconsistent_status_counts(tmp_path: Path) -> None:
+    payload = _valid_payload()
+    payload["live_smoke"]["status_counts"] = {  # type: ignore[index]
+        "stable": 4,
+        "downgrade": 0,
+        "failed": 0,
+        "parse_failed": 2,
+    }
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--evidence", str(evidence), "--json"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(result.stdout)
+
+    assert result.returncode == 1
+    assert "LIVE_SMOKE stable plus downgrade status counts must equal passed" in report["errors"]
+    assert "LIVE_SMOKE failed plus parse_failed status counts must equal failed" in report["errors"]
+    assert "LIVE_SMOKE status counts must equal runs excluding missing" in report["errors"]
+
+
+def test_validator_allows_consistent_status_counts_with_missing_outside_runs(tmp_path: Path) -> None:
+    payload = _valid_payload()
+    payload["live_smoke"]["status_counts"] = {  # type: ignore[index]
+        "stable": 6,
+        "failed": 1,
+        "missing": 1,
+    }
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--evidence", str(evidence), "--json"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(result.stdout)
+
+    assert report["valid"] is True
+
+
 def test_validator_rejects_unknown_top_level_fields(tmp_path: Path) -> None:
     payload = _valid_payload()
     payload["manual_note"] = "safe-looking but not part of the public schema"

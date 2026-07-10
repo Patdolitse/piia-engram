@@ -76,6 +76,10 @@ def _count(block: dict[str, Any], key: str) -> int:
         return 0
 
 
+def _is_non_negative_int(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
 def _private_string(text: str) -> bool:
     return any(token in text for token in PRIVATE_TOKENS) or any(
         pattern.search(text) for pattern in PRIVATE_REGEXES
@@ -134,11 +138,11 @@ def validate_payload(payload: dict[str, Any]) -> list[str]:
 
     for key in ANCHOR_KEYS:
         value = anchors.get(key, 0)
-        if not isinstance(value, int) or value < 0:
+        if not _is_non_negative_int(value):
             errors.append(f"anchors.{key} must be a non-negative integer")
     for key in ("runs", "passed", "failed"):
         value = live_smoke.get(key, 0)
-        if not isinstance(value, int) or value < 0:
+        if not _is_non_negative_int(value):
             errors.append(f"live_smoke.{key} must be a non-negative integer")
 
     checked = _count(anchors, "checked")
@@ -159,7 +163,7 @@ def validate_payload(payload: dict[str, Any]) -> list[str]:
             if not isinstance(label, str) or not _is_safe_failure_class(label):
                 errors.append("unsafe failure class label")
                 break
-            if not isinstance(value, int) or value < 0:
+            if not _is_non_negative_int(value):
                 errors.append("failure class counts must be non-negative integers")
                 break
     statuses = live_smoke.get("status_counts", {})
@@ -171,9 +175,23 @@ def validate_payload(payload: dict[str, Any]) -> list[str]:
                 if label not in LIVE_SMOKE_STATUS_KEYS:
                     errors.append("unsafe status count label")
                     break
-                if not isinstance(value, int) or value < 0:
+                if not _is_non_negative_int(value):
                     errors.append("status counts must be non-negative integers")
                     break
+            else:
+                stable = _count(statuses, "stable")
+                downgrade = _count(statuses, "downgrade")
+                failed_status = _count(statuses, "failed")
+                parse_failed = _count(statuses, "parse_failed")
+                passed = _count(live_smoke, "passed")
+                failed = _count(live_smoke, "failed")
+                runs = _count(live_smoke, "runs")
+                if stable + downgrade != passed:
+                    errors.append("LIVE_SMOKE stable plus downgrade status counts must equal passed")
+                if failed_status + parse_failed != failed:
+                    errors.append("LIVE_SMOKE failed plus parse_failed status counts must equal failed")
+                if stable + downgrade + failed_status + parse_failed != runs:
+                    errors.append("LIVE_SMOKE status counts must equal runs excluding missing")
 
     unknown_anchor_keys = set(anchors) - ANCHOR_KEYS
     unknown_live_keys = set(live_smoke) - LIVE_SMOKE_KEYS

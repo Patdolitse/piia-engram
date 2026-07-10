@@ -43,8 +43,14 @@ PRIVATE_PATTERNS = (
     re.compile(r"(?i)\b[A-Z]:[\\/][^\s\"'<>|]+"),
     re.compile(r"\\\\[^\\/\s\"'<>|]+[\\/][^\\/\s\"'<>|]+"),
     re.compile(r"(?i)(^|[\s\"'=:])/(Users|home|tmp|var/tmp)/[^\s\"'<>]*"),
-    re.compile(r"(?i)\bauthorization\s*:\s*bearer\s+[A-Za-z0-9._~+/=-]+"),
-    re.compile(r"(?i)\b(api[_-]?key|password|token|private[_-]?key)\s*[:=]\s*[^\s\"'<>|]+"),
+    re.compile(r"(?i)\bauthorization\s*[:=]\s*['\"]?[A-Za-z][A-Za-z0-9._~+/=-]*(?:\s+[A-Za-z0-9._~+/=-]+)?['\"]?"),
+    re.compile(r"(?i)(?<![A-Za-z0-9_])bearer\s+[A-Za-z0-9._~+/=-]+"),
+    re.compile(
+        r"(?ix)\b("
+        r"api[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|"
+        r"password|passwd|pwd|token|secret|client[_-]?secret|private[_-]?key"
+        r")\b\s*[:=]\s*['\"]?[^\s\"'<>|]+['\"]?"
+    ),
 )
 
 
@@ -179,7 +185,10 @@ def append_jsonl_record(path: Path, record: dict[str, Any]) -> None:
             data = payload.encode("utf-8")
             offset = 0
             while offset < len(data):
-                offset += os.write(fd, data[offset:])
+                written = os.write(fd, data[offset:])
+                if written <= 0:
+                    raise OSError("short write")
+                offset += written
         finally:
             os.close(fd)
 

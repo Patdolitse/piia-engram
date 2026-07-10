@@ -60,6 +60,12 @@ def _records(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _assert_no_unsafe_fragments(text: str, fragments: list[str]) -> None:
+    for fragment in fragments:
+        if fragment in text:
+            raise AssertionError("unsafe fixture leaked")
+
+
 def test_success_stable_record_and_exit_zero(tmp_path: Path) -> None:
     result = _run(tmp_path, _python_json({"checked": 3, "valid": 3, "invalid": 0, "unknown": 0}))
     record = json.loads(result.stdout)
@@ -226,15 +232,33 @@ def test_failure_artifacts_are_redacted_and_referenced_opaquely(tmp_path: Path) 
     result = _run(tmp_path, _python_exit(0, stdout=unsafe), run_id="unsafe")
     record = json.loads(result.stdout)
     body = result.stdout + result.stderr + (tmp_path / "runs.jsonl").read_text(encoding="utf-8")
+    leaked_fragments = ["Bearer abc.def", "token=secret", "E:\\Private"]
 
     assert result.returncode == 1
-    assert "Bearer abc.def" not in body
-    assert "token=secret" not in body
-    assert "E:\\Private" not in body
+    _assert_no_unsafe_fragments(body, leaked_fragments)
     assert record["evidence_ref"] == [{"id": "unsafe.stdout.txt", "kind": "local_redacted_artifact"}]
     artifact = tmp_path / "diagnostics" / "unsafe.stdout.txt"
-    assert "<redacted>" in artifact.read_text(encoding="utf-8")
-    assert "Bearer abc.def" not in artifact.read_text(encoding="utf-8")
+    artifact_text = artifact.read_text(encoding="utf-8")
+    assert "<redacted>" in artifact_text
+    _assert_no_unsafe_fragments(artifact_text, leaked_fragments)
+
+
+def test_redaction_covers_equals_quotes_and_bare_bearer_without_echo(tmp_path: Path) -> None:
+    unsafe_parts = [
+        "Authorization=Digest abc123",
+        "Bearer xyz.token",
+        "api_key='quoted-secret'",
+        'client_secret="double-quoted"',
+    ]
+    result = _run(tmp_path, _python_exit(0, stdout=" ".join(unsafe_parts)), run_id="redact")
+    record = json.loads(result.stdout)
+    body = result.stdout + result.stderr + (tmp_path / "runs.jsonl").read_text(encoding="utf-8")
+    artifact_text = (tmp_path / "diagnostics" / record["evidence_ref"][0]["id"]).read_text(encoding="utf-8")
+
+    assert result.returncode == 1
+    assert "<redacted>" in artifact_text
+    _assert_no_unsafe_fragments(body, unsafe_parts)
+    _assert_no_unsafe_fragments(artifact_text, unsafe_parts)
 
 
 def test_diagnostic_write_failure_returns_nonzero_without_traceback(tmp_path: Path) -> None:
@@ -455,6 +479,74 @@ def test_collector_excludes_failed_run_from_anchor_sample_count(tmp_path: Path) 
     assert payload["live_smoke"]["failed"] == 1
     assert payload["live_smoke"]["status_counts"] == {"stable": 1, "parse_failed": 1}
     assert payload["live_smoke"]["failure_classes"] == {"parse_failure": 1}
+
+
+def test_collector_rejects_semantically_corrupt_stable_record(tmp_path: Path) -> None:
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text(
+        json.dumps(
+            {
+                "schema": "anchor_live_smoke_run_record.v1",
+                "run_id": "bad-stable",
+                "timestamp": "2026-07-10T02:00:00Z",
+                "runner_status": "stable",
+                "checked": "15",
+                "valid": "15",
+                "invalid": 0,
+                "unknown": 0,
+                "subprocess_exit": 0,
+                "error_code": "parse_failure",
+                "evidence_ref": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(COLLECTOR), "--json", "--synthetic", "--live-smoke-run-jsonl", str(runs)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 0
+    assert payload["anchors"]["checked"] == 5
+    assert payload["anchors"]["valid"] == 3
+    assert payload["live_smoke"]["runs"] == 4
+    assert payload["live_smoke"]["passed"] == 3
+    assert payload["live_smoke"]["failed"] == 1
+    assert payload["live_smoke"]["status_counts"] == {"stable": 3, "parse_failed": 1}
+    assert payload["live_smoke"]["failure_classes"] == {"invalid_run_record": 1}
+
+
+def test_collector_counts_malformed_jsonl_as_failed_run_with_consistent_totals(tmp_path: Path) -> None:
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text(
+        "not-json\n"
+        + json.dumps({"schema": "anchor_live_smoke_run_record.v1", "runner_status": "surprise"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(COLLECTOR), "--json", "--synthetic", "--live-smoke-run-jsonl", str(runs)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    live = payload["live_smoke"]
+
+    assert result.returncode == 0
+    assert live["runs"] == 5
+    assert live["passed"] == 3
+    assert live["failed"] == 2
+    assert live["status_counts"] == {"stable": 3, "parse_failed": 2}
+    assert live["passed"] + live["failed"] == live["runs"]
+    assert live["status_counts"]["stable"] == live["passed"]
+    assert live["status_counts"]["parse_failed"] == live["failed"]
 
 
 def test_installer_copies_runner_and_rejects_codex_runtime_paths() -> None:
