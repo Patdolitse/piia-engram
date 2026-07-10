@@ -20,6 +20,7 @@ def _evidence(
     runs: int = 1,
     passed: int = 1,
     failed: int = 0,
+    status_counts: dict[str, int] | None = None,
 ) -> dict[str, object]:
     return {
         "schema": "anchor_live_smoke_evidence.v1",
@@ -39,6 +40,7 @@ def _evidence(
             "passed": passed,
             "failed": failed,
             "failure_classes": {"timeout": failed} if failed else {},
+            "status_counts": status_counts or {},
         },
         "notes": ["Aggregate counts only."],
     }
@@ -109,6 +111,35 @@ def test_history_summary_aggregates_recent_7_and_14_day_windows(tmp_path: Path) 
     assert fourteen["live_smoke"]["runs"] == 3
     assert "Last 7 days" in summary_md
     assert "Last 14 days" in summary_md
+
+
+def test_history_preserves_live_smoke_status_counts(tmp_path: Path) -> None:
+    history_dir = tmp_path / "history"
+    evidence = tmp_path / "evidence.json"
+    _write_json(
+        evidence,
+        _evidence(
+            date="2026-07-06",
+            checked=3,
+            valid=3,
+            runs=3,
+            passed=1,
+            failed=2,
+            status_counts={"stable": 1, "failed": 1, "parse_failed": 1},
+        ),
+    )
+
+    _run_append(history_dir, evidence, "2026-07-06T10:00:00Z")
+
+    entry = json.loads((history_dir / "anchor-live-smoke-history.jsonl").read_text(encoding="utf-8"))
+    latest = json.loads((history_dir / "latest.json").read_text(encoding="utf-8"))
+
+    assert entry["live_smoke"]["status_counts"] == {"stable": 1, "failed": 1, "parse_failed": 1}
+    assert latest["windows"]["7d"]["evidence"]["live_smoke"]["status_counts"] == {
+        "stable": 1,
+        "failed": 1,
+        "parse_failed": 1,
+    }
 
 
 def test_history_rejects_private_paths_tokens_and_transcripts_without_echoing(tmp_path: Path) -> None:

@@ -48,9 +48,13 @@ def test_anchor_live_smoke_doc_includes_packet_finalizer() -> None:
 def test_anchor_live_smoke_doc_includes_continuous_history_workflow() -> None:
     text = DOC.read_text(encoding="utf-8")
 
+    assert "run_anchor_live_smoke.py" in text
+    assert "anchor-live-smoke-runs.jsonl" in text
     assert "append_anchor_live_smoke_history.py --live --allow-live" in text
     assert ".engram-local-evidence/anchor-live-smoke-history/anchor-live-smoke-history.jsonl" in text
     assert ".engram-local-evidence/anchor-live-smoke-history/latest.json" in text
     assert ".engram-local-evidence/anchor-live-smoke-history/summary.md" in text
     assert "--history-summary .engram-local-evidence/anchor-live-smoke-history/latest.json" in text
     assert "current live store has no structured anchor records" in text
+    assert "failed or parse-failed runs must not be counted as valid/stable anchor samples" in text
+    assert "do not point the task at a temporary worktree or runtime path" in text

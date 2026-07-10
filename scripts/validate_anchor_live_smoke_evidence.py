@@ -29,7 +29,8 @@ ANCHOR_KEYS = {
     "superseded",
     "demoted_to_staging",
 }
-LIVE_SMOKE_KEYS = {"runs", "passed", "failed", "failure_classes"}
+LIVE_SMOKE_KEYS = {"runs", "passed", "failed", "failure_classes", "status_counts"}
+LIVE_SMOKE_STATUS_KEYS = {"missing", "failed", "parse_failed", "stable", "downgrade"}
 PRIVATE_TOKENS = (
     "raw_memory",
     "raw_transcript",
@@ -161,6 +162,18 @@ def validate_payload(payload: dict[str, Any]) -> list[str]:
             if not isinstance(value, int) or value < 0:
                 errors.append("failure class counts must be non-negative integers")
                 break
+    statuses = live_smoke.get("status_counts", {})
+    if statuses != {}:
+        if not isinstance(statuses, dict):
+            errors.append("live_smoke.status_counts must be an object")
+        else:
+            for label, value in statuses.items():
+                if label not in LIVE_SMOKE_STATUS_KEYS:
+                    errors.append("unsafe status count label")
+                    break
+                if not isinstance(value, int) or value < 0:
+                    errors.append("status counts must be non-negative integers")
+                    break
 
     unknown_anchor_keys = set(anchors) - ANCHOR_KEYS
     unknown_live_keys = set(live_smoke) - LIVE_SMOKE_KEYS

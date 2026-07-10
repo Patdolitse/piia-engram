@@ -23,6 +23,16 @@ from piia_engram.core import Engram  # noqa: E402
 
 
 ZERO_ANCHOR_REASON = "current live store has no structured anchor records"
+ANCHOR_KEYS = (
+    "checked",
+    "valid",
+    "invalid",
+    "unknown",
+    "superseded",
+    "demoted_to_staging",
+)
+LIVE_SMOKE_STATUS_KEYS = {"missing", "failed", "parse_failed", "stable", "downgrade"}
+RUN_RECORD_SCHEMA = "anchor_live_smoke_run_record.v1"
 
 
 def _empty_anchor_counts() -> dict[str, int]:
@@ -42,6 +52,7 @@ def _empty_live_smoke_counts() -> dict[str, Any]:
         "passed": 0,
         "failed": 0,
         "failure_classes": {},
+        "status_counts": {},
     }
 
 
@@ -94,7 +105,62 @@ def _merge_live_smoke_counts(base: dict[str, Any], loaded: dict[str, Any]) -> di
             clean_key = _safe_failure_class(key)
             clean_failures[clean_key] = clean_failures.get(clean_key, 0) + _non_negative_int(value, 0)
         merged["failure_classes"] = clean_failures
+    statuses = source.get("status_counts")
+    if isinstance(statuses, dict):
+        clean_statuses: dict[str, int] = {}
+        for key, value in statuses.items():
+            if key in LIVE_SMOKE_STATUS_KEYS:
+                clean_statuses[key] = clean_statuses.get(key, 0) + _non_negative_int(value, 0)
+        merged["status_counts"] = clean_statuses
     return merged
+
+
+def _classify_run_status(status: Any, error_code: Any = None) -> str:
+    text = str(status or "").strip().lower()
+    if text in {"stable", "downgrade"}:
+        return text
+    if text == "parse_failed" or error_code == "parse_failure":
+        return "parse_failed"
+    return "failed"
+
+
+def _merge_run_records(
+    anchors: dict[str, int],
+    live_smoke: dict[str, Any],
+    path_text: str,
+) -> tuple[dict[str, int], dict[str, Any]]:
+    path = Path(path_text)
+    merged_anchors = dict(anchors)
+    merged_live = dict(live_smoke)
+    merged_live.setdefault("failure_classes", {})
+    merged_live.setdefault("status_counts", {})
+    if not path.exists():
+        merged_live["status_counts"]["missing"] = merged_live["status_counts"].get("missing", 0) + 1
+        return merged_anchors, merged_live
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except Exception:
+            merged_live["status_counts"]["parse_failed"] = merged_live["status_counts"].get("parse_failed", 0) + 1
+            continue
+        if not isinstance(record, dict) or record.get("schema") != RUN_RECORD_SCHEMA:
+            merged_live["status_counts"]["parse_failed"] = merged_live["status_counts"].get("parse_failed", 0) + 1
+            continue
+        status = _classify_run_status(record.get("runner_status"), record.get("error_code"))
+        merged_live["status_counts"][status] = merged_live["status_counts"].get(status, 0) + 1
+        merged_live["runs"] = _non_negative_int(merged_live.get("runs", 0), 0) + 1
+        if status in {"stable", "downgrade"}:
+            merged_live["passed"] = _non_negative_int(merged_live.get("passed", 0), 0) + 1
+            for key in ANCHOR_KEYS:
+                merged_anchors[key] = _non_negative_int(merged_anchors.get(key, 0), 0) + _non_negative_int(record.get(key, 0), 0)
+        else:
+            merged_live["failed"] = _non_negative_int(merged_live.get("failed", 0), 0) + 1
+            code = _safe_failure_class(str(record.get("error_code") or status))
+            merged_live["failure_classes"][code] = merged_live["failure_classes"].get(code, 0) + 1
+    return merged_anchors, merged_live
 
 
 def synthetic_payload() -> dict[str, Any]:
@@ -223,6 +289,7 @@ def main() -> int:
     parser.add_argument("--allow-live", action="store_true", help="Required with --live.")
     parser.add_argument("--anchor-json", default="", help="Optional aggregate anchor JSON file.")
     parser.add_argument("--live-smoke-json", default="", help="Optional aggregate LIVE_SMOKE JSON file.")
+    parser.add_argument("--live-smoke-run-jsonl", default="", help="Optional authoritative LIVE_SMOKE run JSONL.")
     parser.add_argument("--out", default="", help="Optional path for public-safe JSON output.")
     args = parser.parse_args()
 
@@ -240,6 +307,12 @@ def main() -> int:
         payload["live_smoke"] = _merge_live_smoke_counts(
             payload["live_smoke"],
             _load_json_file(args.live_smoke_json),
+        )
+    if args.live_smoke_run_jsonl:
+        payload["anchors"], payload["live_smoke"] = _merge_run_records(
+            payload["anchors"],
+            payload["live_smoke"],
+            args.live_smoke_run_jsonl,
         )
     _ensure_zero_anchor_reason(payload)
     if args.out:

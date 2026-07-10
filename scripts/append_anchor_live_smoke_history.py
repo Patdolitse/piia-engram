@@ -50,6 +50,7 @@ ANCHOR_KEYS = (
     "demoted_to_staging",
 )
 LIVE_KEYS = ("runs", "passed", "failed")
+LIVE_STATUS_KEYS = ("missing", "failed", "parse_failed", "stable", "downgrade")
 
 
 def _now_utc_text() -> str:
@@ -118,6 +119,16 @@ def _failure_classes(payload: dict[str, Any]) -> dict[str, int]:
     return clean
 
 
+def _status_counts(payload: dict[str, Any]) -> dict[str, int]:
+    live_smoke = payload.get("live_smoke") if isinstance(payload.get("live_smoke"), dict) else {}
+    statuses = live_smoke.get("status_counts") if isinstance(live_smoke.get("status_counts"), dict) else {}
+    clean: dict[str, int] = {}
+    for key, value in statuses.items():
+        if key in LIVE_STATUS_KEYS:
+            clean[key] = clean.get(key, 0) + _non_negative_int(value)
+    return clean
+
+
 def normalize_entry(payload: dict[str, Any], collected_at: str) -> dict[str, Any]:
     if contains_private_content(payload):
         raise ValueError("private-looking content detected")
@@ -128,6 +139,7 @@ def normalize_entry(payload: dict[str, Any], collected_at: str) -> dict[str, Any
     anchors = _counts(payload, "anchors", ANCHOR_KEYS)
     live_smoke: dict[str, Any] = _counts(payload, "live_smoke", LIVE_KEYS)
     live_smoke["failure_classes"] = _failure_classes(payload)
+    live_smoke["status_counts"] = _status_counts(payload)
     entry: dict[str, Any] = {
         "schema": ENTRY_SCHEMA,
         "collected_at": collected_at,
@@ -167,6 +179,7 @@ def _sum_entries(entries: list[dict[str, Any]], *, days: int, as_of: datetime) -
     anchors = {key: 0 for key in ANCHOR_KEYS}
     live_smoke: dict[str, Any] = {key: 0 for key in LIVE_KEYS}
     live_smoke["failure_classes"] = {}
+    live_smoke["status_counts"] = {}
     for entry in selected:
         entry_anchors = entry.get("anchors") if isinstance(entry.get("anchors"), dict) else {}
         for key in ANCHOR_KEYS:
@@ -180,6 +193,13 @@ def _sum_entries(entries: list[dict[str, Any]], *, days: int, as_of: datetime) -
                 continue
             live_smoke["failure_classes"][label] = (
                 live_smoke["failure_classes"].get(label, 0) + _non_negative_int(value)
+            )
+        statuses = entry_live.get("status_counts") if isinstance(entry_live.get("status_counts"), dict) else {}
+        for label, value in statuses.items():
+            if label not in LIVE_STATUS_KEYS:
+                continue
+            live_smoke["status_counts"][label] = (
+                live_smoke["status_counts"].get(label, 0) + _non_negative_int(value)
             )
 
     notes = [

@@ -85,17 +85,21 @@ No public forum reply is sent by these commands. The owner must read `anchor-liv
 Use this after daily development closeout or before preparing a new forum draft:
 
 ```powershell
+python scripts/run_anchor_live_smoke.py --history-dir .engram-local-evidence/anchor-live-smoke-history
 python scripts/append_anchor_live_smoke_history.py --live --allow-live
 python scripts/build_anchor_forum_evidence_packet.py --history-summary .engram-local-evidence/anchor-live-smoke-history/latest.json --history-window-days 7 --out-dir .engram-local-evidence/weekend-packet-history-7d --label history-7d-review
 ```
 
 Expected local history files:
 
+- `.engram-local-evidence/anchor-live-smoke-history/anchor-live-smoke-runs.jsonl`
 - `.engram-local-evidence/anchor-live-smoke-history/anchor-live-smoke-history.jsonl`
 - `.engram-local-evidence/anchor-live-smoke-history/latest.json`
 - `.engram-local-evidence/anchor-live-smoke-history/summary.md`
 
-The history appends one aggregate JSONL entry per run. It does not install a Windows scheduled task and does not post, push, tag, release, or publish anything.
+The run JSONL is the authoritative record. It distinguishes `stable`, `downgrade`, `failed`, `parse_failed`, and `missing`; failed or parse-failed runs must not be counted as valid/stable anchor samples. Markdown is only a derived human view. Compatibility appends to old Markdown logs must preserve existing rows, including historical `parse-failed` rows.
+
+The aggregate history appends one public-safe JSONL entry per run. It does not install a Windows scheduled task and does not post, push, tag, release, or publish anything. If installing a local scheduled task, use a durable local Python/runtime and copy the runner into a durable install directory; do not point the task at a temporary worktree or runtime path.
 
 If a live run reports `0` anchor checks, keep that as `0` and explain that the current live store has no structured anchor records. Do not infer anchor checks from daily logs, lessons, free-text notes, transcripts, or other narrative records.
 
