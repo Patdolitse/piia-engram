@@ -60,6 +60,26 @@ def _records(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _run_record(**overrides: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "schema": "anchor_live_smoke_run_record.v1",
+        "run_id": "stable",
+        "timestamp": "2026-07-10T02:00:00Z",
+        "runner_status": "stable",
+        "checked": 3,
+        "valid": 3,
+        "invalid": 0,
+        "unknown": 0,
+        "superseded": 0,
+        "demoted_to_staging": 0,
+        "subprocess_exit": 0,
+        "error_code": None,
+        "evidence_ref": [],
+    }
+    record.update(overrides)
+    return record
+
+
 def _assert_no_unsafe_fragments(text: str, fragments: list[str]) -> None:
     for fragment in fragments:
         if fragment in text:
@@ -327,6 +347,8 @@ def test_jsonl_append_is_locked_and_line_delimited_under_threads(tmp_path: Path)
                 "valid": index,
                 "invalid": 0,
                 "unknown": 0,
+                "superseded": 0,
+                "demoted_to_staging": 0,
                 "subprocess_exit": 0,
                 "error_code": None,
                 "evidence_ref": [],
@@ -391,32 +413,17 @@ def test_legacy_markdown_log_is_append_only_and_preserves_old_parse_failed_row(t
 def test_collector_excludes_failed_run_from_anchor_sample_count(tmp_path: Path) -> None:
     runs = tmp_path / "runs.jsonl"
     records = [
-        {
-            "schema": "anchor_live_smoke_run_record.v1",
-            "run_id": "stable",
-            "timestamp": "2026-07-10T02:00:00Z",
-            "runner_status": "stable",
-            "checked": 3,
-            "valid": 3,
-            "invalid": 0,
-            "unknown": 0,
-            "subprocess_exit": 0,
-            "error_code": None,
-            "evidence_ref": [],
-        },
-        {
-            "schema": "anchor_live_smoke_run_record.v1",
-            "run_id": "parse",
-            "timestamp": "2026-07-10T02:01:00Z",
-            "runner_status": "parse_failed",
-            "checked": 99,
-            "valid": 99,
-            "invalid": 0,
-            "unknown": 0,
-            "subprocess_exit": 0,
-            "error_code": "parse_failure",
-            "evidence_ref": [{"kind": "local_redacted_artifact", "id": "parse.stdout.txt"}],
-        },
+        _run_record(),
+        _run_record(
+            run_id="parse",
+            timestamp="2026-07-10T02:01:00Z",
+            runner_status="parse_failed",
+            checked=99,
+            valid=99,
+            subprocess_exit=0,
+            error_code="parse_failure",
+            evidence_ref=[{"kind": "local_redacted_artifact", "id": "parse.stdout.txt"}],
+        ),
     ]
     runs.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
     zero_anchor = tmp_path / "zero-anchor.json"
@@ -485,19 +492,12 @@ def test_collector_rejects_semantically_corrupt_stable_record(tmp_path: Path) ->
     runs = tmp_path / "runs.jsonl"
     runs.write_text(
         json.dumps(
-            {
-                "schema": "anchor_live_smoke_run_record.v1",
-                "run_id": "bad-stable",
-                "timestamp": "2026-07-10T02:00:00Z",
-                "runner_status": "stable",
-                "checked": "15",
-                "valid": "15",
-                "invalid": 0,
-                "unknown": 0,
-                "subprocess_exit": 0,
-                "error_code": "parse_failure",
-                "evidence_ref": [],
-            }
+            _run_record(
+                run_id="bad-stable",
+                checked="15",
+                valid="15",
+                error_code="parse_failure",
+            )
         )
         + "\n",
         encoding="utf-8",
@@ -519,6 +519,165 @@ def test_collector_rejects_semantically_corrupt_stable_record(tmp_path: Path) ->
     assert payload["live_smoke"]["failed"] == 1
     assert payload["live_smoke"]["status_counts"] == {"stable": 3, "parse_failed": 1}
     assert payload["live_smoke"]["failure_classes"] == {"invalid_run_record": 1}
+
+
+def test_collector_rejects_missing_required_stable_record(tmp_path: Path) -> None:
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text(
+        json.dumps(
+            {
+                "schema": "anchor_live_smoke_run_record.v1",
+                "runner_status": "stable",
+                "subprocess_exit": 0,
+                "error_code": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(COLLECTOR), "--json", "--synthetic", "--live-smoke-run-jsonl", str(runs)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 0
+    assert payload["live_smoke"]["passed"] == 3
+    assert payload["live_smoke"]["failed"] == 1
+    assert payload["live_smoke"]["status_counts"] == {"stable": 3, "parse_failed": 1}
+    assert payload["live_smoke"]["failure_classes"] == {"invalid_run_record": 1}
+
+
+def test_collector_rejects_bool_and_float_subprocess_exit(tmp_path: Path) -> None:
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text(
+        json.dumps(_run_record(run_id="bool-exit", subprocess_exit=False))
+        + "\n"
+        + json.dumps(_run_record(run_id="float-exit", subprocess_exit=0.0))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(COLLECTOR), "--json", "--synthetic", "--live-smoke-run-jsonl", str(runs)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 0
+    assert payload["live_smoke"]["passed"] == 3
+    assert payload["live_smoke"]["failed"] == 2
+    assert payload["live_smoke"]["status_counts"] == {"stable": 3, "failed": 2}
+
+
+def test_collector_rejects_parse_failed_without_matching_error_code(tmp_path: Path) -> None:
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text(
+        json.dumps(_run_record(run_id="parse-missing", runner_status="parse_failed", error_code=None))
+        + "\n"
+        + json.dumps(_run_record(run_id="parse-wrong", runner_status="parse_failed", error_code="timeout"))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(COLLECTOR), "--json", "--synthetic", "--live-smoke-run-jsonl", str(runs)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 0
+    assert payload["live_smoke"]["passed"] == 3
+    assert payload["live_smoke"]["failed"] == 2
+    assert payload["live_smoke"]["status_counts"] == {"stable": 3, "failed": 2}
+    assert payload["live_smoke"]["failure_classes"] == {"invalid_run_record": 2}
+
+
+def test_collector_validates_safe_evidence_refs(tmp_path: Path) -> None:
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text(
+        json.dumps(
+            _run_record(
+                run_id="safe-parse",
+                runner_status="parse_failed",
+                error_code="parse_failure",
+                evidence_ref=[{"kind": "local_redacted_artifact", "id": "safe.stdout.txt"}],
+            )
+        )
+        + "\n"
+        + json.dumps(
+            _run_record(
+                run_id="unsafe-ref",
+                runner_status="parse_failed",
+                error_code="parse_failure",
+                evidence_ref=[{"kind": "local_redacted_artifact", "id": "../escape.txt"}],
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(COLLECTOR), "--json", "--synthetic", "--live-smoke-run-jsonl", str(runs)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 0
+    assert payload["live_smoke"]["failed"] == 2
+    assert payload["live_smoke"]["status_counts"] == {"stable": 3, "parse_failed": 2}
+    assert payload["live_smoke"]["failure_classes"] == {
+        "parse_failure": 1,
+        "invalid_run_record": 1,
+    }
+
+
+def test_demotion_only_downgrade_is_preserved_and_collected(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _python_json(
+            {
+                "checked": 3,
+                "valid": 3,
+                "invalid": 0,
+                "unknown": 0,
+                "superseded": 0,
+                "demoted_to_staging": 1,
+            }
+        ),
+        run_id="demotion",
+    )
+    record = json.loads(result.stdout)
+    runs = tmp_path / "runs.jsonl"
+
+    assert result.returncode == 0
+    assert record["runner_status"] == "downgrade"
+    assert record["demoted_to_staging"] == 1
+
+    collector = subprocess.run(
+        [sys.executable, str(COLLECTOR), "--json", "--synthetic", "--live-smoke-run-jsonl", str(runs)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(collector.stdout)
+
+    assert collector.returncode == 0
+    assert payload["anchors"]["checked"] == 8
+    assert payload["anchors"]["valid"] == 6
+    assert payload["anchors"]["invalid"] == 1
+    assert payload["anchors"]["demoted_to_staging"] == 2
+    assert payload["live_smoke"]["passed"] == 4
+    assert payload["live_smoke"]["status_counts"] == {"stable": 3, "downgrade": 1}
 
 
 def test_collector_counts_malformed_jsonl_as_failed_run_with_consistent_totals(tmp_path: Path) -> None:

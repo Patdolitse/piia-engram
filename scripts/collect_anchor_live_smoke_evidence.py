@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import date
@@ -33,6 +34,22 @@ ANCHOR_KEYS = (
 )
 LIVE_SMOKE_STATUS_KEYS = {"missing", "failed", "parse_failed", "stable", "downgrade"}
 RUN_RECORD_SCHEMA = "anchor_live_smoke_run_record.v1"
+RUN_RECORD_REQUIRED_KEYS = {
+    "schema",
+    "run_id",
+    "timestamp",
+    "runner_status",
+    "checked",
+    "valid",
+    "invalid",
+    "unknown",
+    "subprocess_exit",
+    "error_code",
+    "evidence_ref",
+}
+SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+SAFE_ARTIFACT_ID = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+UTC_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 def _empty_anchor_counts() -> dict[str, int]:
@@ -76,6 +93,38 @@ def _strict_non_negative_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
     return value
+
+
+def _strict_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _safe_record_id(value: Any) -> bool:
+    return isinstance(value, str) and SAFE_RUN_ID.fullmatch(value) is not None
+
+
+def _safe_timestamp(value: Any) -> bool:
+    return isinstance(value, str) and UTC_TIMESTAMP.fullmatch(value) is not None
+
+
+def _safe_evidence_ref(value: Any) -> bool:
+    if not isinstance(value, list):
+        return False
+    for item in value:
+        if not isinstance(item, dict):
+            return False
+        if set(item) != {"kind", "id"}:
+            return False
+        if item.get("kind") != "local_redacted_artifact":
+            return False
+        ref_id = item.get("id")
+        if not isinstance(ref_id, str) or SAFE_ARTIFACT_ID.fullmatch(ref_id) is None:
+            return False
+        if ".." in ref_id or "/" in ref_id or "\\" in ref_id or ":" in ref_id:
+            return False
+    return True
 
 
 def _safe_failure_class(label: str) -> str:
@@ -124,6 +173,14 @@ def _merge_live_smoke_counts(base: dict[str, Any], loaded: dict[str, Any]) -> di
 def _valid_run_record(record: dict[str, Any]) -> tuple[str, str | None]:
     if record.get("schema") != RUN_RECORD_SCHEMA:
         return "parse_failed", "invalid_run_record"
+    if not RUN_RECORD_REQUIRED_KEYS <= set(record):
+        return "parse_failed", "invalid_run_record"
+    if not _safe_record_id(record.get("run_id")):
+        return "parse_failed", "invalid_run_record"
+    if not _safe_timestamp(record.get("timestamp")):
+        return "parse_failed", "invalid_run_record"
+    if not _safe_evidence_ref(record.get("evidence_ref")):
+        return "parse_failed", "invalid_run_record"
     status = str(record.get("runner_status") or "").strip().lower()
     if status not in LIVE_SMOKE_STATUS_KEYS - {"missing"}:
         return "parse_failed", "invalid_run_record"
@@ -137,27 +194,29 @@ def _valid_run_record(record: dict[str, Any]) -> tuple[str, str | None]:
     if counts["valid"] + counts["invalid"] + counts["unknown"] > counts["checked"]:
         return "parse_failed", "invalid_run_record"
 
-    subprocess_exit = record.get("subprocess_exit")
+    subprocess_exit = _strict_int(record.get("subprocess_exit"))
     error_code = record.get("error_code")
     has_error = error_code not in (None, "")
     if status in {"stable", "downgrade"}:
         if subprocess_exit != 0 or has_error:
             return "failed", "invalid_run_record"
-        if status == "stable" and counts["invalid"] != 0:
+        if status == "stable" and (counts["invalid"] != 0 or counts["demoted_to_staging"] != 0):
             return "failed", "invalid_run_record"
-        if status == "downgrade" and counts["invalid"] == 0:
+        if status == "downgrade" and counts["invalid"] == 0 and counts["demoted_to_staging"] == 0:
             return "failed", "invalid_run_record"
         return status, None
 
     if status == "parse_failed":
-        if has_error and error_code != "parse_failure":
+        if subprocess_exit is None:
+            return "parse_failed", "invalid_run_record"
+        if error_code != "parse_failure":
             return "failed", "invalid_run_record"
         return "parse_failed", "parse_failure"
 
     if status == "failed":
         if not has_error:
             return "failed", "invalid_run_record"
-        if subprocess_exit == 0:
+        if subprocess_exit is None or subprocess_exit == 0:
             return "failed", "invalid_run_record"
         return "failed", str(error_code)
 

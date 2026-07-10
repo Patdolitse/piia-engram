@@ -141,6 +141,8 @@ def _base_record(*, run_id: str, timestamp: str) -> dict[str, Any]:
         "valid": 0,
         "invalid": 0,
         "unknown": 0,
+        "superseded": 0,
+        "demoted_to_staging": 0,
         "subprocess_exit": None,
         "error_code": None,
         "evidence_ref": [],
@@ -165,6 +167,8 @@ def _record_from_anchor_payload(
             "valid": _safe_int(payload.get("valid")),
             "invalid": invalid,
             "unknown": _safe_int(payload.get("unknown")),
+            "superseded": _safe_int(payload.get("superseded")),
+            "demoted_to_staging": demoted,
             "subprocess_exit": subprocess_exit,
             "error_code": None,
         }
