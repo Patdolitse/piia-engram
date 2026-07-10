@@ -78,6 +78,10 @@ class TestChecklist:
         assert steps["claim_drift"]["phase"] == mod.LOCAL
         assert "check_public_claim_drift.py" in steps["claim_drift"]["command"]
 
+        assert steps["product_boundary"]["phase"] == mod.LOCAL
+        assert "check_product_boundary.py" in steps["product_boundary"]["command"]
+        assert steps["product_boundary"]["auth_required"] is False
+
         assert steps["release_surface"]["phase"] == mod.LOCAL
         assert "check_public_release_surface.py" in steps["release_surface"]["command"]
 

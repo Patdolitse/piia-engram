@@ -14,6 +14,73 @@
     "telemetry_default": "off",
     "telemetry_remote_default": "off"
   },
+  "product_boundary_contract": {
+    "schema_version": 1,
+    "status": "canonical_public_product_boundary",
+    "source_doc": "docs/product-boundary.md",
+    "public_core": [
+      "identity",
+      "knowledge",
+      "context",
+      "storage",
+      "import_export"
+    ],
+    "public_advanced_adapters": [
+      "governance",
+      "recall",
+      "reader",
+      "dock_ui",
+      "tool_registry",
+      "client_validation",
+      "reports",
+      "telemetry"
+    ],
+    "optional_extensions": {
+      "remote": "Optional ASGI/remote serving dependency group.",
+      "ui": "Optional loopback Dock UI dependency group.",
+      "secure": "Optional encryption dependency group.",
+      "vector": "Optional vector-search dependency group.",
+      "reader": "Optional self-contained web-reader dependency group.",
+      "all": "Convenience group for all public optional extensions."
+    },
+    "public_package_roots": [
+      "piia_engram",
+      "engram_core"
+    ],
+    "public_export_surfaces": [
+      "identity_card",
+      "knowledge_report",
+      "agents_md"
+    ],
+    "public_surface_files": [
+      "README.md",
+      "README.zh-CN.md",
+      "docs/architecture.md",
+      "docs/mcp-tool-surface.json",
+      "docs/product-boundary.md",
+      "docs/tool-surface-analysis.md",
+      "glama.yaml",
+      "release-evidence/",
+      ".publishallow"
+    ],
+    "forbidden_package_path_markers": [
+      "private",
+      "internal",
+      "experimental",
+      "research"
+    ],
+    "forbidden_public_surface_terms": [
+      "internal/dogfood",
+      "dogfood",
+      "private research",
+      "experimental branch"
+    ],
+    "non_claims": [
+      "Private or maintainer-local implementation details are not public product capabilities.",
+      "Optional extension dependencies do not imply remote service availability.",
+      "Owner-gated export/admin surfaces are public capabilities with governance, not private internals."
+    ]
+  },
   "last_verified_date": "2026-07-06",
   "sources": {
     "package_name": "pyproject.toml [project].name",

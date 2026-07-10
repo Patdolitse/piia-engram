@@ -286,6 +286,7 @@ piia-engram treats trust claims as release artifacts, not marketing copy:
 |---|---|---|---|
 | Memory retrieval stays measurable | [`docs/trust-evidence.md`](docs/trust-evidence.md), [`docs/benchmarks/memory-eval-suite-v1.md`](docs/benchmarks/memory-eval-suite-v1.md), `python scripts/run_memory_evals.py` | Recall/admission fixtures pass deterministic, knowledge-ID-scored checks with no LLM judge | Synthetic regression floor, not a broad live-agent benchmark |
 | Public numbers do not drift silently | `python scripts/check_public_fact_sync.py` and `python scripts/check_public_claim_drift.py` | README / registry / architecture facts match `docs/public-facts.json` | Historical CHANGELOG keeps old release facts |
+| Product boundaries stay explicit | [`docs/product-boundary.md`](docs/product-boundary.md), `python scripts/check_product_boundary.py` | Package modules/imports, public facts/tool surface, public docs, exports, release surface, and allowlist stay inside the public contract | Metadata-only guard, not a review of private repositories or untracked branches |
 | Security and privacy wording stays consistent | `python scripts/check_public_trust_claims.py` | Network, telemetry, endpoint, plaintext, and optional-encryption statements stay aligned across public docs | Prose consistency guard, not a third-party security audit |
 | Releases cannot skip evidence | `python scripts/check_release_gate.py` | Each release carries structured evidence that required checks passed | Evidence records are maintainer-internal |
 
@@ -629,7 +630,7 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `start_project` | Start a project with inherited knowledge |
 | `get_permission_profile` | View all callers' trust levels and access boundaries |
 | `manage_caller_trust` | Owner/admin `action`: grant / revoke a caller's trust level |
-| `export_feedback_report` | Internal/dogfood: generate an anonymous beta feedback report |
+| `export_feedback_report` | Maintainer feedback: generate an anonymous aggregate feedback report |
 
 </details>
 

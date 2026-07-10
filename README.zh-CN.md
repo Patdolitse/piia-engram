@@ -597,7 +597,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `start_project` | 新项目启动（继承知识 + 建档） |
 | `get_permission_profile` | 查看所有调用方的信任等级、自动分类规则和已撤销列表 |
 | `manage_caller_trust` | owner/admin 按 `action` 管理调用方信任：grant 授予/修改、revoke 前向撤销 |
-| `export_feedback_report` | 内部/dogfood：导出用户反馈报告（Markdown 格式） |
+| `export_feedback_report` | 维护者反馈：导出匿名聚合反馈报告（Markdown 格式） |
 
 </details>
 

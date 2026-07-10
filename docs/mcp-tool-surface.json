@@ -21,9 +21,9 @@
       "meaning": "general product capabilities for power users, review, merge, import/export, playbooks, and governance"
     },
     {
-      "name": "owner_internal_dogfood",
+      "name": "owner_local_maintenance",
       "loaded_by": "ENGRAM_TOOLS=all plus owner/admin/export gates where applicable",
-      "meaning": "local integrations, owner exports, legacy maintenance, full-library import/export, or dogfood surfaces"
+      "meaning": "local integrations, owner exports, legacy maintenance, full-library import/export, or maintainer feedback surfaces"
     },
     {
       "name": "preview_proposal_only",
@@ -35,7 +35,7 @@
     "get_identity_card": "core but owner-gated export surface",
     "preview_context_governance": "advanced owner-gated preview; proposal-only; not stable; not split into four public tools",
     "local_tools_registry": "local path resolver; do not persist absolute paths into playbooks",
-    "legacy_playbook_migration": "maintenance/dogfood surface, not first-run product story"
+    "legacy_playbook_migration": "owner-local maintenance surface, not first-run product story"
   },
   "operator_notes": {
     "core_is_not_read_only": "Core means high-frequency and context-budget friendly. Core includes local write tools and the owner-gated get_identity_card export surface.",

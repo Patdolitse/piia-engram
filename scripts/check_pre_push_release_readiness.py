@@ -55,6 +55,7 @@ CI_TEST_JOB_CHECKS = (
 # parity mirror.
 EXTRA_CHECKS = (
     ("count_mcp_tools_smoke", [sys.executable, "scripts/count_mcp_tools.py", "--json"]),
+    ("product_boundary", [sys.executable, "scripts/check_product_boundary.py"]),
     ("publish_allowlist", [sys.executable, "scripts/check_publish_allowlist.py"]),
     ("public_release_surface", [sys.executable, "scripts/check_public_release_surface.py"]),
 )

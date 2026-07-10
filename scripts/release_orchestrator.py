@@ -104,6 +104,8 @@ def _all_steps() -> list[dict]:
               timeout_hint="~2-3 min"),
         _step("fact_sync", LOCAL, "Public-fact drift guard",
               "python scripts/check_public_fact_sync.py"),
+        _step("product_boundary", LOCAL, "Product boundary contract guard",
+              "python scripts/check_product_boundary.py"),
         _step("claim_drift", LOCAL, "Public claim drift sweep",
               "python scripts/check_public_claim_drift.py"),
         _step("release_surface", LOCAL, "Public release surface guard",

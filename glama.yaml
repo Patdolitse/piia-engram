@@ -82,7 +82,7 @@ spec:
     - name: explore_knowledge
       description: "Explore related, similar, or merge-candidate knowledge items"
     - name: export_feedback_report
-      description: "Internal/dogfood anonymous usage metrics report"
+      description: "Maintainer feedback anonymous usage metrics report"
 
 documentation:
   quickStart: |

@@ -39,6 +39,10 @@ def test_default_mode_does_not_run_full_pytest(monkeypatch, tmp_path):
         any(str(part).endswith("check_public_release_surface.py") for part in cmd)
         for cmd in calls
     )
+    assert any(
+        any(str(part).endswith("check_product_boundary.py") for part in cmd)
+        for cmd in calls
+    )
 
 
 def test_full_tests_mode_adds_pytest(monkeypatch, tmp_path):

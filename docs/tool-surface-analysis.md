@@ -31,8 +31,8 @@ The core tier means "common in daily sessions", not "safe/read-only". Some core 
 | Posture | Count | Meaning |
 |---|---:|---|
 | General publishable | 52 | Broad Engram product capability. Many belong in advanced/admin docs rather than first-run docs. |
-| Optional local / dogfood in current form | 5 | Useful, but depends on local paths, an optional local Reader, or beta-maintainer workflow. |
-| Internal maintenance / legacy | 0 (moved to CLI) | Legacy Playbook scope migration is no longer an MCP surface; it lives in the owner-only local CLI. |
+| Optional local / maintainer feedback in current form | 5 | Useful, but depends on local paths, an optional local Reader, or maintainer feedback workflow. |
+| Owner-local maintenance / legacy | 0 (moved to CLI) | Legacy Playbook scope migration is no longer an MCP surface; it lives in the owner-only local CLI. |
 
 ## Tier-1 core tools
 
@@ -130,7 +130,7 @@ These are publishable as general Engram capabilities, assuming their existing go
 - `doctor`
 - `start_project`
 
-## Optional local / dogfood tools
+## Optional local / maintainer feedback tools
 
 These can be productized, but should be framed as optional local integrations rather than universal cloud features.
 
@@ -138,9 +138,9 @@ These can be productized, but should be framed as optional local integrations ra
 - `find_tool` - local environment registry read.
 - `list_tools` - local environment registry read.
 - `read_web_content` - optional local Reader integration; fetches only a user-provided URL.
-- `export_feedback_report` - internal/dogfood beta-maintainer report.
+- `export_feedback_report` - maintainer feedback report with anonymous aggregate metrics.
 
-## Internal maintenance / legacy tools
+## Owner-local maintenance / legacy tools
 
 Legacy Playbook scope migration (classify, apply, rollback, review queue, resolve) is no longer exposed as MCP tools. It moved to the owner-only local CLI in v4.0: `engram playbook scope classify|apply|rollback|queue|resolve` (previews by default; writes require `--apply --yes`). The CLI process is owner-by-construction, which is a stronger boundary than runtime caller classification, and it keeps maintenance churn out of the AI-facing tool list. The deprecated `get_work_style` compatibility read was absorbed into `get_identity_facets(facet="work_style")`.
 
@@ -152,6 +152,6 @@ Recommended presentation:
 
 - **Core**: the 17 default tools for first-run and daily use.
 - **Advanced**: repo onboarding, knowledge curation, Playbook management, governance, import/export, and optional local integrations.
-- **Owner/internal**: legacy Playbook scope migration (owner CLI), beta-maintainer reports, and high-blast-radius owner/admin operations.
+- **Owner-local maintenance**: legacy Playbook scope migration (owner CLI), maintainer feedback reports, and high-blast-radius owner/admin operations.
 
 Public docs should describe export/import/file-writing/grant-mutating tools as owner/admin/export surfaces (Owner/export and Owner/admin labels in the schema docstrings) even when the tool is broadly useful.

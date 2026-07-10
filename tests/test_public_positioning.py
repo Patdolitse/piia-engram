@@ -295,8 +295,8 @@ def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims(
     assert "40 advanced tools" in doc
     assert "Core is not read-only" in doc
     assert "core but owner-gated" in doc
-    assert "Optional local / dogfood tools" in doc
-    assert "Internal maintenance / legacy tools" in doc
+    assert "Optional local / maintainer feedback tools" in doc
+    assert "Owner-local maintenance / legacy tools" in doc
     assert "Release posture by bucket" in doc
     assert "Consolidation status (v4.0)" in doc
     assert "analysis only" in doc.lower()
@@ -319,7 +319,7 @@ def test_public_tool_surface_docs_label_owner_local_and_legacy_tools():
         "Owner/admin `action`: grant / revoke",
         "moved out of the MCP surface into the owner-only local CLI",
         "Advanced owner-gated preview: build safe-context",
-        "Internal/dogfood",
+        "Maintainer feedback",
     ]:
         assert phrase in readme
 
@@ -336,8 +336,8 @@ def test_public_tool_surface_docs_label_owner_local_and_legacy_tools():
     for phrase in [
         "Core is not read-only",
         "Owner/export",
-        "Optional local / dogfood tools",
-        "Internal maintenance / legacy tools",
+        "Optional local / maintainer feedback tools",
+        "Owner-local maintenance / legacy tools",
         "preview_context_governance",
     ]:
         assert phrase in analysis
