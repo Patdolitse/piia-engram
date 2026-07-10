@@ -17,6 +17,7 @@ from pathlib import Path
 
 DEFAULT_FACTS = "docs/public-facts.json"
 TOOL_SURFACE = "docs/mcp-tool-surface.json"
+CANONICAL_STATUS = "canonical_public_product_boundary"
 
 _PACKAGE_IMPORT_ROOTS = {"piia_engram", "engram_core"}
 _TEXT_SUFFIXES = {".json", ".md", ".py", ".toml", ".yaml", ".yml"}
@@ -26,16 +27,28 @@ _PRIVATE_PATH_RE = re.compile(
 
 
 class SetupError(Exception):
-    """Boundary contract or repository layout problem."""
+    """Boundary contract or repository layout problem.
+
+    The message is deliberately stable and path-free because setup failures can
+    be triggered with caller-controlled paths.
+    """
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
 
 
 def _read_json(path: Path) -> dict:
     if not path.is_file():
-        raise SetupError(f"missing JSON file: {path.as_posix()}")
+        raise SetupError("json_missing", "configured JSON input is missing")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise SetupError(f"invalid JSON: {path.as_posix()}") from exc
+        raise SetupError("json_invalid", "configured JSON input is invalid") from exc
+    if not isinstance(data, dict):
+        raise SetupError("json_not_object", "configured JSON input must be an object")
+    return data
 
 
 def _problem(code: str, rel: str, detail: str, *, line: int | None = None) -> dict:
@@ -49,7 +62,10 @@ def load_contract(root: Path, facts_path: str = DEFAULT_FACTS) -> dict:
     facts = _read_json(root / facts_path)
     contract = facts.get("product_boundary_contract")
     if not isinstance(contract, dict):
-        raise SetupError("docs/public-facts.json is missing product_boundary_contract")
+        raise SetupError(
+            "contract_missing",
+            "public facts manifest is missing product_boundary_contract",
+        )
     return contract
 
 
@@ -76,10 +92,28 @@ def validate_contract(contract: dict) -> list[dict]:
         return problems
     if contract["schema_version"] != 1:
         problems.append(_problem("contract_schema_version", DEFAULT_FACTS, "expected schema_version=1"))
-    for key in ("public_core", "public_advanced_adapters", "public_package_roots", "public_export_surfaces"):
-        if not isinstance(contract.get(key), list) or not contract[key]:
+    if contract["status"] != CANONICAL_STATUS:
+        problems.append(_problem("contract_status", DEFAULT_FACTS, "status must be canonical_public_product_boundary"))
+    list_keys = (
+        "public_core",
+        "public_advanced_adapters",
+        "public_package_roots",
+        "public_export_surfaces",
+        "public_surface_files",
+        "forbidden_package_path_markers",
+        "forbidden_public_surface_terms",
+        "non_claims",
+    )
+    for key in list_keys:
+        value = contract.get(key)
+        if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
             problems.append(_problem("contract_bad_list", DEFAULT_FACTS, key))
-    if not isinstance(contract.get("optional_extensions"), dict) or not contract["optional_extensions"]:
+    extensions = contract.get("optional_extensions")
+    if (
+        not isinstance(extensions, dict)
+        or not extensions
+        or not all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in extensions.items())
+    ):
         problems.append(_problem("contract_bad_extensions", DEFAULT_FACTS, "optional_extensions must be a non-empty object"))
     return problems
 
@@ -112,6 +146,17 @@ def _module_name_from_path(rel: str) -> str:
     if stem.endswith("/__init__"):
         stem = stem[: -len("/__init__")]
     return stem.replace("/", ".")
+
+
+def _import_names(node: ast.Import | ast.ImportFrom) -> list[str]:
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    names: list[str] = []
+    if node.module:
+        names.append("." * node.level + node.module if node.level else node.module)
+    for alias in node.names:
+        names.append("." * node.level + alias.name if node.level else alias.name)
+    return names
 
 
 def check_package_surface(
@@ -159,17 +204,19 @@ def check_package_surface(
         except SyntaxError:
             continue
         for node in ast.walk(tree):
-            module = None
-            if isinstance(node, ast.ImportFrom):
-                module = node.module
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    name = alias.name
-                    if name.split(".", 1)[0] in roots and _contains_marker(name, markers):
-                        problems.append(_problem("package_import_private_marker", rel, "package import uses a private/internal marker", line=node.lineno))
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
-            if module and module.split(".", 1)[0] in roots and _contains_marker(module, markers):
-                problems.append(_problem("package_import_private_marker", rel, "package import uses a private/internal marker", line=node.lineno))
+            for name in _import_names(node):
+                if _contains_marker(name, markers):
+                    problems.append(
+                        _problem(
+                            "package_import_private_marker",
+                            rel,
+                            "package import uses a private/internal marker",
+                            line=node.lineno,
+                        )
+                    )
+                    break
     return problems
 
 
@@ -303,7 +350,7 @@ def run(root: str | Path = ".", *, facts_path: str = DEFAULT_FACTS) -> tuple[boo
         problems.extend(check_public_surfaces(root_path, contract))
     report = {
         "ok": not problems,
-        "contract": facts_path,
+        "contract": "configured_public_facts",
         "source_doc": contract.get("source_doc"),
         "audit": audit_development_surface(root_path),
         "problems": problems,
@@ -322,7 +369,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ok, report = run(args.root, facts_path=args.facts)
     except SetupError as exc:
-        report = {"ok": False, "setup_error": str(exc)}
+        report = {
+            "ok": False,
+            "setup_error": {"code": exc.code, "detail": exc.detail},
+        }
         ok = False
 
     if args.audit and "audit" in report and not args.json:
@@ -341,7 +391,8 @@ def main(argv: list[str] | None = None) -> int:
         loc = item["file"] + (f":{item['line']}" if "line" in item else "")
         print(f"  - {loc} {item['code']}: {item['detail']}")
     if "setup_error" in report:
-        print(f"  - setup_error: {report['setup_error']}")
+        err = report["setup_error"]
+        print(f"  - setup_error {err['code']}: {err['detail']}")
     return 1
 
 
