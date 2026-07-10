@@ -6,6 +6,27 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.14.0] - 2026-07-10
+
+### Added
+- Canonical product-boundary contract and guard: public package roots, optional extensions, tool surface, export surfaces, public docs, release evidence, and publish allowlist now share a machine-readable boundary in `docs/public-facts.json`.
+- LIVE_SMOKE reliability and evidence integrity tooling: run records now preserve failure classes, bounded metadata, validated aggregate evidence, and append-only local history without exposing raw memory bodies, local paths, credentials, or transcripts.
+- Longitudinal real-use evidence evaluator: local collection and report tooling can track first-value evidence over time, while explicitly distinguishing real-use accumulation from synthetic or operational checks.
+
+### Changed
+- `search_knowledge` now routes through a thin application service shared by CLI and MCP adapters, keeping behavior parity while preserving existing protocol boundaries.
+- Provenance and trust semantics are consolidated into canonical helpers for source agent, confirmation source, trust projection, freshness, and recall-visible provenance; unsafe labels and credential-shaped identifiers fail closed.
+- Public facts and test collection now use a deterministic, isolated environment profile, keeping the frozen MCP surface at 57 total tools: 17 core and 40 advanced.
+
+### Fixed
+- Product-boundary and release-surface guards now redact private-looking paths and unsafe public terms in diagnostics instead of echoing matched content.
+- Public fact sync now seals host-environment drift from `PYTHONPATH`, pytest plugin autoload, and ambient Engram stores during collection.
+- Synthetic nested memory-eval validation was tightened so aggregate verdicts cannot overstate readiness.
+
+### Documentation
+- Public docs keep remote telemetry and feedback as separate explicit opt-ins, still off by default.
+- First-value and longitudinal evidence wording stays conservative: local first-value collection begins accumulating only after the client is restarted, and synthetic or operational evidence does not verify real-use longitudinal readiness.
+
 ## [4.13.0] - 2026-07-06
 
 ### Added

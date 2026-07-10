@@ -6,6 +6,27 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.14.0] - 2026-07-10
+
+### 新增
+- Canonical product boundary 契约与守卫：公开包 root、可选扩展、工具面、导出面、公开文档、release evidence 和 publish allowlist 现在共用 `docs/public-facts.json` 中的机器可读边界。
+- LIVE_SMOKE 可靠性与证据完整性工具：run record 现在保留 failure class、有边界的元数据、已校验的聚合证据和 append-only 本地历史，同时不暴露原始记忆正文、本地路径、凭据或 transcript。
+- Longitudinal real-use evidence evaluator：本地采集与报告工具可以随时间跟踪 first-value evidence，并明确区分真实使用积累、synthetic checks 与 operational checks。
+
+### 变更
+- `search_knowledge` 现在通过薄 application service 供 CLI 与 MCP adapter 共用，在保持协议边界的同时维持行为一致性。
+- Provenance 与 trust 语义收敛到 canonical helper：覆盖 source agent、confirmation source、trust projection、freshness 和 recall 可见 provenance；不安全标签和凭据形态 identifier 会 fail closed。
+- Public facts 与测试收集改用确定性、隔离的环境 profile，并继续冻结 MCP 工具面为 57 个：17 个核心、40 个高级。
+
+### 修复
+- Product-boundary 与 release-surface guard 的诊断现在只报告规则码、文件和行号，不回显 private-looking path 或 unsafe public term 的匹配正文。
+- Public fact sync 封住了 `PYTHONPATH`、pytest plugin autoload 和宿主真实 Engram store 对测试收集的环境漂移。
+- Synthetic nested memory-eval validation 已收紧，避免 aggregate verdict 夸大 readiness。
+
+### 文档
+- 公开文档继续保持 remote telemetry 和 feedback 为独立显式 opt-in，默认仍关闭。
+- First-value 与 longitudinal evidence 文案保持克制：local first-value collection 只有在客户端重启后才开始积累；synthetic 或 operational evidence 不能替代 real-use longitudinal readiness 验证。
+
 ## [4.13.0] - 2026-07-06
 
 ### 新增
