@@ -69,6 +69,20 @@ def test_publish_workflow_order_rejects_gate_before_deps(workflow_order):
     assert "before dependency install" in problems[0]
 
 
+def test_publish_workflow_order_requires_pytest_for_public_fact_sync(workflow_order):
+    text = """
+      - name: Install project dependencies for release gates
+        run: pip install -e .
+      - name: Public fact sync gate
+        run: python scripts/check_public_fact_sync.py
+    """
+
+    ok, problems = workflow_order.check_publish_workflow_order(text)
+
+    assert ok is False
+    assert any("requires a dev dependency install with pytest" in problem for problem in problems)
+
+
 def _valid_supply_chain_publish_workflow_text() -> str:
     return """
 permissions:

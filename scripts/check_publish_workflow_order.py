@@ -60,6 +60,10 @@ def _check_dependency_install_order(text: str) -> list[str]:
         pos = text.find(marker)
         if pos >= 0 and pos < first_install:
             problems.append(f"project gate appears before dependency install: {marker}")
+    if "python scripts/check_public_fact_sync.py" in text and not any(
+        marker in text for marker in INSTALL_MARKERS[1:]
+    ):
+        problems.append("public fact sync requires a dev dependency install with pytest")
     return problems
 
 
