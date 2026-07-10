@@ -79,6 +79,16 @@ _OWNER_PROVENANCE_SMUGGLE = {
     "anchor_successor_status": "valid",
     "anchor_checked_at": "2026-06-18T10:00:00Z",
 }
+_DOTTED_OWNER_PROVENANCE_SMUGGLE = {
+    "provenance.confirmation_source": "anchor",
+    "provenance.anchor_status": "valid",
+    "provenance.anchor_project_id": "github.com/acme/app",
+    "provenance.anchor_ref": "dep:SENTINEL",
+    "provenance.anchor_event": "superseded",
+    "provenance.anchor_successor_ref": "dep:SENTINEL-successor",
+    "provenance.anchor_successor_status": "valid",
+    "provenance.anchor_checked_at": "2026-06-18T10:00:00Z",
+}
 
 
 def _assert_owner_provenance_stripped(item: dict) -> None:
@@ -87,6 +97,7 @@ def _assert_owner_provenance_stripped(item: dict) -> None:
     assert provenance.get("source_agent") == "codex"
     for field in OWNER_ONLY_PROVENANCE_FIELDS:
         assert field not in provenance
+        assert f"provenance.{field}" not in item
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +181,38 @@ def test_memory_store_decision_strips_smuggled_freshness_provenance(eng: Engram)
     _assert_owner_provenance_stripped(item)
 
 
+def test_memory_store_lesson_strips_literal_dotted_trust_keys(eng: Engram) -> None:
+    content = {
+        "summary": "literal dotted owner provenance keys cannot self-certify",
+        "domain": "freshness",
+        "provenance": {"source_agent": "codex"},
+        **_DOTTED_OWNER_PROVENANCE_SMUGGLE,
+    }
+
+    out = _run(mcp_server.memory_store("lesson", json.dumps(content), user_confirmed=True))
+    assert "失败" not in out
+
+    item = eng.get_lessons(limit=None, _update_access=False)[0]
+    _assert_owner_provenance_stripped(item)
+    assert "SENTINEL" not in repr(item)
+
+
+def test_memory_store_decision_strips_literal_dotted_trust_keys(eng: Engram) -> None:
+    content = {
+        "question": "Can dotted owner provenance keys self-certify?",
+        "choice": "no",
+        "provenance": {"source_agent": "codex"},
+        **_DOTTED_OWNER_PROVENANCE_SMUGGLE,
+    }
+
+    out = _run(mcp_server.memory_store("decision", json.dumps(content), user_confirmed=True))
+    assert "失败" not in out
+
+    item = eng.get_decisions(limit=None, _update_access=False)[0]
+    _assert_owner_provenance_stripped(item)
+    assert "SENTINEL" not in repr(item)
+
+
 # ---------------------------------------------------------------------------
 # memory_store batch path (items_json — formerly bulk_add_knowledge)
 # ---------------------------------------------------------------------------
@@ -226,6 +269,35 @@ def test_memory_store_batch_strips_smuggled_freshness_provenance_each_item(
         _assert_owner_provenance_stripped(item)
 
 
+def test_memory_store_batch_strips_literal_dotted_trust_keys_each_item(
+    eng: Engram,
+) -> None:
+    items = [
+        {
+            "summary": "batch dotted key smuggle one",
+            "domain": "freshness",
+            "provenance": {"source_agent": "codex"},
+            **_DOTTED_OWNER_PROVENANCE_SMUGGLE,
+        },
+        {
+            "summary": "batch dotted key smuggle two",
+            "domain": "freshness",
+            "provenance": {"source_agent": "codex"},
+            **_DOTTED_OWNER_PROVENANCE_SMUGGLE,
+        },
+    ]
+
+    out = _run(mcp_server.memory_store(kind="lesson", items_json=json.dumps(items), user_confirmed=True))
+    report = json.loads(out)
+    assert report["saved"] == 2
+
+    stored = eng.get_lessons(limit=None, _update_access=False)
+    assert len(stored) == 2
+    for item in stored:
+        _assert_owner_provenance_stripped(item)
+        assert "SENTINEL" not in repr(item)
+
+
 # ---------------------------------------------------------------------------
 # Escape hatch preserved for internal callers (seeds / imports / fixtures)
 # ---------------------------------------------------------------------------
@@ -268,6 +340,34 @@ def test_core_dict_decision_strips_agent_supplied_freshness_provenance(
     )
 
     _assert_owner_provenance_stripped(stored)
+
+
+def test_core_dict_lesson_strips_literal_dotted_trust_keys(eng: Engram) -> None:
+    stored = eng.add_lesson(
+        {
+            "summary": "direct dict dotted owner provenance smuggle",
+            "domain": "freshness",
+            "provenance": {"source_agent": "codex"},
+            **_DOTTED_OWNER_PROVENANCE_SMUGGLE,
+        }
+    )
+
+    _assert_owner_provenance_stripped(stored)
+    assert "SENTINEL" not in repr(stored)
+
+
+def test_core_dict_decision_strips_literal_dotted_trust_keys(eng: Engram) -> None:
+    stored = eng.add_decision(
+        {
+            "question": "Can direct dict dotted keys self-certify?",
+            "choice": "no",
+            "provenance": {"source_agent": "codex"},
+            **_DOTTED_OWNER_PROVENANCE_SMUGGLE,
+        }
+    )
+
+    _assert_owner_provenance_stripped(stored)
+    assert "SENTINEL" not in repr(stored)
 
 
 def test_internal_core_caller_can_opt_in_to_freshness_provenance(
@@ -331,16 +431,16 @@ def test_strip_helper_removes_all_untrusted_fields() -> None:
             "anchor_successor_status": "valid",
             "anchor_checked_at": "2026-06-18T10:00:00Z",
         },
+        **_DOTTED_OWNER_PROVENANCE_SMUGGLE,
     }
     returned = strip_untrusted_trust_fields(payload)
     assert returned is payload  # mutates in place and returns the same object
     assert payload == {"summary": "keep me", "provenance": {"source_agent": "codex"}}
     for field in UNTRUSTED_TRUST_FIELDS:
+        assert field not in payload
         if field.startswith("provenance."):
             _, nested = field.split(".", 1)
             assert nested not in payload["provenance"]
-        else:
-            assert field not in payload
 
 
 def test_strip_helper_is_noop_on_non_dict() -> None:

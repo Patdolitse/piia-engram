@@ -96,6 +96,13 @@ _CREDENTIAL_SHAPE_RE = re.compile(
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
     r")"
 )
+_CREDENTIAL_LABEL_RE = re.compile(
+    r"(?:^|[/._:-])"
+    r"(?:authorization|api[_-]?key|secret[_-]?key|access[_-]?key|token|password"
+    r"|passwd|secret|client[_-]?secret|private[_-]?key|credentials?|bearer)"
+    r"[:=]",
+    re.IGNORECASE,
+)
 
 DEFAULT_FRESHNESS_POLICIES = {
     SOURCE_HUMAN: (FRESH_MAX_DAYS, AGING_MAX_DAYS, DECAY_POLICY_TIME),
@@ -107,7 +114,10 @@ DEFAULT_FRESHNESS_POLICIES = {
 
 
 def _looks_credential_shaped(text: str) -> bool:
-    return bool(_CREDENTIAL_SHAPE_RE.search(text))
+    return bool(
+        _CREDENTIAL_SHAPE_RE.search(text)
+        or _CREDENTIAL_LABEL_RE.search(text)
+    )
 
 
 def _parse_iso(value: Any) -> datetime | None:

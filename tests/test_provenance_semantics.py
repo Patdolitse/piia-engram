@@ -272,6 +272,26 @@ def test_identifier_sanitizer_preserves_existing_legal_producers(value: str) -> 
         ("free_text", "free text SENTINEL"),
         ("api_key_label", "api_key=SENTINEL"),
         ("bearer_label", "Authorization=Bearer_SENTINEL"),
+        ("token_colon", "token:SENTINEL"),
+        ("api_key_colon", "api_key:SENTINEL"),
+        ("password_colon", "password:SENTINEL"),
+        ("passwd_colon", "passwd:SENTINEL"),
+        ("secret_key_colon", "secret_key:SENTINEL"),
+        ("access_key_colon", "access_key:SENTINEL"),
+        ("credential_colon", "credential:SENTINEL"),
+        ("credentials_colon", "credentials:SENTINEL"),
+        ("bearer_colon", "bearer:SENTINEL"),
+        ("authorization_colon", "Authorization:Bearer_SENTINEL"),
+        ("namespaced_token_colon", "org/token:SENTINEL"),
+        ("namespaced_api_key_colon", "org/api_key:SENTINEL"),
+        ("namespaced_secret_key_colon", "org/secret_key:SENTINEL"),
+        ("namespaced_access_key_colon", "org/access-key:SENTINEL"),
+        ("namespaced_credential_colon", "org/credential:SENTINEL"),
+        ("namespaced_bearer_colon", "org/bearer:SENTINEL"),
+        ("namespaced_client_secret_equal", "org/client-secret=SENTINEL"),
+        ("namespaced_private_key_colon", "org/private_key:SENTINEL"),
+        ("nested_colon_token", "org:tool:token:SENTINEL"),
+        ("nested_colon_api_key", "id:scope:api_key:SENTINEL"),
     ],
 )
 def test_recall_provenance_identifier_fields_fail_closed_by_shape(
@@ -301,6 +321,29 @@ def test_recall_provenance_identifier_fields_fail_closed_by_shape(
         ("free_text", "free text SENTINEL"),
         ("api_key_label", "api_key=SENTINEL"),
         ("bearer_label", "Authorization=Bearer_SENTINEL"),
+        ("token_colon", "token:SENTINEL"),
+        ("api_key_colon", "api_key:SENTINEL"),
+        ("password_colon", "password:SENTINEL"),
+        ("secret_colon", "secret:SENTINEL"),
+        ("secret_key_colon", "secret_key:SENTINEL"),
+        ("access_key_colon", "access_key:SENTINEL"),
+        ("credential_colon", "credential:SENTINEL"),
+        ("credentials_colon", "credentials:SENTINEL"),
+        ("bearer_colon", "bearer:SENTINEL"),
+        ("passwd_colon", "passwd:SENTINEL"),
+        ("authorization_colon", "Authorization:Bearer_SENTINEL"),
+        ("client_secret_colon", "client_secret:SENTINEL"),
+        ("private_key_colon", "private-key:SENTINEL"),
+        ("namespaced_token_colon", "org/token:SENTINEL"),
+        ("namespaced_api_key_colon", "org/api_key:SENTINEL"),
+        ("namespaced_secret_key_colon", "org/secret_key:SENTINEL"),
+        ("namespaced_access_key_colon", "org/access-key:SENTINEL"),
+        ("namespaced_credential_colon", "org/credential:SENTINEL"),
+        ("namespaced_bearer_colon", "org/bearer:SENTINEL"),
+        ("namespaced_client_secret_equal", "org/client-secret=SENTINEL"),
+        ("namespaced_private_key_colon", "org/private_key:SENTINEL"),
+        ("nested_colon_token", "org:tool:token:SENTINEL"),
+        ("nested_colon_api_key", "id:scope:api_key:SENTINEL"),
     ],
 )
 def test_trust_reference_fields_fail_closed_by_shape(
@@ -325,6 +368,41 @@ def test_trust_reference_fields_fail_closed_by_shape(
     else:
         assert trust.get("anchor") == "dep:jest"
         assert "anchor_project_id" not in trust
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "dep:token:SENTINEL",
+        "dep:api_key:SENTINEL",
+        "dep:password:SENTINEL",
+        "dep:secret_key:SENTINEL",
+        "dep:access-key:SENTINEL",
+        "dep:credential:SENTINEL",
+        "dep:credentials:SENTINEL",
+        "dep:bearer:SENTINEL",
+        "dep:passwd:SENTINEL",
+        "github:Authorization:Bearer_SENTINEL",
+        "file:client_secret=SENTINEL",
+        "file:private-key:SENTINEL",
+    ],
+)
+def test_trust_anchor_ref_credential_label_variants_fail_closed(unsafe: str) -> None:
+    entry = {
+        "provenance": {
+            "confirmation_source": "anchor",
+            "anchor_ref": unsafe,
+            "anchor_status": "valid",
+            "anchor_project_id": "github.com/acme/app",
+        }
+    }
+
+    trust = P.project_trust(entry, now=NOW)
+    rendered = repr(trust)
+
+    assert "anchor" not in trust
+    assert trust.get("anchor_project_id") == "github.com/acme/app"
+    assert "SENTINEL" not in rendered
 
 
 def test_projection_helpers_do_not_mutate_inputs() -> None:

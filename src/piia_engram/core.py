@@ -93,6 +93,9 @@ def _strip_untrusted_freshness_provenance(entry: dict[str, Any]) -> None:
     ):
         entry.pop("evidence", None)
 
+    for field in OWNER_ONLY_PROVENANCE_FIELDS:
+        entry.pop(f"provenance.{field}", None)
+
     provenance = entry.get("provenance")
     if not isinstance(provenance, dict):
         return

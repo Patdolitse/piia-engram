@@ -260,8 +260,8 @@ def strip_untrusted_trust_fields(payload: Any) -> Any:
     """
     if isinstance(payload, dict):
         for _field in UNTRUSTED_TRUST_FIELDS:
+            payload.pop(_field, None)
             if "." not in _field:
-                payload.pop(_field, None)
                 continue
             parent, child = _field.split(".", 1)
             nested = payload.get(parent)
