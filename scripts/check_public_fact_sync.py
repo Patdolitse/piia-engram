@@ -115,20 +115,43 @@ def _read(root: Path, rel: str) -> str | None:
 
 
 _COLLECTED_RE = re.compile(r"(?m)(\d+)\s+tests?\s+collected\b")
+_COLLECTION_PROFILE_COMMAND = "python -m pytest tests/ --collect-only -q"
+_COLLECTION_PROFILE_ENV = {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "ENGRAM_TEST": "1",
+    "ENGRAM_DIR": "isolated-temp",
+    "PYTHONPATH": "src",
+}
 
 
 def _collection_env(root: Path, isolated_store: Path) -> dict[str, str]:
     """Build the canonical collection environment for public test facts."""
     env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTEST_ADDOPTS", None)
+    env.pop("PYTEST_CURRENT_TEST", None)
     env["ENGRAM_TEST"] = "1"
     env["ENGRAM_DIR"] = str(isolated_store)
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
-    src = str((root / "src").resolve())
-    existing = env.get("PYTHONPATH", "")
-    parts = [p for p in existing.split(os.pathsep) if p]
-    if src not in parts:
-        env["PYTHONPATH"] = os.pathsep.join([src, *parts])
+    env["PYTHONPATH"] = str((root / "src").resolve())
     return env
+
+
+def _check_collection_profile_metadata(profile: dict) -> list[str]:
+    problems: list[str] = []
+    command = profile.get("command")
+    if command != _COLLECTION_PROFILE_COMMAND:
+        problems.append(
+            "collection profile command drift: "
+            f"{command!r} != {_COLLECTION_PROFILE_COMMAND!r}"
+        )
+    env = profile.get("env")
+    if env != _COLLECTION_PROFILE_ENV:
+        problems.append(
+            "collection profile env drift: "
+            f"{env!r} != {_COLLECTION_PROFILE_ENV!r}"
+        )
+    return problems
 
 
 def _parse_collected_count(output: str) -> int:
@@ -213,6 +236,11 @@ def check_facts(manifest: dict, root: Path) -> list[str]:
     # (3) Runtime collection profile must match facts.test_collected.
     profile = checks.get("collection_profile")
     if profile:
+        if not isinstance(profile, dict):
+            problems.append("collection profile must be an object")
+            profile = {}
+        else:
+            problems.extend(_check_collection_profile_metadata(profile))
         fact = profile.get("fact", "test_collected")
         if fact not in facts:
             problems.append(f"collection profile fact missing from manifest facts: {fact}")

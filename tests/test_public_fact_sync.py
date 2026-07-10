@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,19 @@ def _write_manifest(root: Path, manifest: dict) -> Path:
     return path
 
 
+def _collection_profile() -> dict:
+    return {
+        "fact": "test_collected",
+        "command": "python -m pytest tests/ --collect-only -q",
+        "env": {
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "ENGRAM_TEST": "1",
+            "ENGRAM_DIR": "isolated-temp",
+            "PYTHONPATH": "src",
+        },
+    }
+
+
 def test_stale_test_count_fails(guard, tmp_path):
     """A stale '2346' rendering in a current-state README must fail."""
     m = _base_manifest()
@@ -138,12 +152,7 @@ def test_collection_profile_detects_test_collected_drift(guard, tmp_path, monkey
     """The runtime collect-only profile must police facts.test_collected."""
     m = _base_manifest()
     m["current_state_surfaces"] = []
-    m["checks"] = {
-        "collection_profile": {
-            "fact": "test_collected",
-            "command": "python -m pytest tests/ --collect-only -q",
-        }
-    }
+    m["checks"] = {"collection_profile": _collection_profile()}
     path = _write_manifest(tmp_path, m)
     monkeypatch.setattr(guard, "collect_pytest_tests", lambda root: 2407)
 
@@ -157,18 +166,49 @@ def test_collection_profile_accepts_manifest_count(guard, tmp_path, monkeypatch)
     """A matching collect-only count keeps the public facts green."""
     m = _base_manifest()
     m["current_state_surfaces"] = []
-    m["checks"] = {
-        "collection_profile": {
-            "fact": "test_collected",
-            "command": "python -m pytest tests/ --collect-only -q",
-        }
-    }
+    m["checks"] = {"collection_profile": _collection_profile()}
     path = _write_manifest(tmp_path, m)
     monkeypatch.setattr(guard, "collect_pytest_tests", lambda root: 2406)
 
     ok, report = guard.run(path, tmp_path)
 
     assert ok is True, report["problems"]
+
+
+def test_collection_env_ignores_host_pythonpath(guard, tmp_path, monkeypatch):
+    """The canonical collection profile must not inherit host PYTHONPATH order."""
+    root = tmp_path / "repo"
+    src = root / "src"
+    src.mkdir(parents=True)
+    junk = tmp_path / "host-junk"
+    junk.mkdir()
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(junk), str(src.resolve())]))
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--maxfail=1")
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_fake.py::test_fake (call)")
+
+    env = guard._collection_env(root, tmp_path / "engram-home")
+
+    assert env["PYTHONPATH"] == str(src.resolve())
+    assert env["ENGRAM_DIR"] == str(tmp_path / "engram-home")
+    assert env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+    assert "PYTEST_ADDOPTS" not in env
+    assert "PYTEST_CURRENT_TEST" not in env
+
+
+def test_collection_profile_metadata_drift_fails(guard, tmp_path, monkeypatch):
+    """Manifest profile metadata must match the hard-coded canonical profile."""
+    m = _base_manifest()
+    m["current_state_surfaces"] = []
+    profile = _collection_profile()
+    profile["env"] = {**profile["env"], "PYTHONPATH": "host-dependent"}
+    m["checks"] = {"collection_profile": profile}
+    path = _write_manifest(tmp_path, m)
+    monkeypatch.setattr(guard, "collect_pytest_tests", lambda root: 2406)
+
+    ok, report = guard.run(path, tmp_path)
+
+    assert ok is False
+    assert any("collection profile env drift" in p for p in report["problems"])
 
 
 def test_stale_tool_count_fails(guard, tmp_path):
