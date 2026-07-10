@@ -18,13 +18,16 @@ What it checks (all driven by the manifest):
    test_collected``; ``mcp_tools_core + mcp_tools_advanced == mcp_tools_total``.
 2. Manifest freshness: ``local_dev_version`` matches ``pyproject.toml`` so the
    manifest itself cannot silently lag the package version.
-3. Version-bearing surfaces (.mcp/server.json, plugin.json, glama.yaml) carry
+3. Runtime collection profile: when the manifest declares it, run a deterministic
+   ``pytest tests/ --collect-only -q`` profile and compare it to
+   ``facts.test_collected``.
+4. Version-bearing surfaces (.mcp/server.json, plugin.json, glama.yaml) carry
    exactly ``local_dev_version``.
-4. Test-count renderings in README / README.zh-CN equal ``facts.test_passed``
+5. Test-count renderings in README / README.zh-CN equal ``facts.test_passed``
    (generic: catches 2346 and any other stale number, now or future).
-5. Required current-state substrings (the manifest's current tool split, etc.)
+6. Required current-state substrings (the manifest's current tool split, etc.)
    are present.
-6. No known-stale string (e.g. ``**2346**``) appears in any current-state
+7. No known-stale string (e.g. ``**2346**``) appears in any current-state
    surface.
 
 Run from repo root:
@@ -43,8 +46,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 DEFAULT_MANIFEST = "docs/public-facts.json"
@@ -77,6 +83,10 @@ class SetupError(Exception):
     """Manifest or repo layout problem - distinct from a drift failure."""
 
 
+class CollectionProfileError(Exception):
+    """The canonical test collection profile could not produce a count."""
+
+
 def load_manifest(path: Path) -> dict:
     if not path.is_file():
         raise SetupError(f"manifest not found: {path}")
@@ -102,6 +112,52 @@ def _read(root: Path, rel: str) -> str | None:
     if not p.is_file():
         return None
     return p.read_text(encoding="utf-8", errors="ignore")
+
+
+_COLLECTED_RE = re.compile(r"(?m)(\d+)\s+tests?\s+collected\b")
+
+
+def _collection_env(root: Path, isolated_store: Path) -> dict[str, str]:
+    """Build the canonical collection environment for public test facts."""
+    env = os.environ.copy()
+    env["ENGRAM_TEST"] = "1"
+    env["ENGRAM_DIR"] = str(isolated_store)
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    src = str((root / "src").resolve())
+    existing = env.get("PYTHONPATH", "")
+    parts = [p for p in existing.split(os.pathsep) if p]
+    if src not in parts:
+        env["PYTHONPATH"] = os.pathsep.join([src, *parts])
+    return env
+
+
+def _parse_collected_count(output: str) -> int:
+    matches = _COLLECTED_RE.findall(output)
+    if not matches:
+        raise CollectionProfileError("pytest collect-only output had no collected-count summary")
+    return int(matches[-1])
+
+
+def collect_pytest_tests(root: Path, *, python: str = sys.executable) -> int:
+    """Run the one canonical collect-only profile used by public facts."""
+    with tempfile.TemporaryDirectory(prefix="engram-public-facts-") as tmp:
+        proc = subprocess.run(
+            [python, "-m", "pytest", "tests/", "--collect-only", "-q"],
+            cwd=root,
+            env=_collection_env(root, Path(tmp) / "engram-home"),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+        )
+    output = "\n".join(part for part in (proc.stdout, proc.stderr) if part)
+    if proc.returncode != 0:
+        tail = " ".join(output.splitlines()[-3:])[:500] or "no output"
+        raise CollectionProfileError(
+            f"pytest collect-only exited {proc.returncode}: {tail}"
+        )
+    return _parse_collected_count(output)
 
 
 def validate_manifest_schema(manifest: dict) -> list[str]:
@@ -154,7 +210,27 @@ def check_facts(manifest: dict, root: Path) -> list[str]:
             f"-- refresh docs/public-facts.json"
         )
 
-    # (3) Version-bearing surfaces must carry the current version.
+    # (3) Runtime collection profile must match facts.test_collected.
+    profile = checks.get("collection_profile")
+    if profile:
+        fact = profile.get("fact", "test_collected")
+        if fact not in facts:
+            problems.append(f"collection profile fact missing from manifest facts: {fact}")
+        else:
+            try:
+                actual_collected = collect_pytest_tests(root)
+            except CollectionProfileError as exc:
+                problems.append(f"collection profile failed: {exc}")
+            else:
+                expected_collected = int(facts[fact])
+                if actual_collected != expected_collected:
+                    problems.append(
+                        f"collection profile drift: {fact} runtime value "
+                        f"{actual_collected} != manifest facts.{fact} "
+                        f"{expected_collected}"
+                    )
+
+    # (4) Version-bearing surfaces must carry the current version.
     for entry in checks.get("version_bearing", []):
         rel, pat = entry["file"], entry["pattern"]
         text = _read(root, rel)
@@ -169,7 +245,7 @@ def check_facts(manifest: dict, root: Path) -> list[str]:
                 f"'{version}'"
             )
 
-    # (4) Test-count renderings must equal facts.test_passed.
+    # (5) Test-count renderings must equal facts.test_passed.
     expected_passed = str(facts["test_passed"])
     for entry in checks.get("test_count_patterns", []):
         rel, pat = entry["file"], entry["pattern"]
@@ -186,7 +262,7 @@ def check_facts(manifest: dict, root: Path) -> list[str]:
                     f"'{expected_passed}' from manifest)"
                 )
 
-    # (5) Required current-state substrings must be present.
+    # (6) Required current-state substrings must be present.
     for entry in checks.get("required_substrings", []):
         rel = entry["file"]
         text = _read(root, rel)
@@ -196,7 +272,7 @@ def check_facts(manifest: dict, root: Path) -> list[str]:
             if needle not in text:
                 problems.append(f"{rel}: missing required current-state text: {needle!r}")
 
-    # (6) Known-stale strings must not appear in any current-state surface.
+    # (7) Known-stale strings must not appear in any current-state surface.
     forbidden = checks.get("forbidden_in_current_state", [])
     for rel in manifest.get("current_state_surfaces", []):
         text = _read(root, rel)

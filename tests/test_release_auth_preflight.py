@@ -30,6 +30,13 @@ def mod():
     return module
 
 
+@pytest.fixture(autouse=True)
+def _isolate_publisher_env(monkeypatch: pytest.MonkeyPatch):
+    """Host publisher overrides must not decide deterministic unit tests."""
+    monkeypatch.delenv("MCP_PUBLISHER_PATH", raising=False)
+    monkeypatch.delenv("MCP_PUBLISHER_BIN", raising=False)
+
+
 def _which_factory(present: set[str]):
     return lambda name: f"/usr/bin/{name}" if name in present else None
 
@@ -132,6 +139,23 @@ def test_mcp_publisher_local_fallback_candidate(mod, tmp_path):
         candidates=[str(local)],
     )
     assert r["status"] == mod.OK
+
+
+def test_mcp_publisher_explicit_env_path_keeps_owner_priority(mod, tmp_path, monkeypatch):
+    explicit = tmp_path / "explicit" / "mcp-publisher.exe"
+    fallback = tmp_path / "fallback" / "mcp-publisher.exe"
+    explicit.parent.mkdir()
+    fallback.parent.mkdir()
+    explicit.write_text("stub", encoding="utf-8")
+    fallback.write_text("stub", encoding="utf-8")
+    monkeypatch.setenv("MCP_PUBLISHER_PATH", str(explicit))
+
+    resolved = mod._resolve_mcp_publisher(
+        which=_which_factory(set()),
+        candidates=[str(fallback)],
+    )
+
+    assert resolved == str(explicit)
 
 
 def test_warm_mcp_registry_auth_success_no_secret_in_result(mod, tmp_path):

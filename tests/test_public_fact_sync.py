@@ -134,6 +134,43 @@ def test_current_test_count_passes(guard, tmp_path):
     assert ok is True, report["problems"]
 
 
+def test_collection_profile_detects_test_collected_drift(guard, tmp_path, monkeypatch):
+    """The runtime collect-only profile must police facts.test_collected."""
+    m = _base_manifest()
+    m["current_state_surfaces"] = []
+    m["checks"] = {
+        "collection_profile": {
+            "fact": "test_collected",
+            "command": "python -m pytest tests/ --collect-only -q",
+        }
+    }
+    path = _write_manifest(tmp_path, m)
+    monkeypatch.setattr(guard, "collect_pytest_tests", lambda root: 2407)
+
+    ok, report = guard.run(path, tmp_path)
+
+    assert ok is False
+    assert any("collection profile drift" in p for p in report["problems"])
+
+
+def test_collection_profile_accepts_manifest_count(guard, tmp_path, monkeypatch):
+    """A matching collect-only count keeps the public facts green."""
+    m = _base_manifest()
+    m["current_state_surfaces"] = []
+    m["checks"] = {
+        "collection_profile": {
+            "fact": "test_collected",
+            "command": "python -m pytest tests/ --collect-only -q",
+        }
+    }
+    path = _write_manifest(tmp_path, m)
+    monkeypatch.setattr(guard, "collect_pytest_tests", lambda root: 2406)
+
+    ok, report = guard.run(path, tmp_path)
+
+    assert ok is True, report["problems"]
+
+
 def test_stale_tool_count_fails(guard, tmp_path):
     """A required current-state substring (tool split) gone missing must fail."""
     m = _base_manifest()

@@ -5,9 +5,9 @@
   "local_dev_version": "4.13.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 3948,
-    "test_skipped": 4,
-    "test_collected": 3952,
+    "test_passed": 4589,
+    "test_skipped": 14,
+    "test_collected": 4603,
     "mcp_tools_total": 57,
     "mcp_tools_core": 17,
     "mcp_tools_advanced": 40,
@@ -81,13 +81,13 @@
       "Owner-gated export/admin surfaces are public capabilities with governance, not private internals."
     ]
   },
-  "last_verified_date": "2026-07-06",
+  "last_verified_date": "2026-07-10",
   "sources": {
     "package_name": "pyproject.toml [project].name",
     "local_dev_version": "pyproject.toml [project].version  (cross-check: git tag --sort=-creatordate | head -1)",
-    "test_passed": "isolated ENGRAM_DIR; pytest tests/ -q  ->  '<N> passed'",
+    "test_passed": "isolated ENGRAM_DIR; python -m pytest tests/ -q  ->  '<N> passed'",
     "test_skipped": "same pytest run  ->  '<N> skipped'",
-    "test_collected": "pytest tests/ --collect-only -q  ->  '<N> tests collected'  (invariant: test_passed + test_skipped == test_collected)",
+    "test_collected": "canonical collection profile: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1, ENGRAM_TEST=1, isolated ENGRAM_DIR, PYTHONPATH=src; python -m pytest tests/ --collect-only -q  ->  '<N> tests collected'  (invariant: test_passed + test_skipped == test_collected)",
     "mcp_tools_total": "python scripts/count_mcp_tools.py --json -> .total (AST count of @mcp.tool() async defs in src/piia_engram/mcp_server.py; equals ENGRAM_TOOLS=all registration)",
     "mcp_tools_core": "python scripts/count_mcp_tools.py --json -> .core (size of the TIER1_TOOLS frozenset in mcp_server.py, loaded by default when ENGRAM_TOOLS is unset / 'core')",
     "mcp_tools_advanced": "python scripts/count_mcp_tools.py --json -> .advanced (total - core)",
@@ -108,6 +108,16 @@
     "release-evidence/"
   ],
   "checks": {
+    "collection_profile": {
+      "fact": "test_collected",
+      "command": "python -m pytest tests/ --collect-only -q",
+      "env": {
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "ENGRAM_TEST": "1",
+        "ENGRAM_DIR": "isolated-temp",
+        "PYTHONPATH": "src"
+      }
+    },
     "version_bearing": [
       {
         "file": ".mcp/server.json",

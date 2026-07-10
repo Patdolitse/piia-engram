@@ -11,6 +11,28 @@ import pytest
 from piia_engram.reader import _is_private_url
 
 
+_PUBLIC_DNS = {
+    "example.com": "93.184.216.34",
+    "github.com": "140.82.114.4",
+    "docs.python.org": "151.101.0.223",
+}
+
+
+def _install_public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep allow-list tests independent from local DNS interception."""
+    import socket
+
+    original = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        ip = _PUBLIC_DNS.get(str(host).lower().strip("[]"))
+        if ip:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, port or 443))]
+        return original(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+
 class TestPrivateUrlBlocklist:
     @pytest.mark.parametrize("url", [
         "http://127.0.0.1/admin",
@@ -48,7 +70,8 @@ class TestPrivateUrlBlocklist:
         "http://1.2.3.4/public",
         "https://docs.python.org/3/",
     ])
-    def test_public_urls_allowed(self, url):
+    def test_public_urls_allowed(self, url, monkeypatch):
+        _install_public_dns(monkeypatch)
         assert not _is_private_url(url), f"Public URL wrongly blocked: {url}"
 
 

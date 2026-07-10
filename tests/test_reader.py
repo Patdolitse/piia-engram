@@ -31,14 +31,30 @@ from piia_engram import mcp_server
 from piia_engram import reader
 
 
+_PUBLIC_DNS = {
+    "example.com": "93.184.216.34",
+}
+
+
 def _run(coro):
     """Run an async coroutine synchronously in tests."""
     return asyncio.run(coro)
 
 
 @pytest.fixture(autouse=True)
-def _clean_sidecar_state():
+def _clean_sidecar_state(monkeypatch: pytest.MonkeyPatch):
     """Each test starts with a cleared sidecar health cache."""
+    import socket
+
+    original = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        ip = _PUBLIC_DNS.get(str(host).lower().strip("[]"))
+        if ip:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, port or 443))]
+        return original(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
     reader._reset_sidecar_state()
     yield
     reader._reset_sidecar_state()
