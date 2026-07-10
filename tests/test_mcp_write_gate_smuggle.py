@@ -28,7 +28,7 @@ import pytest
 
 from piia_engram import mcp_server
 from piia_engram.core import Engram, strip_untrusted_trust_fields
-from piia_engram.storage import UNTRUSTED_TRUST_FIELDS
+from piia_engram.storage import OWNER_ONLY_PROVENANCE_FIELDS, UNTRUSTED_TRUST_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,25 @@ _SMUGGLE = {
     "approval_status": "approved",
     "approval_required": False,
 }
+_OWNER_PROVENANCE_SMUGGLE = {
+    "source_agent": "codex",
+    "confirmation_source": "anchor",
+    "anchor_status": "valid",
+    "anchor_project_id": "github.com/acme/app",
+    "anchor_ref": "dep:react",
+    "anchor_event": "superseded",
+    "anchor_successor_ref": "dep:vitest",
+    "anchor_successor_status": "valid",
+    "anchor_checked_at": "2026-06-18T10:00:00Z",
+}
+
+
+def _assert_owner_provenance_stripped(item: dict) -> None:
+    provenance = item.get("provenance")
+    assert isinstance(provenance, dict)
+    assert provenance.get("source_agent") == "codex"
+    for field in OWNER_ONLY_PROVENANCE_FIELDS:
+        assert field not in provenance
 
 
 # ---------------------------------------------------------------------------
@@ -129,38 +148,26 @@ def test_memory_store_lesson_strips_smuggled_freshness_provenance(eng: Engram) -
     content = {
         "summary": "a caller cannot self-certify as a test signal",
         "domain": "freshness",
-        "provenance": {
-            "source_agent": "codex",
-            "confirmation_source": "test_signal",
-            "anchor_status": "valid",
-        },
+        "provenance": _OWNER_PROVENANCE_SMUGGLE,
     }
     out = _run(mcp_server.memory_store("lesson", json.dumps(content), user_confirmed=True))
     assert "澶辫触" not in out
 
     item = eng.get_lessons(limit=None, _update_access=False)[0]
-    assert item["provenance"]["source_agent"] == "codex"
-    assert "confirmation_source" not in item["provenance"]
-    assert "anchor_status" not in item["provenance"]
+    _assert_owner_provenance_stripped(item)
 
 
 def test_memory_store_decision_strips_smuggled_freshness_provenance(eng: Engram) -> None:
     content = {
         "question": "Can an agent self-certify anchor provenance?",
         "choice": "no",
-        "provenance": {
-            "source_agent": "codex",
-            "confirmation_source": "anchor",
-            "anchor_status": "valid",
-        },
+        "provenance": _OWNER_PROVENANCE_SMUGGLE,
     }
     out = _run(mcp_server.memory_store("decision", json.dumps(content), user_confirmed=True))
     assert "澶辫触" not in out
 
     item = eng.get_decisions(limit=None, _update_access=False)[0]
-    assert item["provenance"]["source_agent"] == "codex"
-    assert "confirmation_source" not in item["provenance"]
-    assert "anchor_status" not in item["provenance"]
+    _assert_owner_provenance_stripped(item)
 
 
 # ---------------------------------------------------------------------------
@@ -201,19 +208,12 @@ def test_memory_store_batch_strips_smuggled_freshness_provenance_each_item(
         {
             "summary": "batch test signal smuggle",
             "domain": "freshness",
-            "provenance": {
-                "source_agent": "codex",
-                "confirmation_source": "test_signal",
-            },
+            "provenance": _OWNER_PROVENANCE_SMUGGLE,
         },
         {
             "summary": "batch anchor smuggle",
             "domain": "freshness",
-            "provenance": {
-                "source_agent": "codex",
-                "confirmation_source": "anchor",
-                "anchor_status": "valid",
-            },
+            "provenance": _OWNER_PROVENANCE_SMUGGLE,
         },
     ]
     out = _run(mcp_server.memory_store(kind="lesson", items_json=json.dumps(items), user_confirmed=True))
@@ -223,9 +223,7 @@ def test_memory_store_batch_strips_smuggled_freshness_provenance_each_item(
     stored = eng.get_lessons(limit=None, _update_access=False)
     assert len(stored) == 2
     for item in stored:
-        assert item["provenance"]["source_agent"] == "codex"
-        assert "confirmation_source" not in item["provenance"]
-        assert "anchor_status" not in item["provenance"]
+        _assert_owner_provenance_stripped(item)
 
 
 # ---------------------------------------------------------------------------
@@ -251,17 +249,11 @@ def test_core_dict_lesson_strips_agent_supplied_freshness_provenance(
         {
             "summary": "direct dict caller cannot self-certify signal",
             "domain": "freshness",
-            "provenance": {
-                "source_agent": "codex",
-                "confirmation_source": "test_signal",
-                "anchor_status": "valid",
-            },
+            "provenance": _OWNER_PROVENANCE_SMUGGLE,
         }
     )
 
-    assert stored["provenance"]["source_agent"] == "codex"
-    assert "confirmation_source" not in stored["provenance"]
-    assert "anchor_status" not in stored["provenance"]
+    _assert_owner_provenance_stripped(stored)
 
 
 def test_core_dict_decision_strips_agent_supplied_freshness_provenance(
@@ -271,17 +263,11 @@ def test_core_dict_decision_strips_agent_supplied_freshness_provenance(
         {
             "question": "Can direct dict caller self-certify signal?",
             "choice": "no",
-            "provenance": {
-                "source_agent": "codex",
-                "confirmation_source": "test_signal",
-                "anchor_status": "valid",
-            },
+            "provenance": _OWNER_PROVENANCE_SMUGGLE,
         }
     )
 
-    assert stored["provenance"]["source_agent"] == "codex"
-    assert "confirmation_source" not in stored["provenance"]
-    assert "anchor_status" not in stored["provenance"]
+    _assert_owner_provenance_stripped(stored)
 
 
 def test_internal_core_caller_can_opt_in_to_freshness_provenance(
@@ -295,6 +281,8 @@ def test_internal_core_caller_can_opt_in_to_freshness_provenance(
                 "source_agent": "owner",
                 "confirmation_source": "anchor",
                 "anchor_status": "valid",
+                "anchor_ref": "dep:react",
+                "anchor_project_id": "github.com/acme/app",
             },
         },
         _allow_internal_provenance=True,
@@ -302,6 +290,22 @@ def test_internal_core_caller_can_opt_in_to_freshness_provenance(
 
     assert stored["provenance"]["confirmation_source"] == "anchor"
     assert stored["provenance"]["anchor_status"] == "valid"
+    assert stored["provenance"]["anchor_ref"] == "dep:react"
+    assert stored["provenance"]["anchor_project_id"] == "github.com/acme/app"
+
+
+def test_internal_onboard_candidate_keeps_anchor_binding(eng: Engram) -> None:
+    stored = eng.create_onboard_candidate(
+        "This project depends on `react`.",
+        anchor_ref="dep:react",
+        anchor_project_id="github.com/acme/app",
+        extractor="test",
+    )
+
+    assert stored["tier"] == "staging"
+    assert stored["provenance"]["anchor_ref"] == "dep:react"
+    assert stored["provenance"]["anchor_project_id"] == "github.com/acme/app"
+    assert "confirmation_source" not in stored["provenance"]
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +324,12 @@ def test_strip_helper_removes_all_untrusted_fields() -> None:
             "source_agent": "codex",
             "confirmation_source": "test_signal",
             "anchor_status": "valid",
+            "anchor_project_id": "github.com/acme/app",
+            "anchor_ref": "dep:react",
+            "anchor_event": "superseded",
+            "anchor_successor_ref": "dep:vitest",
+            "anchor_successor_status": "valid",
+            "anchor_checked_at": "2026-06-18T10:00:00Z",
         },
     }
     returned = strip_untrusted_trust_fields(payload)
@@ -350,4 +360,9 @@ def test_untrusted_trust_fields_contract() -> None:
         "provenance.confirmation_source",
         "provenance.anchor_status",
         "provenance.anchor_project_id",
+        "provenance.anchor_ref",
+        "provenance.anchor_event",
+        "provenance.anchor_successor_ref",
+        "provenance.anchor_successor_status",
+        "provenance.anchor_checked_at",
     }

@@ -432,6 +432,9 @@ def test_clean_identifier_accepts_namespaced_identifiers():
     assert P._clean_identifier("org/tool") == "org/tool"
     assert P._clean_identifier("org/tool:v1") == "org/tool:v1"
     assert P._clean_identifier("codex") == "codex"
+    assert P._clean_identifier("claude_code") == "claude_code"
+    assert P._clean_identifier("cursor-sub") == "cursor-sub"
+    assert P._clean_identifier("wf-123") == "wf-123"
 
 
 @pytest.mark.parametrize(
@@ -451,6 +454,9 @@ def test_clean_identifier_accepts_namespaced_identifiers():
         "~",
         "~/secrets",
         "has\nnewline",
+        "free text",
+        "api_key=secret",
+        "Authorization=Bearer_secret",
     ],
 )
 def test_clean_identifier_rejects_filesystem_path_shapes(value):

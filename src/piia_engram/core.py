@@ -12,6 +12,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+from . import provenance as _provenance
+
 # All constants and I/O utilities live in storage.py — re-exported here
 # for backward compatibility (tests import from piia_engram.core).
 from .storage import (  # noqa: F401 — re-exports
@@ -26,6 +28,7 @@ from .storage import (  # noqa: F401 — re-exports
     MAX_KNOWLEDGE_ENTRIES,
     MEMORY_RISK_LEVELS,
     MEMORY_STATES,
+    OWNER_ONLY_PROVENANCE_FIELDS,
     PLAYBOOK_TRIGGERS,
     SCHEMA_VERSION,
     SEARCH_RELEVANCE_THRESHOLD,
@@ -94,9 +97,8 @@ def _strip_untrusted_freshness_provenance(entry: dict[str, Any]) -> None:
     if not isinstance(provenance, dict):
         return
     clean = dict(provenance)
-    clean.pop("confirmation_source", None)
-    clean.pop("anchor_status", None)
-    clean.pop("anchor_project_id", None)
+    for field in OWNER_ONLY_PROVENANCE_FIELDS:
+        clean.pop(field, None)
     entry["provenance"] = clean
 
 
@@ -1157,100 +1159,11 @@ class Engram(
 
     @staticmethod
     def _labeling_source_kind(entry: dict) -> str:
-        provenance = entry.get("provenance")
-        if not isinstance(provenance, dict):
-            provenance = {}
-        source_tool = str(
-            entry.get("source_tool") or provenance.get("source_tool") or ""
-        ).strip().lower()
-        source_agent = str(provenance.get("source_agent") or "").strip().lower()
-        source = f"{source_tool} {source_agent}".strip()
-        if not source or source == "unknown":
-            return "unknown"
-        if any(token in source for token in (
-            "import", "migration", "migrate", "sync", "bulk", "bootstrap", "seed",
-        )):
-            return "imported"
-        if any(token in source for token in (
-            "codex", "claude", "cursor", "windsurf", "agent", "gpt", "sonnet", "opus",
-        )):
-            return "agent"
-        if any(
-            token in source for token in ("human", "manual", "owner", "user", "self")
-        ):
-            return "human"
-        return "agent" if source_agent else "unknown"
+        return _provenance.derive_labeling_source_kind(entry)
 
     def _derive_labeling(self, entry: dict) -> dict[str, Any]:
         """Derive non-authoritative data-label maturity metadata."""
-        provenance = entry.get("provenance")
-        if not isinstance(provenance, dict):
-            provenance = {}
-        signals: set[str] = set()
-
-        source_tool = str(
-            entry.get("source_tool") or provenance.get("source_tool") or ""
-        ).strip()
-        if source_tool and source_tool != "unknown":
-            signals.add("has_source_tool")
-        if str(provenance.get("source_agent") or "").strip():
-            signals.add("has_source_agent")
-        if str(provenance.get("run_id") or "").strip():
-            signals.add("has_run_id")
-        if str(provenance.get("last_validated_at") or "").strip():
-            signals.add("has_last_validated_at")
-        if str(entry.get("domain") or "").strip():
-            signals.add("has_domain")
-        if str(entry.get("project") or entry.get("source_project") or "").strip():
-            signals.add("has_project")
-        if str(entry.get("source_url") or "").strip():
-            signals.add("has_source_url")
-
-        if entry.get("risk_level") == "high":
-            signals.add("high_risk")
-        needs_review = (
-            entry.get("tier") == "staging"
-            or entry.get("memory_state") == "staging"
-            or entry.get("approval_required") is True
-            or entry.get("approval_status") == "pending"
-        )
-        if needs_review:
-            signals.add("needs_owner_review")
-
-        if needs_review or entry.get("risk_level") == "high":
-            validation_state = "needs_review"
-        elif "has_last_validated_at" in signals:
-            validation_state = "validated"
-        else:
-            validation_state = "unreviewed"
-
-        has_explainable_source = bool(
-            {"has_source_tool", "has_source_agent"} & signals
-        )
-        has_context_label = bool(
-            {"has_domain", "has_project", "has_source_url"} & signals
-        )
-        if (
-            validation_state == "validated"
-            and has_explainable_source
-            and has_context_label
-            and "has_run_id" in signals
-        ):
-            annotation_quality = "mature"
-        elif has_explainable_source or has_context_label or "has_run_id" in signals:
-            annotation_quality = "partial"
-        else:
-            annotation_quality = "raw"
-
-        if validation_state == "needs_review" and annotation_quality == "mature":
-            annotation_quality = "partial"
-
-        return {
-            "source_kind": self._labeling_source_kind(entry),
-            "annotation_quality": annotation_quality,
-            "validation_state": validation_state,
-            "signals": sorted(signals),
-        }
+        return _provenance.derive_labeling(entry)
 
     def _refresh_labeling(self, entry: dict) -> dict:
         entry["labeling"] = self._derive_labeling(entry)

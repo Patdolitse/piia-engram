@@ -67,6 +67,16 @@ STALE_DECAY_MULTIPLIERS: dict[str, float] = {
 MAX_KNOWLEDGE_ENTRIES = 200        # cap per knowledge type (lessons / decisions)
 MEMORY_STATES = frozenset({"staging", "verified", "rejected", "deprecated"})
 MEMORY_RISK_LEVELS = frozenset({"low", "medium", "high"})
+OWNER_ONLY_PROVENANCE_FIELDS: tuple[str, ...] = (
+    "confirmation_source",
+    "anchor_status",
+    "anchor_project_id",
+    "anchor_ref",
+    "anchor_event",
+    "anchor_successor_ref",
+    "anchor_successor_status",
+    "anchor_checked_at",
+)
 # Trust/approval fields that are the *output* of the owner's risk-based write
 # gate, never an untrusted caller's *input*. An agent-facing MCP payload that
 # tries to set these (e.g. tier="verified" smuggled through content_json /
@@ -81,9 +91,7 @@ UNTRUSTED_TRUST_FIELDS: tuple[str, ...] = (
     "approval_status",
     "approval_required",
     "labeling",
-    "provenance.confirmation_source",
-    "provenance.anchor_status",
-    "provenance.anchor_project_id",
+    *(f"provenance.{field}" for field in OWNER_ONLY_PROVENANCE_FIELDS),
 )
 # Decision-conflict governance thresholds: post-hoc noise reduction for
 # doctor/context/engram conflicts. These favor precision.

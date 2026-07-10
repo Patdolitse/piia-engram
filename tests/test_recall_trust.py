@@ -128,3 +128,36 @@ def test_project_trust_superseded_by_not_leaked_without_include_trust():
         _superseded_entry(), include_freshness=True, now=None
     )
     assert "trust" not in view
+
+
+def test_trust_projection_rejects_malformed_enums_and_unsafe_refs_without_echo():
+    unsafe = "C:/Users/victim/sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\nsecret"
+    entry = {
+        "id": "unsafe",
+        "summary": "unsafe owner-only fields must fail closed",
+        "tier": "verified",
+        "provenance": {
+            "confirmation_source": "robot",
+            "anchor_ref": unsafe,
+            "anchor_status": "trusted",
+            "anchor_project_id": unsafe,
+            "anchor_event": "superseded",
+            "anchor_successor_ref": unsafe,
+            "source_agent": unsafe,
+            "run_id": "../escape",
+        },
+    }
+
+    view = recall._project_item(entry, include_freshness=True, now=None, include_trust=True)
+    rendered = repr(view)
+    trust = view.get("trust", {})
+
+    assert "confirmation_source" not in trust
+    assert "anchor" not in trust
+    assert "anchor_status" not in trust
+    assert "anchor_project_id" not in trust
+    assert "superseded_by" not in trust
+    assert "provenance" not in view
+    assert "victim" not in rendered
+    assert "sk-proj-" not in rendered
+    assert "escape" not in rendered

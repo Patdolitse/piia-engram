@@ -23,6 +23,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import math
+import re
 from typing import Any
 
 # --- freshness thresholds (days) -------------------------------------------
@@ -47,11 +48,30 @@ SOURCE_UNKNOWN = "unknown"
 DECAY_POLICY_TIME = "time"
 DECAY_POLICY_TRIGGER = "trigger"
 
+LABEL_SOURCE_HUMAN = "human"
+LABEL_SOURCE_AGENT = "agent"
+LABEL_SOURCE_IMPORTED = "imported"
+LABEL_SOURCE_UNKNOWN = "unknown"
+
+LABEL_QUALITY_RAW = "raw"
+LABEL_QUALITY_PARTIAL = "partial"
+LABEL_QUALITY_MATURE = "mature"
+
+LABEL_VALIDATION_UNREVIEWED = "unreviewed"
+LABEL_VALIDATION_VALIDATED = "validated"
+LABEL_VALIDATION_NEEDS_REVIEW = "needs_review"
+
+CONFIRMATION_SOURCES = frozenset({"human", "test_signal", "anchor"})
+ANCHOR_STATUSES = frozenset({"valid", "invalid", "unknown"})
+ANCHOR_EVENTS = frozenset({"superseded"})
+
 # Priority order of timestamp fields used to measure age.
 FRESHNESS_BASES = ("last_validated_at", "last_reviewed", "created_at", "timestamp")
 
 # Optional provenance identifier fields and their caps.
 _MAX_ID_LEN = 120
+_MAX_REF_LEN = 240
+_MAX_LABEL_SIGNAL_LEN = 80
 _CONFIRMATION_SOURCE_MAP = {
     "human": SOURCE_HUMAN,
     "test_signal": SOURCE_SIGNAL,
@@ -59,6 +79,23 @@ _CONFIRMATION_SOURCE_MAP = {
 }
 _HUMAN_SOURCE_AGENTS = {"owner", "human", "user", "manual", "self"}
 _METADATA_SUBTREES = ("provenance", "labeling")
+_IDENTIFIER_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*"
+    r"(?::[A-Za-z0-9][A-Za-z0-9_.-]*)?$"
+)
+_REFERENCE_RE = re.compile(r"^[A-Za-z0-9@][A-Za-z0-9_.@:/-]*$")
+_CREDENTIAL_SHAPE_RE = re.compile(
+    r"(?:"
+    r"sk-(?:proj-)?[A-Za-z0-9_-]{16,}"
+    r"|gh[pousr]_[A-Za-z0-9_]{20,}"
+    r"|github_pat_[A-Za-z0-9_]{20,}"
+    r"|glpat-[A-Za-z0-9_-]{16,}"
+    r"|pypi-[A-Za-z0-9_-]{16,}"
+    r"|cfut_[A-Za-z0-9]{16,}"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r")"
+)
 
 DEFAULT_FRESHNESS_POLICIES = {
     SOURCE_HUMAN: (FRESH_MAX_DAYS, AGING_MAX_DAYS, DECAY_POLICY_TIME),
@@ -67,6 +104,10 @@ DEFAULT_FRESHNESS_POLICIES = {
     SOURCE_ANCHOR: (FRESH_MAX_DAYS, AGING_MAX_DAYS, DECAY_POLICY_TRIGGER),
     SOURCE_UNKNOWN: (FRESH_MAX_DAYS, AGING_MAX_DAYS, DECAY_POLICY_TIME),
 }
+
+
+def _looks_credential_shaped(text: str) -> bool:
+    return bool(_CREDENTIAL_SHAPE_RE.search(text))
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -89,6 +130,10 @@ def _clean_identifier(value: Any) -> str | None:
     text = value.strip()
     if not text or len(text) > _MAX_ID_LEN:
         return None
+    if _looks_credential_shaped(text):
+        return None
+    if not _IDENTIFIER_RE.fullmatch(text):
+        return None
     # Identifiers are not free text or filesystem-ish paths.
     if "\n" in text or "\r" in text or "\\" in text:
         return None
@@ -108,6 +153,92 @@ def _clean_identifier(value: Any) -> str | None:
         if "/" not in text and namespace != "github":
             return None
     return text
+
+
+def _has_unsafe_ref_shape(text: str, *, max_len: int = _MAX_REF_LEN) -> bool:
+    """Reject references that look like paths, credentials, or free text."""
+    if not text or len(text) > max_len:
+        return True
+    if "\n" in text or "\r" in text or "\0" in text or "\\" in text:
+        return True
+    if _looks_credential_shaped(text):
+        return True
+    if not _REFERENCE_RE.fullmatch(text):
+        return True
+    if text in {".", "..", "~"} or text.startswith(("..", "~", "/", ":")):
+        return True
+    if len(text) >= 2 and text[1] == ":" and text[0].isalpha():
+        return True
+    return False
+
+
+def _segments_are_safe(text: str) -> bool:
+    parts = text.split("/")
+    return all(part not in {"", ".", ".."} for part in parts)
+
+
+def _clean_anchor_ref(value: Any) -> str | None:
+    """Return a safe owner/internal anchor ref for recall trust projection."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if _has_unsafe_ref_shape(text):
+        return None
+    if ":" not in text:
+        return None
+    namespace, ref = text.split(":", 1)
+    namespace = namespace.strip().lower()
+    ref = ref.strip()
+    if namespace not in {"dep", "file", "github"}:
+        return None
+    if _has_unsafe_ref_shape(ref):
+        return None
+    if ":" in ref:
+        return None
+    if not _segments_are_safe(ref):
+        return None
+    if namespace == "dep" and any(ch.isspace() for ch in ref):
+        return None
+    return f"{namespace}:{ref}"
+
+
+def _clean_anchor_project_id(value: Any) -> str | None:
+    """Return a safe project identity string for owner-only trust projection."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if _has_unsafe_ref_shape(text):
+        return None
+    if not _segments_are_safe(text):
+        return None
+    if ":" in text:
+        namespace, rest = text.split(":", 1)
+        if not namespace or not rest or any(ch.isspace() for ch in namespace):
+            return None
+        if _has_unsafe_ref_shape(rest) or not _segments_are_safe(rest):
+            return None
+    return text
+
+
+def _clean_confirmation_source(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    return text if text in CONFIRMATION_SOURCES else None
+
+
+def _clean_anchor_status(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    return text if text in ANCHOR_STATUSES else None
+
+
+def _clean_anchor_event(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    return text if text in ANCHOR_EVENTS else None
 
 
 def normalize_provenance_fields(raw: dict[str, Any]) -> dict[str, Any]:
@@ -148,6 +279,228 @@ def resolve_source_agent(entry: dict[str, Any]) -> str:
         if agent:
             return agent
     return _clean_identifier(entry.get("source_tool")) or ""
+
+
+def derive_labeling_source_kind(entry: dict[str, Any]) -> str:
+    """Derive source_kind for system labeling without reading external state."""
+    if not isinstance(entry, dict):
+        return LABEL_SOURCE_UNKNOWN
+    provenance = entry.get("provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    source_tool = str(
+        entry.get("source_tool") or provenance.get("source_tool") or ""
+    ).strip().lower()
+    source_agent = str(provenance.get("source_agent") or "").strip().lower()
+    source = f"{source_tool} {source_agent}".strip()
+    if not source or source == "unknown":
+        return LABEL_SOURCE_UNKNOWN
+    if any(token in source for token in (
+        "import", "migration", "migrate", "sync", "bulk", "bootstrap", "seed",
+    )):
+        return LABEL_SOURCE_IMPORTED
+    if any(token in source for token in (
+        "codex", "claude", "cursor", "windsurf", "agent", "gpt", "sonnet", "opus",
+    )):
+        return LABEL_SOURCE_AGENT
+    if any(token in source for token in ("human", "manual", "owner", "user", "self")):
+        return LABEL_SOURCE_HUMAN
+    return LABEL_SOURCE_AGENT if source_agent else LABEL_SOURCE_UNKNOWN
+
+
+def derive_labeling(entry: dict[str, Any]) -> dict[str, Any]:
+    """Derive non-authoritative data-label maturity metadata.
+
+    Contract matrix:
+    - lifecycle tier/status says whether the item is staging/verified/archived.
+    - validation maturity says unreviewed/validated/needs_review.
+    - confirmation evidence says human/test_signal/anchor/none.
+    - temporal freshness says fresh/aging/stale/unknown.
+
+    These dimensions are intentionally independent: verified tier does not imply
+    evidence-backed validation, and fresh timestamps do not imply trust.
+    """
+    safe_entry = entry if isinstance(entry, dict) else {}
+    provenance = safe_entry.get("provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    signals: set[str] = set()
+
+    source_tool = str(
+        safe_entry.get("source_tool") or provenance.get("source_tool") or ""
+    ).strip()
+    if source_tool and source_tool != "unknown":
+        signals.add("has_source_tool")
+    if str(provenance.get("source_agent") or "").strip():
+        signals.add("has_source_agent")
+    if str(provenance.get("run_id") or "").strip():
+        signals.add("has_run_id")
+    if str(provenance.get("last_validated_at") or "").strip():
+        signals.add("has_last_validated_at")
+    if str(safe_entry.get("domain") or "").strip():
+        signals.add("has_domain")
+    if str(safe_entry.get("project") or safe_entry.get("source_project") or "").strip():
+        signals.add("has_project")
+    if str(safe_entry.get("source_url") or "").strip():
+        signals.add("has_source_url")
+
+    if safe_entry.get("risk_level") == "high":
+        signals.add("high_risk")
+    needs_review = (
+        safe_entry.get("tier") == "staging"
+        or safe_entry.get("memory_state") == "staging"
+        or safe_entry.get("approval_required") is True
+        or safe_entry.get("approval_status") == "pending"
+    )
+    if needs_review:
+        signals.add("needs_owner_review")
+
+    if needs_review or safe_entry.get("risk_level") == "high":
+        validation_state = LABEL_VALIDATION_NEEDS_REVIEW
+    elif "has_last_validated_at" in signals:
+        validation_state = LABEL_VALIDATION_VALIDATED
+    else:
+        validation_state = LABEL_VALIDATION_UNREVIEWED
+
+    has_explainable_source = bool({"has_source_tool", "has_source_agent"} & signals)
+    has_context_label = bool({"has_domain", "has_project", "has_source_url"} & signals)
+    if (
+        validation_state == LABEL_VALIDATION_VALIDATED
+        and has_explainable_source
+        and has_context_label
+        and "has_run_id" in signals
+    ):
+        annotation_quality = LABEL_QUALITY_MATURE
+    elif has_explainable_source or has_context_label or "has_run_id" in signals:
+        annotation_quality = LABEL_QUALITY_PARTIAL
+    else:
+        annotation_quality = LABEL_QUALITY_RAW
+
+    if validation_state == LABEL_VALIDATION_NEEDS_REVIEW and annotation_quality == LABEL_QUALITY_MATURE:
+        annotation_quality = LABEL_QUALITY_PARTIAL
+
+    return {
+        "source_kind": derive_labeling_source_kind(safe_entry),
+        "annotation_quality": annotation_quality,
+        "validation_state": validation_state,
+        "signals": sorted(signals),
+    }
+
+
+def project_recall_provenance(entry: dict[str, Any]) -> dict[str, Any]:
+    """Project the safe recall provenance subset, failing closed on unsafe IDs."""
+    safe_entry = entry if isinstance(entry, dict) else {}
+    out: dict[str, Any] = {}
+    source_agent = resolve_source_agent(safe_entry)
+    if source_agent:
+        out["source_agent"] = source_agent
+    raw_prov = safe_entry.get("provenance")
+    if not isinstance(raw_prov, dict):
+        return out
+
+    run_id = _clean_identifier(raw_prov.get("run_id"))
+    if run_id:
+        out["run_id"] = run_id
+
+    validated = raw_prov.get("last_validated_at")
+    if _parse_iso(validated) is not None:
+        out["last_validated_at"] = validated.strip()
+    return out
+
+
+def project_labeling(entry: dict[str, Any]) -> dict[str, Any]:
+    """Project stored labeling through a small enum allowlist."""
+    safe_entry = entry if isinstance(entry, dict) else {}
+    labeling = safe_entry.get("labeling")
+    if not isinstance(labeling, dict):
+        return {}
+    out: dict[str, Any] = {}
+    source_kind = labeling.get("source_kind")
+    if isinstance(source_kind, str) and source_kind.strip() in {
+        LABEL_SOURCE_HUMAN,
+        LABEL_SOURCE_AGENT,
+        LABEL_SOURCE_IMPORTED,
+        LABEL_SOURCE_UNKNOWN,
+    }:
+        out["source_kind"] = source_kind.strip()
+    quality = labeling.get("annotation_quality")
+    if isinstance(quality, str) and quality.strip() in {
+        LABEL_QUALITY_RAW,
+        LABEL_QUALITY_PARTIAL,
+        LABEL_QUALITY_MATURE,
+    }:
+        out["annotation_quality"] = quality.strip()
+    validation = labeling.get("validation_state")
+    if isinstance(validation, str) and validation.strip() in {
+        LABEL_VALIDATION_UNREVIEWED,
+        LABEL_VALIDATION_VALIDATED,
+        LABEL_VALIDATION_NEEDS_REVIEW,
+    }:
+        out["validation_state"] = validation.strip()
+    signals = labeling.get("signals")
+    if isinstance(signals, list):
+        clean: list[str] = []
+        for value in signals:
+            text = str(value).strip()
+            if not text or len(text) > _MAX_LABEL_SIGNAL_LEN:
+                continue
+            if _clean_identifier(text) is None:
+                continue
+            clean.append(text)
+        if clean:
+            out["signals"] = clean[:20]
+    return out
+
+
+def project_trust(
+    entry: dict[str, Any],
+    *,
+    freshness: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Project owner-only trust metadata with strict enum/reference allowlists."""
+    safe_entry = entry if isinstance(entry, dict) else {}
+    raw = safe_entry.get("provenance")
+    raw = raw if isinstance(raw, dict) else {}
+    trust: dict[str, Any] = {}
+
+    confirmation = _clean_confirmation_source(raw.get("confirmation_source"))
+    if confirmation:
+        trust["confirmation_source"] = confirmation
+
+    anchor_ref = _clean_anchor_ref(raw.get("anchor_ref"))
+    if anchor_ref:
+        trust["anchor"] = anchor_ref
+
+    anchor_status = _clean_anchor_status(raw.get("anchor_status"))
+    if anchor_status:
+        trust["anchor_status"] = anchor_status
+
+    anchor_project_id = _clean_anchor_project_id(raw.get("anchor_project_id"))
+    if anchor_project_id:
+        trust["anchor_project_id"] = anchor_project_id
+
+    validated_at = raw.get("last_validated_at")
+    if _parse_iso(validated_at) is not None:
+        trust["validated_at"] = validated_at.strip()
+
+    fr = freshness if isinstance(freshness, dict) else compute_freshness(safe_entry, now=now)
+    if isinstance(fr, dict):
+        decay_policy = fr.get("decay_policy")
+        if decay_policy in {DECAY_POLICY_TIME, DECAY_POLICY_TRIGGER}:
+            trust["decay_policy"] = decay_policy
+        skip_decay = fr.get("skip_decay")
+        if isinstance(skip_decay, bool):
+            trust["skip_decay"] = skip_decay
+        freshness_status = fr.get("freshness_status")
+        if freshness_status in {FRESH, AGING, STALE, UNKNOWN}:
+            trust["freshness_status"] = freshness_status
+
+    if _clean_anchor_event(raw.get("anchor_event")) == "superseded":
+        successor = _clean_anchor_ref(raw.get("anchor_successor_ref"))
+        if successor:
+            trust["superseded_by"] = successor
+    return trust
 
 
 def _is_verified_active(entry: dict[str, Any]) -> bool:

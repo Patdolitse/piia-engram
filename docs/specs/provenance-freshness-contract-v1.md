@@ -27,7 +27,8 @@ decisions, playbooks). All are optional; entries without them remain valid.
 | `last_validated_at` | ISO-8601 string | When a human/agent last confirmed the entry still holds. Distinct from `created_at` (birth) and `last_reviewed` (existing field). | falls back to `last_reviewed`, then `created_at`, then `timestamp` |
 
 `freshness_status` is **derived at recall time, never stored** (see §3) so it
-cannot go stale on disk.
+cannot go stale on disk. Freshness is a temporal hint only: `fresh` does not
+mean validated or trustworthy.
 
 Each knowledge entry also carries a system-derived `labeling` object:
 
@@ -46,14 +47,40 @@ from provenance, domain/project/source URL context, risk tier, and approval
 state. Staging entries are `needs_review`; high-risk entries remain conservative
 even after promotion, while ordinary owner-reviewed/promoted entries receive a
 validation stamp and can become `validated`/`mature` when the supporting signals
-are present.
+are present. A lifecycle `tier` of `verified` is still only lifecycle state; it
+does not by itself mean the entry has owner confirmation evidence.
+
+The contract keeps four independent dimensions:
+
+| Dimension | Examples | Meaning |
+|-----------|----------|---------|
+| Lifecycle tier/status | `staging`, `verified`, `archived`/inactive | Where the item sits in the memory lifecycle. |
+| Validation maturity | `unreviewed`, `validated`, `needs_review` | Whether the item carries a validation signal such as `last_validated_at`, unless risk/staging forces review. |
+| Confirmation evidence | `human`, `test_signal`, `anchor`, absent | Owner/internal evidence that can explain why a fact is trusted. |
+| Temporal freshness | `fresh`, `aging`, `stale`, `unknown` | Age of the best available timestamp basis. |
+
+These dimensions are not substitutes. `verified` does not imply
+`confirmation_source`; `last_validated_at` can make labeling `validated` without
+fabricating a `confirmation_source`; and `fresh` does not imply validated.
+
+Owner/internal confirmation fields include `confirmation_source`,
+`anchor_status`, `anchor_project_id`, `anchor_ref`, `anchor_event`,
+`anchor_successor_ref`, `anchor_successor_status`, and `anchor_checked_at`.
+Ordinary agent-facing writes strip these fields. Existing owner/internal paths
+such as review/promote/confirm/onboard/anchor checking may still write them
+when their own gates allow it.
 
 ### Type / safety rules
 
 - `source_agent`, `run_id` are short identifiers: trimmed, capped at 120 chars,
-  rejected (dropped) if they contain newlines or look like content/paths.
+  rejected (dropped) if they contain newlines, credential-shaped text, or look
+  like content/paths.
 - `last_validated_at` must parse as ISO-8601 (with or without `Z`); otherwise it
   is ignored and freshness falls back to the next basis.
+- Owner-only trust projection accepts only known confirmation/anchor enums and
+  safe anchor references (for example `dep:jest`, `file:package.json`) or safe
+  project ids (for example `github.com/acme/app`, `id:x`). Malformed values fail
+  closed and are not echoed back.
 - None of these fields are sensitive by themselves, but `source_agent`/`run_id`
   pass through the **same sensitivity gate** as the rest of the entry — they are
   never surfaced for an entry the caller is not allowed to see.
@@ -139,6 +166,9 @@ equally current. This is opt-in at the surface level and changes no stored data.
 
 - No cryptographic provenance / signing (identity over MCP is self-reported;
   see governance notes). This is descriptive metadata, not attestation.
+- No autonomous validation or automatic trust promotion; confirmation evidence
+  is owner/internal metadata, not a claim that Engram independently proved a
+  fact.
 - No automatic re-validation or expiry of stale knowledge — freshness is a
   *hint*, never an automatic delete.
 

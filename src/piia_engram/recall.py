@@ -68,16 +68,7 @@ def _project_item(
         view["domain"] = domain.strip()
 
     # Provenance subset — source-explainable, never internal bookkeeping.
-    prov: dict[str, Any] = {}
-    source_agent = _provenance.resolve_source_agent(entry)
-    if source_agent:
-        prov["source_agent"] = source_agent
-    raw_prov = entry.get("provenance")
-    if isinstance(raw_prov, dict):
-        for key in ("run_id", "last_validated_at"):
-            value = raw_prov.get(key)
-            if isinstance(value, str) and value.strip():
-                prov[key] = value.strip()
+    prov = _provenance.project_recall_provenance(entry)
     if prov:
         view["provenance"] = prov
 
@@ -99,35 +90,7 @@ def _project_trust(
     """Owner-only allowlisted trust block: why-trustworthy / anchor / expires /
     validated-at. `expires` is derived from freshness (trigger-bound/skip_decay
     facts don't expire on a clock; time facts age) -- never a fabricated date."""
-    raw = entry.get("provenance")
-    raw = raw if isinstance(raw, dict) else {}
-    trust: dict[str, Any] = {}
-    cs = raw.get("confirmation_source")
-    if isinstance(cs, str) and cs.strip():
-        trust["confirmation_source"] = cs.strip()
-    anchor_ref = raw.get("anchor_ref")
-    if isinstance(anchor_ref, str) and anchor_ref.strip():
-        trust["anchor"] = anchor_ref.strip()
-    anchor_status = raw.get("anchor_status")
-    if isinstance(anchor_status, str) and anchor_status.strip():
-        trust["anchor_status"] = anchor_status.strip()
-    anchor_project_id = raw.get("anchor_project_id")
-    if isinstance(anchor_project_id, str) and anchor_project_id.strip():
-        trust["anchor_project_id"] = anchor_project_id.strip()
-    validated_at = raw.get("last_validated_at")
-    if isinstance(validated_at, str) and validated_at.strip():
-        trust["validated_at"] = validated_at.strip()
-    fr = freshness if isinstance(freshness, dict) else _provenance.compute_freshness(entry, now=now)
-    if isinstance(fr, dict):
-        for key in ("decay_policy", "skip_decay", "freshness_status"):
-            if key in fr:
-                trust[key] = fr[key]
-    # Feature #33: successor hint — additive, owner-only, never leaks via default recall.
-    if raw.get("anchor_event") == "superseded":
-        successor = raw.get("anchor_successor_ref")
-        if isinstance(successor, str) and successor.strip():
-            trust["superseded_by"] = successor.strip()
-    return trust
+    return _provenance.project_trust(entry, freshness=freshness, now=now)
 
 
 def _item_cost(view: dict[str, Any]) -> int:
@@ -140,20 +103,7 @@ def _count_dicts(items: list[dict[str, Any]] | None) -> int:
 
 
 def _project_labeling(entry: dict[str, Any]) -> dict[str, Any]:
-    labeling = entry.get("labeling")
-    if not isinstance(labeling, dict):
-        return {}
-    out: dict[str, Any] = {}
-    for key in ("source_kind", "annotation_quality", "validation_state"):
-        value = labeling.get(key)
-        if isinstance(value, str) and value.strip():
-            out[key] = value.strip()
-    signals = labeling.get("signals")
-    if isinstance(signals, list):
-        clean = [str(value).strip() for value in signals if str(value).strip()]
-        if clean:
-            out["signals"] = clean[:20]
-    return out
+    return _provenance.project_labeling(entry)
 
 
 def merge_knowledge(
