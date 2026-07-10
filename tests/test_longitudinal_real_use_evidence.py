@@ -343,6 +343,25 @@ def test_synthetic_eval_accepts_consistent_failed_snapshot_as_failed_not_invalid
     assert synthetic["invalid_snapshot_count"] == 0
 
 
+def test_synthetic_eval_accepts_threshold_failure_with_clean_counts(tmp_path: Path) -> None:
+    mod = _load_module()
+    eval_json = tmp_path / "memory-eval.json"
+    snapshot = _memory_eval_snapshot(passed=True)
+    snapshot["overall_passed"] = False
+    snapshot["recall"][0]["overall_passed"] = False
+    snapshot["recall"][0]["mean_recall_at_k"] = 0.25
+    eval_json.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    artifact = mod.build_evidence(memory_eval_jsons=[eval_json], as_of="2026-06-10", window_days=7)
+    synthetic = artifact["evidence_classes"]["synthetic_memory_eval"]
+
+    assert synthetic["snapshot_count"] == 1
+    assert synthetic["passed_snapshot_count"] == 0
+    assert synthetic["failed_snapshot_count"] == 1
+    assert synthetic["invalid_snapshot_count"] == 0
+    assert synthetic["aggregate_case_counts"]["recall_failed_count"] == 0
+
+
 def test_live_smoke_unsafe_extra_field_is_failed_without_anchor_contribution(tmp_path: Path) -> None:
     mod = _load_module()
     sentinel = "PRIVATE_LIVE_SMOKE_SENTINEL"

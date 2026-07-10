@@ -581,7 +581,7 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
             return None, False, "synthetic_memory_eval.invalid_count"
         if passed_count + failed_count != case_count:
             return None, False, "synthetic_memory_eval.inconsistent_counts"
-        if bool(item.get("overall_passed")) != (failed_count == 0 and passed_count == case_count):
+        if bool(item.get("overall_passed")) and (failed_count != 0 or passed_count != case_count):
             return None, False, "synthetic_memory_eval.inconsistent_overall"
         counts["recall_case_count"] += case_count
         counts["recall_passed_count"] += passed_count
@@ -607,7 +607,7 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
         failed_expectation_count = _strict_non_negative_int(item.get("failed_expectation_count"))
         if candidate_count is None or failed_expectation_count is None:
             return None, False, "synthetic_memory_eval.invalid_count"
-        if bool(item.get("overall_passed")) != (failed_expectation_count == 0):
+        if bool(item.get("overall_passed")) and failed_expectation_count != 0:
             return None, False, "synthetic_memory_eval.inconsistent_overall"
         counts["admission_candidate_count"] += candidate_count
         counts["admission_failed_expectation_count"] += failed_expectation_count
@@ -634,8 +634,9 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
         return None, False, "synthetic_memory_eval.invalid_count"
     if passed_count + failed_count != case_count:
         return None, False, "synthetic_memory_eval.inconsistent_counts"
-    agent_context_expected = failed_count == 0 and passed_count == case_count and case_count > 0
-    if bool(agent_context.get("overall_passed")) != agent_context_expected:
+    if bool(agent_context.get("overall_passed")) and (
+        failed_count != 0 or passed_count != case_count or case_count == 0
+    ):
         return None, False, "synthetic_memory_eval.inconsistent_overall"
     counts["agent_context_case_count"] += case_count
     counts["agent_context_passed_count"] += passed_count
