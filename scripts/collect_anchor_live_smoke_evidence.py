@@ -216,9 +216,15 @@ def _valid_run_record(record: dict[str, Any]) -> tuple[str, str | None]:
     if status == "failed":
         if not has_error:
             return "failed", "invalid_run_record"
-        if subprocess_exit is None or subprocess_exit == 0:
-            return "failed", "invalid_run_record"
-        return "failed", str(error_code)
+        if error_code in {"launch_failure", "timeout"}:
+            if record.get("subprocess_exit") is not None:
+                return "failed", "invalid_run_record"
+            return "failed", str(error_code)
+        if error_code == "nonzero_subprocess":
+            if subprocess_exit is None or subprocess_exit == 0:
+                return "failed", "invalid_run_record"
+            return "failed", "nonzero_subprocess"
+        return "failed", "invalid_run_record"
 
     return "parse_failed", "invalid_run_record"
 

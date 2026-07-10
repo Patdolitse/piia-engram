@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run_anchor_live_smoke.py"
 COLLECTOR = ROOT / "scripts" / "collect_anchor_live_smoke_evidence.py"
+VALIDATOR = ROOT / "scripts" / "validate_anchor_live_smoke_evidence.py"
 INSTALLER = ROOT / "scripts" / "install_anchor_live_smoke_task.ps1"
 
 
@@ -162,6 +163,126 @@ def test_nonzero_subprocess_records_failure_and_nonzero(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert record["error_code"] == "nonzero_subprocess"
     assert record["subprocess_exit"] == 7
+
+
+def test_collector_preserves_runner_failure_classes_for_failed_records(tmp_path: Path) -> None:
+    launch = _run(tmp_path, ["definitely-missing-anchor-smoke-executable"], run_id="launch")
+    timeout = subprocess.run(
+        [
+            sys.executable,
+            str(RUNNER),
+            "--repo-root",
+            str(ROOT),
+            "--history-dir",
+            str(tmp_path),
+            "--record-file",
+            str(tmp_path / "runs.jsonl"),
+            "--diagnostics-dir",
+            str(tmp_path / "diagnostics"),
+            "--timeout",
+            "0.1",
+            "--no-markdown",
+            "--run-id",
+            "timeout",
+            "--timestamp",
+            "2026-07-10T02:00:00Z",
+            "--json",
+            "--command",
+            sys.executable,
+            "-c",
+            "import time; time.sleep(5)",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    nonzero = _run(tmp_path, _python_exit(7, stdout='{"checked":1}\n'), run_id="nonzero")
+
+    assert json.loads(launch.stdout)["error_code"] == "launch_failure"
+    assert json.loads(timeout.stdout)["error_code"] == "timeout"
+    assert json.loads(nonzero.stdout)["error_code"] == "nonzero_subprocess"
+
+    zero_anchor = tmp_path / "zero-anchor.json"
+    zero_anchor.write_text(
+        json.dumps(
+            {
+                "anchors": {
+                    "checked": 0,
+                    "valid": 0,
+                    "invalid": 0,
+                    "unknown": 0,
+                    "superseded": 0,
+                    "demoted_to_staging": 0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    zero_live = tmp_path / "zero-live.json"
+    zero_live.write_text(
+        json.dumps(
+            {
+                "live_smoke": {
+                    "runs": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "failure_classes": {},
+                    "status_counts": {},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    collector = subprocess.run(
+        [
+            sys.executable,
+            str(COLLECTOR),
+            "--json",
+            "--synthetic",
+            "--anchor-json",
+            str(zero_anchor),
+            "--live-smoke-json",
+            str(zero_live),
+            "--live-smoke-run-jsonl",
+            str(tmp_path / "runs.jsonl"),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if collector.returncode != 0:
+        raise AssertionError(collector.stderr)
+    payload = json.loads(collector.stdout)
+
+    assert payload["anchors"] == {
+        "checked": 0,
+        "valid": 0,
+        "invalid": 0,
+        "unknown": 0,
+        "superseded": 0,
+        "demoted_to_staging": 0,
+    }
+    assert payload["live_smoke"]["runs"] == 3
+    assert payload["live_smoke"]["passed"] == 0
+    assert payload["live_smoke"]["failed"] == 3
+    assert payload["live_smoke"]["status_counts"] == {"failed": 3}
+    assert payload["live_smoke"]["failure_classes"] == {
+        "launch_failure": 1,
+        "timeout": 1,
+        "nonzero_subprocess": 1,
+    }
+
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+    validator = subprocess.run(
+        [sys.executable, str(VALIDATOR), "--evidence", str(evidence), "--json"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(validator.stdout)
+    assert validator.returncode == 0
+    assert report["valid"] is True
 
 
 def test_parse_failure_records_failure_and_nonzero(tmp_path: Path) -> None:
