@@ -360,6 +360,165 @@ class TestSearchTools:
         # a3: permissions metadata is always present
         assert "_caller_permissions" in result
 
+    def test_search_knowledge_uses_shared_service_with_mcp_policy(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        from piia_engram import mcp_tools_read
+
+        seen = {}
+
+        def fake_search(eng, **kwargs):
+            seen["eng"] = eng
+            seen.update(kwargs)
+            return {"lessons": [], "decisions": [], "playbooks": []}
+
+        monkeypatch.setattr(mcp_tools_read, "_search_knowledge_service", fake_search)
+        monkeypatch.setattr(
+            mcp_server._gov_rt, "caller_is_owner", lambda root: True
+        )
+
+        result = json.loads(_run(
+            mcp_server.search_knowledge("needle", scope="lessons", limit=3)
+        ))
+
+        assert result["lessons"] == []
+        assert "_caller_permissions" in result
+        assert seen == {
+            "eng": isolated_engram,
+            "query": "needle",
+            "scope": "lessons",
+            "limit": 3,
+            "filters": None,
+            "allow_hybrid_index": True,
+            "project_folder": None,
+        }
+
+    @pytest.mark.parametrize(
+        ("is_owner", "expected_allow_index"),
+        [(True, True), (False, False)],
+    )
+    def test_search_knowledge_owner_policy_controls_hybrid_index(
+        self,
+        isolated_engram: Engram,
+        monkeypatch: pytest.MonkeyPatch,
+        is_owner: bool,
+        expected_allow_index: bool,
+    ):
+        from piia_engram import mcp_tools_read
+
+        seen = {}
+
+        def fake_search(eng, **kwargs):
+            seen.update(kwargs)
+            return {"lessons": [], "decisions": [], "playbooks": []}
+
+        monkeypatch.setattr(mcp_tools_read, "_search_knowledge_service", fake_search)
+        monkeypatch.setattr(
+            mcp_server._gov_rt, "caller_is_owner", lambda root: is_owner
+        )
+
+        json.loads(_run(mcp_server.search_knowledge("needle")))
+
+        assert seen["allow_hybrid_index"] is expected_allow_index
+
+    def test_search_knowledge_project_folder_is_detected_and_forwarded(
+        self,
+        isolated_engram: Engram,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        from piia_engram import mcp_tools_read
+
+        seen = {}
+
+        def fake_search(eng, **kwargs):
+            seen.update(kwargs)
+            return {"lessons": [], "decisions": [], "playbooks": []}
+
+        project = str(tmp_path / "project-a")
+        monkeypatch.setattr(mcp_tools_read, "_search_knowledge_service", fake_search)
+
+        json.loads(_run(mcp_server.search_knowledge("needle", project_folder=project)))
+
+        assert seen["project_folder"] == project
+        assert mcp_server._session.project_folder == project
+
+    def test_search_knowledge_adapter_tracks_success_and_failure(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
+    ):
+        from piia_engram import mcp_tools_read
+
+        tracks = []
+        monkeypatch.setattr(
+            mcp_server,
+            "_track",
+            lambda name, success=True, args_summary="": tracks.append((name, success)),
+        )
+        monkeypatch.setattr(
+            mcp_tools_read,
+            "_search_knowledge_service",
+            lambda eng, **kwargs: {"lessons": [], "decisions": [], "playbooks": []},
+        )
+
+        json.loads(_run(mcp_server.search_knowledge("ok")))
+
+        def boom(eng, **kwargs):
+            raise RuntimeError("service boom")
+
+        monkeypatch.setattr(mcp_tools_read, "_search_knowledge_service", boom)
+        failed = _run(mcp_server.search_knowledge("fail"))
+
+        assert tracks == [
+            ("search_knowledge", True),
+            ("search_knowledge", False),
+        ]
+        assert "搜索失败: service boom" in failed
+
+    def test_search_knowledge_service_shared_fields_match_dock_search(
+        self,
+        isolated_engram: Engram,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ):
+        from piia_engram import mcp_tools_read
+        from piia_engram.setup_wizard import _run_dock_search
+
+        calls = {}
+
+        def fake_cli_search(eng, **kwargs):
+            calls["cli"] = kwargs
+            return {"lessons": [], "decisions": [], "playbooks": []}
+
+        def fake_mcp_search(eng, **kwargs):
+            calls["mcp"] = kwargs
+            return {"lessons": [], "decisions": [], "playbooks": []}
+
+        monkeypatch.setenv("ENGRAM_DIR", str(isolated_engram.root))
+        monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+        monkeypatch.setattr(
+            "piia_engram.knowledge_search_service.search_knowledge",
+            fake_cli_search,
+        )
+        monkeypatch.setattr(mcp_tools_read, "_search_knowledge_service", fake_mcp_search)
+
+        assert _run_dock_search([
+            "--query", "same",
+            "--scope", "lessons",
+            "--limit", "4",
+            "--json",
+        ]) == 0
+        json.loads(capsys.readouterr().out)
+        json.loads(_run(
+            mcp_server.search_knowledge("same", scope="lessons", limit=4)
+        ))
+
+        shared = ("query", "scope", "limit", "filters", "project_folder")
+        assert {k: calls["cli"][k] for k in shared} == {
+            k: calls["mcp"][k] for k in shared
+        }
+        assert calls["cli"]["allow_hybrid_index"] is False
+        assert calls["mcp"]["allow_hybrid_index"] is True
+
     def test_search_knowledge_playbooks_include_usage_policy(
         self, isolated_engram: Engram
     ):
@@ -1628,6 +1787,24 @@ def test_mcp_search_knowledge_invalid_filters_json(isolated_engram: Engram):
         query="anything", filters_json="not valid json{",
     ))
     assert "filters_json 格式错误" in result
+
+
+@pytest.mark.parametrize(
+    ("filters_json", "expected"),
+    [
+        ('["tier"]', "filters_json 应为 JSON 对象"),
+        ('{"unknown": "x"}', "filters 不支持的键: unknown"),
+        ('{"domain": 3}', "filters['domain'] 应为字符串"),
+        ('{"tier": "gold"}', "filters['tier'] 仅支持"),
+    ],
+)
+def test_mcp_search_knowledge_filter_validation_edges(
+    isolated_engram: Engram, filters_json: str, expected: str
+):
+    result = _run(mcp_server.search_knowledge(
+        query="anything", filters_json=filters_json,
+    ))
+    assert expected in result
 
 
 def test_review_staging_list_is_metadata_only(isolated_engram: Engram):

@@ -254,6 +254,110 @@ def test_dock_search_json_is_structured_and_zero_write(monkeypatch, tmp_path, ca
     assert _snapshot(store) == before  # the whole search path wrote nothing
 
 
+def test_dock_search_uses_shared_service_with_cli_policy(
+        monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    _populate(store)
+    seen = {}
+
+    def fake_search(eng, **kwargs):
+        seen["read_only"] = getattr(eng, "_read_only", None)
+        seen["root"] = eng.root
+        seen.update(kwargs)
+        return {"lessons": [], "decisions": [], "playbooks": []}
+
+    monkeypatch.setattr(
+        "piia_engram.knowledge_search_service.search_knowledge",
+        fake_search,
+    )
+
+    assert _cli_search(
+        monkeypatch, tmp_path,
+        ["--query", "needle", "--scope", "lessons", "--limit", "3", "--json"],
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is True
+    assert seen == {
+        "read_only": True,
+        "root": store,
+        "query": "needle",
+        "scope": "lessons",
+        "limit": 3,
+        "filters": None,
+        "project_folder": None,
+        "allow_hybrid_index": False,
+    }
+
+
+def test_dock_search_all_and_scoped_json_parity(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_lesson({"summary": "release checklist lesson"})
+    eng.add_decision({"question": "release gate?", "choice": "run tests"})
+    eng.add_playbook({"title": "release checklist", "triggers": ["release"]})
+
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "release", "--json"]) == 0
+    all_payload = json.loads(capsys.readouterr().out)
+    assert {item["kind"] for item in all_payload["results"]} == {
+        "lesson", "decision", "playbook",
+    }
+
+    assert _cli_search(
+        monkeypatch, tmp_path,
+        ["--query", "release", "--scope", "decisions", "--json"],
+    ) == 0
+    scoped_payload = json.loads(capsys.readouterr().out)
+    assert {item["kind"] for item in scoped_payload["results"]} == {"decision"}
+
+
+def test_dock_search_text_success_and_empty(monkeypatch, tmp_path, capsys):
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_lesson({"summary": "sqlite query planning lesson"})
+
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "sqlite"]) == 0
+    assert "- (lesson" in capsys.readouterr().out
+
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "notfound"]) == 0
+    assert "(no matches for: notfound)" in capsys.readouterr().out
+
+
+def test_dock_search_exception_keeps_error_contract(
+        monkeypatch, tmp_path, capsys):
+    _populate(tmp_path / "store")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("service boom")
+
+    monkeypatch.setattr(
+        "piia_engram.knowledge_search_service.search_knowledge",
+        boom,
+    )
+
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "x"]) == 1
+    assert "ERROR: search failed: service boom" in capsys.readouterr().out
+
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "x", "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"] == "service boom"
+
+
+def test_dock_search_hybrid_env_still_creates_no_search_index(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("ENGRAM_SEARCH", "hybrid")
+    store = tmp_path / "store"
+    eng = _populate(store)
+    eng.add_lesson({"summary": "hybrid index should not be built by dock search"})
+    before = _snapshot(store)
+
+    assert _cli_search(monkeypatch, tmp_path, ["--query", "hybrid", "--json"]) == 0
+
+    assert _snapshot(store) == before
+    assert not (store / "search_index.db").exists()
+
+
 def test_read_only_does_not_persist_field_migration(tmp_path):
     """A legacy entry missing backfilled fields must be migrated in MEMORY only
     under read_only — never rewritten to disk."""

@@ -2833,6 +2833,9 @@ def _run_dock_search(args: list[str]) -> int:
     """
     import os as _os
     from piia_engram.core import Engram
+    from piia_engram.knowledge_search_service import (
+        search_knowledge as _search_knowledge_service,
+    )
 
     if args and args[0] in {"-h", "--help"}:
         print(
@@ -2904,8 +2907,14 @@ def _run_dock_search(args: list[str]) -> int:
         eng = Engram(root=root, read_only=True)
         # allow_hybrid_index=False keeps this zero-write: it never builds or
         # persists the FTS/vector index to <root>/search_index.db.
-        raw = eng.search_knowledge(
-            query, scope=scope, limit=limit, allow_hybrid_index=False,
+        raw = _search_knowledge_service(
+            eng,
+            query=query,
+            scope=scope,
+            limit=limit,
+            filters=None,
+            project_folder=None,
+            allow_hybrid_index=False,
         )
     except Exception as exc:  # never crash the Dock spawn — emit a usable error
         if want_json:

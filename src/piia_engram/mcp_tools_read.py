@@ -6,8 +6,12 @@ import json
 
 try:
     from . import mcp_server as S
+    from .knowledge_search_service import search_knowledge as _search_knowledge_service
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
+    from knowledge_search_service import (  # type: ignore[no-redef]
+        search_knowledge as _search_knowledge_service,
+    )
 
 @S.mcp.tool()
 async def get_user_context(
@@ -572,9 +576,11 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
         # readable in the FTS index file (Codex round-19 file-side-effect leak).
         # Suppress that persisted index for non-owners; caller_is_owner is True
         # when governance is OFF, so the disabled/owner path is unchanged.
-        allow_index = S._gov_rt.caller_is_owner(S._get_engram().root)
-        result = S._get_engram().search_knowledge(
-            query, scope=scope, limit=limit, filters=filters,
+        eng = S._get_engram()
+        allow_index = S._gov_rt.caller_is_owner(eng.root)
+        result = _search_knowledge_service(
+            eng,
+            query=query, scope=scope, limit=limit, filters=filters,
             allow_hybrid_index=allow_index,
             project_folder=effective_project,
         )
