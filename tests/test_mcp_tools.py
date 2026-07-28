@@ -1764,6 +1764,70 @@ class TestCollectProjectInfo:
         assert "module_count" not in info
         assert "test_count" not in info
 
+    def test_collects_git_position_without_subprocess(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nversion = "0.1.0"\n', encoding="utf-8",
+        )
+        git_dir = tmp_path / ".git"
+        ref = git_dir / "refs" / "heads" / "feature" / "fast-closeout"
+        ref.parent.mkdir(parents=True)
+        (git_dir / "HEAD").write_text(
+            "ref: refs/heads/feature/fast-closeout\n",
+            encoding="ascii",
+        )
+        ref.write_text("1234567890abcdef1234567890abcdef12345678\n", encoding="ascii")
+
+        info = mcp_server._collect_project_info(str(tmp_path))
+
+        assert info["current_branch"] == "feature/fast-closeout"
+        assert info["latest_local_commit"] == "1234567"
+
+    def test_collects_linked_worktree_position(self, tmp_path: Path):
+        project = tmp_path / "worktree"
+        project.mkdir()
+        (project / "pyproject.toml").write_text(
+            '[project]\nversion = "0.1.0"\n', encoding="utf-8",
+        )
+        common_dir = tmp_path / "main" / ".git"
+        worktree_git_dir = common_dir / "worktrees" / "feature"
+        worktree_git_dir.mkdir(parents=True)
+        (project / ".git").write_text(
+            f"gitdir: {worktree_git_dir}\n",
+            encoding="utf-8",
+        )
+        (worktree_git_dir / "commondir").write_text("../..\n", encoding="ascii")
+        (worktree_git_dir / "HEAD").write_text(
+            "ref: refs/heads/feature\n",
+            encoding="ascii",
+        )
+        common_dir.mkdir(parents=True, exist_ok=True)
+        (common_dir / "packed-refs").write_text(
+            "abcdef0123456789abcdef0123456789abcdef01 refs/heads/feature\n",
+            encoding="ascii",
+        )
+
+        info = mcp_server._collect_project_info(str(project))
+
+        assert info["current_branch"] == "feature"
+        assert info["latest_local_commit"] == "abcdef0"
+
+    def test_rejects_git_ref_path_traversal(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nversion = "0.1.0"\n', encoding="utf-8",
+        )
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/../../secret\n", encoding="ascii")
+        (tmp_path / "secret").write_text(
+            "1234567890abcdef1234567890abcdef12345678\n",
+            encoding="ascii",
+        )
+
+        info = mcp_server._collect_project_info(str(tmp_path))
+
+        assert "current_branch" not in info
+        assert "latest_local_commit" not in info
+
 
 # ---------------------------------------------------------------------------
 # Provider 兼容层参数测试

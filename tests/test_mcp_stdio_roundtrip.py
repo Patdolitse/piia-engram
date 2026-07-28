@@ -8,6 +8,7 @@ Codex and Cursor use. A green in-process suite does not prove a client can
 actually reach the server over the protocol; this test guards that path.
 """
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -48,23 +49,50 @@ def _server_params(tmp_path: Path) -> StdioServerParameters:
     )
 
 
-async def _initialize_list_call(params: StdioServerParameters):
+async def _initialize_list_call(
+    params: StdioServerParameters,
+    project_folder: Path,
+):
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             init = await session.initialize()
             tools = await session.list_tools()
             call = await session.call_tool("get_user_context", {"level": "quick"})
-            return init, tools, call
+            closeout = await session.call_tool(
+                "wrap_up_session",
+                {
+                    "summary": "Completed an isolated MCP stdio closeout smoke test.",
+                    "project_folder": str(project_folder),
+                    "source_tool": "pytest",
+                    "project_title": "MCP stdio smoke",
+                    "user_confirmed": True,
+                    "run_reconcile": False,
+                    "idempotency_key": "mcp-stdio-roundtrip-closeout",
+                },
+            )
+            return init, tools, call, closeout
 
 
-def _run_roundtrip(params: StdioServerParameters):
+def _run_roundtrip(params: StdioServerParameters, project_folder: Path):
     return asyncio.run(
-        asyncio.wait_for(_initialize_list_call(params), timeout=_ROUNDTRIP_TIMEOUT_S)
+        asyncio.wait_for(
+            _initialize_list_call(params, project_folder),
+            timeout=_ROUNDTRIP_TIMEOUT_S,
+        )
     )
 
 
 def test_mcp_server_stdio_jsonrpc_roundtrip(tmp_path):
-    init, tools, call = _run_roundtrip(_server_params(tmp_path))
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "mcp-stdio-smoke"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    init, tools, call, closeout = _run_roundtrip(
+        _server_params(tmp_path),
+        project,
+    )
 
     # Handshake succeeded and we reached the engram server itself.
     assert init.serverInfo.name == "engram", f"unexpected serverInfo: {init.serverInfo!r}"
@@ -77,3 +105,8 @@ def test_mcp_server_stdio_jsonrpc_roundtrip(tmp_path):
     # tools/call roundtrips: a real read-only entry actually executes, no error.
     assert call.isError is False, f"tool call errored: {call!r}"
     assert call.content, f"empty tool call content: {call!r}"
+
+    assert closeout.isError is False, f"closeout errored: {closeout!r}"
+    payload = json.loads(closeout.content[0].text)
+    assert payload["maintenance"]["save_project_snapshot"]["status"] == "ok"
+    assert payload["operation"]["status"] in {"completed", "partial_complete"}

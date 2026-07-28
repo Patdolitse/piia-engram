@@ -2,6 +2,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -217,36 +218,44 @@ def test_mcp_server_background_startup_sync_errors_do_not_crash(monkeypatch):
     assert warnings == [("startup sync failed: %s", "sync boom")]
 
 
-def test_startup_sync_and_write_tool_share_write_lock(monkeypatch):
+def test_startup_sync_does_not_block_normal_write_lock(monkeypatch):
     from piia_engram import mcp_server
 
-    events = []
+    reconcile_started = threading.Event()
+    allow_reconcile_finish = threading.Event()
+    write_completed = threading.Event()
 
-    class FakeLock:
-        def __enter__(self):
-            events.append("lock:enter")
+    def slow_reconcile():
+        reconcile_started.set()
+        assert allow_reconcile_finish.wait(timeout=2)
+        return {"imported": 0}
 
-        def __exit__(self, exc_type, exc, tb):
-            events.append("lock:exit")
+    monkeypatch.setattr(mcp_server._engram, "reconcile_memories", slow_reconcile)
+    monkeypatch.setattr(
+        mcp_server._engram,
+        "reconcile_ai_configs",
+        lambda: {"imported": 0},
+    )
 
-    monkeypatch.setattr(mcp_server, "_write_operation_lock", FakeLock())
-    monkeypatch.setattr(mcp_server._engram, "reconcile_memories", lambda: events.append("mem") or {"imported": 0})
-    monkeypatch.setattr(mcp_server._engram, "reconcile_ai_configs", lambda: events.append("cfg") or {"imported": 0})
+    startup_thread = threading.Thread(target=mcp_server._run_startup_sync)
+    startup_thread.start()
+    assert reconcile_started.wait(timeout=1)
 
-    mcp_server._run_startup_sync()
+    def run_normal_write():
+        mcp_server._locked_engram_call(lambda: None)
+        write_completed.set()
 
-    assert events == ["lock:enter", "mem", "cfg", "lock:exit"]
+    write_thread = threading.Thread(target=run_normal_write)
+    write_thread.start()
 
-    events.clear()
-    monkeypatch.setattr(mcp_server._gov_rt, "maybe_refuse_write", lambda root, tool: None)
-    monkeypatch.setattr(mcp_server._engram, "add_lesson", lambda lesson: events.append("add") or {"id": "lesson-1"})
-    monkeypatch.setattr(mcp_server, "_track", lambda *args, **kwargs: None)
-    monkeypatch.setattr(mcp_server, "_beta", lambda *args, **kwargs: None)
+    try:
+        assert write_completed.wait(timeout=0.5)
+    finally:
+        allow_reconcile_finish.set()
+        write_thread.join(timeout=1)
+        startup_thread.join(timeout=2)
 
-    result = asyncio.run(mcp_server.add_lesson("locked write", user_confirmed=True))
-
-    assert result == "[Engram] 教训已记录 · tier=staging · 可召回: locked write"
-    assert events == ["lock:enter", "add", "lock:exit"]
+    assert not startup_thread.is_alive()
 
 
 def test_help_detection_only_applies_to_mcp_entrypoint():

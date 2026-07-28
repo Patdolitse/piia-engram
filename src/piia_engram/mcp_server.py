@@ -26,6 +26,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 _write_operation_lock = threading.RLock()
+_reconcile_operation_lock = threading.RLock()
 
 
 def _configure_utf8_stdio() -> None:
@@ -48,6 +49,12 @@ def _env_flag_enabled(name: str) -> bool:
 def _locked_engram_call(fn, *args, **kwargs):
     """Serialize MCP write operations that may read-modify-write JSON stores."""
     with _write_operation_lock:
+        return fn(*args, **kwargs)
+
+
+def _locked_reconcile_call(fn, *args, **kwargs):
+    """Serialize long-running reconcile passes without blocking normal writes."""
+    with _reconcile_operation_lock:
         return fn(*args, **kwargs)
 
 
@@ -91,7 +98,7 @@ def _run_startup_sync() -> None:
     if _engram is None:
         return
     try:
-        with _write_operation_lock:
+        with _reconcile_operation_lock:
             _mem = _engram.reconcile_memories()
             _cfg = _engram.reconcile_ai_configs()
         if _mem["imported"] or _cfg["imported"]:
@@ -626,6 +633,132 @@ class _SessionTracker:
                 logger.warning("project snapshot auto-update failed: %s", exc)
 
 
+def _git_dirs_for_project(root: Path) -> tuple[Path, Path] | None:
+    """Return (worktree git-dir, common git-dir) without spawning git."""
+    try:
+        current = root.resolve()
+    except OSError:
+        current = root.absolute()
+    if current.is_file():
+        current = current.parent
+
+    for candidate in (current, *current.parents):
+        marker = candidate / ".git"
+        if marker.is_dir():
+            resolved = marker.resolve()
+            return resolved, resolved
+        if not marker.is_file():
+            continue
+        try:
+            marker_text = marker.read_text(
+                encoding="utf-8",
+                errors="ignore",
+            ).strip()
+        except OSError:
+            continue
+        if not marker_text.lower().startswith("gitdir:"):
+            continue
+        raw_git_dir = marker_text[len("gitdir:"):].strip()
+        if not raw_git_dir:
+            continue
+        git_dir = Path(raw_git_dir)
+        if not git_dir.is_absolute():
+            git_dir = marker.parent / git_dir
+        try:
+            git_dir = git_dir.resolve()
+        except OSError:
+            git_dir = git_dir.absolute()
+
+        common_dir = git_dir
+        common_file = git_dir / "commondir"
+        if common_file.is_file():
+            try:
+                common_raw = common_file.read_text(
+                    encoding="utf-8",
+                    errors="ignore",
+                ).strip()
+            except OSError:
+                common_raw = ""
+            if common_raw:
+                common_dir = Path(common_raw)
+                if not common_dir.is_absolute():
+                    common_dir = git_dir / common_dir
+                try:
+                    common_dir = common_dir.resolve()
+                except OSError:
+                    common_dir = common_dir.absolute()
+        return git_dir, common_dir
+    return None
+
+
+def _is_safe_git_ref(ref: str) -> bool:
+    return bool(
+        re.fullmatch(r"refs/[A-Za-z0-9._/-]+", ref)
+        and all(part not in {"", ".", ".."} for part in ref.split("/"))
+    )
+
+
+def _read_git_ref(git_dir: Path, common_dir: Path, ref: str) -> str:
+    if not _is_safe_git_ref(ref):
+        return ""
+    for base in dict.fromkeys((git_dir, common_dir)):
+        ref_path = base / Path(ref)
+        try:
+            value = ref_path.read_text(
+                encoding="ascii",
+                errors="ignore",
+            ).strip()
+        except OSError:
+            continue
+        if value:
+            return value
+
+    packed_refs = common_dir / "packed-refs"
+    try:
+        lines = packed_refs.read_text(
+            encoding="ascii",
+            errors="ignore",
+        ).splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        if not line or line.startswith(("#", "^")):
+            continue
+        oid, separator, packed_ref = line.partition(" ")
+        if separator and packed_ref.strip() == ref:
+            return oid.strip()
+    return ""
+
+
+def _collect_git_position(root: Path) -> dict[str, str]:
+    """Collect branch and commit from Git metadata with bounded file reads."""
+    resolved = _git_dirs_for_project(root)
+    if resolved is None:
+        return {}
+    git_dir, common_dir = resolved
+    try:
+        head = (git_dir / "HEAD").read_text(
+            encoding="ascii",
+            errors="ignore",
+        ).strip()
+    except OSError:
+        return {}
+    if not head:
+        return {}
+
+    info: dict[str, str] = {}
+    if head.startswith("ref:"):
+        ref = head[len("ref:"):].strip()
+        if _is_safe_git_ref(ref) and ref.startswith("refs/heads/"):
+            info["current_branch"] = ref[len("refs/heads/"):]
+        oid = _read_git_ref(git_dir, common_dir, ref)
+    else:
+        oid = head
+    if re.fullmatch(r"[0-9a-fA-F]{7,64}", oid or ""):
+        info["latest_local_commit"] = oid[:7].lower()
+    return info
+
+
 def _collect_project_info(project_folder: str) -> dict:
     """Collect lightweight project metrics from the filesystem.
 
@@ -695,33 +828,11 @@ def _collect_project_info(project_folder: str) -> dict:
         pass
 
     # 5. Local git position: useful for cross-tool handoff, never required.
+    # Read metadata directly. On Windows, killing a timed-out git.exe wrapper
+    # can leave its child holding stdout's pipe open, which makes
+    # subprocess.run(..., timeout=...) wait indefinitely inside communicate().
     try:
-        import subprocess
-
-        head = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=2,
-        )
-        if head.returncode == 0 and head.stdout.strip():
-            info["latest_local_commit"] = head.stdout.strip()
-        branch = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=str(root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=2,
-        )
-        if branch.returncode == 0 and branch.stdout.strip():
-            info["current_branch"] = branch.stdout.strip()
+        info.update(_collect_git_position(root))
     except Exception:
         pass
 

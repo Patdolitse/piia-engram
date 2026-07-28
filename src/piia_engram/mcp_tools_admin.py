@@ -979,7 +979,7 @@ async def wrap_up_session(
                 if effective_reconcile_scope == "project"
                 else {}
             )
-            reconcile = S._locked_engram_call(
+            reconcile = S._locked_reconcile_call(
                 S._get_engram().reconcile_memories,
                 **reconcile_kwargs,
             )
@@ -1022,7 +1022,7 @@ async def wrap_up_session(
                 if effective_reconcile_scope == "project"
                 else {}
             )
-            cfg_sync = S._locked_engram_call(
+            cfg_sync = S._locked_reconcile_call(
                 S._get_engram().reconcile_ai_configs,
                 **config_kwargs,
             )
