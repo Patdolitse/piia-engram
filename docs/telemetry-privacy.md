@@ -24,10 +24,11 @@ and the worker allowlists (`worker/src/index.js`), all pinned by the tests under
 - **Remote activation stays user-gated.** Standing up / migrating the remote D1
   and deploying the worker are explicit owner actions. No assistant pass
   performs them.
-- **Dashboard access is operator-controlled.** The worker's `/` dashboard and
-  `/v1/stats` JSON API are gated by the `DASH_PASSWORD` secret. Auth **fails
-  open**: with `DASH_PASSWORD` unset, both surfaces are public. Only anonymous,
-  metadata-only aggregates (buckets/counts, no PII) are ever exposed there, so a
+- **Dashboard access is operator-controlled.** The worker's `/` dashboard,
+  `/v1/stats` JSON API, and `/v1/active` JSON API are gated by the
+  `DASH_PASSWORD` secret. Auth **fails open**: with `DASH_PASSWORD` unset, all
+  three surfaces are public. Only anonymous, metadata-only aggregates
+  (buckets/counts, no PII) are ever exposed there, so a
   public dashboard is a deliberate operator choice rather than a content leak.
   The closeout runbook documents setting the secret if a gated dashboard is
   wanted.
@@ -78,6 +79,14 @@ state, returning bucket, error trend — all short fixed-vocabulary strings).
   new-vs-returning split is per rotating daily id (approximate churn), not
   deduplicated people. This wording is enforced by
   `validate_dashboard_wording()` and the worker-contract tests.
+- **Recent activity uses two different interpretations.** The worker exposes a
+  compact `/v1/active` JSON view and dashboard activity block. Today's distinct
+  rotating IDs are an **active-install estimate**. The last 7 and 30 day values
+  are **anonymous install-day counts**, because one installation can contribute
+  a different ID on each active UTC day; they are not deduplicated installations
+  or people. No new client field, cookie, account id, device id, path, or
+  persistent cross-day identifier is added. The API labels each window and
+  carries the same rotation caveat.
 
 ## First-value funnel (local-only, opt-in, content-blind)
 

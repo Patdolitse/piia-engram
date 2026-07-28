@@ -145,6 +145,17 @@ def test_dashboard_activity_trends_have_range_selector():
     assert "setActivityRange" in source
 
 
+def test_worker_exposes_recent_anonymous_activity_windows():
+    source = _source()
+    assert "'/v1/active'" in source
+    assert "recent_active" in source
+    assert "anonymous_daily_id_activity" in source
+    assert "active_install_estimate" in source
+    assert "anonymous_install_days" in source
+    assert "anonymous_daily_ids" in source
+    assert "only today approximates active installs" in source
+
+
 def test_dashboard_v1_1_section_gated_on_migration():
     source = _source()
     # The v1.1 tiles only render real numbers once the migration is applied;

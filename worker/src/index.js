@@ -643,8 +643,38 @@ async function getStatsData(env) {
     } catch {}
   }
 
+  const recentActive = {
+    metric: 'anonymous_daily_ids',
+    label: 'anonymous_daily_id_activity',
+    caveat: 'daily_id rotates every UTC day; only today approximates active installs; multi-day windows are install-day counts, not deduplicated people',
+    windows: {
+      today: {
+        days: 1,
+        label: 'active_install_estimate',
+        anonymous_daily_ids: Number(today?.users || 0),
+        events: Number(today?.events || 0),
+        active_days: Number(today?.events || 0) > 0 ? 1 : 0,
+      },
+      last_7_days: {
+        days: 7,
+        label: 'anonymous_install_days',
+        anonymous_daily_ids: Number(week?.users || 0),
+        events: Number(week?.events || 0),
+        active_days: Number(week?.active_days || 0),
+      },
+      last_30_days: {
+        days: 30,
+        label: 'anonymous_install_days',
+        anonymous_daily_ids: Number(month?.users || 0),
+        events: Number(month?.events || 0),
+        active_days: Number(month?.active_days || 0),
+      },
+    },
+  };
+
   return {
     totals, today, week, month,
+    recent_active: recentActive,
     versions: versions.results,
     analysis_contract_v1: {
       available: hasAnalysisContractV1,
@@ -810,6 +840,31 @@ export function renderDashboard(stats) {
   const td = stats.today || {};
   const wk = stats.week || {};
   const mo = stats.month || {};
+  const activeWindows = stats.recent_active?.windows || {};
+  function activeWindow(key) {
+    return activeWindows[key] || { anonymous_daily_ids: 0, events: 0, active_days: 0 };
+  }
+  const activeToday = activeWindow('today');
+  const activeWeek = activeWindow('last_7_days');
+  const activeMonth = activeWindow('last_30_days');
+  const activeEstimateHtml = `
+    <div class="metrics three" style="margin-bottom:1.5rem">
+      <div class="metric highlight">
+        <div class="period-label">今日活跃安装估算</div>
+        <div class="period-row"><span class="period-val">${activeToday.anonymous_daily_ids||0}</span><span class="period-unit">匿名日 ID</span></div>
+        <div class="period-row"><span class="period-val">${activeToday.events||0}</span><span class="period-unit">事件</span></div>
+      </div>
+      <div class="metric">
+        <div class="period-label">近 7 天匿名安装·日</div>
+        <div class="period-row"><span class="period-val">${activeWeek.anonymous_daily_ids||0}</span><span class="period-unit">匿名日 ID 次数</span></div>
+        <div class="period-row"><span class="period-val">${activeWeek.active_days||0}</span><span class="period-unit">活跃天</span></div>
+      </div>
+      <div class="metric">
+        <div class="period-label">近 30 天匿名安装·日</div>
+        <div class="period-row"><span class="period-val">${activeMonth.anonymous_daily_ids||0}</span><span class="period-unit">匿名日 ID 次数</span></div>
+        <div class="period-row"><span class="period-val">${activeMonth.active_days||0}</span><span class="period-unit">活跃天</span></div>
+      </div>
+    </div>`;
   const periodHtml = `
     <div class="metrics four">
       <div class="metric highlight">
@@ -1123,6 +1178,7 @@ export function renderDashboard(stats) {
   <!-- 总览 -->
   ${metricsHtml}
   ${dailyIdNotice}
+  ${activeEstimateHtml}
 
   <!-- PyPI 下载统计 -->
   <div class="section-title">&#128230; PyPI 下载统计</div>
@@ -1332,6 +1388,13 @@ export default {
         return new Response(renderDashboard(stats), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
       return new Response(JSON.stringify(stats, null, 2), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.pathname === '/v1/active') {
+      const stats = await getStatsData(env);
+      return new Response(JSON.stringify(stats.recent_active, null, 2), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }

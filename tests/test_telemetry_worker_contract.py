@@ -26,5 +26,12 @@ def test_dashboard_copy_uses_daily_id_wording_instead_of_user_count_claims():
 
     assert "匿名日 ID" in source
     assert "daily_id 按 UTC 日期轮换" in source
+    assert "今日活跃安装估算" in source
+    assert "近 7 天匿名安装·日" in source
+    assert "近 30 天匿名安装·日" in source
+    assert "anonymous_daily_id_activity" in source
+    assert "anonymous_install_days" in source
+    assert "近 7 天活跃安装估算" not in source
+    assert "近 30 天活跃安装估算" not in source
     assert "独立用户" not in source
     assert "用户数" not in source

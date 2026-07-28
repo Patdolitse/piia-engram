@@ -7,6 +7,7 @@
  *   2. v1 fallback (P1 columns missing → P0 insert)
  *   3. legacy fallback (P0 + P1 missing → base insert)
  *   4. rejected content field (an unexpected/content field → 422, never stored)
+ *   5. dashboard rendering for PyPI ranges and recent active-install estimates
  *
  * This is intentionally NOT part of the pytest suite (so CI stays dependency
  * light). Run manually:  node worker/test/smoke.mjs
@@ -148,6 +149,13 @@ async function postEvent(db, body) {
     all_tools: [],
     daily_active: [],
     monthly_summary: [],
+    recent_active: {
+      windows: {
+        today: { anonymous_daily_ids: 3, events: 8, active_days: 1 },
+        last_7_days: { anonymous_daily_ids: 11, events: 24, active_days: 5 },
+        last_30_days: { anonymous_daily_ids: 29, events: 51, active_days: 14 },
+      },
+    },
     versions: [],
     os_distribution: [],
     py_distribution: [],
@@ -171,6 +179,12 @@ async function postEvent(db, body) {
   check('dashboard PyPI KPI values render from recent API',
     html.includes('<div class="value">700</div><div class="label">近 7 天下载（PyPI API）</div>') &&
       html.includes('<div class="value">9,000</div><div class="label">近 30 天下载（PyPI API）</div>'));
+  check('dashboard separates today estimate from multi-day install-days',
+    html.includes('今日活跃安装估算') && html.includes('<span class="period-val">3</span>') &&
+      html.includes('近 7 天匿名安装·日') && html.includes('<span class="period-val">11</span>') &&
+      html.includes('近 30 天匿名安装·日') && html.includes('<span class="period-val">29</span>') &&
+      !html.includes('近 7 天活跃安装估算') &&
+      !html.includes('近 30 天活跃安装估算'));
   check('dashboard 30d panel renders every bar', barItems.length === 30, `bars=${barItems.length}`);
   check('dashboard 30d panel sparsifies visible x labels',
     visibleLabels.length <= 8 && visibleLabels.length >= 2, `labels=${visibleLabels.length}`);
