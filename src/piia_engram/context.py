@@ -31,6 +31,12 @@ from .storage import (
     _now_iso,
     strip_untrusted_trust_fields,
 )
+from .session_filters import (
+    has_explicit_decision_signal,
+    has_lesson_outcome_signal,
+    is_process_or_delegation_sentence,
+    strip_session_noise_blocks,
+)
 from .sensitivity import _SECRET_VALUE_RE  # audited high-confidence credential shapes
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type hints
@@ -566,7 +572,8 @@ class ContextMixin:
         if not text or not text.strip():
             return {"candidates": [], "skipped": 0, "skipped_low_quality": 0}
 
-        sentences = re.split(r"[。！？.!?\n]+", text)
+        candidate_text = strip_session_noise_blocks(text)
+        sentences = re.split(r"[。！？.!?\n]+", candidate_text)
         candidates: list[dict] = []
         skipped = skipped_low_quality = 0
         seen: set[tuple[str, str]] = set()
@@ -581,6 +588,10 @@ class ContextMixin:
                 continue
 
             sentence_lower = sentence.lower()
+            if is_process_or_delegation_sentence(sentence):
+                skipped += 1
+                skipped_low_quality += 1
+                continue
             is_decision = any(t in sentence_lower for t in DECISION_TRIGGERS)
             is_lesson = any(t in sentence_lower for t in LESSON_TRIGGERS)
             if not is_decision and not is_lesson:
@@ -600,6 +611,14 @@ class ContextMixin:
 
             candidate_type = "decision" if is_decision else "lesson"
             trigger_reason = "decision_trigger" if is_decision else "lesson_trigger"
+            if candidate_type == "decision" and not has_explicit_decision_signal(sentence):
+                skipped += 1
+                skipped_low_quality += 1
+                continue
+            if candidate_type == "lesson" and not has_lesson_outcome_signal(sentence):
+                skipped += 1
+                skipped_low_quality += 1
+                continue
             quality = _assess_extraction_candidate(
                 sentence, candidate_type, trigger_reason, 0.75,
             )
@@ -726,10 +745,52 @@ class ContextMixin:
                 "results": [],
             }
 
-        sentences = re.split(r"[。！？.!?\n]+", summary)
+        candidate_summary = strip_session_noise_blocks(summary)
+        sentences = re.split(r"[。！？.!?\n]+", candidate_summary)
         saved_lessons = saved_decisions = duplicates = skipped = skipped_low_quality = 0
         rejected_quality = _empty_rejected_quality_summary()
         results = []
+
+        def _skip_low_quality(
+            sentence: str,
+            *,
+            candidate_type: str,
+            trigger_reason: str,
+            flag: str,
+            assessed_quality: dict | None = None,
+        ) -> None:
+            nonlocal skipped, skipped_low_quality
+            skipped += 1
+            skipped_low_quality += 1
+            if assessed_quality:
+                quality = dict(assessed_quality)
+                quality["accepted"] = False
+                quality["reason"] = "low_quality"
+                quality["candidate_type"] = candidate_type
+                quality["trigger_reason"] = trigger_reason
+                flags = list(quality.get("flags") or [])
+                if flag not in flags:
+                    flags.append(flag)
+                quality["flags"] = flags
+            else:
+                quality = {
+                    "accepted": False,
+                    "score": 0.0,
+                    "signals": [],
+                    "flags": [flag],
+                    "reason": "low_quality",
+                    "candidate_type": candidate_type,
+                    "trigger_reason": trigger_reason,
+                }
+            _record_rejected_quality(rejected_quality, quality)
+            results.append({
+                "type": candidate_type,
+                "status": "skipped",
+                "reason": "low_quality",
+                "quality_score": quality.get("score", 0.0),
+                "quality_flags": list(quality.get("flags") or [flag]),
+                "text": sentence[:80],
+            })
 
         for raw in sentences:
             sentence = raw.strip()
@@ -738,6 +799,14 @@ class ContextMixin:
                 continue
             if not self._has_content_chars(sentence):
                 skipped += 1
+                continue
+            if is_process_or_delegation_sentence(sentence):
+                _skip_low_quality(
+                    sentence,
+                    candidate_type="unknown",
+                    trigger_reason="process_or_delegation",
+                    flag="process_or_delegation",
+                )
                 continue
 
             sentence_lower = sentence.lower()
@@ -766,6 +835,24 @@ class ContextMixin:
             quality = _assess_extraction_candidate(
                 sentence, candidate_type, trigger_reason, 0.75,
             )
+            if candidate_type == "decision" and not has_explicit_decision_signal(sentence):
+                _skip_low_quality(
+                    sentence,
+                    candidate_type=candidate_type,
+                    trigger_reason=trigger_reason,
+                    flag="missing_decision_choice_signal",
+                    assessed_quality=quality,
+                )
+                continue
+            if candidate_type == "lesson" and not has_lesson_outcome_signal(sentence):
+                _skip_low_quality(
+                    sentence,
+                    candidate_type=candidate_type,
+                    trigger_reason=trigger_reason,
+                    flag="missing_lesson_evidence",
+                    assessed_quality=quality,
+                )
+                continue
             if not quality["accepted"]:
                 skipped += 1
                 skipped_low_quality += 1
@@ -789,7 +876,7 @@ class ContextMixin:
                     "source_tool": source_tool,
                     "project_folder": project_folder,
                     "evidence": _make_session_candidate_evidence(
-                        summary,
+                        candidate_summary,
                         source_tool=source_tool,
                         source_ref=source_ref,
                         confidence=0.75,
@@ -827,7 +914,7 @@ class ContextMixin:
                     "source_tool": source_tool,
                     "project_folder": project_folder,
                     "evidence": _make_session_candidate_evidence(
-                        summary,
+                        candidate_summary,
                         source_tool=source_tool,
                         source_ref=source_ref,
                         confidence=0.75,

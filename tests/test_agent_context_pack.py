@@ -125,7 +125,7 @@ def test_agent_context_pack_excludes_other_project_memory(tmp_path: Path) -> Non
     body = repr(pack)
 
     assert "Project A implementation rule" in body
-    assert "Reusable global rule" in body
+    assert "Reusable global rule" not in body
     assert "Project B private rule" not in body
 
 

@@ -303,6 +303,76 @@ def test_project_snapshot_crud(tmp_path: Path):
     assert snapshot["project_folder"] == project_folder
 
 
+def test_project_checkpoint_replaces_current_state_and_versions_history(
+    tmp_path: Path,
+):
+    engram = make_engram(tmp_path)
+    project_folder = str(tmp_path / "checkpoint-project")
+
+    engram.save_project_snapshot(
+        project_folder,
+        {
+            "title": "Checkpoint Project",
+            "current_state": {
+                "stage": "old",
+                "last_completed": ["old completion"],
+                "next_actions": ["old next"],
+            },
+        },
+        source_tool="codex",
+        source_session="session-old",
+    )
+    engram.save_project_snapshot(
+        project_folder,
+        {
+            "current_state": {
+                "stage": "new",
+                "next_actions": ["new next"],
+            },
+        },
+        source_tool="codex",
+        source_session="session-new",
+    )
+
+    snapshot = engram.get_project_snapshot(project_folder)
+    assert snapshot["title"] == "Checkpoint Project"
+    assert snapshot["current_state"] == {
+        "stage": "new",
+        "next_actions": ["new next"],
+    }
+    assert snapshot["checkpoint"]["revision"] == 2
+    assert snapshot["checkpoint"]["source_scope"]["project_id"] == _project_id(
+        project_folder
+    )
+    assert snapshot["checkpoint"]["source_session"] == {
+        "tool": "codex",
+        "session_ref": "session-new",
+    }
+    assert snapshot["checkpoint_history"][-1]["revision"] == 1
+    assert snapshot["checkpoint_history"][-1]["current_state"]["last_completed"] == [
+        "old completion"
+    ]
+
+
+def test_project_metadata_update_does_not_advance_canonical_checkpoint(
+    tmp_path: Path,
+):
+    engram = make_engram(tmp_path)
+    project_folder = str(tmp_path / "metadata-project")
+    engram.save_project_snapshot(
+        project_folder,
+        {"current_state": {"next_actions": ["ship checkpoint"]}},
+    )
+    first = engram.get_project_snapshot(project_folder)
+
+    engram.save_project_snapshot(project_folder, {"notes": "metadata only"})
+    second = engram.get_project_snapshot(project_folder)
+
+    assert second["checkpoint"] == first["checkpoint"]
+    assert second["current_state"] == first["current_state"]
+    assert second["notes"] == "metadata only"
+
+
 def test_stats(tmp_path: Path):
     """统计应返回正确数字。"""
     engram = make_engram(tmp_path)
@@ -2047,7 +2117,7 @@ def test_extract_session_insights_empty(tmp_path: Path):
 def test_extract_session_insights_deduplication(tmp_path: Path):
     """重复调用相同摘要不应重复存储。"""
     engram = make_engram(tmp_path)
-    summary = "注意：PyPI 包名需要提前确认是否被占用。"
+    summary = "注意：PyPI 包名需要提前确认是否被占用，因为重复包名会导致发布失败。"
 
     result1 = engram.extract_session_insights(summary, source_tool="test")
     result2 = engram.extract_session_insights(summary, source_tool="test")

@@ -15,6 +15,12 @@ import re
 from typing import Any
 
 from .export_redaction import redact_export_text
+from .session_filters import (
+    has_explicit_decision_signal,
+    has_lesson_outcome_signal,
+    is_process_or_delegation_sentence,
+    strip_session_noise_blocks,
+)
 
 SCHEMA = "session_digest.v1"
 _PLACEHOLDER = "[REDACTED]"
@@ -171,17 +177,19 @@ def _extract_changed_files(text: str) -> list[dict]:
 def _extract_decisions_lessons(text: str) -> tuple[list[dict], list[dict]]:
     decisions: list[dict] = []
     lessons: list[dict] = []
-    for raw in re.split(r"[。！？.!?\n]+", text):
+    for raw in re.split(r"[。！？.!?\n]+", strip_session_noise_blocks(text)):
         sentence = raw.strip()
         if len(sentence) < 6:
             continue
-        if _DECISION_TRIGGER.search(sentence):
+        if is_process_or_delegation_sentence(sentence):
+            continue
+        if _DECISION_TRIGGER.search(sentence) and has_explicit_decision_signal(sentence):
             decisions.append({
                 "summary": sentence[:_MAX_LEN],
                 "reason": "",
                 "status": "candidate",
             })
-        elif _LESSON_TRIGGER.search(sentence):
+        elif _LESSON_TRIGGER.search(sentence) and has_lesson_outcome_signal(sentence):
             lessons.append({
                 "summary": sentence[:_MAX_LEN],
                 "evidence": "",
@@ -203,7 +211,7 @@ def build_session_digest(
     input still returns a valid digest with stable empty containers. Every
     string value is redacted before return.
     """
-    text = summary or ""
+    text = strip_session_noise_blocks(summary or "")
     decisions, lessons = _extract_decisions_lessons(text)
     digest = {
         "schema": SCHEMA,

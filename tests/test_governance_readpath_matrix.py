@@ -271,6 +271,7 @@ _SAFE_ALLOWLIST = {
     # summary/title via the audit detail field) — now governed owner-only.
     "list_projects", "list_agent_sessions",
     "find_tool", "list_tools", "export_feedback_report", "doctor",
+    "get_wrap_up_session_status",
     # caller-supplied-content writes — echo only what the caller just passed in,
     # so there is nothing to read *back* above the ceiling.
     # NOTE: add_lesson / add_decision / add_playbook / memory_store were moved

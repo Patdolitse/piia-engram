@@ -273,12 +273,18 @@ def test_mcp_doctor_json_and_markdown_include_actionable_samples(
     parsed = json.loads(raw)
     check = next(c for c in parsed["checks"] if c["name"] == "decision_conflicts")
 
+    assert parsed["runtime_capabilities"]["fingerprint"].startswith("sha256:")
+    assert (
+        "wrap_up_status_by_idempotency_key"
+        in parsed["runtime_capabilities"]["capability_codes"]
+    )
     assert check["status"] == "WARN"
     assert check["count_unsuppressed"] >= 1
     assert check["samples"][0]["id1"] == first["id"]
     assert check["samples"][0]["id2"] == second["id"]
 
     markdown = asyncio.run(mcp_tools_admin.doctor(output_format="markdown"))
+    assert "Runtime capability fingerprint" in markdown
     assert "Decision conflict samples" in markdown
     assert first["id"] in markdown
     assert "engram conflicts list" in markdown

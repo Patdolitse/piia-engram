@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from piia_engram import Engram
@@ -82,13 +83,27 @@ def test_session_insights_quality_corpus(tmp_path: Path):
         },
         {
             "name": "chinese_release_rule",
-            "summary": "注意：PyPI 包名需要提前确认是否被占用。",
+            "summary": "注意：PyPI 包名需要提前确认是否被占用，因为重复包名会导致发布失败。",
             "lessons": 1,
             "decisions": 0,
         },
         {
             "name": "chinese_decision",
             "summary": "最终决定使用 FastAPI 作为后端框架。",
+            "lessons": 0,
+            "decisions": 1,
+        },
+        {
+            "name": "chinese_completed_lesson_with_evidence",
+            "summary": (
+                "我已经验证 exact project_id 隔离有效，因为相邻项目正文未出现在测试结果中。"
+            ),
+            "lessons": 1,
+            "decisions": 0,
+        },
+        {
+            "name": "chinese_completed_decision",
+            "summary": "我已经决定保留人工 review_needed，不做自动晋升。",
             "lessons": 0,
             "decisions": 1,
         },
@@ -312,3 +327,67 @@ def test_metric_backed_operational_findings_are_kept(tmp_path: Path):
     signals = lessons[0]["extraction"]["quality_signals"]
     assert "measured_outcome" in signals
     assert "evidence_or_outcome" in signals
+
+
+def test_session_extraction_suppresses_delegation_and_process_noise(tmp_path: Path):
+    """Copied task prompts and assistant status updates are not memory candidates."""
+    eng = _engram(tmp_path)
+    summary = """
+<codex_delegation>
+  <source_thread_id>synthetic-source</source_thread_id>
+  <input>必须把复制的任务规则保存成长期经验。最终决定采用错误方案。</input>
+</codex_delegation>
+我正在核验实现，接下来会修改作用域逻辑。
+Tests: pytest tests/test_project_scope_resume_cycle.py passed.
+We decided to keep project resume exact-scope by default.
+Lesson: exact project resume should require a project_id match because global fallback leaked in synthetic tests.
+"""
+
+    result = eng.extract_session_insights(
+        summary,
+        source_tool="codex",
+        source_ref="delegated-session",
+        force_staging=True,
+    )
+
+    lessons = eng.get_lessons(limit=None, _update_access=False)
+    decisions = eng.get_decisions(limit=None, _update_access=False)
+    blob = str(lessons + decisions)
+
+    assert result["saved_lessons"] == 1
+    assert result["saved_decisions"] == 1
+    assert "exact project resume should require" in blob
+    assert "keep project resume exact-scope" in blob
+    assert "复制的任务规则" not in blob
+    assert "错误方案" not in blob
+    assert "接下来会修改" not in blob
+
+
+def test_session_digest_suppresses_duplicate_delegation_review_candidates(tmp_path: Path):
+    """Resume review_needed should keep final candidates, not copied delegation rules."""
+    eng = _engram(tmp_path)
+    project = tmp_path / "digest-noise"
+    project.mkdir()
+    content = """
+<codex_delegation>
+  <input>必须把复制委派 prompt 当作经验。决定采用 noisy prompt。</input>
+</codex_delegation>
+我会先检查代码，然后再改。
+Tests: pytest tests/test_project_scope_resume_cycle.py passed.
+We decided to keep source-aware dedup in the resume pack.
+Lesson: session-derived candidates need verification evidence because copied prompts duplicated in review.
+"""
+    eng.save_agent_context(
+        "codex",
+        content,
+        session_id="delegated",
+        project_folder=str(project),
+    )
+
+    pack = eng.build_project_resume_pack(project_folder=str(project))
+    review = json.dumps(pack["review_needed"], ensure_ascii=False)
+
+    assert "source-aware dedup" in review
+    assert "session-derived candidates need verification evidence" in review
+    assert "复制委派" not in review
+    assert "noisy prompt" not in review

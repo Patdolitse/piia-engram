@@ -9,9 +9,9 @@ Source of truth:
 - `TOOL_GOVERNANCE_CLASS` for side-effect and governance class
 - `tests/snapshots/mcp_tool_schema.json` for the generated schema snapshot
 
-Current count: **57 MCP tools**. The default server loads **17 core tools** with `ENGRAM_TOOLS=core`; the other **40 advanced tools** are available with `ENGRAM_TOOLS=all`. The machine-readable taxonomy snapshot is [`mcp-tool-surface.json`](mcp-tool-surface.json), and `tests/test_mcp_tool_surface_classification.py` verifies that it stays aligned with `scripts/count_mcp_tools.py --json`.
+Current count: **58 MCP tools**. The default server loads **18 core tools** with `ENGRAM_TOOLS=core`; the other **40 advanced tools** are available with `ENGRAM_TOOLS=all`. The machine-readable taxonomy snapshot is [`mcp-tool-surface.json`](mcp-tool-surface.json), and `tests/test_mcp_tool_surface_classification.py` verifies that it stays aligned with `scripts/count_mcp_tools.py --json`.
 
-v4.0 consolidated the previous 87-tool surface into 53 tools, later source-aware freshness work added two owner-only freshness tools (`confirm_knowledge` and `check_anchors`), and onboard-repo adds two owner-only repo acceptance tools (`onboard_repo` and `onboard_accept`) for the current 57-tool surface. Families of closely related operations were merged into single tools with a `mode`/`action` selector (for example `get_identity_facets`, `manage_playbook`, `review_staging`), and legacy Playbook scope migration moved out of MCP into the owner-only local CLI. See [`migration-v4.md`](migration-v4.md) for the old-name → new-call mapping.
+v4.0 consolidated the previous 87-tool surface into 53 tools. Later source-aware freshness work added two owner-only freshness tools (`confirm_knowledge` and `check_anchors`), onboard-repo added two owner-only acceptance tools (`onboard_repo` and `onboard_accept`), and closeout recovery added the metadata-only `get_wrap_up_session_status` tool for the current 58-tool surface. Families of closely related operations were merged into single tools with a `mode`/`action` selector (for example `get_identity_facets`, `manage_playbook`, `review_staging`), and legacy Playbook scope migration moved out of MCP into the owner-only local CLI. See [`migration-v4.md`](migration-v4.md) for the old-name → new-call mapping.
 
 ## Core is not read-only
 
@@ -24,7 +24,7 @@ The core tier means "common in daily sessions", not "safe/read-only". Some core 
 | `owner_only_write` | 6 | Changes trust grants/imports, or applies owner-only freshness stamps/checks. |
 | `export_owner_only` | 5 | Writes full-knowledge exports or local files and requires owner-level export permission. |
 
-`get_identity_card` is intentionally in the 17-tool core set for discoverability, but it is classed as `export_owner_only`: it writes an identity-card export file and can include identity, lessons, and decisions. Treat it as "core but owner-gated", not as a harmless read. Merged tools keep the strictest gate of their family: `playbook_execution` is `governed_write` and its `prepare` action additionally passes the export gate before writing a local execution-plan file, and `review_staging` runs the write gate for every action, including `list`.
+`get_identity_card` is intentionally in the 18-tool core set for discoverability, but it is classed as `export_owner_only`: it writes an identity-card export file and can include identity, lessons, and decisions. Treat it as "core but owner-gated", not as a harmless read. Merged tools keep the strictest gate of their family: `playbook_execution` is `governed_write` and its `prepare` action additionally passes the export gate before writing a local execution-plan file, and `review_staging` runs the write gate for every action, including `list`.
 
 ## Release posture by bucket
 
@@ -150,7 +150,7 @@ The consolidation direction described in earlier revisions of this page shipped 
 
 Recommended presentation:
 
-- **Core**: the 17 default tools for first-run and daily use.
+- **Core**: the 18 default tools for first-run and daily use.
 - **Advanced**: repo onboarding, knowledge curation, Playbook management, governance, import/export, and optional local integrations.
 - **Owner-local maintenance**: legacy Playbook scope migration (owner CLI), maintainer feedback reports, and high-blast-radius owner/admin operations.
 

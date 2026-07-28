@@ -338,8 +338,20 @@ wrap_up_session(
     source_tool="codex",
     project_folder="E:/Example/Project",
     user_confirmed=True,
+    idempotency_key="optional-caller-stable-key",
 )
 ```
+
+The returned payload includes a metadata-only `operation` block with an opaque
+`operation_id`, per-stage status, committed substeps, and terminal state
+(`completed` or `partial_complete`). If a host-side transport timeout happens,
+before that payload arrives, call
+`get_wrap_up_session_status(idempotency_key="optional-caller-stable-key")`
+from a fresh process to see the last recorded stage. A long-unupdated operation
+is reported as `stale_running`; lookup does not mutate the stored record.
+Retrying the same caller-provided `idempotency_key` returns
+the existing operation state instead of duplicating daily-log, extraction,
+snapshot, or playbook writes.
 
 Explicit maintenance reconcile:
 
@@ -350,11 +362,17 @@ wrap_up_session(
     project_folder="E:/Example/Project",
     user_confirmed=True,
     run_reconcile=True,
+    reconcile_scope="project",
 )
 ```
 
 Use the explicit form only when the owner wants reconciliation work during
-closeout.
+closeout. With a project folder, `project` is the default scope: external
+Claude memory is accepted only from the same canonical project identity and
+config scanning is confined to that project root. There is no fuzzy path-prefix
+merge. An owner can request `reconcile_scope="global"` explicitly for a global
+maintenance pass. If the bounded config-import budget is reached, closeout
+returns `partial_complete` with a metadata-only budget reason.
 
 Telemetry and feedback are separate opt-in metadata paths. They are not reconciliation, do not contain knowledge bodies, and are controlled by the telemetry/feedback opt-in settings rather than `run_reconcile`. Default non-opt-in closeout sends no remote feedback.
 
@@ -362,12 +380,22 @@ The returned `timing` block is metadata-only. It reports stage durations in
 milliseconds and must not be treated as user approval, release evidence, or a
 live-agent benchmark.
 
+Project-scoped resume also carries checkpoint freshness metadata. Structured
+`current_state` writes advance a monotonic project revision and atomically
+replace the previous state; older states move to bounded local history.
+`get_resume_brief` and `project_resume_pack.v1` compare that checkpoint with
+the newest session digest. A revision mismatch returns
+`partial_or_stale_context` while selecting the newer source. When no reliable
+completion or next action exists, handoff fields say `unknown` instead of
+inventing a generic continuation.
+
 ### Closeout diagnostics
 
 Use `python scripts/diagnose_wrap_up_session.py --json` to inspect session-end
 timing without touching the live store. Default diagnostics use an isolated temporary store. Use `--live-inspect` for read-only live metadata. Use
 `--live-closeout --allow-write` only as an owner-approved local diagnostic, and
-share only aggregate timing/stage metadata.
+share only aggregate timing/stage metadata. For a real timed-out closeout,
+prefer `get_wrap_up_session_status(idempotency_key=...)` over blind retries.
 
 ---
 

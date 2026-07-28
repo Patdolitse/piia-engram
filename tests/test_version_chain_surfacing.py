@@ -119,8 +119,16 @@ def _make_engine(tmp_path: Path):
 
 def test_resume_brief_annotates_version_chains(tmp_path):
     eng = _make_engine(tmp_path)
-    a = eng.add_lesson("initial approach to recall collapse", tier="verified")
-    b = eng.add_lesson("revised approach to recall head selection logic", tier="verified")
+    a = eng.add_lesson(
+        "initial approach to recall collapse",
+        tier="verified",
+        project_folder=str(tmp_path),
+    )
+    b = eng.add_lesson(
+        "revised approach to recall head selection logic",
+        tier="verified",
+        project_folder=str(tmp_path),
+    )
     eng.add_relation(b["id"], "supersedes", a["id"])
 
     brief = eng.get_resume_brief(project_folder=str(tmp_path))

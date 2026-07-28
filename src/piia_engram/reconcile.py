@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 
-from .storage import SIMILARITY_THRESHOLD
+from .storage import SIMILARITY_THRESHOLD, _project_id
 
 
 class ReconcileMixin:
@@ -90,7 +90,7 @@ class ReconcileMixin:
                 pass
         return True  # default True for backward compatibility
 
-    def reconcile_memories(self) -> dict:
+    def reconcile_memories(self, *, project_folder: str = "") -> dict:
         """Scan external AI tool memory dirs and auto-import missing items.
 
         Returns a dict with sync stats.  Designed to be called silently
@@ -100,14 +100,25 @@ class ReconcileMixin:
         ENGRAM_RECONCILE=1 env var).
         """
         if not self._reconcile_authorized():
-            return {"imported": 0, "duplicates": 0, "scanned_files": 0,
-                    "skipped_large": 0, "sources": [],
-                    "skipped_reason": "reconcile not authorized"}
+            result = {"imported": 0, "duplicates": 0, "scanned_files": 0,
+                      "skipped_large": 0, "sources": [],
+                      "skipped_reason": "reconcile not authorized"}
+            if project_folder:
+                result["scope"] = self._reconcile_scope_metadata(project_folder)
+                result["skipped_scope"] = 0
+            return result
         imported = 0
         duplicates = 0
         scanned_files = 0
         skipped_large = 0
+        skipped_scope = 0
         sources: list[str] = []
+        target_project_id = _project_id(project_folder) if project_folder else ""
+        target_claude_project = (
+            self._encode_claude_project_name(str(Path(project_folder).resolve()))
+            if project_folder
+            else ""
+        )
 
         existing_lessons = self.get_lessons(limit=None, _update_access=False)
         existing_decisions = self.get_decisions(limit=None, _update_access=False)
@@ -136,6 +147,11 @@ class ReconcileMixin:
             for mem_file in base.glob(rel_pattern):
                 if mem_file.name == "MEMORY.md":
                     continue  # Index file, not a memory
+                if target_project_id:
+                    project_entry = mem_file.parent.parent
+                    if project_entry.name != target_claude_project:
+                        skipped_scope += 1
+                        continue
                 scanned_files += 1
                 try:
                     fsize = mem_file.stat().st_size
@@ -216,6 +232,7 @@ class ReconcileMixin:
                     detail=detail,
                     source_tool="auto_reconcile",
                     tier="staging",
+                    project_folder=project_folder or None,
                 )
                 if result.get("status") != "duplicate":
                     imported += 1
@@ -227,13 +244,17 @@ class ReconcileMixin:
         self._audit.log("read", "reconcile_memories",
                         detail=f"scanned={scanned_files} imported={imported} "
                                f"dup={duplicates} skipped_large={skipped_large}")
-        return {
+        result = {
             "scanned_files": scanned_files,
             "imported": imported,
             "duplicates": duplicates,
             "skipped_large": skipped_large,
             "sources": sources,
         }
+        if project_folder:
+            result["skipped_scope"] = skipped_scope
+            result["scope"] = self._reconcile_scope_metadata(project_folder)
+        return result
 
     def collect_memory_candidates(self) -> list[dict]:
         """Read-only scan of external AI memory files into reconcile candidates.
@@ -313,6 +334,11 @@ class ReconcileMixin:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _encode_claude_project_name(path: str) -> str:
+        """Encode a native absolute path the way Claude names project dirs."""
+        return re.sub(r"[^a-zA-Z0-9]", "-", str(path))
+
+    @staticmethod
     def _decode_claude_project_name(name: str) -> Path | None:
         """Decode a Claude Code project directory name back to a real path.
 
@@ -389,6 +415,7 @@ class ReconcileMixin:
         *,
         search_roots: list[str] | None = None,
         max_imports: int = 25,
+        project_folder: str = "",
     ) -> dict:
         """Scan AI tool config files and import unique rules into Engram.
 
@@ -400,10 +427,13 @@ class ReconcileMixin:
         ENGRAM_RECONCILE=1 env var).
         """
         if not self._reconcile_authorized():
-            return {"imported": 0, "duplicates": 0, "scanned_files": 0,
-                    "sources": [],
-                    "skipped_reason": "reconcile not authorized",
-                    "budget_exhausted": False}
+            result = {"imported": 0, "duplicates": 0, "scanned_files": 0,
+                      "sources": [],
+                      "skipped_reason": "reconcile not authorized",
+                      "budget_exhausted": False}
+            if project_folder:
+                result["scope"] = self._reconcile_scope_metadata(project_folder)
+            return result
         imported = 0
         duplicates = 0
         scanned_files = 0
@@ -425,7 +455,12 @@ class ReconcileMixin:
         config_files: list[Path] = []
 
         # Global configs (all AI tools), or explicit roots for owner/test flows.
-        root_candidates = list(search_roots) if search_roots is not None else list(self._AI_GLOBAL_CONFIGS)
+        if project_folder:
+            root_candidates = [project_folder]
+        elif search_roots is not None:
+            root_candidates = list(search_roots)
+        else:
+            root_candidates = list(self._AI_GLOBAL_CONFIGS)
         for gpath in root_candidates:
             if gpath.startswith("~/") or gpath.startswith("~\\"):
                 resolved = Path.home() / gpath[2:]
@@ -436,7 +471,7 @@ class ReconcileMixin:
             if resolved.is_file():
                 config_files.append(resolved)
             elif resolved.is_dir():
-                if search_roots is not None:
+                if search_roots is not None or project_folder:
                     for fname in self._AI_CONFIG_FILENAMES:
                         candidate = resolved / fname
                         if candidate.is_file():
@@ -449,7 +484,7 @@ class ReconcileMixin:
                         config_files.extend(sorted(resolved.glob(ext))[:10])
 
         # Project-level configs
-        if search_roots is None:
+        if search_roots is None and not project_folder:
             for root in self._discover_project_roots():
                 for fname in self._AI_CONFIG_FILENAMES:
                     candidate = root / fname
@@ -523,6 +558,7 @@ class ReconcileMixin:
                     detail=section_body[:500],
                     source_tool="config_scan",
                     tier="staging",
+                    project_folder=project_folder or None,
                 )
                 if result.get("status") != "duplicate":
                     imported += 1
@@ -533,12 +569,22 @@ class ReconcileMixin:
             if budget_exhausted:
                 break
 
-        return {
+        result = {
             "scanned_files": scanned_files,
             "imported": imported,
             "duplicates": duplicates,
             "sources": sources,
             "budget_exhausted": budget_exhausted,
+        }
+        if project_folder:
+            result["scope"] = self._reconcile_scope_metadata(project_folder)
+        return result
+
+    @staticmethod
+    def _reconcile_scope_metadata(project_folder: str) -> dict[str, str]:
+        return {
+            "mode": "project_exact" if project_folder else "global",
+            "project_id": _project_id(project_folder) if project_folder else "",
         }
 
     @staticmethod

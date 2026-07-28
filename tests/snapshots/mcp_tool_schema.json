@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "src/piia_engram/mcp_server.py",
-  "tool_count": 57,
+  "tool_count": 58,
   "tools": {
     "add_decision": {
       "params": [
@@ -947,6 +947,25 @@
       ],
       "returns": "str"
     },
+    "get_wrap_up_session_status": {
+      "params": [
+        {
+          "name": "operation_id",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "idempotency_key",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
     "import_engram": {
       "params": [
         {
@@ -1860,6 +1879,20 @@
           "annotation": "bool",
           "required": false,
           "default": false,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "idempotency_key",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "reconcile_scope",
+          "annotation": "str",
+          "required": false,
+          "default": "project",
           "kind": "positional_or_keyword"
         }
       ],

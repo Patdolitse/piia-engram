@@ -3,7 +3,7 @@
 > 中文版：[快速上手：约 5 分钟拿到第一个价值](quickstart-first-value.zh-CN.md)
 
 Goal: save one useful lesson and recall it in a fresh AI session using the
-default **17 core tools**. You do not need the advanced tools or
+default **18 core tools**. You do not need the advanced tools or
 `ENGRAM_TOOLS=all` for this path; the default is `ENGRAM_TOOLS=core`.
 
 This quickstart is for a local MCP-compatible coding tool such as Claude Code,

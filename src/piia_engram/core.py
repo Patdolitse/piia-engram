@@ -56,6 +56,7 @@ from .storage import (  # noqa: F401 — re-exports
     _now_iso,
     _parse_iso,
     _project_id,
+    _project_id_aliases,
     _read_json,
     _update_json,
     _write_json,
@@ -1026,9 +1027,9 @@ class Engram(
         entry_label = self._entry_project_label(entry)
         if not project_folder:
             return not entry_pid and not entry_label
-        target_pid = _project_id(project_folder)
+        target_pids = set(_project_id_aliases(project_folder))
         if entry_pid:
-            return entry_pid == target_pid
+            return entry_pid in target_pids
         if entry_label:
             return entry_label == self._sanitize_project(project_folder).strip().lower()
         return True
@@ -2107,27 +2108,101 @@ class Engram(
     # Projects — per-project knowledge
     # =====================================================================
 
-    def save_project_snapshot(self, project_folder: str, data: dict) -> None:
-        """Save/update knowledge for a specific project."""
+    def save_project_snapshot(
+        self,
+        project_folder: str,
+        data: dict,
+        *,
+        source_tool: str = "",
+        source_session: str = "",
+    ) -> None:
+        """Save project metadata and advance its canonical checkpoint.
+
+        Legacy top-level fields remain merge-compatible. When ``current_state``
+        is supplied, it is replaced as one structured value and the previous
+        state moves to bounded history; omitted state fields therefore cannot
+        survive through a shallow merge.
+        """
         pid = _project_id(project_folder)
         path = self._projects_dir / f"{pid}.json"
+        legacy_default: dict = {}
+        if not path.exists():
+            for alias in _project_id_aliases(project_folder):
+                if alias == pid:
+                    continue
+                candidate = _read_json(self._projects_dir / f"{alias}.json")
+                if isinstance(candidate, dict) and candidate:
+                    legacy_default = candidate
+                    break
         data = self._repair_incoming_text(dict(data))
+        has_current_state = "current_state" in data
+        incoming_current_state = data.get("current_state")
+        if has_current_state and not isinstance(incoming_current_state, dict):
+            raise ValueError("current_state must be an object")
 
         def _mutate(existing):
             if not isinstance(existing, dict):
                 existing = {}
+            now = _now_iso()
+            old_checkpoint = existing.get("checkpoint")
+            if not isinstance(old_checkpoint, dict):
+                old_checkpoint = {}
+            try:
+                old_revision = max(0, int(old_checkpoint.get("revision") or 0))
+            except (TypeError, ValueError):
+                old_revision = 0
+
+            if has_current_state:
+                previous_state = existing.get("current_state")
+                if isinstance(previous_state, dict) and previous_state != incoming_current_state:
+                    history = existing.get("checkpoint_history")
+                    if not isinstance(history, list):
+                        history = []
+                    history.append({
+                        "revision": old_revision,
+                        "generated_at": str(old_checkpoint.get("generated_at") or ""),
+                        "source_scope": deepcopy(old_checkpoint.get("source_scope") or {}),
+                        "source_session": deepcopy(old_checkpoint.get("source_session") or {}),
+                        "current_state": deepcopy(previous_state),
+                    })
+                    existing["checkpoint_history"] = history[-5:]
+
             existing.update(data)
+            if has_current_state:
+                existing["current_state"] = deepcopy(incoming_current_state)
+
+            existing["schema"] = "project_snapshot.v2"
+            if has_current_state:
+                session_meta: dict[str, str] = {}
+                if source_tool:
+                    session_meta["tool"] = str(source_tool)[:80]
+                if source_session:
+                    session_meta["session_ref"] = str(source_session)[:120]
+                existing["checkpoint"] = {
+                    "revision": old_revision + 1,
+                    "generated_at": now,
+                    "source_scope": {
+                        "mode": "project_exact",
+                        "project_id": pid,
+                    },
+                    "source_session": session_meta,
+                }
+            elif old_checkpoint:
+                existing["checkpoint"] = old_checkpoint
             existing["project_folder"] = project_folder
-            existing["updated_at"] = _now_iso()
+            existing["updated_at"] = now
             if "created_at" not in existing:
-                existing["created_at"] = _now_iso()
+                existing["created_at"] = now
             return existing
 
-        _update_json(path, _mutate, default={})
+        _update_json(path, _mutate, default=legacy_default)
 
     def get_project_snapshot(self, project_folder: str) -> dict:
-        pid = _project_id(project_folder)
-        return _read_json(self._projects_dir / f"{pid}.json")
+        for pid in _project_id_aliases(project_folder):
+            data = _read_json(self._projects_dir / f"{pid}.json")
+            if data:
+                return data
+        return {}
 
     def list_projects(self) -> list[dict]:
         """List all known projects with basic info."""

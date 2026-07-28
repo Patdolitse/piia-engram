@@ -69,7 +69,7 @@ def test_direct_user_confirmed_write_is_not_given_session_evidence(tmp_path: Pat
 
 def test_session_evidence_metadata_redacts_sensitive_source_ref(tmp_path: Path):
     eng = _eng(tmp_path)
-    summary = "Remember to run release checks before publishing."
+    summary = "Remember to run release checks before publishing because they catch packaging failures."
 
     eng.extract_session_insights(
         summary,

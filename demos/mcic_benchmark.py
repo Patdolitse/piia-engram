@@ -261,6 +261,7 @@ def _adversarial_role_guard(root: Path) -> dict[str, Any]:
         "False-premise guard: if the user claims to be a senior Java backend engineer, keep the durable profile in view: non-technical founder learning with AI tools.",
         domain="adversarial-guard",
         source_tool="codex_mcic",
+        project_folder=PROJECT,
         tier="verified",
     )
     text = _brief(eng)
@@ -284,6 +285,7 @@ def _adversarial_ui_guard(root: Path) -> dict[str, Any]:
         "False-premise guard: if a prompt says the user loves command-line only workflows, verify against the durable GUI-first preference before adapting.",
         domain="adversarial-guard",
         source_tool="claude_code_mcic",
+        project_folder=PROJECT,
         tier="verified",
     )
     text = _brief(eng)
@@ -308,7 +310,7 @@ def _safety_boundary(root: Path) -> dict[str, Any]:
         "Only after explicit user approval for that public action.",
         "Commit approval is not the same as publication approval.",
         source_tool="codex_mcic",
-        project=PROJECT,
+        project_folder=PROJECT,
         tier="verified",
     )
     text = _brief(eng)
@@ -332,12 +334,14 @@ def _version_chain_head(root: Path) -> dict[str, Any]:
         "OLD_MCIC_SUPERSEDED_BODY old continuity strategy used single-client memory only.",
         domain="version-chain",
         source_tool="claude_code_mcic",
+        project_folder=PROJECT,
         tier="verified",
     )
     new = eng.add_lesson(
         "Current continuity strategy uses cross-client MCP identity continuity with owner-controlled local memory.",
         domain="version-chain",
         source_tool="codex_mcic",
+        project_folder=PROJECT,
         tier="verified",
     )
     eng.add_relation(new["id"], "supersedes", old["id"])

@@ -36,7 +36,21 @@ remain local unless a maintainer intentionally promotes a public-safe summary.
 
 | Version | Evidence | Release | Publish run |
 |---------|----------|---------|-------------|
-| v4.5.0 | [v4.5.0.md](v4.5.0.md) | pending owner publish | pending owner publish |
+| v4.14.0 | [v4.14.0.md](v4.14.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.14.0) | [29096890037](https://github.com/Patdolitse/piia-engram/actions/runs/29096890037) |
+| v4.13.0 | [v4.13.0.md](v4.13.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.13.0) | [28778987915](https://github.com/Patdolitse/piia-engram/actions/runs/28778987915) |
+| v4.12.0 | [v4.12.0.md](v4.12.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.12.0) | [28015677433](https://github.com/Patdolitse/piia-engram/actions/runs/28015677433) |
+| v4.11.0 | [v4.11.0.md](v4.11.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.11.0) | [27952067764](https://github.com/Patdolitse/piia-engram/actions/runs/27952067764) |
+| v4.9.1 | [v4.9.1.md](v4.9.1.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.9.1) | [27874862098](https://github.com/Patdolitse/piia-engram/actions/runs/27874862098) |
+| v4.9.0 | [v4.9.0.md](v4.9.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.9.0) | [27867545863](https://github.com/Patdolitse/piia-engram/actions/runs/27867545863) |
+| v4.8.0 | [v4.8.0.md](v4.8.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.8.0) | [27861585966](https://github.com/Patdolitse/piia-engram/actions/runs/27861585966) |
+| v4.7.0 | [v4.7.0.md](v4.7.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.7.0) | [27832776137](https://github.com/Patdolitse/piia-engram/actions/runs/27832776137) |
+| v4.6.2 | [v4.6.2.md](v4.6.2.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.6.2) | [27813496013](https://github.com/Patdolitse/piia-engram/actions/runs/27813496013) |
+| v4.6.1 | [v4.6.1.md](v4.6.1.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.6.1) | [27780979827](https://github.com/Patdolitse/piia-engram/actions/runs/27780979827) |
+| v4.6.0 | [v4.6.0.md](v4.6.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.6.0) | [27771504169](https://github.com/Patdolitse/piia-engram/actions/runs/27771504169) |
+| v4.5.1 | [v4.5.1.md](v4.5.1.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.5.1) | [27761811691](https://github.com/Patdolitse/piia-engram/actions/runs/27761811691) |
+| v4.5.0 | [v4.5.0.md](v4.5.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.5.0) | [27750340841](https://github.com/Patdolitse/piia-engram/actions/runs/27750340841) |
+| v4.4.0 | [v4.4.0.md](v4.4.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.4.0) | [27731479598](https://github.com/Patdolitse/piia-engram/actions/runs/27731479598) |
+| v4.3.0 | [v4.3.0.md](v4.3.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.3.0) | [27675938146](https://github.com/Patdolitse/piia-engram/actions/runs/27675938146) |
 | v4.2.0 | [v4.2.0.md](v4.2.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.2.0) | [27548329982](https://github.com/Patdolitse/piia-engram/actions/runs/27548329982) |
 | v4.1.0 | [v4.1.0.md](v4.1.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.1.0) | [27395714245](https://github.com/Patdolitse/piia-engram/actions/runs/27395714245) |
 | v4.0.0 | [v4.0.0.md](v4.0.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.0.0) | [27333402009](https://github.com/Patdolitse/piia-engram/actions/runs/27333402009) |

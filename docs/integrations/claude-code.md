@@ -25,7 +25,7 @@ Manual MCP entries should launch:
 python -m piia_engram.mcp_server
 ```
 
-Leave `ENGRAM_TOOLS` unset for the default 17 core tools. Add
+Leave `ENGRAM_TOOLS` unset for the default 18 core tools. Add
 `ENGRAM_TOOLS=all` only when you intentionally need review, import/export,
 tool-registry, or governance maintenance surfaces.
 

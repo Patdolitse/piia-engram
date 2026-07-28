@@ -379,6 +379,124 @@ def test_reconcile_ai_configs_preserves_utf8_text(tmp_path: Path) -> None:
     assert "盲赂" not in body
 
 
+def test_project_scoped_config_reconcile_ignores_external_search_roots(
+    tmp_path: Path,
+) -> None:
+    engram = _make_engram(tmp_path / "engram")
+    project = tmp_path / "project"
+    adjacent = tmp_path / "adjacent-private"
+    project.mkdir()
+    adjacent.mkdir()
+    (project / "AGENTS.md").write_text(
+        "## Project rule\nVerify the accepted project checkpoint before closeout.",
+        encoding="utf-8",
+    )
+    (adjacent / "AGENTS.md").write_text(
+        "## Adjacent rule\nThis synthetic adjacent project text must stay isolated.",
+        encoding="utf-8",
+    )
+
+    result = engram.reconcile_ai_configs(
+        search_roots=[str(adjacent)],
+        project_folder=str(project),
+        max_imports=10,
+    )
+
+    assert result["scanned_files"] == 1
+    assert result["imported"] == 1
+    assert result["scope"]["mode"] == "project_exact"
+    assert result["scope"]["project_id"]
+    project_body = json.dumps(
+        engram.get_lessons(
+            project_folder=str(project),
+            limit=None,
+            _update_access=False,
+        ),
+        ensure_ascii=False,
+    )
+    adjacent_body = json.dumps(
+        engram.get_lessons(
+            project_folder=str(adjacent),
+            limit=None,
+            _update_access=False,
+        ),
+        ensure_ascii=False,
+    )
+    assert "accepted project checkpoint" in project_body
+    assert "synthetic adjacent project text" not in project_body
+    assert "accepted project checkpoint" not in adjacent_body
+    assert "synthetic adjacent project text" not in adjacent_body
+
+
+def test_project_scoped_memory_reconcile_filters_claude_project_entries(
+    tmp_path: Path,
+) -> None:
+    engram = _make_engram(tmp_path / "engram")
+    project = tmp_path / "project"
+    adjacent = tmp_path / "adjacent-private"
+    project.mkdir()
+    adjacent.mkdir()
+    claude_projects = tmp_path / "fake_claude" / "projects"
+
+    def _encoded(path: Path) -> str:
+        import re
+
+        return re.sub(r"[^a-zA-Z0-9]", "-", str(path.resolve()))
+
+    project_memory = claude_projects / _encoded(project) / "memory"
+    adjacent_memory = claude_projects / _encoded(adjacent) / "memory"
+    _write_memory_file(
+        project_memory,
+        "checkpoint.md",
+        "Project-scoped reconcile retained this verified synthetic result.",
+    )
+    _write_memory_file(
+        adjacent_memory,
+        "private.md",
+        "Synthetic adjacent project content must never cross the scope boundary.",
+    )
+    engram._CLAUDE_MEMORY_GLOBS = [
+        str(claude_projects / "*" / "memory" / "*.md")
+    ]
+
+    result = engram.reconcile_memories(project_folder=str(project))
+
+    assert result["scanned_files"] == 1
+    assert result["skipped_scope"] == 1
+    assert result["imported"] == 1
+    assert result["scope"]["mode"] == "project_exact"
+    project_body = json.dumps(
+        engram.get_lessons(
+            project_folder=str(project),
+            limit=None,
+            _update_access=False,
+        ),
+        ensure_ascii=False,
+    )
+    adjacent_body = json.dumps(
+        engram.get_lessons(
+            project_folder=str(adjacent),
+            limit=None,
+            _update_access=False,
+        ),
+        ensure_ascii=False,
+    )
+    assert "retained this verified synthetic result" in project_body
+    assert "adjacent project content" not in project_body
+    assert "retained this verified synthetic result" not in adjacent_body
+
+
+def test_encode_claude_project_name_supports_posix_and_windows_paths() -> None:
+    assert (
+        Engram._encode_claude_project_name("/Users/example/Project One")
+        == "-Users-example-Project-One"
+    )
+    assert (
+        Engram._encode_claude_project_name(r"E:\Project One\engram")
+        == "E--Project-One-engram"
+    )
+
+
 def test_parse_config_sections():
     """_parse_config_sections should split markdown by headers."""
     from piia_engram.core import Engram

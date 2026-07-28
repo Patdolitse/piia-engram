@@ -20,7 +20,7 @@ It complements the user-facing [README](../README.md) (which answers *"what does
                          │ HTTP/SSE  (self-hosted shared instance)
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  mcp_server.py — exposes 57 tools (Tier-1 by default, opt-in rest)  │
+│  mcp_server.py — exposes 58 tools (Tier-1 by default, opt-in rest)  │
 └────────────────────────┬────────────────────────────────────────────┘
                          │ Python method calls on a single shared
                          │ ``Engram`` instance
@@ -46,7 +46,7 @@ Three layers:
 2. **Domain** (`Engram` class + mixins) — the data model and the rules over it. No I/O of its own beyond the `_read_json` / `_write_json` primitives in `storage.py`.
 3. **Storage** — flat JSON files under `~/.engram/`. Atomic writes via temp-file + rename, cross-process locks via `portalocker`.
 
-MCP tool tiering is intentionally conservative: the server defines 57 tools total, with 17 Tier-1 core tools loaded by default and 40 Tier-2 advanced tools behind `ENGRAM_TOOLS=all`.
+MCP tool tiering is intentionally conservative: the server defines 58 tools total, with 18 Tier-1 core tools loaded by default and 40 Tier-2 advanced tools behind `ENGRAM_TOOLS=all`.
 
 Alongside the MCP request path there are two **capture channels** that feed the store without the AI having to call a tool: the `hooks/` subpackage (event-driven — the host tool invokes them on session stop/compact/start) and the `watcher/` subpackage (polling fallback for tools without hook support). See [§6](#6-capture-channels-hooks-and-watcher).
 
@@ -73,7 +73,7 @@ After the v3.14.1 refactor, the v3.16.0 reports split, and the v3.55.0 monolith 
 | [`retrieval.py`](../src/piia_engram/retrieval.py) | ~639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
 | [`search_index.py`](../src/piia_engram/search_index.py) | ~461 | Optional hybrid search — rebuildable SQLite index (FTS5 + optional `[vector]` semantic layer, RRF fusion) over the JSON store. JSON stays the single source of truth; enabled via `ENGRAM_SEARCH=hybrid`. See [hybrid-search.md](hybrid-search.md) |
 | [`context.py`](../src/piia_engram/context.py) | ~811 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
-| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~473 | `ReconcileMixin` — explicit or startup-controlled import from other AI tools: `reconcile_memories` (scans `~/.claude/projects/*/memory/*.md`), `reconcile_ai_configs` (scans `CLAUDE.md`, `.cursorrules`, `AGENT.md`, etc.) with similarity-based deduplication |
+| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~590 | `ReconcileMixin` — explicit or startup-controlled import from other AI tools: global startup keeps the compatible scan, while project closeout filters Claude memory by exact canonical project identity and confines config scanning to the project root |
 | [`reports.py`](../src/piia_engram/reports.py) | 20 | `ReportsMixin` — thin composition hub, inherits from 4 sub-mixins below |
 | [`reports_rarity.py`](../src/piia_engram/reports_rarity.py) | ~84 | `RarityMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `RARITY_TIERS` constant |
 | [`reports_review.py`](../src/piia_engram/reports_review.py) | ~517 | `ReviewMixin` — `generate_review_page` (interactive HTML audit), `export_review_page`, `promote_knowledge`, `apply_review` |
@@ -95,7 +95,7 @@ Session Markdown remains the human-readable local record. The digest sidecar is 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
 | [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1400 | FastMCP server core: shared state (`_engram`, `_session`), stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration. Re-exports every tool from the `mcp_tools_*` modules |
-| `mcp_tools_read / write / knowledge / admin / session .py` | ~330–1030 each | All 57 `@mcp.tool()` async wrappers, grouped by surface (context/recall queries; memory store + playbooks + tool registry; bulk/merge/lifecycle; permissions/governance/import-export; agent-session context). Each binds back to `mcp_server` via late `S.<name>` lookups so module-level state and monkeypatches resolve there |
+| `mcp_tools_read / write / knowledge / admin / session .py` | ~330–1500 each | All 58 `@mcp.tool()` async wrappers, grouped by surface (context/recall queries; memory store + playbooks + tool registry; bulk/merge/lifecycle; permissions/governance/import-export; agent-session context). Each binds back to `mcp_server` via late `S.<name>` lookups so module-level state and monkeypatches resolve there |
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (local log first; remote send and weekly feedback are separate, independent opt-ins, count-only/metadata-only), payload validation, HMAC daily ID, preview/status CLI support |
 | [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~3049 | `engram setup` wizard + CLI entry — interactive bilingual onboarding with privacy preferences, including the optional one-keystroke hybrid-search step |
@@ -104,6 +104,7 @@ Session Markdown remains the human-readable local record. The digest sidecar is 
 | [`i18n.py`](../src/piia_engram/i18n.py) | ~48 | Shared bilingual text helper (`t()`, language detection) — user-facing strings go through here |
 | [`audit.py`](../src/piia_engram/audit.py) | ~54 | `AuditLogger` — default-on local audit trail to `~/.engram/audit.log` (opt out with `ENGRAM_AUDIT=0`) |
 | [`stats.py`](../src/piia_engram/stats.py) | ~157 | `piia-engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
+| `src/piia_engram/runtime_capabilities.py` | ~130 | Content-free runtime capability manifest, stable contract fingerprint, and compatibility handshake used by CLI and MCP doctor |
 
 ### Why this shape?
 
@@ -231,12 +232,12 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 
 ## 5. The MCP surface
 
-`mcp_server.py` exposes 57 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions. Tier-1 is a discoverability and context-budget tier, not a read-only safety class: write, export, and owner/admin behavior is still governed by `TOOL_GOVERNANCE_CLASS`.
+`mcp_server.py` exposes 58 tools. By default (`ENGRAM_TOOLS=core`), only the **Tier-1** subset is registered — these are the tools an AI agent uses in 95% of sessions. Tier-1 is a discoverability and context-budget tier, not a read-only safety class: write, export, and owner/admin behavior is still governed by `TOOL_GOVERNANCE_CLASS`.
 
 | Tier-1 (default) | Why |
 |------------------|-----|
 | `get_user_context` | Cold-start identity + context |
-| `wrap_up_session` | Lightweight session-end save; full reconciliation is explicit via `run_reconcile=True` |
+| `wrap_up_session` | Lightweight session-end save; reconciliation is explicit via `run_reconcile=True`, exact-project scoped when a project folder is present, and globally scoped only by explicit request |
 | `memory_store` | Unified write endpoint for lessons, decisions, and playbooks |
 | `add_lesson`, `add_decision`, `add_playbook` | Capture knowledge |
 | `search_knowledge`, `get_relevant_knowledge`, `get_recall` | Retrieve knowledge and one-call recall bundles |

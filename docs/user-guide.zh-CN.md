@@ -51,7 +51,7 @@ engram setup
 MCP 连接前请你一键确认**。每次外部写入都先备份，选"否"则所有配置原封不动。
 非交互/CI 场景用 `engram setup --apply-external-config` 跳过确认。
 
-默认你会得到 **17 个核心 MCP 工具**（`ENGRAM_TOOLS=core`）——足够覆盖安装、
+默认你会得到 **18 个核心 MCP 工具**（`ENGRAM_TOOLS=core`）——足够覆盖安装、
 首个价值、日常召回、会话收尾。进阶工具集（审查队列、导入导出、治理、迁移、
 Playbook 管理）默认关闭，需要时用 `ENGRAM_TOOLS=all` 开启。
 
@@ -97,6 +97,10 @@ Engram 的价值出现在你*第二次*跟 AI 说话时——它已经知道你�
 2. 下一个工具开场就调 `get_resume_brief()`——一段 30 秒交接，点明当前项目、
    上次活动、下一步动作，以及一条信任提示。
 3. AI 先读这段交接，再决定是否需要让你重复上下文。
+
+`wrap_up_session` 默认只做轻量收尾，不执行完整 reconcile。只有 Owner 明确同意时
+才使用 `run_reconcile=True`；传入项目目录后默认按 canonical project identity
+精确隔离，只有显式设置 `reconcile_scope="global"` 才执行全局维护扫描。
 
 三档恢复，由快到慢：
 

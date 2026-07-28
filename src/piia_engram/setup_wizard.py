@@ -2481,8 +2481,8 @@ def _existing_engram_tools_values(tools: list[dict]) -> list[str]:
 def _prompt_setup_capability_mode() -> str:
     print()
     print(_t("  MCP 工具模式 / Capability mode:", "  Capability mode / MCP 工具模式:"))
-    print(_t("    1. 全部工具（推荐，57 个）", "    1. All tools (recommended, 57 tools)"))
-    print(_t("    2. 仅核心（17 个，最小面）", "    2. Core only (17 tools, minimal surface)"))
+    print(_t("    1. 全部工具（推荐，58 个）", "    1. All tools (recommended, 58 tools)"))
+    print(_t("    2. 仅核心（18 个，最小面）", "    2. Core only (18 tools, minimal surface)"))
     print(_t("    3. 核心+知识库管理（40 个）", "    3. Core + knowledge management (40 tools)"))
     answer = _prompt(_t("  请选择工具模式", "  Choose tool mode"), "1").strip()
     return {"2": "core", "3": "core+knowledge"}.get(answer, "all")
@@ -3003,6 +3003,68 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
 )
 
 
+def _run_capabilities_cli(args: list[str]) -> int:
+    """Print the content-free runtime capability manifest and handshake."""
+    from piia_engram.runtime_capabilities import (
+        check_runtime_compatibility,
+        get_runtime_capabilities,
+    )
+
+    required_codes: list[str] = []
+    required_contracts: dict[str, str] = {}
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"--require", "--contract"}:
+            if index + 1 >= len(args):
+                print(f"usage error: {token} requires a value", file=sys.stderr)
+                return 2
+            value = args[index + 1].strip()
+            if token == "--require":
+                required_codes.extend(
+                    item.strip() for item in value.split(",") if item.strip()
+                )
+            else:
+                if "=" not in value:
+                    print(
+                        "usage error: --contract requires NAME=VERSION",
+                        file=sys.stderr,
+                    )
+                    return 2
+                name, expected = value.split("=", 1)
+                required_contracts[name.strip()] = expected.strip()
+            index += 2
+            continue
+        if token != "--json":
+            print(f"usage error: unknown capabilities option: {token}", file=sys.stderr)
+            return 2
+        index += 1
+
+    manifest = get_runtime_capabilities()
+    compatibility = None
+    if required_codes or required_contracts:
+        compatibility = check_runtime_compatibility(
+            required_codes=required_codes,
+            required_contracts=required_contracts,
+        )
+        manifest["compatibility"] = compatibility
+
+    if "--json" in args:
+        print(json.dumps(manifest, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"Engram runtime {manifest['runtime_version']}")
+        print(f"Capability fingerprint: {manifest['fingerprint']}")
+        print("Capability codes:")
+        for code in manifest["capability_codes"]:
+            print(f"  - {code}")
+        if compatibility is not None:
+            print(
+                "Compatibility: "
+                + ("compatible" if compatibility["compatible"] else "incompatible")
+            )
+    return 0 if compatibility is None or compatibility["compatible"] else 1
+
+
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
@@ -3013,7 +3075,7 @@ def main() -> None:
     # dry-run-by-default JSON surfaces — the reminder would write .update_check.json
     # into the store — so skip them too (`dock-quality-action` only writes after
     # an explicit --yes, never on its default dry-run). Not reached by the MCP entry.
-    if not (args and args[0] in ("doctor", "continuity", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang", "dock-onboard-scan", "weekly")):
+    if not (args and args[0] in ("doctor", "capabilities", "continuity", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang", "dock-onboard-scan", "weekly")):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3028,6 +3090,8 @@ def main() -> None:
     elif args[0] == "doctor":
         fix = "--fix" in args
         sys.exit(run_doctor(fix=fix))
+    elif args[0] == "capabilities":
+        sys.exit(_run_capabilities_cli(args[1:]))
     elif args[0] == "sessions":
         sys.exit(run_sessions(args[1:]))
     elif args[0] == "review":
@@ -3165,6 +3229,7 @@ def main() -> None:
             "  engram setup --advanced Full interactive setup with privacy prompts\n"
             "  engram doctor           Check config health (all AI tools)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
+            "  engram capabilities     Content-free runtime capability fingerprint (--json/--require)\n"
             "  engram status           Show a redacted install + memory health summary\n"
             "  engram status --html    Write a local redacted status page\n"
             "  engram preview          Show what a simulated AI caller would receive (--as/--level/--html)\n"
@@ -3228,8 +3293,8 @@ def main() -> None:
             "  export_knowledge_report Readable Markdown report of active knowledge\n"
             "  export_engram           Full local JSON backup (treat as sensitive)\n\n"
             "Tool tiers:\n"
-            "  Default: 17 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 57 tools.\n"
+            "  Default: 18 核心工具 / core MCP tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 58 tools.\n"
         )
         sys.exit(0)
 

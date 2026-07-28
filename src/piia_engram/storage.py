@@ -567,8 +567,97 @@ def _parse_iso(value: str | None) -> datetime | None:
 _NO_PROJECT_LITERAL = "(no-project)"
 
 
+def _legacy_project_identity_key(folder: str) -> str:
+    raw = (folder or "").strip()
+    if not raw:
+        return _NO_PROJECT_LITERAL
+    return str(Path(raw).resolve()).replace("\\", "/").lower()
+
+
+def _read_gitdir_file(path: Path) -> Path | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore").strip()
+    except OSError:
+        return None
+    prefix = "gitdir:"
+    if not text.lower().startswith(prefix):
+        return None
+    raw = text[len(prefix):].strip()
+    if not raw:
+        return None
+    gitdir = Path(raw)
+    if not gitdir.is_absolute():
+        gitdir = (path.parent / gitdir).resolve()
+    return gitdir.resolve()
+
+
+def _git_common_dir_for_folder(folder: str) -> Path | None:
+    """Best-effort git common-dir resolver without spawning ``git``.
+
+    Normal repositories use ``<worktree>/.git`` as the common dir. Linked git
+    worktrees use a ``.git`` file pointing at ``.../.git/worktrees/<name>`` with
+    a ``commondir`` file that resolves back to the shared repo metadata. We only
+    use this as a stable local identity anchor; parent directories and nested
+    repositories remain distinct because the walk stops at the first ``.git``
+    marker found from the supplied path upward.
+    """
+    raw = (folder or "").strip()
+    if not raw:
+        return None
+    try:
+        current = Path(raw).resolve()
+    except OSError:
+        current = Path(raw).expanduser().absolute()
+    if current.is_file():
+        current = current.parent
+
+    for candidate in (current, *current.parents):
+        marker = candidate / ".git"
+        if marker.is_dir():
+            return marker.resolve()
+        if marker.is_file():
+            gitdir = _read_gitdir_file(marker)
+            if gitdir is None:
+                continue
+            common_file = gitdir / "commondir"
+            if common_file.is_file():
+                try:
+                    common_raw = common_file.read_text(
+                        encoding="utf-8",
+                        errors="ignore",
+                    ).strip()
+                except OSError:
+                    common_raw = ""
+                if common_raw:
+                    common = Path(common_raw)
+                    if not common.is_absolute():
+                        common = (gitdir / common).resolve()
+                    return common.resolve()
+            return gitdir.resolve()
+    return None
+
+
+def _canonical_project_identity_key(folder: str) -> str:
+    raw = (folder or "").strip()
+    if not raw:
+        return _NO_PROJECT_LITERAL
+    common_dir = _git_common_dir_for_folder(raw)
+    if common_dir is not None:
+        return "git-common:" + str(common_dir).replace("\\", "/").lower()
+    return _legacy_project_identity_key(raw)
+
+
+def _hash_project_identity_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
+def _legacy_project_id(folder: str) -> str:
+    """Pre-v4.15 path-hash project id, kept for read-only compatibility."""
+    return _hash_project_identity_key(_legacy_project_identity_key(folder))
+
+
 def _project_id(folder: str) -> str:
-    """Stable short hash for a project folder path.
+    """Stable short hash for a canonical project identity.
 
     v3.30 M3 fix: empty / whitespace-only folder maps to a fixed
     ``(no-project)`` literal *before* hashing. The old behaviour passed
@@ -576,10 +665,29 @@ def _project_id(folder: str) -> str:
     current working directory — meaning two tools (Claude Code in
     project A's cwd, Codex in project B's cwd) ended up with different
     "no-project" hashes and couldn't see each other's spillover logs.
+
+    v4.15 keeps that behavior and adds git worktree-aware identity: linked
+    worktrees that share a git common-dir now share the same project id, while
+    parent folders, nested repositories, and adjacent checkouts remain separate.
     """
-    raw = (folder or "").strip()
-    if not raw:
-        normalized = _NO_PROJECT_LITERAL
-    else:
-        normalized = str(Path(raw).resolve()).replace("\\", "/").lower()
-    return hashlib.sha256(normalized.encode()).hexdigest()[:12]
+    return _hash_project_identity_key(_canonical_project_identity_key(folder))
+
+
+def _project_id_aliases(folder: str) -> tuple[str, ...]:
+    """Return canonical id plus legacy path-hash ids for read-only lookup.
+
+    This intentionally does not rewrite old records. Callers can read legacy
+    snapshots or entries for the exact path they asked for, but migration stays
+    explicit.
+    """
+    canonical = _project_id(folder)
+    legacy = _legacy_project_id(folder)
+    aliases = [canonical]
+    if legacy != canonical:
+        aliases.append(legacy)
+    common_dir = _git_common_dir_for_folder(folder)
+    if common_dir is not None and common_dir.name.lower() == ".git":
+        main_checkout_legacy = _legacy_project_id(str(common_dir.parent))
+        if main_checkout_legacy not in aliases:
+            aliases.append(main_checkout_legacy)
+    return tuple(aliases)

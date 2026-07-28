@@ -4,8 +4,8 @@ This is the short operational view of the Engram MCP surface.
 
 ## Default surface
 
-- Default: 17 core tools.
-- Opt-in full surface: all 57 tools with `ENGRAM_TOOLS=all` (17 core + 40 advanced).
+- Default: 18 core tools.
+- Opt-in full surface: all 58 tools with `ENGRAM_TOOLS=all` (18 core + 40 advanced).
 - Core means high-frequency and context-budget friendly. It does not mean read-only.
 
 ## Capability modes
@@ -83,11 +83,49 @@ owner-only local CLI (`engram playbook scope classify|apply|rollback|queue|resol
 
 Reconciliation is an owner maintenance action. Default session closeout does not scan external AI memory or config files. To request reconciliation during closeout, call `wrap_up_session(..., run_reconcile=True, user_confirmed=True)`.
 
+When `project_folder` is present, explicit closeout reconciliation defaults to
+`reconcile_scope="project"`: Claude memory entries are matched to the exact
+canonical project identity and config scanning stays inside that project root.
+Parent folders, nested repositories, and adjacent projects are not prefix
+matched. Use `reconcile_scope="global"` only for an intentional owner-approved
+global maintenance pass. A bounded config import reports `partial_complete`
+rather than claiming that all candidates were scanned.
+
 Imported items remain staging-tier candidates until reviewed. Reconcile results should stay metadata-only: counts, source labels, scan status, and budget flags are appropriate; raw external memory bodies and config file contents are not.
 
 ## Closeout budget
 
 The closeout budget bounds optional late session-end work and reports metadata under `maintenance.budget`. Fast closeout mode may skip extraction-heavy and late optional stages, but it does not change the default reconcile boundary: external memory/config reconciliation still requires `run_reconcile=True`.
+
+`wrap_up_session` also returns an opaque `operation.operation_id` and metadata-only
+stage records. Provide a caller-stable `idempotency_key` before starting closeout.
+If an MCP host times out before receiving the response, use
+`get_wrap_up_session_status(idempotency_key=...)` from a fresh process to inspect the
+last recorded stage and whether the operation reached `completed`,
+`partial_complete`, is still `running`, or became `stale_running`. A known
+`operation_id` remains supported. Reusing the same idempotency key returns the
+existing operation state instead of repeating closeout writes.
+
+Project handoff uses the canonical structured checkpoint when it is newer than
+the latest session digest. Checkpoints include a monotonic revision,
+`generated_at`, exact `source_scope`, and bounded `source_session` metadata.
+Revision conflicts are reported as `partial_or_stale_context`; an interrupted
+checkpoint cannot inherit an older `last_completed` value.
+
+## Runtime compatibility
+
+`engram capabilities --json` returns a content-free capability manifest and
+stable SHA-256 fingerprint. Consumers should require capability codes or
+specific contract versions instead of comparing the full package version:
+
+```text
+engram capabilities --json \
+  --require exact_project_scope,project_scoped_reconcile,wrap_up_status_by_idempotency_key \
+  --contract project_snapshot=project_snapshot.v2
+```
+
+The same manifest is included in MCP `doctor(output_format="json")`. It contains
+no project paths, user identity, memory bodies, or provider responses.
 
 ## Decision conflict governance
 

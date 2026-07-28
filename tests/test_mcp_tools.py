@@ -985,7 +985,9 @@ class TestToolTier:
         visible = self._filtered_tool_names(group_name, monkeypatch)
 
         assert visible == mcp_server.TIER1_TOOLS | mcp_server.CAPABILITY_GROUPS[group_name]
-        assert len(visible) == 17 + len(mcp_server.CAPABILITY_GROUPS[group_name])
+        assert len(visible) == len(mcp_server.TIER1_TOOLS) + len(
+            mcp_server.CAPABILITY_GROUPS[group_name]
+        )
 
     @pytest.mark.parametrize(
         ("raw_mode", "group_names"),

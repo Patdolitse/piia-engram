@@ -100,7 +100,8 @@ def test_resume_brief_starts_with_30_second_handoff(tmp_path: Path):
     assert "## 30-second handoff" in md
     assert "Handoff Project" in md
     assert "implemented recovery dry-run" in md
-    assert "Read suggested docs first" in md
+    assert "- **next_action**: unknown" in md
+    assert "- **freshness**: unknown" in md
     assert "Memory is reference context" in md
 
 

@@ -59,9 +59,14 @@ class TestBriefBrandLine:
         project = tmp_path / "myproj"
         project.mkdir()
         e.save_project_snapshot(str(project), {"title": "MyProj", "tech_stack": ["python"]})
-        e.add_lesson("Use Path.resolve() before hashing", domain="python")
-        e.add_lesson("Pin dependencies in CI", domain="python")
-        e.add_decision("Database choice", choice="SQLite", reasoning="local-first")
+        e.add_lesson("Use Path.resolve() before hashing", domain="python", project_folder=str(project))
+        e.add_lesson("Pin dependencies in CI", domain="python", project_folder=str(project))
+        e.add_decision(
+            "Database choice",
+            choice="SQLite",
+            reasoning="local-first",
+            project_folder=str(project),
+        )
 
         md = e.get_resume_brief(project_folder=str(project))["markdown"]
 

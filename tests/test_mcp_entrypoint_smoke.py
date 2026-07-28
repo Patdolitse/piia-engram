@@ -92,16 +92,35 @@ def test_runtime_wrap_up_explicit_reconcile_runs_only_when_requested(
     monkeypatch,
 ):
     _store, project, eng = isolated_runtime
-    calls: list[str] = []
+    calls: list[tuple[str, dict]] = []
+
+    def reconcile_memories(**kwargs):
+        calls.append(("mem", kwargs))
+        return {
+            "imported": 0,
+            "sources": [],
+            "scope": {"mode": "project_exact"},
+        }
+
+    def reconcile_ai_configs(**kwargs):
+        calls.append(("cfg", kwargs))
+        return {
+            "imported": 0,
+            "sources": [],
+            "scanned_files": 0,
+            "budget_exhausted": False,
+            "scope": {"mode": "project_exact"},
+        }
+
     monkeypatch.setattr(
         eng,
         "reconcile_memories",
-        lambda: calls.append("mem") or {"imported": 0, "sources": []},
+        reconcile_memories,
     )
     monkeypatch.setattr(
         eng,
         "reconcile_ai_configs",
-        lambda: calls.append("cfg") or {"imported": 0, "sources": [], "scanned_files": 0},
+        reconcile_ai_configs,
     )
 
     payload = json.loads(_run(mcp_server.wrap_up_session(
@@ -112,6 +131,20 @@ def test_runtime_wrap_up_explicit_reconcile_runs_only_when_requested(
         run_reconcile=True,
     )))
 
-    assert calls == ["mem", "cfg"]
+    assert calls == [
+        ("mem", {"project_folder": str(project)}),
+        (
+            "cfg",
+            {
+                "search_roots": [str(project)],
+                "project_folder": str(project),
+            },
+        ),
+    ]
+    assert payload["maintenance"]["reconcile_scope"] == {
+        "requested": "project",
+        "effective": "project",
+        "project_scoped": True,
+    }
     assert payload["maintenance"]["reconcile_memories"]["status"] == "ok"
     assert payload["maintenance"]["reconcile_ai_configs"]["status"] == "ok"

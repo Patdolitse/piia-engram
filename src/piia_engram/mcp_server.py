@@ -125,6 +125,7 @@ def _schedule_startup_sync(mode: str) -> None:
 
 from piia_engram.beta_tracker import track_event as _beta
 from piia_engram import provenance as _provenance
+from piia_engram.continuity_digest import build_session_digest as _build_session_digest
 
 # Starlette imports are deferred to SSE mode — not needed for stdio.
 # Importing eagerly can slow startup and fail in minimal Docker images.
@@ -147,6 +148,7 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 try:
     from .core import (  # noqa: E402
         Engram,
+        _project_id,
         export_to_openclaw,
         import_from_openclaw,
         strip_untrusted_trust_fields,
@@ -154,6 +156,7 @@ try:
 except ImportError:
     from core import (  # noqa: E402
         Engram,
+        _project_id,
         export_to_openclaw,
         import_from_openclaw,
         strip_untrusted_trust_fields,
@@ -598,9 +601,6 @@ class _SessionTracker:
                 if project_info:
                     verified_at = _dt.now().isoformat()
                     project_info["last_auto_snapshot"] = verified_at
-                    project_info = _attach_current_state(
-                        project_info, verified_at=verified_at
-                    )
                     _locked_engram_call(
                         _engram.save_project_snapshot,
                         self.project_folder,
@@ -712,7 +712,50 @@ def _collect_project_info(project_folder: str) -> dict:
     return info
 
 
-def _attach_current_state(info: dict, *, verified_at: str | None = None) -> dict:
+def _session_handoff_state(
+    summary: str,
+    *,
+    source_tool: str = "",
+    project_folder: str = "",
+    session_ref: str = "",
+) -> dict:
+    """Extract only explicit completion/next/blocking signals for a checkpoint."""
+    digest = _build_session_digest(
+        summary,
+        tool=source_tool,
+        project_id=_project_id(project_folder) if project_folder else "",
+        session_ref=session_ref,
+    )
+    completed = [str(item) for item in digest.get("completed") or [] if str(item).strip()]
+    next_actions = [str(item) for item in digest.get("next_actions") or [] if str(item).strip()]
+    blocked_on = [
+        str(item)
+        for item in digest.get("risks") or []
+        if any(marker in str(item).lower() for marker in ("block", "blocked", "阻塞"))
+    ]
+    handoff: dict[str, object] = {
+        "last_completed": completed[:8],
+        "next_actions": next_actions[:8],
+        "blocked_on": blocked_on[:5],
+        "session_status": (
+            "completed"
+            if completed
+            else "interrupted"
+            if next_actions or blocked_on
+            else "unknown"
+        ),
+    }
+    if next_actions:
+        handoff["current_focus"] = next_actions[0]
+    return handoff
+
+
+def _attach_current_state(
+    info: dict,
+    *,
+    verified_at: str | None = None,
+    handoff: dict | None = None,
+) -> dict:
     """Attach machine-derived project facts without discarding legacy fields."""
     if not isinstance(info, dict):
         return {}
@@ -726,6 +769,8 @@ def _attach_current_state(info: dict, *, verified_at: str | None = None) -> dict
         "current_branch",
     )
     current = {key: out[key] for key in keys if out.get(key) is not None}
+    if isinstance(handoff, dict):
+        current.update(handoff)
     if current:
         current["verified_at"] = verified_at or _dt.now().isoformat()
         out["current_state"] = current
@@ -895,6 +940,7 @@ TIER1_TOOLS = frozenset({
     "get_recent_context",        # recover lost session context
     "get_daily_log",             # v3.30: human-readable per-project day timeline
     "get_resume_brief",          # v3.30: cross-session/cross-tool resume brief
+    "get_wrap_up_session_status",  # session closeout operation status
     # Diagnostics
     "doctor",                    # memory system self-diagnosis
 })
@@ -1083,6 +1129,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "get_daily_log": "read",
     "get_decisions": "read",
     "explore_knowledge": "read",
+    "get_wrap_up_session_status": "read",
     # export/file-writer: embeds lesson summaries + decision text verbatim AND
     # writes exports/identity_card.md to disk; gated by maybe_refuse_export.
     # Classed export_owner_only so the writer-spy matrix verifies that gate
@@ -1417,6 +1464,7 @@ try:
         import_engram,
         get_audit_log,
         wrap_up_session,
+        get_wrap_up_session_status,
         export_feedback_report,
         doctor,
         start_project,
@@ -1488,6 +1536,7 @@ except ImportError:  # plain-script mode (no package context)
         import_engram,
         get_audit_log,
         wrap_up_session,
+        get_wrap_up_session_status,
         export_feedback_report,
         doctor,
         start_project,

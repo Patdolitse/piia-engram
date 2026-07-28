@@ -53,7 +53,7 @@ def test_pack_meta_counts_match_output_arrays(tmp_path: Path):
     assert meta["trusted_count"] == len(pack["trusted_context"])
     assert meta["review_needed_count"] == len(pack["review_needed"])
     assert meta["omitted_count"] == len(pack["omitted"])
-    assert meta["selection_policy"] == "recency_then_review_state_then_limit"
+    assert meta["selection_policy"] == "exact_project_scope_then_value_then_limit"
     assert meta["budget"] == {"digest_limit": 1, "knowledge_limit": 2}
 
 
@@ -82,9 +82,14 @@ def test_resume_pack_order_is_deterministic_across_repeated_calls(tmp_path: Path
     project = _project(tmp_path)
     eng.save_project_snapshot(str(project), {"title": "Deterministic Project", "stage": "M2"})
     _save_digest_session(eng, project, session_id="sess-a")
-    eng.add_lesson("Alpha verified lesson", tier="verified")
-    eng.add_lesson("Beta verified lesson", tier="verified")
-    eng.add_decision("Architecture choice", choice="Deterministic order", tier="verified")
+    eng.add_lesson("Alpha verified lesson", tier="verified", project_folder=str(project))
+    eng.add_lesson("Beta verified lesson", tier="verified", project_folder=str(project))
+    eng.add_decision(
+        "Architecture choice",
+        choice="Deterministic order",
+        tier="verified",
+        project_folder=str(project),
+    )
 
     first = eng.build_project_resume_pack(project_folder=str(project), digest_limit=2, knowledge_limit=3)
     second = eng.build_project_resume_pack(project_folder=str(project), digest_limit=2, knowledge_limit=3)
@@ -103,9 +108,14 @@ def test_omitted_records_appear_when_knowledge_limit_is_exceeded(tmp_path: Path)
     eng = _eng(tmp_path)
     project = _project(tmp_path)
     eng.save_project_snapshot(str(project), {"title": "Limit Project", "stage": "M2"})
-    eng.add_lesson("Kept verified lesson", tier="verified")
-    eng.add_lesson("Omitted verified lesson", tier="verified")
-    eng.add_decision("Omitted decision", choice="Past the budget", tier="verified")
+    eng.add_lesson("Kept verified lesson", tier="verified", project_folder=str(project))
+    eng.add_lesson("Omitted verified lesson", tier="verified", project_folder=str(project))
+    eng.add_decision(
+        "Omitted decision",
+        choice="Past the budget",
+        tier="verified",
+        project_folder=str(project),
+    )
 
     pack = eng.build_project_resume_pack(project_folder=str(project), knowledge_limit=1)
 
@@ -123,8 +133,17 @@ def test_review_candidates_never_enter_trusted_context(tmp_path: Path):
     eng = _eng(tmp_path)
     project = _project(tmp_path)
     _save_digest_session(eng, project)
-    eng.add_lesson("Staging lesson must stay review-needed", tier="staging")
-    eng.add_decision("Staging decision", choice="Needs owner review", tier="staging")
+    eng.add_lesson(
+        "Staging lesson must stay review-needed",
+        tier="staging",
+        project_folder=str(project),
+    )
+    eng.add_decision(
+        "Staging decision",
+        choice="Needs owner review",
+        tier="staging",
+        project_folder=str(project),
+    )
 
     pack = eng.build_project_resume_pack(project_folder=str(project))
     trusted = json.dumps(pack["trusted_context"], ensure_ascii=False)
@@ -199,13 +218,14 @@ def test_project_scoped_knowledge_is_selected_for_matching_project(tmp_path: Pat
     review = json.dumps(pack["review_needed"], ensure_ascii=False)
     blob = trusted + review
 
-    assert "Global reusable lesson" in trusted
+    assert "Global reusable lesson" not in trusted
     assert "Matching project verified lesson" in trusted
     assert "Matching project staging lesson" in review
     assert "Other project verified lesson" not in blob
+    assert pack["pack_meta"]["omitted_category_counts"]["lesson:global_excluded_by_exact_scope"] == 1
 
 
-def test_label_only_project_entries_match_project_name_and_stay_out_of_global_pack(
+def test_label_only_project_entries_stay_out_of_exact_project_and_global_pack(
     tmp_path: Path,
 ):
     eng = _eng(tmp_path)
@@ -229,10 +249,14 @@ def test_label_only_project_entries_match_project_name_and_stay_out_of_global_pa
     project_blob = json.dumps(project_pack["trusted_context"], ensure_ascii=False)
     global_blob = json.dumps(global_pack["trusted_context"], ensure_ascii=False)
 
-    assert "Label-only project decision" in project_blob
+    assert "Label-only project decision" not in project_blob
     assert "Other label-only project decision" not in project_blob
     assert "Label-only project decision" not in global_blob
     assert "Other label-only project decision" not in global_blob
+    assert (
+        project_pack["pack_meta"]["omitted_category_counts"]["decision:label_only_project_scope"]
+        == 1
+    )
 
 
 def test_digest_selection_filters_before_applying_limit(tmp_path: Path):
@@ -255,8 +279,8 @@ def test_digest_selection_filters_before_applying_limit(tmp_path: Path):
 def test_verified_knowledge_selection_prefers_recent_items(tmp_path: Path):
     eng = _eng(tmp_path)
     project = _project(tmp_path)
-    eng.add_lesson("Old verified lesson", tier="verified")
-    eng.add_lesson("Recent verified lesson", tier="verified")
+    eng.add_lesson("Old verified lesson", tier="verified", project_folder=str(project))
+    eng.add_lesson("Recent verified lesson", tier="verified", project_folder=str(project))
 
     pack = eng.build_project_resume_pack(project_folder=str(project), knowledge_limit=1)
 
@@ -270,9 +294,14 @@ def test_omitted_records_are_bounded_metadata(tmp_path: Path):
     eng = _eng(tmp_path)
     project = _project(tmp_path)
     for index in range(30):
-        eng.add_lesson(f"Omitted lesson {index}", tier="verified")
+        eng.add_lesson(f"Omitted lesson {index}", tier="verified", project_folder=str(project))
     for index in range(30):
-        eng.add_decision(f"Omitted decision {index}", choice="Past the budget", tier="verified")
+        eng.add_decision(
+            f"Omitted decision {index}",
+            choice="Past the budget",
+            tier="verified",
+            project_folder=str(project),
+        )
 
     pack = eng.build_project_resume_pack(project_folder=str(project), knowledge_limit=0)
 
@@ -281,3 +310,164 @@ def test_omitted_records_are_bounded_metadata(tmp_path: Path):
         {"kind": "lesson", "reason": "knowledge_limit", "source": "knowledge"},
         {"kind": "decision", "reason": "knowledge_limit", "source": "knowledge"},
     ]
+
+
+def test_newer_checkpoint_wins_over_stale_digest_and_marks_revision_conflict(
+    tmp_path: Path,
+):
+    eng = _eng(tmp_path)
+    project = _project(tmp_path, "checkpoint-wins")
+    eng.save_project_snapshot(
+        str(project),
+        {
+            "current_state": {
+                "last_completed": ["initial checkpoint"],
+                "next_actions": ["produce a newer checkpoint"],
+            },
+        },
+    )
+    _save_digest_session(eng, project, session_id="old-digest")
+    eng.save_project_snapshot(
+        str(project),
+        {
+            "current_state": {
+                "last_completed": ["accepted checkpoint completed"],
+                "next_actions": ["continue from accepted checkpoint"],
+                "blocked_on": [],
+                "session_status": "completed",
+            },
+        },
+        source_tool="codex",
+        source_session="accepted-checkpoint",
+    )
+
+    fresh = Engram(root=eng.root)
+    pack = fresh.build_project_resume_pack(
+        project_folder=str(project),
+        digest_limit=1,
+    )
+
+    assert pack["handoff"]["last_completed"] == [
+        "accepted checkpoint completed"
+    ]
+    assert pack["handoff"]["next_actions"] == [
+        "continue from accepted checkpoint"
+    ]
+    assert "resume pack quality tests" not in json.dumps(
+        pack["handoff"],
+        ensure_ascii=False,
+    )
+    assert pack["freshness"]["status"] == "partial_or_stale_context"
+    assert pack["freshness"]["reason"] == "revision_conflict"
+    assert pack["freshness"]["authoritative_source"] == "project_checkpoint"
+
+
+def test_checkpoint_wins_over_newer_digest_timestamp_at_same_revision(
+    tmp_path: Path,
+) -> None:
+    eng = _eng(tmp_path)
+    project = _project(tmp_path, "same-revision")
+    snapshot = {
+        "current_state": {
+            "current_focus": "accepted checkpoint focus",
+            "last_completed": [],
+            "next_actions": ["accepted checkpoint next"],
+            "blocked_on": ["accepted checkpoint blocker"],
+        },
+        "checkpoint": {
+            "revision": 2,
+            "generated_at": "2026-07-28T07:00:00Z",
+        },
+    }
+    digest = {
+        "completed": ["stale digest completion"],
+        "next_actions": ["stale digest next"],
+        "risks": ["blocked by stale digest"],
+        "generated_at": "2026-07-28T07:10:00Z",
+        "source": {"project_revision": 2},
+    }
+
+    result = eng._project_handoff_from_sources(
+        project_folder=str(project),
+        snapshot=snapshot,
+        digests=[digest],
+    )
+
+    assert result["handoff"]["current_focus"] == "accepted checkpoint focus"
+    assert result["handoff"]["last_completed"] == []
+    assert result["handoff"]["next_actions"] == ["accepted checkpoint next"]
+    assert result["freshness"]["status"] == "current"
+    assert result["freshness"]["reason"] == "matching_revision_project_checkpoint"
+    assert result["freshness"]["authoritative_source"] == "project_checkpoint"
+
+
+def test_checkpoint_wins_over_newer_legacy_digest_without_revision(
+    tmp_path: Path,
+) -> None:
+    eng = _eng(tmp_path)
+    project = _project(tmp_path, "legacy-digest")
+    result = eng._project_handoff_from_sources(
+        project_folder=str(project),
+        snapshot={
+            "current_state": {
+                "last_completed": [],
+                "next_actions": ["canonical checkpoint next"],
+            },
+            "checkpoint": {
+                "revision": 3,
+                "generated_at": "2026-07-28T07:00:00Z",
+            },
+        },
+        digests=[
+            {
+                "completed": ["legacy digest must not override"],
+                "next_actions": ["legacy digest next"],
+                "generated_at": "2026-07-28T07:10:00Z",
+                "source": {},
+            }
+        ],
+    )
+
+    assert result["handoff"]["last_completed"] == []
+    assert result["handoff"]["next_actions"] == ["canonical checkpoint next"]
+    assert result["freshness"]["status"] == "partial_or_stale_context"
+    assert result["freshness"]["reason"] == "legacy_digest_without_revision"
+    assert result["freshness"]["authoritative_source"] == "project_checkpoint"
+
+
+def test_interrupted_checkpoint_does_not_reuse_previous_completion(
+    tmp_path: Path,
+):
+    eng = _eng(tmp_path)
+    project = _project(tmp_path, "interrupted")
+    eng.save_project_snapshot(
+        str(project),
+        {
+            "current_state": {
+                "last_completed": ["previous cycle completed"],
+                "next_actions": ["start next cycle"],
+                "session_status": "completed",
+            },
+        },
+    )
+    eng.save_project_snapshot(
+        str(project),
+        {
+            "current_state": {
+                "next_actions": ["resume interrupted implementation"],
+                "blocked_on": ["blocked on synthetic fixture"],
+                "session_status": "interrupted",
+            },
+        },
+    )
+
+    fresh = Engram(root=eng.root)
+    pack = fresh.build_project_resume_pack(project_folder=str(project))
+
+    assert pack["handoff"]["last_completed"] == []
+    assert pack["handoff"]["next_actions"] == [
+        "resume interrupted implementation"
+    ]
+    assert pack["handoff"]["blocked_on"] == ["blocked on synthetic fixture"]
+    assert pack["freshness"]["status"] == "current"
+    assert pack["handoff"]["revision"] == 2

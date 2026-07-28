@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
   "status": "taxonomy_snapshot",
-  "last_reviewed": "2026-06-18",
+  "last_reviewed": "2026-07-28",
   "source_of_truth": "scripts/count_mcp_tools.py --json",
   "counts": {
-    "total": 57,
-    "core": 17,
+    "total": 58,
+    "core": 18,
     "advanced": 40
   },
   "tiers": [
     {
       "name": "core",
-      "count": 17,
+      "count": 18,
       "loaded_by": "default",
       "meaning": "high-frequency and context-budget friendly; not synonymous with read-only"
     },
@@ -33,6 +33,7 @@
   ],
   "notable_boundaries": {
     "get_identity_card": "core but owner-gated export surface",
+    "get_wrap_up_session_status": "core metadata-only recovery surface; queryable by operation_id or caller-known idempotency_key",
     "preview_context_governance": "advanced owner-gated preview; proposal-only; not stable; not split into four public tools",
     "local_tools_registry": "local path resolver; do not persist absolute paths into playbooks",
     "legacy_playbook_migration": "owner-local maintenance surface, not first-run product story"

@@ -136,7 +136,7 @@ def _run_decision_context(root: Path, project: Path) -> dict[str, Any]:
         "No. Default setup must be read-only for external client configs; explicit apply requires backup and ledger.",
         "The trust pitch depends on non-action safety for user-owned client files.",
         source_tool="codex_benchmark",
-        project=str(project),
+        project_folder=str(project),
         tier="verified",
     )
     eng.save_agent_context(

@@ -224,7 +224,7 @@ def test_quickstart_first_value_stays_core_and_honest():
 
     for phrase in [
         "Goal",
-        "17 core tools",
+        "18 core tools",
         "ENGRAM_TOOLS=core",
         "ENGRAM_TOOLS=all",
         # Honest risk-gated approval model: low/medium auto-verify, high-risk
@@ -290,8 +290,8 @@ def test_tool_surface_analysis_covers_all_current_tools_without_refactor_claims(
     doc = _read("docs/tool-surface-analysis.md")
     tools = _mcp_tool_names()
 
-    assert len(tools) == 57
-    assert "17 core tools" in doc
+    assert len(tools) == 58
+    assert "18 core tools" in doc
     assert "40 advanced tools" in doc
     assert "Core is not read-only" in doc
     assert "core but owner-gated" in doc
@@ -374,7 +374,7 @@ def test_architecture_does_not_carry_stale_mcp_wrapper_count():
     assert "81 `@mcp.tool()`" not in doc
     assert "83 `@mcp.tool()`" not in doc
     assert "87 `@mcp.tool()`" not in doc
-    assert "57 `@mcp.tool()`" in doc
+    assert "58 `@mcp.tool()`" in doc
 
 
 def test_readme_top_positions_identity_layer_not_plain_memory():
@@ -389,10 +389,17 @@ def test_readme_top_positions_identity_layer_not_plain_memory():
     assert "跨工具持久 AI 记忆" not in readme_zh[:600]
 
 
-def test_release_evidence_index_includes_v42_and_marker_only_policy():
+def test_release_evidence_index_covers_all_markers_and_marker_only_policy():
     index = _read("release-evidence/README.md")
 
-    assert "| v4.2.0 | [v4.2.0.md](v4.2.0.md)" in index
+    markers = sorted(
+        path.name
+        for path in (ROOT / "release-evidence").glob("v*.md")
+        if not path.name.endswith("-notes.md")
+    )
+    missing = [name for name in markers if f"[{name}]({name})" not in index]
+    assert not missing, f"release evidence index is missing: {missing}"
+    assert "| v4.14.0 | [v4.14.0.md](v4.14.0.md)" in index
     assert "marker-only evidence file" in index
     assert "not raw logs" in index
     assert "no local paths" in index

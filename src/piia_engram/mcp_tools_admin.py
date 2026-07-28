@@ -9,19 +9,31 @@ from time import perf_counter
 try:
     from . import mcp_server as S
     from .session_closeout import (
+        begin_wrap_up_operation as _begin_wrap_up_operation,
         budget_exhausted as _budget_exhausted,
         budget_metadata as _closeout_budget_metadata,
         configured_closeout_mode as _configured_closeout_mode,
         configured_wrap_up_budget_ms as _configured_wrap_up_budget_ms,
+        finish_wrap_up_operation as _finish_wrap_up_operation,
+        mark_wrap_up_stage as _mark_wrap_up_stage,
+        public_wrap_up_operation_status as _public_wrap_up_operation_status,
+        read_wrap_up_operation as _read_wrap_up_operation,
+        resolve_wrap_up_operation_id as _resolve_wrap_up_operation_id,
         skipped_stage as _skipped_stage,
     )
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
     from session_closeout import (  # type: ignore[no-redef]
+        begin_wrap_up_operation as _begin_wrap_up_operation,
         budget_exhausted as _budget_exhausted,
         budget_metadata as _closeout_budget_metadata,
         configured_closeout_mode as _configured_closeout_mode,
         configured_wrap_up_budget_ms as _configured_wrap_up_budget_ms,
+        finish_wrap_up_operation as _finish_wrap_up_operation,
+        mark_wrap_up_stage as _mark_wrap_up_stage,
+        public_wrap_up_operation_status as _public_wrap_up_operation_status,
+        read_wrap_up_operation as _read_wrap_up_operation,
+        resolve_wrap_up_operation_id as _resolve_wrap_up_operation_id,
         skipped_stage as _skipped_stage,
     )
 
@@ -576,6 +588,8 @@ async def wrap_up_session(
     known_issues: str = "",
     user_confirmed: bool = False,
     run_reconcile: bool = False,
+    idempotency_key: str = "",
+    reconcile_scope: str = "project",
 ) -> str:
     """会话结束一键收尾：自动提取知识、操作流程并保存项目快照。 / Wrap up a session in one step: extract knowledge, detect playbooks, and save a project snapshot.
 
@@ -598,6 +612,8 @@ async def wrap_up_session(
         project_title: 项目名称（可选，仅在首次保存快照时需要）。 / Project title (optional; mainly needed when first saving a snapshot).
         tech_stack: 技术栈（可选，逗号分隔）。 / Tech stack (optional, comma-separated).
         known_issues: 已知问题（可选，逗号分隔）。 / Known issues (optional, comma-separated).
+        idempotency_key: 可选幂等键；重试同一键只返回既有 operation 状态，不重复写入。 / Optional idempotency key; retrying the same key returns the existing operation status without duplicate writes.
+        reconcile_scope: "project"（有项目路径时默认精确项目隔离）或显式 "global"。 / "project" for exact project isolation when a project path is present, or explicit "global".
     """
     # a4: write-path governance gate — wrap_up_session fans out into many writes
     # (extract insights/playbook, save snapshot, daily log, evaluate_tiers), so
@@ -614,6 +630,7 @@ async def wrap_up_session(
         "tech_stack": tech_stack,
         "known_issues": known_issues,
         "run_reconcile": run_reconcile,
+        "reconcile_scope": reconcile_scope,
     }
     if not _is_user_confirmed(user_confirmed):
         return _confirmation_required(
@@ -621,6 +638,18 @@ async def wrap_up_session(
             "Wrap up session memory write",
             preview,
         )
+
+    requested_reconcile_scope = str(reconcile_scope or "project").strip().lower()
+    if requested_reconcile_scope not in {"project", "global"}:
+        return S._json({
+            "status": "error",
+            "error": "reconcile_scope must be 'project' or 'global'",
+        })
+    effective_reconcile_scope = (
+        "project"
+        if project_folder and requested_reconcile_scope == "project"
+        else "global"
+    )
 
     S._session.detect_tool(source_tool)
     if project_folder:
@@ -633,14 +662,88 @@ async def wrap_up_session(
     closeout_budget_ms = _configured_wrap_up_budget_ms()
     closeout_mode = _configured_closeout_mode()
     maintenance["closeout_mode"] = closeout_mode
+    maintenance["reconcile_scope"] = {
+        "requested": requested_reconcile_scope,
+        "effective": effective_reconcile_scope,
+        "project_scoped": effective_reconcile_scope == "project",
+    }
+    operation_state, idempotent_replay = _begin_wrap_up_operation(
+        S._get_engram().root,
+        idempotency_key=idempotency_key,
+        project_folder=project_folder,
+        source_tool=source_tool,
+        budget_ms=closeout_budget_ms,
+        closeout_mode=closeout_mode,
+    )
+    operation_id = str(operation_state.get("operation_id") or "")
+    if idempotent_replay:
+        public_operation = _public_wrap_up_operation_status(operation_state)
+        replay_payload = {
+            "status": public_operation.get("status", "unknown"),
+            "idempotent_replay": True,
+            "operation": public_operation,
+            "maintenance": {
+                "idempotency": {
+                    "status": "replayed",
+                    "reason": "same_idempotency_key",
+                },
+            },
+        }
+        return S._json(S._gov_rt.maybe_govern_write_ack(
+            S._get_engram().root, replay_payload, tool="wrap_up_session",
+        ))
+
+    stage_errors: list[str] = []
+    stage_partials: list[str] = []
+
+    def _stage_start(stage: str) -> float:
+        _mark_wrap_up_stage(S._get_engram().root, operation_id, stage, "running")
+        return perf_counter()
+
+    def _stage_finish(
+        stage: str,
+        status: str,
+        started_at: float,
+        *,
+        reason: str = "",
+        error: str = "",
+        counts: dict[str, int] | None = None,
+        committed: dict[str, object] | None = None,
+    ) -> None:
+        if status == "error":
+            stage_errors.append(stage)
+        elif status == "partial":
+            stage_partials.append(stage)
+        _mark_wrap_up_stage(
+            S._get_engram().root,
+            operation_id,
+            stage,
+            status,
+            timing_ms=_elapsed_ms(started_at),
+            reason=reason,
+            error=error,
+            counts=counts,
+            committed=committed,
+        )
 
     # Step 1: Extract insights
     if closeout_mode == "fast":
         results["insights"] = {"skipped": True}
         maintenance["extract_session_insights"] = _skipped_stage("fast_closeout")
         timing["extract_session_insights_ms"] = 0
+        _mark_wrap_up_stage(
+            S._get_engram().root,
+            operation_id,
+            "extract_session_insights",
+            "skipped",
+            timing_ms=0,
+            reason="fast_closeout",
+        )
     else:
-        stage_start = perf_counter()
+        stage_start = _stage_start("extract_session_insights")
+        stage_status = "ok"
+        stage_error = ""
+        insight_counts: dict[str, int] = {}
         try:
             insights = S._locked_engram_call(
                 S._get_engram().extract_session_insights,
@@ -649,17 +752,39 @@ async def wrap_up_session(
                 project_folder=project_folder,
             )
             results["insights"] = insights
+            if isinstance(insights, dict):
+                insight_counts = {
+                    "saved_lessons": _count_value(insights.get("saved_lessons")),
+                    "saved_decisions": _count_value(insights.get("saved_decisions")),
+                }
+            maintenance["extract_session_insights"] = {"status": "ok", **insight_counts}
         except Exception as exc:
             S.logger.warning("extract_session_insights failed: %s", exc)
-            results["insights"] = {"error": S._safe_err(exc)}
+            stage_status = "error"
+            stage_error = S._safe_err(exc)
+            results["insights"] = {"error": stage_error}
+            maintenance["extract_session_insights"] = {"status": "error", "error": stage_error}
         finally:
             timing["extract_session_insights_ms"] = _elapsed_ms(stage_start)
+            _stage_finish(
+                "extract_session_insights",
+                stage_status,
+                stage_start,
+                error=stage_error,
+                counts=insight_counts,
+                committed=insight_counts,
+            )
 
     # Step 1.5: Auto-extract Playbook if session looks like a procedure
-    stage_start = perf_counter()
+    stage_start = _stage_start("extract_playbook_from_session")
+    playbook_stage_status = "ok"
+    playbook_stage_reason = ""
+    playbook_stage_error = ""
     try:
         if closeout_mode == "fast":
             maintenance["extract_playbook_from_session"] = _skipped_stage("fast_closeout")
+            playbook_stage_status = "skipped"
+            playbook_stage_reason = "fast_closeout"
             playbook = None
         else:
             playbook = S._locked_engram_call(
@@ -686,16 +811,41 @@ async def wrap_up_session(
                 "confidence": pb_confidence,
                 "message": _pb_msg,
             }
+            maintenance["extract_playbook_from_session"] = {
+                "status": "ok",
+                "draft": True,
+            }
+        elif closeout_mode != "fast":
+            maintenance["extract_playbook_from_session"] = {
+                "status": "ok",
+                "draft": False,
+            }
     except Exception as exc:
+        playbook_stage_status = "error"
+        playbook_stage_error = S._safe_err(exc)
         S.logger.warning("playbook extraction failed: %s", exc)
+        maintenance["extract_playbook_from_session"] = {
+            "status": "error",
+            "error": playbook_stage_error,
+        }
     finally:
         timing["extract_playbook_from_session_ms"] = (
             0 if closeout_mode == "fast" else _elapsed_ms(stage_start)
         )
+        _stage_finish(
+            "extract_playbook_from_session",
+            playbook_stage_status,
+            stage_start,
+            reason=playbook_stage_reason,
+            error=playbook_stage_error,
+            committed={"playbook_draft": bool(results.get("playbook_draft"))},
+        )
 
     # Step 2: Save project snapshot (if project_folder provided)
-    stage_start = perf_counter()
     if project_folder:
+        stage_start = _stage_start("save_project_snapshot")
+        snapshot_stage_status = "ok"
+        snapshot_stage_error = ""
         try:
             snapshot_data: dict = {}
             if project_title:
@@ -705,26 +855,64 @@ async def wrap_up_session(
             if known_issues:
                 snapshot_data["known_issues"] = [s.strip() for s in known_issues.split(",") if s.strip()]
             project_info = S._collect_project_info(project_folder)
+            verified_at = S._dt.now().isoformat()
             if project_info:
-                verified_at = S._dt.now().isoformat()
                 project_info["last_auto_snapshot"] = verified_at
-                snapshot_data.update(S._attach_current_state(
-                    project_info, verified_at=verified_at
-                ))
-            S._locked_engram_call(S._get_engram().save_project_snapshot, project_folder, snapshot_data)
+            snapshot_data.update(S._attach_current_state(
+                project_info,
+                verified_at=verified_at,
+                handoff=S._session_handoff_state(
+                    summary,
+                    source_tool=source_tool,
+                    project_folder=project_folder,
+                    session_ref=operation_id,
+                ),
+            ))
+            S._locked_engram_call(
+                S._get_engram().save_project_snapshot,
+                project_folder,
+                snapshot_data,
+                source_tool=source_tool,
+                source_session=operation_id,
+            )
             results["project_snapshot"] = {"saved": True, "folder": project_folder}
+            maintenance["save_project_snapshot"] = {"status": "ok", "saved": True}
         except Exception as exc:
+            snapshot_stage_status = "error"
+            snapshot_stage_error = S._safe_err(exc)
             S.logger.warning("save_project_snapshot failed: %s", exc)
-            results["project_snapshot"] = {"error": S._safe_err(exc)}
+            results["project_snapshot"] = {"error": snapshot_stage_error}
+            maintenance["save_project_snapshot"] = {
+                "status": "error",
+                "error": snapshot_stage_error,
+            }
         finally:
             timing["save_project_snapshot_ms"] = _elapsed_ms(stage_start)
+            _stage_finish(
+                "save_project_snapshot",
+                snapshot_stage_status,
+                stage_start,
+                error=snapshot_stage_error,
+                committed={"project_snapshot": snapshot_stage_status == "ok"},
+            )
     else:
         timing["save_project_snapshot_ms"] = 0
+        maintenance["save_project_snapshot"] = _skipped_stage("no_project_folder")
+        _mark_wrap_up_stage(
+            S._get_engram().root,
+            operation_id,
+            "save_project_snapshot",
+            "skipped",
+            timing_ms=0,
+            reason="no_project_folder",
+        )
 
     # Step 2.5: Append human-readable entry to today's daily log
     # (v3.30 mechanism 5). Always-on, lossy-safe single-file append per
     # (project, day). Falls back to "(no-project)" bucket if no folder.
-    stage_start = perf_counter()
+    stage_start = _stage_start("append_daily_log")
+    daily_stage_status = "ok"
+    daily_stage_error = ""
     try:
         daily_target = project_folder or "(no-project)"
         # Keep the daily entry compact — first ~600 chars of the summary
@@ -756,54 +944,123 @@ async def wrap_up_session(
             "file": daily_result["file"],
             "created": daily_result["created"],
         }
+        maintenance["append_daily_log"] = {
+            "status": "ok",
+            "written": True,
+            "created": bool(daily_result["created"]),
+        }
     except Exception as exc:
+        daily_stage_status = "error"
+        daily_stage_error = S._safe_err(exc)
         S.logger.warning("append_daily_log failed: %s", exc)
+        maintenance["append_daily_log"] = {
+            "status": "error",
+            "error": daily_stage_error,
+        }
     finally:
         timing["append_daily_log_ms"] = _elapsed_ms(stage_start)
+        _stage_finish(
+            "append_daily_log",
+            daily_stage_status,
+            stage_start,
+            error=daily_stage_error,
+            committed={"daily_log": daily_stage_status == "ok"},
+        )
 
     # Step 3: Auto-reconcile external AI memories and configs
     _reconcile_imported = 0
     if run_reconcile:
-        stage_start = perf_counter()
+        stage_start = _stage_start("reconcile_memories")
+        reconcile_stage_status = "ok"
+        reconcile_stage_error = ""
         try:
-            reconcile = S._locked_engram_call(S._get_engram().reconcile_memories)
+            reconcile_kwargs = (
+                {"project_folder": project_folder}
+                if effective_reconcile_scope == "project"
+                else {}
+            )
+            reconcile = S._locked_engram_call(
+                S._get_engram().reconcile_memories,
+                **reconcile_kwargs,
+            )
             imported = int(reconcile.get("imported", 0) or 0)
             maintenance["reconcile_memories"] = {
                 "status": "ok",
                 "imported": imported,
+                "scope": reconcile.get("scope", {}),
             }
             if imported > 0:
                 results["memory_sync"] = reconcile
                 _reconcile_imported += imported
         except Exception as exc:
+            reconcile_stage_status = "error"
+            reconcile_stage_error = S._safe_err(exc)
             S.logger.warning("reconcile_memories failed: %s", exc)
             maintenance["reconcile_memories"] = {
                 "status": "error",
-                "error": S._safe_err(exc),
+                "error": reconcile_stage_error,
             }
         finally:
             timing["reconcile_memories_ms"] = _elapsed_ms(stage_start)
+            _stage_finish(
+                "reconcile_memories",
+                reconcile_stage_status,
+                stage_start,
+                error=reconcile_stage_error,
+                counts={"imported": _reconcile_imported},
+            )
 
-        stage_start = perf_counter()
+        stage_start = _stage_start("reconcile_ai_configs")
+        cfg_stage_status = "ok"
+        cfg_stage_error = ""
         try:
-            cfg_sync = S._locked_engram_call(S._get_engram().reconcile_ai_configs)
+            config_kwargs = (
+                {
+                    "search_roots": [project_folder],
+                    "project_folder": project_folder,
+                }
+                if effective_reconcile_scope == "project"
+                else {}
+            )
+            cfg_sync = S._locked_engram_call(
+                S._get_engram().reconcile_ai_configs,
+                **config_kwargs,
+            )
             imported = int(cfg_sync.get("imported", 0) or 0)
+            config_budget_exhausted = bool(cfg_sync.get("budget_exhausted"))
+            if config_budget_exhausted:
+                cfg_stage_status = "partial"
+                cfg_stage_reason = "import_budget_exhausted"
+            else:
+                cfg_stage_reason = ""
             maintenance["reconcile_ai_configs"] = {
-                "status": "ok",
+                "status": "partial" if config_budget_exhausted else "ok",
                 "imported": imported,
                 "scanned_files": int(cfg_sync.get("scanned_files", 0) or 0),
+                "budget_exhausted": config_budget_exhausted,
+                "scope": cfg_sync.get("scope", {}),
             }
             if imported > 0:
                 results["config_sync"] = cfg_sync
                 _reconcile_imported += imported
         except Exception as exc:
+            cfg_stage_status = "error"
+            cfg_stage_reason = ""
+            cfg_stage_error = S._safe_err(exc)
             S.logger.warning("reconcile_ai_configs failed: %s", exc)
             maintenance["reconcile_ai_configs"] = {
                 "status": "error",
-                "error": S._safe_err(exc),
+                "error": cfg_stage_error,
             }
         finally:
             timing["reconcile_ai_configs_ms"] = _elapsed_ms(stage_start)
+            _stage_finish(
+                "reconcile_ai_configs",
+                cfg_stage_status,
+                stage_start,
+                reason=cfg_stage_reason,
+                error=cfg_stage_error,
+            )
     else:
         maintenance["reconcile_memories"] = {
             "status": "skipped",
@@ -815,6 +1072,22 @@ async def wrap_up_session(
         }
         timing["reconcile_memories_ms"] = 0
         timing["reconcile_ai_configs_ms"] = 0
+        _mark_wrap_up_stage(
+            S._get_engram().root,
+            operation_id,
+            "reconcile_memories",
+            "skipped",
+            timing_ms=0,
+            reason="default_session_end_budget",
+        )
+        _mark_wrap_up_stage(
+            S._get_engram().root,
+            operation_id,
+            "reconcile_ai_configs",
+            "skipped",
+            timing_ms=0,
+            reason="default_session_end_budget",
+        )
 
     if _reconcile_imported > 0:
         S._beta("reconcile", imported=_reconcile_imported)
@@ -826,29 +1099,67 @@ async def wrap_up_session(
     ):
         maintenance["evaluate_tiers"] = _skipped_stage("closeout_budget_exhausted")
         timing["evaluate_tiers_ms"] = 0
+        _mark_wrap_up_stage(
+            S._get_engram().root,
+            operation_id,
+            "evaluate_tiers",
+            "skipped",
+            timing_ms=0,
+            reason="closeout_budget_exhausted",
+        )
     else:
-        stage_start = perf_counter()
+        stage_start = _stage_start("evaluate_tiers")
+        tier_stage_status = "ok"
+        tier_stage_error = ""
+        tier_counts: dict[str, int] = {}
         try:
             tier_result = S._locked_engram_call(S._get_engram().evaluate_tiers)
+            tier_counts = {"suggested": _count_value(tier_result.get("suggested"))}
+            maintenance["evaluate_tiers"] = {"status": "ok", **tier_counts}
             if tier_result.get("suggested", 0) > 0:
                 results["promotion_suggestions"] = tier_result
         except Exception as exc:
+            tier_stage_status = "error"
+            tier_stage_error = S._safe_err(exc)
             S.logger.warning("evaluate_tiers failed: %s", exc)
+            maintenance["evaluate_tiers"] = {
+                "status": "error",
+                "error": tier_stage_error,
+            }
         finally:
             timing["evaluate_tiers_ms"] = _elapsed_ms(stage_start)
+            _stage_finish(
+                "evaluate_tiers",
+                tier_stage_status,
+                stage_start,
+                error=tier_stage_error,
+                counts=tier_counts,
+            )
 
     # Step 5: Report staging backlog
-    stage_start = perf_counter()
     skip_staging_summary = closeout_mode == "fast" or _budget_exhausted(
         total_start=total_start,
         budget_ms=closeout_budget_ms,
     )
+    stage_start = perf_counter()
+    staging_stage_status = "ok"
+    staging_stage_reason = ""
+    staging_stage_error = ""
+    staging = {"total_staging": 0}
+    if not skip_staging_summary:
+        stage_start = _stage_start("staging_summary")
     try:
         if skip_staging_summary:
             maintenance["staging_summary"] = _skipped_stage("closeout_budget_exhausted")
+            staging_stage_status = "skipped"
+            staging_stage_reason = "closeout_budget_exhausted"
             staging = {"total_staging": 0}
         else:
             staging = S._get_engram().get_staging_summary()
+            maintenance["staging_summary"] = {
+                "status": "ok",
+                "total_staging": _count_value(staging.get("total_staging")),
+            }
         if staging["total_staging"] > 0:
             _zh = S._user_lang() == "zh"
             if _zh:
@@ -870,11 +1181,35 @@ async def wrap_up_session(
                 **staging,
             }
     except Exception as exc:
+        staging_stage_status = "error"
+        staging_stage_error = S._safe_err(exc)
         S.logger.warning("get_staging_summary failed: %s", exc)
+        maintenance["staging_summary"] = {
+            "status": "error",
+            "error": staging_stage_error,
+        }
     finally:
         timing["staging_summary_ms"] = (
             0 if skip_staging_summary else _elapsed_ms(stage_start)
         )
+        if skip_staging_summary:
+            _mark_wrap_up_stage(
+                S._get_engram().root,
+                operation_id,
+                "staging_summary",
+                "skipped",
+                timing_ms=0,
+                reason=staging_stage_reason,
+            )
+        else:
+            _stage_finish(
+                "staging_summary",
+                staging_stage_status,
+                stage_start,
+                reason=staging_stage_reason,
+                error=staging_stage_error,
+                counts={"total_staging": _count_value(staging.get("total_staging", 0))},
+            )
 
     # Step 6: Beta event — session end
     S._beta("session_end",
@@ -893,8 +1228,18 @@ async def wrap_up_session(
     ):
         maintenance["telemetry_flush"] = _skipped_stage("closeout_budget_exhausted")
         timing["telemetry_flush_ms"] = 0
+        _mark_wrap_up_stage(
+            S._get_engram().root,
+            operation_id,
+            "telemetry_flush",
+            "skipped",
+            timing_ms=0,
+            reason="closeout_budget_exhausted",
+        )
     else:
-        stage_start = perf_counter()
+        stage_start = _stage_start("telemetry_flush")
+        telemetry_stage_status = "ok"
+        telemetry_stage_error = ""
         try:
             if S._tracker is not None:
                 from importlib.metadata import version as _pkg_version
@@ -916,10 +1261,23 @@ async def wrap_up_session(
                     tools_tier=_tier,
                     force=True,
                 )
+            maintenance["telemetry_flush"] = {"status": "ok", "flushed": S._tracker is not None}
         except Exception as exc:
+            telemetry_stage_status = "error"
+            telemetry_stage_error = S._safe_err(exc)
             S.logger.debug("telemetry flush skipped: %s", exc)
+            maintenance["telemetry_flush"] = {
+                "status": "error",
+                "error": telemetry_stage_error,
+            }
         finally:
             timing["telemetry_flush_ms"] = _elapsed_ms(stage_start)
+            _stage_finish(
+                "telemetry_flush",
+                telemetry_stage_status,
+                stage_start,
+                error=telemetry_stage_error,
+            )
 
     # Step 8: Periodic anonymous feedback report (weekly, if opted in)
     if closeout_mode == "fast" or _budget_exhausted(
@@ -928,30 +1286,114 @@ async def wrap_up_session(
     ):
         maintenance["feedback_send"] = _skipped_stage("closeout_budget_exhausted")
         timing["feedback_send_ms"] = 0
+        _mark_wrap_up_stage(
+            S._get_engram().root,
+            operation_id,
+            "feedback_send",
+            "skipped",
+            timing_ms=0,
+            reason="closeout_budget_exhausted",
+        )
     else:
-        stage_start = perf_counter()
+        stage_start = _stage_start("feedback_send")
+        feedback_stage_status = "ok"
+        feedback_stage_error = ""
+        feedback_sent = False
         try:
             from piia_engram.telemetry import is_feedback_enabled, _feedback_due, send_feedback
             if is_feedback_enabled() and _feedback_due():
                 from piia_engram.setup_wizard import _build_feedback_report
                 report = _build_feedback_report()
                 send_feedback(report)
+                feedback_sent = True
+            maintenance["feedback_send"] = {"status": "ok", "sent": feedback_sent}
         except Exception as exc:
+            feedback_stage_status = "error"
+            feedback_stage_error = S._safe_err(exc)
             S.logger.debug("feedback send skipped: %s", exc)
+            maintenance["feedback_send"] = {
+                "status": "error",
+                "error": feedback_stage_error,
+            }
         finally:
             timing["feedback_send_ms"] = _elapsed_ms(stage_start)
+            _stage_finish(
+                "feedback_send",
+                feedback_stage_status,
+                stage_start,
+                error=feedback_stage_error,
+            )
 
     timing["total_ms"] = _elapsed_ms(total_start)
     maintenance["budget"] = _closeout_budget_metadata(
         total_start=total_start,
         budget_ms=closeout_budget_ms,
     )
+    terminal_status = (
+        "partial_complete"
+        if stage_errors or stage_partials
+        else "completed"
+    )
+    operation_state = _finish_wrap_up_operation(
+        S._get_engram().root,
+        operation_id,
+        status=terminal_status,
+        timing_ms=timing["total_ms"],
+        outcome={
+            "status": terminal_status,
+            "stage_errors": list(stage_errors),
+            "stage_partials": list(stage_partials),
+            "saved_lessons": _count_value((results.get("insights") or {}).get("saved_lessons"))
+            if isinstance(results.get("insights"), dict) else 0,
+            "saved_decisions": _count_value((results.get("insights") or {}).get("saved_decisions"))
+            if isinstance(results.get("insights"), dict) else 0,
+            "daily_log_written": bool(results.get("daily_log")),
+            "project_snapshot_saved": bool(
+                isinstance(results.get("project_snapshot"), dict)
+                and results["project_snapshot"].get("saved")
+            ),
+        },
+    )
     results["maintenance"] = maintenance
     results["timing"] = timing
+    results["operation"] = _public_wrap_up_operation_status(operation_state)
 
     return S._json(S._gov_rt.maybe_govern_write_ack(
         S._get_engram().root, results, tool="wrap_up_session",
     ))
+
+
+@S.mcp.tool()
+async def get_wrap_up_session_status(
+    operation_id: str = "",
+    idempotency_key: str = "",
+) -> str:
+    """读取 wrap_up_session 的阶段状态。 / Read metadata-only stage status for a wrap_up_session operation.
+
+    用途：当 MCP 客户端在会话收尾时遇到 transport timeout，可用调用前已知的
+    idempotency_key，或成功返回过的 operation_id，查询最后阶段和终态。长期未更新的
+    running 会只读标记为 stale_running。该工具不返回会话摘要正文或项目本地路径。
+    Purpose: after a session-closeout transport timeout, query metadata-only
+    state by the caller-known idempotency_key or a returned operation_id.
+    Long-unupdated running records are projected as stale_running without
+    mutating the record. No summary text or local project path is returned.
+    """
+    try:
+        resolved_operation_id = _resolve_wrap_up_operation_id(
+            operation_id=operation_id,
+            idempotency_key=idempotency_key,
+        )
+        state = _read_wrap_up_operation(S._get_engram().root, resolved_operation_id)
+    except ValueError as exc:
+        return S._json({"status": "error", "error": str(exc)})
+    if not state:
+        return S._json({
+            "status": "not_found",
+            "operation_id": resolved_operation_id,
+            "lookup": "idempotency_key" if idempotency_key else "operation_id",
+        })
+    S._track_read_safe("get_wrap_up_session_status", success=True)
+    return S._json(_public_wrap_up_operation_status(state))
 
 
 @S.mcp.tool()
@@ -1177,10 +1619,14 @@ async def doctor(output_format: str = "markdown") -> str:
     passed = sum(1 for c in checks if c["status"] == "PASS")
     warned = sum(1 for c in checks if c["status"] == "WARN")
     failed = sum(1 for c in checks if c["status"] == "FAIL")
+    from piia_engram.runtime_capabilities import get_runtime_capabilities
+
+    runtime_capabilities = get_runtime_capabilities()
 
     result = {
         "summary": f"{passed} PASS, {warned} WARN, {failed} FAIL (共 {len(checks)} 项)",
         "checks": checks,
+        "runtime_capabilities": runtime_capabilities,
     }
 
     if output_format == "json":
@@ -1190,6 +1636,12 @@ async def doctor(output_format: str = "markdown") -> str:
     # Markdown output
     lines = ["# Engram Doctor Report", ""]
     lines.append(f"**总结**: {result['summary']}")
+    lines.append("")
+    lines.append(
+        "**Runtime capability fingerprint**: "
+        f"`{runtime_capabilities['fingerprint']}` "
+        f"({runtime_capabilities['runtime_version']})"
+    )
     lines.append("")
     lines.append("| 检查项 | 状态 | 详情 |")
     lines.append("|--------|------|------|")

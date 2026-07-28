@@ -3,4 +3,18 @@
 from .core import Engram
 from .core import export_to_openclaw, hermes_handoff_payload, import_from_openclaw
 
-__version__ = "4.14.1"
+__version__ = "4.15.0"
+
+from .runtime_capabilities import (  # noqa: E402
+    check_runtime_compatibility,
+    get_runtime_capabilities,
+)
+
+__all__ = [
+    "Engram",
+    "check_runtime_compatibility",
+    "export_to_openclaw",
+    "get_runtime_capabilities",
+    "hermes_handoff_payload",
+    "import_from_openclaw",
+]

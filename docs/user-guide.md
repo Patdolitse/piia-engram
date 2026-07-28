@@ -57,7 +57,7 @@ connection. Every external write is backed up first, and declining leaves all
 configs untouched. For non-interactive/CI runs, `engram setup
 --apply-external-config` skips the prompt.
 
-By default you get **17 core MCP tools** (`ENGRAM_TOOLS=core`) — enough for
+By default you get **18 core MCP tools** (`ENGRAM_TOOLS=core`) — enough for
 install, first value, daily recall, and session wrap-up. The advanced set
 (review queues, import/export, governance, migration, Playbook management) stays
 off until you opt in with `ENGRAM_TOOLS=all`.
@@ -112,7 +112,9 @@ work:
 
 `wrap_up_session` is a lightweight session-end save. It does not run full
 reconciliation by default. Use `run_reconcile=True` only for owner-approved
-maintenance reconciliation.
+maintenance reconciliation. When a project folder is supplied, that explicit
+reconcile is exact-project scoped by default; global maintenance requires
+`reconcile_scope="global"`.
 
 Three levels of recovery, fastest first:
 
