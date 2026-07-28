@@ -8,10 +8,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MCP_SERVER = ROOT / "src" / "piia_engram" / "mcp_server.py"
+TOOL_SURFACE = MCP_SERVER.parent / "tool_surface.py"
 
 
 def _trees() -> list[ast.Module]:
-    files = [MCP_SERVER, *sorted(MCP_SERVER.parent.glob("mcp_tools_*.py"))]
+    files = [
+        MCP_SERVER,
+        TOOL_SURFACE,
+        *sorted(MCP_SERVER.parent.glob("mcp_tools_*.py")),
+    ]
     return [ast.parse(f.read_text(encoding="utf-8")) for f in files]
 
 

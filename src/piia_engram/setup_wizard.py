@@ -32,6 +32,10 @@ def _module_src_dir(mcp_server_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 from piia_engram.i18n import set_lang as _set_lang, get_lang as _get_lang, t as _t
+from piia_engram.tool_surface import (
+    capability_mode_tool_count,
+    mcp_surface_counts,
+)
 
 # Backward compat: _lang is still readable but writes go through i18n module.
 _lang = "zh"  # 默认中文，setup 开始时由用户选择
@@ -2479,11 +2483,22 @@ def _existing_engram_tools_values(tools: list[dict]) -> list[str]:
 
 
 def _prompt_setup_capability_mode() -> str:
+    surface = mcp_surface_counts()
+    core_knowledge = capability_mode_tool_count("core+knowledge")
     print()
     print(_t("  MCP 工具模式 / Capability mode:", "  Capability mode / MCP 工具模式:"))
-    print(_t("    1. 全部工具（推荐，58 个）", "    1. All tools (recommended, 58 tools)"))
-    print(_t("    2. 仅核心（18 个，最小面）", "    2. Core only (18 tools, minimal surface)"))
-    print(_t("    3. 核心+知识库管理（40 个）", "    3. Core + knowledge management (40 tools)"))
+    print(_t(
+        f"    1. 全部工具（推荐，{surface['total']} 个）",
+        f"    1. All tools (recommended, {surface['total']} tools)",
+    ))
+    print(_t(
+        f"    2. 仅核心（{surface['core']} 个，最小面）",
+        f"    2. Core only ({surface['core']} tools, minimal surface)",
+    ))
+    print(_t(
+        f"    3. 核心+知识库管理（{core_knowledge} 个）",
+        f"    3. Core + knowledge management ({core_knowledge} tools)",
+    ))
     answer = _prompt(_t("  请选择工具模式", "  Choose tool mode"), "1").strip()
     return {"2": "core", "3": "core+knowledge"}.get(answer, "all")
 

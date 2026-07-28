@@ -173,6 +173,22 @@ try:
     from . import context_governance as _context_governance  # noqa: E402
 except ImportError:
     import context_governance as _context_governance  # noqa: E402
+try:
+    from .tool_surface import (  # noqa: E402
+        ALL_CAPABILITY_TOOLS,
+        CAPABILITY_GROUPS,
+        CAPABILITY_MODE_NAMES,
+        TIER1_TOOLS,
+        resolve_capability_mode_details as _resolve_capability_mode_details,
+    )
+except ImportError:
+    from tool_surface import (  # type: ignore[no-redef]  # noqa: E402
+        ALL_CAPABILITY_TOOLS,
+        CAPABILITY_GROUPS,
+        CAPABILITY_MODE_NAMES,
+        TIER1_TOOLS,
+        resolve_capability_mode_details as _resolve_capability_mode_details,
+    )
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -917,60 +933,6 @@ IDENTITY_FIELDS = frozenset({
 })
 
 TOOL_TIER = os.environ.get("ENGRAM_TOOLS", "core").strip() or "core"
-TIER1_TOOLS = frozenset({
-    # Session lifecycle (startup)
-    "get_user_context",          # cold-start: load identity + context
-    "wrap_up_session",           # session end: save insights + sync
-    # Knowledge write (writeback)
-    "memory_store",              # unified write endpoint (provider-compatible)
-    "add_lesson",                # store reusable experience
-    "add_decision",              # record decision + reasoning
-    "add_playbook",              # record operational procedure
-    # Knowledge read (retrieval)
-    "search_knowledge",          # search across all knowledge
-    "get_relevant_knowledge",    # project-aware knowledge retrieval
-    "get_recall",                # structured identity + recent + knowledge recall bundle
-    # Identity
-    "get_identity_card",         # export identity for non-MCP tools
-    "update_identity",           # update profile/preferences/standards
-    # Project context
-    "get_project_context",       # current project state
-    "save_project_snapshot",     # persist project state
-    # Agent context recovery
-    "get_recent_context",        # recover lost session context
-    "get_daily_log",             # v3.30: human-readable per-project day timeline
-    "get_resume_brief",          # v3.30: cross-session/cross-tool resume brief
-    "get_wrap_up_session_status",  # session closeout operation status
-    # Diagnostics
-    "doctor",                    # memory system self-diagnosis
-})
-
-CAPABILITY_GROUPS: dict[str, frozenset[str]] = {
-    "knowledge": frozenset({
-        "refresh_quick_context", "get_identity_facets", "get_lessons",
-        "get_decisions", "list_projects", "get_knowledge_inheritance",
-        "get_knowledge_overview", "explore_knowledge", "export_knowledge_report",
-        "ingest_notes", "extract_session_insights", "update_knowledge",
-        "archive_knowledge", "confirm_knowledge", "onboard_repo", "onboard_accept",
-        "check_anchors", "review_staging", "get_stale_knowledge",
-        "request_outline_review", "merge_knowledge", "manage_relation",
-        "get_playbooks", "manage_playbook", "playbook_execution",
-    }),
-    "governance": frozenset({
-        "get_permission_profile", "manage_caller_trust", "get_audit_log",
-        "preview_context_governance",
-    }),
-    "admin": frozenset({
-        "user_portrait", "export_engram", "import_engram",
-        "export_feedback_report", "start_project", "save_agent_context",
-        "list_agent_sessions",
-    }),
-    "integrations": frozenset({
-        "read_web_content", "register_tool", "find_tool", "list_tools",
-    }),
-}
-ALL_CAPABILITY_TOOLS = frozenset().union(TIER1_TOOLS, *CAPABILITY_GROUPS.values())
-CAPABILITY_MODE_NAMES = frozenset({"core", "all", *CAPABILITY_GROUPS})
 
 
 def _warn_unknown_capability_tokens(
@@ -992,54 +954,6 @@ def _warn_unknown_capability_tokens(
         f"Ignoring unknown token(s). / 已忽略未知 token。{suffix}",
         file=sys.stderr,
     )
-
-
-def _resolve_capability_mode_details(raw: str | None) -> dict[str, object]:
-    normalized = "" if raw is None else str(raw).strip()
-    if not normalized:
-        return {
-            "raw": "" if raw is None else str(raw),
-            "modes": frozenset({"core"}),
-            "unknown_tokens": (),
-            "fallback_to_core": False,
-            "tools": TIER1_TOOLS,
-        }
-
-    tokens = [token.strip().lower() for token in normalized.split("+")]
-    tokens = [token for token in tokens if token]
-    known: list[str] = []
-    unknown: list[str] = []
-    for token in tokens:
-        if token in CAPABILITY_MODE_NAMES:
-            known.append(token)
-        else:
-            unknown.append(token)
-
-    if "all" in known:
-        modes = frozenset({"all"})
-        tools = ALL_CAPABILITY_TOOLS
-        fallback_to_core = False
-    elif known:
-        modes = frozenset({"core", *known})
-        tools = TIER1_TOOLS
-        for mode in modes:
-            if mode == "core":
-                continue
-            tools = tools | CAPABILITY_GROUPS[mode]
-        fallback_to_core = False
-    else:
-        modes = frozenset({"core"})
-        tools = TIER1_TOOLS
-        fallback_to_core = bool(unknown)
-
-    deduped_unknown = tuple(dict.fromkeys(unknown))
-    return {
-        "raw": str(raw),
-        "modes": modes,
-        "unknown_tokens": deduped_unknown,
-        "fallback_to_core": fallback_to_core,
-        "tools": frozenset(tools),
-    }
 
 
 def resolve_capability_modes(raw: str | None) -> frozenset[str]:

@@ -9,14 +9,11 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Iterable
 
 from .storage import SCHEMA_VERSION
+from .tool_surface import mcp_surface_counts
 
 
 CAPABILITY_SCHEMA = "engram_runtime_capabilities.v1"
-MCP_SURFACE = {
-    "total": 58,
-    "core": 18,
-    "advanced": 40,
-}
+MCP_SURFACE = mcp_surface_counts()
 CONTRACTS = {
     "knowledge_store": f"knowledge_store.v{SCHEMA_VERSION}",
     "project_identity": "canonical_project_identity.v1",

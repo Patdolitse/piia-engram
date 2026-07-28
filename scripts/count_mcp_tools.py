@@ -9,8 +9,8 @@ module (no package import, no side effects):
 
 - total   = number of ``@mcp.tool()``-decorated ``async def`` wrappers
             (equals what ``ENGRAM_TOOLS=all`` registers)
-- core    = number of names in the ``TIER1_TOOLS`` frozenset literal
-            (loaded by default when ``ENGRAM_TOOLS`` is unset / ``core``)
+- core    = number of names in the canonical ``tool_surface.py``
+            ``TIER1_TOOLS`` literal
 - advanced = total - core
 
 Run from the repo root:
@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 MCP_SERVER_REL = "src/piia_engram/mcp_server.py"
+TOOL_SURFACE_REL = "src/piia_engram/tool_surface.py"
 # Tool implementations are split across mcp_server.py + mcp_tools_*.py siblings.
 MCP_TOOLS_GLOB = "mcp_tools_*.py"
 TIER1_NAME = "TIER1_TOOLS"
@@ -88,17 +89,20 @@ def count_core(tree: ast.AST) -> int | None:
 
 def derive(root: Path) -> dict[str, int]:
     path = root / MCP_SERVER_REL
+    surface_path = root / TOOL_SURFACE_REL
     if not path.is_file():
         raise SystemExit(f"[error] not found: {path}")
+    if not surface_path.is_file():
+        raise SystemExit(f"[error] not found: {surface_path}")
     total = 0
-    core = None
     for src in _tool_source_files(root):
         tree = ast.parse(src.read_text(encoding="utf-8"))
         total += count_total(tree)
-        if core is None:
-            core = count_core(tree)
+    core = count_core(ast.parse(surface_path.read_text(encoding="utf-8")))
     if core is None:
-        raise SystemExit(f"[error] {TIER1_NAME} frozenset literal not found in {path}")
+        raise SystemExit(
+            f"[error] {TIER1_NAME} frozenset literal not found in {surface_path}"
+        )
     return {"total": total, "core": core, "advanced": total - core}
 
 

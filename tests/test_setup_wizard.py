@@ -1148,6 +1148,24 @@ def test_prompt_setup_capability_mode_maps_numeric_choices(
     assert _prompt_setup_capability_mode() == expected
 
 
+def test_prompt_setup_capability_mode_uses_canonical_surface_counts(
+    monkeypatch,
+    capsys,
+):
+    """Mode labels must reflect the same capability groups used by the server."""
+    from piia_engram.setup_wizard import _prompt_setup_capability_mode
+    from piia_engram.tool_surface import capability_mode_tool_count
+
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "1")
+
+    assert _prompt_setup_capability_mode() == "all"
+    output = capsys.readouterr().out
+    assert "58" in output
+    assert "18" in output
+    assert "43" in output
+    assert capability_mode_tool_count("core+knowledge") == 43
+
+
 def test_choose_setup_capability_mode_preserves_existing_non_default_noninteractive(
     tmp_path: Path,
 ):
