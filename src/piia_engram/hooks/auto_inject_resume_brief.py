@@ -60,6 +60,15 @@ def main() -> None:
     try:
         from piia_engram.core import Engram
         engram = Engram()
+        try:
+            # Same bootstrap trigger as the MCP get_resume_brief wrapper: a
+            # fresh store with discoverable rule files auto-imports once.
+            from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
+
+            if needs_bootstrap(engram):
+                run_bootstrap(engram)
+        except Exception:
+            pass  # bootstrap is best-effort; the brief must still render
         # Keep the budget snug so the additionalContext payload doesn't
         # dominate the first turn. 1500 tokens ≈ 6000 chars is plenty
         # for identity + project snapshot + a few lessons.

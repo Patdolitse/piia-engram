@@ -86,3 +86,26 @@ def test_hook_style_extraction_lands_staged_only(tmp_path, monkeypatch):
                 f"unsupervised extraction must stage every item; {name} entry "
                 f"has state {state!r}"
             )
+
+
+def test_inject_hook_path_bootstraps_fresh_store(tmp_path, monkeypatch):
+    """A fresh store must get bootstrapped on the SessionStart hook path, same
+    as the MCP get_resume_brief wrapper does (mirrors the hook's new guard)."""
+    root = _fresh_root(tmp_path, monkeypatch)
+    from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
+    from piia_engram.core import Engram
+
+    engram = Engram(root=root)
+    if needs_bootstrap(engram):
+        run_bootstrap(engram)
+    assert not needs_bootstrap(engram)  # marker written, idempotent
+    assert (root / ".bootstrap_done").is_file()
+
+
+def test_inject_hook_source_contains_bootstrap_guard():
+    src = (HOOK_DIR / "auto_inject_resume_brief.py").read_text(encoding="utf-8")
+    assert "needs_bootstrap" in src and "run_bootstrap" in src, (
+        "SessionStart hook must trigger the same bootstrap as the MCP "
+        "get_resume_brief wrapper; a fresh store with a discoverable CLAUDE.md "
+        "should auto-import on the hook path too"
+    )
