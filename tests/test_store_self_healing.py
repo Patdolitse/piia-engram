@@ -115,3 +115,40 @@ def test_upgrade_backup_skips_logs_and_ledger(tmp_path, monkeypatch):
         "audit.log", "audit.log.1", "telemetry.log", "session_state.json",
     ):
         assert not (bdir / skipped).exists(), skipped
+
+
+def test_prune_backups_dedupes_same_version_and_caps_total(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_AUDIT", "0")
+    monkeypatch.delenv("ENGRAM_UPGRADE_BACKUP_KEEP", raising=False)
+    from piia_engram.core import Engram
+
+    e = Engram(root=tmp_path)
+    bdir = tmp_path / "backups"
+    bdir.mkdir(exist_ok=True)
+    import os as _os
+    # mtime order (oldest -> newest) puts the same-version duplicate pair
+    # NEWER than 4.14: a purely mtime-based keep=3 would retain both 4.13
+    # copies and drop 4.14 — the policy under test must instead dedupe per
+    # version and keep the newest 3 distinct versions.
+    names = [
+        "engram-4.12.0-20260623-165822-480326-9932",
+        "engram-4.14.0-20260710-204340-603072-17920",
+        "engram-4.13.0-20260706-103339-779182-13304",  # same-version duplicate (older)
+        "engram-4.13.0-20260706-103339-779182-32740",  # same-version duplicate (newer)
+        "engram-4.15.0-20260728-152509-041800-21204",
+    ]
+    for i, name in enumerate(names):
+        d = bdir / name
+        d.mkdir()
+        _os.utime(d, (1000 + i, 1000 + i))  # mtime order == list order
+
+    e._prune_backups(keep=3)
+
+    kept = sorted(p.name for p in bdir.iterdir())
+    # one per version, newest 3 versions: 4.13 (newer dup), 4.14, 4.15
+    assert kept == [
+        "engram-4.13.0-20260706-103339-779182-32740",
+        "engram-4.14.0-20260710-204340-603072-17920",
+        "engram-4.15.0-20260728-152509-041800-21204",
+    ]

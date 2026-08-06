@@ -332,7 +332,7 @@ class Engram(
             return
         # Record + prune only after a complete backup so a failed attempt retries next open.
         self._record_backup_version(current_version)
-        self._prune_backups(keep=5)
+        self._prune_backups()
 
     @staticmethod
     def _is_upgrade(last_version: str, current_version: str) -> bool:
@@ -442,11 +442,19 @@ class Engram(
         except Exception:
             pass  # best-effort metadata; never block init
 
-    def _prune_backups(self, keep: int = 5) -> None:
-        """Keep only the most-recent ``keep`` upgrade backups; delete older ones so
-        the backups dir can't grow without bound."""
+    def _prune_backups(self, keep: int = 3) -> None:
+        """Keep the newest backup per version, capped at ``keep`` versions.
+
+        Dir names look like ``engram-<version>-<timestamp>-<pid>``; two
+        near-simultaneous opens of one version used to leave duplicate
+        full-store snapshots. Override the cap via ENGRAM_UPGRADE_BACKUP_KEEP.
+        """
         import shutil
 
+        try:
+            keep = max(1, int(os.environ.get("ENGRAM_UPGRADE_BACKUP_KEEP", str(keep))))
+        except ValueError:
+            keep = max(1, keep)
         try:
             bdir = self.root / "backups"
             if not bdir.is_dir():
@@ -456,7 +464,18 @@ class Engram(
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
-            for old in backups[keep:]:
+            newest_per_version: dict[str, Path] = {}
+            doomed: list[Path] = []
+            for p in backups:  # newest first
+                parts = p.name.split("-")
+                version = parts[1] if len(parts) > 1 else p.name
+                if version in newest_per_version:
+                    doomed.append(p)  # older duplicate of a kept version
+                elif len(newest_per_version) >= keep:
+                    doomed.append(p)  # beyond the version cap
+                else:
+                    newest_per_version[version] = p
+            for old in doomed:
                 shutil.rmtree(old, ignore_errors=True)
         except Exception:
             pass  # pruning is best-effort
