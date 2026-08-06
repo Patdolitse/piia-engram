@@ -1457,7 +1457,12 @@ def test_config_integrity_report_is_metadata_only_and_read_only(tmp_path: Path, 
     home.mkdir()
     project.mkdir()
     monkeypatch.setattr(Path, "home", lambda: home)
-    monkeypatch.delenv("ENGRAM_DIR", raising=False)
+    # Pin ENGRAM_DIR inside the temp home instead of delenv: clearing it
+    # strips the suite-wide store isolation (conftest), so any subprocess —
+    # which inherits the env but not the Path.home patch — would resolve the
+    # REAL ~/.engram. home/.engram also keeps _shared_instruction_candidates
+    # pointing at the shared_instructions.md created below.
+    monkeypatch.setenv("ENGRAM_DIR", str(home / ".engram"))
 
     codex_config = home / ".codex" / "config.toml"
     codex_config.parent.mkdir(parents=True)
@@ -1623,6 +1628,12 @@ def test_doctor_healthy_config(tmp_path: Path, monkeypatch):
     mcp_path = _find_mcp_server()
     if not python_path or not mcp_path:
         return  # Skip if can't find paths
+
+    # Isolate: a healthy config makes doctor run functional checks, which
+    # construct Engram() without a root — that must never resolve to the
+    # real user store (proven to rotate its logs mid-test otherwise).
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_TEST", "1")
 
     config_dir = tmp_path / ".claude"
     config_dir.mkdir()
@@ -1858,6 +1869,12 @@ def test_terminal_encoding_check_flags_non_utf8_pythonioencoding(capsys):
 def test_doctor_fix_repairs_encoding_mojibake(tmp_path: Path, monkeypatch, capsys):
     """doctor --fix should repair high-confidence mojibake and create backup."""
     from piia_engram.setup_wizard import _run_functional_checks
+
+    # fix=True also injects instruction snippets / Claude hooks into
+    # Path.home() — keep that inside tmp_path, never the real home.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
 
     damaged = "发布流程测试".encode("utf-8").decode("gbk")
     kdir = tmp_path / "knowledge"
@@ -3565,6 +3582,11 @@ class TestDoctorEvidenceTrackedCommunity:
         if not python_path or not mcp_path:
             pytest.skip("Cannot find Python or mcp_server.py")
 
+        # Healthy config → doctor runs functional checks → Engram() without a
+        # root. Must resolve to the temp store, never the real user store.
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setenv("ENGRAM_TEST", "1")
+
         config_dir = tmp_path / ".claude"
         config_dir.mkdir()
         config_path = config_dir / ".mcp.json"
@@ -3650,6 +3672,11 @@ class TestDoctorFix:
 
         engram_root = tmp_path / "engram-root"
         monkeypatch.setenv("ENGRAM_DIR", str(engram_root))
+        # fix=True ends with functional checks that inject instruction
+        # snippets / Claude hooks into Path.home() — keep it inside tmp_path.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home)
 
         config_dir = tmp_path / ".claude"
         config_dir.mkdir()

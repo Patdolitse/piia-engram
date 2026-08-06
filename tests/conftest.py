@@ -1,11 +1,26 @@
 """Shared pytest fixtures for the Engram test suite."""
 
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
 
 _SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
+
+# Collection-time seal: importing some test modules imports
+# piia_engram.mcp_server, which constructs Engram() at module import time —
+# during pytest COLLECTION, before any fixture (including the isolation
+# fixtures below) can run. With a machine-wide ENGRAM_DIR exported, that init
+# writes into the developer's LIVE store (session_state stamp, structure
+# creation, file-safety ledger appends — and log rotation once the store
+# self-healing code runs). Fixtures cannot guard imports; only module-level
+# conftest code runs early enough, because pytest imports conftest.py before
+# collecting any test module.
+os.environ["ENGRAM_TEST"] = "1"
+os.environ["ENGRAM_DIR"] = str(
+    Path(tempfile.mkdtemp(prefix="engram-collect-")) / "engram-home"
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
