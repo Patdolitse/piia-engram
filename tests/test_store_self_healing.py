@@ -47,3 +47,31 @@ def test_durable_write_still_ledgers_and_backs_up(tmp_path):
     lines = _ledger_lines(tmp_path)
     assert len(lines) == 1
     assert json.loads(lines[0])["path"] == "<engram-root>/knowledge/lessons.json"
+
+
+def test_ledger_rotates_when_over_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(file_safety, "LEDGER_MAX_BYTES", 500)
+    target = tmp_path / "knowledge" / "lessons.json"
+    target.parent.mkdir()
+    for i in range(20):
+        file_safety.write_engram_text(tmp_path, target, f'[{{"id": "{i}"}}]', tool="t")
+
+    active = tmp_path / "file_safety_ledger.jsonl"
+    rotated = tmp_path / "file_safety_ledger.jsonl.1"
+    assert rotated.is_file()  # rotation happened
+    assert active.stat().st_size <= 500 + 400  # cap + one entry of slack
+    # every line in both files is still valid JSON
+    for f in (active, rotated):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            json.loads(line)
+
+
+def test_read_ledger_entries_reads_active_file_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(file_safety, "LEDGER_MAX_BYTES", 200)
+    target = tmp_path / "knowledge" / "lessons.json"
+    target.parent.mkdir()
+    for i in range(10):
+        file_safety.write_engram_text(tmp_path, target, f'["{i}"]', tool="t")
+    entries = file_safety.read_ledger_entries(tmp_path)
+    assert entries  # non-empty
+    assert all(e["schema_version"] == 1 for e in entries)

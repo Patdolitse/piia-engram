@@ -21,6 +21,25 @@ try:
 except ValueError:
     BACKUP_RETENTION = 10
 
+# Rotate append-only logs once they pass this size; one rotated generation is
+# kept (<name>.1), so the on-disk ceiling is ~2x the cap. Override in MB via
+# ENGRAM_LOG_MAX_MB. The owner store hit 168M before rotation existed.
+try:
+    LEDGER_MAX_BYTES = max(1, int(os.environ.get("ENGRAM_LOG_MAX_MB", "16"))) * 1024 * 1024
+except ValueError:
+    LEDGER_MAX_BYTES = 16 * 1024 * 1024
+
+
+def rotate_if_oversized(path: Path, max_bytes: int) -> bool:
+    """Move ``path`` to ``path.1`` (replacing any prior ``.1``) when oversized."""
+    try:
+        if not path.is_file() or path.stat().st_size < max_bytes:
+            return False
+        os.replace(path, path.with_name(path.name + ".1"))
+        return True
+    except OSError:
+        return False
+
 
 # Process-bookkeeping files rewritten on every open (session stamps, update
 # markers, heartbeats). Backing these up or ledgering them turns each process
@@ -90,6 +109,7 @@ def _append_ledger(
 ) -> None:
     ledger = _ledger_path(root)
     ledger.parent.mkdir(parents=True, exist_ok=True)
+    rotate_if_oversized(ledger, LEDGER_MAX_BYTES)
     entry = {
         "schema_version": 1,
         "ts": datetime.now(timezone.utc).isoformat(),
