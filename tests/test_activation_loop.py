@@ -175,3 +175,21 @@ def test_second_process_sees_first_process_write(tmp_path):
         timeout=120, capture_output=True, text=True,
     )
     assert "FOUND" in out.stdout
+
+
+def test_quick_context_refresh_writes_snapshot(tmp_path, monkeypatch):
+    root = _fresh_root(tmp_path, monkeypatch)
+    from piia_engram.core import Engram
+
+    engram = Engram(root=root)
+    engram.add_lesson("刷新快照测试教训", domain="testing", source_tool="t")
+    engram.refresh_quick_context()
+    qc = root / "quick_context.md"
+    assert qc.is_file() and qc.stat().st_size > 0
+
+
+def test_stop_hook_source_refreshes_quick_context():
+    """The Layer-1 cold-start snapshot must not go stale the moment a session
+    ends: the Stop hook refreshes it after saving."""
+    src = (HOOK_DIR / "auto_save_on_stop.py").read_text(encoding="utf-8")
+    assert "refresh_quick_context" in src

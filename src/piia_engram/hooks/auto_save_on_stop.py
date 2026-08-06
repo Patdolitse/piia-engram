@@ -187,6 +187,12 @@ def main() -> None:
                 )
             except Exception as exc:
                 log_failure("auto_save_on_stop", "extract_session_insights failed", exc)
+            try:
+                # Keep the Layer-1 cold-start snapshot current so the next
+                # session's quick path reflects this session's memory.
+                engram.refresh_quick_context()
+            except Exception as exc:
+                log_failure("auto_save_on_stop", "quick_context refresh failed", exc)
 
         if cwd:
             _root = Path(cwd)
