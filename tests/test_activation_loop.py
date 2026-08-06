@@ -193,3 +193,13 @@ def test_stop_hook_source_refreshes_quick_context():
     ends: the Stop hook refreshes it after saving."""
     src = (HOOK_DIR / "auto_save_on_stop.py").read_text(encoding="utf-8")
     assert "refresh_quick_context" in src
+
+
+def test_setup_closes_with_activation_promise():
+    """Setup's final output must tell the user the activation contract in one
+    line: after restart, the next session remembers you; verify via doctor."""
+    wizard = (
+        Path(__file__).resolve().parents[1] / "src" / "piia_engram" / "setup_wizard.py"
+    ).read_text(encoding="utf-8")
+    assert "下一次会话，你的 AI 工具就会认识你" in wizard
+    assert "your AI tool will remember you in the next session" in wizard

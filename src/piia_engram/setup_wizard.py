@@ -2781,6 +2781,9 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
         print("  External AI tool configs are unchanged.")
         print("  To connect tools automatically, run: engram setup --apply-external-config")
     print()
+    print(_t("  ✓ 重启后，下一次会话，你的 AI 工具就会认识你。验证：engram doctor",
+             "  ✓ After restart, your AI tool will remember you in the next session. Verify: engram doctor"))
+    print()
     print(_t("  觉得有用？来聊聊你怎么用的：",
              "  Find Engram useful? Share how you use it:"))
     print("  https://github.com/Patdolitse/piia-engram/discussions\n")
