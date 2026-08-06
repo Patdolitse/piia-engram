@@ -75,3 +75,19 @@ def test_read_ledger_entries_reads_active_file_only(tmp_path, monkeypatch):
     entries = file_safety.read_ledger_entries(tmp_path)
     assert entries  # non-empty
     assert all(e["schema_version"] == 1 for e in entries)
+
+
+def test_audit_log_rotates_when_over_cap(tmp_path, monkeypatch):
+    from piia_engram import audit as audit_mod
+    from piia_engram.audit import AuditLogger
+
+    monkeypatch.setattr(audit_mod, "AUDIT_MAX_BYTES", 300)
+    log_path = tmp_path / "audit.log"
+    logger = AuditLogger(log_path=log_path, enabled=True)
+    for i in range(30):
+        logger.log("write", "knowledge/lessons", detail=f"entry {i}")
+
+    assert (tmp_path / "audit.log.1").is_file()
+    assert log_path.stat().st_size <= 300 + 250
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        json.loads(line)

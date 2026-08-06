@@ -16,6 +16,13 @@ from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
+# Same cap/rotation contract as the file-safety ledger (ENGRAM_LOG_MAX_MB,
+# one .1 generation kept). The owner store's audit.log hit 124M before this.
+try:
+    AUDIT_MAX_BYTES = max(1, int(os.environ.get("ENGRAM_LOG_MAX_MB", "16"))) * 1024 * 1024
+except ValueError:
+    AUDIT_MAX_BYTES = 16 * 1024 * 1024
+
 
 class AuditLogger:
     """Lightweight audit logger."""
@@ -78,6 +85,8 @@ class AuditLogger:
         }
         try:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            from .file_safety import rotate_if_oversized
+            rotate_if_oversized(self.log_path, AUDIT_MAX_BYTES)
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as exc:
