@@ -109,7 +109,7 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 
 | | Current repo / development facts |
 |---|---|
-| Version frame | **v4.14.0** (verified 2026-07-10; check PyPI and GitHub Releases for the latest published package) |
+| Version frame | **v4.14.1** (verified 2026-08-05; check PyPI and GitHub Releases for the latest published package) |
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **17 Core** (loaded by default) + **40 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |

@@ -6,6 +6,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.14.1] - 2026-08-05
+
+### 修复
+- 将 `mcp` 依赖锁定在 1.x（`mcp>=1.0,<2`）：mcp 2.0.0 移除了 Engram MCP 服务器启动时导入的模块，导致全新安装无法启动 `piia-engram-mcp`。新安装现在会自动解析到兼容的 mcp 1.x。如果现有安装已遇到此问题，运行 `pip install "mcp>=1.0,<2"` 或 `pip install -U piia-engram` 升级即可。
+
 ## [4.14.0] - 2026-07-10
 
 ### 新增
