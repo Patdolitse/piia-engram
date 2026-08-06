@@ -5,9 +5,9 @@
   "local_dev_version": "4.15.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 4646,
+    "test_passed": 4657,
     "test_skipped": 14,
-    "test_collected": 4660,
+    "test_collected": 4671,
     "mcp_tools_total": 58,
     "mcp_tools_core": 18,
     "mcp_tools_advanced": 40,
