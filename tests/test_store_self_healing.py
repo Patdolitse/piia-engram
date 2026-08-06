@@ -152,3 +152,40 @@ def test_prune_backups_dedupes_same_version_and_caps_total(tmp_path, monkeypatch
         "engram-4.14.0-20260710-204340-603072-17920",
         "engram-4.15.0-20260728-152509-041800-21204",
     ]
+
+
+def test_store_footprint_reports_sizes_and_warnings(tmp_path):
+    from piia_engram.store_health import store_footprint
+
+    (tmp_path / "backups").mkdir()
+    big = tmp_path / "file_safety_ledger.jsonl"
+    big.write_bytes(b"x" * (2 * 1024 * 1024))
+    report = store_footprint(tmp_path, log_warn_bytes=1024 * 1024, backups_warn_bytes=1024)
+
+    assert report["ledger_bytes"] == 2 * 1024 * 1024
+    assert any("ledger" in w for w in report["warnings"])
+    assert "total_bytes" in report and "backups_bytes" in report
+
+
+def test_store_footprint_healthy_store_has_no_warnings(tmp_path):
+    from piia_engram.store_health import store_footprint
+
+    report = store_footprint(tmp_path)
+    assert report["warnings"] == []
+
+
+def test_apply_store_maintenance_rotates_and_prunes(tmp_path, monkeypatch):
+    from piia_engram.store_health import apply_store_maintenance
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_AUDIT", "0")
+    monkeypatch.setattr(file_safety, "LEDGER_MAX_BYTES", 100)
+    monkeypatch.setattr("piia_engram.audit.AUDIT_MAX_BYTES", 100)
+    (tmp_path / "file_safety_ledger.jsonl").write_bytes(b"x" * 500)
+    (tmp_path / "audit.log").write_bytes(b"y" * 500)
+
+    actions = apply_store_maintenance(tmp_path)
+
+    assert (tmp_path / "file_safety_ledger.jsonl.1").is_file()
+    assert (tmp_path / "audit.log.1").is_file()
+    assert len(actions) >= 2  # human-readable action lines

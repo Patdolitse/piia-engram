@@ -1130,5 +1130,25 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     except Exception as exc:
         W._safe_print(f"    [--] Version check skipped: {exc}")
 
+    # 8. Store footprint (warn-only: never counts as a problem, --fix maintains)
+    try:
+        from piia_engram.store_health import apply_store_maintenance, store_footprint
+
+        footprint = store_footprint(eng.root)
+        mb = 1024 * 1024
+        print()
+        W._safe_print(
+            f"    [ok] Store footprint: total {footprint['total_bytes'] // mb}MB "
+            f"(backups {footprint['backups_bytes'] // mb}MB, "
+            f"logs {(footprint['ledger_bytes'] + footprint['audit_bytes']) // mb}MB)"
+        )
+        for warning in footprint["warnings"]:
+            W._safe_print(f"    [--] {warning}")
+        if fix and footprint["warnings"]:
+            for action in apply_store_maintenance(eng.root):
+                W._safe_print(f"    [fixed] {action}")
+    except Exception as exc:
+        W._safe_print(f"    [--] Store footprint check skipped: {exc}")
+
     print()
     return problems
