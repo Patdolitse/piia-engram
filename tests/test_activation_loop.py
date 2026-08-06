@@ -203,3 +203,25 @@ def test_setup_closes_with_activation_promise():
     ).read_text(encoding="utf-8")
     assert "下一次会话，你的 AI 工具就会认识你" in wizard
     assert "your AI tool will remember you in the next session" in wizard
+
+
+def test_activation_status_derivation(tmp_path, monkeypatch):
+    root = _fresh_root(tmp_path, monkeypatch)
+    from piia_engram.core import Engram
+    from piia_engram.store_health import activation_status
+
+    s = activation_status(root)
+    assert s["bootstrapped"] is False and s["has_memory"] is False
+
+    engram = Engram(root=root)
+    engram.add_lesson("激活状态测试教训", domain="testing", source_tool="t")
+    (root / ".bootstrap_done").write_text("{}", encoding="utf-8")
+    s = activation_status(root)
+    assert s["bootstrapped"] is True and s["has_memory"] is True
+
+
+def test_doctor_source_reports_activation():
+    doctor = (
+        Path(__file__).resolve().parents[1] / "src" / "piia_engram" / "doctor.py"
+    ).read_text(encoding="utf-8")
+    assert "activation_status" in doctor

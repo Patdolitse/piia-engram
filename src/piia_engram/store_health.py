@@ -57,6 +57,25 @@ def store_footprint(
     return report
 
 
+def activation_status(root: Path) -> dict:
+    """Metadata-only activation snapshot: bootstrapped? any durable memory?"""
+    root = Path(root)
+
+    def _has_items(p: Path) -> bool:
+        try:
+            return p.is_file() and p.stat().st_size > 4  # more than "[]"
+        except OSError:
+            return False
+
+    return {
+        "bootstrapped": (root / ".bootstrap_done").is_file(),
+        "has_memory": (
+            _has_items(root / "knowledge" / "lessons.json")
+            or _has_items(root / "knowledge" / "decisions.json")
+        ),
+    }
+
+
 def apply_store_maintenance(root: Path) -> list[str]:
     """Owner-invoked cleanup: rotate oversized logs, prune upgrade backups."""
     from . import audit as audit_mod

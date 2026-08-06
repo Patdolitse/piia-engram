@@ -1150,5 +1150,19 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     except Exception as exc:
         W._safe_print(f"    [--] Store footprint check skipped: {exc}")
 
+    # 9. Activation status (warn-only, derived from existing markers)
+    try:
+        from piia_engram.store_health import activation_status
+
+        act = activation_status(eng.root)
+        if act["has_memory"]:
+            W._safe_print("    [ok] Activation: memory present; next session will recall it")
+        else:
+            W._safe_print(
+                "    [--] Activation: no durable memory yet — save one lesson to activate"
+            )
+    except Exception as exc:
+        W._safe_print(f"    [--] Activation check skipped: {exc}")
+
     print()
     return problems
