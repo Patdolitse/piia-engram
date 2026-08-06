@@ -109,3 +109,69 @@ def test_inject_hook_source_contains_bootstrap_guard():
         "get_resume_brief wrapper; a fresh store with a discoverable CLAUDE.md "
         "should auto-import on the hook path too"
     )
+
+
+def test_second_session_new_instance_sees_first_session(tmp_path, monkeypatch):
+    """Session 1 writes via real entry points; session 2 = a brand-new Engram
+    instance on the same root; recall must surface the memory."""
+    root = _fresh_root(tmp_path, monkeypatch)
+    from piia_engram.core import Engram
+
+    # --- session 1 ---
+    s1 = Engram(root=root)
+    s1.add_lesson(
+        "激活回环测试教训：第二次会话必须能看到第一次的记忆",
+        domain="testing",
+        source_tool="claude_code",
+    )
+    s1.save_agent_context(
+        tool="claude_code",
+        content="完成激活回环第一阶段，下一步验证第二会话召回。",
+        project_folder=str(tmp_path),
+    )
+    del s1
+
+    # --- session 2: fresh instance, same store ---
+    s2 = Engram(root=root)
+    hits = s2.search_knowledge("激活回环 第二次会话", scope="lessons", limit=5)
+    assert hits["lessons"], "lesson saved in session 1 must be searchable in session 2"
+
+    brief = s2.get_resume_brief(project_folder=str(tmp_path), token_budget=2000)
+    md = brief.get("markdown", "")
+    assert md, "second session must render a non-empty resume brief"
+    assert "激活回环" in md or "第一阶段" in md, (
+        "second session's resume brief must surface first-session traces"
+    )
+
+
+def test_second_process_sees_first_process_write(tmp_path):
+    """Real process boundary: process 1 writes, process 2 recalls."""
+    import os
+    import subprocess
+    import sys
+
+    root = tmp_path / "store2"
+    root.mkdir()
+    env = dict(
+        os.environ,
+        ENGRAM_DIR=str(root),
+        ENGRAM_AUDIT="0",
+        PYTHONIOENCODING="utf-8",
+        PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"),
+    )
+    write_code = (
+        "from piia_engram.core import Engram;"
+        "e = Engram();"
+        "e.add_lesson('跨进程激活教训：进程一写入的记忆', domain='testing', source_tool='t')"
+    )
+    read_code = (
+        "from piia_engram.core import Engram;"
+        "r = Engram().search_knowledge('跨进程激活', scope='lessons', limit=3);"
+        "print('FOUND' if r['lessons'] else 'MISSING')"
+    )
+    subprocess.run([sys.executable, "-c", write_code], env=env, check=True, timeout=120)
+    out = subprocess.run(
+        [sys.executable, "-c", read_code], env=env, check=True,
+        timeout=120, capture_output=True, text=True,
+    )
+    assert "FOUND" in out.stdout
