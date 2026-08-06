@@ -411,7 +411,15 @@ class Engram(
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
 
-        skip_exact = {"backups", "audit.log", "beta_events.jsonl", ".update_check.json"}
+        # Skip operational logs, rotated generations, transient stamps, and the
+        # backups dir itself: they are not irreplaceable memory, and copying the
+        # ledger/audit logs made each upgrade snapshot ~6x larger than the data.
+        skip_exact = {
+            "backups", "audit.log", "audit.log.1", "beta_events.jsonl",
+            ".update_check.json", "file_safety_ledger.jsonl",
+            "file_safety_ledger.jsonl.1", "telemetry.log",
+            "session_state.json", ".backup_state.json",
+        }
 
         def _ignore(_directory: str, names: list[str]) -> set[str]:
             out: set[str] = set()

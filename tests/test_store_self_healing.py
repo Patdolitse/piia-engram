@@ -91,3 +91,27 @@ def test_audit_log_rotates_when_over_cap(tmp_path, monkeypatch):
     assert log_path.stat().st_size <= 300 + 250
     for line in log_path.read_text(encoding="utf-8").splitlines():
         json.loads(line)
+
+
+def test_upgrade_backup_skips_logs_and_ledger(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_AUDIT", "0")
+    from piia_engram.core import Engram
+
+    e = Engram(root=tmp_path)
+    (tmp_path / "file_safety_ledger.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "file_safety_ledger.jsonl.1").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "audit.log").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "audit.log.1").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "telemetry.log").write_text("x\n", encoding="utf-8")
+    (tmp_path / "knowledge").mkdir(exist_ok=True)
+    (tmp_path / "knowledge" / "lessons.json").write_text('[{"id": "a"}]', encoding="utf-8")
+
+    bdir = e._backup_store("9.9.9")
+
+    assert (bdir / "knowledge" / "lessons.json").is_file()  # real data kept
+    for skipped in (
+        "file_safety_ledger.jsonl", "file_safety_ledger.jsonl.1",
+        "audit.log", "audit.log.1", "telemetry.log", "session_state.json",
+    ):
+        assert not (bdir / skipped).exists(), skipped
