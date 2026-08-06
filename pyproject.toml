@@ -20,7 +20,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "mcp>=1.0",
+    # mcp 2.0.0 removed mcp.server.fastmcp — piia-engram's server entry point
+    # breaks on import. Stay on 1.x until an explicit 2.x migration ships.
+    "mcp>=1.0,<2",
     "portalocker>=2.0",
 ]
 
