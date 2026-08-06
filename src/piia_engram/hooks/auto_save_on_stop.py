@@ -176,13 +176,17 @@ def main() -> None:
             if tool_calls:
                 summary += f"使用工具: {', '.join(tool_calls[:20])}\n"
             try:
-                engram.wrap_up_session(
-                    summary=summary,
-                    project_folder=cwd or "",
+                # Unsupervised background writeback: force_staging keeps every
+                # extracted item behind owner review (trust-model contract).
+                engram.extract_session_insights(
+                    summary,
                     source_tool="claude_code",
+                    source_ref=session_id,
+                    force_staging=True,
+                    project_folder=cwd or "",
                 )
             except Exception as exc:
-                log_failure("auto_save_on_stop", "wrap_up_session failed", exc)
+                log_failure("auto_save_on_stop", "extract_session_insights failed", exc)
 
         if cwd:
             _root = Path(cwd)
