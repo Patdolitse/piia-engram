@@ -111,6 +111,24 @@ Automated promotional issues, repeated grading notifications, and unsolicited ba
 
 **Security vulnerabilities**: Do NOT open a public issue. Email engram-security@proton.me instead.
 
+## Developer Certificate of Origin (DCO)
+
+All contributions must be signed off under the [Developer Certificate of Origin](https://developercertificate.org/). By signing off, you certify that you wrote the contribution or otherwise have the right to submit it under the project license.
+
+Add a `Signed-off-by` line to each commit (git does this for you with the `-s` flag):
+
+```
+git commit -s -m "feat: your change"
+```
+
+This adds a line like:
+
+```
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+PRs with unsigned commits will be asked to rebase with sign-offs before merge.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [GNU AGPL v3.0](LICENSE).
