@@ -22,6 +22,22 @@ except ValueError:
     BACKUP_RETENTION = 10
 
 
+# Process-bookkeeping files rewritten on every open (session stamps, update
+# markers, heartbeats). Backing these up or ledgering them turns each process
+# start into a ledger line + rolling .bak — ~500k entries on a real store.
+# They carry no irreplaceable user memory, so file-safety skips them.
+TRANSIENT_BASENAMES = frozenset({
+    "session_state.json",
+    ".update_check.json",
+    ".backup_state.json",
+})
+
+
+def _is_transient(path: Path) -> bool:
+    name = Path(path).name
+    return name in TRANSIENT_BASENAMES or "heartbeat" in name.lower()
+
+
 def _resolve(path: Path) -> Path:
     return path.expanduser().resolve()
 
@@ -184,6 +200,9 @@ def write_engram_text(root: Path, path: Path, text: str, *, tool: str) -> Path |
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = path.read_text(encoding="utf-8") if path.is_file() else None
     if existing == text:
+        return None
+    if _is_transient(path):
+        path.write_text(text, encoding="utf-8")
         return None
     backup_path = backup_existing_file(root, path, scope="engram_root", tool=tool)
     path.write_text(text, encoding="utf-8")
