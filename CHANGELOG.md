@@ -6,6 +6,11 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.14.1] - 2026-08-05
+
+### Fixed
+- Pinned the `mcp` dependency to 1.x (`mcp>=1.0,<2`): mcp 2.0.0 removed a module the Engram MCP server imports at startup, so fresh installs failed to launch `piia-engram-mcp`. New installs now resolve a compatible mcp 1.x automatically. If you already hit this on an existing install, run `pip install "mcp>=1.0,<2"` or upgrade with `pip install -U piia-engram`.
+
 ## [4.14.0] - 2026-07-10
 
 ### Added
