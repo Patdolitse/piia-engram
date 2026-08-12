@@ -36,6 +36,7 @@ remain local unless a maintainer intentionally promotes a public-safe summary.
 
 | Version | Evidence | Release | Publish run |
 |---------|----------|---------|-------------|
+| v4.14.1 | [v4.14.1.md](v4.14.1.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.14.1) | [31088273284](https://github.com/Patdolitse/piia-engram/actions/runs/31088273284) |
 | v4.14.0 | [v4.14.0.md](v4.14.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.14.0) | [29096890037](https://github.com/Patdolitse/piia-engram/actions/runs/29096890037) |
 | v4.13.0 | [v4.13.0.md](v4.13.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.13.0) | [28778987915](https://github.com/Patdolitse/piia-engram/actions/runs/28778987915) |
 | v4.12.0 | [v4.12.0.md](v4.12.0.md) | [release notes](https://github.com/Patdolitse/piia-engram/releases/tag/v4.12.0) | [28015677433](https://github.com/Patdolitse/piia-engram/actions/runs/28015677433) |
