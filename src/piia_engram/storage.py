@@ -595,11 +595,18 @@ def _git_common_dir_for_folder(folder: str) -> Path | None:
     """Best-effort git common-dir resolver without spawning ``git``.
 
     Normal repositories use ``<worktree>/.git`` as the common dir. Linked git
-    worktrees use a ``.git`` file pointing at ``.../.git/worktrees/<name>`` with
-    a ``commondir`` file that resolves back to the shared repo metadata. We only
+    worktrees use a ``.git`` file pointing at ``.../.git/worktrees/<name>``
+    with a ``commondir`` file that resolves back to the shared repo metadata. We only
     use this as a stable local identity anchor; parent directories and nested
     repositories remain distinct because the walk stops at the first ``.git``
     marker found from the supplied path upward.
+
+    Only existing folders participate: a path string that does not exist on
+    disk (e.g. a cross-OS format like a Windows drive path read on POSIX)
+    resolves against the current directory, and walking up from there would
+    silently inherit the nearest unrelated repo — collapsing unrelated
+    project folders onto one id. Nonexistent paths fall back to the
+    path-hash identity (pre-v4.15 behavior).
     """
     raw = (folder or "").strip()
     if not raw:
@@ -610,6 +617,8 @@ def _git_common_dir_for_folder(folder: str) -> Path | None:
         current = Path(raw).expanduser().absolute()
     if current.is_file():
         current = current.parent
+    if not current.exists():
+        return None
 
     for candidate in (current, *current.parents):
         marker = candidate / ".git"

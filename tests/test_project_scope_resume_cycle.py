@@ -199,3 +199,37 @@ def test_worktree_reads_main_checkout_legacy_snapshot(tmp_path: Path) -> None:
     snapshot = eng.get_project_snapshot(str(worktree))
 
     assert snapshot["title"] == "Main checkout legacy snapshot"
+
+
+def test_nonexistent_folder_strings_never_inherit_cwd_repo_identity():
+    """Regression: cross-OS/nonexistent path strings must not collapse onto
+    the nearest repo above the current working directory.
+
+    v4.15 walks up from the supplied folder to the first ``.git`` marker.
+    A path string that does not exist on disk (e.g. a Windows drive path read
+    on POSIX, or any relative path) resolves against the cwd; when the cwd is
+    inside a repository, every such string inherited that repo's identity and
+    unrelated projects merged onto one id — observed as a cross-project
+    knowledge leak in the recall eval on Linux CI. Nonexistent paths must
+    fall back to the path-hash identity and stay distinct.
+    """
+    from piia_engram.storage import _git_common_dir_for_folder
+
+    alpha = "definitely-not-on-disk-alpha/sub"
+    beta = "definitely-not-on-disk-beta/sub"
+
+    assert _git_common_dir_for_folder(alpha) is None
+    assert _git_common_dir_for_folder(beta) is None
+    assert _project_id(alpha) != _project_id(beta)
+
+    # Existing folders keep git-anchored identity (the walk still applies).
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="engram-identity-repo-") as tmp:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        project = repo / "project"
+        project.mkdir()
+        assert _git_common_dir_for_folder(str(project)) is not None
+        assert _project_id(str(project)) == _project_id(str(repo))

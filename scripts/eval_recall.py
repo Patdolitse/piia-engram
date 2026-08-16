@@ -52,7 +52,37 @@ def load_corpus(path: str | Path = DEFAULT_FIXTURE) -> dict[str, Any]:
     return data
 
 
-def _seed_engram(store: dict[str, Any], root: Path) -> Engram:
+def _materialize_project_folders(
+    store: dict[str, Any], case: dict[str, Any], case_root: Path
+) -> dict[str, str]:
+    """Map fixture folder strings to real per-case directories on disk.
+
+    Fixtures carry platform-shaped path strings (e.g. ``E:/synthetic/alpha``)
+    that never exist. Resolving those against the process cwd is
+    OS-dependent, so every fixture folder is materialized as a real directory
+    under the case root and both seeding and queries use the real path. This
+    keeps project identity well-defined on every platform.
+    """
+    folder_strings: list[str] = []
+    for meta in (store.get("projects") or {}).values():
+        folder = str((meta or {}).get("folder") or "")
+        if folder and folder not in folder_strings:
+            folder_strings.append(folder)
+    case_folder = str(case.get("project_folder") or "")
+    if case_folder and case_folder not in folder_strings:
+        folder_strings.append(case_folder)
+    base = case_root / "projects"
+    mapping: dict[str, str] = {}
+    for index, folder in enumerate(folder_strings):
+        real = base / f"p{index}"
+        real.mkdir(parents=True, exist_ok=True)
+        mapping[folder] = str(real)
+    return mapping
+
+
+def _seed_engram(
+    store: dict[str, Any], root: Path, folder_map: dict[str, str] | None = None
+) -> Engram:
     """Create an isolated Engram store from one synthetic store fixture."""
     previous_test_flag = os.environ.get("ENGRAM_TEST")
     os.environ["ENGRAM_TEST"] = "1"
@@ -75,7 +105,10 @@ def _seed_engram(store: dict[str, Any], root: Path) -> Engram:
         # project_folder and let add_playbook normalize the real id.
         fixture_project_id = item.get("project_id")
         if fixture_project_id and projects.get(fixture_project_id):
-            item["project_folder"] = projects[fixture_project_id]["folder"]
+            item["project_folder"] = folder_map.get(
+                projects[fixture_project_id]["folder"],
+                projects[fixture_project_id]["folder"],
+            )
             item.pop("project_id", None)
         eng.add_playbook(item)
 
@@ -97,7 +130,7 @@ def _seed_engram(store: dict[str, Any], root: Path) -> Engram:
         if not folder:
             continue
         eng.save_project_snapshot(
-            folder,
+            folder_map.get(folder, folder),
             {
                 "title": meta.get("title", project_id),
                 "tech_stack": meta.get("tech_stack", []),
@@ -167,14 +200,16 @@ def evaluate_case(corpus: dict[str, Any], case: dict[str, Any], workdir: str | P
         raise ValueError(f"unknown recall eval store: {store_id}")
 
     case_root = Path(workdir) / "stores" / str(case["id"])
-    eng = _seed_engram(stores[store_id], case_root)
+    folder_map = _materialize_project_folders(stores[store_id], case, case_root)
+    eng = _seed_engram(stores[store_id], case_root, folder_map)
     result = eng.search_knowledge(
         str(case.get("query") or ""),
         scope=str(case.get("scope") or "all"),
         limit=int(case.get("limit") or 5),
         filters=case.get("filters") or None,
         allow_hybrid_index=False,
-        project_folder=case.get("project_folder") or None,
+        project_folder=folder_map.get(str(case.get("project_folder") or ""),
+                                       str(case.get("project_folder") or "")) or None,
     )
     relation_edges = stores[store_id].get("relation_edges") or []
     actual_ids = _flatten_ids(result, relation_edges)
