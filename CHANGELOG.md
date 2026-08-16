@@ -6,6 +6,20 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.15.0] - 2026-08-16
+
+### Added
+- Runtime capability handshake for embedders and hosts: `get_runtime_capabilities()` (schema `engram_runtime_capabilities.v1`) exposes a content-free contract map, capability codes, MCP surface counts and a deterministic fingerprint; `check_runtime_compatibility()` and `engram capabilities --json` report explicit missing codes and contract mismatches, so consumers can gate on capabilities instead of version strings.
+- Idempotent session closeout: `wrap_up_session` accepts an optional `idempotency_key`; retries replay the recorded operation state instead of duplicating writes. New core tool `get_wrap_up_session_status` reports stage-level progress, including `stale_running` arbitration after interrupted calls. MCP surface moves to 58 total / 18 core / 40 advanced.
+- Store self-healing: `file_safety_ledger.jsonl` and `audit.log` rotate at a size cap (`ENGRAM_LOG_MAX_MB`, default 16 MB, one `.1` generation kept); upgrade backups exclude operational logs, dedupe same-version snapshots and cap at 3 versions (`ENGRAM_UPGRADE_BACKUP_KEEP`); transient runtime files no longer enter the file-safety ledger or rolling backups; `engram doctor` reports a warn-only store footprint and activation status, and `--fix` performs rotation/pruning maintenance.
+- Git-worktree-aware project identity: linked worktrees sharing a git common-dir resolve to one project id, while parent directories, nested repositories and adjacent checkouts stay distinct; legacy path-hash ids remain readable as read-only aliases with no record rewriting.
+- Claude Code `SessionStart` hook runs the same idempotent bootstrap as the MCP path; the `Stop` hook now calls the real core extraction API with `force_staging=True` (unsupervised writeback always lands in staging for review) and refreshes `quick_context.md` after session-end saves; `engram setup` closes with an explicit activation promise and doctor check hint.
+
+### Fixed
+- MCP stdio closeout stalls: background startup reconcile no longer contends with normal writes on the operation lock.
+- Claude Code `Stop` hook called a core method that did not exist (`wrap_up_session`), silently skipping structured extraction on every substantial session; it now calls `extract_session_insights` and leaves a breadcrumb on failure.
+- Anonymous activity telemetry windows clarified; `engram setup` tool counts derive from capability groups instead of hardcoded numbers.
+
 ## [4.14.1] - 2026-08-05
 
 ### Fixed

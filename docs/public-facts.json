@@ -81,7 +81,7 @@
       "Owner-gated export/admin surfaces are public capabilities with governance, not private internals."
     ]
   },
-  "last_verified_date": "2026-08-13",
+  "last_verified_date": "2026-08-16",
   "sources": {
     "package_name": "pyproject.toml [project].name",
     "local_dev_version": "pyproject.toml [project].version  (cross-check: git tag --sort=-creatordate | head -1)",

@@ -6,6 +6,20 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.15.0] - 2026-08-16
+
+### 新增
+- 面向嵌入方与宿主的运行时能力握手：`get_runtime_capabilities()`（schema `engram_runtime_capabilities.v1`）输出无内容的契约映射、能力码、MCP 面板计数和确定性指纹；`check_runtime_compatibility()` 与 `engram capabilities --json` 显式报告缺失能力码和契约不匹配，消费方可按能力门控而不是版本字符串。
+- 幂等会话收尾：`wrap_up_session` 支持可选 `idempotency_key`，重试会重放已记录的操作状态而不是重复写入。新增核心工具 `get_wrap_up_session_status` 报告阶段级进度，包括中断后的 `stale_running` 仲裁。MCP 面板变为 58 总数 / 18 核心 / 40 高级。
+- 存储自愈：`file_safety_ledger.jsonl` 与 `audit.log` 按大小上限轮转（`ENGRAM_LOG_MAX_MB`，默认 16 MB，保留一代 `.1`）；升级备份排除操作日志、同版本快照去重并封顶 3 个版本（`ENGRAM_UPGRADE_BACKUP_KEEP`）；瞬态运行时文件不再进入文件安全台账与滚动备份；`engram doctor` 增加只警告的存储足迹与激活状态报告，`--fix` 执行轮转/清理维护。
+- 感知 git worktree 的项目身份：共享 git common-dir 的链接 worktree 归并为同一项目 id，父目录、嵌套仓库与相邻检出保持区分；旧路径哈希 id 以只读别名保留，不重写任何记录。
+- Claude Code `SessionStart` 钩子执行与 MCP 路径相同的幂等 bootstrap；`Stop` 钩子改为调用真实的核心提取 API（`force_staging=True`，无人监督的写回一律落入 staging 待审），并在会话结束保存后刷新 `quick_context.md`；`engram setup` 收尾时给出明确的激活承诺与 doctor 检查提示。
+
+### 修复
+- MCP stdio 收尾卡顿：后台启动 reconcile 不再与常规写入争抢操作锁。
+- Claude Code `Stop` 钩子调用了不存在的核心方法（`wrap_up_session`），导致每个实质性会话都静默跳过结构化提取；现改为调用 `extract_session_insights` 并在失败时留下可诊断痕迹。
+- 澄清匿名活动遥测窗口；`engram setup` 工具计数改为从能力组派生，不再硬编码。
+
 ## [4.14.1] - 2026-08-05
 
 ### 修复
