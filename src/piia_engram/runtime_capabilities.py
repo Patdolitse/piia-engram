@@ -8,6 +8,8 @@ from copy import deepcopy
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Iterable
 
+from .embedded.contract import FACADE_CONTRACT_VERSION
+from .embedded.contract import SNAPSHOT_SCHEMA as EMBEDDED_SNAPSHOT_SCHEMA
 from .storage import SCHEMA_VERSION
 from .tool_surface import mcp_surface_counts
 
@@ -23,6 +25,11 @@ CONTRACTS = {
     "wrap_up_operation": "wrap_up_operation.v1",
     "mcp_schema": "mcp_tool_schema.v1",
     "read_path": "zero_write_read_path.v1",
+    # The embedded-host facade declares its own handshake and witness; binding
+    # its identifiers here keeps the two compatibility surfaces from drifting
+    # apart (checked by test_runtime_capabilities + the embedded facade tests).
+    "embedded_host_facade": FACADE_CONTRACT_VERSION,
+    "embedded_task_context_snapshot": EMBEDDED_SNAPSHOT_SCHEMA,
 }
 CAPABILITY_CODES = (
     "exact_project_scope",

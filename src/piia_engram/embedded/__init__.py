@@ -10,9 +10,12 @@ An embedding host admits this runtime by contract, not by version string:
         task_class="software_development", objective="...", limit=8,
     )
 
-Phase 1 exposes no write path of any kind. The stability promise covers only the
-names re-exported here; everything else in this package is implementation
-detail, and the product version may move underneath a stable facade contract.
+Phase 1 exposes no store-mutating path of any kind. The one file-writing
+helper re-exported here, ``write_capability_witness``, writes a capability
+witness to a caller-chosen path and never touches the Engram store. The
+stability promise covers only the names re-exported here; everything else in
+this package is implementation detail, and the product version may move
+underneath a stable facade contract.
 """
 
 from __future__ import annotations

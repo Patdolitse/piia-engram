@@ -67,6 +67,12 @@ jobs:
       - name: Generated export redaction gate
         run: python scripts/check_generated_export_redaction.py
 
+      - name: Embedded facade contract manifest guard
+        run: python scripts/check_embedded_contract.py
+
+      - name: Embedded capability witness guard
+        run: python scripts/generate_capability_witness.py --verify docs/embedded/capability-witness.json
+
       - name: Memory eval suite gate
         run: python scripts/run_memory_evals.py --json
 
@@ -126,6 +132,12 @@ jobs:
 
       - name: Generated export redaction gate
         run: python scripts/check_generated_export_redaction.py
+
+      - name: Embedded facade contract manifest guard
+        run: python scripts/check_embedded_contract.py
+
+      - name: Embedded capability witness guard
+        run: python scripts/generate_capability_witness.py --verify docs/embedded/capability-witness.json
 
       - name: Memory eval suite gate
         run: python scripts/run_memory_evals.py --json

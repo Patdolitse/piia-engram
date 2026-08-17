@@ -1,0 +1,26 @@
+{
+  "facade_contract": "engram.embedded_host_facade.v1",
+  "read_only_guarantee": {
+    "index_materialisation": "none",
+    "network": "none",
+    "phase": 1,
+    "store_writes": "none",
+    "subprocess": "none",
+    "write_paths_exposed": [
+      "write_capability_witness: caller-chosen witness file; never the store"
+    ]
+  },
+  "retrieval_modes": [
+    "keyword_no_persistent_index"
+  ],
+  "runtime_version": "4.15.0",
+  "schema": "engram.embedded_capability_witness.v1",
+  "snapshot_schema": "engram.embedded_task_context_snapshot.v1",
+  "source_digests": {
+    "embedded/__init__.py": "a3f2ea9e38acd0ce92badca1bbc8c8f619ce6143715195a35a759c90f6da47e3",
+    "embedded/contract.py": "61bed51644feda1ac79dfae3ccd53f31a4eda0a5ffe572c818ab242a390692b8",
+    "embedded/handshake.py": "b31c6713a4704efe414ba6dcf36b85a40416179b6c9e40a946fdef29451d3262",
+    "embedded/snapshot.py": "79513b834ce75be585e6540308f35070d456e7d68648443fc408aa2b6f58b83c"
+  },
+  "witness_hash": "c11c8fd495017459437a53e919a8cd56d553151e046fbeb0646e151be2b6ffa4"
+}

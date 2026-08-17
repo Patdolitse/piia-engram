@@ -1,0 +1,37 @@
+{
+  "facade_contract": "engram.embedded_host_facade.v1",
+  "max_items": 8,
+  "public_api": [
+    "FACADE_CONTRACT_VERSION",
+    "FacadeContextError",
+    "FacadeHandshakeError",
+    "MAX_ITEMS",
+    "RETRIEVAL_MODES",
+    "SNAPSHOT_SCHEMA",
+    "WITNESS_SCHEMA",
+    "canonical_hash",
+    "capability_witness",
+    "handshake",
+    "require_compatible",
+    "retrieve_task_context_snapshot",
+    "validate_snapshot",
+    "verify_witness",
+    "write_capability_witness"
+  ],
+  "read_only_guarantee": {
+    "index_materialisation": "none",
+    "network": "none",
+    "phase": 1,
+    "store_writes": "none",
+    "subprocess": "none",
+    "write_paths_exposed": [
+      "write_capability_witness: caller-chosen witness file; never the store"
+    ]
+  },
+  "retrieval_modes": [
+    "keyword_no_persistent_index"
+  ],
+  "schema": "engram.embedded_contract_manifest.v1",
+  "snapshot_schema": "engram.embedded_task_context_snapshot.v1",
+  "witness_schema": "engram.embedded_capability_witness.v1"
+}

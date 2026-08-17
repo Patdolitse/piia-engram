@@ -115,17 +115,50 @@ same project folder.
 
 ## Zero-write constitution
 
-Phase 1 exposes **no write path**. The store is opened read-only, the persistent
-index is never touched, and there is no network or subprocess use. This is
-enforced by tests that (a) fingerprint every file under the store root before and
-after a retrieval and (b) intercept write-mode `open`,
+Phase 1 exposes **no store-mutating path**. The store is opened read-only, the
+persistent index is never touched, and there is no network or subprocess use.
+This is enforced by tests that (a) fingerprint every file under the store root
+before and after a retrieval and (b) intercept write-mode `open`,
 `os.replace/rename/remove/mkdir`, `shutil` copies and `Path.write_*` inside the
 store root, failing if any fires. A guard-sanity test asserts the interceptor
 catches a real write, so the proof cannot pass vacuously. Any capability that
-requires a write is phase 2+.
+requires writing to the store is phase 2+.
 
-## Not in phase 1
+One explicit, non-store exception: `write_capability_witness` writes a
+capability-witness file to a caller-chosen path. It never writes to the store;
+the guarantee block in the witness declares this exception.
 
-Writes of any kind; supersede/rollback primitives; a provider-safe projection
-mode beyond the public-equivalent gate above; a published performance envelope;
-a packaged contract-test kit for host CI.
+## Phase-1 boundary (what a host must NOT assume)
+
+The facade is phase 1 by design, and its limits are part of the contract. A
+host integrating today gets exactly what the capability witness declares and
+nothing more. Not in phase 1:
+
+- any write to the Engram store (see the zero-write constitution above);
+- supersede/rollback or version-chain primitives;
+- a provider-safe projection mode beyond the public-equivalent gate;
+- a published performance envelope;
+- a packaged contract-test kit for host CI;
+- hybrid/vector retrieval (the declared retrieval mode is keyword-only, no
+  persistent index — requests for other modes fail closed in the handshake
+  with `retrieval_mode_unsupported:<mode>`).
+
+If any of these become necessary, that is a phase-2 contract conversation,
+not something to work around against the phase-1 surface.
+
+## Keeping the contract honest (for maintainers)
+
+Two checked-in artifacts pin the facade surface, and CI verifies both:
+
+- `docs/embedded/contract-manifest.json` — semantic projection of the facade
+  (identifiers, retrieval modes, read-only guarantee, public API names, item
+  bound). Guard: `python scripts/check_embedded_contract.py`.
+- `docs/embedded/capability-witness.json` — the shipped capability witness.
+  Guard: `python scripts/generate_capability_witness.py --verify
+  docs/embedded/capability-witness.json`.
+
+Any facade change that alters the surface fails CI until both are consciously
+updated (`--update` / regenerate). Changed identifiers mean a contract version
+bump and a documented migration for embedding hosts. When releasing, refresh
+the witness so its `runtime_version` matches the release
+(`generate_capability_witness.py -o docs/embedded/capability-witness.json`).

@@ -27,14 +27,18 @@ WITNESS_SCHEMA = "engram.embedded_capability_witness.v1"
 # environments nor writable-free (materialising it would write to the store).
 RETRIEVAL_MODES = ("keyword_no_persistent_index",)
 
-# Phase 1 is read-only by construction; there is no write path to declare.
+# Phase 1 exposes no store-mutating path. The one file-writing helper this
+# package re-exports, ``write_capability_witness``, writes a capability
+# witness to a caller-chosen path - it never writes to the Engram store.
 READ_ONLY_GUARANTEE = {
     "phase": 1,
     "store_writes": "none",
     "index_materialisation": "none",
     "network": "none",
     "subprocess": "none",
-    "write_paths_exposed": [],
+    "write_paths_exposed": [
+        "write_capability_witness: caller-chosen witness file; never the store",
+    ],
 }
 
 # Source files whose bytes define facade behaviour. A host can re-hash these to

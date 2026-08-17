@@ -47,6 +47,11 @@ CI_TEST_JOB_CHECKS = (
       "docs/samples/export-redaction-clean-sample.md"]),
     ("generated_export_redaction",
      [sys.executable, "scripts/check_generated_export_redaction.py"]),
+    ("embedded_contract",
+     [sys.executable, "scripts/check_embedded_contract.py"]),
+    ("embedded_witness",
+     [sys.executable, "scripts/generate_capability_witness.py", "--verify",
+      "docs/embedded/capability-witness.json"]),
     ("memory_eval_suite", [sys.executable, "scripts/run_memory_evals.py", "--json"]),
 )
 
