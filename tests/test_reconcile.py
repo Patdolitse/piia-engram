@@ -172,18 +172,18 @@ def test_reconcile_detects_existing_decision_as_dup(tmp_path: Path):
     mem_dir = _make_claude_memory_dir(tmp_path)
 
     engram.add_decision(
-        "Should we use DeepSeek API for testing",
-        choice="Yes use DeepSeek API for all feature validation tests",
+        "Should we use ExampleLLM API for testing",
+        choice="Yes use ExampleLLM API for all feature validation tests",
         reasoning="Need real LLM evaluation",
     )
 
-    _write_memory_file(mem_dir, "deepseek.md", """\
+    _write_memory_file(mem_dir, "examplellm.md", """\
 ---
-name: DeepSeek Decision
+name: ExampleLLM Decision
 type: project
 ---
 
-Yes use DeepSeek API for all feature validation tests
+Yes use ExampleLLM API for all feature validation tests
 """)
 
     engram._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]

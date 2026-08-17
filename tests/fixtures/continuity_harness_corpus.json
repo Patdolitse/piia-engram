@@ -13,7 +13,7 @@
     ],
     "decisions": [
       {"id": "D1", "question": "Which mechanism for long phase tasks?",
-       "choice": "Use the D+ mechanism by default",
+       "choice": "Use the staged mechanism by default",
        "tier": "verified", "status": "active", "sensitivity": "work"}
     ]
   },

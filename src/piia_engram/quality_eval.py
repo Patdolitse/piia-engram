@@ -2,7 +2,7 @@
 
 A *conservative, structural* gate for candidate lessons/decisions/playbooks. It
 deliberately does NOT judge truth or semantics — that is the job of human review
-and the optional Claude/DeepSeek double-review (see
+and the optional external double-review (see
 ``docs/specs/knowledge-quality-evaluation.md``). This helper only catches the
 mechanical "this should never have been a durable memory" cases using metadata
 and shape, so reviewers spend attention on real candidates.

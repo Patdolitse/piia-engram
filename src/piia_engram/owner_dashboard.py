@@ -16,7 +16,7 @@ Constraints:
 - **safe HTML**: every dynamic value is ``html.escape``-d (the dashboard could
   surface user-derived strings such as a domain label).
 - **no private-mechanism leak**: the dashboard describes Engram's own state only;
-  it never references private workflow/Core-Self-Optimization mechanisms.
+  it never references private workflow or internal maintainer mechanisms.
 """
 
 from __future__ import annotations

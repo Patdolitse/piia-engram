@@ -119,7 +119,7 @@ def test_staging_and_private_entries_absent_from_export(corpus):
     assert "owner@example.com" not in md
     # Verified, non-sensitive content IS present.
     assert "Telemetry stays opt-in" in md
-    assert "D+ mechanism" in md
+    assert "staged mechanism" in md
 
 
 def test_empty_store_exports_nothing_but_does_not_crash():

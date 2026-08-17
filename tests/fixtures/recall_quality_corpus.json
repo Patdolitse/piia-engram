@@ -47,7 +47,7 @@
     {
       "id": "D-decision",
       "question": "Which mechanism for long tasks?",
-      "choice": "Use the D+ mechanism by default",
+      "choice": "Use the staged mechanism by default",
       "domain": "process",
       "last_validated_at": "2026-06-02T00:00:00+00:00"
     }
