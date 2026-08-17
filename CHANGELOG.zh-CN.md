@@ -6,6 +6,19 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.17.0] - 2026-08-17
+
+### 新增
+- **可选的会话结束内容摘要**（`hook_content_digest`，默认关闭）：Claude Code stop hook 可将脱敏后的 assistant 文本节选送入知识提取，修复"纯元数据摘要永远过不了质量门槛"的结构性空转。仅采集 assistant 文本（用户消息与工具输入/输出永不采集）、冻结 transcript schema、有状态围栏/引用清洗、NFKC + 零宽归一化、组合脱敏、硬预算、整体复扫、落盘前输出守卫（命中即丢弃只记计数）、元数据化审计，以及覆盖混淆/跨边界形态的金丝雀套件。phase 1 残余风险见 PRIVACY.md。
+- hook 端到端测试：真实 stop/start hook 入口以子进程进套件（此前仅反射与源码字符串 tripwire 把守）。
+- 项目身份规则成为文档化契约（architecture.md）并附残余输入矩阵：现存文件/符号链接（活/断）、畸形 `.git`/`commondir`、大小写折叠、跨 cwd 稳定性、平台特有路径形态。
+- `telemetry.log` 与 `beta_events.jsonl` 按同一大小上限轮转并进入存储足迹报告；`engram doctor --fix` 维护不再依赖足迹告警触发。
+
+### 修复
+- resume pack 顺序 flaky 根因修复：包时钟可注入（`contexts._utc_now_iso_seconds`），冻结时钟测试断言全字典相等，真实时钟测试白名单唯一易变字段。
+- 备份清理在 mtime 平局下确定（名字内嵌时间戳破平）；升级备份版本解析不再折叠带连字符的 dev 版本（4.15.0-rc1 与 rc2）。
+- memory-eval 失败现报告逐 case 检查布尔值与子进程载荷，而非裸 CalledProcessError。
+
 ## [4.16.0] - 2026-08-17
 
 ### 新增

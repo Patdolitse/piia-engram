@@ -6,6 +6,19 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.17.0] - 2026-08-17
+
+### Added
+- **Opt-in session-end content digest** (`hook_content_digest`, default off): the Claude Code stop hook can feed a sanitized digest of assistant text into knowledge extraction, fixing the structural no-op where metadata-only summaries never passed the quality gate. Assistant text only (user messages and tool IO are never collected), frozen transcript schema, stateful fence/quote cleaning, NFKC + zero-width normalization, composed redaction, hard budgets, a whole-digest rescan, an output guard that drops secret-shaped candidates before any write, metadata-only auditing, and a canary suite covering obfuscated/boundary-straddling shapes. See PRIVACY.md for phase-1 residual risks.
+- End-to-end hook tests: the real stop/start hook entry points now run as subprocesses in the suite (previously only reflection and source-string tripwires guarded them).
+- Project identity rules are now documented contracts (architecture.md) with a residual-input matrix: existing-file/symlink (live and broken), malformed `.git`/`commondir`, case folding, cross-cwd stability, and platform-specific path forms.
+- `telemetry.log` and `beta_events.jsonl` rotate at the same size cap as the other logs and appear in the store footprint report; `engram doctor --fix` maintenance no longer depends on footprint warnings.
+
+### Fixed
+- `test_resume_pack_order_is_deterministic...` flake root-caused and fixed properly: the pack clock is injectable (`contexts._utc_now_iso_seconds`), a frozen-clock test asserts full dict equality, and a real-clock test whitelists the only volatile field.
+- Backup pruning is deterministic under mtime ties (name-embedded stamps break ties), and upgrade-backup version parsing no longer collapses dashed dev versions (4.15.0-rc1 vs rc2).
+- Memory-eval failures now report per-case check booleans and the child payload instead of a bare CalledProcessError.
+
 ## [4.16.0] - 2026-08-17
 
 ### Added
