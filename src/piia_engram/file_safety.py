@@ -154,7 +154,9 @@ def _prune_backups(backup_dir: Path, prefix: str, keep: int) -> int:
         ]
     except OSError:
         return 0
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    # name-embedded UTC stamps (with microseconds) break mtime ties so pruning
+    # is deterministic even when copy2 preserves equal source mtimes
+    candidates.sort(key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
     removed = 0
     for stale in candidates[keep:]:
         try:

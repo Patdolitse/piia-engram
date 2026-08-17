@@ -471,3 +471,62 @@ def test_interrupted_checkpoint_does_not_reuse_previous_completion(
     assert pack["handoff"]["blocked_on"] == ["blocked on synthetic fixture"]
     assert pack["freshness"]["status"] == "current"
     assert pack["handoff"]["revision"] == 2
+
+
+def test_resume_pack_deterministic_under_frozen_clock(tmp_path, monkeypatch):
+    """Full-dict equality with the clock frozen: nothing else may be volatile.
+
+    Root cause of the historical flake: handoff.generated_at is a per-call
+    second-resolution timestamp, and two back-to-back builds straddling a
+    wall-clock second differed. The pack now reads the clock through
+    contexts._utc_now_iso_seconds; freezing it must make repeated builds
+    dict-identical, proving no OTHER volatile field exists.
+    """
+    from piia_engram import contexts as contexts_mod
+
+    frozen = {"calls": 0}
+
+    def _fake_now():
+        frozen["calls"] += 1
+        return "2026-08-16T08:46:00Z"
+
+    monkeypatch.setattr(contexts_mod, "_utc_now_iso_seconds", _fake_now)
+
+    eng = _eng(tmp_path)
+    project = _project(tmp_path)
+    eng.save_project_snapshot(str(project), {"title": "Frozen Clock Project", "stage": "M2"})
+    _save_digest_session(eng, project, session_id="sess-frozen")
+    eng.add_lesson("Frozen clock lesson", tier="verified", project_folder=str(project))
+    eng.add_decision(
+        "Frozen clock decision", choice="Deterministic", tier="verified",
+        project_folder=str(project),
+    )
+
+    first = eng.build_project_resume_pack(project_folder=str(project), digest_limit=2, knowledge_limit=3)
+    second = eng.build_project_resume_pack(project_folder=str(project), digest_limit=2, knowledge_limit=3)
+
+    assert first == second
+    assert frozen["calls"] >= 2  # the clock was actually consulted per build
+
+
+def test_resume_pack_real_clock_only_declared_volatile_fields_differ(tmp_path):
+    """Under the real clock, repeated builds may differ ONLY in the declared
+    volatile field (handoff.generated_at). Any other drift is a regression."""
+    eng = _eng(tmp_path)
+    project = _project(tmp_path)
+    eng.save_project_snapshot(str(project), {"title": "Volatile Field Project", "stage": "M2"})
+    _save_digest_session(eng, project, session_id="sess-volatile")
+    eng.add_lesson("Volatile field lesson", tier="verified", project_folder=str(project))
+
+    first = eng.build_project_resume_pack(project_folder=str(project))
+    second = eng.build_project_resume_pack(project_folder=str(project))
+
+    if first != second:
+        diffs = []
+        for key in set(first) | set(second):
+            if first.get(key) != second.get(key):
+                diffs.append(key)
+        assert diffs == ["handoff"], f"unexpected volatile top-level keys: {diffs}"
+        h1, h2 = first["handoff"], second["handoff"]
+        hk = [k for k in set(h1) | set(h2) if h1.get(k) != h2.get(k)]
+        assert hk == ["generated_at"], f"unexpected volatile handoff keys: {hk}"

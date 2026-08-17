@@ -51,7 +51,14 @@ def test_memory_eval_suite_allows_targeted_agent_context_run() -> None:
 
     assert summary["recall"] == []
     assert summary["admission"] == []
-    assert summary["agent_context_pack"]["overall_passed"] is True
+    pack = summary["agent_context_pack"]
+    assert pack["overall_passed"] is True, (
+        "agent_context_pack failed; per-case checks: "
+        + json.dumps(
+            [c for c in pack.get("cases", []) if not c.get("passed")],
+            ensure_ascii=False,
+        )
+    )
 
 
 def test_memory_eval_suite_agent_context_pack_ignores_live_engram_dir(
@@ -213,8 +220,24 @@ def test_memory_eval_suite_cli_json_and_output_file(tmp_path: Path) -> None:
         encoding="utf-8",
         env=env,
         capture_output=True,
-        check=True,
     )
+    if result.returncode != 0:
+        # The child stdout carries the full JSON with per-case check booleans;
+        # surface it instead of a bare CalledProcessError so an intermittent
+        # failure is diagnosable from the log alone.
+        failed_cases = ""
+        try:
+            payload_dbg = json.loads(result.stdout)
+            failed_cases = json.dumps(
+                payload_dbg.get("agent_context_pack", {}).get("cases", []),
+                ensure_ascii=False,
+            )
+        except Exception:
+            failed_cases = result.stdout[-2000:]
+        raise AssertionError(
+            f"run_memory_evals exited {result.returncode}; "
+            f"stderr tail: {result.stderr[-500:]}; cases: {failed_cases}"
+        )
 
     payload = json.loads(result.stdout)
     written = json.loads(output.read_text(encoding="utf-8"))

@@ -105,7 +105,34 @@ Session Markdown remains the human-readable local record. The digest sidecar is 
 | [`audit.py`](../src/piia_engram/audit.py) | ~54 | `AuditLogger` — default-on local audit trail to `~/.engram/audit.log` (opt out with `ENGRAM_AUDIT=0`) |
 | [`stats.py`](../src/piia_engram/stats.py) | ~157 | `piia-engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
 | `src/piia_engram/runtime_capabilities.py` | ~130 | Content-free runtime capability manifest, stable contract fingerprint, and compatibility handshake used by CLI and MCP doctor |
-| [`embedded/`](../src/piia_engram/embedded/) | ~700 | Embedded-host facade (phase 1): contract handshake, capability witness, bounded zero-store-write task-context snapshots for in-process hosts ([contract doc](embedded-host-facade.md)) |
+| [`embedded/`](../src/piia_engram/embedded/) | ~700 |
+
+
+### Project identity rules (`storage.py`)
+
+Project ids anchor project-scoped knowledge. The rules are contracts, each
+pinned by `tests/test_project_scope_resume_cycle.py` and
+`tests/test_project_identity_matrix.py`:
+
+- **Git-anchored when possible**: for an existing folder, the id derives from
+  the first `.git` found walking upward (worktrees resolve through
+  `commondir` to the shared repo). Be aware that a `.git` in a high ancestor
+  (e.g. a dotfiles-managed home directory) will fold every project beneath it
+  onto one id.
+- **Existing file → parent**: a path that is an existing FILE is treated as
+  its parent directory.
+- **Symlinks dereference**: identity follows the target's location; a broken
+  symlink falls back like a nonexistent path.
+- **Nonexistent / non-native path strings never inherit a repo**: they fall
+  back to the path-hash key (this was a real cross-platform defect class —
+  see the v4.15.0 release notes).
+- **Malformed `.git` files are skipped** (the walk continues upward); an
+  empty/malformed `commondir` falls back to the worktree's own gitdir.
+- **The legacy path-key is case-folded** (whole path lowercased): case-only
+  spellings share one id on every platform.
+- The legacy path-hash id stays readable as a read-only alias; no records are
+  ever rewritten.
+ Embedded-host facade (phase 1): contract handshake, capability witness, bounded zero-store-write task-context snapshots for in-process hosts ([contract doc](embedded-host-facade.md)) |
 
 ### Why this shape?
 

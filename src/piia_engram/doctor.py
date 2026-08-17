@@ -1144,7 +1144,10 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         )
         for warning in footprint["warnings"]:
             W._safe_print(f"    [--] {warning}")
-        if fix and footprint["warnings"]:
+        if fix:
+            # maintenance is idempotent (rotate-oversized + prune-to-cap);
+            # running it regardless of warnings keeps prune/rotation from
+            # being gated on footprint thresholds
             for action in apply_store_maintenance(eng.root):
                 W._safe_print(f"    [fixed] {action}")
     except Exception as exc:

@@ -29,6 +29,23 @@ from .storage import _atomic_write_json, _project_id, _project_id_aliases
 logger = logging.getLogger(__name__)
 
 
+def _utc_now_iso_seconds() -> str:
+    """Current UTC time as an ISO-8601 second-resolution string.
+
+    Pack assembly stamps ``handoff.generated_at`` through this helper so tests
+    can freeze the clock: the pack is asserted dict-equal across repeated
+    builds, and a wall-clock second boundary between two builds would break
+    that equality (root cause of the resume-pack flake). Injected via
+    monkeypatching this module function; production reads the real clock.
+    """
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
 def _sanitize_tool_name(name: str) -> str:
     """Normalize tool name for filesystem use."""
     return name.strip().lower().replace(" ", "_").replace("/", "_")
@@ -925,10 +942,7 @@ class ContextStoreMixin:
                 "last_completed": completed[:8],
                 "next_actions": next_actions[:8],
                 "blocked_on": blocked_on[:5],
-                "generated_at": datetime.now(timezone.utc)
-                .replace(microsecond=0)
-                .isoformat()
-                .replace("+00:00", "Z"),
+                "generated_at": _utc_now_iso_seconds(),
                 "source_generated_at": source_generated_at,
                 "source_session": source_session,
                 "source_scope": source_scope,

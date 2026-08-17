@@ -51,6 +51,22 @@ python -m pytest tests/ -v
 
 All PRs must maintain a passing suite with zero failures.
 
+If your machine has a machine-wide `ENGRAM_DIR` (or another ambient store
+configuration), run the suite inside an isolated venv so nothing can touch a
+real store even before the test-suite's own seals apply:
+
+```bash
+python -m venv --system-site-packages .venv
+.venv/Scripts/python -m pip install pytest   # or .venv/bin/python on POSIX
+.venv/Scripts/python -m pip install -e . --no-deps
+ENGRAM_TEST=1 ENGRAM_DIR=<temp dir> .venv/Scripts/python -m pytest tests/ -q
+```
+
+Note for Windows developers: platform-sensitive behavior (paths, identity
+derivation, content hashing) is exercised by CI on Linux/macOS too — a green
+local run on one OS is not full evidence. `wsl -e bash -c "cd $(pwd) && ..."`
+is a cheap second platform before pushing.
+
 For retrieval quality benchmarks (requires test data setup):
 ```bash
 python experiments/benchmarks/run_benchmarks.py

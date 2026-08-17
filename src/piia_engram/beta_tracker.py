@@ -70,6 +70,8 @@ def track_event(event: str, **data: Any) -> None:
                 entry["d"] = safe
         path = _events_path()
         path.parent.mkdir(parents=True, exist_ok=True)
+        from .file_safety import rotate_if_oversized, LEDGER_MAX_BYTES
+        rotate_if_oversized(path, LEDGER_MAX_BYTES)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
     except Exception as exc:

@@ -461,14 +461,24 @@ class Engram(
                 return
             backups = sorted(
                 (p for p in bdir.iterdir() if p.is_dir() and p.name.startswith("engram-")),
-                key=lambda p: p.stat().st_mtime,
+                # name-embedded timestamp+pid breaks mtime ties deterministically
+                key=lambda p: (p.stat().st_mtime, p.name),
                 reverse=True,
             )
             newest_per_version: dict[str, Path] = {}
             doomed: list[Path] = []
+            import re as _re
+            # dir names: engram-<version>-<YYYYMMDD-HHMMSS-ffffff-pid>; the
+            # version itself may contain dashes (e.g. 4.15.0-rc1), so cut at
+            # the timestamp segment instead of splitting on every dash
+            _name_re = _re.compile(r"^engram-(.+?)-\d{8}-\d{6}-")
             for p in backups:  # newest first
-                parts = p.name.split("-")
-                version = parts[1] if len(parts) > 1 else p.name
+                m = _name_re.match(p.name)
+                if m:
+                    version = m.group(1)
+                else:
+                    parts = p.name.split("-")
+                    version = parts[1] if len(parts) > 1 else p.name
                 if version in newest_per_version:
                     doomed.append(p)  # older duplicate of a kept version
                 elif len(newest_per_version) >= keep:
@@ -1471,6 +1481,7 @@ class Engram(
         detail: str = "",
         source_tool: str = "",
         source_url: str = "",
+        _audit_metadata_only: bool = False,
         **extra: Any,
     ) -> dict:
         """Add a lesson learned.
@@ -1604,11 +1615,20 @@ class Engram(
             return result
 
         summary = new_lesson.get("summary", "")
-        self._audit.log(
-            "write", "knowledge/lessons",
-            detail=f"[{_gate_note}] {summary[:100]}",
-            source_tool=new_lesson.get("source_tool", ""),
-        )
+        if _audit_metadata_only:
+            # unsupervised transcript-derived capture: the audit trail carries
+            # category + gate only, never item text (B-F1 privacy contract)
+            self._audit.log(
+                "write", "knowledge/lessons",
+                detail=f"[{_gate_note}] [metadata-only]",
+                source_tool=new_lesson.get("source_tool", ""),
+            )
+        else:
+            self._audit.log(
+                "write", "knowledge/lessons",
+                detail=f"[{_gate_note}] {summary[:100]}",
+                source_tool=new_lesson.get("source_tool", ""),
+            )
         if new_lesson.get("domain"):
             for _d in new_lesson["domain"].split(","):
                 _d = _d.strip()
@@ -1769,6 +1789,7 @@ class Engram(
         alternatives: list[str] | None = None,
         source_tool: str = "",
         project: str = "",
+        _audit_metadata_only: bool = False,
         **extra: Any,
     ) -> dict:
         """Record a key decision.
@@ -1917,11 +1938,18 @@ class Engram(
         if result.get("status") == "duplicate":
             return result
         title = new_decision.get("question", "") or new_decision.get("title", "")
-        self._audit.log(
-            "write", "knowledge/decisions",
-            detail=f"[{_gate_note}] {title[:100]}",
-            source_tool=new_decision.get("source_tool", ""),
-        )
+        if _audit_metadata_only:
+            self._audit.log(
+                "write", "knowledge/decisions",
+                detail=f"[{_gate_note}] [metadata-only]",
+                source_tool=new_decision.get("source_tool", ""),
+            )
+        else:
+            self._audit.log(
+                "write", "knowledge/decisions",
+                detail=f"[{_gate_note}] {title[:100]}",
+                source_tool=new_decision.get("source_tool", ""),
+            )
 
         # Auto-supersedes: build a directed edge in the decision thread.
         # Priority: (1) explicit ``supersedes`` field in the input,

@@ -34,11 +34,15 @@ def store_footprint(
     audit = _size(root / "audit.log")
     backups = _size(root / "backups")
     contexts = _size(root / "contexts")
+    telemetry = _size(root / "telemetry.log")
+    beta_events = _size(root / "beta_events.jsonl")
     report = {
         "ledger_bytes": ledger,
         "audit_bytes": audit,
         "backups_bytes": backups,
         "contexts_bytes": contexts,
+        "telemetry_bytes": telemetry,
+        "beta_events_bytes": beta_events,
         "total_bytes": _size(root),
         "warnings": [],
     }
@@ -49,6 +53,14 @@ def store_footprint(
     if audit > log_warn_bytes:
         report["warnings"].append(
             f"audit.log is {audit // _MB}MB; run 'engram doctor --fix' to rotate"
+        )
+    if telemetry > log_warn_bytes:
+        report["warnings"].append(
+            f"telemetry.log is {telemetry // _MB}MB; run 'engram doctor --fix' to rotate"
+        )
+    if beta_events > log_warn_bytes:
+        report["warnings"].append(
+            f"beta_events.jsonl is {beta_events // _MB}MB; run 'engram doctor --fix' to rotate"
         )
     if backups > backups_warn_bytes:
         report["warnings"].append(
@@ -89,6 +101,10 @@ def apply_store_maintenance(root: Path) -> list[str]:
         actions.append("rotated file_safety_ledger.jsonl")
     if file_safety.rotate_if_oversized(root / "audit.log", audit_mod.AUDIT_MAX_BYTES):
         actions.append("rotated audit.log")
+    if file_safety.rotate_if_oversized(root / "telemetry.log", file_safety.LEDGER_MAX_BYTES):
+        actions.append("rotated telemetry.log")
+    if file_safety.rotate_if_oversized(root / "beta_events.jsonl", file_safety.LEDGER_MAX_BYTES):
+        actions.append("rotated beta_events.jsonl")
 
     from .core import Engram
 

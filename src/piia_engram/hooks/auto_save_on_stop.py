@@ -64,6 +64,9 @@ def main() -> None:
     # can itself fire SessionEnd/PreCompact in a child process, which
     # would loop infinitely. ``CLAUDE_INVOKED_BY=engram_*`` is set by the
     # parent hook command to break the recursion cycle.
+    # Recursion is BOUNDED AT DEPTH TWO by design: an engram_* child runs
+    # once (upgraded to engram_recursive), and only that child's own child
+    # returns immediately. One nested save is accepted; infinite loops are not.
     if os.environ.get("CLAUDE_INVOKED_BY", "").startswith("engram_"):
         if os.environ.get("CLAUDE_INVOKED_BY") == "engram_recursive":
             return
@@ -171,19 +174,42 @@ def main() -> None:
         )
 
         if msg_count >= _flush_threshold():
+            # checkpoint_content above stays metadata-only by construction.
+            # The extraction summary may additionally carry an OPT-IN
+            # sanitized assistant-text digest (hook_content_digest preference,
+            # default off; privacy contract in piia_engram.hook_digest).
             summary = f"Claude Code 会话 ({duration_str}, {msg_count} 消息)\n"
             summary += f"工作目录: {cwd}\n"
             if tool_calls:
                 summary += f"使用工具: {', '.join(tool_calls[:20])}\n"
+            digest_appended = False
+            try:
+                from piia_engram.hook_digest import (
+                    PREFERENCE_KEY,
+                    build_digest,
+                    digest_enabled,
+                    read_transcript_lines,
+                )
+
+                prefs = engram.get_preferences()
+                if digest_enabled(prefs.get(PREFERENCE_KEY)) and transcript_path:
+                    digest = build_digest(read_transcript_lines(transcript_path))
+                    if digest:
+                        summary = summary + "\n" + digest
+                        digest_appended = True
+            except Exception as exc:
+                log_failure("auto_save_on_stop", "content digest build failed", exc)
             try:
                 # Unsupervised background writeback: force_staging keeps every
-                # extracted item behind owner review (trust-model contract).
+                # extracted item behind owner review (trust-model contract);
+                # a digest-carrying call also runs the output privacy guard.
                 engram.extract_session_insights(
                     summary,
                     source_tool="claude_code",
                     source_ref=session_id,
                     force_staging=True,
                     project_folder=cwd or "",
+                    capture_origin="hook_content_digest" if digest_appended else "",
                 )
             except Exception as exc:
                 log_failure("auto_save_on_stop", "extract_session_insights failed", exc)

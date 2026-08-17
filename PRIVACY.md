@@ -38,6 +38,31 @@ Default implementation: local files only. Telemetry is off by default; when enab
 
 All files are plain JSON. You can open, edit, back up, or delete them at any time.
 
+## Session-end content digest (opt-in, default off)
+
+The Claude Code session-end hook can additionally feed a sanitized digest of
+the conversation's assistant text into local knowledge extraction. This is
+**off by default** and only enables when the `hook_content_digest` preference
+is literally `true`. When enabled:
+
+- only assistant text blocks are read from the local transcript — user
+  messages and tool input/output are never collected;
+- text is filtered (code fences, quotes, XML envelopes dropped), normalized,
+  and scrubbed of credential/path/PII shapes before use, under hard size
+  budgets;
+- extracted items are staged for your review, never auto-verified;
+- the audit trail records category + counts only (no item text);
+- every candidate is checked by an output guard before it is stored;
+  anything secret-shaped is dropped, not stored.
+
+Residual risks you accept when opting in (phase 1 limits): the filters are
+shape-based, not semantic — names, business secrets, or unusual secret
+formats without a recognizable shape can pass into staged items; staged items
+are included in full local backups/exports you create; and the output guard
+is deliberately over-broad, so legitimate content hashes or checksums in a
+session may cause some candidate items to be dropped. Review staged items
+with `engram review` and delete anything unwanted.
+
 ## Network requests
 
 ### Default identity and knowledge tools: zero network requests

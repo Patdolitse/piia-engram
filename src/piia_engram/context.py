@@ -725,6 +725,7 @@ class ContextMixin:
         source_ref: str = "",
         force_staging: bool = False,
         project_folder: str = "",
+        capture_origin: str = "",
     ) -> dict:
         """Extract lessons and decisions from a free-form session summary.
 
@@ -733,6 +734,12 @@ class ContextMixin:
         ``force_staging=True`` for fully-unsupervised background capture paths
         (e.g. the opt-in cross-tool writeback hooks) where every captured item
         should land in staging for explicit owner review regardless of risk.
+
+        ``capture_origin="hook_content_digest"`` marks transcript-derived
+        unsupervised input: every candidate passes an output privacy guard
+        BEFORE any persistence (a hit drops the item, counted only), item
+        text never enters the audit log (metadata-only), and extraction
+        metadata carries no evidence span.
         """
         if not summary or not summary.strip():
             return {
@@ -741,6 +748,7 @@ class ContextMixin:
                 "duplicates": 0,
                 "skipped": 0,
                 "skipped_low_quality": 0,
+                "rejected_by_output_guard": 0,
                 "rejected_quality": _empty_rejected_quality_summary(),
                 "results": [],
             }
@@ -748,6 +756,7 @@ class ContextMixin:
         candidate_summary = strip_session_noise_blocks(summary)
         sentences = re.split(r"[。！？.!?\n]+", candidate_summary)
         saved_lessons = saved_decisions = duplicates = skipped = skipped_low_quality = 0
+        rejected_by_output_guard = 0
         rejected_quality = _empty_rejected_quality_summary()
         results = []
 
@@ -867,6 +876,25 @@ class ContextMixin:
                 })
                 continue
 
+            if capture_origin == "hook_content_digest":
+                from .hook_digest import output_guard_item
+
+                # guard exactly the fields that would be persisted as item
+                # text (the raw summary is not persisted and must not nuke
+                # clean candidates from other sentences)
+                guard_ok, guard_reason = output_guard_item({
+                    "sentence": sentence,
+                })
+                if not guard_ok:
+                    skipped += 1
+                    rejected_by_output_guard += 1
+                    results.append({
+                        "type": candidate_type,
+                        "status": "skipped",
+                        "reason": guard_reason,
+                    })
+                    continue
+
             item_domain = self._infer_domain(sentence)
             if is_decision:
                 _payload = {
@@ -884,12 +912,21 @@ class ContextMixin:
                     ),
                     # tier decided by risk gate: low/medium auto-absorb, high->staging
                     "extraction": _make_extraction_metadata(
-                        "session_insights", sentence, trigger_reason, source_tool, 0.75, quality,
+                        "session_insights",
+                        "" if capture_origin == "hook_content_digest" else sentence,
+                        trigger_reason,
+                        source_tool,
+                        0.75,
+                        quality,
                     ),
                 }
                 if force_staging:
                     _payload["tier"] = "staging"
-                result = self.add_decision(_payload, _allow_internal_provenance=True)
+                result = self.add_decision(
+                    _payload,
+                    _allow_internal_provenance=True,
+                    _audit_metadata_only=capture_origin == "hook_content_digest",
+                )
                 if result.get("status") == "duplicate":
                     duplicates += 1
                     results.append({
@@ -922,12 +959,21 @@ class ContextMixin:
                     ),
                     # tier decided by risk gate: low/medium auto-absorb, high->staging
                     "extraction": _make_extraction_metadata(
-                        "session_insights", sentence, trigger_reason, source_tool, 0.75, quality,
+                        "session_insights",
+                        "" if capture_origin == "hook_content_digest" else sentence,
+                        trigger_reason,
+                        source_tool,
+                        0.75,
+                        quality,
                     ),
                 }
                 if force_staging:
                     _payload["tier"] = "staging"
-                result = self.add_lesson(_payload, _allow_internal_provenance=True)
+                result = self.add_lesson(
+                    _payload,
+                    _allow_internal_provenance=True,
+                    _audit_metadata_only=capture_origin == "hook_content_digest",
+                )
                 if result.get("status") == "duplicate":
                     duplicates += 1
                     results.append({
@@ -952,6 +998,7 @@ class ContextMixin:
             "duplicates": duplicates,
             "skipped": skipped,
             "skipped_low_quality": skipped_low_quality,
+            "rejected_by_output_guard": rejected_by_output_guard,
             "rejected_quality": rejected_quality,
             "results": results,
         }

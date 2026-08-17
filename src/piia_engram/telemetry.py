@@ -847,6 +847,8 @@ def log_payload(payload: dict[str, Any]) -> Path:
     """
     log_file = _log_path()
     log_file.parent.mkdir(parents=True, exist_ok=True)
+    from .file_safety import rotate_if_oversized, LEDGER_MAX_BYTES
+    rotate_if_oversized(log_file, LEDGER_MAX_BYTES)
     line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(line + "\n")
