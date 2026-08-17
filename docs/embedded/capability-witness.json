@@ -17,10 +17,10 @@
   "schema": "engram.embedded_capability_witness.v1",
   "snapshot_schema": "engram.embedded_task_context_snapshot.v1",
   "source_digests": {
-    "embedded/__init__.py": "a3f2ea9e38acd0ce92badca1bbc8c8f619ce6143715195a35a759c90f6da47e3",
-    "embedded/contract.py": "61bed51644feda1ac79dfae3ccd53f31a4eda0a5ffe572c818ab242a390692b8",
-    "embedded/handshake.py": "b31c6713a4704efe414ba6dcf36b85a40416179b6c9e40a946fdef29451d3262",
-    "embedded/snapshot.py": "79513b834ce75be585e6540308f35070d456e7d68648443fc408aa2b6f58b83c"
+    "embedded/__init__.py": "55c80b08febed2f465537240e9c9a32f6c9da7215411778d88e68d344ddc9981",
+    "embedded/contract.py": "4aa7342b6b3277cb41145fa53f2a10a4cf3b9b52627613b32081163822818ead",
+    "embedded/handshake.py": "4d98f06f9989a3b10eea7bc509878983b6f361e491971f61845708f4231c9560",
+    "embedded/snapshot.py": "7b6d45c58a7e797e94d6e6fe7432ae50f7b1724fd63a76d99131440f3aff8517"
   },
-  "witness_hash": "9163405a24018c90f334603bc1197ab08918f30aee3f8d1184c92da585187911"
+  "witness_hash": "52050f68dfa753d4e4c83f85abf0d85c0f33f1f32806cc2f3ee5f182e9d4968a"
 }

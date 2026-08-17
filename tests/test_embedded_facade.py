@@ -522,3 +522,24 @@ def test_retrieval_hostile_inputs_never_leak_or_crash(store, project, over):
             assert raw[:40] not in message
         return
     validate_snapshot(snapshot)
+
+
+def test_source_digests_are_line_ending_normalized():
+    """A witness generated on a CRLF checkout must verify on an LF checkout.
+
+    Regression: raw-byte digests made the checked-in witness platform-
+    dependent (generated on Windows, drifted on Linux CI before the
+    v4.16.0 release - caught by the new CI witness guard).
+    """
+    import tempfile
+
+    from piia_engram.embedded.contract import _normalized_source_bytes
+
+    with tempfile.TemporaryDirectory(prefix="engram-witness-norm-") as tmp:
+        base = Path(tmp)
+        lf = base / "lf.py"
+        crlf = base / "crlf.py"
+        body = b"print('line one')\nprint('line two')\n"
+        lf.write_bytes(body)
+        crlf.write_bytes(body.replace(b"\n", b"\r\n"))
+        assert _normalized_source_bytes(lf) == _normalized_source_bytes(crlf) == body

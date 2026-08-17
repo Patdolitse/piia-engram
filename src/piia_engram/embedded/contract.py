@@ -77,13 +77,25 @@ def _runtime_version() -> str:
         return "unknown"
 
 
+def _normalized_source_bytes(path: Path) -> bytes:
+    """File bytes with CRLF folded to LF.
+
+    Source digests must be stable across platforms: a Windows checkout with
+    autocrlf holds CRLF bytes where a Linux checkout holds LF, and hashing raw
+    bytes would make a witness generated on one platform fail verification on
+    the other (caught by CI before the v4.16.0 release). Line endings are not
+    behaviour; the digest normalizes them away.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def _source_digests() -> dict[str, str]:
     base = Path(__file__).resolve().parent.parent
     digests: dict[str, str] = {}
     for relative in WITNESSED_SOURCES:
         path = base / relative
         try:
-            digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+            digests[relative] = hashlib.sha256(_normalized_source_bytes(path)).hexdigest()
         except OSError:
             digests[relative] = "unreadable"
     return dict(sorted(digests.items()))
