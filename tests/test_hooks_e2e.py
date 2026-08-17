@@ -24,11 +24,15 @@ def _run_hook(module: str, payload: dict, store: Path, cwd: Path) -> subprocess.
     env = dict(os.environ, ENGRAM_DIR=str(store), ENGRAM_AUDIT="0", PYTHONIOENCODING="utf-8")
     env.pop("ENGRAM_TEST", None)
     env.pop("CLAUDE_INVOKED_BY", None)
+    # encoding must be explicit: the hooks emit UTF-8 (CJK briefs) and the
+    # Windows default cp1252 decode raises on CI runners
     return subprocess.run(
         [sys.executable, "-m", module],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         timeout=180,
         cwd=str(cwd),
