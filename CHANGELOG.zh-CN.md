@@ -6,6 +6,13 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.16.0] - 2026-08-17
+
+### 新增
+- 嵌入式宿主门面（phase 1）：进程内宿主现在可以按契约（而不是版本字符串）准入本运行时。`piia_engram.embedded` 提供失败即关闭的握手（`require_compatible`）、对源码摘要可验证的无内容能力见证，以及零存储写入的有界任务上下文快照（仅关键词检索、公开等价投影）。契约、phase-1 边界与见证见 `docs/embedded-host-facade.md`。
+- 门面表面由两个签入工件钉住并在 CI 验证：语义契约清单（`scripts/check_embedded_contract.py`）与随包能力见证（`docs/embedded/capability-witness.json`）；任何门面漂移都会让 CI 失败，直至显式更新，标识符变更必须伴随契约版本号提升。
+- 运行时能力清单绑定门面标识符（`embedded_host_facade`、`embedded_task_context_snapshot`），两个兼容性平面保持一致。
+
 ## [4.15.0] - 2026-08-16
 
 ### 新增

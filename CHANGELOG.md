@@ -6,6 +6,13 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.16.0] - 2026-08-17
+
+### Added
+- Embedded-host facade (phase 1): an in-process host can now admit this runtime by contract instead of version string. `piia_engram.embedded` exposes a fail-closed handshake (`require_compatible`), a content-free capability witness verified against live source digests, and bounded task-context snapshots with zero store writes (keyword-only retrieval, public-equivalent projection). See `docs/embedded-host-facade.md` for the contract, the phase-1 boundary, and the witness.
+- The facade surface is pinned by two checked-in artifacts verified in CI: a semantic contract manifest (`scripts/check_embedded_contract.py`) and the shipped capability witness (`docs/embedded/capability-witness.json`); any facade drift fails CI until consciously updated, and identifier changes require a contract version bump.
+- The runtime capability manifest now binds the embedded facade identifiers (`embedded_host_facade`, `embedded_task_context_snapshot`), keeping the two compatibility surfaces consistent.
+
 ## [4.15.0] - 2026-08-16
 
 ### Added

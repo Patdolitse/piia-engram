@@ -105,6 +105,7 @@ Session Markdown remains the human-readable local record. The digest sidecar is 
 | [`audit.py`](../src/piia_engram/audit.py) | ~54 | `AuditLogger` — default-on local audit trail to `~/.engram/audit.log` (opt out with `ENGRAM_AUDIT=0`) |
 | [`stats.py`](../src/piia_engram/stats.py) | ~157 | `piia-engram stats` CLI — GitHub release / PyPI download counters + `--log` snapshot |
 | `src/piia_engram/runtime_capabilities.py` | ~130 | Content-free runtime capability manifest, stable contract fingerprint, and compatibility handshake used by CLI and MCP doctor |
+| [`embedded/`](../src/piia_engram/embedded/) | ~700 | Embedded-host facade (phase 1): contract handshake, capability witness, bounded zero-store-write task-context snapshots for in-process hosts ([contract doc](embedded-host-facade.md)) |
 
 ### Why this shape?
 
