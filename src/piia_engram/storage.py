@@ -615,34 +615,44 @@ def _git_common_dir_for_folder(folder: str) -> Path | None:
         current = Path(raw).resolve()
     except OSError:
         current = Path(raw).expanduser().absolute()
-    if current.is_file():
-        current = current.parent
-    if not current.exists():
+    try:
+        if current.is_file():
+            current = current.parent
+        if not current.exists():
+            return None
+    except OSError:
         return None
 
     for candidate in (current, *current.parents):
         marker = candidate / ".git"
-        if marker.is_dir():
-            return marker.resolve()
-        if marker.is_file():
-            gitdir = _read_gitdir_file(marker)
-            if gitdir is None:
-                continue
-            common_file = gitdir / "commondir"
-            if common_file.is_file():
-                try:
-                    common_raw = common_file.read_text(
-                        encoding="utf-8",
-                        errors="ignore",
-                    ).strip()
-                except OSError:
-                    common_raw = ""
-                if common_raw:
-                    common = Path(common_raw)
-                    if not common.is_absolute():
-                        common = (gitdir / common).resolve()
-                    return common.resolve()
-            return gitdir.resolve()
+        try:
+            if marker.is_dir():
+                return marker.resolve()
+            if marker.is_file():
+                gitdir = _read_gitdir_file(marker)
+                if gitdir is None:
+                    continue
+                common_file = gitdir / "commondir"
+                if common_file.is_file():
+                    try:
+                        common_raw = common_file.read_text(
+                            encoding="utf-8",
+                            errors="ignore",
+                        ).strip()
+                    except OSError:
+                        common_raw = ""
+                    if common_raw:
+                        common = Path(common_raw)
+                        if not common.is_absolute():
+                            common = (gitdir / common).resolve()
+                        return common.resolve()
+                return gitdir.resolve()
+        except OSError:
+            # Path.is_dir()/is_file() propagate EACCES on POSIX (only ENOENT
+            # is swallowed): an unreadable directory in the walk path means
+            # "no usable anchor here", never a crash for the caller. The
+            # walk continues upward like any malformed marker.
+            continue
     return None
 
 
