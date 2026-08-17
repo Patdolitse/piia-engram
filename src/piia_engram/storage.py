@@ -134,6 +134,7 @@ _ALLOWED_PROFILE_FIELDS: frozenset = frozenset({
 _ALLOWED_PREFERENCES_FIELDS: frozenset = frozenset({
     "work_patterns", "communication", "tool_preferences",
     "playbook_auto_extract",
+    "hook_content_digest",
     "updated_at", "migrated_from",
 })
 _ALLOWED_TRUST_FIELDS: frozenset = frozenset({
@@ -625,10 +626,28 @@ def _git_common_dir_for_folder(folder: str) -> Path | None:
 
     for candidate in (current, *current.parents):
         marker = candidate / ".git"
+        # Probe the marker with an explicit stat and discriminate by errno.
+        # Path.is_dir()/is_file() are version-dependent here: Python <=3.12
+        # propagates EACCES, Python >=3.13 swallows ALL OSError and returns
+        # False — which would silently continue the walk into an unrelated
+        # ancestor repo on unreadable directories. Only a genuinely ABSENT
+        # marker (ENOENT/ENOTDIR/EBADF/ELOOP) may continue the walk; anything
+        # undecidable (EACCES/EPERM/EIO/...) aborts to the path-hash identity.
+        import errno as _errno
+        import stat as _stat
+
         try:
-            if marker.is_dir():
+            marker_mode = marker.stat().st_mode
+        except OSError as exc:
+            if exc.errno in (
+                _errno.ENOENT, _errno.ENOTDIR, _errno.EBADF, _errno.ELOOP,
+            ):
+                continue  # no marker here — keep walking up
+            return None  # undecidable marker — never inherit an ancestor
+        try:
+            if _stat.S_ISDIR(marker_mode):
                 return marker.resolve()
-            if marker.is_file():
+            if _stat.S_ISREG(marker_mode):
                 gitdir = _read_gitdir_file(marker)
                 if gitdir is None:
                     continue
@@ -648,11 +667,8 @@ def _git_common_dir_for_folder(folder: str) -> Path | None:
                         return common.resolve()
                 return gitdir.resolve()
         except OSError:
-            # Path.is_dir()/is_file() propagate EACCES on POSIX (only ENOENT
-            # is swallowed): an unreadable directory in the walk path means
-            # "no usable anchor here", never a crash for the caller. The
-            # walk continues upward like any malformed marker.
-            continue
+            # undecidable deeper in resolution — same fail-safe rule
+            return None
     return None
 
 

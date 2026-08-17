@@ -961,6 +961,7 @@ class RetrievalMixin:
 
     def get_relevant_lessons(self, project_folder: str | None = None,
                              limit: int = 8,
+                             tier: str | None = None,
                              _update_access: bool = True) -> list[dict]:
         """根据项目技术栈智能筛选教训：相关领域优先，兼顾通用教训。
 
@@ -974,6 +975,7 @@ class RetrievalMixin:
         all_lessons = self.get_lessons(
             limit=MAX_KNOWLEDGE_ENTRIES,
             project_folder=project_folder,
+            tier=tier,
             _update_access=_update_access,
         )
         if not all_lessons:

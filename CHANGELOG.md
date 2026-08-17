@@ -8,6 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [4.17.0] - 2026-08-17
 
+> **Erratum (2026-08-18):** the content-digest feature below shipped with
+> three defects fixed in 4.17.1 — the digest reader read zero blocks from
+> real transcripts (synthetic-shape parser), the `hook_content_digest`
+> preference could not be enabled through the public API, and a cross-line
+> secret pair could reach staging. The opt-in default-off gate worked as
+> designed, so no enabled deployment existed. Also: project identity
+> derivation no longer crashes on unreadable directories (POSIX EACCES),
+> fixed within the 4.17.0 window.
+
+### Fixed (within 4.17.0)
+- Project identity derivation no longer raises on unreadable directories on POSIX (EACCES from stat propagation), found by the identity matrix on a non-root CI runner.
+
+
 ### Added
 - **Opt-in session-end content digest** (`hook_content_digest`, default off): the Claude Code stop hook can feed a sanitized digest of assistant text into knowledge extraction, fixing the structural no-op where metadata-only summaries never passed the quality gate. Assistant text only (user messages and tool IO are never collected), frozen transcript schema, stateful fence/quote cleaning, NFKC + zero-width normalization, composed redaction, hard budgets, a whole-digest rescan, an output guard that drops secret-shaped candidates before any write, metadata-only auditing, and a canary suite covering obfuscated/boundary-straddling shapes. See PRIVACY.md for phase-1 residual risks.
 - End-to-end hook tests: the real stop/start hook entry points now run as subprocesses in the suite (previously only reflection and source-string tripwires guarded them).

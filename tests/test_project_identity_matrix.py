@@ -116,13 +116,19 @@ def test_unreadable_directory_falls_back_without_inheriting_ancestors(tmp_path):
         pytest.skip("cannot drop permissions")
     try:
         # CONTRACT: identity derivation must never RAISE for an unreadable
-        # directory (CPython Path.is_dir() propagates EACCES), and must stay
-        # deterministic. The unreadable own .git is treated like a malformed
-        # marker: the walk continues upward and may inherit the ancestor
-        # repo anchor — that is the documented skip rule, not a leak.
+        # directory (CPython Path.is_dir() propagates EACCES), must stay
+        # deterministic, and must NOT inherit the ancestor repo identity —
+        # an undecidable marker aborts the walk to the path-hash identity
+        # rather than silently merging into an unrelated repo.
         first = _project_id(str(secret))
         second = _project_id(str(secret))
         assert first == second
+        assert first != _project_id(str(repo))
+        anchor = _git_common_dir_for_folder(str(secret))
+        # undecidable (None) for unprivileged users; for privileged users the
+        # marker stays readable and MUST anchor to the folder's own .git,
+        # never to an ancestor
+        assert anchor is None or anchor == (secret / ".git").resolve()
     finally:
         os.chmod(secret, 0o755)
 

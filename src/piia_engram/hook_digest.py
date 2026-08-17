@@ -79,6 +79,13 @@ _ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufe
 # stateful fence stripping (applied per text block, never per line)
 _FENCE_OPEN_RE = re.compile(r"^\s*(```|~~~)")
 
+# cross-line secret pairs: a line ENDING with a secret-key form makes the
+# NEXT line a candidate value; per-line scanning cannot see the pair together
+_SECRET_KEY_SUFFIX_RE = re.compile(
+    r"(?i)(?:token|secret|password|passwd|pwd|key|authorization|auth|cookie|bearer|apikey|api_key)\s*[:=]\s*$"
+)
+_VALUEISH_PREFIX_RE = re.compile(r"^[A-Za-z0-9._~+/=-]{8,}")
+
 
 def normalize_text(text: str) -> str:
     """NFKC-fold and drop zero-width/format characters.
@@ -148,11 +155,25 @@ def extract_assistant_text_blocks(transcript_lines: Iterable[str]) -> list[str]:
             continue
         content = None
         if "type" in entry:
-            # the top-level shape is authoritative when present: a
-            # non-assistant outer type must never be rescued by a nested
-            # message.role (forged-role fail-closed rule)
-            if entry.get("type") == "assistant" and isinstance(entry.get("content"), list):
-                content = entry["content"]
+            # The outer type is authoritative when present: a non-assistant
+            # outer type must never be rescued by a nested message.role
+            # (forged-role fail-closed rule).
+            if entry.get("type") == "assistant":
+                # Real Claude Code transcript lines carry BOTH a top-level
+                # type and the payload under message.content (with role);
+                # synthetic writers may put content at the top level. Accept
+                # either location, but a nested location still requires the
+                # nested role to say assistant.
+                if isinstance(entry.get("content"), list):
+                    content = entry["content"]
+                else:
+                    message = entry.get("message")
+                    if (
+                        isinstance(message, dict)
+                        and message.get("role") == "assistant"
+                        and isinstance(message.get("content"), list)
+                    ):
+                        content = message["content"]
         else:
             message = entry.get("message")
             if isinstance(message, dict):
@@ -219,12 +240,25 @@ def build_digest(transcript_lines: Iterable[str]) -> str | None:
     selected = blocks[-MAX_MESSAGES:]
 
     lines_out: list[str] = []
+    prev_line: str = ""
     for block in selected:
         cleaned = clean_block(block)
         for line in cleaned.splitlines():
             line = line.strip()
             if not line:
+                prev_line = ""
                 continue
+            # cross-line secret pair: the previous line ends with a bare
+            # secret-KEY form and this line starts value-like — the value is
+            # secret material even though neither line matches any
+            # single-line pattern
+            if (
+                _SECRET_KEY_SUFFIX_RE.search(prev_line)
+                and _VALUEISH_PREFIX_RE.match(line)
+            ):
+                prev_line = line
+                continue
+            prev_line = line
             sanitized, hit = sanitize_line(line)
             if hit:
                 # a redaction fired; the sanitized result must itself be

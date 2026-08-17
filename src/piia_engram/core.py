@@ -1642,6 +1642,7 @@ class Engram(
         source_tool: str | None = None,
         project_folder: str | None = None,
         limit: int | None = 50,
+        tier: str | None = None,
         _update_access: bool = True,
         _migrate_fields: bool = True,
     ) -> list[dict]:
@@ -1650,6 +1651,8 @@ class Engram(
         result = []
         for lesson in lessons:
             if lesson.get("status") != "active":
+                continue
+            if tier is not None and (lesson.get("tier") or lesson.get("memory_state")) != tier:
                 continue
             if domain:
                 lesson_domains = {d.strip() for d in (lesson.get("domain") or "").split(",") if d.strip()}
@@ -1988,6 +1991,7 @@ class Engram(
         project: str | None = None,
         project_folder: str | None = None,
         domain: str | None = None,
+        tier: str | None = None,
         _update_access: bool = True,
         _migrate_fields: bool = True,
     ) -> list[dict]:
@@ -1996,6 +2000,8 @@ class Engram(
         result = []
         for decision in decisions:
             if decision.get("status") != "active":
+                continue
+            if tier is not None and (decision.get("tier") or decision.get("memory_state")) != tier:
                 continue
             if source_tool and decision.get("source_tool") != source_tool:
                 continue

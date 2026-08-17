@@ -314,3 +314,101 @@ def test_supervised_extraction_path_unchanged(tmp_path, monkeypatch):
     assert "[metadata-only]" not in audit
     lessons = json.loads((root / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
     assert any((i.get("extraction") or {}).get("evidence_span") for i in lessons)
+
+
+# ── v4.17.1 regression classes (terminal-review blockers) ──────────────────
+
+
+def _real_transcript_line(text: str, i: int = 0) -> str:
+    """Real Claude Code shape: top-level type AND payload under message."""
+    return json.dumps({
+        "type": "assistant",
+        "timestamp": f"2026-08-17T12:00:{i:02d}.000Z",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "text", "text": text}],
+        },
+    })
+
+
+def test_real_transcript_shape_is_extracted():
+    """Regression (terminal review): real transcript lines carry BOTH a
+    top-level type and message.content — the exclusive-shape parser read
+    zero blocks from real transcripts (structural no-op)."""
+    blocks = extract_assistant_text_blocks([
+        _real_transcript_line("验证发现：门禁先行可省三轮往返", 1),
+        _real_transcript_line("决定采用线性方案因为保护分支禁 merge", 2),
+    ])
+    assert blocks == [
+        "验证发现：门禁先行可省三轮往返",
+        "决定采用线性方案因为保护分支禁 merge",
+    ]
+
+
+def test_real_transcript_canary_digest_is_clean():
+    lines = [
+        _real_transcript_line(f"deploy token: {FAKE_KEY}", 1),
+        _real_transcript_line("验证发现：门禁先行因为 CI 会拦，实测省三轮", 2),
+    ]
+    digest = build_digest(lines)
+    assert digest is not None
+    assert FAKE_KEY not in digest
+    assert "省三轮" in digest
+
+
+def test_cross_line_secret_pair_is_dropped_in_digest():
+    """Regression (terminal review): token:/value split across two lines is
+    invisible to single-line patterns; the digest must drop the value line."""
+    lines = [
+        _real_transcript_line("the value follows below", 1),
+        _real_transcript_line("api token:\nZmFrZS1zZWNyZXQtdmFsdWUtMDA\nkept tail", 2),
+    ]
+    digest = build_digest(lines)
+    assert digest is not None
+    assert "ZmFrZS1zZWNyZXQtdmFsdWUtMDA" not in digest
+    assert "kept tail" in digest
+
+
+def test_output_guard_window_catches_cross_line_pair():
+    from piia_engram.hook_digest import sanitize_line as _sl  # noqa: F401
+
+    ok, reason = output_guard_item({
+        "sentence": "ZmFrZS1zZWNyZXQtdmFsdWUtMDA",
+        "window": "api token: ZmFrZS1zZWNyZXQtdmFsdWUtMDA",
+    })
+    assert ok is False, "cross-line pair must be caught via the window field"
+
+
+def test_staging_items_never_reach_cold_start_context(tmp_path, monkeypatch):
+    """Regression (terminal review): staged items are unreviewed and must
+    not surface in quick_context / generate_context (verified-only)."""
+    import os
+
+    root = tmp_path / "store"
+    root.mkdir()
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+
+    from piia_engram.core import Engram
+
+    eng = Engram(root=root)
+    eng.add_lesson({
+        "summary": "STAGED-NEVER-SHOW lesson about guardrails",
+        "domain": "testing", "tier": "staging", "status": "active",
+    })
+    eng.add_lesson({
+        "summary": "VERIFIED-SHOWS lesson about guardrails",
+        "domain": "testing", "tier": "verified", "status": "active",
+    })
+    eng.add_decision({
+        "question": "STAGED decision question?",
+        "choice": "STAGED-NEVER-SHOW choice", "tier": "staging", "status": "active",
+    })
+
+    body = eng.generate_context(level="standard")
+    assert "VERIFIED-SHOWS" in body
+    assert "STAGED-NEVER-SHOW" not in body
+
+    eng.refresh_quick_context(level="standard")
+    quick = (root / "quick_context.md").read_text(encoding="utf-8")
+    assert "VERIFIED-SHOWS" in quick
+    assert "STAGED-NEVER-SHOW" not in quick

@@ -156,10 +156,12 @@ def test_stop_hook_optin_digest_stages_items_and_leaks_nothing(tmp_path, project
     builds the sanitized digest, the extraction lands staged items, and NO
     canary appears on any persistent surface."""
     store = tmp_path / "store"
-    (store / "identity").mkdir(parents=True)
-    (store / "identity" / "preferences.json").write_text(
-        '{"hook_content_digest": true}', encoding="utf-8",
-    )
+    store.mkdir()
+    # enable through the PUBLIC preference API — the allowlist is part of
+    # the contract under test (a hand-written JSON file would bypass it)
+    from piia_engram.core import Engram
+
+    Engram(root=store).update_preferences({"hook_content_digest": True})
     fake_key = "s" + "k-FAKE-" + "A1b2C3d4E5f6G7h8I9j0"
     lines = [
         json.dumps({
