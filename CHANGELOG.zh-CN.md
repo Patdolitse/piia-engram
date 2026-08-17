@@ -6,6 +6,19 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.17.1] - 2026-08-18
+
+### 修复
+可选内容摘要的终审阻断项（每项均有在修复前代码上验证为红的回归测试）：
+- **真实 transcript 形态**：真实 Claude Code transcript 行同时带顶层 type 与 `message.content` 载荷；原解析器在真实 transcript 上读到 0 块。现在两种内容位置都被接受（嵌套仍要求 `role: assistant`）。
+- **偏好可经公开 API 写入**：`hook_content_digest` 进入偏好白名单，`update_preferences`/`update_identity` 可开启（此前只能手改 JSON 文件）。
+- **跨行秘密对**：键形态行后跟值行的组合在摘要拼装时被丢弃；提取输出守卫增加前句+当前句窗口扫描——单行模式此前对两行各自都不可见。
+- **冷启动上下文仅取 verified**：staging 的 lessons/decisions 不再出现在 `generate_context`/`quick_context`；tier 过滤下沉到检索层，staging 条目也无法占用最新名额。
+
+另：
+- 项目身份步进改用显式 `stat`+errno 判别：仅真正缺失的 marker 继续向上；不可判定的 marker（EACCES/EPERM/EIO/...）终止步进回退路径哈希身份，绝不继承祖先仓库。 closes 随 Python 版本而异的漏洞（3.12 的 `is_dir` 传播 EACCES，3.13+ 吞掉并静默把不可读目录折叠进祖先仓库）。
+- architecture 模块表行修复；4.17.0 的 CHANGELOG 条目附上本版本修复的摘要缺陷的诚实勘误。
+
 ## [4.17.0] - 2026-08-17
 
 > **勘误（2026-08-18）：**下述内容摘要功能发布时存在三个缺陷，已在 4.17.1 修复——

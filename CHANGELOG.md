@@ -6,6 +6,19 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.17.1] - 2026-08-18
+
+### Fixed
+Terminal-review blockers in the opt-in content digest (all sealed by regression tests proven red on the pre-fix code):
+- **Real transcript shape**: real Claude Code transcript lines carry both a top-level type and the payload under `message.content`; the previous parser read zero blocks from real transcripts. Both content locations are now accepted (nested still requires `role: assistant`).
+- **Preference writable through the public API**: `hook_content_digest` is now in the preference allowlist, so `update_preferences`/`update_identity` can enable it (previously only a hand-edited JSON file could).
+- **Cross-line secret pairs**: a secret-key line followed by a value line is now dropped at digest assembly, and the extraction output guard scans a prev+current sentence window — neither line alone matched any single-line pattern.
+- **Cold-start context is verified-only**: staged lessons/decisions no longer surface in `generate_context`/`quick_context`; the tier filter is threaded through the retrieval layer so staged items cannot consume the recency slots either.
+
+Also:
+- Project identity walk probes markers with explicit `stat`+errno discrimination: only a genuinely absent marker continues upward; an undecidable marker (EACCES/EPERM/EIO/...) aborts to the path-hash identity and never inherits an ancestor repo. Closes a Python-version-dependent hole (3.12 propagates EACCES from `is_dir`, 3.13+ swallows it and silently folded unreadable folders into ancestor repos).
+- Architecture module-map row repaired; the 4.17.0 CHANGELOG entry now carries an honest erratum for the digest defects fixed here.
+
 ## [4.17.0] - 2026-08-17
 
 > **Erratum (2026-08-18):** the content-digest feature below shipped with
