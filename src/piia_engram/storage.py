@@ -134,7 +134,6 @@ _ALLOWED_PROFILE_FIELDS: frozenset = frozenset({
 _ALLOWED_PREFERENCES_FIELDS: frozenset = frozenset({
     "work_patterns", "communication", "tool_preferences",
     "playbook_auto_extract",
-    "hook_content_digest",
     "updated_at", "migrated_from",
 })
 _ALLOWED_TRUST_FIELDS: frozenset = frozenset({
@@ -576,10 +575,7 @@ def _legacy_project_identity_key(folder: str) -> str:
 
 
 def _read_gitdir_file(path: Path) -> Path | None:
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore").strip()
-    except OSError:
-        return None
+    text = path.read_text(encoding="utf-8", errors="ignore").strip()
     prefix = "gitdir:"
     if not text.lower().startswith(prefix):
         return None
@@ -631,17 +627,15 @@ def _git_common_dir_for_folder(folder: str) -> Path | None:
         # propagates EACCES, Python >=3.13 swallows ALL OSError and returns
         # False — which would silently continue the walk into an unrelated
         # ancestor repo on unreadable directories. Only a genuinely ABSENT
-        # marker (ENOENT/ENOTDIR/EBADF/ELOOP) may continue the walk; anything
-        # undecidable (EACCES/EPERM/EIO/...) aborts to the path-hash identity.
+        # marker (ENOENT/ENOTDIR) may continue the walk; anything undecidable
+        # (EACCES/EPERM/EIO/EBADF/ELOOP/...) aborts to the path-hash identity.
         import errno as _errno
         import stat as _stat
 
         try:
             marker_mode = marker.stat().st_mode
         except OSError as exc:
-            if exc.errno in (
-                _errno.ENOENT, _errno.ENOTDIR, _errno.EBADF, _errno.ELOOP,
-            ):
+            if exc.errno in (_errno.ENOENT, _errno.ENOTDIR):
                 continue  # no marker here — keep walking up
             return None  # undecidable marker — never inherit an ancestor
         try:

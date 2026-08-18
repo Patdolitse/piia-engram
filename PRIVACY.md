@@ -38,12 +38,17 @@ Default implementation: local files only. Telemetry is off by default; when enab
 
 All files are plain JSON. You can open, edit, back up, or delete them at any time.
 
-## Session-end content digest (opt-in, default off)
+## Session-end content digest (temporarily withdrawn)
 
 The Claude Code session-end hook can additionally feed a sanitized digest of
-the conversation's assistant text into local knowledge extraction. This is
-**off by default** and only enables when the `hook_content_digest` preference
-is literally `true`. When enabled:
+the conversation's assistant text into local knowledge extraction. The
+implementation is retained for redesign work, but the public preference API
+does not accept `hook_content_digest`, so supported installations cannot turn
+it on. A closed runtime gate also ignores a literal `true` retained from an
+older store or written by hand. The code remains present only for testability
+and the planned 4.18 redesign.
+
+If this path is reintroduced after the privacy review, its current controls are:
 
 - only assistant text blocks are read from the local transcript — user
   messages and tool input/output are never collected;

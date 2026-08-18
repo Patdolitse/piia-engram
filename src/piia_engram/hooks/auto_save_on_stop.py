@@ -175,9 +175,9 @@ def main() -> None:
 
         if msg_count >= _flush_threshold():
             # checkpoint_content above stays metadata-only by construction.
-            # The extraction summary may additionally carry an OPT-IN
-            # sanitized assistant-text digest (hook_content_digest preference,
-            # default off; privacy contract in piia_engram.hook_digest).
+            # The retained digest path has a closed runtime gate and is not
+            # writable through the public preference API. See the privacy
+            # contract in piia_engram.hook_digest before future reactivation.
             summary = f"Claude Code 会话 ({duration_str}, {msg_count} 消息)\n"
             summary += f"工作目录: {cwd}\n"
             if tool_calls:

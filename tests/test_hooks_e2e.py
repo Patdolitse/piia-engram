@@ -151,17 +151,20 @@ def _scan_all_persistent_surfaces(store: Path) -> str:
     return "\n".join(parts)
 
 
-def test_stop_hook_optin_digest_stages_items_and_leaks_nothing(tmp_path, project):
-    """Opt-in (literal-true preference) end to end: the real hook subprocess
-    builds the sanitized digest, the extraction lands staged items, and NO
-    canary appears on any persistent surface."""
+def test_stop_hook_legacy_true_preference_remains_runtime_disabled(tmp_path, project):
+    """A 4.17.1-era true preference cannot reactivate the retained path."""
     store = tmp_path / "store"
     store.mkdir()
-    # enable through the PUBLIC preference API — the allowlist is part of
-    # the contract under test (a hand-written JSON file would bypass it)
     from piia_engram.core import Engram
 
-    Engram(root=store).update_preferences({"hook_content_digest": True})
+    identity_dir = store / "identity"
+    identity_dir.mkdir()
+    (identity_dir / "preferences.json").write_text(
+        json.dumps({"hook_content_digest": True}),
+        encoding="utf-8",
+    )
+    assert Engram(root=store).get_preferences()["hook_content_digest"] is True
+
     fake_key = "s" + "k-FAKE-" + "A1b2C3d4E5f6G7h8I9j0"
     lines = [
         json.dumps({
@@ -183,21 +186,21 @@ def test_stop_hook_optin_digest_stages_items_and_leaks_nothing(tmp_path, project
         })
         for i in range(10)
     ]
-    transcript = tmp_path / "optin.jsonl"
+    transcript = tmp_path / "legacy-true-disabled.jsonl"
     transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = _run_hook(
         "piia_engram.hooks.auto_save_on_stop",
-        {"cwd": str(project), "transcript_path": str(transcript), "session_id": "e2e-optin"},
+        {"cwd": str(project), "transcript_path": str(transcript), "session_id": "e2e-legacy-disabled"},
         store, tmp_path,
     )
     assert result.returncode == 0, result.stderr[-500:]
 
-    lessons = json.loads((store / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
-    decisions = json.loads((store / "knowledge" / "decisions.json").read_text(encoding="utf-8"))
-    assert len(lessons) + len(decisions) >= 1, "opt-in digest produced no staged items"
-    for item in lessons + decisions:
-        assert (item.get("memory_state") or item.get("tier")) == "staging"
+    lessons_path = store / "knowledge" / "lessons.json"
+    decisions_path = store / "knowledge" / "decisions.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8")) if lessons_path.is_file() else []
+    decisions = json.loads(decisions_path.read_text(encoding="utf-8")) if decisions_path.is_file() else []
+    assert lessons + decisions == []
 
     blob = _scan_all_persistent_surfaces(store)
     for canary in (fake_key, "A1b2C3d4E5f6G7h8I9j0", "deploy token"):

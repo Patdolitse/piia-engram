@@ -8,6 +8,7 @@ meaningful on the running platform).
 """
 from __future__ import annotations
 
+import errno
 import os
 import sys
 from pathlib import Path
@@ -131,6 +132,51 @@ def test_unreadable_directory_falls_back_without_inheriting_ancestors(tmp_path):
         assert anchor is None or anchor == (secret / ".git").resolve()
     finally:
         os.chmod(secret, 0o755)
+
+
+@pytest.mark.parametrize("marker_errno", [errno.ELOOP, errno.EBADF])
+def test_undecidable_marker_errno_never_inherits_ancestor_repo(
+    tmp_path, monkeypatch, marker_errno,
+):
+    """ELOOP/EBADF are probe failures, not proof that a marker is absent."""
+    repo = _repo(tmp_path / "repo")
+    child = repo / "child"
+    child.mkdir()
+    child_marker = child / ".git"
+    original_stat = Path.stat
+
+    def _stat(path, *args, **kwargs):
+        if path == child_marker:
+            raise OSError(marker_errno, "synthetic undecidable marker")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _stat)
+
+    assert _git_common_dir_for_folder(str(child)) is None
+    assert _project_id(str(child)) != _project_id(str(repo))
+
+
+@pytest.mark.parametrize("read_errno", [errno.ELOOP, errno.EBADF, errno.EACCES])
+def test_undecidable_gitdir_read_never_inherits_ancestor_repo(
+    tmp_path, monkeypatch, read_errno,
+):
+    """A readable marker type with unreadable content is still undecidable."""
+    repo = _repo(tmp_path / "repo")
+    child = repo / "child"
+    child.mkdir()
+    child_marker = child / ".git"
+    child_marker.write_text("gitdir: ignored", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def _read_text(path, *args, **kwargs):
+        if path == child_marker:
+            raise OSError(read_errno, "synthetic undecidable gitdir read")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _read_text)
+
+    assert _git_common_dir_for_folder(str(child)) is None
+    assert _project_id(str(child)) != _project_id(str(repo))
 
 
 def test_case_folding_policy_on_legacy_key():

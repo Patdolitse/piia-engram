@@ -6,6 +6,16 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.17.2] - 2026-08-18
+
+### Security
+- Withdrew `hook_content_digest` from the public preferences allowlist and closed its runtime gate. The implementation remains present but dormant while its privacy model is redesigned for 4.18; persisted 4.17.1 values and manually edited preferences cannot reactivate it. This change does not claim physical removal.
+
+### Fixed
+- Recent and cold-start Playbook recall now requires both `status=active` and `tier=verified`, preventing staged Playbooks from entering model-facing startup context or consuming the recent-item budget.
+- Project identity discovery now treats `ELOOP`, `EBADF`, and other marker probe/read failures as undecidable and aborts to the exact path-hash identity instead of walking upward into an ancestor repository.
+- Added per-defect regressions and proved them red against `v4.17.1@aec0328` before applying the fixes.
+
 ## [4.17.1] - 2026-08-18
 
 ### Fixed
@@ -25,8 +35,10 @@ Also:
 > three defects fixed in 4.17.1 — the digest reader read zero blocks from
 > real transcripts (synthetic-shape parser), the `hook_content_digest`
 > preference could not be enabled through the public API, and a cross-line
-> secret pair could reach staging. The opt-in default-off gate worked as
-> designed, so no enabled deployment existed. Also: project identity
+> secret pair could reach staging. The default remained off and the public
+> preference API could not enable it in 4.17.0; manually edited stores could
+> still activate the path, so this does not claim that no deployment was
+> enabled. Also: project identity
 > derivation no longer crashes on unreadable directories (POSIX EACCES),
 > fixed within the 4.17.0 window.
 

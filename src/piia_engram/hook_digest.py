@@ -40,6 +40,9 @@ MAX_BLOCK_ORIGINAL_CHARS = 100_000
 
 PREFERENCE_KEY = "hook_content_digest"
 CAPTURE_ORIGIN = "hook_content_digest"
+# Closed until the 4.18 privacy redesign. Keeping the implementation importable
+# preserves its test surface without letting persisted legacy preferences run it.
+RUNTIME_ENABLED = False
 
 # shapes the existing scrubbers intentionally leave to other layers, plus
 # generic secret-bearing forms the digest must not carry. Composed AFTER the
@@ -308,12 +311,12 @@ def output_guard_item(fields: dict[str, Any]) -> tuple[bool, str]:
 
 
 def digest_enabled(preference_value: object) -> bool:
-    """Behavioral gate: ONLY the literal boolean True enables the digest.
+    """Behavioral gate for the retained, currently dormant digest path.
 
-    fresh / missing / None / False / truthy strings / invalid values all
-    disable. This is the single decision point the hook and the tests share.
+    The runtime kill switch wins over every preference value, including a
+    literal True retained from 4.17.1 or written by hand.
     """
-    return preference_value is True
+    return RUNTIME_ENABLED and preference_value is True
 
 
 def read_transcript_lines(path: str | Path) -> list[str]:
