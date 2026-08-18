@@ -77,7 +77,12 @@ def test_quality_signals_reflect_empty_partial_and_full_pack_states(tmp_path: Pa
     assert "has_review_candidates" in full["quality_signals"]
 
 
-def test_resume_pack_order_is_deterministic_across_repeated_calls(tmp_path: Path):
+def test_resume_pack_order_is_deterministic_across_repeated_calls(tmp_path: Path, monkeypatch):
+    from piia_engram import contexts as contexts_mod
+
+    generated_times = iter(("2026-08-18T06:13:46Z", "2026-08-18T06:13:47Z"))
+    monkeypatch.setattr(contexts_mod, "_utc_now_iso_seconds", lambda: next(generated_times))
+
     eng = _eng(tmp_path)
     project = _project(tmp_path)
     eng.save_project_snapshot(str(project), {"title": "Deterministic Project", "stage": "M2"})
@@ -94,6 +99,9 @@ def test_resume_pack_order_is_deterministic_across_repeated_calls(tmp_path: Path
     first = eng.build_project_resume_pack(project_folder=str(project), digest_limit=2, knowledge_limit=3)
     second = eng.build_project_resume_pack(project_folder=str(project), digest_limit=2, knowledge_limit=3)
 
+    assert first["handoff"]["generated_at"] != second["handoff"]["generated_at"]
+    first["handoff"].pop("generated_at", None)
+    second["handoff"].pop("generated_at", None)
     assert first == second
     assert first["handoff"]["current_focus"] == "implement pack metadata."
     assert [item["kind"] for item in first["trusted_context"][:4]] == [
