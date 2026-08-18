@@ -745,11 +745,12 @@ class PlaybookMixin:
     def get_recent_playbooks(
         self, limit: int = 5, project_folder: str | None = None,
     ) -> list[dict]:
-        """Return recently used active playbooks, sorted by last_reviewed descending."""
+        """Return recent verified active playbooks by last_reviewed descending."""
         all_pbs = self._export_playbooks()
         active = [
             pb for pb in all_pbs
             if pb.get("status") == "active"
+            and pb.get("tier") == "verified"
             and self._playbook_visible_for_project(pb, project_folder)
         ]
         active.sort(key=lambda pb: pb.get("last_reviewed", ""), reverse=True)

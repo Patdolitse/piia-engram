@@ -4204,6 +4204,15 @@ def test_update_preferences_all_rejected(tmp_path: Path):
     assert "unknown_pref" not in prefs
 
 
+def test_update_preferences_rejects_hook_content_digest(tmp_path: Path):
+    """The dormant hook digest cannot be enabled through the public API."""
+    engram = make_engram(tmp_path)
+
+    engram.update_preferences({"hook_content_digest": True})
+
+    assert "hook_content_digest" not in engram.get_preferences()
+
+
 def test_update_trust_boundaries_all_rejected(tmp_path: Path):
     """全部字段被拒绝时 update_trust_boundaries 应直接返回。"""
     engram = make_engram(tmp_path)
@@ -4708,6 +4717,31 @@ def test_add_and_get_playbook(tmp_path: Path):
     playbooks = engram.get_playbooks()
     assert len(playbooks) == 1
     assert playbooks[0]["title"] == "MCP Registry 发布流程"
+
+
+def test_recent_and_cold_start_playbooks_are_verified_only(tmp_path: Path):
+    """Staged playbooks remain reviewable but never enter cold-start context."""
+    engram = make_engram(tmp_path)
+    verified = engram.add_playbook({
+        "title": "Verified release flow",
+        "triggers": ["release"],
+        "steps": ["Run tests", "Publish"],
+        "tier": "verified",
+    })
+    staged = engram.add_playbook({
+        "title": "Staged experimental flow",
+        "triggers": ["experiment"],
+        "steps": ["Try candidate", "Review result"],
+        "tier": "staging",
+    })
+
+    recent_ids = {pb["id"] for pb in engram.get_recent_playbooks(limit=5)}
+    context = engram.generate_context(max_tokens=None)
+
+    assert verified["id"] in recent_ids
+    assert staged["id"] not in recent_ids
+    assert verified["title"] in context
+    assert staged["title"] not in context
 
 
 def test_add_playbook_normalizes_loose_shape_to_contract(tmp_path: Path):
