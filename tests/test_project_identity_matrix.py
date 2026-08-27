@@ -68,16 +68,45 @@ def test_broken_symlink_falls_back_to_distinct_legacy_identity(tmp_path):
     assert _project_id(str(link)) != _project_id(str(repo))
 
 
-def test_malformed_git_file_is_skipped_and_walk_continues(tmp_path):
-    """Policy: a .git FILE whose content is not a gitdir pointer is ignored;
-    the walk continues to ancestors (a malformed marker is not a repo)."""
+def test_malformed_git_file_fails_closed_to_legacy_identity(tmp_path):
+    """PR-4 3-state machine: a .git FILE that exists but has malformed
+    content is a DECIDABLY broken marker — the walk terminates and the
+    folder falls back to the path-hash identity, never inheriting an
+    unrelated ancestor repo."""
     outer = _repo(tmp_path / "outer")
     inner = outer / "inner"
     inner.mkdir()
     (inner / ".git").write_text("this is not a gitdir pointer", encoding="utf-8")
     project = inner / "proj"
     project.mkdir()
-    assert _project_id(str(project)) == _project_id(str(outer))
+    assert _git_common_dir_for_folder(str(project)) is None
+    assert _project_id(str(project)) != _project_id(str(outer))
+
+
+def test_dangling_gitdir_target_fails_closed(tmp_path):
+    """PR-4: a .git file with a valid pointer to a nonexistent target is
+    decidable-broken — path-hash identity, no ancestor inheritance."""
+    outer = _repo(tmp_path / "outer")
+    inner = outer / "inner"
+    inner.mkdir()
+    (inner / ".git").write_text(
+        "gitdir: /definitely/not/a/real/path/worktrees/x", encoding="utf-8"
+    )
+    project = inner / "proj"
+    project.mkdir()
+    assert _git_common_dir_for_folder(str(project)) is None
+    assert _project_id(str(project)) != _project_id(str(outer))
+
+
+def test_empty_git_file_fails_closed(tmp_path):
+    """PR-4: an empty .git file is decidable-broken."""
+    outer = _repo(tmp_path / "outer")
+    inner = outer / "inner"
+    inner.mkdir()
+    (inner / ".git").write_text("", encoding="utf-8")
+    project = inner / "proj"
+    project.mkdir()
+    assert _git_common_dir_for_folder(str(project)) is None
 
 
 def test_malformed_commondir_falls_back_to_own_gitdir(tmp_path):

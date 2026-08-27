@@ -643,9 +643,16 @@ def _git_common_dir_for_folder(folder: str) -> Path | None:
             if _stat.S_ISDIR(marker_mode):
                 return marker.resolve()
             if _stat.S_ISREG(marker_mode):
+                # a regular-file .git marker exists; parse it strictly.
+                # If the content is malformed (not a valid gitdir pointer,
+                # or the target doesn't exist / isn't a directory), the
+                # marker is DECIDABLY broken — return None (path-hash
+                # identity), never continue up to an unrelated ancestor.
                 gitdir = _read_gitdir_file(marker)
                 if gitdir is None:
-                    continue
+                    return None  # malformed .git file — fail closed
+                if not gitdir.is_dir():
+                    return None  # dangling gitdir target — fail closed
                 common_file = gitdir / "commondir"
                 if common_file.is_file():
                     try:
