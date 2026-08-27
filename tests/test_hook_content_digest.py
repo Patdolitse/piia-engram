@@ -358,15 +358,18 @@ def test_real_transcript_canary_digest_is_clean():
 
 def test_cross_line_secret_pair_is_dropped_in_digest():
     """Regression (terminal review): token:/value split across two lines is
-    invisible to single-line patterns; the digest must drop the value line."""
+    invisible to single-line patterns; the PR-2 hardening normalizes the
+    key form before pairing so the value line is dropped while clean lines
+    survive."""
     lines = [
-        _real_transcript_line("the value follows below", 1),
+        _real_transcript_line("clean context survives the pairing", 0),
         _real_transcript_line("api token:\nZmFrZS1zZWNyZXQtdmFsdWUtMDA\nkept tail", 2),
     ]
     digest = build_digest(lines)
     assert digest is not None
     assert "ZmFrZS1zZWNyZXQtdmFsdWUtMDA" not in digest
     assert "kept tail" in digest
+    assert "clean context survives" in digest
 
 
 def test_output_guard_window_catches_cross_line_pair():

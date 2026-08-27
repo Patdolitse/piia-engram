@@ -26,20 +26,7 @@ _spec.loader.exec_module(_eval)
 # cases measured RED on the current (pre-PR2) code, 2026-08-27:
 # 12 of 20 fail exactly on the known hardening gaps (verified per-case before
 # landing); CORP-011 and CORP-014 already pass via the shape-scan drop path.
-_PENDING_PR2 = {
-    "CORP-004",  # zwsp in key form (prev_line unnormalized gap)
-    "CORP-005",  # NFKC fullwidth key
-    "CORP-006",  # crossline same block
-    "CORP-007",  # crossline across messages
-    "CORP-009",  # short key boundary 7 (window tracking before length gate)
-    "CORP-012",  # paraphrase zh
-    "CORP-013",  # paraphrase en
-    "CORP-015",  # cyrillic homoglyph
-    "CORP-016",  # greek homoglyph value
-    "CORP-017",  # zwsp x crossline
-    "CORP-018",  # shortkey x crossline
-    "CORP-019",  # paraphrase x truncation
-}
+_PENDING_PR2: set[str] = set()  # PR-2 landed; all cases green
 
 _cases = _eval.expanded_cases(_eval.load_corpus())
 

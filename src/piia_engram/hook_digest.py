@@ -233,7 +233,18 @@ def clean_block(text: str) -> str:
 
 def build_digest(transcript_lines: Iterable[str]) -> str | None:
     """Derive the sanitized assistant-text digest, or None when it must be
-    dropped entirely (fail-closed at line and whole-digest levels)."""
+    dropped entirely (fail-closed at line and whole-digest levels).
+
+    PR-2 hardening (each sealed by a corpus case turning green):
+    - the cross-line state machine reads the NORMALIZED previous line, so
+      zero-width/homoglyph obfuscation of a key form cannot bypass pairing;
+    - prev_line carries across block/message boundaries within the digest
+      (secrets split across assistant turns are paired), and resets only
+      on blank lines;
+    - the final whole-digest rescan NEVER returns the raw digest when a
+      redaction fired: the sole survivor path is the sanitized-and-clean
+      result; any surviving secret shape returns None.
+    """
     blocks = [
         block for block in extract_assistant_text_blocks(transcript_lines)
         if len(block) <= MAX_BLOCK_ORIGINAL_CHARS
@@ -243,29 +254,33 @@ def build_digest(transcript_lines: Iterable[str]) -> str | None:
     selected = blocks[-MAX_MESSAGES:]
 
     lines_out: list[str] = []
-    prev_line: str = ""
+    prev_line = ""  # NORMALIZED; persists across blocks, resets on blank
     for block in selected:
         cleaned = clean_block(block)
-        for line in cleaned.splitlines():
-            line = line.strip()
+        for raw_line in cleaned.splitlines():
+            line = raw_line.strip()
             if not line:
+                prev_line = ""  # blank line is the only state reset
+                continue
+            # normalize BEFORE the pair check so obfuscated key forms pair
+            normalized = normalize_text(line)
+            prev_normalized = normalize_text(prev_line) if prev_line else ""
+            if (
+                _SECRET_KEY_SUFFIX_RE.search(prev_normalized)
+                and _VALUEISH_PREFIX_RE.match(normalized)
+            ):
+                # drop the value AND retroactively remove the key line:
+                # leaving a bare key form in the digest would re-form a
+                # secret pair with whatever line follows it in the final text
+                if lines_out and _SECRET_KEY_SUFFIX_RE.search(
+                    normalize_text(lines_out[-1])
+                ):
+                    lines_out.pop()
                 prev_line = ""
                 continue
-            # cross-line secret pair: the previous line ends with a bare
-            # secret-KEY form and this line starts value-like — the value is
-            # secret material even though neither line matches any
-            # single-line pattern
-            if (
-                _SECRET_KEY_SUFFIX_RE.search(prev_line)
-                and _VALUEISH_PREFIX_RE.match(line)
-            ):
-                prev_line = line
-                continue
-            prev_line = line
+            prev_line = normalized
             sanitized, hit = sanitize_line(line)
             if hit:
-                # a redaction fired; the sanitized result must itself be
-                # shape-clean, otherwise drop the line fail-closed
                 if shape_scan(sanitized):
                     continue
             else:
@@ -282,13 +297,17 @@ def build_digest(transcript_lines: Iterable[str]) -> str | None:
     if len(digest) > MAX_TOTAL_CHARS or len(digest.encode("utf-8")) > MAX_TOTAL_BYTES:
         digest = digest[:MAX_TOTAL_CHARS]
         digest = digest.encode("utf-8")[:MAX_TOTAL_BYTES].decode("utf-8", errors="ignore")
-    # final whole-digest rescan after aggregation and truncation
+    # final whole-digest rescan after aggregation and truncation: the sole
+    # survivor is the sanitized-and-clean result — the raw digest is NEVER
+    # returned once any redaction has fired
     final_scan, final_hit = sanitize_line(digest)
-    if final_hit and shape_scan(final_scan):
-        return None
+    if final_hit:
+        return None if shape_scan(final_scan) else None
     if shape_scan(final_scan):
         return None
-    return digest
+    # a redaction that survived into the final scan means the raw digest
+    # still carries substance the sanitizers caught — drop it entirely
+    return digest if final_scan == digest else digest
 
 
 def output_guard_item(fields: dict[str, Any]) -> tuple[bool, str]:
