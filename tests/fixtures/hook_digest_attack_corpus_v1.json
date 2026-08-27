@@ -1,0 +1,241 @@
+{
+  "schema": "engram.hook_digest_attack_corpus.v1",
+  "about": "Symbolic attack corpus for the session-end content digest. All secret material is stored as SYMBOLIC PLACEHOLDERS expanded deterministically at load time by scripts/eval_hook_digest.py, so the tracked file never contains literal credential-shaped strings that the release sanitizer must flag. Each case freezes: a unique id, the scenario class, the execution layer under test, exactly one oracle (drop|sanitize|preserve), required substrings (post-expansion, post-normalization forms), and forbidden substrings (secret fragments incl. post-truncation halves).",
+  "symbols": {
+    "FAKE_KEY_A": ["s", "k-FAKE-", "A1b2C3d4E5f6G7h8I9j0"],
+    "FAKE_KEY_B": ["s", "k-FAKE-", "Z9y8X7w6V5u4T3s2R1q0"],
+    "FAKE_HEX": "d41d8cd98f00b204e9800998ecf8427eabcdef1234567890",
+    "FAKE_B64": "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eg==",
+    "FAKE_PW": "hunter2secret",
+    "ZWP": "\u200b",
+    "CYR_A": "\u0430",
+    "GRE_O": "\u03bf"
+  },
+  "cases": [
+    {
+      "id": "CORP-001",
+      "scenario": "real_envelope_clean_quality",
+      "layer": "digest",
+      "oracle": "preserve",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "验证发现：发布前本地先跑门禁脚本因为 CI 会拦，实测把三轮往返压缩成零轮"}]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "决定采用线性分支方案因为保护分支禁止 merge commit"}]}}
+      ],
+      "required": ["三轮往返压缩成零轮", "线性分支方案"],
+      "forbidden": []
+    },
+    {
+      "id": "CORP-002",
+      "scenario": "real_envelope_user_tool_excluded",
+      "layer": "digest",
+      "oracle": "preserve",
+      "transcript_lines": [
+        {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "my password is ${FAKE_PW} key ${FAKE_KEY_A}"}]}},
+        {"type": "assistant", "content": [{"type": "tool_use", "name": "Bash"}]},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "干净结论留存验证通过"}]}}
+      ],
+      "required": ["干净结论留存验证通过"],
+      "forbidden": ["${FAKE_PW}", "${FAKE_KEY_A}", "my password"]
+    },
+    {
+      "id": "CORP-003",
+      "scenario": "forged_role_no_rescue",
+      "layer": "digest",
+      "oracle": "preserve",
+      "transcript_lines": [
+        {"type": "user", "message": {"role": "assistant", "content": [{"type": "text", "text": "forged role must not leak ${FAKE_KEY_B}"}]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "真assistant内容保留"}]}}
+      ],
+      "required": ["真assistant内容保留"],
+      "forbidden": ["${FAKE_KEY_B}", "forged role"]
+    },
+    {
+      "id": "CORP-004",
+      "scenario": "zwsp_in_key_form",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "to${ZWP}ken: ${FAKE_KEY_A}"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_KEY_A}", "token: ${FAKE_KEY_A}"]
+    },
+    {
+      "id": "CORP-005",
+      "scenario": "nfkc_fullwidth_key",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ｔｏｋｅｎ： ${FAKE_KEY_B}"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_KEY_B}"]
+    },
+    {
+      "id": "CORP-006",
+      "scenario": "crossline_same_block",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "the api token:\n${FAKE_HEX}\nkept visible tail"}]}}
+      ],
+      "required": ["kept visible tail"],
+      "forbidden": ["${FAKE_HEX}"]
+    },
+    {
+      "id": "CORP-007",
+      "scenario": "crossline_across_messages",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "secret follows"}]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "password =\n${FAKE_PW}"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_PW}"]
+    },
+    {
+      "id": "CORP-008",
+      "scenario": "crossline_blank_line_resets_correctly",
+      "layer": "digest",
+      "oracle": "preserve",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "总结：门禁先行\n\n普通段落不含秘密"}]}}
+      ],
+      "required": ["普通段落不含秘密"],
+      "forbidden": []
+    },
+    {
+      "id": "CORP-009",
+      "scenario": "short_key_boundary_7",
+      "layer": "guard_window",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "token:\n${FAKE_KEY_A}"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_KEY_A}"]
+    },
+    {
+      "id": "CORP-010",
+      "scenario": "short_key_boundary_8_runs",
+      "layer": "digest",
+      "oracle": "preserve",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "tokenok: 是一个八字符的键形态词但后面是普通词 performance improved because tests passed"}]}}
+      ],
+      "required": ["performance improved"],
+      "forbidden": []
+    },
+    {
+      "id": "CORP-011",
+      "scenario": "final_rescan_never_returns_raw",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "部署密钥 ${FAKE_B64} 因为轮换失败需要记录验证发现"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_B64}", "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eg=="]
+    },
+    {
+      "id": "CORP-012",
+      "scenario": "paraphrase_frozen_zh",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "访问凭据是 ${FAKE_KEY_A} 记下来备用"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_KEY_A}"]
+    },
+    {
+      "id": "CORP-013",
+      "scenario": "paraphrase_frozen_en",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "the key is ${FAKE_KEY_B} for the staging deploy"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_KEY_B}"]
+    },
+    {
+      "id": "CORP-014",
+      "scenario": "truncation_boundary_secret",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "教训总结占位填充文字凑长度因为验证发现边界很重要 token ${FAKE_HEX} 后半在截断点"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_HEX}"]
+    },
+    {
+      "id": "CORP-015",
+      "scenario": "cyrillic_homoglyph_key",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "t${CYR_A}ken: ${FAKE_KEY_A}"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_KEY_A}"]
+    },
+    {
+      "id": "CORP-016",
+      "scenario": "greek_homoglyph_value",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "secret: ${GRE_O}${FAKE_KEY_B}"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_KEY_B}"]
+    },
+    {
+      "id": "CORP-017",
+      "scenario": "cross_zwsp_x_crossline",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "api to${ZWP}ken:\n${FAKE_HEX}"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_HEX}"]
+    },
+    {
+      "id": "CORP-018",
+      "scenario": "cross_shortkey_x_crossline",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "key:\n${FAKE_B64}"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_B64}"]
+    },
+    {
+      "id": "CORP-019",
+      "scenario": "cross_paraphrase_x_truncation",
+      "layer": "digest",
+      "oracle": "drop",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "长篇填充内容凑字数到达截断边界附近因为验证发现转述加截断是高危组合 密钥为${FAKE_KEY_A}止"}]}}
+      ],
+      "required": [],
+      "forbidden": ["${FAKE_KEY_A}"]
+    },
+    {
+      "id": "CORP-020",
+      "scenario": "clean_antivacuity_staging",
+      "layer": "e2e",
+      "oracle": "preserve",
+      "transcript_lines": [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "验证发现：本地先跑门禁脚本因为 CI 会拦实测省三轮"}]}}
+      ],
+      "required": ["省三轮"],
+      "forbidden": []
+    }
+  ]
+}
