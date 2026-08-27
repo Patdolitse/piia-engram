@@ -648,6 +648,10 @@ def _validate_memory_eval_snapshot(snapshot: Any) -> tuple[dict[str, int] | None
         "case_count",
         "passed_count",
         "failed_count",
+        # 4.18: per-case diagnostic (public-safe: case names and check
+        # booleans only — validated below to contain no string content
+        # beyond the case name and boolean check values)
+        "cases",
     }
     if set(agent_context) - agent_context_keys:
         return None, False, "synthetic_memory_eval.unknown_nested_field"
