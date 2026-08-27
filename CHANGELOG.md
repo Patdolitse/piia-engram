@@ -6,6 +6,22 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.18.0] - 2026-08-27
+
+### Added
+- **Opt-in session-end content digest v2** (`hook_content_digest_v2`, default off): re-enabled under a new versioned preference key with a strict activation formula (runtime gate ON + literal True; the legacy boolean key is never consulted). The digest pipeline is hardened by a 20-case attack corpus (real transcript envelope, zero-width and NFKC homoglyph key forms, cross-line secret pairs across block/message boundaries, short-key boundary at 7/8/9 chars, frozen paraphrase sets, triple-truncation boundaries, Cyrillic/Greek homoglyphs, three cross-product combinations) — all 20 cases green.
+- **Attack corpus as a first-class artifact**: `tests/fixtures/hook_digest_attack_corpus_v1.json` stores symbolic placeholders (credential-shaped symbols as fragment arrays, runtime-expanded by `scripts/eval_hook_digest.py`), so the tracked file never contains literal credentials while the release sanitizer keeps scanning it.
+- **Canonical test-count CI gate**: a pinned ubuntu-latest / Python 3.12 job runs the REAL full suite with JUnit output and requires collected/passed/skipped to match `docs/public-facts.json` exactly; publish re-runs the same gate on release commits.
+- Cold-start context is verified-only: staged lessons/decisions/playbooks no longer surface in `generate_context`/`quick_context`; the tier filter is threaded through retrieval so staged items cannot consume recency slots.
+
+### Fixed
+- **PII-shape project hash redaction no longer breaks scope filtering** (ENG-CORE-013): a 12-hex project hash matching the CN mobile-phone pattern was redacted in the digest source block, causing exact-scope filtering to exclude the project's own session digest. The internal verified project identifier is now preserved verbatim while the digest body still passes the full scrubber. This was a deterministic recall defect (reproducible 3/3 with a PII-shape hash), not an intermittent flake.
+- **Project identity three-state machine**: a malformed `.git` file (bad content, empty, dangling gitdir target) now terminates the walk to the path-hash identity instead of continuing up to an unrelated ancestor repo. Only a genuinely absent marker (ENOENT/ENOTDIR) continues upward; anything undecidable (EACCES/EPERM/EIO/ELOOP/EBADF) fails closed.
+- Cross-line secret pairs: the state machine reads the NORMALIZED previous line (zero-width/homoglyph obfuscation of key forms cannot bypass pairing), persists across block/message boundaries, and removes both the key line and value line when a pair is detected.
+- The final whole-digest rescan never returns the raw digest when any redaction fired.
+- Memory-eval failures now report per-case check booleans and the child payload (the summary preserves case names and checks, public-safe).
+- Resume-pack determinism: the pack clock is injectable; frozen-clock full-equality test plus a real-clock volatile-whitelist test.
+
 ## [4.17.2] - 2026-08-18
 
 ### Security

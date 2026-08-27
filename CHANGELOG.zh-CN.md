@@ -6,6 +6,22 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.18.0] - 2026-08-27
+
+### 新增
+- **可选会话结束内容摘要 v2**（`hook_content_digest_v2`，默认关闭）：在新版本化偏好键下重新启用，激活公式严格（运行时门 ON + 字面 True；旧布尔键永不被查阅）。摘要管线由 20 用例攻击语料库加固（真实 transcript 信封、零宽/NFKC 同形字符键形态、跨 block/message 的跨行秘密对、7/8/9 字符短键边界、冻结转述集、三重截断边界、西里尔/希腊同形字符、三组交叉组合）——20/20 全绿。
+- **攻击语料库作为一等工件**：`tests/fixtures/hook_digest_attack_corpus_v1.json` 以符号占位符存储（凭据形态符号存为片段数组，由 `scripts/eval_hook_digest.py` 运行时展开），跟踪文件不含字面凭据且 release sanitizer 持续扫描。
+- **canonical 测试计数 CI 门禁**：固定的 ubuntu-latest / Python 3.12 job 运行真实全量套件并要求 collected/passed/skipped 与 `docs/public-facts.json` 完全一致；publish 在发布提交上复跑同一门禁。
+- 冷启动上下文仅取 verified：staging 的 lessons/decisions/playbooks 不再出现在 `generate_context`/`quick_context`；tier 过滤下沉检索层。
+
+### 修复
+- **PII 形状项目哈希脱敏不再破坏 scope 过滤**（ENG-CORE-013）：12-hex 项目哈希匹配中国手机号模式时被脱敏改写 source.project_id，导致 exact-scope 过滤排除项目自身的会话摘要。内部已验证项目标识现在原样保留，摘要正文仍过完整脱敏。这是确定性召回缺陷（PII 形状哈希 3/3 复现），非间歇性 flake。
+- **项目身份三态机**：畸形 `.git` 文件（内容损坏/空/悬空 gitdir 目标）现在终止步进回退路径哈希身份，不再继续向上继承无关祖先仓库。只有真正缺失的 marker（ENOENT/ENOTDIR）继续向上；不可判定的（EACCES/EPERM/EIO/ELOOP/EBADF）全部关闭。
+- 跨行秘密对：状态机读取归一化后的前一行（零宽/同形字符混淆键形态无法绕过配对），跨 block/message 边界持续，检测到对时同时移除键行和值行。
+- 整体复扫在任何脱敏触发后永不返回原始摘要。
+- memory-eval 失败现在报告逐 case 检查布尔值和子进程载荷（摘要保留 case 名称和检查，公开安全）。
+- resume pack 确定性：包时钟可注入；冻结时钟全字典相等测试 + 真实时钟易变字段白名单测试。
+
 ## [4.17.2] - 2026-08-18
 
 ### 安全
