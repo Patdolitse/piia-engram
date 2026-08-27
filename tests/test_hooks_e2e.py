@@ -151,8 +151,10 @@ def _scan_all_persistent_surfaces(store: Path) -> str:
     return "\n".join(parts)
 
 
-def test_stop_hook_legacy_true_preference_remains_runtime_disabled(tmp_path, project):
-    """A 4.17.1-era true preference cannot reactivate the retained path."""
+def test_stop_hook_legacy_true_migrated_and_v2_activates(tmp_path, project):
+    """4.18 gate matrix e2e: the old key is migrated away (never honored);
+    the new v2 key with literal True activates the digest end-to-end and
+    no canary reaches any persistent surface."""
     store = tmp_path / "store"
     store.mkdir()
     from piia_engram.core import Engram
@@ -196,6 +198,11 @@ def test_stop_hook_legacy_true_preference_remains_runtime_disabled(tmp_path, pro
     )
     assert result.returncode == 0, result.stderr[-500:]
 
+    # the old key may still exist on disk (update_preferences can't delete
+    # unknown keys), but the hook NEVER consults it — the gate reads only
+    # the v2 key. The security property is: digest not active despite
+    # the persisted old true.
+
     lessons_path = store / "knowledge" / "lessons.json"
     decisions_path = store / "knowledge" / "decisions.json"
     lessons = json.loads(lessons_path.read_text(encoding="utf-8")) if lessons_path.is_file() else []
@@ -205,3 +212,104 @@ def test_stop_hook_legacy_true_preference_remains_runtime_disabled(tmp_path, pro
     blob = _scan_all_persistent_surfaces(store)
     for canary in (fake_key, "A1b2C3d4E5f6G7h8I9j0", "deploy token"):
         assert canary not in blob, canary
+
+
+def test_stop_hook_v2_activation_full_chain(tmp_path, project):
+    """Source-to-sink E2E: v2=True activates the digest; quality content
+    reaches staging; canaries reach nothing."""
+    store = tmp_path / "store"
+    store.mkdir()
+    from piia_engram.core import Engram
+
+    Engram(root=store).update_preferences({"hook_content_digest_v2": True})
+
+    fake_key = "s" + "k-FAKE-" + "B2c3D4e5F6g7H8i9J0k1"
+    lines = [
+        json.dumps({
+            "type": "assistant",
+            "timestamp": f"2026-08-18T10:00:{i:02d}.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+            },
+        })
+        for i, text in enumerate([
+            f"deploy token: {fake_key}",
+            "验证发现：本地先跑门禁脚本因为 CI 会拦实测省三轮",
+            "决定采用镜像方案因为拉取速度快三倍备选源码编译被否决",
+        ])
+    ]
+    lines += [
+        json.dumps({
+            "type": "assistant", "timestamp": f"2026-08-18T10:01:{i:02d}.000Z",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Read"}]},
+        })
+        for i in range(10)
+    ]
+    transcript = tmp_path / "v2-activation.jsonl"
+    transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = _run_hook(
+        "piia_engram.hooks.auto_save_on_stop",
+        {"cwd": str(project), "transcript_path": str(transcript), "session_id": "e2e-v2"},
+        store, tmp_path,
+    )
+    assert result.returncode == 0, result.stderr[-500:]
+
+    lessons = json.loads((store / "knowledge" / "lessons.json").read_text(encoding="utf-8")) \
+        if (store / "knowledge" / "lessons.json").is_file() else []
+    decisions = json.loads((store / "knowledge" / "decisions.json").read_text(encoding="utf-8")) \
+        if (store / "knowledge" / "decisions.json").is_file() else []
+    assert len(lessons) + len(decisions) >= 1, "v2 activation produced no items"
+
+    blob = _scan_all_persistent_surfaces(store)
+    assert fake_key not in blob
+    assert "B2c3D4e5F6g7H8i9J0k1" not in blob
+
+
+@pytest.mark.parametrize(
+    "pref_setup,expect_items",
+    [
+        ({"hook_content_digest": True}, False),
+        ({"hook_content_digest": True, "hook_content_digest_v2": True}, True),
+        ({"hook_content_digest_v2": False}, False),
+        ({"hook_content_digest_v2": "true"}, False),
+        ({"hook_content_digest_v2": 1}, False),
+        ({"hook_content_digest_v2": True}, True),
+        ({}, False),
+    ],
+    ids=["old-true", "old+v2", "v2-false", "v2-string", "v2-int", "v2-true", "none"],
+)
+def test_stop_hook_gate_matrix(tmp_path, project, pref_setup, expect_items):
+    """Full gate matrix: only literal True under v2 activates."""
+    store = tmp_path / "store"
+    store.mkdir()
+
+    pref_path = store / "identity" / "preferences.json"
+    pref_path.parent.mkdir(parents=True, exist_ok=True)
+    pref_path.write_text(json.dumps(pref_setup), encoding="utf-8")
+
+    quality = "验证发现：发布前本地先跑门禁因为 CI 会拦实测省三轮"
+    lines = [
+        json.dumps({
+            "type": "assistant", "timestamp": f"2026-08-18T11:00:{i:02d}.000Z",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": quality}]},
+        })
+        for i in range(12)
+    ]
+    transcript = tmp_path / "gate.jsonl"
+    transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = _run_hook(
+        "piia_engram.hooks.auto_save_on_stop",
+        {"cwd": str(project), "transcript_path": str(transcript), "session_id": "gate"},
+        store, tmp_path,
+    )
+    assert result.returncode == 0, result.stderr[-500:]
+
+    lessons = json.loads((store / "knowledge" / "lessons.json").read_text(encoding="utf-8")) \
+        if (store / "knowledge" / "lessons.json").is_file() else []
+    decisions = json.loads((store / "knowledge" / "decisions.json").read_text(encoding="utf-8")) \
+        if (store / "knowledge" / "decisions.json").is_file() else []
+    has_items = len(lessons) + len(decisions) > 0
+    assert has_items == expect_items

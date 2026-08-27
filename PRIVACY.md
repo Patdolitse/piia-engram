@@ -38,33 +38,41 @@ Default implementation: local files only. Telemetry is off by default; when enab
 
 All files are plain JSON. You can open, edit, back up, or delete them at any time.
 
-## Session-end content digest (temporarily withdrawn)
+## Session-end content digest (opt-in, default off)
 
-The Claude Code session-end hook can additionally feed a sanitized digest of
-the conversation's assistant text into local knowledge extraction. The
-implementation is retained for redesign work, but the public preference API
-does not accept `hook_content_digest`, so supported installations cannot turn
-it on. A closed runtime gate also ignores a literal `true` retained from an
-older store or written by hand. The code remains present only for testability
-and the planned 4.18 redesign.
+The Claude Code session-end hook can feed a sanitized digest of the
+conversation's assistant text into local knowledge extraction. This is
+**off by default** and only activates when the `hook_content_digest_v2`
+preference is set to the literal boolean `true` (via
+`update_preferences`/`update_identity`; strings, numbers, and the legacy
+`hook_content_digest` boolean key are all ignored — a persisted `true`
+from an older version is inert by construction).
 
-If this path is reintroduced after the privacy review, its current controls are:
+When enabled:
 
 - only assistant text blocks are read from the local transcript — user
   messages and tool input/output are never collected;
-- text is filtered (code fences, quotes, XML envelopes dropped), normalized,
-  and scrubbed of credential/path/PII shapes before use, under hard size
-  budgets;
+- text is filtered (code fences, quotes, XML envelopes dropped), normalized
+  (NFKC + zero-width folding BEFORE detection), and scrubbed of
+  credential/path/PII shapes, under hard size budgets;
+- cross-line secret pairs (key-form line + value line) are detected after
+  normalization, so zero-width or homoglyph obfuscation of the key form
+  cannot bypass the pairing;
+- the final whole-digest rescan never returns the raw digest when any
+  redaction fired;
 - extracted items are staged for your review, never auto-verified;
 - the audit trail records category + counts only (no item text);
-- every candidate is checked by an output guard before it is stored;
-  anything secret-shaped is dropped, not stored.
+- every candidate is checked by an output guard (including a
+  prev+current sentence window for cross-line pairs) before it is
+  stored; anything secret-shaped is dropped, not stored.
 
-Residual risks you accept when opting in (phase 1 limits): the filters are
-shape-based, not semantic — names, business secrets, or unusual secret
-formats without a recognizable shape can pass into staged items; staged items
-are included in full local backups/exports you create; and the output guard
-is deliberately over-broad, so legitimate content hashes or checksums in a
+Residual risks you accept when opting in: the filters are shape-based,
+not semantic — names, business secrets, or unusual secret formats without
+a recognizable shape can pass into staged items; natural-language
+paraphrases of a secret cannot be caught by finite regular expressions
+and are an explicitly accepted residual risk; staged items are included
+in full local backups/exports you create; and the output guard is
+deliberately over-broad, so legitimate content hashes or checksums in a
 session may cause some candidate items to be dropped. Review staged items
 with `engram review` and delete anything unwanted.
 

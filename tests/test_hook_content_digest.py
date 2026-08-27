@@ -167,8 +167,13 @@ def test_digest_disabled_for_anything_but_literal_true(value):
     assert digest_enabled(value) is False
 
 
-def test_digest_runtime_gate_disables_even_literal_true():
-    assert digest_enabled(True) is False
+def test_digest_activation_formula():
+    """4.18 gate: literal True activates; everything else disables."""
+    assert digest_enabled(True) is True
+    assert digest_enabled("true") is False
+    assert digest_enabled(1) is False
+    assert digest_enabled(None) is False
+    assert digest_enabled(False) is False
 
 
 def test_preference_key_is_stable():

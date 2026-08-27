@@ -134,6 +134,7 @@ _ALLOWED_PROFILE_FIELDS: frozenset = frozenset({
 _ALLOWED_PREFERENCES_FIELDS: frozenset = frozenset({
     "work_patterns", "communication", "tool_preferences",
     "playbook_auto_extract",
+    "hook_content_digest_v2",
     "updated_at", "migrated_from",
 })
 _ALLOWED_TRUST_FIELDS: frozenset = frozenset({

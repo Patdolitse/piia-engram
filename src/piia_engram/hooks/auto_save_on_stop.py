@@ -175,9 +175,9 @@ def main() -> None:
 
         if msg_count >= _flush_threshold():
             # checkpoint_content above stays metadata-only by construction.
-            # The retained digest path has a closed runtime gate and is not
-            # writable through the public preference API. See the privacy
-            # contract in piia_engram.hook_digest before future reactivation.
+            # The digest path is re-enabled in 4.18 under a NEW versioned
+            # key (hook_content_digest_v2, literal True only); the legacy
+            # boolean key is migrated away and never honored.
             summary = f"Claude Code 会话 ({duration_str}, {msg_count} 消息)\n"
             summary += f"工作目录: {cwd}\n"
             if tool_calls:
@@ -186,13 +186,18 @@ def main() -> None:
             try:
                 from piia_engram.hook_digest import (
                     PREFERENCE_KEY,
+                    PREFERENCE_KEY_V2,
                     build_digest,
                     digest_enabled,
                     read_transcript_lines,
                 )
 
                 prefs = engram.get_preferences()
-                if digest_enabled(prefs.get(PREFERENCE_KEY)) and transcript_path:
+                # the legacy boolean key is NEVER consulted: the gate reads
+                # only the v2 key, so a persisted old true from 4.17.1 is
+                # inert by construction (no migration needed — the key is
+                # outside the allowlist and the gate ignores it)
+                if digest_enabled(prefs.get(PREFERENCE_KEY_V2)) and transcript_path:
                     digest = build_digest(read_transcript_lines(transcript_path))
                     if digest:
                         summary = summary + "\n" + digest

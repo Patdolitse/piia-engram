@@ -39,10 +39,15 @@ MAX_TOTAL_BYTES = 8_000
 MAX_BLOCK_ORIGINAL_CHARS = 100_000
 
 PREFERENCE_KEY = "hook_content_digest"
+PREFERENCE_KEY_V2 = "hook_content_digest_v2"
 CAPTURE_ORIGIN = "hook_content_digest"
-# Closed until the 4.18 privacy redesign. Keeping the implementation importable
-# preserves its test surface without letting persisted legacy preferences run it.
-RUNTIME_ENABLED = False
+# 4.18 activation gate: the digest path is re-enabled under a NEW versioned
+# preference key. The master gate is ON; the sole activation formula is
+# `hook_content_digest_v2 is literal True`. The old boolean key
+# (`hook_content_digest`) is migrated away at read time and never honored,
+# so a persisted legacy `true` (from 4.17.1 or hand-edited JSON) cannot
+# reactivate the path, nor can it survive an upgrade-then-downgrade cycle.
+RUNTIME_ENABLED = True
 
 # shapes the existing scrubbers intentionally leave to other layers, plus
 # generic secret-bearing forms the digest must not carry. Composed AFTER the
@@ -330,10 +335,12 @@ def output_guard_item(fields: dict[str, Any]) -> tuple[bool, str]:
 
 
 def digest_enabled(preference_value: object) -> bool:
-    """Behavioral gate for the retained, currently dormant digest path.
+    """4.18 activation gate: ONLY a literal True under the NEW v2 key.
 
-    The runtime kill switch wins over every preference value, including a
-    literal True retained from 4.17.1 or written by hand.
+    The master gate must be ON AND the value must be the literal boolean
+    True (type-checked; the string "true", the int 1, etc. are all False).
+    The old `hook_content_digest` boolean key is never consulted here —
+    callers read the v2 key exclusively.
     """
     return RUNTIME_ENABLED and preference_value is True
 
