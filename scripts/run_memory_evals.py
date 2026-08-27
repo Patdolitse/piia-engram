@@ -96,6 +96,17 @@ def _agent_context_pack_summary() -> dict[str, Any]:
         "case_count": case_count,
         "passed_count": passed_count,
         "failed_count": failed_count,
+        # per-case diagnostic (public-safe: case names and check booleans
+        # only, never fixture content) — the root cause of intermittent
+        # failures was invisible until this was preserved
+        "cases": [
+            {
+                "name": case.get("name", ""),
+                "passed": case.get("passed"),
+                "checks": case.get("checks") or {},
+            }
+            for case in cases
+        ],
     }
 
 

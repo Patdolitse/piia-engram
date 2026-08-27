@@ -229,7 +229,16 @@ def build_session_digest(
             "session_ref": session_ref or "",
         },
     }
-    return sanitize_digest_value(digest)
+    # The internal project_id is a verified path-derived hash, not user
+    # content — redacting it (e.g. a 12-hex hash that happens to match the
+    # CN mobile phone pattern) breaks the exact-scope filter downstream,
+    # which compares the digest's source id against the project's canonical
+    # id. Preserve the internal identifier; the digest BODY (goal, lessons,
+    # etc.) still passes through the full scrubber below.
+    internal_project_id = digest["source"]["project_id"]
+    result = sanitize_digest_value(digest)
+    result["source"]["project_id"] = internal_project_id
+    return result
 
 
 def render_session_digest_markdown(digest: dict, *, max_chars: int = 2000) -> str:

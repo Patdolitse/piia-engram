@@ -77,7 +77,14 @@ def test_memory_eval_suite_agent_context_pack_ignores_live_engram_dir(
     after_files = sorted(path.relative_to(live_store).as_posix() for path in live_store.rglob("*"))
     summary_blob = json.dumps(summary, ensure_ascii=False)
 
-    assert summary["overall_passed"] is True
+    # diagnostic: show per-case check booleans when the pack fails, so the
+    # root cause is visible in the CI log (was invisible before 4.18)
+    pack = summary.get("agent_context_pack") or {}
+    failed_cases = [c for c in pack.get("cases", []) if not c.get("passed")]
+    assert summary["overall_passed"] is True, (
+        f"agent_context_pack failed; failing cases: "
+        f"{json.dumps(failed_cases, ensure_ascii=False)}"
+    )
     assert summary["agent_context_pack"]["store_isolated"] is True
     assert before_files == after_files == ["sentinel.txt"]
     assert sentinel.read_text(encoding="utf-8") == "LIVE_MEMORY_SUITE_SENTINEL"
