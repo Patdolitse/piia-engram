@@ -80,6 +80,12 @@ jobs:
       - name: Pre-release sanitization scan (internal disclosure blocks publish)
         run: python scripts/release_sanitize_check.py --internal --strict
 
+      - name: Canonical count gate (release re-run)
+        run: |
+          pip install -e ".[dev]"
+          ENGRAM_TEST=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=src \
+            pytest tests/ -q -p no:cacheprovider --junitxml=canonical-count.xml
+          python scripts/check_canonical_counts.py canonical-count.xml
       - name: Install build tools
         run: pip install build==1.5.0
 
