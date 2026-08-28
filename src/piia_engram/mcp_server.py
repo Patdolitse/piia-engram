@@ -1163,6 +1163,7 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "get_identity_facets": "read",
     "get_knowledge_inheritance": "read",
     "get_knowledge_overview": "read",
+    "get_knowledge_history": "read",
     "get_lessons": "read",
     "get_permission_profile": "read",
     "preview_context_governance": "read",
@@ -1477,6 +1478,7 @@ try:
         request_outline_review,
         merge_knowledge,
         manage_relation,
+        get_knowledge_history,
     )
     from .mcp_tools_admin import (  # noqa: E402,F401 — re-exports
         get_permission_profile,

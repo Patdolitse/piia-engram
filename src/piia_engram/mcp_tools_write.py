@@ -232,6 +232,7 @@ async def add_lesson(
     source_agent: str = "",
     run_id: str = "",
     last_validated_at: str = "",
+    allow_similar_new: bool = False,
     user_confirmed: bool = False,
 ) -> str:
     """记录单条经验教训（你已经知道要记什么）。 / Record one lesson learned when you already know what to save.
@@ -252,8 +253,9 @@ async def add_lesson(
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
         source_url: 如果教训来自外部内容，填写来源 URL（可选）。 / Source URL when the lesson comes from external content (optional).
         source_agent: 产生/校验此条目的 agent 身份（可选，如 'claude_code'，比 source_tool 更细）。 / Agent identity that produced or validated this entry (optional; finer-grained than source_tool).
-        run_id: 产生此条目的工作流/会话运行 ID（可选）。 / Workflow/session run id that produced this entry (optional).
+        run_id: 产生此条目的工作流/会话运行 ID（可选）。 / Workflow/session id that produced this entry (optional).
         last_validated_at: 人/agent 最近确认此条目仍然成立的 ISO-8601 时间（可选）。 / ISO-8601 time this entry was last confirmed to still hold (optional).
+        allow_similar_new: 相似摘要但确属新条目时，显式绕过去重门存为新条目并互链（可选，默认 false；同摘要不同正文时去重拒绝会带修订指引）。 / When the similar summary is genuinely a NEW fact, explicitly bypass the duplicate gate and store it linked as related (optional, default false; same-summary-different-body rejections carry revision guidance).
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_lesson")
@@ -281,7 +283,9 @@ async def add_lesson(
     if not _is_user_confirmed(user_confirmed):
         return _confirmation_required("lesson", _lesson_confirmation_title(lesson), lesson)
     try:
-        result = S._locked_engram_call(S._get_engram().add_lesson, lesson)
+        result = S._locked_engram_call(
+            S._get_engram().add_lesson, lesson, allow_similar_new=allow_similar_new
+        )
         S._track("add_lesson", success=True)
         S._beta("knowledge_created", kind="lesson",
               domain=domain[:80] if domain else "",
@@ -407,6 +411,7 @@ async def add_playbook(
     source_agent: str = "",
     run_id: str = "",
     last_validated_at: str = "",
+    allow_similar_new: bool = False,
     user_confirmed: bool = False,
 ) -> str:
     """记录操作手册（Playbook）— 结构化的多步骤流程。 / Record an operational playbook — a structured multi-step procedure.
@@ -431,6 +436,7 @@ async def add_playbook(
         pitfalls: 常见陷阱，逗号分隔（可选）。 / Common pitfalls, comma-separated (optional).
         outcome: 预期结果（可选）。 / Expected outcome (optional).
         source_tool: 来源工具（可选）。 / Source tool (optional).
+        allow_similar_new: 标题相似但确属另一份手册时，显式绕过相似度门存为新条目（可选，默认 false；同标题不同正文的去重拒绝会带修订指引）。 / When the similar title is genuinely a DIFFERENT playbook, explicitly bypass the similarity gate (optional, default false; same-title-different-body rejections carry revision guidance).
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_playbook")
@@ -486,7 +492,9 @@ async def add_playbook(
     if not _is_user_confirmed(user_confirmed):
         return _confirmation_required("playbook", _playbook_confirmation_title(playbook), playbook)
     try:
-        result = S._locked_engram_call(S._get_engram().add_playbook, playbook)
+        result = S._locked_engram_call(
+            S._get_engram().add_playbook, playbook, allow_similar_new=allow_similar_new
+        )
         S._track("add_playbook", success=True)
     except Exception as exc:
         S._track("add_playbook", success=False)

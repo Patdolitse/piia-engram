@@ -372,3 +372,116 @@ class TestCli:
         assert preflight.main(
             ["--root", str(repo), "--since", "deadbeef", "--base-required"]
         ) == 1
+
+
+# ---------------------------------------------------------------------------
+# v4.19: bounded merge-base fallback for an orphaned/unreadable --since base
+# (the force-push orphaning seen in the v4.18 release chain)
+# ---------------------------------------------------------------------------
+
+_ORPHAN = "deadbeef" * 5  # 40 hex chars, never a readable ref
+
+
+def _add_origin_remote(repo: Path, tmp_path: Path) -> None:
+    """Give the repo a REAL origin (bare) with main pushed, so the fallback's
+    `git fetch origin main` genuinely works instead of being mocked."""
+    bare = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "-q", "--bare", str(bare)],
+        check=True, capture_output=True, text=True,
+    )
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+
+class TestMergeBaseFallback:
+    def _repo(self, tmp_path: Path, version: str = "4.12.0", *, evidence: bool = True) -> Path:
+        repo = make_repo(tmp_path, version, evidence=evidence)
+        _add_origin_remote(repo, tmp_path)
+        return repo
+
+    @staticmethod
+    def _bump(repo: Path, version: str, *, with_evidence: bool) -> None:
+        _write_version_files(repo, version)
+        if with_evidence:
+            (repo / "release-evidence").mkdir(exist_ok=True)
+            (repo / "release-evidence" / f"v{version}.md").write_text(
+                _REQUIRED_EVIDENCE.format(v=version), encoding="utf-8"
+            )
+            allow = (repo / ".publishallow").read_text(encoding="utf-8")
+            (repo / ".publishallow").write_text(
+                allow + f"release-evidence/v{version}.md\n", encoding="utf-8"
+            )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", f"bump {version}")
+
+    def test_orphaned_base_recovers_via_fallback_with_evidence(self, tmp_path: Path):
+        repo = self._repo(tmp_path)  # origin/main = 4.12.0 WITH evidence
+        self._bump(repo, "4.13.0", with_evidence=True)
+        result = preflight.preflight(repo, since=_ORPHAN, base_required=True)
+        assert result.ok, result.errors
+
+    def test_orphaned_base_fallback_catches_bump_without_evidence(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._bump(repo, "4.13.0", with_evidence=False)
+        result = preflight.preflight(repo, since=_ORPHAN, base_required=True)
+        assert not result.ok
+        assert any("4.13.0" in e for e in result.errors)
+
+    def test_fallback_verifies_head_evidence_unconditionally(self, tmp_path: Path):
+        # main-push bypass shape: origin/main == HEAD, no version delta — the
+        # fallback must STILL demand HEAD evidence (merge-base == HEAD must
+        # not skip the check).
+        repo = self._repo(tmp_path, "4.13.0", evidence=False)
+        result = preflight.preflight(repo, since=_ORPHAN, base_required=True)
+        assert not result.ok
+        assert any("evidence" in e.lower() or "HEAD" in e for e in result.errors)
+
+    def test_fallback_over_bound_fails_closed(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._bump(repo, "4.13.0", with_evidence=True)
+        (repo / "README.md").write_text(
+            (repo / "README.md").read_text(encoding="utf-8") + "\nextra\n", encoding="utf-8"
+        )
+        _git(repo, "commit", "-aqm", "docs 1")
+        (repo / "README.md").write_text(
+            (repo / "README.md").read_text(encoding="utf-8") + "\nmore\n", encoding="utf-8"
+        )
+        _git(repo, "commit", "-aqm", "docs 2")
+        result = preflight.preflight(
+            repo, since=_ORPHAN, base_required=True, fallback_bound=1
+        )
+        assert not result.ok
+        assert any("exceeds bound" in e for e in result.errors)
+        # the same shape passes with the default bound
+        assert preflight.preflight(repo, since=_ORPHAN, base_required=True).ok
+
+    def test_fallback_no_common_ancestor_fails_closed(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        _git(repo, "checkout", "-q", "--orphan", "unrelated")
+        for path in repo.rglob("*"):
+            if path.is_file() and ".git" not in path.parts:
+                path.unlink()
+        (repo / ".publishallow").write_text("# nothing\n", encoding="utf-8")
+        self._bump(repo, "4.14.0", with_evidence=True)
+        result = preflight.preflight(repo, since=_ORPHAN, base_required=True)
+        assert not result.ok
+        assert any("no common ancestor" in e for e in result.errors)
+
+    def test_readable_but_not_ancestor_engages_fallback(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        _git(repo, "checkout", "-qb", "diverged")
+        (repo / "README.md").write_text("diverged\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "diverge")
+        _git(repo, "checkout", "-q", "master")
+        # 'diverged' is readable but NOT an ancestor of HEAD: fallback engages
+        result = preflight.preflight(repo, since="diverged", base_required=True)
+        assert result.ok, result.errors  # no version delta + evidence present
+
+    def test_fallback_fetch_failure_fails_closed(self, tmp_path: Path):
+        # no origin remote at all: fetch fails -> fail closed with diagnostics
+        repo = make_repo(tmp_path, "4.12.0")
+        result = preflight.preflight(repo, since=_ORPHAN, base_required=True)
+        assert not result.ok
+        assert any("fallback refused" in e for e in result.errors)

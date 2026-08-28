@@ -184,6 +184,50 @@ def _resolve_base(root: Path, since: str) -> str | None:
     return None
 
 
+def _is_ancestor(root: Path, ref: str, head: str = "HEAD") -> bool:
+    proc = _git(root, "merge-base", "--is-ancestor", ref, head)
+    return proc.returncode == 0
+
+
+DEFAULT_FALLBACK_BOUND = 100
+
+
+def _merge_base_fallback(root: Path, *, bound: int) -> tuple[str | None, str | None]:
+    """Bounded merge-base(origin/main, HEAD) recovery for an orphaned baseline.
+
+    The event baseline (PR base SHA / push-before SHA) is PRIMARY; this runs
+    only when that baseline is unreadable or no longer an ancestor of HEAD
+    (the force-push orphaning seen in the v4.18 release chain). Returns
+    (base_sha, None) on success or (None, diagnostic) on refusal — every
+    refusal is fail-closed with the reason (fetch failed / no origin/main /
+    no common ancestor / ancestry distance over the bound). The bound keeps
+    the fallback from silently widening the guard's comparison window to an
+    unrelated ancient history.
+    """
+    fetch = _git(root, "fetch", "origin", "main", "--quiet")
+    if fetch.returncode != 0:
+        return None, f"'git fetch origin main' failed (rc={fetch.returncode})"
+    if _git(root, "rev-parse", "--verify", "-q", "origin/main").returncode != 0:
+        return None, "origin/main does not exist after fetch"
+    mb = _git(root, "merge-base", "origin/main", "HEAD")
+    if mb.returncode != 0 or not mb.stdout.strip():
+        return None, "no common ancestor between origin/main and HEAD"
+    base_sha = mb.stdout.strip()
+    count = _git(root, "rev-list", "--count", f"{base_sha}..HEAD")
+    if count.returncode != 0:
+        return None, "'git rev-list --count' failed"
+    try:
+        distance = int(count.stdout.strip() or "0")
+    except ValueError:
+        return None, f"unparsable ancestry distance {count.stdout.strip()!r}"
+    if distance > bound:
+        return None, (
+            f"ancestry distance {distance} exceeds bound {bound} "
+            f"(merge-base={base_sha}); refusing to widen the guard window"
+        )
+    return base_sha, None
+
+
 def version_at_ref(root: Path, ref: str) -> str | None:
     """Read [project].version from pyproject.toml as it exists at ``ref``.
 
@@ -281,6 +325,7 @@ def preflight(
     since: str | None = None,
     base_required: bool = False,
     require_clean: bool = True,
+    fallback_bound: int = DEFAULT_FALLBACK_BOUND,
 ) -> Result:
     root = Path(root)
     errors: list[str] = list(check_version_consistency(root))
@@ -293,13 +338,38 @@ def preflight(
             errors.append("--since was given an empty ref")
         else:
             base_ref = _resolve_base(root, since)
+            orphaned = False
+            if base_ref is not None and not _is_ancestor(root, base_ref):
+                # Readable but no longer an ancestor (force-push orphaning):
+                # the event baseline cannot anchor a comparison — treat the
+                # same as unreadable and try the bounded merge-base fallback.
+                orphaned = True
+                base_ref = None
             if base_ref is None:
-                if base_required:
-                    errors.append(
-                        f"--since base {since!r} is unreadable and --base-required is set; "
-                        "cannot verify the version-bump evidence guard (fail closed)"
-                    )
-                # else: lenient (local convenience) — main() warns on stderr
+                fb_sha, fb_diag = _merge_base_fallback(root, bound=fallback_bound)
+                if fb_sha is None:
+                    detail = f"; merge-base fallback refused: {fb_diag}" if fb_diag else ""
+                    if base_required:
+                        errors.append(
+                            f"--since base {since!r} "
+                            f"{'is not an ancestor of HEAD' if orphaned else 'is unreadable'}"
+                            f" and --base-required is set; cannot verify the version-bump "
+                            f"evidence guard (fail closed){detail}"
+                        )
+                    # else: lenient (local convenience) — main() warns on stderr
+                else:
+                    # Fallback engaged: the comparison window is derived, not
+                    # event-guaranteed, so HEAD evidence verification is
+                    # UNCONDITIONAL — even when the fallback base carries the
+                    # same version (closes the origin/main == HEAD bypass
+                    # where merge-base == HEAD would otherwise skip the check).
+                    if version:
+                        if not SEMVER_FINAL.match(version):
+                            errors.append(
+                                f"fallback mode: HEAD version {version!r} is not a "
+                                "final SemVer X.Y.Z"
+                            )
+                        errors += _evidence_errors(root, version)
             elif version:
                 base_version = version_at_ref(root, base_ref)
                 if base_version is not None and version != base_version:
@@ -336,6 +406,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tag", default=None, help="intended tag, e.g. v4.12.0 — enables the full pre-tag gate")
     parser.add_argument("--since", default=None, help="base ref; if HEAD bumped the version vs <ref>, require evidence in HEAD (CI release-commit guard)")
     parser.add_argument("--base-required", action="store_true", help="fail closed if the --since base is unreadable (use in CI)")
+    parser.add_argument(
+        "--fallback-bound",
+        type=int,
+        default=DEFAULT_FALLBACK_BOUND,
+        help=f"max ancestry distance for the merge-base(origin/main, HEAD) fallback "
+        f"when the --since baseline is orphaned/unreadable (default {DEFAULT_FALLBACK_BOUND})",
+    )
     parser.add_argument("--allow-dirty", action="store_true", help="skip the clean-worktree check (NOT for real releases)")
     args = parser.parse_args(argv)
 
@@ -354,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
         since=args.since,
         base_required=args.base_required,
         require_clean=not args.allow_dirty,
+        fallback_bound=args.fallback_bound,
     )
     if result.ok:
         if args.tag:

@@ -79,7 +79,7 @@ def test_tool_surface_classification_pins_local_legacy_and_core_export_tools():
     tier1 = _literal_assignment("TIER1_TOOLS")
     docs = _tool_docstrings()
 
-    assert len(tier1) == 18
+    assert len(tier1) == 19
     assert classes["get_identity_card"] == "export_owner_only"
     assert "get_identity_card" in tier1
     assert "Owner/export surface" in docs["get_identity_card"]

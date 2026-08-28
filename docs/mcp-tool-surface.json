@@ -4,14 +4,14 @@
   "last_reviewed": "2026-07-28",
   "source_of_truth": "scripts/count_mcp_tools.py --json",
   "counts": {
-    "total": 58,
-    "core": 18,
+    "total": 59,
+    "core": 19,
     "advanced": 40
   },
   "tiers": [
     {
       "name": "core",
-      "count": 18,
+      "count": 19,
       "loaded_by": "default",
       "meaning": "high-frequency and context-budget friendly; not synonymous with read-only"
     },

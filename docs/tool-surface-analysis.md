@@ -9,7 +9,7 @@ Source of truth:
 - `TOOL_GOVERNANCE_CLASS` for side-effect and governance class
 - `tests/snapshots/mcp_tool_schema.json` for the generated schema snapshot
 
-Current count: **58 MCP tools**. The default server loads **18 core tools** with `ENGRAM_TOOLS=core`; the other **40 advanced tools** are available with `ENGRAM_TOOLS=all`. The machine-readable taxonomy snapshot is [`mcp-tool-surface.json`](mcp-tool-surface.json), and `tests/test_mcp_tool_surface_classification.py` verifies that it stays aligned with `scripts/count_mcp_tools.py --json`.
+Current count: **59 MCP tools**. The default server loads **19 core tools** with `ENGRAM_TOOLS=core`; the other **40 advanced tools** are available with `ENGRAM_TOOLS=all`. The machine-readable taxonomy snapshot is [`mcp-tool-surface.json`](mcp-tool-surface.json), and `tests/test_mcp_tool_surface_classification.py` verifies that it stays aligned with `scripts/count_mcp_tools.py --json`.
 
 v4.0 consolidated the previous 87-tool surface into 53 tools. Later source-aware freshness work added two owner-only freshness tools (`confirm_knowledge` and `check_anchors`), onboard-repo added two owner-only acceptance tools (`onboard_repo` and `onboard_accept`), and closeout recovery added the metadata-only `get_wrap_up_session_status` tool for the current 58-tool surface. Families of closely related operations were merged into single tools with a `mode`/`action` selector (for example `get_identity_facets`, `manage_playbook`, `review_staging`), and legacy Playbook scope migration moved out of MCP into the owner-only local CLI. See [`migration-v4.md`](migration-v4.md) for the old-name → new-call mapping.
 
@@ -47,6 +47,7 @@ Loaded by default:
 - `search_knowledge`
 - `get_relevant_knowledge`
 - `get_recall`
+- `get_knowledge_history` — v4.19 revision-loop read: superseded snapshots by id / by exact version
 - `get_identity_card`
 - `update_identity`
 - `get_project_context`
@@ -87,6 +88,7 @@ These are publishable as general Engram capabilities, assuming their existing go
 
 - `get_lessons`
 - `get_decisions` — plus `thread_seed_id` / `history_question` for decision threads and revision history
+- `get_knowledge_history` — v4.19: one item's superseded snapshots (id / exact-version lookup)
 - `get_project_context`
 - `list_projects`
 - `get_relevant_knowledge`

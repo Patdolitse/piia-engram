@@ -35,6 +35,7 @@ CORE_MCP_TOOLS = {
     "search_knowledge",
     "get_relevant_knowledge",
     "get_recall",
+    "get_knowledge_history",  # v4.19 revision-loop read surface
     "get_identity_card",
     "update_identity",
     "get_project_context",
@@ -129,9 +130,9 @@ def test_glama_metadata_tracks_current_public_version_and_tool_count():
     content = GLAMA_YAML.read_text(encoding="utf-8")
 
     assert f"version: {pyproject_version}" in content
-    assert "58 MCP tools" in content
-    assert "'core' (18 tools)" in content
-    assert "'all' (58 tools)" in content
+    assert "59 MCP tools" in content
+    assert "'core' (19 tools)" in content
+    assert "'all' (59 tools)" in content
     assert "87 MCP tools" not in content
     assert "'all' (87 tools)" not in content
     assert "'core' (12 tools)" not in content
@@ -430,20 +431,20 @@ def test_source_and_user_facing_docs_are_utf8_without_bom():
 
 
 def test_architecture_documents_current_tool_split():
-    """Architecture docs should carry the same 58/18/40 tool split as README."""
+    """Architecture docs should carry the same 59/19/40 tool split as README."""
     content = ARCHITECTURE.read_text(encoding="utf-8")
-    assert re.search(r"\b58 tools\b", content)
-    assert "18 Tier-1" in content
+    assert re.search(r"\b59 tools\b", content)
+    assert "19 Tier-1" in content
     assert "40 Tier-2" in content
     assert not re.search(r"\b87 tools\b", content)
     assert "70 Tier-2" not in content
 
 
 def test_cli_help_documents_current_tool_split():
-    """CLI help text should not drift from the public 58/18 tool split."""
+    """CLI help text should not drift from the public 59/19 tool split."""
     content = SETUP_WIZARD.read_text(encoding="utf-8")
-    assert "18 核心工具 / core MCP tools" in content
-    assert "unlock all 58 tools" in content
+    assert "19 核心工具 / core MCP tools" in content
+    assert "unlock all 59 tools" in content
     assert "unlock all 87 tools" not in content
 
 
@@ -485,7 +486,7 @@ def test_zh_readme_uses_pypi_install_and_current_tool_split():
     assert "https://img.shields.io/pypi/v/piia-engram" in content
     assert "pip install piia-engram" in content
     assert "40 个" in content  # Tier-2 tool count
-    assert "18 个" in content  # Tier-1 tool count
+    assert "19 个" in content  # Tier-1 tool count
     assert "70 个" not in content  # pre-v4 Tier-2 count must not linger
     assert "`update_knowledge`" in content
     assert "`get_knowledge_overview`" in content

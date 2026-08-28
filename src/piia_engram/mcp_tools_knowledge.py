@@ -134,18 +134,21 @@ async def extract_session_insights(
 
 
 @S.mcp.tool()
-async def update_knowledge(item_id: str, updates_json: str) -> str:
-    """按 ID 更新 lesson 或 decision（自动识别类型）。 / Update a lesson or decision by ID, automatically detecting the item type.
+async def update_knowledge(
+    item_id: str, updates_json: str, expected_version: int | None = None
+) -> str:
+    """按 ID 更新 lesson、decision 或 playbook（自动识别类型）。 / Update a lesson, decision, or playbook by ID, automatically detecting the item type.
 
-    用途：需要修改已有知识条目的内容、状态或元数据时调用。
-    Purpose: Call when an existing knowledge item's content, status, or metadata needs to be changed.
+    用途：需要修改已有知识条目的内容、状态或元数据时调用。内容变更会自动保留旧版本为不可变快照并递增版本号（用 get_knowledge_history 查看）。
+    Purpose: Call when an existing knowledge item's content, status, or metadata needs to be changed. Content changes automatically retain the prior body as an immutable snapshot and bump the version (see get_knowledge_history).
 
     注意：如果只是确认某条知识仍有效，用 review_staging(action="review_item")；如果要归档，用 archive_knowledge。
-    Note: If you only need to confirm an item is still valid, use review_staging(action="review_item"); to archive it, use archive_knowledge.
+    Note: If you only need to confirm an item is still valid, use review_staging(action="review_item"); to archive, use archive_knowledge.
 
     Args:
-        item_id: lesson 或 decision 的 ID。 / ID of the lesson or decision.
+        item_id: lesson、decision 或 playbook 的 ID。 / ID of the lesson, decision, or playbook.
         updates_json: 要更新字段的 JSON 字符串。 / JSON string containing fields to update.
+        expected_version: 乐观并发保护（可选）：传入当前版本号，不匹配则拒绝写入且零改动（version_conflict）。修订指引的 guidance.revision.expected_version 会给出当前值。 / Optimistic-concurrency guard (optional): the current version; a mismatch refuses the write with zero changes (version_conflict). The dedup guidance's revision.expected_version carries the current value.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="update_knowledge")
@@ -159,8 +162,42 @@ async def update_knowledge(item_id: str, updates_json: str) -> str:
     # Returns the FULL stored item; an attacker who guesses an id can no-op
     # update and read a secret item back through this "write" tool (Codex
     # round-16 P1-3). Gate the returned item — over-ceiling → withheld stub.
-    result = S._locked_engram_call(S._get_engram().update_knowledge, item_id, updates)
+    result = S._locked_engram_call(
+        S._get_engram().update_knowledge, item_id, updates, expected_version=expected_version
+    )
     result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="update_knowledge")
+    return S._json(result)
+
+
+@S.mcp.tool()
+async def get_knowledge_history(
+    item_id: str, include_bodies: bool = False, version: int | None = None
+) -> str:
+    """查看一个知识条目（lesson/decision/playbook）的修订历史。 / Return the revision history (superseded snapshots) of one knowledge item.
+
+    **Lifecycle: retrieval** — 需要追溯某条知识改过什么、何时改的、改前长什么样时调用。
+    Lifecycle: retrieval — call when you need what changed on an item, when, and what the prior body looked like.
+
+    用途：修订后核对旧行为、审计版本链、或找回被改掉的内容。
+    Purpose: verify prior behavior after a revision, audit a version chain, or recover replaced content.
+
+    Args:
+        item_id: 条目 ID（稳定 HEAD id，不是快照 id）。 / Item id (the stable HEAD id, not a snapshot id).
+        include_bodies: 是否在结果里带快照正文（默认 false 只给元数据）。 / Include snapshot bodies in the result (default false returns metadata only).
+        version: 精确按版本号取一个快照（可选）；不存在时返回 version_not_found 而不是近似值。 / Exact by-version snapshot lookup (optional); a miss returns version_not_found, never a nearest match.
+    """
+    result = S._locked_engram_call(
+        S._get_engram().get_knowledge_history,
+        item_id,
+        include_bodies=include_bodies,
+        version=version,
+    )
+    # History payloads embed knowledge bodies in the "snapshots" list (and the
+    # by-version "snapshot" item): govern them like any mixed-list read.
+    result = S._gov_rt.maybe_govern_result(
+        S._get_engram().root, result, tool="get_knowledge_history",
+        list_fields=("snapshots",), item_fields=("snapshot",),
+    )
     return S._json(result)
 
 

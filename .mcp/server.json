@@ -8,7 +8,7 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/Patdolitse/piia-engram",
-  "version": "4.18.0",
+  "version": "4.19.0",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "displayName": "Piia Engram",
@@ -29,8 +29,8 @@
         "knowledge-management"
       ],
       "capabilities": {
-        "mcp_tools_total": 58,
-        "mcp_tools_core": 18,
+        "mcp_tools_total": 59,
+        "mcp_tools_core": 19,
         "mcp_tools_advanced": 40,
         "prompts": 0,
         "resources": 0
@@ -47,13 +47,13 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "piia-engram",
-      "version": "4.18.0",
+      "version": "4.19.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
           "type": "named",
           "name": "--from",
-          "value": "piia-engram==4.18.0",
+          "value": "piia-engram==4.19.0",
           "description": "Install this exact PyPI package version before running the MCP console script."
         },
         {

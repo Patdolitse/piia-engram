@@ -21,6 +21,20 @@ from .storage import (
 
 _BUILTIN_PLAYBOOKS: dict[str, dict] = {}
 
+# Content-bearing update fields: a change to any of these is a REVISION under
+# the v4.19 contract (snapshot + version bump). Everything else in
+# _ALLOWED_PLAYBOOK_UPDATE_FIELDS (status, scope, source_tool) is metadata:
+# applied + audited, but never snapshotted and never version-bumping.
+_PLAYBOOK_CONTENT_FIELDS: frozenset = frozenset({
+    "title", "description", "triggers", "domain", "steps",
+    "preconditions", "pitfalls", "outcome", "parameters",
+    "required_tools", "tool_refs", "source_url",
+})
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+
 
 class PlaybookMixin:
     """Playbook CRUD / scope governance / management / execution plans."""
@@ -507,6 +521,7 @@ class PlaybookMixin:
         self,
         playbook: dict,
         source_tool: str = "",
+        allow_similar_new: bool = False,
         **extra: Any,
     ) -> dict:
         """Add an operational playbook.
@@ -543,13 +558,39 @@ class PlaybookMixin:
                 continue
             sim = self._bigram_similarity(new_title, entry.get("title", ""))
             if sim >= SIMILARITY_THRESHOLD:
-                return {
+                titles_identical = str(entry.get("title", "")) == new_title
+                if allow_similar_new and not titles_identical:
+                    # Explicit new-entry mode: the caller knows this is a
+                    # DISTINCT playbook; a different title bypasses the gate.
+                    continue
+                existing_id = str(entry.get("id") or "")
+                existing_pb = self._read_playbook_by_id(existing_id)
+                body_differs = existing_pb is None or self._playbook_body_differs(
+                    new_pb, existing_pb
+                )
+                result = {
                     "status": "duplicate",
                     "similarity": round(sim, 2),
-                    "existing_id": entry.get("id"),
+                    "existing_id": existing_id,
                     "existing_title": entry.get("title"),
                     "message": f"与现有 Playbook 相似度 {sim:.0%}，未重复添加",
+                    "likely_revision": body_differs,
                 }
+                if body_differs and existing_pb is not None:
+                    # Never a silent swallow: a differing body under a matching
+                    # title is probably a REVISION — carry the explicit path.
+                    result["guidance"] = {
+                        "revision": {
+                            "tool_hint": "update_knowledge",
+                            "target_id": existing_id,
+                            "expected_version": int(existing_pb.get("version") or 1),
+                        },
+                        "new_entry": {
+                            "param": "allow_similar_new",
+                            "note": "set allow_similar_new=true to store as a distinct entry",
+                        },
+                    }
+                return result
 
         self._write_playbook_and_index(new_pb)
 
@@ -1345,21 +1386,147 @@ class PlaybookMixin:
             "updated": change,
         }
 
-    def update_playbook(self, playbook_id: str, updates: dict) -> dict:
-        """Update fields on a playbook entry."""
+    def _playbook_body_differs(self, left: dict, right: dict) -> bool:
+        """True when any content-bearing field differs between two playbooks."""
+        for field in _PLAYBOOK_CONTENT_FIELDS:
+            if field == "tool_refs":
+                # normalized away by _ensure_playbook_fields; ignore on compare
+                continue
+            if _stable_json(left.get(field)) != _stable_json(right.get(field)):
+                return True
+        return False
+
+    def _write_playbook_snapshot(self, pb: dict) -> str | None:
+        """Persist the pre-revision playbook body as an immutable snapshot.
+
+        State machine addendum v2.2: snapshot id reuses the lesson scheme
+        ``{head_id}-prev-{alphanumeric timestamp}`` with a collision counter;
+        the record carries status/tier/snapshot_of/superseded_by/superseded_at
+        plus ``snapshot_version`` (the numeric version the body had).
+        """
+        head_id = str(pb.get("id") or "")
+        if not head_id:
+            return None
+        now = _now_iso()
+        suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
+        base_id = f"{head_id}-prev-{suffix}"
+        snapshot_id = base_id
+        counter = 2
+        existing_index_ids = {e.get("id") for e in self._read_playbook_index()}
+        while snapshot_id in existing_index_ids or (
+            self._playbooks_dir / f"{snapshot_id}.json"
+        ).exists():
+            snapshot_id = f"{base_id}-{counter}"
+            counter += 1
+        current_version = int(pb.get("version") or 1)
+        snapshot = deepcopy(dict(pb))
+        snapshot["id"] = snapshot_id
+        snapshot["status"] = "superseded"
+        snapshot["tier"] = "archived"
+        snapshot["snapshot_of"] = head_id
+        snapshot["superseded_by"] = head_id
+        snapshot["superseded_at"] = now
+        snapshot["last_updated"] = now
+        snapshot["snapshot_version"] = current_version
+        snapshot["version"] = current_version
+        snapshot = self._ensure_playbook_fields(snapshot)
+        self._write_playbook_and_index(snapshot)
+        return snapshot_id
+
+    def _delete_playbook_snapshot(self, snapshot_id: str) -> None:
+        """Best-effort removal of an orphaned snapshot (body file + index row)."""
+        try:
+            body_path = self._playbooks_dir / f"{snapshot_id}.json"
+            if body_path.exists():
+                body_path.unlink()
+
+            def _drop(index: list[dict]) -> list[dict]:
+                return [e for e in index if e.get("id") != snapshot_id]
+
+            self._update_playbook_index(_drop)
+        except OSError:
+            # orphan cleanup is best-effort; a leftover snapshot is reported
+            # by get_knowledge_history as a pending commit, never as history
+            pass
+
+    def update_playbook(
+        self,
+        playbook_id: str,
+        updates: dict,
+        expected_version: int | None = None,
+    ) -> dict:
+        """Update fields on a playbook entry.
+
+        v4.19 revision contract (state machine addendum v2.2): a content
+        change first writes an immutable snapshot of the pre-revision body
+        (own file + superseded index entry), then bumps the head version.
+        Metadata-only changes (status/scope) apply without snapshot or bump.
+        A stale ``expected_version`` fails closed (CAS pre-check plus a
+        re-check inside the per-file write lock; the orphaned snapshot of a
+        lost race is removed best-effort). An updates dict that changes
+        nothing is a no-op.
+
+        Two-phase on purpose: JSON writes in one directory serialize on a
+        shared lock file, so the snapshot write must happen OUTSIDE the head
+        file's locked mutation or the nested lock self-deadlocks.
+        """
         updates = self._repair_incoming_text(dict(updates))
 
+        current = self._read_playbook_by_id(playbook_id)
+        if current is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+        current_version = int(current.get("version") or 1)
+        if expected_version is not None and expected_version != current_version:
+            return {
+                "error": "version_conflict",
+                "item_id": playbook_id,
+                "expected_version": expected_version,
+                "actual_version": current_version,
+            }
+
+        allowed_updates = {
+            key: value
+            for key, value in updates.items()
+            if key in _ALLOWED_PLAYBOOK_UPDATE_FIELDS
+        }
+        any_changed = any(value != current.get(key) for key, value in allowed_updates.items())
+        if not any_changed:
+            result = dict(current)
+            result["revision_outcome"] = "noop"
+            return result
+        content_changed = any(
+            key in _PLAYBOOK_CONTENT_FIELDS and value != current.get(key)
+            for key, value in allowed_updates.items()
+        )
+
+        snapshot_id: str | None = None
+        if content_changed:
+            snapshot_id = self._write_playbook_snapshot(current)
+
+        outcome: dict[str, Any] = {}
+
         def _apply(pb: dict) -> dict:
-            for key, value in updates.items():
-                if key in _ALLOWED_PLAYBOOK_UPDATE_FIELDS:
-                    pb[key] = value
+            live_version = int(pb.get("version") or 1)
+            if expected_version is not None and expected_version != live_version:
+                outcome["error"] = {
+                    "error": "version_conflict",
+                    "item_id": playbook_id,
+                    "expected_version": expected_version,
+                    "actual_version": live_version,
+                }
+                return pb
+            for key, value in allowed_updates.items():
+                pb[key] = value
             pb["last_updated"] = _now_iso()
-            pb["version"] = pb.get("version", 1) + 1
+            if content_changed:
+                pb["version"] = live_version + 1
             return self._ensure_playbook_fields(pb)
 
         result = self._update_playbook_file_by_id(playbook_id, _apply)
-        if result is None:
-            return {"error": f"Playbook not found: {playbook_id}"}
+        if outcome.get("error") or result is None:
+            if snapshot_id:
+                self._delete_playbook_snapshot(snapshot_id)
+            return outcome.get("error") or {"error": f"Playbook not found: {playbook_id}"}
 
         idx_entry = self._playbook_index_entry(result)
 
@@ -1373,6 +1540,13 @@ class PlaybookMixin:
             return index
 
         self._update_playbook_index(_upsert)
+        if snapshot_id:
+            self._commit_version_edge(playbook_id, snapshot_id)
+            self._audit.log(
+                "write",
+                "knowledge/version_snapshot",
+                detail=f"playbook {playbook_id} supersedes {snapshot_id}",
+            )
         self._audit.log("write", "playbooks", detail=f"updated {playbook_id}")
         return result
 

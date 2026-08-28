@@ -109,9 +109,9 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 
 | | Current repo / development facts |
 |---|---|
-| Version frame | **v4.18.0** (verified 2026-08-27; check PyPI and GitHub Releases for the latest published package) |
+| Version frame | **v4.19.0** (verified 2026-08-28; check PyPI and GitHub Releases for the latest published package) |
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
-| MCP tools | **18 Core** (loaded by default) + **40 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
+| MCP tools | **19 Core** (loaded by default) + **40 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
 | Test suite | Unit + integration; run `pytest tests/` to verify |
 | Lines in `core.py` | **1770** (facade; domain logic now lives in focused mixins — see [architecture.md](docs/architecture.md)) |
@@ -222,7 +222,7 @@ pip install piia-engram
 engram setup
 ```
 
-New to piia-engram? See the fuller [first-value quickstart](docs/quickstart-first-value.md) for the install -> first memory -> fresh-session recall path using only the default 18 core tools, or the complete [User Guide](docs/user-guide.md) covering install -> first value -> cross-tool continuity -> governance -> privacy -> FAQ. Host-specific setup cards are available for [Claude Code](docs/integrations/claude-code.md), [Codex](docs/integrations/codex.md), and [Cursor](docs/integrations/cursor.md). For proposal-only safe-context, replay, freshness/conflict, and evidence drafts, see [Context governance](docs/context-governance.md).
+New to piia-engram? See the fuller [first-value quickstart](docs/quickstart-first-value.md) for the install -> first memory -> fresh-session recall path using only the default 19 core tools, or the complete [User Guide](docs/user-guide.md) covering install -> first value -> cross-tool continuity -> governance -> privacy -> FAQ. Host-specific setup cards are available for [Claude Code](docs/integrations/claude-code.md), [Codex](docs/integrations/codex.md), and [Cursor](docs/integrations/cursor.md). For proposal-only safe-context, replay, freshness/conflict, and evidence drafts, see [Context governance](docs/context-governance.md).
 
 The setup wizard will:
 1. Detect your Python environment
@@ -547,7 +547,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 58 MCP tools. By default, only the 18 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 58 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 59 MCP tools. By default, only the 19 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 59 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 You can also expose composable capability modes such as knowledge management, governance, admin, or integrations; see the [capability modes guide](docs/operator-mcp-cheatsheet.md#capability-modes).
 
@@ -578,6 +578,7 @@ You can also expose composable capability modes such as knowledge management, go
 | `search_knowledge` | **Retrieval** — Search lessons, decisions, and playbooks (supports `filters_json` for domain/tier/date filtering) |
 | `get_relevant_knowledge` | Find knowledge relevant to current project |
 | `get_recall` | Return one structured identity + recent activity + relevant knowledge recall payload |
+| `get_knowledge_history` | Read one item's revision history (superseded snapshots; exact by-version lookup) |
 | `get_identity_card` | Owner-gated export: write and return a Markdown identity card for non-MCP tools |
 | `update_identity` | Update profile, preferences, or quality standards |
 | `get_project_context` | Read a saved project snapshot |
@@ -750,7 +751,7 @@ See [docs/runbooks/setup-upgrade-safety.md](docs/runbooks/setup-upgrade-safety.m
 | Feature | piia-engram | Claude Memory | Manual `CLAUDE.md` | Mem0 | Letta (MemGPT) |
 |---|---|---|---|---|---|
 | Primary purpose | User identity across tools | Per-conversation memory | Per-project notes | Agent vector memory | Agent self-editing memory |
-| Cross-tool by design | ✅ MCP-native (18 core tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
+| Cross-tool by design | ✅ MCP-native (19 core tools) | ❌ Claude only | ❌ tool-specific | ⚠ requires per-tool wiring | ⚠ requires per-tool wiring |
 | Storage | Local JSON in `~/.engram/` | Cloud | Local | Vector DB + Mem0 Cloud | Postgres or Letta Cloud |
 | Local-first by default | ✅ | ❌ | ✅ | ⚠ Cloud is the default | ⚠ Cloud is the default |
 | Encryption at rest | ✅ AES-256-GCM, PBKDF2 600k (opt-in) | depends on Cloud | ❌ plain Markdown | depends on store config | depends on Postgres config |
@@ -780,7 +781,7 @@ piia-engram. Install with `pip install piia-engram && engram setup`, and both to
 piia-engram is a local-first AI work identity layer for MCP-compatible coding tools. It stores your identity, preferences, code standards, lessons learned, and key decisions as local JSON files on your machine. Configured tools (Claude Code, Codex, Cursor, Windsurf, Claude Desktop) can read the same user-owned context, so new chats and tool switches can start from the same governed memory and identity base.
 
 **How is piia-engram different from the official MCP memory server?**
-The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 58 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
+The official `@modelcontextprotocol/server-memory` stores a generic knowledge graph of entities and relations. piia-engram is specialized for **developer identity**: it has structured fields for your profile, code standards, quality bar, lessons learned, and key decisions — plus 59 tools for knowledge lifecycle management (search, review, merge, inherit across projects). If you need general-purpose entity memory, use the official server. If you want MCP-compatible coding tools to start from the same approved understanding of your preferences and past mistakes, use piia-engram.
 
 **How is piia-engram different from agent memory tools like Mem0, Zep, or Letta?**
 Those tools store task context and session history for AI agents — what happened during a workflow. piia-engram stores who *you* are as a person — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: identity persists across tools, sessions, and projects, while task memory is scoped to a single agent run. Your data is local JSON files you own and can edit directly.

@@ -18,16 +18,165 @@ class KnowledgeOpsMixin:
     # Knowledge update / archive / lifecycle / merge / linking
     # ------------------------------------------------------------------
 
-    def update_knowledge(self, item_id: str, updates: dict) -> dict:
-        """Update a lesson, decision, or playbook by ID (auto-detects type)."""
+    def update_knowledge(
+        self, item_id: str, updates: dict, expected_version: int | None = None
+    ) -> dict:
+        """Update a lesson, decision, or playbook by ID (auto-detects type).
+
+        ``expected_version`` is the v4.19 CAS guard: when given, it must equal
+        the target's current numeric version or the update fails closed with
+        zero semantic writes (``{"error": "version_conflict", ...}``).
+        """
         item_type, _ = self._find_item_by_id(item_id)
         if item_type is None:
             return {"error": f"Item not found: {item_id}"}
         if item_type == "lesson":
-            return self.update_lesson(item_id, updates)
+            return self.update_lesson(item_id, updates, expected_version=expected_version)
         if item_type == "playbook":
-            return self.update_playbook(item_id, updates)
-        return self.update_decision(item_id, updates)
+            return self.update_playbook(item_id, updates, expected_version=expected_version)
+        return self.update_decision(item_id, updates, expected_version=expected_version)
+
+    def _commit_version_edge(self, head_id: str, snapshot_id: str) -> bool:
+        """Write the ``head supersedes snapshot`` version edge, cycle-safe.
+
+        The star topology (every edge originates at the stable HEAD pointing
+        at a strictly older immutable snapshot) makes cycles impossible by
+        construction; the DFS here is defense-in-depth against store
+        corruption or legacy/anomalous data. Refuses self-edges and any edge
+        that would let the snapshot reach the head through existing edges.
+        """
+        if not head_id or not snapshot_id or head_id == snapshot_id:
+            return False
+        from .governance_store import RelationStore
+
+        store = RelationStore(self.root)
+        adjacency: dict[str, list[str]] = {}
+        for edge in store.all_edges():
+            adjacency.setdefault(edge["src"], []).append(edge["dst"])
+        stack = [snapshot_id]
+        seen: set[str] = set()
+        while stack:
+            node = stack.pop()
+            if node == head_id:
+                return False
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(adjacency.get(node, []))
+        return store.add_relation(head_id, "supersedes", snapshot_id)
+
+    _HISTORY_BODY_FIELDS: dict[str, tuple[str, ...]] = {
+        "lesson": ("summary", "detail", "domain"),
+        "decision": ("title", "question", "choice", "reasoning", "alternatives"),
+        "playbook": (
+            "title", "description", "triggers", "domain", "steps",
+            "preconditions", "pitfalls", "outcome",
+        ),
+    }
+
+    def _load_history_record(self, item_type: str, snapshot_id: str) -> dict | None:
+        if item_type == "playbook":
+            return self._read_playbook_by_id(snapshot_id)
+        filename = "lessons.json" if item_type == "lesson" else "decisions.json"
+        for entry in self._read_entries(self._knowledge_dir / filename, item_type):
+            if entry.get("id") == snapshot_id:
+                return entry
+        return None
+
+    def get_knowledge_history(
+        self,
+        item_id: str,
+        *,
+        include_bodies: bool = False,
+        version: int | None = None,
+    ) -> dict:
+        """Return the version history (superseded snapshots) of a knowledge item.
+
+        Enumerates the ``supersedes`` star edges from the stable HEAD, loads
+        the snapshot records, and orders them newest-first by
+        ``snapshot_version`` (legacy snapshots without the field fall back to
+        ``superseded_at`` + id collision suffix). Snapshots whose
+        ``snapshot_version`` is >= the head's current version are commits that
+        never saw their HEAD write finish; they are counted as
+        ``pending_commits`` and excluded from the history list.
+
+        ``version`` requests an exact by-version lookup — a miss returns
+        ``{"error": "version_not_found", ...}``, never a nearest neighbor.
+        """
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return {"error": f"Item not found: {item_id}"}
+        head_version = int(item.get("version") or 1)
+
+        from .governance_store import RelationStore
+
+        snapshot_ids = [
+            edge["dst"]
+            for edge in RelationStore(self.root).all_edges()
+            if edge["src"] == item_id and edge["rel"] == "supersedes"
+        ]
+        nodes: list[dict] = []
+        pending = 0
+        for snapshot_id in snapshot_ids:
+            record = self._load_history_record(item_type, snapshot_id)
+            if record is None:
+                continue
+            raw_sv = record.get("snapshot_version")
+            snapshot_version = None
+            if isinstance(raw_sv, int):
+                snapshot_version = raw_sv
+            elif isinstance(raw_sv, str) and raw_sv.isdigit():
+                snapshot_version = int(raw_sv)
+            if snapshot_version is not None and snapshot_version >= head_version:
+                pending += 1
+                continue
+            node = {
+                "id": record.get("id", ""),
+                "snapshot_version": snapshot_version,
+                "superseded_at": record.get("superseded_at", ""),
+                "snapshot_of": record.get("snapshot_of", ""),
+                "status": record.get("status", ""),
+                "tier": record.get("tier", ""),
+            }
+            if include_bodies:
+                for field in self._HISTORY_BODY_FIELDS.get(item_type, ()):
+                    if field in record:
+                        node[field] = record.get(field)
+            nodes.append(node)
+
+        # newest first: snapshot_version desc; legacy (None) last, ordered by
+        # superseded_at desc then id (the collision suffix keeps ids unique)
+        nodes.sort(
+            key=lambda n: (n.get("superseded_at") or "", n.get("id") or ""),
+            reverse=True,
+        )
+        nodes.sort(
+            key=lambda n: (
+                0,
+                -(n["snapshot_version"] or 0),
+            )
+            if n["snapshot_version"] is not None
+            else (1, 0)
+        )
+
+        if version is not None:
+            for node in nodes:
+                if node["snapshot_version"] == version:
+                    return {"id": item_id, "type": item_type, "version": version, "snapshot": node}
+            return {
+                "error": "version_not_found",
+                "item_id": item_id,
+                "requested_version": version,
+                "head_version": head_version,
+            }
+        return {
+            "id": item_id,
+            "type": item_type,
+            "head_version": head_version,
+            "snapshots": nodes,
+            "total": len(nodes),
+            "pending_commits": pending,
+        }
 
     def create_onboard_candidate(
         self,

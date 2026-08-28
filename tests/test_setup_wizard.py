@@ -1160,10 +1160,10 @@ def test_prompt_setup_capability_mode_uses_canonical_surface_counts(
 
     assert _prompt_setup_capability_mode() == "all"
     output = capsys.readouterr().out
-    assert "58" in output
-    assert "18" in output
-    assert "43" in output
-    assert capability_mode_tool_count("core+knowledge") == 43
+    assert "59" in output
+    assert "19" in output
+    assert "44" in output
+    assert capability_mode_tool_count("core+knowledge") == 44
 
 
 def test_choose_setup_capability_mode_preserves_existing_non_default_noninteractive(

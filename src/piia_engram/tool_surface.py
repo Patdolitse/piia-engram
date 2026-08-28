@@ -16,6 +16,7 @@ TIER1_TOOLS = frozenset({
     "search_knowledge",
     "get_relevant_knowledge",
     "get_recall",
+    "get_knowledge_history",
     # Identity
     "get_identity_card",
     "update_identity",

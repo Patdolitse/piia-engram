@@ -745,6 +745,7 @@ def _read_tool_kwargs(tool_name: str, ids: dict[str, str]) -> dict:
         "find_tool": {"query": "probe"},
         "get_daily_log": {"project_folder": ids["project_folder"]},
         "get_wrap_up_session_status": {"operation_id": "wrap-00000000"},
+        "get_knowledge_history": {"item_id": ids["lesson_id"]},
         "get_knowledge_inheritance": {
             "description": "python read sweep",
             "limit": 5,

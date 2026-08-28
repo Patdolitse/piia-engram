@@ -77,6 +77,10 @@ _MATRIX = [
     ("get_playbooks", "get_recent_playbooks", [_pub(), _sec()],
      {"mode": "recent"}, "filter"),
     ("get_recent_context", "get_recent_context", [_pub(), _sec()], {}, "filter"),
+    # ---- v4.19: revision history — snapshots list carries knowledge bodies ----
+    ("get_knowledge_history", "get_knowledge_history",
+     {"id": "sec-1", "head_version": 2, "snapshots": [_pub(), _sec()], "total": 2},
+     {"item_id": "sec-1"}, "filter"),
     # ---- dict-of-lists read tools (maybe_govern_buckets) ----
     ("search_knowledge", "search_knowledge",
      {"lessons": [_pub(), _sec()], "decisions": [], "playbooks": []},
@@ -630,6 +634,8 @@ _SIDE_EFFECT_HARNESS = [
                                        "scope": "all", "limit": 5}),
     ("get_stale_knowledge", lambda ids: {}),
     ("get_knowledge_inheritance", lambda ids: {"description": "test project"}),
+    ("get_knowledge_history", lambda ids: {"item_id": ids["lesson_id"],
+                                           "include_bodies": True}),
     ("explore_knowledge", lambda ids: {"mode": "related",
                                         "item_id": ids["lesson_id"]}),
     ("explore_knowledge", lambda ids: {"mode": "similar",

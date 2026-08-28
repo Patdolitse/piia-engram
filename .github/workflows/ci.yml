@@ -38,13 +38,23 @@ jobs:
           pytest tests/ -q -p no:cacheprovider \
             --junitxml=canonical-count.xml
       - name: Verify counts against public-facts manifest
-        run: python scripts/check_canonical_counts.py canonical-count.xml
+        run: |
+          set +e
+          python scripts/check_canonical_counts.py canonical-count.xml \
+            --patch-output canonical-count.patch
+          rc=$?
+          if [ -f canonical-count.patch ]; then
+            echo "::notice::public-facts patch artifact generated (review + apply; the gate stays red until the manifest is refreshed)"
+          fi
+          exit $rc
       - name: Upload JUnit artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: canonical-count-junit
-          path: canonical-count.xml
+          path: |
+            canonical-count.xml
+            canonical-count.patch
 
   test:
     name: Test (Python ${{ matrix.python-version }})

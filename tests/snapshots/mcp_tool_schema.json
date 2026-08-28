@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "src/piia_engram/mcp_server.py",
-  "tool_count": 58,
+  "tool_count": 59,
   "tools": {
     "add_decision": {
       "params": [
@@ -158,6 +158,13 @@
           "kind": "positional_or_keyword"
         },
         {
+          "name": "allow_similar_new",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
+          "kind": "positional_or_keyword"
+        },
+        {
           "name": "user_confirmed",
           "annotation": "bool",
           "required": false,
@@ -279,6 +286,13 @@
           "annotation": "str",
           "required": false,
           "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "allow_similar_new",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
           "kind": "positional_or_keyword"
         },
         {
@@ -589,6 +603,32 @@
           "annotation": "bool",
           "required": false,
           "default": true,
+          "kind": "positional_or_keyword"
+        }
+      ],
+      "returns": "str"
+    },
+    "get_knowledge_history": {
+      "params": [
+        {
+          "name": "item_id",
+          "annotation": "str",
+          "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "include_bodies",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
           "kind": "positional_or_keyword"
         }
       ],
@@ -1805,6 +1845,13 @@
           "name": "updates_json",
           "annotation": "str",
           "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "expected_version",
+          "annotation": "int | None",
+          "required": false,
           "default": null,
           "kind": "positional_or_keyword"
         }

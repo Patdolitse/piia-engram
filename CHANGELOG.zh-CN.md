@@ -6,6 +6,21 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.19.0] - 2026-08-28
+
+### 新增
+- **统一知识修订闭环**：`add_lesson` / `add_decision` / `add_playbook` / `memory_store` / `update_knowledge` / `manage_playbook(update)` 汇入同一修订合同。内容变更自动保留旧正文为不可变快照（独立 id `{head}-prev-…`、`status=superseded`、`snapshot_version`）并递增惰性物化的数字 `version`；纯元数据变更（tier/status）不快照不递增。版本关系是内部生成的 `supersedes` 星形边——调用方永远无法写入 lineage 字段（验证为忽略/拒绝）——另有写入时环检测作为纵深防御。
+- **修订指引取代静默吞没**：正文不同的去重拒绝现在携带 `likely_revision` 与结构化 `guidance`（精确的 `update_knowledge` 目标 id 与当前 `expected_version`，以及显式新建模式）。独立的 opt-in 参数 `allow_similar_new` 用于存入确实不同的相似条目（playbook 新条目 / lesson 关联条目），默认门强度不变。
+- **乐观并发（CAS）修订**：`update_knowledge` / `update_lesson` / `update_decision` / `update_playbook` 接受 `expected_version`；过期预期返回 `version_conflict` 且零写入（锁内复核，两个并发修订恰好一个提交）。无任何变更的更新为 no-op（`revision_outcome: noop`）——不递增版本、不快照、不触碰时间戳。
+- **`get_knowledge_history`（新核心 MCP 工具，第 19 个）**：lesson/decision/playbook 的显式修订历史读取——按 `snapshot_version` 新→旧枚举 supersedes 星形（遗留快照按 `superseded_at` 决胜），支持按精确版本号查找（未命中返回 `version_not_found`，绝不就近返回）、可选正文、并把崩溃遗留快照计为 `pending_commits` 而非历史。
+- **发布守卫 merge-base 自愈**（`check_release_preflight.py`）：事件基线保持优先；当其不可读或不再是 HEAD 祖先（v4.18 发布链实测的 force-push 孤立）时，受控 `merge-base(origin/main, HEAD)` 回退恢复——显式 `git fetch origin main`、祖先距离上界（`--fallback-bound`，默认 100）、超界/无共同祖先/fetch 失败全部带诊断 fail-closed；回退模式无条件验证 HEAD final SemVer + 发布证据（封堵 `origin/main == HEAD` 旁路）。
+- **canonical 计数补丁工件**（`check_canonical_counts.py --patch-output`）：全绿套件 + manifest 漂移时，门禁产出三个计数字段的 unified diff 供 review+apply（CI 中随 JUnit 一起上传）——人工应用前门禁保持红；红/空/畸形 JUnit 不产出补丁。
+
+### 修复
+- `update_playbook` 不再毁历史：修订先快照旧正文（文件 + superseded 索引项），playbook 版本链可像 lesson 一样追溯。
+- `update_knowledge` MCP 文档字符串修正：正确声明 playbook 支持（实际早已分派）。
+- 规避 playbook 修订中的同目录嵌套锁自死锁：快照写入移出头文件的锁定变更之外（同目录 JSON 写入共享一个锁文件串行）。
+
 ## [4.18.0] - 2026-08-27
 
 ### 新增

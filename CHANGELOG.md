@@ -6,6 +6,21 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.19.0] - 2026-08-28
+
+### Added
+- **Unified knowledge revision loop**: `add_lesson` / `add_decision` / `add_playbook` / `memory_store` / `update_knowledge` / `manage_playbook(update)` now converge on one revision contract. A content change retains the prior body as an immutable snapshot (own id `{head}-prev-…`, `status=superseded`, `snapshot_version`) and bumps a lazily-materialized numeric `version`; metadata-only changes (tier/status) apply without snapshot or bump. Lineage is a star of `supersedes` edges generated internally — callers can never write lineage fields (validated as ignored/rejected) — with a write-time cycle guard as defense-in-depth.
+- **Revision guidance instead of silent dedup swallow**: a duplicate-gate rejection whose body differs now carries `likely_revision` plus structured `guidance` (the exact `update_knowledge` target id and current `expected_version`, and the explicit new-entry mode). A separate opt-in `allow_similar_new` parameter stores a genuinely-distinct similar entry (playbooks) or related entry (lessons) without weakening the default gate.
+- **Optimistic-concurrency (CAS) revisions**: `update_knowledge` / `update_lesson` / `update_decision` / `update_playbook` accept `expected_version`; a stale expectation fails with `version_conflict` and zero writes (re-checked inside the per-file write lock, so exactly one of two racing revisions commits). An updates dict that changes nothing is a no-op (`revision_outcome: noop`) — no version bump, no snapshot, no timestamp touch.
+- **`get_knowledge_history` (new core MCP tool, 19th)**: explicit revision-history read for lessons, decisions, and playbooks — enumerates the supersedes star newest-first by `snapshot_version` (legacy tiebreak by `superseded_at`), supports exact by-version lookup (`version_not_found` on miss, never nearest-neighbor), optional bodies, and reports crash-orphaned snapshots as `pending_commits` instead of history.
+- **Release-guard merge-base recovery** (`check_release_preflight.py`): the event baseline stays primary; when it is unreadable or no longer an ancestor of HEAD (the force-push orphaning hit during the v4.18 release chain), a bounded `merge-base(origin/main, HEAD)` fallback recovers — explicit `git fetch origin main`, ancestry-distance bound (`--fallback-bound`, default 100), over-bound / no-common-ancestor / fetch-failure all fail closed WITH diagnostics, and fallback mode unconditionally verifies the HEAD final SemVer + release evidence (closes the `origin/main == HEAD` bypass).
+- **Canonical-count patch artifact** (`check_canonical_counts.py --patch-output`): on a fully-green suite with manifest drift, the gate emits a unified diff of the three count fields as a review+apply artifact (uploaded alongside the JUnit in CI) — the gate still fails until the human applies it; red, empty, or malformed JUnit produce no patch.
+
+### Fixed
+- `update_playbook` no longer destroys history: revisions snapshot the prior body first (file + superseded index entry), so a playbook lineage is recoverable exactly like lesson lineage.
+- `update_knowledge` MCP docstring now correctly documents playbook support (it has dispatched to playbooks all along).
+- Nested same-directory lock self-deadlock avoided in playbook revisions: snapshot writes happen outside the head file's locked mutation (JSON writes in one directory serialize on a shared lock file).
+
 ## [4.18.0] - 2026-08-27
 
 ### Added

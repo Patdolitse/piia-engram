@@ -3311,8 +3311,8 @@ def main() -> None:
             "  export_knowledge_report Readable Markdown report of active knowledge\n"
             "  export_engram           Full local JSON backup (treat as sensitive)\n\n"
             "Tool tiers:\n"
-            "  Default: 18 核心工具 / core MCP tools.\n"
-            "  Set ENGRAM_TOOLS=all to unlock all 58 tools.\n"
+            "  Default: 19 核心工具 / core MCP tools.\n"
+            "  Set ENGRAM_TOOLS=all to unlock all 59 tools.\n"
         )
         sys.exit(0)
 

@@ -1482,6 +1482,7 @@ class Engram(
         source_tool: str = "",
         source_url: str = "",
         _audit_metadata_only: bool = False,
+        allow_similar_new: bool = False,
         **extra: Any,
     ) -> dict:
         """Add a lesson learned.
@@ -1563,15 +1564,46 @@ class Engram(
                     marker in new_summary_lower and marker not in existing_summary_lower
                     for marker in _SUPPLEMENT_MARKERS
                 )
-                if not has_supplement_signal:
-                    # Tier 1: exact duplicate — reject
-                    result_box["result"] = {
+                summaries_identical = (
+                    best_match.get("summary") or ""
+                ) == new_lesson.get("summary", "")
+                if allow_similar_new and not summaries_identical:
+                    # Explicit new-entry mode: a caller who knows the similar
+                    # summary is a DISTINCT fact falls through to the related
+                    # tier instead of being swallowed by the duplicate gate.
+                    pass
+                elif not has_supplement_signal:
+                    # Tier 1: exact duplicate — reject, but never silently: a
+                    # differing body means this is probably a REVISION, and the
+                    # rejection must carry the explicit path to revise it.
+                    detail_differs = (best_match.get("detail") or "") != (
+                        new_lesson.get("detail") or ""
+                    )
+                    domain_differs = (best_match.get("domain") or "") != (
+                        new_lesson.get("domain") or ""
+                    )
+                    likely_revision = bool(detail_differs or domain_differs)
+                    result = {
                         "status": "duplicate",
                         "similarity": round(best_sim, 2),
                         "existing_id": best_match.get("id"),
                         "existing_summary": best_match.get("summary"),
                         "message": f"与现有教训相似度 {best_sim:.0%}，未重复添加",
+                        "likely_revision": likely_revision,
                     }
+                    if likely_revision:
+                        result["guidance"] = {
+                            "revision": {
+                                "tool_hint": "update_knowledge",
+                                "target_id": best_match.get("id"),
+                                "expected_version": int(best_match.get("version") or 1),
+                            },
+                            "new_entry": {
+                                "param": "allow_similar_new",
+                                "note": "set allow_similar_new=true to store as a distinct related entry",
+                            },
+                        }
+                    result_box["result"] = result
                     return lessons
                 # Supplement signal detected — fall through to related tier
 
@@ -1687,7 +1719,9 @@ class Engram(
             result = self._display_sanitize(result, "lesson")
         return result
 
-    def update_lesson(self, lesson_id: str, updates: dict) -> dict:
+    def update_lesson(
+        self, lesson_id: str, updates: dict, expected_version: int | None = None
+    ) -> dict:
         """Update fields on a lesson entry.
 
         v3.31 P0-1: ``tier`` is now updatable so users can promote a staging
@@ -1695,10 +1729,18 @@ class Engram(
         ``archived`` in a single call, instead of the previous two-step
         ``archive_knowledge`` + ``add_lesson`` workaround. Tier change is
         recorded in the audit log so the transition is traceable.
+
+        v4.19 revision contract (state machine addendum v2.2): content changes
+        create an immutable snapshot and bump the lazily-materialized numeric
+        ``version``; metadata-only changes (tier/status) do neither. An
+        ``expected_version`` that no longer matches the current head fails
+        closed with zero writes (CAS). An updates dict that changes nothing is
+        a no-op: no timestamp touch, no snapshot, no version bump.
         """
         path = self._knowledge_dir / "lessons.json"
         updates = self._repair_incoming_text(dict(updates))
         allowed_fields = {"summary", "detail", "domain", "status", "tier"}
+        content_fields = {"summary", "detail", "domain"}
         valid_tiers = {"staging", "verified", "archived"}
         result_box: dict[str, Any] = {}
 
@@ -1707,8 +1749,18 @@ class Engram(
             for lesson in lessons:
                 if lesson.get("id") != lesson_id:
                     continue
+                current_version = int(lesson.get("version") or 1)
+                if expected_version is not None and expected_version != current_version:
+                    result_box["result"] = {
+                        "error": "version_conflict",
+                        "item_id": lesson_id,
+                        "expected_version": expected_version,
+                        "actual_version": current_version,
+                    }
+                    return lessons
                 before = dict(lesson)
                 content_changed = False
+                any_changed = False
                 old_tier = lesson.get("tier")
                 tier_changed = False
                 new_tier = None
@@ -1728,11 +1780,17 @@ class Engram(
                         if value != old_tier:
                             tier_changed = True
                             new_tier = value
-                    elif key in {"summary", "detail", "domain"} and value != lesson.get(key):
-                        content_changed = True
-                    lesson[key] = value
+                    if value != lesson.get(key):
+                        any_changed = True
+                        if key in content_fields:
+                            content_changed = True
+                        lesson[key] = value
+                if not any_changed:
+                    result_box["result"] = dict(lesson)
+                    result_box["result"]["revision_outcome"] = "noop"
+                    result_box["noop"] = True
+                    return lessons
                 lesson["last_updated"] = now
-                lesson = self._ensure_fields(lesson, "lesson")
                 if content_changed:
                     suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
                     base_id = f"{lesson_id}-prev-{suffix}"
@@ -1749,9 +1807,12 @@ class Engram(
                     snapshot["superseded_by"] = lesson_id
                     snapshot["superseded_at"] = now
                     snapshot["last_updated"] = now
+                    snapshot["snapshot_version"] = current_version
                     snapshot = self._ensure_fields(snapshot, "lesson")
                     lessons.append(snapshot)
                     result_box["snapshot_id"] = snapshot_id
+                    lesson["version"] = current_version + 1
+                lesson = self._ensure_fields(lesson, "lesson")
                 result_box["result"] = lesson
                 result_box["tier_changed"] = tier_changed
                 result_box["old_tier"] = old_tier
@@ -1770,9 +1831,7 @@ class Engram(
             )
         snapshot_id = result_box.get("snapshot_id")
         if snapshot_id:
-            from .governance_store import RelationStore
-
-            RelationStore(self.root).add_relation(lesson_id, "supersedes", snapshot_id)
+            self._commit_version_edge(lesson_id, snapshot_id)
             self._audit.log(
                 "write",
                 "knowledge/version_snapshot",
@@ -2040,11 +2099,19 @@ class Engram(
             result = self._display_sanitize(result, "decision")
         return result
 
-    def update_decision(self, decision_id: str, updates: dict) -> dict:
+    def update_decision(
+        self, decision_id: str, updates: dict, expected_version: int | None = None
+    ) -> dict:
         """Update fields on a decision entry.
 
         v3.31 P0-1: ``tier`` is updatable; same validation + audit semantics
         as :meth:`update_lesson`.
+
+        v4.19 revision contract (state machine addendum v2.2): mirrors
+        :meth:`update_lesson` — content changes snapshot + bump the
+        lazily-materialized ``version``; metadata-only changes do neither;
+        stale ``expected_version`` fails closed with zero writes; a no-op
+        updates dict touches nothing.
         """
         path = self._knowledge_dir / "decisions.json"
         updates = self._repair_incoming_text(dict(updates))
@@ -2059,16 +2126,31 @@ class Engram(
             "source_tool",
             "tier",
         }
+        content_fields = {"title", "question", "choice", "reasoning", "alternatives"}
         valid_tiers = {"staging", "verified", "archived"}
         result_box: dict[str, Any] = {}
 
         def _mutate_decisions(decisions: list[dict]) -> list[dict]:
+            existing_ids = {str(item.get("id")) for item in decisions if item.get("id")}
             for decision in decisions:
                 if decision.get("id") != decision_id:
                     continue
+                current_version = int(decision.get("version") or 1)
+                if expected_version is not None and expected_version != current_version:
+                    result_box["result"] = {
+                        "error": "version_conflict",
+                        "item_id": decision_id,
+                        "expected_version": expected_version,
+                        "actual_version": current_version,
+                    }
+                    return decisions
+                before = dict(decision)
+                content_changed = False
+                any_changed = False
                 old_tier = decision.get("tier")
                 tier_changed = False
                 new_tier = None
+                now = _now_iso()
                 for key, value in updates.items():
                     if key not in allowed_fields:
                         continue
@@ -2084,8 +2166,38 @@ class Engram(
                         if value != old_tier:
                             tier_changed = True
                             new_tier = value
-                    decision[key] = value
-                decision["last_updated"] = _now_iso()
+                    if value != decision.get(key):
+                        any_changed = True
+                        if key in content_fields:
+                            content_changed = True
+                        decision[key] = value
+                if not any_changed:
+                    result_box["result"] = dict(decision)
+                    result_box["result"]["revision_outcome"] = "noop"
+                    result_box["noop"] = True
+                    return decisions
+                decision["last_updated"] = now
+                if content_changed:
+                    suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
+                    base_id = f"{decision_id}-prev-{suffix}"
+                    snapshot_id = base_id
+                    counter = 2
+                    while snapshot_id in existing_ids:
+                        snapshot_id = f"{base_id}-{counter}"
+                        counter += 1
+                    snapshot = dict(before)
+                    snapshot["id"] = snapshot_id
+                    snapshot["status"] = "superseded"
+                    snapshot["tier"] = "archived"
+                    snapshot["snapshot_of"] = decision_id
+                    snapshot["superseded_by"] = decision_id
+                    snapshot["superseded_at"] = now
+                    snapshot["last_updated"] = now
+                    snapshot["snapshot_version"] = current_version
+                    snapshot = self._ensure_fields(snapshot, "decision")
+                    decisions.append(snapshot)
+                    result_box["snapshot_id"] = snapshot_id
+                    decision["version"] = current_version + 1
                 decision = self._ensure_fields(decision, "decision")
                 result_box["result"] = decision
                 result_box["tier_changed"] = tier_changed
@@ -2102,6 +2214,14 @@ class Engram(
                 "write",
                 "knowledge/tier_change",
                 detail=f"decision {decision_id}: {result_box.get('old_tier')} -> {result_box.get('new_tier')}",
+            )
+        snapshot_id = result_box.get("snapshot_id")
+        if snapshot_id:
+            self._commit_version_edge(decision_id, snapshot_id)
+            self._audit.log(
+                "write",
+                "knowledge/version_snapshot",
+                detail=f"decision {decision_id} supersedes {snapshot_id}",
             )
         return result
 
