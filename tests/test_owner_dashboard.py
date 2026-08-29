@@ -211,7 +211,9 @@ def test_cli_dashboard_includes_readiness(tmp_path, monkeypatch, capsys):
     eng = Engram()
     a = eng.add_lesson("initial recall collapse approach for version chains", tier="verified")
     b = eng.add_lesson("revised recall head selection approach for chains", tier="verified")
-    eng.add_relation(b["id"], "supersedes", a["id"])
+    from piia_engram.governance_store import RelationStore
+
+    RelationStore(eng.root).add_relation(b["id"], "supersedes", a["id"])
 
     assert _run_dashboard(["--json"]) == 0
     dash = _json.loads(capsys.readouterr().out)

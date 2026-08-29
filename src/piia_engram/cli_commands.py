@@ -4742,10 +4742,14 @@ def _run_conflicts_resolve(eng, args: list[str]) -> tuple[int, dict]:
     keep_decision = first if keep == id1 else second
     other_decision = second if keep == id1 else first
     if action == "supersede":
-        relation = eng.add_relation(keep, "supersedes", other)
+        # v4.19.1: internal version lineage — write via RelationStore directly
+        # (the caller-facing add_relation refuses supersedes).
+        from piia_engram.governance_store import RelationStore as _RS
+
+        relation_added = _RS(eng.root).add_relation(keep, "supersedes", other)
         archive = eng.update_decision(other, {"status": "outdated"})
         store.record(first, second, action=action, keep=keep, note=str(opts["note"] or ""))
-        payload["changed"] = bool(relation.get("added") or archive.get("status") == "outdated")
+        payload["changed"] = bool(relation_added or archive.get("status") == "outdated")
     elif action == "archive":
         archive = eng.update_decision(other, {"status": "outdated"})
         store.record(first, second, action=action, keep=keep, note=str(opts["note"] or ""))

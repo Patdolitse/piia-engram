@@ -642,8 +642,11 @@ class ImportExportMixin:
             if added_entry:
                 self._write_entries(path, entries_for_relation, entry_type)
 
-            relation = self.add_relation(new_id, "supersedes", existing_id)
-            relation_added = bool(relation.get("added"))
+            # v4.19.1: import dedup supersedes is internal lineage — write via
+            # RelationStore directly (caller-facing add_relation refuses it).
+            from .governance_store import RelationStore as _RS
+
+            relation_added = _RS(self.root).add_relation(new_id, "supersedes", existing_id)
             edge_present = any(
                 edge.get("src") == new_id
                 and edge.get("rel") == "supersedes"
@@ -710,10 +713,19 @@ class ImportExportMixin:
                 # Export decrypted plaintext so backups are portable across
                 # different .corpus_salt / ENGRAM_SECRET combinations.
                 # The backup file itself should be protected by the user.
-                "lessons": self._read_entries(
-                    self._knowledge_dir / "lessons.json", "lesson"),
-                "decisions": self._read_entries(
-                    self._knowledge_dir / "decisions.json", "decision"),
+                # v4.19.1: export HEADs only — superseded snapshots are local
+                # history artifacts (reachable via get_knowledge_history), not
+                # part of the portable backup.
+                "lessons": [
+                    l for l in self._read_entries(
+                        self._knowledge_dir / "lessons.json", "lesson")
+                    if l.get("status") != "superseded" and "snapshot_of" not in l
+                ],
+                "decisions": [
+                    d for d in self._read_entries(
+                        self._knowledge_dir / "decisions.json", "decision")
+                    if d.get("status") != "superseded" and "snapshot_of" not in d
+                ],
                 "domains": self.get_domains(),
                 "playbooks": self._export_playbooks(),
                 "relations": RelationStore(self.root).all_edges(),

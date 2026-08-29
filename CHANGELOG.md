@@ -6,6 +6,20 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.19.1] - 2026-08-28
+
+### Fixed
+Contract-fidelity fixes from the post-release Codex final review of v4.19.0 (all sealed by negative controls proven red on `main@ec4178d`; receipts kept locally):
+- **History snapshots are immutable**: updating a superseded snapshot id (lesson/decision/playbook) now fails with `snapshot_immutable` instead of mutating the record and nesting a "snapshot of a snapshot" (which broke the star version topology).
+- **Caller lineage fields are explicitly rejected** (`lineage_fields_rejected`): `version` / `snapshot_of` / `superseded_by` / `superseded_at` / `snapshot_version` / `supersedes` in an update payload abort the update — silence never looks like success. The caller-facing `add_relation` refuses `rel="supersedes"` (version lineage is generated only by the revision primitive).
+- **Fuzzy duplicate hits never auto-select a revision target**: `guidance.revision.target_id` is filled only when the title/summary matches EXACTLY; similar-but-different matches get the explicit new-entry hint only.
+- **All-zeros event baseline unified**: the "no parent" sentinel now takes the same bounded merge-base fallback as any other unusable baseline (explicit fetch + ancestry bound + unconditional HEAD evidence), closing a bypass of the v4.19 guard hardening.
+- **Encrypted-store zero-write**: a not-found or no-op knowledge update no longer rewrites the store file (plaintext-level SkipWrite) — previously every read-shaped update re-encrypted and replaced every byte.
+- **Concurrent same-second snapshot ids no longer collide**: snapshot reservation uses an exclusive file create, so racing revisions of one head cannot share an id (the loser's cleanup could previously delete the winner's snapshot).
+- Playbook revisions re-check CAS and no-op against the LIVE record inside the write lock (the pre-read outside the lock was advisory only); a lost-race no-op removes its orphan snapshot and never double-bumps the version.
+- `get_playbooks(mode="get")` refuses snapshot ids; `export_all` exports active HEADs only.
+- `memory_store` forwards `allow_similar_new` and surfaces the playbook duplicate guidance payload; `get_knowledge_history` adds `total_body_size` + `pending_commit_ids` and complete playbook body fields.
+
 ## [4.19.0] - 2026-08-28
 
 ### Added

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,40 @@ class KnowledgeOpsMixin:
     # Knowledge update / archive / lifecycle / merge / linking
     # ------------------------------------------------------------------
 
+    # v4.19.1: version-lineage fields are generated ONLY by the revision
+    # primitive. Callers sending them in an update payload get an explicit
+    # rejection (never a silent drop — silence looks like success).
+    _LINEAGE_FIELDS: frozenset = frozenset({
+        "version", "snapshot_of", "superseded_by", "superseded_at",
+        "snapshot_version", "supersedes",
+    })
+
+    _REVISION_PRIMITIVE_LINEAGE_ERROR = "lineage_fields_rejected"
+
+    @staticmethod
+    def _is_snapshot_record(item: dict) -> bool:
+        """True for a superseded history snapshot (immutable by contract)."""
+        return item.get("status") == "superseded" or "snapshot_of" in item
+
+    def _reject_update_payload(self, item: dict, updates: dict) -> dict | None:
+        """Contract gate for every update entry point: snapshots are not
+        targets and caller lineage fields are rejected outright."""
+        if self._is_snapshot_record(item):
+            return {
+                "error": "snapshot_immutable",
+                "item_id": item.get("id", ""),
+                "message": "history snapshots are immutable; revise the HEAD via update_knowledge or read history via get_knowledge_history",
+            }
+        smuggled = sorted(self._LINEAGE_FIELDS.intersection(updates))
+        if smuggled:
+            return {
+                "error": self._REVISION_PRIMITIVE_LINEAGE_ERROR,
+                "item_id": item.get("id", ""),
+                "fields": smuggled,
+                "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
+            }
+        return None
+
     def update_knowledge(
         self, item_id: str, updates: dict, expected_version: int | None = None
     ) -> dict:
@@ -26,10 +61,15 @@ class KnowledgeOpsMixin:
         ``expected_version`` is the v4.19 CAS guard: when given, it must equal
         the target's current numeric version or the update fails closed with
         zero semantic writes (``{"error": "version_conflict", ...}``).
+        v4.19.1: updating a history snapshot fails with ``snapshot_immutable``;
+        lineage fields in ``updates`` fail with ``lineage_fields_rejected``.
         """
-        item_type, _ = self._find_item_by_id(item_id)
+        item_type, item = self._find_item_by_id(item_id)
         if item_type is None:
             return {"error": f"Item not found: {item_id}"}
+        refusal = self._reject_update_payload(item or {}, updates)
+        if refusal is not None:
+            return refusal
         if item_type == "lesson":
             return self.update_lesson(item_id, updates, expected_version=expected_version)
         if item_type == "playbook":
@@ -70,7 +110,8 @@ class KnowledgeOpsMixin:
         "decision": ("title", "question", "choice", "reasoning", "alternatives"),
         "playbook": (
             "title", "description", "triggers", "domain", "steps",
-            "preconditions", "pitfalls", "outcome",
+            "preconditions", "pitfalls", "outcome", "parameters",
+            "required_tools",
         ),
     }
 
@@ -116,11 +157,20 @@ class KnowledgeOpsMixin:
             if edge["src"] == item_id and edge["rel"] == "supersedes"
         ]
         nodes: list[dict] = []
-        pending = 0
+        pending: list[str] = []
+        total_body_size = 0
+        body_fields = self._HISTORY_BODY_FIELDS.get(item_type, ())
         for snapshot_id in snapshot_ids:
             record = self._load_history_record(item_type, snapshot_id)
             if record is None:
                 continue
+            total_body_size += len(
+                json.dumps(
+                    {f: record.get(f) for f in body_fields},
+                    ensure_ascii=False,
+                    default=str,
+                ).encode("utf-8")
+            )
             raw_sv = record.get("snapshot_version")
             snapshot_version = None
             if isinstance(raw_sv, int):
@@ -128,7 +178,7 @@ class KnowledgeOpsMixin:
             elif isinstance(raw_sv, str) and raw_sv.isdigit():
                 snapshot_version = int(raw_sv)
             if snapshot_version is not None and snapshot_version >= head_version:
-                pending += 1
+                pending.append(snapshot_id)
                 continue
             node = {
                 "id": record.get("id", ""),
@@ -175,7 +225,9 @@ class KnowledgeOpsMixin:
             "head_version": head_version,
             "snapshots": nodes,
             "total": len(nodes),
-            "pending_commits": pending,
+            "total_body_size": total_body_size,
+            "pending_commits": len(pending),
+            "pending_commit_ids": pending,
         }
 
     def create_onboard_candidate(

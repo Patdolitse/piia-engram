@@ -577,19 +577,30 @@ class PlaybookMixin:
                     "likely_revision": body_differs,
                 }
                 if body_differs and existing_pb is not None:
-                    # Never a silent swallow: a differing body under a matching
-                    # title is probably a REVISION — carry the explicit path.
-                    result["guidance"] = {
-                        "revision": {
-                            "tool_hint": "update_knowledge",
-                            "target_id": existing_id,
-                            "expected_version": int(existing_pb.get("version") or 1),
-                        },
-                        "new_entry": {
-                            "param": "allow_similar_new",
-                            "note": "set allow_similar_new=true to store as a distinct entry",
-                        },
-                    }
+                    if titles_identical:
+                        # EXACT identity: the rejection can safely point at the
+                        # revision target (v4.19.1: fuzzy hits never do —
+                        # similarity must never auto-select a revise target).
+                        result["guidance"] = {
+                            "revision": {
+                                "tool_hint": "update_knowledge",
+                                "target_id": existing_id,
+                                "expected_version": int(existing_pb.get("version") or 1),
+                            },
+                            "new_entry": {
+                                "param": "allow_similar_new",
+                                "note": "set allow_similar_new=true to store as a distinct entry",
+                            },
+                        }
+                    else:
+                        # Fuzzy title match: name the new-entry escape hatch
+                        # only; picking a revision target is the caller's job.
+                        result["guidance"] = {
+                            "new_entry": {
+                                "param": "allow_similar_new",
+                                "note": "titles are similar but not identical; if this is genuinely a distinct playbook, set allow_similar_new=true, otherwise locate the exact target id yourself",
+                            },
+                        }
                 return result
 
         self._write_playbook_and_index(new_pb)
@@ -756,6 +767,13 @@ class PlaybookMixin:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        # v4.19.1: history snapshots are reachable only via get_knowledge_history
+        if self._is_snapshot_record(pb):
+            return {
+                "error": "snapshot_immutable",
+                "item_id": playbook_id,
+                "message": "this id is a superseded history snapshot; read it via get_knowledge_history",
+            }
         if project_folder is not None and not self._playbook_visible_for_project(pb, project_folder):
             if not confirm_cross_project:
                 return {
@@ -1403,21 +1421,44 @@ class PlaybookMixin:
         ``{head_id}-prev-{alphanumeric timestamp}`` with a collision counter;
         the record carries status/tier/snapshot_of/superseded_by/superseded_at
         plus ``snapshot_version`` (the numeric version the body had).
+
+        v4.19.1: the id is RESERVED with an exclusive file create so two
+        concurrent revisions of one head in the same second cannot collide on
+        one id (the winner keeps the plain scheme; a racer that loses the
+        exclusive create falls back to the counter/entropy suffix). Without
+        this, the loser's conflict cleanup could delete the winner's snapshot.
         """
+        import os as _os
+
         head_id = str(pb.get("id") or "")
         if not head_id:
             return None
         now = _now_iso()
         suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
         base_id = f"{head_id}-prev-{suffix}"
+        existing_index_ids = {e.get("id") for e in self._read_playbook_index()}
         snapshot_id = base_id
         counter = 2
-        existing_index_ids = {e.get("id") for e in self._read_playbook_index()}
-        while snapshot_id in existing_index_ids or (
-            self._playbooks_dir / f"{snapshot_id}.json"
-        ).exists():
-            snapshot_id = f"{base_id}-{counter}"
-            counter += 1
+        body_path = self._playbooks_dir / f"{snapshot_id}.json"
+        while True:
+            if snapshot_id in existing_index_ids:
+                snapshot_id = f"{base_id}-{counter}"
+                counter += 1
+                body_path = self._playbooks_dir / f"{snapshot_id}.json"
+                continue
+            try:
+                self._playbooks_dir.mkdir(parents=True, exist_ok=True)
+                fd = _os.open(str(body_path), _os.O_CREAT | _os.O_EXCL | _os.O_WRONLY)
+                _os.close(fd)
+                break
+            except FileExistsError:
+                snapshot_id = f"{base_id}-{counter}-{_os.urandom(2).hex()}"
+                counter += 1
+                body_path = self._playbooks_dir / f"{snapshot_id}.json"
+                continue
+            except OSError:
+                # fall back to non-exclusive write (exotic filesystems)
+                break
         current_version = int(pb.get("version") or 1)
         snapshot = deepcopy(dict(pb))
         snapshot["id"] = snapshot_id
@@ -1475,6 +1516,9 @@ class PlaybookMixin:
         current = self._read_playbook_by_id(playbook_id)
         if current is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        refusal = self._reject_update_payload(current, updates)
+        if refusal is not None:
+            return refusal
         current_version = int(current.get("version") or 1)
         if expected_version is not None and expected_version != current_version:
             return {
@@ -1506,6 +1550,15 @@ class PlaybookMixin:
         outcome: dict[str, Any] = {}
 
         def _apply(pb: dict) -> dict:
+            # v4.19.1 in-lock recheck: the pre-read outside the lock is only
+            # advisory (another writer may have landed first). The CAS and the
+            # change detection are re-decided against the LIVE record here.
+            if self._is_snapshot_record(pb):
+                outcome["error"] = {
+                    "error": "snapshot_immutable",
+                    "item_id": playbook_id,
+                }
+                return pb
             live_version = int(pb.get("version") or 1)
             if expected_version is not None and expected_version != live_version:
                 outcome["error"] = {
@@ -1515,8 +1568,14 @@ class PlaybookMixin:
                     "actual_version": live_version,
                 }
                 return pb
+            live_changed = False
             for key, value in allowed_updates.items():
-                pb[key] = value
+                if value != pb.get(key):
+                    live_changed = True
+                    pb[key] = value
+            if not live_changed:
+                outcome["noop"] = True
+                return pb
             pb["last_updated"] = _now_iso()
             if content_changed:
                 pb["version"] = live_version + 1
@@ -1527,6 +1586,13 @@ class PlaybookMixin:
             if snapshot_id:
                 self._delete_playbook_snapshot(snapshot_id)
             return outcome.get("error") or {"error": f"Playbook not found: {playbook_id}"}
+        if outcome.get("noop"):
+            # the live record already had these values (lost race): the
+            # pre-lock snapshot is an orphan — remove it, bump nothing
+            if snapshot_id:
+                self._delete_playbook_snapshot(snapshot_id)
+            result["revision_outcome"] = "noop"
+            return result
 
         idx_entry = self._playbook_index_entry(result)
 
@@ -2226,12 +2292,19 @@ class PlaybookMixin:
         }
 
     def _export_playbooks(self) -> list[dict]:
-        """Export all playbooks as a list for backup."""
+        """Export ACTIVE playbooks as a list for backup.
+
+        v4.19.1: history snapshots (superseded records) are excluded — export
+        surfaces HEADs only; snapshot bodies remain local store artifacts
+        reachable via get_knowledge_history.
+        """
         index = self._read_playbook_index()
         result = []
         for entry in index:
+            if entry.get("status") == "superseded":
+                continue
             pb = self._read_playbook_by_id(entry.get("id", ""))
-            if pb:
+            if pb and not self._is_snapshot_record(pb):
                 result.append(pb)
         return result
 

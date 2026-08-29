@@ -91,6 +91,18 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    # v4.19.1: clear any pre-existing patch output BEFORE deciding the verdict.
+    # CI uploads whatever file exists under that name — a stale patch from an
+    # earlier run must never ride along a red/empty/no-drift result.
+    if args.patch_output:
+        try:
+            Path(args.patch_output).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            print(f"::error::canonical count gate: cannot clear stale patch output ({exc})")
+            return 1
+
     junit_path = Path(args.junit)
     try:
         got_raw = junit_counts(junit_path)

@@ -337,22 +337,28 @@ def preflight(
         if since == "":
             errors.append("--since was given an empty ref")
         else:
-            base_ref = _resolve_base(root, since)
-            orphaned = False
-            if base_ref is not None and not _is_ancestor(root, base_ref):
-                # Readable but no longer an ancestor (force-push orphaning):
-                # the event baseline cannot anchor a comparison — treat the
-                # same as unreadable and try the bounded merge-base fallback.
-                orphaned = True
+            if _ALL_ZEROS.match(since):
+                # v4.19.1: the all-zeros "no parent" sentinel is an UNUSABLE
+                # event baseline like any other — it takes the same bounded
+                # merge-base fallback path (explicit fetch + bound +
+                # unconditional HEAD evidence), not a shortcut to a cached
+                # origin/main ref.
                 base_ref = None
+            else:
+                base_ref = _resolve_base(root, since)
+                if base_ref is not None and not _is_ancestor(root, base_ref):
+                    # Readable but no longer an ancestor (force-push orphaning):
+                    # the event baseline cannot anchor a comparison — treat the
+                    # same as unreadable and try the bounded merge-base fallback.
+                    base_ref = None
             if base_ref is None:
                 fb_sha, fb_diag = _merge_base_fallback(root, bound=fallback_bound)
                 if fb_sha is None:
                     detail = f"; merge-base fallback refused: {fb_diag}" if fb_diag else ""
                     if base_required:
                         errors.append(
-                            f"--since base {since!r} "
-                            f"{'is not an ancestor of HEAD' if orphaned else 'is unreadable'}"
+                            f"--since base {since!r} is unusable (unreadable, "
+                            f"all-zeros, or not an ancestor of HEAD)"
                             f" and --base-required is set; cannot verify the version-bump "
                             f"evidence guard (fail closed){detail}"
                         )

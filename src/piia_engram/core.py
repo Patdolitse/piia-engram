@@ -1467,9 +1467,21 @@ class Engram(
         """Apply ``mutator`` to a knowledge list under the storage write lock."""
         def _locked(current: Any) -> list[dict]:
             entries = self._entries_for_locked_mutation(current, entry_type)
+            # v4.19.1: mutators mutate the list IN PLACE and return it, so the
+            # no-change check needs the pre-mutation state. Deepcopy (not
+            # shallow) — nested dicts/lists are mutated in place too.
+            before = deepcopy(entries)
             updated = mutator(entries)
             if updated is None:
                 updated = entries
+            # A mutation that changes nothing (not-found, no-op, rejected
+            # payload) must not rewrite the file. The comparison is at the
+            # PLAINTEXT level — ciphertext differs on every write (random
+            # nonce), so comparing storage bytes never fires. On an encrypted
+            # store a rewrite re-encrypts and replaces every byte, turning a
+            # read-shaped call into a write; SkipWrite aborts with zero I/O.
+            if updated == before:
+                raise SkipWrite()
             return self._entries_for_storage(updated, entry_type)
 
         _update_json(path, _locked, default=[])
@@ -1592,17 +1604,29 @@ class Engram(
                         "likely_revision": likely_revision,
                     }
                     if likely_revision:
-                        result["guidance"] = {
-                            "revision": {
-                                "tool_hint": "update_knowledge",
-                                "target_id": best_match.get("id"),
-                                "expected_version": int(best_match.get("version") or 1),
-                            },
-                            "new_entry": {
-                                "param": "allow_similar_new",
-                                "note": "set allow_similar_new=true to store as a distinct related entry",
-                            },
-                        }
+                        if summaries_identical:
+                            # EXACT summary identity: safe to point at the
+                            # revision target (v4.19.1: fuzzy never does).
+                            result["guidance"] = {
+                                "revision": {
+                                    "tool_hint": "update_knowledge",
+                                    "target_id": best_match.get("id"),
+                                    "expected_version": int(best_match.get("version") or 1),
+                                },
+                                "new_entry": {
+                                    "param": "allow_similar_new",
+                                    "note": "set allow_similar_new=true to store as a distinct related entry",
+                                },
+                            }
+                        else:
+                            # Fuzzy summary match: new-entry escape hatch only;
+                            # the revision target is never auto-selected.
+                            result["guidance"] = {
+                                "new_entry": {
+                                    "param": "allow_similar_new",
+                                    "note": "summaries are similar but not identical; if this is genuinely a distinct fact, set allow_similar_new=true, otherwise locate the exact target id yourself",
+                                },
+                            }
                     result_box["result"] = result
                     return lessons
                 # Supplement signal detected — fall through to related tier
@@ -1739,6 +1763,14 @@ class Engram(
         """
         path = self._knowledge_dir / "lessons.json"
         updates = self._repair_incoming_text(dict(updates))
+        smuggled = sorted(self._LINEAGE_FIELDS.intersection(updates))
+        if smuggled:
+            return {
+                "error": "lineage_fields_rejected",
+                "item_id": lesson_id,
+                "fields": smuggled,
+                "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
+            }
         allowed_fields = {"summary", "detail", "domain", "status", "tier"}
         content_fields = {"summary", "detail", "domain"}
         valid_tiers = {"staging", "verified", "archived"}
@@ -1749,6 +1781,12 @@ class Engram(
             for lesson in lessons:
                 if lesson.get("id") != lesson_id:
                     continue
+                if self._is_snapshot_record(lesson):
+                    result_box["result"] = {
+                        "error": "snapshot_immutable",
+                        "item_id": lesson_id,
+                    }
+                    return lessons
                 current_version = int(lesson.get("version") or 1)
                 if expected_version is not None and expected_version != current_version:
                     result_box["result"] = {
@@ -2035,8 +2073,18 @@ class Engram(
                 if target_decision and self._entries_share_project_scope(
                     new_decision, target_decision
                 ):
-                    self.add_relation(
+                    # v4.19.1: decision-thread edges are INTERNAL version
+                    # lineage — write via RelationStore directly (the
+                    # caller-facing add_relation now refuses supersedes).
+                    from .governance_store import RelationStore as _RS
+
+                    _RS(self.root).add_relation(
                         str(new_decision["id"]), "supersedes", str(supersedes_id)
+                    )
+                    self._audit.log(
+                        "write",
+                        "knowledge/relations",
+                        detail=f"{new_decision['id']} supersedes {supersedes_id} (decision thread)",
                     )
             except Exception:
                 pass  # edge is advisory; the decision itself is the hard write
@@ -2115,6 +2163,14 @@ class Engram(
         """
         path = self._knowledge_dir / "decisions.json"
         updates = self._repair_incoming_text(dict(updates))
+        smuggled = sorted(self._LINEAGE_FIELDS.intersection(updates))
+        if smuggled:
+            return {
+                "error": "lineage_fields_rejected",
+                "item_id": decision_id,
+                "fields": smuggled,
+                "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
+            }
         allowed_fields = {
             "title",
             "question",
@@ -2135,6 +2191,12 @@ class Engram(
             for decision in decisions:
                 if decision.get("id") != decision_id:
                     continue
+                if self._is_snapshot_record(decision):
+                    result_box["result"] = {
+                        "error": "snapshot_immutable",
+                        "item_id": decision_id,
+                    }
+                    return decisions
                 current_version = int(decision.get("version") or 1)
                 if expected_version is not None and expected_version != current_version:
                     result_box["result"] = {

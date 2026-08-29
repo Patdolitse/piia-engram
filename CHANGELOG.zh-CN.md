@@ -6,6 +6,20 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.19.1] - 2026-08-28
+
+### 修复
+v4.19.0 发布后 Codex 终审发现的合同保真度缺口（全部由在 `main@ec4178d` 上验证为红的负控测试封印；收据本地留存）：
+- **历史快照不可变**：更新被取代的快照 id（lesson/decision/playbook）现在返回 `snapshot_immutable` 拒绝，而不是改掉记录并嵌套出"快照的快照"（后者打穿星形版本拓扑）。
+- **caller lineage 字段显式拒绝**（`lineage_fields_rejected`）：更新载荷里的 `version` / `snapshot_of` / `superseded_by` / `superseded_at` / `snapshot_version` / `supersedes` 直接中止更新——静默不再冒充成功。调用方面向的 `add_relation` 拒绝 `rel="supersedes"`（版本 lineage 只由修订原语生成）。
+- **模糊去重命中绝不自动指认修订目标**：只有标题/摘要完全一致才填 `guidance.revision.target_id`；相似但不同的命中只给显式新建提示。
+- **全零事件基线统一**："无父提交"哨兵与其余不可用基线一样走受控 merge-base 回退（显式 fetch + 祖先距离上界 + 无条件 HEAD 证据），封堵 v4.19 守卫加固的旁路。
+- **加密存储零写**：未命中或 no-op 的知识更新不再重写存储文件（明文层 SkipWrite）——此前每个读形更新都会重加密并替换全部字节。
+- **并发同秒快照 id 不再碰撞**：快照预留改用独占文件创建，同一 head 的并发修订无法共享一个 id（此前败者的清理可能删掉赢者的快照）。
+- Playbook 修订在写锁内对活记录复核 CAS 与 no-op（锁外预读仅作参考）；竞争落败的 no-op 清掉自己的孤儿快照，绝不重复递增版本。
+- `get_playbooks(mode="get")` 拒绝快照 id；`export_all` 只导出活跃 HEAD。
+- `memory_store` 透传 `allow_similar_new` 并浮出 playbook 去重指引载荷；`get_knowledge_history` 增加 `total_body_size` + `pending_commit_ids` 和完整 playbook 正文字段。
+
 ## [4.19.0] - 2026-08-28
 
 ### 新增

@@ -310,7 +310,10 @@ def test_conflicts_cli_is_registered_in_top_level_help(capsys: pytest.CaptureFix
 def test_export_import_native_includes_relations_and_conflict_resolutions(tmp_path: Path):
     source = Engram(root=tmp_path / "source")
     first, second = _seed_conflict(source)
-    source.add_relation(second["id"], "supersedes", first["id"])
+    # v4.19.1: version lineage is internal-only — seed the edge directly
+    from piia_engram.governance_store import RelationStore as _RS
+
+    _RS(source.root).add_relation(second["id"], "supersedes", first["id"])
     ResolutionStore(source.root).dismiss(first, second)
     export_path = source.export_all(str(tmp_path / "backup.json"))
 

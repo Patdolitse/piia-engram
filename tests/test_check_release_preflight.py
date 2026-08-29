@@ -319,17 +319,18 @@ class TestSinceMode:
 
     def test_all_zeros_base_falls_back_to_main_and_catches_bump(self, tmp_path: Path):
         repo = make_repo(tmp_path, "4.12.0")  # commit A
-        head_a = _git(repo, "rev-parse", "HEAD")
-        _git(repo, "update-ref", "refs/remotes/origin/main", head_a)
+        # v4.19.1: the all-zeros path runs the REAL bounded fallback, which
+        # needs an actual origin to fetch from (a bare remote; local commits
+        # after the push give distance 1, inside the default bound)
+        _add_origin_remote(repo, tmp_path)
         self._bump_to(repo, "4.13.0", with_evidence=False)  # commit B (HEAD)
         result = preflight.preflight(repo, since="0" * 40, base_required=True)
-        assert not result.ok  # fallback origin/main (4.12.0) sees the bump, no evidence
+        assert not result.ok  # fallback sees the bump vs origin/main, no evidence
         assert any("4.13.0" in e for e in result.errors)
 
     def test_all_zeros_base_fallback_passes_with_evidence(self, tmp_path: Path):
         repo = make_repo(tmp_path, "4.12.0")
-        head_a = _git(repo, "rev-parse", "HEAD")
-        _git(repo, "update-ref", "refs/remotes/origin/main", head_a)
+        _add_origin_remote(repo, tmp_path)
         self._bump_to(repo, "4.13.0", with_evidence=True)
         result = preflight.preflight(repo, since="0" * 40, base_required=True)
         assert result.ok, result.errors

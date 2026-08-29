@@ -129,7 +129,8 @@ def test_resume_brief_annotates_version_chains(tmp_path):
         tier="verified",
         project_folder=str(tmp_path),
     )
-    eng.add_relation(b["id"], "supersedes", a["id"])
+    # v4.19.1: version lineage is internal-only — seed the chain directly
+    gstore.RelationStore(tmp_path).add_relation(b["id"], "supersedes", a["id"])
 
     brief = eng.get_resume_brief(project_folder=str(tmp_path))
     md = brief["markdown"]

@@ -344,7 +344,10 @@ def _version_chain_head(root: Path) -> dict[str, Any]:
         project_folder=PROJECT,
         tier="verified",
     )
-    eng.add_relation(new["id"], "supersedes", old["id"])
+    # version lineage is internal-only since v4.19.1: seed the edge directly
+    from piia_engram.governance_store import RelationStore
+
+    RelationStore(eng.root).add_relation(new["id"], "supersedes", old["id"])
     text = _brief(eng)
     return _scenario(
         name="version_chain_head_preferred",

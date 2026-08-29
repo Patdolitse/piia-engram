@@ -6,6 +6,10 @@ version bumped / not, history readable / not — never a similarity number.
 
 Cases 1/4/9 guard behavior that must NOT change; the rest are red on the
 pre-fix ref (5b114f0) by construction.
+
+v4.19.1 amendment: case 9 was strengthened — caller lineage fields are now
+explicitly REJECTED (lineage_fields_rejected), not silently dropped; original
+red receipt (13 red / 3 green on 5b114f0) unchanged.
 """
 from __future__ import annotations
 
@@ -264,7 +268,9 @@ def test_case8_second_cas_with_stale_version_fails_single_winner(tmp_path: Path)
 
 
 # ---------------------------------------------------------------- case 9
-def test_case9_caller_supplied_lineage_and_version_fields_not_stored(tmp_path: Path):
+def test_case9_caller_lineage_fields_rejected_explicitly(tmp_path: Path):
+    # v4.19.1 contract strengthening: lineage fields are no longer silently
+    # dropped — the update is REJECTED so silence can never look like success.
     eng = Engram(tmp_path)
     created = eng.add_playbook(_playbook(TITLE, STEPS_A))
     pid = created["id"]
@@ -281,21 +287,22 @@ def test_case9_caller_supplied_lineage_and_version_fields_not_stored(tmp_path: P
         },
     )
 
-    assert res.get("version") == 2  # internally bumped, not caller-set
-    for forbidden in ("snapshot_of", "superseded_by", "supersedes", "snapshot_version"):
-        assert forbidden not in res
-    edges = _edges(tmp_path)
-    assert len(edges) == 1
-    assert edges[0]["src"] == pid
+    assert res.get("error") == "lineage_fields_rejected"
+    assert set(res.get("fields") or []) == {
+        "snapshot_of", "superseded_by", "supersedes", "snapshot_version", "version",
+    }
+    stored = eng._read_playbook_by_id(pid)
+    assert stored["version"] == 1  # nothing applied
+    assert stored["steps"] == STEPS_A
+    assert _edges(tmp_path) == []
 
     lesson = eng.add_lesson({"summary": "lesson lineage guard", "detail": "d1", "domain": "release"})
     lres = eng.update_lesson(
         lesson["id"],
         {"detail": "d2", "version": 42, "snapshot_of": "attacker-node", "snapshot_version": 99},
     )
-    assert lres.get("version") == 2
-    assert "snapshot_of" not in lres
-    assert "snapshot_version" not in lres
+    assert lres.get("error") == "lineage_fields_rejected"
+    assert len(_raw_lessons(tmp_path)) == 1  # zero writes
 
 
 # ---------------------------------------------------------------- case 10

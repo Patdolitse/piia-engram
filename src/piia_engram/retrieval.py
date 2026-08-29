@@ -556,6 +556,13 @@ class RetrievalMixin:
         if str(src_id) not in known or str(dst_id) not in known:
             return {"added": False, "reason": "unknown_id",
                     "src": str(src_id), "rel": rel, "dst": str(dst_id)}
+        # v4.19.1: `supersedes` version-lineage edges are generated ONLY by the
+        # revision primitive (update_*); the caller-facing relation API never
+        # writes them (decision-thread edges are also created internally).
+        if rel == "supersedes":
+            return {"added": False, "reason": "supersedes_is_internal",
+                    "src": str(src_id), "rel": rel, "dst": str(dst_id),
+                    "message": "version lineage is generated internally by update_knowledge; use it to revise an item"}
 
         added = RelationStore(self.root).add_relation(src_id, rel, dst_id)
         self._audit.log("write", "knowledge/relations",

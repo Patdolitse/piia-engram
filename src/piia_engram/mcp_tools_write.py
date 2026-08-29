@@ -58,6 +58,7 @@ async def memory_store(
     source_tool: str = "",
     items_json: str = "",
     project_folder: str = "",
+    allow_similar_new: bool = False,
     user_confirmed: bool = False,
 ) -> str:
     """统一知识写入入口 — 根据 kind 自动路由到 add_lesson / add_decision / add_playbook。
@@ -193,7 +194,9 @@ async def memory_store(
 
     try:
         if kind == "lesson":
-            result = S._locked_engram_call(S._get_engram().add_lesson, content)
+            result = S._locked_engram_call(
+                S._get_engram().add_lesson, content, allow_similar_new=allow_similar_new
+            )
             label = content.get("summary", "")[:60]
             S._track("memory_store", success=True)
             if result.get("status") == "duplicate":
@@ -211,9 +214,15 @@ async def memory_store(
             tier = result.get("tier", "staging")
             return f"[Engram] 决策已记录 · tier={tier} · 可召回: {label}"
         else:  # playbook
-            result = S._locked_engram_call(S._get_engram().add_playbook, content)
+            result = S._locked_engram_call(
+                S._get_engram().add_playbook, content, allow_similar_new=allow_similar_new
+            )
             label = content.get("title", "")[:60]
             S._track("memory_store", success=True)
+            if result.get("status") == "duplicate":
+                # v4.19.1: surface the revision/new-entry guidance payload
+                # (gated like every write-echo) instead of swallowing it.
+                return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
             tier = result.get("tier", "staging")
             return f"[Engram] Playbook 已记录 · tier={tier} · 可召回: {label}"
     except Exception as exc:
