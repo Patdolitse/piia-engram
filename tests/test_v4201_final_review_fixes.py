@@ -99,6 +99,20 @@ def test_agent_transcripts_fallback_requires_frozen_uuid_shape(tmp_path: Path):
     )
     out2 = cp._summary_from_transcript(str(frozen), 4000, hook_input={})
     assert "FROZEN-OK" in out2
+    # trailing-segment bypass: anything appended after the frozen filename
+    # must be refused (v4.20.1 second-round review item). Windows cannot have
+    # a directory named like the existing file, so build the shape under a
+    # SECOND uuid: agent-transcripts/<u2>/<u2>.jsonl/<dir>/loot.jsonl where
+    # <u2>.jsonl is a DIRECTORY carrying more trailing segments.
+    uuid2 = "223d0ca6-b5d5-4547-b631-e91ce154fdc7"
+    loot_parent = tmp_path / "attack2" / "agent-transcripts" / uuid2 / f"{uuid2}.jsonl"
+    loot_parent.mkdir(parents=True)
+    trailing = loot_parent / "loot.jsonl"
+    trailing.write_text(
+        json.dumps({"role": "user", "text": "TRAILING-SECRET"}), encoding="utf-8"
+    )
+    out3 = cp._summary_from_transcript(str(trailing), 4000, hook_input={})
+    assert "TRAILING-SECRET" not in out3
 
 
 # ---------------------------------------------------------------- 4
@@ -178,19 +192,31 @@ def test_eviction_blocked_when_relation_store_unreadable(tmp_path: Path, monkeyp
 
 
 def test_decision_pending_supersede_survives_eviction(tmp_path: Path):
+    """v4.20.1 second round: the EXPLICIT supersedes field (not just the
+    auto-detected same-question target) must be protected — distinct question
+    text so the auto path cannot fire and mask the gap."""
+    from piia_engram.governance_store import RelationStore
     from piia_engram.storage import MAX_KNOWLEDGE_ENTRIES
 
     eng = Engram(tmp_path)
-    old = eng.add_decision({"question": "q", "choice": "old"})
+    old = eng.add_decision({"question": "entirely distinct question", "choice": "old"})
     for i in range(MAX_KNOWLEDGE_ENTRIES - 1):
-        eng.add_decision({"question": f"q{i}", "choice": f"c{i}"})
+        eng.add_decision({"question": f"filler q{i}", "choice": f"c{i}"})
 
-    # supersede `old` — its edge is written AFTER the insertion+eviction ran
-    new = eng.add_decision({"question": "q", "choice": "new", "supersedes": old["id"]})
+    new = eng.add_decision({
+        "question": "a different question entirely",
+        "choice": "new",
+        "supersedes": old["id"],
+    })
 
     raw = json.loads(
         (tmp_path / "knowledge" / "decisions.json").read_text(encoding="utf-8")
     )
     ids = {d["id"] for d in raw}
-    assert old["id"] in ids, "the superseded HEAD was evicted before its edge landed"
+    assert old["id"] in ids, "the EXPLICIT supersede target was evicted before its edge landed"
     assert new["id"] in ids
+    edges = RelationStore(tmp_path).all_edges()
+    assert any(
+        e["src"] == new["id"] and e["dst"] == old["id"] and e["rel"] == "supersedes"
+        for e in edges
+    ), "the supersede edge must exist (both endpoints alive)"

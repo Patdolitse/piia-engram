@@ -2044,8 +2044,14 @@ class Engram(
                     result_box["result"] = new_decision
                     supersedes_box["target"] = auto_supersedes_target
                     return decisions  # fail closed: cap may temporarily exceed
-                if auto_supersedes_target:
-                    protected = set(protected) | {str(auto_supersedes_target)}
+                # v4.20.1: protect BOTH the auto-detected target AND an
+                # explicitly supplied supersedes id — the explicit field is
+                # only resolved into an edge AFTER insertion+eviction ran.
+                pending_target = str(
+                    new_decision.get("supersedes") or auto_supersedes_target or ""
+                )
+                if pending_target:
+                    protected = set(protected) | {pending_target}
                 staging = [
                     d for d in decisions
                     if d.get("tier") == "staging" and d.get("id") not in protected

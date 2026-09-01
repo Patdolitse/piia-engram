@@ -228,18 +228,21 @@ _UUID_RE = __import__("re").compile(
 
 def _matches_frozen_transcript_shape(resolved: Path) -> bool:
     """The ONLY rootless fallback (v4.20.1 hardened): the exact Cursor shape
-    ``agent-transcripts/<uuid>/<same-uuid>.jsonl``. Merely carrying the
-    directory segment is NOT enough — any other path with that segment
-    (attacker-planted or coincidental) is refused."""
+    ``agent-transcripts/<uuid>/<same-uuid>.jsonl`` AS THE FINAL PATH SEGMENT.
+    Merely carrying the directory segment — or appending anything after the
+    frozen filename — is refused."""
     parts = resolved.parts
     for i, part in enumerate(parts):
         if part != "agent-transcripts":
             continue
-        if i + 2 < len(parts):
+        # the frozen shape must TERMINATE the path: i+2 is the LAST segment
+        if i + 2 == len(parts) - 1:
             uuid_dir = parts[i + 1]
-            stem = parts[i + 2][: -len(".jsonl")] if parts[i + 2].endswith(".jsonl") else parts[i + 2]
-            if uuid_dir == stem and _UUID_RE.match(uuid_dir):
-                return True
+            fname = parts[i + 2]
+            if fname.endswith(".jsonl"):
+                stem = fname[: -len(".jsonl")]
+                if uuid_dir == stem and _UUID_RE.match(uuid_dir):
+                    return True
     return False
 
 
