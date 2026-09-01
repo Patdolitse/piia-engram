@@ -6,6 +6,23 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.20.0] - 2026-08-30
+
+### 新增
+- **Playbook 召回面（opt-in）**：`get_recall` 新增 `include_playbooks`（默认关闭）。开启后浮现第三个指针桶——近期 verified+active、项目可见的 playbook；仅元数据投影（id、标题、≤5 个触发提示、领域、≤240 字描述预览、版本、更新时间）；**完整 `steps` 永不进入任何召回载荷**（守卫测试钉死）。指针共享知识预算但有子上限：最多 2 条且 ≤25% 预算，lessons/decisions 保底容量（双向防饿死）。版本链经既有的类型无关折叠收敛到 HEAD；被取代快照与 staging 级 playbook 永不浮现；项目作用域 playbook 走后过滤尊重召回项目边界（lesson/decision 查询语义刻意不变）。
+- **agent_context_pack 填充 playbook 槽位**：schema 里既有（此前硬编码为空）的 `context.playbooks` 槽位现经零写 recent reader 填充，遵守各角色的 `playbook_limit`；指针经净化+限长，绝不含 steps。
+- **召回投影正确标注 playbook**：playbook 条目投影为 `type: "playbook"` 及指针字段，不再被误投影成空 summary 的 lesson。
+- **真实面评测门**：`eval_recall` 支持 `surface: "get_recall"` 用例走真实召回载荷路径（旧 harness 只走原生 `search_knowledge`），含逐用例 `no_steps_leak` 断言；新增 3 例（指针浮现、默认关合同、跨项目隔离）——recall eval 11/11。
+
+### 安全
+- **共享 hardened transcript 读取器**（两个 Cursor 钩子——save 与 writeback）：transcript 路径必须（strict）解析落在白名单根内（payload workspace roots、owner 配置的 `ENGRAM_CURSOR_TRANSCRIPT_ROOTS`、或冻结的 `agent-transcripts` 路径形态）；符号链接/junction 逃逸一律 fail-closed 返回空摘要；只读 `.jsonl`；非 JSON 的畸形行跳过、绝不回显；单句柄限读（≤512KB 尾窗）。**破坏性变更**：白名单外的非标准 transcript 位置将得到空摘要——用 `ENGRAM_CURSOR_TRANSCRIPT_ROOTS` 迁移（发布说明已标注）。
+- **session_id 写路径包含**：session id 在每个提取点净化为严格 `[A-Za-z0-9._-]` 字符集（≤128 字符），`save_agent_context` 再保险一次——构造的 id 无法逃出 `contexts/<tool>/` 目录。
+- **向量索引 SQL 纪律**：嵌入维度只经唯一受审计 helper 进 DDL，每次 DDL 执行时对照**封闭** model→维度映射校验；未知 `ENGRAM_EMBED_MODEL` fail-closed（禁用向量层）而非静默回退插值；AST 绊线守卫任意值 SQL 插值，同时放行安全的 `?,?,?` 占位形态。
+- **知识上限淘汰永不删版本链 HEAD**：200 行静默淘汰跳过任何带 supersedes 出边的 id（负控：上限处的 HEAD 连同其 lineage 存活）。完整的上限重设计留给 v4.21 保留策略轮。
+
+### 明确推迟（有承诺）
+- **历史保留策略（tombstone、剪枝、owner-OFF 策略、首跑 dry-run）**：按双评审结论切出为独立的 v4.21 设计轮——保留策略要么完整交付（tombstone 清单、崩溃协议、integrity/backup/export/counts 全面适配）要么不做；v4.20 只带上述最小 HEAD 保护防线。
+
 ## [4.19.1] - 2026-08-28
 
 ### 修复

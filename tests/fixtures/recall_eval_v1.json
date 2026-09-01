@@ -70,8 +70,15 @@
         {
           "id": "PB-project-a-deploy",
           "title": "Project A deployment checklist",
-          "triggers": ["deploy", "release"],
-          "steps": ["Run tests", "Build artifacts", "Publish after approval"],
+          "triggers": [
+            "deploy",
+            "release"
+          ],
+          "steps": [
+            "Run tests",
+            "Build artifacts",
+            "Publish after approval"
+          ],
           "domain": "deployment",
           "scope": "project",
           "project_id": "project-a"
@@ -79,19 +86,35 @@
         {
           "id": "PB-project-b-deploy",
           "title": "Project B deployment checklist",
-          "triggers": ["deploy", "release"],
-          "steps": ["Run smoke test", "Notify team"],
+          "triggers": [
+            "deploy",
+            "release"
+          ],
+          "steps": [
+            "Run smoke test",
+            "Notify team"
+          ],
           "domain": "deployment",
           "scope": "project",
           "project_id": "project-b"
         }
       ],
       "relation_edges": [
-        {"src": "L-current-release-flow", "rel": "supersedes", "dst": "L-old-release-flow"}
+        {
+          "src": "L-current-release-flow",
+          "rel": "supersedes",
+          "dst": "L-old-release-flow"
+        }
       ],
       "projects": {
-        "project-a": {"folder": "E:/synthetic/project-a", "title": "Synthetic Project A"},
-        "project-b": {"folder": "E:/synthetic/project-b", "title": "Synthetic Project B"}
+        "project-a": {
+          "folder": "E:/synthetic/project-a",
+          "title": "Synthetic Project A"
+        },
+        "project-b": {
+          "folder": "E:/synthetic/project-b",
+          "title": "Synthetic Project B"
+        }
       }
     }
   },
@@ -103,7 +126,9 @@
       "query": "release executable guard",
       "scope": "lessons",
       "limit": 5,
-      "expected_ids": ["L-release-verify"],
+      "expected_ids": [
+        "L-release-verify"
+      ],
       "forbidden_ids": []
     },
     {
@@ -113,7 +138,9 @@
       "query": "py dependency conflict",
       "scope": "lessons",
       "limit": 5,
-      "expected_ids": ["L-python-venv"],
+      "expected_ids": [
+        "L-python-venv"
+      ],
       "forbidden_ids": []
     },
     {
@@ -123,7 +150,9 @@
       "query": "release authorization public actions",
       "scope": "decisions",
       "limit": 5,
-      "expected_ids": ["D-release-auth"],
+      "expected_ids": [
+        "D-release-auth"
+      ],
       "forbidden_ids": []
     },
     {
@@ -133,7 +162,9 @@
       "query": "Chinese internal reports planning summaries",
       "scope": "lessons",
       "limit": 5,
-      "expected_ids": ["L-user-language"],
+      "expected_ids": [
+        "L-user-language"
+      ],
       "forbidden_ids": []
     },
     {
@@ -143,7 +174,9 @@
       "query": "数据库索引",
       "scope": "lessons",
       "limit": 5,
-      "expected_ids": ["L-cn-index"],
+      "expected_ids": [
+        "L-cn-index"
+      ],
       "forbidden_ids": []
     },
     {
@@ -163,8 +196,12 @@
       "query": "current release flow registry retry wrappers",
       "scope": "lessons",
       "limit": 5,
-      "expected_ids": ["L-current-release-flow"],
-      "forbidden_ids": ["L-old-release-flow"]
+      "expected_ids": [
+        "L-current-release-flow"
+      ],
+      "forbidden_ids": [
+        "L-old-release-flow"
+      ]
     },
     {
       "id": "project-isolation",
@@ -174,8 +211,58 @@
       "scope": "playbooks",
       "limit": 5,
       "project_folder": "E:/synthetic/project-a",
-      "expected_ids": ["PB-project-a-deploy"],
-      "forbidden_ids": ["PB-project-b-deploy"]
+      "expected_ids": [
+        "PB-project-a-deploy"
+      ],
+      "forbidden_ids": [
+        "PB-project-b-deploy"
+      ]
+    },
+    {
+      "id": "recall-surface-playbook-pointer",
+      "scenario": "v4.20 get_recall playbook pointer surfaces with include_playbooks",
+      "store": "seed",
+      "surface": "get_recall",
+      "include_playbooks": true,
+      "project_folder": "E:/synthetic/project-a",
+      "query": "",
+      "limit": 5,
+      "expected_ids": [
+        "PB-project-a-deploy"
+      ],
+      "forbidden_ids": [],
+      "no_steps_leak": true
+    },
+    {
+      "id": "recall-surface-playbook-default-off",
+      "scenario": "v4.20 get_recall default keeps playbooks out (opt-in contract)",
+      "store": "seed",
+      "surface": "get_recall",
+      "include_playbooks": false,
+      "project_folder": "E:/synthetic/project-a",
+      "query": "",
+      "limit": 5,
+      "expected_ids": [],
+      "forbidden_ids": [
+        "PB-project-a-deploy"
+      ]
+    },
+    {
+      "id": "recall-surface-playbook-cross-project-isolated",
+      "scenario": "v4.20 project-scoped playbook does not leak into the other project",
+      "store": "seed",
+      "surface": "get_recall",
+      "include_playbooks": true,
+      "project_folder": "E:/synthetic/project-a",
+      "query": "deployment",
+      "limit": 5,
+      "expected_ids": [
+        "PB-project-a-deploy"
+      ],
+      "forbidden_ids": [
+        "PB-project-b-deploy"
+      ],
+      "no_steps_leak": true
     }
   ]
 }

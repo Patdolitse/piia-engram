@@ -450,7 +450,7 @@ def test_real_memory_eval_snapshot_is_accepted(tmp_path: Path) -> None:
     assert synthetic["snapshot_count"] == 1
     assert synthetic["passed_snapshot_count"] == 1
     assert synthetic["invalid_snapshot_count"] == 0
-    assert synthetic["aggregate_case_counts"]["recall_case_count"] == 18
+    assert synthetic["aggregate_case_counts"]["recall_case_count"] == 21  # v4.20: +3 real-get_recall playbook cases
     assert synthetic["aggregate_case_counts"]["admission_candidate_count"] == 15
     assert synthetic["aggregate_case_counts"]["agent_context_case_count"] == 2
 

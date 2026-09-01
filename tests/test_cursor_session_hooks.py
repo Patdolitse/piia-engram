@@ -125,16 +125,19 @@ def test_extract_summary_transcript_fallback(tmp_path: Path):
     lines = [
         json.dumps({"summary": "第一段"}, ensure_ascii=False),
         json.dumps({"text": "second"}, ensure_ascii=False),
-        "plain non-json line",
         json.dumps({"irrelevant": True}),
     ]
     transcript.write_text("\n".join(lines), encoding="utf-8")
 
-    out = payload_mod.extract_summary({"transcript_path": str(transcript)}, 4000)
+    # v4.20 containment: the transcript must sit inside an allowlisted root;
+    # pass the temp dir as the workspace root.
+    out = payload_mod.extract_summary(
+        {"transcript_path": str(transcript), "workspace_roots": [str(tmp_path)]},
+        4000,
+    )
 
     assert "第一段" in out
     assert "second" in out
-    assert "plain non-json line" in out
 
 
 def test_extract_summary_missing_transcript_is_empty():
@@ -228,7 +231,10 @@ def test_transcript_tail_read_when_oversized(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(payload_mod, "_MAX_TRANSCRIPT_BYTES", 200)
 
-    out = payload_mod._summary_from_transcript(str(transcript), 4000)
+    # v4.20: containment requires an allowlisted root (workspace_roots here)
+    out = payload_mod._summary_from_transcript(
+        str(transcript), 4000, hook_input={"workspace_roots": [str(tmp_path)]}
+    )
     assert "NEW-TAIL" in out  # tail survives
     assert "OLD-HEAD" not in out  # head beyond the window is dropped
 
@@ -499,7 +505,11 @@ def test_save_transcript_fallback(monkeypatch, tmp_path: Path, fake_engram):
         json.dumps({"summary": "来自 transcript 的内容"}, ensure_ascii=False),
         encoding="utf-8",
     )
-    _stdin(monkeypatch, {"transcript_path": str(transcript), "session_id": "s9"})
+    _stdin(monkeypatch, {
+        "transcript_path": str(transcript),
+        "session_id": "s9",
+        "workspace_roots": [str(tmp_path)],  # v4.20 containment root
+    })
 
     save_mod.main()
 

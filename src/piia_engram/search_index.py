@@ -60,6 +60,32 @@ _MODEL_DIMS = {
 EMBED_MODEL = os.environ.get("ENGRAM_EMBED_MODEL", "BAAI/bge-small-zh-v1.5")
 EMBED_DIM = _MODEL_DIMS.get(EMBED_MODEL, 512)
 
+
+def validated_embed_dim() -> int | None:
+    """v4.20 SQL discipline (fail closed): the vector DDL interpolates the
+    embedding dimension, so the dimension is only valid when EMBED_MODEL is
+    in the CLOSED mapping above and its dimension is a positive int. An
+    unknown model returns None — callers must skip vector-DDL work entirely
+    (no silent 512 fallback, which would build SQL from an unvalidated value).
+    Re-checked at every DDL execution, not just import time (reload/patching
+    of EMBED_MODEL cannot smuggle a value through)."""
+    model = os.environ.get("ENGRAM_EMBED_MODEL", EMBED_MODEL)
+    dim = _MODEL_DIMS.get(model)
+    if isinstance(dim, int) and not isinstance(dim, bool) and dim > 0:
+        return dim
+    return None
+
+
+# The ONE audited DDL template: the dimension is the only interpolated part,
+# and it always arrives validated (closed-set int from validated_embed_dim).
+# DDL structure cannot use ?-parameters, so the int is re-cast here.
+_VEC_DDL_PREFIX = "CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0(embedding float["
+_VEC_DDL_SUFFIX = "])"
+
+
+def _vec_ddl(dim: int) -> str:
+    return "".join((_VEC_DDL_PREFIX, str(int(dim)), _VEC_DDL_SUFFIX))
+
 # Fields concatenated into the FTS document for each entry, in priority
 # order. Mirrors the primary-text logic in retrieval.py so both signals
 # index the same surface.

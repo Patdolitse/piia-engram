@@ -41,46 +41,23 @@ def _coerce_text(value: Any) -> str:
     return ""
 
 
-def _summary_from_transcript(path: str) -> str:
-    if not path:
-        return ""
-    p = Path(path)
-    if not p.is_file():
-        return ""
-    try:
-        if p.stat().st_size > _MAX_TRANSCRIPT_BYTES:
-            return ""
-        raw = p.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
-    lines: list[str] = []
-    for line in raw.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            entry = json.loads(stripped)
-        except json.JSONDecodeError:
-            lines.append(stripped)
-            continue
-        text = _coerce_text(
-            entry.get("summary")
-            or entry.get("text")
-            or entry.get("content")
-            or entry.get("message")
-            or ""
-        )
-        if text:
-            lines.append(text)
-    return "\n".join(lines)[-_MAX_TEXT_CHARS:]
+def _summary_from_transcript(path: str, hook_input: dict | None = None) -> str:
+    # v4.20: route through the shared hardened containment reader — this hook
+    # fed its summary straight into staging extraction, so an uncontained read
+    # here was the same read-oracle as the save hook.
+    from ._cursor_payload import _summary_from_transcript as _hardened
+
+    return _hardened(path, _MAX_TEXT_CHARS, hook_input=hook_input or {})
 
 
-def _extract_summary(hook_input: dict[str, Any]) -> str:
+def _extract_summary(hook_input: dict) -> str:
     for key in ("summary", "session_summary", "text", "content"):
         text = _coerce_text(hook_input.get(key))
         if text.strip():
             return text.strip()[-_MAX_TEXT_CHARS:]
-    return _summary_from_transcript(str(hook_input.get("transcript_path") or ""))
+    return _summary_from_transcript(
+        str(hook_input.get("transcript_path") or ""), hook_input=hook_input
+    )
 
 
 def main() -> int:

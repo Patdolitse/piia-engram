@@ -198,6 +198,7 @@ async def get_recall(
     token_budget: int = 2000,
     include_freshness: bool = True,
     collapse_versions: bool = True,
+    include_playbooks: bool = False,
 ) -> str:
     """获取结构化 Recall Surface v1 载荷。 / Get a structured Recall Surface v1 payload.
 
@@ -220,6 +221,7 @@ async def get_recall(
         token_budget: 知识片段的粗略 token 预算（默认 2000）。 / Rough token budget for knowledge items.
         include_freshness: 是否附加 freshness 提示。 / Attach freshness hints.
         collapse_versions: 是否折叠版本链到当前 HEAD。 / Collapse version chains to current heads.
+        include_playbooks: 是否附带 playbook 指针桶（v4.20，默认 False；元数据+240 字描述预览，完整步骤永不入召回，最多 2 条且 ≤25% 知识预算）。 / Attach the playbook pointer bucket (v4.20, default False; metadata + 240-char description preview, full steps never enter recall, max 2 items and <=25% of the knowledge budget).
     """
     try:
         is_owner = S._gov_rt.caller_is_owner(S._get_engram().root)
@@ -241,6 +243,7 @@ async def get_recall(
             token_budget=safe_budget,
             include_freshness=include_freshness,
             collapse_versions=collapse_versions,
+            include_playbooks=include_playbooks,
             include_trust=True,
             # Owner gate decides whether this aggregate view may be read at all.
             # When governance is on, role-scoped memory then narrows which

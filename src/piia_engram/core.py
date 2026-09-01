@@ -1651,9 +1651,21 @@ class Engram(
 
             lessons.append(new_lesson)
             if len(lessons) > MAX_KNOWLEDGE_ENTRIES:
-                # Evict staging items first, then oldest; never drop verified
-                staging = [l for l in lessons if l.get("tier") == "staging"]
-                verified = [l for l in lessons if l.get("tier") != "staging"]
+                # Evict staging items first, then oldest; never drop verified.
+                # v4.20: a version-chain HEAD (an id with supersedes out-edges)
+                # is never an eviction candidate — silent deletion of a HEAD
+                # would orphan its lineage and bypass every audited-deletion
+                # contract (negative control: test_eviction_never_deletes_chain_head).
+                protected = self._version_chain_head_ids()
+                staging = [
+                    l for l in lessons
+                    if l.get("tier") == "staging" and l.get("id") not in protected
+                ]
+                verified = [
+                    l for l in lessons
+                    if l.get("tier") != "staging" and l.get("id") not in protected
+                ]
+                protected_rows = [l for l in lessons if l.get("id") in protected]
                 overflow = len(lessons) - MAX_KNOWLEDGE_ENTRIES
                 if len(staging) >= overflow:
                     staging = staging[overflow:]  # drop oldest staging
@@ -1661,7 +1673,7 @@ class Engram(
                     remaining = overflow - len(staging)
                     staging = []
                     verified = verified[remaining:]  # drop oldest verified as last resort
-                lessons = verified + staging
+                lessons = verified + staging + protected_rows
             result_box["result"] = new_lesson
             return lessons
 
@@ -2019,8 +2031,17 @@ class Engram(
 
             decisions.append(new_decision)
             if len(decisions) > MAX_KNOWLEDGE_ENTRIES:
-                staging = [d for d in decisions if d.get("tier") == "staging"]
-                verified = [d for d in decisions if d.get("tier") != "staging"]
+                # v4.20: same HEAD-protection rule as the lesson eviction above.
+                protected = self._version_chain_head_ids()
+                staging = [
+                    d for d in decisions
+                    if d.get("tier") == "staging" and d.get("id") not in protected
+                ]
+                verified = [
+                    d for d in decisions
+                    if d.get("tier") != "staging" and d.get("id") not in protected
+                ]
+                protected_rows = [d for d in decisions if d.get("id") in protected]
                 overflow = len(decisions) - MAX_KNOWLEDGE_ENTRIES
                 if len(staging) >= overflow:
                     staging = staging[overflow:]
@@ -2028,7 +2049,7 @@ class Engram(
                     remaining = overflow - len(staging)
                     staging = []
                     verified = verified[remaining:]
-                decisions = verified + staging
+                decisions = verified + staging + protected_rows
             result_box["result"] = new_decision
             supersedes_box["target"] = auto_supersedes_target
             return decisions

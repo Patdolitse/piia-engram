@@ -134,23 +134,56 @@ def coerce_text(value: Any) -> str:
     return ""
 
 
-def _summary_from_transcript(path: str, max_chars: int) -> str:
+def _summary_from_transcript(
+    path: str, max_chars: int, hook_input: dict[str, Any] | None = None
+) -> str:
+    """Hardened transcript reader (v4.20 shared boundary).
+
+    Containment contract (dual-reviewed PROPOSAL_v420_v2): the candidate must
+    resolve (strict) INSIDE an allowlisted root — payload workspace roots,
+    owner-configured ``ENGRAM_CURSOR_TRANSCRIPT_ROOTS`` entries, or the frozen
+    Cursor transcript shape (a path containing an ``agent-transcripts``
+    segment). Symlink/junction escapes fail closed to "". Only ``.jsonl``
+    files are read; non-JSON lines are SKIPPED (never echoed raw — echoing
+    arbitrary file bytes was the read-oracle leak); the read is a single
+    bounded handle capped at ``_MAX_TRANSCRIPT_BYTES``.
+    """
     if not path:
         return ""
-    p = Path(path)
+    roots = _transcript_allowlisted_roots(hook_input or {})
+    candidate: Path | None = None
     try:
-        if not p.is_file():
+        resolved = Path(path).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return ""
+    for root in roots:
+        try:
+            root_resolved = root.expanduser().resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if resolved == root_resolved or _is_within(resolved, root_resolved):
+            candidate = resolved
+            break
+    if candidate is None and "agent-transcripts" in resolved.parts:
+        # empirically-frozen Cursor shape: agent-transcripts/<uuid>/<uuid>.jsonl
+        candidate = resolved
+    if candidate is None:
+        return ""
+    if candidate.suffix.lower() != ".jsonl":
+        return ""
+    try:
+        if not candidate.is_file():
             return ""
-        size = p.stat().st_size
-        if size > _MAX_TRANSCRIPT_BYTES:
-            # Long sessions are the most valuable ones — read the tail instead
-            # of bailing out. Drop the first (likely partial) line.
-            with open(p, "rb") as handle:
+        size = candidate.stat().st_size
+        # Long sessions are the most valuable ones — read the tail with ONE
+        # bounded handle instead of bailing out; drop the first partial line.
+        with open(candidate, "rb") as handle:
+            if size > _MAX_TRANSCRIPT_BYTES:
                 handle.seek(size - _MAX_TRANSCRIPT_BYTES)
-                raw = handle.read().decode("utf-8", errors="replace")
-            raw = raw.split("\n", 1)[-1]
-        else:
-            raw = p.read_text(encoding="utf-8", errors="replace")
+                raw = handle.read(_MAX_TRANSCRIPT_BYTES).decode("utf-8", errors="replace")
+                raw = raw.split("\n", 1)[-1]
+            else:
+                raw = handle.read(_MAX_TRANSCRIPT_BYTES).decode("utf-8", errors="replace")
     except OSError:
         return ""
     lines: list[str] = []
@@ -161,8 +194,7 @@ def _summary_from_transcript(path: str, max_chars: int) -> str:
         try:
             entry = json.loads(stripped)
         except json.JSONDecodeError:
-            lines.append(stripped)
-            continue
+            continue  # hardening: malformed lines are skipped, never echoed
         if not isinstance(entry, dict):
             continue
         text = coerce_text(
@@ -181,25 +213,69 @@ def _summary_from_transcript(path: str, max_chars: int) -> str:
     return "\n".join(lines)[-max_chars:]
 
 
+def _is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+_ENV_EXTRA_ROOTS = "ENGRAM_CURSOR_TRANSCRIPT_ROOTS"
+
+
+def _transcript_allowlisted_roots(hook_input: dict[str, Any]) -> list[Path]:
+    """Allowlist roots: payload workspace roots, owner config, project dir env.
+
+    The workspace root and the transcript path come from the SAME untrusted
+    payload, so the payload root alone is not a trust anchor — it bounds the
+    read to the caller's own workspace; the owner-controlled env config is the
+    escape hatch for non-standard transcript locations.
+    """
+    roots: list[Path] = []
+    ws = hook_input.get("workspace_roots")
+    if isinstance(ws, list):
+        for item in ws:
+            if isinstance(item, str) and item.strip():
+                roots.append(Path(item.strip()))
+            elif isinstance(item, dict):
+                for sub in ("path", "uri", "folder"):
+                    val = item.get(sub)
+                    if isinstance(val, str) and val.strip():
+                        roots.append(Path(val.strip()))
+    for key in _PROJECT_KEYS:
+        val = hook_input.get(key)
+        if isinstance(val, str) and val.strip():
+            roots.append(Path(val.strip()))
+    env_project = os.environ.get(_ENV_PROJECT, "").strip()
+    if env_project:
+        roots.append(Path(env_project))
+    for extra in os.environ.get(_ENV_EXTRA_ROOTS, "").split(os.pathsep):
+        if extra.strip():
+            roots.append(Path(extra.strip()))
+    return roots
+
+
 def extract_summary(hook_input: dict[str, Any], max_chars: int) -> str:
     """Summary text by field priority; transcript file as last resort.
 
     Transcript sources, in order: an explicit ``transcript_path`` payload
     field, then the ``CURSOR_TRANSCRIPT_PATH`` environment variable (the real
     Cursor protocol — stdin payloads arrive empty). Keeps the *tail* when
-    truncating — session conclusions beat openings.
+    truncating — session conclusions beat openings. Both reads go through the
+    hardened containment reader (v4.20).
     """
     for key in _SUMMARY_KEYS:
         text = coerce_text(hook_input.get(key))
         if text.strip():
             return text.strip()[-max_chars:]
     from_payload = _summary_from_transcript(
-        str(hook_input.get("transcript_path") or ""), max_chars
+        str(hook_input.get("transcript_path") or ""), max_chars, hook_input=hook_input
     )
     if from_payload:
         return from_payload
     return _summary_from_transcript(
-        os.environ.get(_ENV_TRANSCRIPT, "").strip(), max_chars
+        os.environ.get(_ENV_TRANSCRIPT, "").strip(), max_chars, hook_input=hook_input
     )
 
 
@@ -222,25 +298,37 @@ def extract_project_folder(hook_input: dict[str, Any]) -> str:
     return os.environ.get(_ENV_PROJECT, "").strip()
 
 
+def _sanitize_session_id(raw: str) -> str:
+    """v4.20 write-path containment: session ids join file paths, so only a
+    strict [A-Za-z0-9._-] charset (<=128 chars) survives; anything else
+    collapses to a timestamp fallback so a crafted id can never escape the
+    contexts/<tool>/ directory."""
+    cleaned = "".join(ch for ch in raw if ch.isalnum() or ch in "._-").strip(".")
+    if cleaned and len(cleaned) <= 128:
+        return cleaned
+    return datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+
+
 def extract_session_id(hook_input: dict[str, Any]) -> str:
     """Session id from any known payload key; transcript filename as fallback.
 
     Cursor names its transcript ``agent-transcripts/<uuid>/<uuid>.jsonl``, so
     the file stem is a stable per-conversation identifier — it keys the save
     debounce per real session and appends checkpoints of one conversation to
-    one context file.
+    one context file. The returned id is SANITIZED (v4.20): it is joined into
+    checkpoint file paths downstream.
     """
     for key in _SESSION_KEYS:
         val = hook_input.get(key)
         if isinstance(val, str) and val.strip():
-            return val.strip()
+            return _sanitize_session_id(val.strip())
         if isinstance(val, (int, float)):
-            return str(val)
+            return _sanitize_session_id(str(val))
     transcript = os.environ.get(_ENV_TRANSCRIPT, "").strip()
     if transcript:
         stem = Path(transcript).stem.strip()
         if stem:
-            return stem
+            return _sanitize_session_id(stem)
     return ""
 
 

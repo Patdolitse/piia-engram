@@ -193,7 +193,15 @@ def _score_ids(actual_ids: list[str], expected_ids: list[str], forbidden_ids: li
 
 
 def evaluate_case(corpus: dict[str, Any], case: dict[str, Any], workdir: str | Path) -> dict[str, Any]:
-    """Evaluate one labeled query against its synthetic store."""
+    """Evaluate one labeled query against its synthetic store.
+
+    v4.20: a case may set ``"surface": "get_recall"`` to run through the REAL
+    recall surface (``gather_recall`` with ``include_playbooks`` honored from
+    the case) instead of raw ``search_knowledge`` — the harness previously
+    never exercised the projection/budget path, so playbook-recall cases can
+    only be proven here. ``no_steps_leak: true`` asserts the projected payload
+    contains no playbook ``steps`` bytes at all.
+    """
     store_id = str(case.get("store") or "")
     stores = corpus.get("stores") or {}
     if store_id not in stores:
@@ -202,17 +210,41 @@ def evaluate_case(corpus: dict[str, Any], case: dict[str, Any], workdir: str | P
     case_root = Path(workdir) / "stores" / str(case["id"])
     folder_map = _materialize_project_folders(stores[store_id], case, case_root)
     eng = _seed_engram(stores[store_id], case_root, folder_map)
-    result = eng.search_knowledge(
-        str(case.get("query") or ""),
-        scope=str(case.get("scope") or "all"),
-        limit=int(case.get("limit") or 5),
-        filters=case.get("filters") or None,
-        allow_hybrid_index=False,
-        project_folder=folder_map.get(str(case.get("project_folder") or ""),
-                                       str(case.get("project_folder") or "")) or None,
-    )
-    relation_edges = stores[store_id].get("relation_edges") or []
-    actual_ids = _flatten_ids(result, relation_edges)
+    surface = str(case.get("surface") or "search")
+    if surface == "get_recall":
+        from piia_engram.recall_service import gather_recall
+
+        payload = gather_recall(
+            eng,
+            project_folder=folder_map.get(
+                str(case.get("project_folder") or ""), str(case.get("project_folder") or "")
+            ) or "",
+            query=str(case.get("query") or ""),
+            limit=int(case.get("limit") or 5),
+            include_playbooks=bool(case.get("include_playbooks")),
+        )
+        actual_ids = [
+            str(item["id"])
+            for item in payload.get("knowledge") or []
+            if isinstance(item, dict) and item.get("id")
+        ]
+        if case.get("no_steps_leak"):
+            import json as _json
+
+            assert "steps" not in _json.dumps(payload, ensure_ascii=False), (
+                f"case {case['id']}: playbook steps leaked into the recall payload")
+    else:
+        result = eng.search_knowledge(
+            str(case.get("query") or ""),
+            scope=str(case.get("scope") or "all"),
+            limit=int(case.get("limit") or 5),
+            filters=case.get("filters") or None,
+            allow_hybrid_index=False,
+            project_folder=folder_map.get(str(case.get("project_folder") or ""),
+                                           str(case.get("project_folder") or "")) or None,
+        )
+        relation_edges = stores[store_id].get("relation_edges") or []
+        actual_ids = _flatten_ids(result, relation_edges)
     expected_ids = [str(item_id) for item_id in case.get("expected_ids") or []]
     forbidden_ids = [str(item_id) for item_id in case.get("forbidden_ids") or []]
     scored = _score_ids(actual_ids, expected_ids, forbidden_ids)
@@ -226,6 +258,7 @@ def evaluate_case(corpus: dict[str, Any], case: dict[str, Any], workdir: str | P
         "case_id": str(case["id"]),
         "scenario": str(case.get("scenario") or ""),
         "query": str(case.get("query") or ""),
+        "surface": surface,
         "expected_ids": expected_ids,
         "forbidden_ids": forbidden_ids,
         "actual_ids": actual_ids,

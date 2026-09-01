@@ -34,7 +34,7 @@ def test_memory_eval_suite_runs_baseline_and_heldout_sets() -> None:
     for item in summary["recall"]:
         assert item["forbidden_leak_rate"] == 0.0
         assert item["negative_false_positive_rate"] == 0.0
-    assert sum(item["case_count"] for item in summary["recall"]) == 18
+    assert sum(item["case_count"] for item in summary["recall"]) == 21  # v4.20: +3 real-get_recall playbook cases
     assert sum(item["candidate_count"] for item in summary["admission"]) == 15
     agent_context_pack = summary["agent_context_pack"]
     assert agent_context_pack["schema"] == "agent_context_pack_eval.v1"

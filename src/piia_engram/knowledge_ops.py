@@ -76,6 +76,29 @@ class KnowledgeOpsMixin:
             return self.update_playbook(item_id, updates, expected_version=expected_version)
         return self.update_decision(item_id, updates, expected_version=expected_version)
 
+    def _version_chain_head_ids(self) -> set[str]:
+        """Ids that are the HEAD of a version chain (have supersedes out-edges).
+
+        v4.20: the knowledge-cap eviction must never silently delete one of
+        these — deleting a HEAD orphans its lineage and bypasses every
+        audited-deletion contract. Best-effort: any failure yields an empty
+        set ONLY when the relation store itself is unreadable (in which case
+        there are no chains to protect).
+        """
+        root = getattr(self, "root", None)
+        if root is None:
+            return set()
+        try:
+            from .governance_store import RelationStore
+
+            return {
+                str(edge["src"])
+                for edge in RelationStore(root).all_edges()
+                if edge.get("rel") == "supersedes"
+            }
+        except Exception:  # pragma: no cover - defensive
+            return set()
+
     def _commit_version_edge(self, head_id: str, snapshot_id: str) -> bool:
         """Write the ``head supersedes snapshot`` version edge, cycle-safe.
 

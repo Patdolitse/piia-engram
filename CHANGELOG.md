@@ -6,6 +6,23 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.20.0] - 2026-08-30
+
+### Added
+- **Playbook recall surface (opt-in)**: `get_recall` gains `include_playbooks` (default off). When on, a third pointer bucket surfaces recent verified+active project-visible playbooks — metadata-only projection (id, title, ≤5 trigger hints, domain, ≤240-char description preview, version, updated_at); **full `steps` never enter any recall payload** (guard-tested). Pointers share the knowledge budget under a sub-cap: max 2 playbook items and ≤25% of the budget, with lessons/decisions keeping guaranteed capacity (anti-starve both ways). Version chains collapse to HEAD via the existing type-agnostic collapse; superseded snapshots and staging-tier playbooks never surface; project-scoped playbooks respect the recall project filter (applied as a post-filter — the lesson/decision query semantics are deliberately unchanged).
+- **agent_context_pack playbook slot populated**: the schema's existing (previously hardcoded-empty) `context.playbooks` slot is now filled via the zero-write recent reader, honoring each role's `playbook_limit`; pointers are sanitized and bounded, steps never included.
+- **Recall projection labels playbooks correctly**: playbook entries project as `type: "playbook"` with pointer fields instead of mis-projecting as an empty-summary lesson.
+- **Real-surface eval gate**: `eval_recall` supports `surface: "get_recall"` cases that run through the actual recall payload path (the old harness only exercised raw `search_knowledge`), with a `no_steps_leak` per-case assertion; 3 new cases (pointer surfaces, default-off contract, cross-project isolation) — recall eval 11/11.
+
+### Security
+- **Shared hardened transcript reader** (both Cursor hooks — save and writeback): transcript paths must resolve (strict) INSIDE an allowlisted root (payload workspace roots, owner-configured `ENGRAM_CURSOR_TRANSCRIPT_ROOTS`, or the frozen `agent-transcripts` path shape); symlink/junction escapes fail closed to an empty summary; only `.jsonl` files are read; malformed non-JSON lines are skipped, never echoed; reads are a single bounded handle (≤512KB tail window). **Breaking change**: non-standard transcript locations outside the allowlist now yield empty summaries — migrate via `ENGRAM_CURSOR_TRANSCRIPT_ROOTS` (release-notes flagged).
+- **session_id write-path containment**: session ids are sanitized to a strict `[A-Za-z0-9._-]` charset (≤128 chars) at every extraction site and again in `save_agent_context` (belt-and-braces) — a crafted id can no longer escape the `contexts/<tool>/` directory.
+- **SQL discipline in the vector index**: the embedding dimension enters DDL only through one audited helper, validated at every DDL execution against a CLOSED model→dimension mapping; an unknown `ENGRAM_EMBED_MODEL` fails closed (vector layer disabled) instead of silently interpolating a fallback; an AST tripwire guards against arbitrary-value SQL interpolation while allowing the safe `?,?,?` placeholder shape.
+- **Knowledge-cap eviction never deletes a version-chain HEAD**: the 200-row silent eviction now skips any id with supersedes out-edges (negative control: a HEAD at the cap survives with its lineage intact). Full cap redesign stays with the v4.21 retention round.
+
+### Deferred (committed)
+- **History retention (tombstones, pruning, owner-OFF policy, first-run dry-run)**: cut to its own v4.21 design round per the dual review — retention either ships complete (tombstone manifest, crash protocol, integrity/backup/export/counts awareness) or not at all; v4.20 ships only the minimal HEAD-protection guard above.
+
 ## [4.19.1] - 2026-08-28
 
 ### Fixed

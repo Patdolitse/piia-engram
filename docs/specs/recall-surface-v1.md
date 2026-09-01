@@ -70,6 +70,34 @@ stable shape:
 }
 ```
 
+### v1.1 amendment: playbook pointers (v4.20.0, opt-in)
+
+`get_recall` accepts `include_playbooks: bool = false`. When true, the
+`knowledge` array may additionally contain playbook POINTERS — metadata only,
+never bodies:
+
+```json
+{
+  "type": "playbook",
+  "id": "…",                              // pointer for a get_playbooks fetch
+  "title": "…",
+  "triggers": ["…", "…"],                  // ≤5 hints, per-item capped
+  "domain": "…",
+  "description": "…",                      // ≤240-char preview
+  "version": 3,
+  "updated_at": "…"
+}
+```
+
+Contract pins: `steps` never appears in any recall payload (guard-tested);
+at most 2 playbook pointers per payload and at most 25% of the knowledge
+budget (lessons/decisions keep guaranteed capacity); only verified+active
+HEADs surface (staging tiers and superseded snapshots are filtered); project
+visibility respects the recall project scope. `collapse_versions` folds
+playbook version chains to their HEAD exactly like lessons/decisions. The
+default-off posture stays until the next spec revision; flipping the default
+requires a Recall Surface v2 document.
+
 ### Inputs
 
 ```text
@@ -77,6 +105,7 @@ project_folder : str  = ""     # scope to a project (like get_resume_brief)
 query          : str  = ""     # optional keyword focus (folds in search_knowledge)
 token_budget   : int  = 2000   # same budgeting model as get_resume_brief
 include_freshness : bool = True # attach provenance/freshness hints (Task 3)
+include_playbooks : bool = False # v1.1: attach the playbook pointer bucket
 ```
 
 ### Composition (no new retrieval logic)

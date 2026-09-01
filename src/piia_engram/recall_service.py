@@ -162,6 +162,7 @@ def gather_recall(
     include_freshness: bool = True,
     include_trust: bool = False,
     collapse_versions: bool = True,
+    include_playbooks: bool = False,
     role_scoped_memory: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -171,6 +172,13 @@ def gather_recall(
     ``get_recent_context``, ``get_relevant_lessons``, ``search_knowledge``),
     optionally collapses superseded knowledge to its current head using typed
     relation edges, then delegates to :func:`recall.build_recall_payload`.
+
+    v4.20: ``include_playbooks`` (opt-in, default False) adds a playbook
+    pointer bucket — recent verified+active project-visible playbooks via the
+    existing zero-write ``get_recent_playbooks`` reader, plus query hits from
+    the playbooks scope of ``search_knowledge`` (project_folder threaded).
+    Playbook pointers are projected metadata-only and share the knowledge
+    budget under a sub-cap inside ``build_recall_payload``.
 
     All sub-fetches are guarded: a method that is missing or raises yields an
     empty slice, so the digest is always producible. Returns the standard
@@ -182,11 +190,13 @@ def gather_recall(
         query=query,
         limit=limit,
         collapse_versions=collapse_versions,
+        include_playbooks=include_playbooks,
     )
     identity = sources["identity"]
     recent_activity = sources["recent_activity"]
     relevant = sources["relevant"]
     query_knowledge = sources["query_knowledge"]
+    playbooks = sources.get("playbooks") or []
     collapsed_count = sources["collapsed_count"]
     heads_present = sources["heads_present"]
 
@@ -228,6 +238,7 @@ def gather_recall(
         recent_activity=recent_activity,
         relevant_knowledge=relevant,
         query_knowledge=query_knowledge,
+        playbooks=playbooks,
         project=project_folder,
         query=query,
         token_budget=token_budget,
@@ -258,6 +269,7 @@ def gather_recall_sources(
     query: str = "",
     limit: int = 8,
     collapse_versions: bool = True,
+    include_playbooks: bool = False,
 ) -> dict[str, Any]:
     """Fetch phase of recall: identity slice, recent activity, raw knowledge.
 
@@ -266,10 +278,16 @@ def gather_recall_sources(
     :mod:`context_preview` (which needs the *raw* items so per-item
     ``sensitivity``/``tier`` survive for the exposed/withheld split).
 
+    v4.20: ``include_playbooks`` adds a raw ``playbooks`` bucket (recent
+    verified+active project-visible via the zero-write recent reader, plus
+    query hits from the playbooks scope with ``project_folder`` threaded);
+    superseded snapshots never enter (status/tier filtered at the source).
+
     All sub-fetches are guarded exactly like ``gather_recall``: a missing or
     raising method yields an empty slice. Returns a dict with ``identity``,
     ``recent_activity``, ``relevant``, ``query_knowledge`` (both raw,
-    post-version-collapse), ``collapsed_count`` and ``heads_present``.
+    post-version-collapse), ``playbooks`` (opt-in), ``collapsed_count`` and
+    ``heads_present``.
     """
     # --- identity -------------------------------------------------------
     profile: dict[str, Any] | None = None
@@ -303,7 +321,12 @@ def gather_recall_sources(
             relevant = []
 
     # --- query knowledge (optional) -------------------------------------
+    # NOTE: the query search itself deliberately keeps its historical shape
+    # (no project_folder) — threading it would change lesson/decision recall
+    # semantics, which is out of the v4.20 scope. Project-scoping for the
+    # playbook bucket is applied as a post-filter below.
     query_knowledge: list[dict[str, Any]] = []
+    playbook_query_hits: list[dict[str, Any]] = []
     if query and hasattr(eng, "search_knowledge"):
         try:
             hits = eng.search_knowledge(query, scope="all", limit=limit) or {}
@@ -313,6 +336,53 @@ def gather_recall_sources(
             rows = hits.get(bucket) if isinstance(hits, dict) else None
             if isinstance(rows, list):
                 query_knowledge.extend(r for r in rows if isinstance(r, dict))
+        rows = hits.get("playbooks") if isinstance(hits, dict) else None
+        if isinstance(rows, list):
+            playbook_query_hits.extend(r for r in rows if isinstance(r, dict))
+
+    # --- playbook bucket (v4.20, opt-in) ----------------------------------
+    playbooks: list[dict[str, Any]] = []
+    if include_playbooks:
+        recent_pbs: list[dict[str, Any]] = []
+        if hasattr(eng, "get_recent_playbooks"):
+            try:
+                recent_pbs = eng.get_recent_playbooks(
+                    limit=4, project_folder=project_folder or None
+                ) or []
+            except Exception:  # pragma: no cover - defensive
+                recent_pbs = []
+        # project-scoped query hits: keep only playbooks visible for THIS
+        # project (same visibility predicate the recent reader applies)
+        visible_query_pbs: list[dict[str, Any]] = []
+        for pb in playbook_query_hits:
+            visible = getattr(eng, "_playbook_visible_for_project", None)
+            if callable(visible):
+                try:
+                    if visible(pb, project_folder or None):
+                        visible_query_pbs.append(pb)
+                except Exception:  # pragma: no cover - defensive
+                    continue
+            else:
+                visible_query_pbs.append(pb)
+        # active+verified enforced defensively even if a reader loosens later
+        playbooks = [
+            pb
+            for pb in (recent_pbs + visible_query_pbs)
+            if isinstance(pb, dict)
+            and pb.get("status") == "active"
+            and pb.get("tier") == "verified"
+            and pb.get("snapshot_of") is None
+        ]
+        # de-dup by id (recent reader and query scope can both return one)
+        seen_pb: set[str] = set()
+        deduped: list[dict[str, Any]] = []
+        for pb in playbooks:
+            key = str(pb.get("id") or id(pb))
+            if key in seen_pb:
+                continue
+            seen_pb.add(key)
+            deduped.append(pb)
+        playbooks = deduped
 
     # --- version collapse (prefer HEAD) ---------------------------------
     collapsed_count = 0
@@ -322,12 +392,13 @@ def gather_recall_sources(
         if edges:
             relevant, collapsed_rel = _vc.collapse_to_heads(relevant, edges)
             query_knowledge, collapsed_q = _vc.collapse_to_heads(query_knowledge, edges)
-            collapsed_count = len(collapsed_rel) + len(collapsed_q)
+            playbooks, collapsed_pb = _vc.collapse_to_heads(playbooks, edges)
+            collapsed_count = len(collapsed_rel) + len(collapsed_q) + len(collapsed_pb)
             # Render-only surfacing: how many *surviving* items are the current
             # HEAD of a version chain (so the owner sees "this is the latest").
             heads = _vc.head_ids(edges)
             heads_present = sum(
-                1 for item in (relevant + query_knowledge)
+                1 for item in (relevant + query_knowledge + playbooks)
                 if isinstance(item, dict) and item.get("id") in heads
             )
 
@@ -336,6 +407,7 @@ def gather_recall_sources(
         "recent_activity": recent_activity,
         "relevant": relevant,
         "query_knowledge": query_knowledge,
+        "playbooks": playbooks,
         "collapsed_count": collapsed_count,
         "heads_present": heads_present,
     }

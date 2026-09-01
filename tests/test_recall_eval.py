@@ -153,6 +153,7 @@ def test_markdown_report_is_shareable_and_metadata_only(tmp_path: Path) -> None:
             "case_id",
             "scenario",
             "query",
+            "surface",  # v4.20: "search" (raw) or "get_recall" (real surface)
             "expected_ids",
             "forbidden_ids",
             "actual_ids",

@@ -3,7 +3,7 @@
 from .core import Engram
 from .core import export_to_openclaw, hermes_handoff_payload, import_from_openclaw
 
-__version__ = "4.19.1"
+__version__ = "4.20.0"
 
 from .runtime_capabilities import (  # noqa: E402
     check_runtime_compatibility,

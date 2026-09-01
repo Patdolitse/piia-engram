@@ -34,7 +34,68 @@ _CHARS_PER_TOKEN = 4
 
 
 def _entry_type(entry: dict[str, Any]) -> str:
-    return "decision" if ("choice" in entry or "question" in entry) else "lesson"
+    if "choice" in entry or "question" in entry:
+        return "decision"
+    # v4.20 playbook pointer: playbook entries carry title/triggers and never a
+    # lesson summary — mis-projecting them produced an empty-summary "lesson".
+    if "triggers" in entry or ("title" in entry and "summary" not in entry):
+        return "playbook"
+    return "lesson"
+
+
+# v4.20 frozen playbook projection bounds (PROPOSAL_v420_v2): metadata-only —
+# `steps` NEVER enters a recall payload; description capped at 240 chars so a
+# pointer stays a pointer; at most 5 trigger hints with per-item caps.
+_PLAYBOOK_DESCRIPTION_CAP = 240
+_PLAYBOOK_TRIGGER_MAX_ITEMS = 5
+_PLAYBOOK_TRIGGER_ITEM_CAP = 60
+_PLAYBOOK_MAX_ITEMS = 2
+_PLAYBOOK_BUDGET_SHARE = 0.25
+
+
+def _project_playbook_item(
+    entry: dict[str, Any],
+    *,
+    include_freshness: bool,
+    now: datetime | None,
+    include_trust: bool = False,
+) -> dict[str, Any]:
+    """Project a playbook to the stable recall view (pointer, never the body)."""
+    view: dict[str, Any] = {"type": "playbook"}
+    eid = entry.get("id")
+    if isinstance(eid, str) and eid.strip():
+        view["id"] = eid.strip()
+    view["title"] = str(entry.get("title", "") or "")[:200]
+    triggers = entry.get("triggers")
+    if isinstance(triggers, list) and triggers:
+        hints = [str(t).strip()[:_PLAYBOOK_TRIGGER_ITEM_CAP] for t in triggers if str(t).strip()]
+        if hints:
+            view["triggers"] = hints[:_PLAYBOOK_TRIGGER_MAX_ITEMS]
+    domain = entry.get("domain")
+    if isinstance(domain, str) and domain.strip():
+        view["domain"] = domain.strip()[:80]
+    description = entry.get("description")
+    if isinstance(description, str) and description.strip():
+        view["description"] = description.strip()[:_PLAYBOOK_DESCRIPTION_CAP]
+    if isinstance(entry.get("version"), int):
+        view["version"] = entry["version"]
+    updated = entry.get("last_updated") or entry.get("updated_at") or entry.get("timestamp")
+    if isinstance(updated, str) and updated:
+        view["updated_at"] = updated
+
+    prov = _provenance.project_recall_provenance(entry)
+    if prov:
+        view["provenance"] = prov
+    if include_freshness:
+        view["freshness"] = _provenance.compute_freshness(entry, now=now)
+    labeling = _project_labeling(entry)
+    if labeling:
+        view["labeling"] = labeling
+    if include_trust:
+        trust = _project_trust(entry, freshness=view.get("freshness"), now=now)
+        if trust:
+            view["trust"] = trust
+    return view
 
 
 def _dedup_key(entry: dict[str, Any], index: int) -> str:
@@ -56,6 +117,13 @@ def _project_item(
 ) -> dict[str, Any]:
     """Project a stored knowledge dict to the stable recall view (summary/meta)."""
     etype = _entry_type(entry)
+    if etype == "playbook":
+        return _project_playbook_item(
+            entry,
+            include_freshness=include_freshness,
+            now=now,
+            include_trust=include_trust,
+        )
     view: dict[str, Any] = {"type": etype}
     if etype == "decision":
         view["question"] = entry.get("question", "") or ""
@@ -135,6 +203,7 @@ def build_recall_payload(
     recent_activity: dict[str, Any] | None = None,
     relevant_knowledge: list[dict[str, Any]] | None = None,
     query_knowledge: list[dict[str, Any]] | None = None,
+    playbooks: list[dict[str, Any]] | None = None,
     project: str = "",
     query: str = "",
     token_budget: int = 2000,
@@ -148,6 +217,12 @@ def build_recall_payload(
     All inputs are pre-fetched by the (future, reviewed) caller; this function
     only assembles, de-duplicates, projects, annotates, and trims. It never
     reads the store and never mutates its inputs.
+
+    v4.20: ``playbooks`` is an OPTIONAL pre-fetched playbook bucket (pointers
+    only, projected metadata-only). It shares the knowledge budget under a
+    sub-cap — at most ``_PLAYBOOK_MAX_ITEMS`` items and at most
+    ``_PLAYBOOK_BUDGET_SHARE`` of the budget — so playbooks can be surfaced
+    without ever starving lessons/decisions of capacity.
     """
     merged = merge_knowledge(relevant_knowledge, query_knowledge)
 
@@ -155,6 +230,33 @@ def build_recall_payload(
     spent = 0
     excluded = 0
     budget = max(0, int(token_budget))
+    playbook_token_cap = int(budget * _PLAYBOOK_BUDGET_SHARE)
+    playbook_count = 0
+    playbook_spent = 0
+
+    playbook_views: list[dict[str, Any]] = []
+    playbook_excluded = 0
+    for entry in (playbooks or []):
+        if not isinstance(entry, dict):
+            continue
+        if playbook_count >= _PLAYBOOK_MAX_ITEMS:
+            playbook_excluded += 1
+            continue
+        view = _project_item(
+            entry, include_freshness=include_freshness, now=now, include_trust=include_trust
+        )
+        cost = _item_cost(view)
+        if playbook_count >= 1 and playbook_spent + cost > playbook_token_cap:
+            playbook_excluded += 1
+            continue
+        playbook_views.append(view)
+        playbook_count += 1
+        playbook_spent += cost
+
+    # lessons/decisions spend against the budget MINUS the playbook reservation
+    # (anti-starve runs both ways: playbooks cannot crowd out knowledge, and
+    # knowledge cannot consume the playbooks' sub-cap).
+    lesson_budget = max(0, budget - playbook_spent)
     for entry in merged:
         view = _project_item(
             entry, include_freshness=include_freshness, now=now, include_trust=include_trust
@@ -162,11 +264,15 @@ def build_recall_payload(
         cost = _item_cost(view)
         # Always allow at least one item through so a tiny budget never yields an
         # empty knowledge list when there is something to say.
-        if knowledge and spent + cost > budget:
+        if knowledge and spent + cost > lesson_budget:
             excluded += 1
             continue
         knowledge.append(view)
         spent += cost
+
+    # playbook pointers ride at the end of the knowledge list
+    knowledge.extend(playbook_views)
+    total_spent = spent + playbook_spent
 
     gov_meta: dict[str, Any] = {"excluded_count": excluded}
     if isinstance(governance, dict):
@@ -178,16 +284,22 @@ def build_recall_payload(
         "sources": {
             "project_relevant": {"loaded": _count_dicts(relevant_knowledge)},
             "query": {"loaded": _count_dicts(query_knowledge)},
+            "playbooks": {"loaded": _count_dicts(playbooks)},
         },
         "knowledge": {
             "merged": len(merged),
             "returned": len(knowledge),
-            "trimmed_by_budget": excluded,
+            "trimmed_by_budget": excluded + playbook_excluded,
+        },
+        "playbooks": {
+            "returned": playbook_count,
+            "trimmed": playbook_excluded,
+            "budget_share_cap_tokens": playbook_token_cap,
         },
         "budget": {
             "requested_tokens": budget,
-            "estimated_used_tokens": spent,
-            "over_budget": spent > budget if budget else bool(spent),
+            "estimated_used_tokens": total_spent,
+            "over_budget": total_spent > budget if budget else bool(total_spent),
         },
         "freshness": {
             "attached": sum(

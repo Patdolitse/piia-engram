@@ -832,6 +832,13 @@
           "required": false,
           "default": true,
           "kind": "positional_or_keyword"
+        },
+        {
+          "name": "include_playbooks",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
+          "kind": "positional_or_keyword"
         }
       ],
       "returns": "str"
@@ -1339,6 +1346,13 @@
           "annotation": "str",
           "required": false,
           "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "allow_similar_new",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
           "kind": "positional_or_keyword"
         },
         {

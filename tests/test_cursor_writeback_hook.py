@@ -106,7 +106,10 @@ def test_cursor_writeback_reads_transcript_path(tmp_path, monkeypatch):
     monkeypatch.setenv("ENGRAM_CURSOR_WRITEBACK", "1")
     monkeypatch.delenv("ENGRAM_CURSOR_WRITEBACK_ACTIVE", raising=False)
 
-    assert _run_hook(monkeypatch, {"transcript_path": str(transcript)}) == 0
+    assert _run_hook(monkeypatch, {
+        "transcript_path": str(transcript),
+        "workspace_roots": [str(tmp_path)],  # v4.20 containment root
+    }) == 0
 
     lessons = Engram().get_lessons(limit=None, _update_access=False)
     assert len(lessons) == 1

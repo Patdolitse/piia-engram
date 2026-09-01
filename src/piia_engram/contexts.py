@@ -51,6 +51,16 @@ def _sanitize_tool_name(name: str) -> str:
     return name.strip().lower().replace(" ", "_").replace("/", "_")
 
 
+def _sanitize_session_id_for_path(session_id: str, fallback: datetime) -> str:
+    """v4.20 write-path containment: session ids join file paths, so only a
+    strict [A-Za-z0-9._-] charset (<=128 chars) survives; anything else falls
+    back to a timestamp so a crafted id can never escape contexts/<tool>/."""
+    cleaned = "".join(ch for ch in str(session_id) if ch.isalnum() or ch in "._-").strip(".")
+    if cleaned and len(cleaned) <= 128:
+        return cleaned
+    return fallback.strftime("%Y-%m-%dT%H-%M-%S")
+
+
 _RESUME_WRAPPER_OPEN = "<engram-resume"
 _RESUME_WRAPPER_CLOSE = "</engram-resume>"
 
@@ -603,6 +613,10 @@ class ContextStoreMixin:
         if not session_id:
             session_id = now.strftime("%Y-%m-%dT%H-%M-%S")
 
+        # v4.20 belt-and-braces: the id is joined into a file path, so the
+        # same strict charset rule applies here as at every extraction site —
+        # a crafted id (../, \\, NUL) can never escape contexts/<tool>/.
+        session_id = _sanitize_session_id_for_path(session_id, fallback=now)
         file_path = tool_dir / f"{session_id}.md"
         timestamp = now.strftime("%H:%M")
 
@@ -1409,8 +1423,33 @@ class ContextStoreMixin:
             if include_review
             else []
         )
-        # M6A keeps playbook surfaces unread so this pack stays strictly zero-write.
+        # v4.20: populate the schema's existing playbooks slot through the
+        # ZERO-WRITE recent reader (get_recent_playbooks never touches access
+        # metadata), projected to bounded metadata pointers — full steps stay
+        # behind get_playbooks, so this pack remains strictly zero-write.
         playbooks: list[dict[str, str]] = []
+        try:
+            recent_pbs = self.get_recent_playbooks(
+                limit=max(playbook_cap, 1), project_folder=project_folder or None
+            ) or []
+        except Exception:
+            recent_pbs = []
+        for pb in recent_pbs[: max(0, playbook_cap)]:
+            if not isinstance(pb, dict):
+                continue
+            pointer: dict[str, str] = {
+                "title": _sanitize_then_bound_agent_text(pb.get("title"), limit=200),
+                "id": str(pb.get("id") or "")[:64],
+            }
+            hint = pb.get("triggers")
+            if isinstance(hint, list) and hint:
+                pointer["triggers"] = _sanitize_then_bound_agent_text(
+                    ", ".join(str(t) for t in hint[:5]), limit=120
+                )
+            desc = pb.get("description")
+            if isinstance(desc, str) and desc.strip():
+                pointer["description"] = _sanitize_then_bound_agent_text(desc, limit=240)
+            playbooks.append(pointer)
 
         handoff = resume_pack.get("handoff")
         if not isinstance(handoff, dict):
