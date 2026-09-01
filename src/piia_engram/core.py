@@ -1652,11 +1652,14 @@ class Engram(
             lessons.append(new_lesson)
             if len(lessons) > MAX_KNOWLEDGE_ENTRIES:
                 # Evict staging items first, then oldest; never drop verified.
-                # v4.20: a version-chain HEAD (an id with supersedes out-edges)
-                # is never an eviction candidate — silent deletion of a HEAD
-                # would orphan its lineage and bypass every audited-deletion
-                # contract (negative control: test_eviction_never_deletes_chain_head).
+                # v4.20/4.20.1: a version-chain HEAD (an id with supersedes
+                # out-edges) is never an eviction candidate, and when the
+                # protected set is UNKNOWABLE (relation store unreadable) the
+                # eviction is SKIPPED entirely — fail closed, never open.
                 protected = self._version_chain_head_ids()
+                if protected is None:
+                    result_box["result"] = new_lesson
+                    return lessons  # fail closed: cap may temporarily exceed
                 staging = [
                     l for l in lessons
                     if l.get("tier") == "staging" and l.get("id") not in protected
@@ -2031,8 +2034,18 @@ class Engram(
 
             decisions.append(new_decision)
             if len(decisions) > MAX_KNOWLEDGE_ENTRIES:
-                # v4.20: same HEAD-protection rule as the lesson eviction above.
+                # v4.20/4.20.1: HEAD protection + fail-closed, same as the
+                # lesson eviction above — AND the pending supersede target of
+                # THIS insertion is protected before its edge is written
+                # (v4.20.0 could evict the very HEAD this new decision is
+                # about to supersede, because edges land after insertion).
                 protected = self._version_chain_head_ids()
+                if protected is None:
+                    result_box["result"] = new_decision
+                    supersedes_box["target"] = auto_supersedes_target
+                    return decisions  # fail closed: cap may temporarily exceed
+                if auto_supersedes_target:
+                    protected = set(protected) | {str(auto_supersedes_target)}
                 staging = [
                     d for d in decisions
                     if d.get("tier") == "staging" and d.get("id") not in protected

@@ -246,7 +246,10 @@ def build_recall_payload(
             entry, include_freshness=include_freshness, now=now, include_trust=include_trust
         )
         cost = _item_cost(view)
-        if playbook_count >= 1 and playbook_spent + cost > playbook_token_cap:
+        # HARD cap (v4.20.1): the FIRST playbook item pays against the 25%
+        # sub-cap too — an over-cap pointer is excluded even when it is the
+        # only one (a 100-token budget can never return a 209-token pointer).
+        if playbook_spent + cost > playbook_token_cap:
             playbook_excluded += 1
             continue
         playbook_views.append(view)

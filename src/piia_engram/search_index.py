@@ -76,15 +76,23 @@ def validated_embed_dim() -> int | None:
     return None
 
 
-# The ONE audited DDL template: the dimension is the only interpolated part,
-# and it always arrives validated (closed-set int from validated_embed_dim).
-# DDL structure cannot use ?-parameters, so the int is re-cast here.
-_VEC_DDL_PREFIX = "CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0(embedding float["
-_VEC_DDL_SUFFIX = "])"
+# v4.20.1: the ONE audited DDL source is a CLOSED-SET LITERAL TABLE keyed by
+# the validated dimension — no interpolation of any kind builds vec DDL. The
+# keys mirror _MODEL_DIMS (the closed set validated_embed_dim enforces); a dim
+# missing from the table is a programmer error (KeyError), never SQL built
+# from an unvalidated value.
+_VEC_DDL_BY_DIM = {
+    384: ("CREATE VIRTUAL TABLE IF NOT EXISTS vec "
+          "USING vec0(embedding float[384])"),
+    512: ("CREATE VIRTUAL TABLE IF NOT EXISTS vec "
+          "USING vec0(embedding float[512])"),
+    1024: ("CREATE VIRTUAL TABLE IF NOT EXISTS vec "
+           "USING vec0(embedding float[1024])"),
+}
 
 
 def _vec_ddl(dim: int) -> str:
-    return "".join((_VEC_DDL_PREFIX, str(int(dim)), _VEC_DDL_SUFFIX))
+    return _VEC_DDL_BY_DIM[int(dim)]
 
 # Fields concatenated into the FTS document for each entry, in priority
 # order. Mirrors the primary-text logic in retrieval.py so both signals
@@ -359,7 +367,13 @@ class SearchIndex:
             con.execute("DROP TABLE IF EXISTS vec")
             con.execute("DROP TABLE IF EXISTS vec_map")
 
-        con.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0(embedding float[{EMBED_DIM}])")
+        # v4.20.1: the ONLY vec-DDL execution — closed-set validation at every
+        # run; the DDL string comes solely from the audited literal table via
+        # _vec_ddl (v4.20.0 shipped this site unwired with a raw fallback).
+        _dim = validated_embed_dim()
+        if _dim is None:
+            return  # fail closed: vector layer disabled for this configuration
+        con.execute(_vec_ddl(_dim))
         con.execute(
             "CREATE TABLE IF NOT EXISTS vec_map("
             "rowid INTEGER PRIMARY KEY, eid TEXT UNIQUE, chash TEXT)"
@@ -456,13 +470,15 @@ class SearchIndex:
                 return []  # no vec table built yet
             if not rowids:
                 return []
-            placeholders = ",".join("?" * len(rowids))
-            eid_by_rowid = dict(
-                con.execute(
-                    f"SELECT rowid, eid FROM vec_map WHERE rowid IN ({placeholders})",
-                    rowids,
-                ).fetchall()
-            )
+            # v4.20.1: per-rowid parameterized lookups (rowid lists here are
+            # small, <= the search limit) — no dynamically shaped SQL at all.
+            eid_by_rowid = {}
+            for rowid in rowids:
+                hit = con.execute(
+                    "SELECT eid FROM vec_map WHERE rowid = ?", (rowid,)
+                ).fetchone()
+                if hit and hit[0] is not None:
+                    eid_by_rowid[rowid] = hit[0]
             return [eid_by_rowid[r] for r in rowids if r in eid_by_rowid]
         finally:
             con.close()

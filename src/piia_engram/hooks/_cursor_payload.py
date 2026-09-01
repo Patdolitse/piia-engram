@@ -164,8 +164,8 @@ def _summary_from_transcript(
         if resolved == root_resolved or _is_within(resolved, root_resolved):
             candidate = resolved
             break
-    if candidate is None and "agent-transcripts" in resolved.parts:
-        # empirically-frozen Cursor shape: agent-transcripts/<uuid>/<uuid>.jsonl
+    if candidate is None and _matches_frozen_transcript_shape(resolved):
+        # empirically-frozen Cursor shape: agent-transcripts/<uuid>/<same-uuid>.jsonl
         candidate = resolved
     if candidate is None:
         return ""
@@ -219,6 +219,28 @@ def _is_within(child: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+_UUID_RE = __import__("re").compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _matches_frozen_transcript_shape(resolved: Path) -> bool:
+    """The ONLY rootless fallback (v4.20.1 hardened): the exact Cursor shape
+    ``agent-transcripts/<uuid>/<same-uuid>.jsonl``. Merely carrying the
+    directory segment is NOT enough — any other path with that segment
+    (attacker-planted or coincidental) is refused."""
+    parts = resolved.parts
+    for i, part in enumerate(parts):
+        if part != "agent-transcripts":
+            continue
+        if i + 2 < len(parts):
+            uuid_dir = parts[i + 1]
+            stem = parts[i + 2][: -len(".jsonl")] if parts[i + 2].endswith(".jsonl") else parts[i + 2]
+            if uuid_dir == stem and _UUID_RE.match(uuid_dir):
+                return True
+    return False
 
 
 _ENV_EXTRA_ROOTS = "ENGRAM_CURSOR_TRANSCRIPT_ROOTS"
@@ -298,13 +320,16 @@ def extract_project_folder(hook_input: dict[str, Any]) -> str:
     return os.environ.get(_ENV_PROJECT, "").strip()
 
 
+_SESSION_ID_RE = __import__("re").compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
 def _sanitize_session_id(raw: str) -> str:
-    """v4.20 write-path containment: session ids join file paths, so only a
-    strict [A-Za-z0-9._-] charset (<=128 chars) survives; anything else
-    collapses to a timestamp fallback so a crafted id can never escape the
-    contexts/<tool>/ directory."""
-    cleaned = "".join(ch for ch in raw if ch.isalnum() or ch in "._-").strip(".")
-    if cleaned and len(cleaned) <= 128:
+    """v4.20.1 write-path containment (ASCII fullmatch): session ids join file
+    paths, so ONLY a strict ASCII [A-Za-z0-9._-] run (<=128 chars) passes
+    verbatim — Unicode lookalikes (accepted by isalnum) fall to the timestamp
+    fallback so a crafted id can never escape the contexts/<tool>/ directory."""
+    cleaned = raw.strip().strip(".")
+    if _SESSION_ID_RE.fullmatch(cleaned):
         return cleaned
     return datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 

@@ -51,12 +51,16 @@ def _sanitize_tool_name(name: str) -> str:
     return name.strip().lower().replace(" ", "_").replace("/", "_")
 
 
+_SESSION_ID_PATH_RE = __import__("re").compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
 def _sanitize_session_id_for_path(session_id: str, fallback: datetime) -> str:
-    """v4.20 write-path containment: session ids join file paths, so only a
-    strict [A-Za-z0-9._-] charset (<=128 chars) survives; anything else falls
-    back to a timestamp so a crafted id can never escape contexts/<tool>/."""
-    cleaned = "".join(ch for ch in str(session_id) if ch.isalnum() or ch in "._-").strip(".")
-    if cleaned and len(cleaned) <= 128:
+    """v4.20.1 write-path containment (ASCII fullmatch): ONLY a strict ASCII
+    [A-Za-z0-9._-] run (<=128 chars) passes verbatim — Unicode lookalikes
+    (accepted by isalnum) fall back to a timestamp so a crafted id can never
+    escape contexts/<tool>/."""
+    cleaned = str(session_id).strip().strip(".")
+    if _SESSION_ID_PATH_RE.fullmatch(cleaned):
         return cleaned
     return fallback.strftime("%Y-%m-%dT%H-%M-%S")
 

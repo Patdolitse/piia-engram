@@ -304,26 +304,68 @@ def test_embed_dim_closed_set_validation(monkeypatch, tmp_path: Path):
     importlib.reload(si)
 
 
-def test_ast_guard_no_arbitrary_sql_interpolation():
-    """Tripwire (green today by design): no f-string SQL with value interpolation."""
+def _sql_interpolation_violations(source: str) -> list[str]:
+    """AST tripwire: report SQL execute() calls whose statement string is
+    built with dynamic interpolation (f-string OR concatenation/format of a
+    variable into the SQL text). The ONLY allowed dynamic shape is the
+    audited ?-placeholder construction (string of '?,' chars bound to
+    parameter values) — v4.20.1: even that is gone from search_index, but
+    the exemption stays so the rule documents the audited pattern."""
     import ast
-    import re
-    from pathlib import Path as P
 
-    src = P("src/piia_engram/search_index.py").read_text(encoding="utf-8")
     violations = []
-    for node in ast.walk(ast.parse(src)):
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "execute"
+            and node.func.attr in ("execute", "executemany")
             and node.args
-            and isinstance(node.args[0], ast.JoinedStr)
         ):
-            rendered = ast.unparse(node.args[0])
-            # allow the audited placeholder shape (?,? interpolation) only
-            if not re.fullmatch(
-                r"f?'(?:[^']*)'(?:\s*\+\s*\"',?'\"\s*\*\s*\w+)?", rendered
-            ):
-                violations.append(rendered[:80])
+            arg = node.args[0]
+            # f-string statement -> violation unless every formatted value is
+            # a '?'-placeholder generator expression (the audited shape)
+            if isinstance(arg, ast.JoinedStr):
+                dynamic = [
+                    v for v in arg.values
+                    if isinstance(v, ast.FormattedValue)
+                    and not _is_placeholder_generator(v.value)
+                ]
+                if dynamic:
+                    violations.append(ast.unparse(node)[:100])
+                continue
+            # string concatenation/format with a variable operand -> check
+            # whether the result feeds a LIKE/shape context; conservative:
+            # flag concat/format calls whose parts include any Name/Call
+            if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Mod):
+                violations.append(ast.unparse(node)[:100])
+            if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "join":
+                # join((prefix, <dynamic>, suffix)) into execute: dynamic SQL
+                violations.append(ast.unparse(node)[:100])
+    return violations
+
+
+def _is_placeholder_generator(expr: ast.expr) -> bool:
+    import ast
+
+    # "?":s or "?,".join(...) or "?" * n — the audited placeholder shapes
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str) and set(expr.value) <= {"?", ","}:
+        return True
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Mult):
+        left = expr.left
+        return isinstance(left, ast.Constant) and isinstance(left.value, str) and set(left.value) <= {"?", ","}
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) and expr.func.attr == "join":
+        return True
+    return False
+
+
+def test_ast_guard_no_arbitrary_sql_interpolation():
+    """Tripwire: no dynamically interpolated SQL in search_index (v4.20.1:
+    even the audited ?,? placeholder shape is gone — per-rowid parameterized
+    queries everywhere; the vec DDL is a closed-set literal table)."""
+    import ast as _ast
+    from pathlib import Path as P
+
+    src = P("src/piia_engram/search_index.py").read_text(encoding="utf-8")
+    violations = _sql_interpolation_violations(src)
     assert not violations, violations

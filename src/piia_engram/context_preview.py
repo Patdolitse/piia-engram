@@ -94,6 +94,7 @@ def build_context_preview(
     role: str = DEFAULT_ROLE,
     project_folder: str = "",
     query: str = "",
+    include_playbooks: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the owner-facing preview of one simulated injection.
@@ -132,10 +133,22 @@ def build_context_preview(
         project_folder=project_folder,
         query=query,
         limit=budget["limit"],
+        include_playbooks=include_playbooks,
     )
     identity = sources.get("identity", {})
     recent_activity = sources.get("recent_activity", {})
     merged = merge_knowledge(sources.get("relevant"), sources.get("query_knowledge"))
+    # v4.20.1: the frozen surface wiring — when the playbook bucket is on,
+    # preview carries its pointers with the playbook label (never projected
+    # through the lesson/decision split, which would mislabel them).
+    playbook_pointers = [
+        {"type": "playbook", **{
+            k: v for k, v in pb.items()
+            if k in ("id", "title", "triggers", "domain", "description", "version", "last_updated")
+        }}
+        for pb in (sources.get("playbooks") or [])
+        if isinstance(pb, dict)
+    ][:2]
 
     # --- panel ②: split raw knowledge into exposed vs withheld -----------
     exposed_pre: list[dict[str, Any]] = []
@@ -160,6 +173,10 @@ def build_context_preview(
         digest["summary"] = redact_export_text(digest["summary"])
 
     # --- redaction + budget pass on what survives -------------------------
+    # v4.20.1: playbook pointers ride in the exposed panel WITH their type
+    # label (they are metadata-only; the lesson/decision split above never
+    # touched them, so mislabeling as lessons is impossible).
+    exposed_pre.extend(playbook_pointers)
     raw_exposed_payload = {
         "identity": identity,
         "recent_activity": recent_activity,
