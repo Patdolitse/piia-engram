@@ -1899,6 +1899,19 @@ class Engram(
             batch["archived"].extend(outcome.archived_ids)
 
     @staticmethod
+    def _invalid_status_error(item_id: str, updates: dict) -> dict | None:
+        """Reject a status a caller may not set (``superseded`` is system-only)."""
+        if "status" not in updates or updates["status"] in _capacity.UPDATABLE_STATUSES:
+            return None
+        return {
+            "error": "invalid_status",
+            "item_id": item_id,
+            "status": updates["status"],
+            "allowed": sorted(_capacity.UPDATABLE_STATUSES),
+            "message": "status must be one of " + ", ".join(sorted(_capacity.UPDATABLE_STATUSES)),
+        }
+
+    @staticmethod
     def _capacity_refusal(write, item_id: str) -> dict | None:
         """Run ``write``; return an error dict instead of raising a capacity refusal."""
         try:
@@ -2030,6 +2043,9 @@ class Engram(
                 "fields": smuggled,
                 "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
             }
+        invalid_status = self._invalid_status_error(lesson_id, updates)
+        if invalid_status:
+            return invalid_status
         allowed_fields = {"summary", "detail", "domain", "status", "tier"}
         content_fields = {"summary", "detail", "domain"}
         valid_tiers = {"staging", "verified", "archived"}
@@ -2448,6 +2464,9 @@ class Engram(
                 "fields": smuggled,
                 "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
             }
+        invalid_status = self._invalid_status_error(decision_id, updates)
+        if invalid_status:
+            return invalid_status
         allowed_fields = {
             "title",
             "question",

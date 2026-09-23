@@ -38,7 +38,7 @@ def test_openclaw_l3_memory_snapshot_is_verified_active_and_bounded(tmp_path: Pa
     engram.add_lesson({"summary": "verified active lesson", "tier": "verified"})
     engram.add_lesson({"summary": "staging lesson must stay out", "tier": "staging"})
     archived = engram.add_lesson({"summary": "archived lesson must stay out"})
-    engram.update_lesson(archived["id"], {"status": "archived"})
+    engram.update_lesson(archived["id"], {"tier": "archived"})
 
     result = export_to_openclaw(engram, str(tmp_path / "openclaw"))
     memory = (tmp_path / "openclaw" / "MEMORY.md").read_text(encoding="utf-8")

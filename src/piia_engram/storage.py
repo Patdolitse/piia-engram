@@ -18,6 +18,8 @@ from typing import Any, Iterator
 
 import portalocker
 
+from .capacity import SYSTEM_FIELDS as _CAPACITY_SYSTEM_FIELDS
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,6 +97,11 @@ UNTRUSTED_TRUST_FIELDS: tuple[str, ...] = (
     "approval_required",
     "labeling",
     *(f"provenance.{field}" for field in OWNER_ONLY_PROVENANCE_FIELDS),
+    # Capacity bookkeeping and archive lineage are written by the system only.
+    *_CAPACITY_SYSTEM_FIELDS,
+    "snapshot_of",
+    "overflow_archived_at",
+    "overflow_archive_reason",
 )
 # Decision-conflict governance thresholds: post-hoc noise reduction for
 # doctor/context/engram conflicts. These favor precision.
