@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -1375,20 +1375,12 @@ class Engram(
     # Corpus encryption helpers (transparent when ENGRAM_SECRET not set)
     # ------------------------------------------------------------------
 
-    def _write_entries(
-        self,
-        path: Path,
-        entries: list[dict],
-        entry_type: str,
-        *,
-        skip_archive_ids: Iterable[str] = (),
-    ):
+    def _write_entries(self, path: Path, entries: list[dict], entry_type: str):
         """Write knowledge entries with corpus encryption if enabled.
 
         Lessons and decisions go through the capacity core like every other
         write. Whole-file writers (imports, tier evaluation) get no new-row
-        exemption, and any row they drop is archived instead of lost, except
-        ``skip_archive_ids``: rows the caller archived itself or is rolling back.
+        exemption, and any row they drop is archived instead of lost.
         """
         if entry_type in self._OVERFLOW_ARCHIVE_FILES:
             replacement = [dict(e) for e in entries]
@@ -1396,9 +1388,7 @@ class Engram(
                 path,
                 entry_type,
                 lambda _current: replacement,
-                capacity_ctx=_capacity.CapacityContext(
-                    import_mode=True, skip_archive_ids=frozenset(skip_archive_ids)
-                ),
+                capacity_ctx=_capacity.CapacityContext(import_mode=True),
             )
         if self._corpus_key:
             entries = [self._crypto.encrypt_entry(e, self._corpus_key, entry_type)

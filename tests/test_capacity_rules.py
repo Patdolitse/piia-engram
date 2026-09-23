@@ -173,12 +173,22 @@ def test_removed_rows_are_archived_as_a_backstop():
     assert [(r["id"], reason) for r, reason in plan.archive] == [("r1", cap.REASON_REMOVED)]
 
 
-def test_removed_rows_the_caller_already_archived_are_not_archived_again():
-    before = [_row(i) for i in range(4)]
-    after = [dict(before[0])]
-    plan = _plan([dict(r) for r in before], after, skip_archive_ids=frozenset({"r1", "r3"}))
-    assert [(r["id"], reason) for r, reason in plan.archive] == [("r2", cap.REASON_REMOVED)]
-    assert [r["id"] for r in plan.rows] == ["r0"]
+def test_the_caller_names_the_removal_reason_and_extra_archived_rows():
+    before = [_row(i) for i in range(3)]
+    replaced = dict(before[1])
+    after = [dict(before[0]), dict(before[1], summary="new body")]
+    plan = _plan([dict(r) for r in before], after, removed_reason=cap.REASON_IMPORT_REPLACE,
+                 extra_archive=[(replaced, cap.REASON_IMPORT_REPLACE)])
+    assert [(r["id"], reason) for r, reason in plan.archive] == [
+        ("r2", cap.REASON_IMPORT_REPLACE), ("r1", cap.REASON_IMPORT_REPLACE)
+    ]
+
+
+def test_extra_archived_rows_are_kept_when_no_pool_changes():
+    before = [_row(0)]
+    plan = _plan([dict(r) for r in before], [dict(before[0], summary="new body")],
+                 extra_archive=[(dict(before[0]), cap.REASON_IMPORT_REPLACE)])
+    assert [(r["id"], reason) for r, reason in plan.archive] == [("r0", cap.REASON_IMPORT_REPLACE)]
 
 
 def test_a_new_snapshot_goes_straight_to_the_archive_and_a_legacy_one_stays():

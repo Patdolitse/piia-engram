@@ -178,9 +178,6 @@ class CapacityContext:
     supersede_target: str = ""
     owner_override: bool = False
     source_tool: str = ""  # audit attribution only
-    # Removed rows the caller archived itself (the positional import split)
-    # or is rolling back; the removed-row backstop skips them.
-    skip_archive_ids: frozenset = frozenset()
     # Reason recorded for rows the mutator drops (replace imports use import_replace).
     removed_reason: str = REASON_REMOVED
     # (row, reason) pairs the mutator archives in the same write, e.g. a local
@@ -407,10 +404,7 @@ def plan_capacity(
                 moved.add(key)
                 total -= 1
 
-    archive = [
-        (row, ctx.removed_reason) for row in removed
-        if str(row.get("id") or "") not in ctx.skip_archive_ids
-    ]
+    archive = [(row, ctx.removed_reason) for row in removed]
     archive += list(ctx.extra_archive)
     archive += [(row, reason) for _key, row, reason in moves]
     rows = [row for key, row in after_keyed if key not in moved]
