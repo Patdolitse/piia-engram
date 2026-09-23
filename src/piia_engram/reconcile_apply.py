@@ -44,6 +44,29 @@ OUTCOME_NOOP = "noop"
 OUTCOME_FAILED = "failed"
 
 
+def _archived_existing(eng) -> list[dict[str, Any]]:
+    """Rows the capacity cap moved to the overflow archive, filtered like active rows.
+
+    They were already imported once, so classification counts them; only rows
+    the regular list calls would return had they stayed active are included
+    (status active, visible without a project), so retired, superseded and
+    project-scoped rows cannot turn a candidate into a conflict or duplicate.
+    """
+    rows: list[dict[str, Any]] = []
+    if not hasattr(eng, "_read_overflow_archive"):
+        return rows
+    for kind in ("lesson", "decision"):
+        try:
+            archived = eng._read_overflow_archive(kind)
+        except Exception:  # pragma: no cover - defensive
+            continue
+        rows.extend(
+            row for row in archived
+            if row.get("status") == "active" and eng._entry_visible_for_project(row, None)
+        )
+    return rows
+
+
 def _load_existing(eng) -> list[dict[str, Any]]:
     """Read active lessons + decisions for classification (access-neutral)."""
     existing: list[dict[str, Any]] = []
@@ -57,14 +80,7 @@ def _load_existing(eng) -> list[dict[str, Any]]:
             existing.extend(eng.get_decisions(limit=None, _update_access=False) or [])
         except Exception:  # pragma: no cover - defensive
             pass
-    # Rows the capacity cap archived were already imported once; classify
-    # against them too so an apply does not re-import them.
-    if hasattr(eng, "_read_overflow_archive"):
-        for kind in ("lesson", "decision"):
-            try:
-                existing.extend(eng._read_overflow_archive(kind))
-            except Exception:  # pragma: no cover - defensive
-                pass
+    existing.extend(_archived_existing(eng))
     return existing
 
 
@@ -303,6 +319,13 @@ def render_reconcile_apply_text(payload: dict[str, Any]) -> str:
     ]
     if payload.get("requires_confirmation"):
         lines.append("  confirmation required - re-run with --commit --yes to apply.")
+    archived_ids = payload.get("overflow_archived_ids") or []
+    if archived_ids:
+        lines.append(
+            f"  moved to the overflow archive by the capacity cap: {len(archived_ids)} "
+            f"({', '.join(str(i) for i in archived_ids[:20])}"
+            + (", ..." if len(archived_ids) > 20 else "") + ")"
+        )
     for it in payload.get("items", [])[:50]:
         label = it.get("imported_id") or f"candidate#{it.get('candidate_ref')}"
         lines.append(

@@ -101,12 +101,17 @@ def _run_startup_sync() -> None:
         with _reconcile_operation_lock:
             _mem = _engram.reconcile_memories()
             _cfg = _engram.reconcile_ai_configs()
-        if _mem["imported"] or _cfg["imported"]:
+        _archived = len(_mem.get("overflow_archived_ids") or []) + len(
+            _cfg.get("overflow_archived_ids") or []
+        )
+        if _mem["imported"] or _cfg["imported"] or _archived:
             _msgs = []
             if _mem["imported"]:
                 _msgs.append(f"memories={_mem['imported']}")
             if _cfg["imported"]:
                 _msgs.append(f"configs={_cfg['imported']}")
+            if _archived:
+                _msgs.append(f"moved to overflow archive={_archived}")
             print(
                 f"[engram] startup sync: {', '.join(_msgs)}",
                 file=sys.stderr,

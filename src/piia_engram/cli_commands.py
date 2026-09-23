@@ -4271,10 +4271,12 @@ def _run_dashboard(args: list[str]) -> int:
         merge_report = None
     reconcile_report = None
     try:
+        from piia_engram.reconcile_apply import _archived_existing
         from piia_engram.reconcile_proposal import build_reconcile_proposal
         candidates = eng.collect_memory_candidates()
         reconcile_report = build_reconcile_proposal(
-            candidates, list(lessons) + list(decisions), source="memory_files",
+            candidates, list(lessons) + list(decisions) + _archived_existing(eng),
+            source="memory_files",
         )
     except Exception:
         reconcile_report = None

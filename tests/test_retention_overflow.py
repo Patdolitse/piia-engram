@@ -409,40 +409,116 @@ def _bulk(engram: Engram, kind: str, rows: list[dict]) -> dict:
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_a_batch_never_pushes_out_its_own_rows(_full_stores, tmp_path, monkeypatch, kind):
+def test_a_staging_batch_gives_way_before_reviewed_rows(_full_stores, tmp_path, monkeypatch, kind):
     root, seeded, engram = _copy_store(_full_stores, kind, tmp_path, monkeypatch)
     monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
     result = _bulk(engram, kind, [_row(kind, i, "BATCH") for i in range(3)])
     saved_ids = [item["id"] for item in result["results"] if item["status"] == "saved"]
     assert len(saved_ids) == 3
-    assert set(saved_ids) <= set(_active_ids(root, kind))
-    assert result["overflow_archived_ids"] == seeded[:3]
-    assert [item["overflow_archived_ids"] for item in result["results"]] == [[s] for s in seeded[:3]]
+    # only the first write finds no staging row to move; each later write moves the batch's previous row
+    assert result["overflow_archived_ids"] == [seeded[0], saved_ids[0], saved_ids[1]]
+    assert [item["overflow_archived_ids"] for item in result["results"]] == [
+        [seeded[0]], [saved_ids[0]], [saved_ids[1]]]
+    active = _active_ids(root, kind)
+    assert saved_ids[2] in active
+    assert set(seeded[1:]) <= set(active)
 
 
-def test_a_batch_keeps_its_rows_in_write_order(_full_stores, tmp_path, monkeypatch):
-    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
-    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
-    result = engram.bulk_add_lessons([_row("lesson", i, "ORDER") for i in range(5)])
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_reviewed_batch_moves_the_oldest_rows_and_keeps_write_order(_full_stores, tmp_path, monkeypatch, kind):
+    root, seeded, engram = _copy_store(_full_stores, kind, tmp_path, monkeypatch)
+    result = _bulk(engram, kind, [_row(kind, i, "ORDER", tier="verified") for i in range(5)])
     saved_ids = [item["id"] for item in result["results"]]
-    active = _active_ids(root, "lesson")
-    assert [i for i in active if i in saved_ids] == saved_ids
-    # after the batch, the oldest staging row is the first one pushed out
-    later = _add(engram, "lesson", _row("lesson", 970, "N"))
-    assert later["overflow_archived_ids"] == [saved_ids[0]]
+    assert result["overflow_archived_ids"] == seeded[:5]
+    assert _active_ids(root, kind) == seeded[5:] + saved_ids
 
 
-def test_a_batch_larger_than_the_cap_still_keeps_the_cap(tmp_path, monkeypatch):
+def _fresh(tmp_path: Path, monkeypatch, approval: str | None = None) -> tuple[Path, Engram]:
     root = tmp_path / "store"
     monkeypatch.setenv("ENGRAM_DIR", str(root))
-    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
-    engram = Engram(root=root)
-    result = engram.bulk_add_lessons([_row("lesson", i, "BIG", tier="verified") for i in range(MAX_KNOWLEDGE_ENTRIES + 5)])
+    if approval:
+        monkeypatch.setenv("ENGRAM_APPROVAL", approval)
+    else:
+        monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    return root, Engram(root=root)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_batch_larger_than_the_cap_still_keeps_the_cap(tmp_path, monkeypatch, kind):
+    root, engram = _fresh(tmp_path, monkeypatch)
+    result = _bulk(engram, kind, [_row(kind, i, "BIG", tier="verified") for i in range(MAX_KNOWLEDGE_ENTRIES + 5)])
     saved_ids = [item["id"] for item in result["results"] if item["status"] == "saved"]
     assert len(saved_ids) == MAX_KNOWLEDGE_ENTRIES + 5
-    assert len(_active_ids(root, "lesson")) == MAX_KNOWLEDGE_ENTRIES
+    assert len(_active_ids(root, kind)) == MAX_KNOWLEDGE_ENTRIES
     assert result["overflow_archived_ids"] == saved_ids[:5]
-    assert _archived_ids(root, "lesson") == saved_ids[:5]
+    assert _archived_ids(root, kind) == saved_ids[:5]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_an_oversized_staging_batch_archives_its_oldest_rows(tmp_path, monkeypatch, kind):
+    root, engram = _fresh(tmp_path, monkeypatch, approval="strict")
+    result = _bulk(engram, kind, [_row(kind, i, "BIGS") for i in range(MAX_KNOWLEDGE_ENTRIES + 3)])
+    saved_ids = [item["id"] for item in result["results"] if item["status"] == "saved"]
+    assert len(saved_ids) == MAX_KNOWLEDGE_ENTRIES + 3
+    assert {row.get("tier") for row in _read_json(_active_path(root, kind))} == {"staging"}
+    assert len(_active_ids(root, kind)) == MAX_KNOWLEDGE_ENTRIES
+    assert result["overflow_archived_ids"] == saved_ids[:3]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_an_oversized_mixed_batch_takes_its_staging_rows_first_but_never_the_current_row(tmp_path, monkeypatch, kind):
+    root, engram = _fresh(tmp_path, monkeypatch)
+    rows = ([_row(kind, 0, "MIX", tier="staging")]
+            + [_row(kind, i, "MIX", tier="verified") for i in range(1, MAX_KNOWLEDGE_ENTRIES + 1)]
+            + [_row(kind, MAX_KNOWLEDGE_ENTRIES + 1, "MIX", tier="staging")])
+    result = _bulk(engram, kind, rows)
+    saved_ids = [item["id"] for item in result["results"] if item["status"] == "saved"]
+    assert len(saved_ids) == MAX_KNOWLEDGE_ENTRIES + 2
+    # write 201 takes the batch's staging row; write 202 is the last staging row itself,
+    # which is never a candidate, so the oldest verified batch row goes instead
+    assert result["overflow_archived_ids"] == [saved_ids[0], saved_ids[1]]
+    assert saved_ids[-1] in _active_ids(root, kind)
+
+
+def test_a_batch_keeps_a_version_chain_head_at_the_cap(_full_stores, tmp_path, monkeypatch):
+    from piia_engram.governance_store import RelationStore
+
+    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
+    RelationStore(root).add_relation(seeded[0], "supersedes", seeded[1])
+    result = engram.bulk_add_lessons([_row("lesson", i, "HEADB", tier="verified") for i in range(2)])
+    assert seeded[0] in _active_ids(root, "lesson")
+    assert result["overflow_archived_ids"] == seeded[1:3]
+
+
+def test_a_batch_keeps_its_pending_supersede_target_at_the_cap(_full_stores, tmp_path, monkeypatch):
+    from piia_engram.governance_store import RelationStore
+
+    root, seeded, engram = _copy_store(_full_stores, "decision", tmp_path, monkeypatch)
+    rows = [_row("decision", 990, "PSB", tier="verified"),
+            dict(_row("decision", 991, "PSB", tier="verified"), supersedes=seeded[1])]
+    result = engram.bulk_add_decisions(rows)
+    new_id = result["results"][1]["id"]
+    # the first row takes the oldest row; the second must skip its own supersede target
+    assert result["overflow_archived_ids"] == [seeded[0], seeded[2]]
+    assert {seeded[1], new_id} <= set(_active_ids(root, "decision"))
+    assert {"src": new_id, "rel": "supersedes", "dst": seeded[1]} in RelationStore(root).all_edges()
+
+
+def test_eviction_rewrites_rows_grouped_as_earlier_releases_did(tmp_path, monkeypatch):
+    """Kept rows are written non-staging, then staging, then protected (unchanged since 4.20.0)."""
+    from piia_engram.governance_store import RelationStore
+
+    root, engram = _fresh(tmp_path, monkeypatch)
+    ids = [
+        _add(engram, "lesson", _row("lesson", i, "GRP", tier="staging" if i % 2 else "verified"))["id"]
+        for i in range(MAX_KNOWLEDGE_ENTRIES)
+    ]
+    RelationStore(root).add_relation(ids[4], "supersedes", ids[2])
+    new = _add(engram, "lesson", _row("lesson", 999, "GRP", tier="verified"))
+    staging = [i for n, i in enumerate(ids) if n % 2]
+    verified = [i for n, i in enumerate(ids) if not n % 2 and n != 4]
+    assert new["overflow_archived_ids"] == [staging[0]]
+    assert _active_ids(root, "lesson") == verified + [new["id"]] + staging[1:] + [ids[4]]
 
 
 def test_every_batch_writer_runs_as_one_batch():
@@ -489,6 +565,125 @@ def test_recapture_skips_rows_already_in_the_archive(_full_stores, tmp_path, mon
     archived_before = len(_archive_lines(root, "lesson"))
     assert engram.reconcile_memories()["imported"] == 0
     assert len(_archive_lines(root, "lesson")) == archived_before
+
+
+# -- reconcile apply against the archive ---------------------------------------------
+
+
+def _candidate(kind: str, i: int, salt: str) -> dict:
+    row = _row(kind, i, salt)
+    return {"summary": row["summary"]} if kind == "lesson" else {"question": row["question"], "choice": row["choice"]}
+
+
+def _apply_again_after_the_import_was_archived(engram: Engram, root: Path, kind: str):
+    from piia_engram.reconcile_apply import apply_reconcile
+
+    candidate = _candidate(kind, 980, "RA")
+    first = apply_reconcile(engram, [candidate], dry_run=False, confirm=True)
+    assert first["counts"]["imported"] == 1
+    imported_id = first["items"][0]["imported_id"]
+    # the import is staging, so the next write at the cap moves it to the archive
+    _add(engram, kind, _row(kind, 981, "N", tier="verified"))
+    assert imported_id in _archived_ids(root, kind)
+    lines_before = len(_archive_lines(root, kind))
+    plan = apply_reconcile(engram, [candidate])
+    second = apply_reconcile(engram, [candidate], dry_run=False, confirm=True)
+    return imported_id, lines_before, plan, second
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_reconcile_apply_treats_an_archived_row_as_a_duplicate(_full_stores, tmp_path, monkeypatch, kind):
+    root, seeded, engram = _copy_store(_full_stores, kind, tmp_path, monkeypatch)
+    imported_id, lines_before, plan, second = _apply_again_after_the_import_was_archived(engram, root, kind)
+    assert [(item["action"], item["match_id"]) for item in plan["items"]] == [("duplicate", imported_id)]
+    assert (second["counts"]["imported"], second["counts"]["duplicate"]) == (0, 1)
+    assert len(_archive_lines(root, kind)) == lines_before
+
+
+def test_reconcile_apply_reads_the_archive_of_an_encrypted_store(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+    monkeypatch.setenv("ENGRAM_SECRET", "reconcile-archive-test-key")
+    root, engram = _fresh(tmp_path, monkeypatch)
+    if not engram._corpus_key:
+        pytest.skip("corpus encryption not active in this environment")
+    for i in range(MAX_KNOWLEDGE_ENTRIES):
+        _add(engram, "lesson", _row("lesson", i, "ENCR", tier="verified"))
+    imported_id, lines_before, plan, second = _apply_again_after_the_import_was_archived(engram, root, "lesson")
+    assert _candidate("lesson", 980, "RA")["summary"] not in _archive_path(root, "lesson").read_text(encoding="utf-8")
+    assert [(item["action"], item["match_id"]) for item in plan["items"]] == [("duplicate", imported_id)]
+    assert second["counts"]["imported"] == 0
+    assert len(_archive_lines(root, "lesson")) == lines_before
+
+
+def test_reconcile_conflict_preview_sees_an_archived_decision(_full_stores, tmp_path, monkeypatch):
+    from piia_engram.reconcile_apply import preview_reconcile_conflicts
+
+    root, seeded, engram = _copy_store(_full_stores, "decision", tmp_path, monkeypatch)
+    _add(engram, "decision", _row("decision", 982, "N", tier="verified"))
+    archived = engram.get_overflow_archived("decision", seeded[0])
+    preview = preview_reconcile_conflicts(engram, [{"question": archived["question"], "choice": _words(983, "OTHER")}])
+    assert [(item["action"], item["match_id"]) for item in preview["items"]] == [("conflict", seeded[0])]
+
+
+def test_reconcile_counts_only_archived_rows_the_list_calls_would_return(tmp_path, monkeypatch):
+    from piia_engram.reconcile_apply import _archived_existing, apply_reconcile
+
+    root, engram = _fresh(tmp_path, monkeypatch)
+    q = [_words(i, "FQ") for i in range(4)]
+    c = [_words(i, "FC") for i in range(4)]
+    engram._archive_overflow_rows("decision", [
+        {"id": "d-live", "question": q[0], "choice": c[0], "status": "active"},
+        {"id": "d-superseded", "question": q[1], "choice": c[1], "status": "superseded"},
+        {"id": "d-retired", "question": q[2], "choice": c[2], "status": "archived"},
+        {"id": "d-project", "question": q[3], "choice": c[3], "status": "active", "project": "delta-service"},
+    ])
+    engram._archive_overflow_rows("lesson", [
+        {"id": "l-live", "summary": _words(0, "FL"), "status": "active"},
+        {"id": "l-project", "summary": _words(1, "FL"), "status": "active", "project": "delta-service"},
+        {"id": "l-superseded", "summary": _words(2, "FL"), "status": "superseded"},
+    ])
+    assert sorted(row["id"] for row in _archived_existing(engram)) == ["d-live", "l-live"]
+    candidates = [
+        {"question": q[0], "choice": c[0]},
+        {"question": q[1], "choice": _words(1, "NEW")},
+        {"question": q[2], "choice": _words(2, "NEW")},
+        {"question": q[3], "choice": _words(3, "NEW")},
+        {"summary": _words(0, "FL")},
+        {"summary": _words(1, "FL")},
+        {"summary": _words(2, "FL")},
+    ]
+    plan = apply_reconcile(engram, candidates)
+    assert [item["action"] for item in plan["items"]] == [
+        "duplicate", "import", "import", "import", "duplicate", "import", "import"]
+
+
+def test_reconcile_apply_digest_mentions_rows_moved_to_the_archive(_full_stores, tmp_path, monkeypatch):
+    from piia_engram.reconcile_apply import apply_reconcile, render_reconcile_apply_text
+
+    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
+    payload = apply_reconcile(engram, [_candidate("lesson", 984, "DG")], dry_run=False, confirm=True)
+    assert payload["overflow_archived_ids"] == [seeded[0]]
+    assert f"moved to the overflow archive by the capacity cap: 1 ({seeded[0]})" in render_reconcile_apply_text(payload)
+    quiet = apply_reconcile(Engram(root=tmp_path / "small"), [_candidate("lesson", 985, "DG")],
+                            dry_run=False, confirm=True)
+    assert "overflow archive" not in render_reconcile_apply_text(quiet)
+
+
+def test_startup_sync_message_counts_rows_moved_to_the_archive(_full_stores, tmp_path, monkeypatch, capsys):
+    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    mem_dir = tmp_path / "fake_claude" / "projects" / "p" / "memory"
+    mem_dir.mkdir(parents=True)
+    for i in range(2):
+        (mem_dir / f"note_{i}.md").write_text(
+            f"---\nname: note {i}\ndescription: d\ntype: feedback\n---\n\n{_words(i, 'SYNC')}\n", encoding="utf-8")
+    engram._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
+    monkeypatch.setattr(engram, "reconcile_ai_configs", lambda: {"imported": 0})
+    server = _serve(engram, monkeypatch)
+    server._run_startup_sync()
+    err = capsys.readouterr().err
+    assert "memories=2" in err
+    assert "moved to overflow archive=2" in err
 
 
 # -- MCP replies --------------------------------------------------------------------
