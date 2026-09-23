@@ -395,3 +395,20 @@ def test_an_unchanged_archive_is_parsed_once(engram: Engram, monkeypatch):
     _raw_archive(engram, "lesson", [{"id": "L-d", "summary": "appended"}])
     assert "L-d" in engram._archive_ids("lesson")
     assert len([p for p in calls if p.name == "lessons.jsonl"]) == 2
+
+
+# -- a batch revising a decision it just archived (KL6) ---------------------------------
+
+
+def test_a_batch_revising_a_decision_it_just_archived_records_the_supersede(engram: Engram, monkeypatch):
+    for name, value in {"ENGRAM_REVIEW_QUEUE_MAX": "1", "ENGRAM_REVIEW_MIN_STAY_DAYS": "0"}.items():
+        monkeypatch.setenv(name, value)
+    old = _decision(engram, "JSON lines", tier="staging")["id"]
+    result = engram.bulk_add_decisions([
+        {"question": "An unrelated queued question?", "choice": "Yes", "reasoning": "Pushes the old one out.",
+         "tier": "staging"},
+        {"question": QUESTION, "choice": "SQLite", "reasoning": "Revises the archived one.", "tier": "verified"},
+    ])
+    assert old in result["overflow_archived_ids"]
+    new = result["results"][1]["id"]
+    assert _supersedes_edges(engram) == {(new, old)}

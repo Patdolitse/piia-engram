@@ -1672,6 +1672,24 @@ class Engram(
             batch["archived_rows"][entry_type].extend(items)
         return ids
 
+    def _batch_archived_revision(self, new_row: dict) -> dict | None:
+        """A same-question decision with another choice that the open batch archived, or None."""
+        batch = _OVERFLOW_BATCH.get()
+        if batch is None:
+            return None
+        identity = self._entry_identity_text(new_row, "decision")
+        choice = (new_row.get("choice") or "").strip().lower()
+        if not identity or not choice:
+            return None
+        for row in reversed(batch["archived_rows"]["decision"]):
+            similarity = self._bigram_similarity(identity, self._entry_identity_text(row, "decision"))
+            if similarity < SIMILARITY_DUPLICATE_THRESHOLD:
+                continue
+            other = (row.get("choice") or "").strip().lower()
+            if other and other != choice and self._entries_share_project_scope(new_row, row):
+                return row
+        return None
+
     def _batch_archived_twin(self, entry_type: str, new_row: dict) -> dict | None:
         """A row the open batch call already moved to the archive with the same content, or None.
 
@@ -2489,6 +2507,13 @@ class Engram(
                 # Same question + different choice → the new decision supersedes the old.
                 if choices_differ:
                     auto_supersedes_target = best_match.get("id")
+
+            # A same-question decision that this batch just moved to the archive
+            # is no longer in the active list; this one revises it all the same.
+            if auto_supersedes_target is None and not new_decision.get("supersedes"):
+                archived_prior = self._batch_archived_revision(new_decision)
+                if archived_prior is not None:
+                    auto_supersedes_target = archived_prior.get("id")
 
             if best_sim >= SIMILARITY_THRESHOLD and best_match:
                 new_id = new_decision.get("id", "")
