@@ -747,7 +747,7 @@ def test_apply_review_with_promote(tmp_path: Path):
 # ══════════════════════════════════════════════════════════════════════
 
 def test_truncation_protects_verified(tmp_path: Path):
-    """When exceeding 200 lessons, staging items are evicted first."""
+    """A reviewed lesson survives a review queue that reaches its ceiling (v4.21)."""
     from piia_engram.core import _read_json
     engram = _make_engram(tmp_path / "engram")
     # Add 199 staging lessons
@@ -757,14 +757,17 @@ def test_truncation_protects_verified(tmp_path: Path):
     engram.add_lesson("Critical verified knowledge that must survive truncation", domain="core")
     # Now add 2 more staging to exceed 200
     engram.add_lesson(f"Overflow staging lesson A extra padding", domain="bulk", tier="staging")
-    engram.add_lesson(f"Overflow staging lesson B extra padding", domain="bulk", tier="staging")
+    overflow_b = engram.add_lesson(f"Overflow staging lesson B extra padding", domain="bulk", tier="staging")
+    assert overflow_b["placement"] == "archived"
 
     lessons_path = engram._knowledge_dir / "lessons.json"
     data = _read_json(lessons_path)
-    assert len(data) <= 200
+    # the queue holds at most 200 rows; the 201st unreviewed row goes to the archive
+    assert len(data) == 201
     # The verified lesson must survive
     summaries = [l.get("summary", "") for l in data]
     assert any("Critical verified knowledge" in s for s in summaries)
+    assert engram.get_overflow_archived("lesson", overflow_b["id"]) is not None
 
 
 def test_review_page_no_access_count_side_effect(tmp_path: Path):

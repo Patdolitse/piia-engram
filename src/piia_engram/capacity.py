@@ -159,6 +159,7 @@ class CapacityContext:
     on_queue_full: str = "archive"  # "archive" or "refuse"
     supersede_target: str = ""
     owner_override: bool = False
+    source_tool: str = ""  # audit attribution only
 
 
 @dataclass

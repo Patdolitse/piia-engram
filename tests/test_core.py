@@ -3777,8 +3777,8 @@ def test_evaluate_tiers_no_promote_low_access(tmp_path: Path):
 # ── Knowledge eviction tests ───────────────────────────────────────
 
 
-def test_lesson_eviction_staging_first(tmp_path: Path):
-    """超出 MAX_KNOWLEDGE_ENTRIES 时应优先驱逐 staging 条目。"""
+def test_a_full_store_keeps_its_queue_row_on_the_next_write(tmp_path: Path):
+    """v4.21：满 200 条时，已通过的条目不被挪走，待审条目在名额内也保留。"""
     engram = make_engram(tmp_path)
     path = tmp_path / "knowledge" / "lessons.json"
 
@@ -3799,12 +3799,11 @@ def test_lesson_eviction_staging_first(tmp_path: Path):
     })
     path.write_text(json.dumps(lessons, ensure_ascii=False), encoding="utf-8")
 
-    # 再添加一个新的，触发驱逐
-    engram.add_lesson("new lesson that triggers eviction")
+    # 再添加一个新的
+    engram.add_lesson("new lesson after the store is full")
     final = json.loads(path.read_text(encoding="utf-8"))
-    assert len(final) <= MAX_KNOWLEDGE_ENTRIES
-    # staging 应该被驱逐
-    assert not any(l.get("id") == "s-0" for l in final)
+    assert len(final) == MAX_KNOWLEDGE_ENTRIES + 1
+    assert any(l.get("id") == "s-0" for l in final)
 
 
 # ── context.py coverage: generate_context sections ─────────────────
@@ -4317,8 +4316,8 @@ def test_add_decision_with_alternatives(tmp_path: Path):
     assert result.get("alternatives") == ["Flask", "Django"]
 
 
-def test_lesson_eviction_overflow(tmp_path: Path):
-    """超过 MAX_KNOWLEDGE_ENTRIES 时应驱逐 staging 条目优先。"""
+def test_lesson_write_into_a_full_store_moves_nothing(tmp_path: Path):
+    """v4.21：满 200 条（5 条待审）时再写一条，不挪走任何条目。"""
     from piia_engram.storage import MAX_KNOWLEDGE_ENTRIES, _read_json
 
     engram = make_engram(tmp_path)
@@ -4343,11 +4342,11 @@ def test_lesson_eviction_overflow(tmp_path: Path):
     assert "status" not in result or result.get("status") != "duplicate"
 
     lessons = _read_json(path)
-    assert len(lessons) <= MAX_KNOWLEDGE_ENTRIES
+    assert len(lessons) == MAX_KNOWLEDGE_ENTRIES + 1
 
 
-def test_decision_eviction_overflow(tmp_path: Path):
-    """超过 MAX_KNOWLEDGE_ENTRIES 时应驱逐 staging 决策优先。"""
+def test_decision_write_into_a_full_store_moves_nothing(tmp_path: Path):
+    """v4.21：满 200 条（5 条待审）时再写一条决策，不挪走任何条目。"""
     from piia_engram.storage import MAX_KNOWLEDGE_ENTRIES, _read_json
 
     engram = make_engram(tmp_path)
@@ -4370,7 +4369,7 @@ def test_decision_eviction_overflow(tmp_path: Path):
     assert "status" not in result or result.get("status") != "duplicate"
 
     decisions = _read_json(path)
-    assert len(decisions) <= MAX_KNOWLEDGE_ENTRIES
+    assert len(decisions) == MAX_KNOWLEDGE_ENTRIES + 1
 
 
 def test_get_lessons_domain_filter(tmp_path: Path):

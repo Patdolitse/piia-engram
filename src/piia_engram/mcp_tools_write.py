@@ -52,11 +52,19 @@ def _playbook_confirmation_title(playbook: dict) -> str:
 
 
 def _overflow_note(result: object) -> str:
-    """Suffix for a write reply when the per-type cap moved older rows out."""
-    ids = result.get("overflow_archived_ids") if isinstance(result, dict) else None
+    """Suffix for a write reply when the capacity rules moved rows to the overflow archive."""
+    if not isinstance(result, dict):
+        return ""
+    ids = list(result.get("overflow_archived_ids") or [])
     if not ids:
         return ""
-    return f" · 容量已满：{len(ids)} 条较早的条目已移入溢出归档（未删除）"
+    notes = []
+    if result.get("placement") == "archived":
+        notes.append(" · 待审队列已满：本条已直接放入溢出归档（未删除，可恢复）")
+        ids = [archived_id for archived_id in ids if archived_id != result.get("id")]
+    if ids:
+        notes.append(f" · 容量已满：{len(ids)} 条较早的条目已移入溢出归档（未删除）")
+    return "".join(notes)
 
 
 @S.mcp.tool()

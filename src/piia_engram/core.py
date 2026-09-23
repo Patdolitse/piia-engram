@@ -8,11 +8,14 @@ import logging
 import os
 import re
 from copy import deepcopy
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+from . import capacity as _capacity
 from . import provenance as _provenance
 
 # All constants and I/O utilities live in storage.py — re-exported here
@@ -88,6 +91,18 @@ from .compat import (  # noqa: F401
     import_from_openclaw,
     migrate_from_oca_memory,
 )
+
+
+@dataclass
+class CapacityOutcome:
+    """What the capacity rules did during one knowledge write."""
+
+    archived: list[tuple[str, str]] = field(default_factory=list)  # (id, reason)
+    placed_ids: list[str] = field(default_factory=list)
+
+    @property
+    def archived_ids(self) -> list[str]:
+        return [row_id for row_id, _reason in self.archived]
 
 
 def _strip_untrusted_freshness_provenance(entry: dict[str, Any]) -> None:
@@ -1471,8 +1486,28 @@ class Engram(
             for entry in entries
         ]
 
-    def _update_entries(self, path: Path, entry_type: str, mutator) -> None:
-        """Apply ``mutator`` to a knowledge list under the storage write lock."""
+    def _update_entries(
+        self,
+        path: Path,
+        entry_type: str,
+        mutator,
+        *,
+        capacity_ctx: _capacity.CapacityContext | None = None,
+        blocking: bool = True,
+    ) -> CapacityOutcome:
+        """Apply ``mutator`` to a knowledge list under the storage write lock.
+
+        For lessons and decisions the capacity rules (capacity.py) run inside
+        the same lock: rows they move are appended to the overflow archive
+        before the active file is replaced, and each move is audited after the
+        lock is released. ``capacity.CapacityRefused`` and
+        ``capacity.QueueFull`` propagate with nothing written. With
+        ``blocking=False`` the call does nothing when another writer holds the
+        lock.
+        """
+        outcome = CapacityOutcome()
+        ctx = capacity_ctx or _capacity.CapacityContext()
+
         def _locked(current: Any) -> list[dict]:
             entries = self._entries_for_locked_mutation(current, entry_type)
             # v4.19.1: mutators mutate the list IN PLACE and return it, so the
@@ -1482,6 +1517,25 @@ class Engram(
             updated = mutator(entries)
             if updated is None:
                 updated = entries
+            if entry_type in self._OVERFLOW_ARCHIVE_FILES:
+                plan = _capacity.plan_capacity(
+                    deepcopy(before),
+                    updated,
+                    kind=entry_type,
+                    now=datetime.now(timezone.utc),
+                    limits=_capacity.limits_from_env(),
+                    ctx=ctx,
+                )
+                by_reason: dict[str, list[dict]] = {}
+                for row, reason in plan.archive:
+                    by_reason.setdefault(reason, []).append(row)
+                # Archive BEFORE the active file is replaced: an interruption
+                # can leave a row in both files but never in neither.
+                for reason, rows in by_reason.items():
+                    for archived_id in self._archive_overflow_rows(entry_type, rows, reason=reason):
+                        outcome.archived.append((archived_id, reason))
+                outcome.placed_ids = list(plan.placed_ids)
+                updated = plan.rows
             # A mutation that changes nothing (not-found, no-op, rejected
             # payload) must not rewrite the file. The comparison is at the
             # PLAINTEXT level — ciphertext differs on every write (random
@@ -1493,7 +1547,9 @@ class Engram(
             return self._entries_for_storage(updated, entry_type)
 
         with knowledge_write_allowed():
-            _update_json(path, _locked, default=[])
+            _update_json(path, _locked, default=[], blocking=blocking)
+        self._audit_capacity_moves(entry_type, outcome, ctx.source_tool)
+        return outcome
 
     # -- capacity overflow ---------------------------------------------------
     # A knowledge file holds at most MAX_KNOWLEDGE_ENTRIES rows. Rows pushed out
@@ -1513,35 +1569,6 @@ class Engram(
         except KeyError:
             raise ValueError(f"no overflow archive for entry type {entry_type!r}") from None
         return self._knowledge_dir / "overflow_archive" / name
-
-    @staticmethod
-    def _select_overflow(
-        rows: list[dict],
-        new_row: dict | None,
-        protected: set[str],
-    ) -> tuple[list[dict], list[dict]]:
-        """Split ``rows`` into (kept, evicted) for a list over the cap.
-
-        Eviction order is unchanged from earlier releases (oldest non-protected
-        staging first, then oldest non-protected non-staging), except that the
-        row written by the current call is never a candidate. Unreviewed rows
-        therefore give way before reviewed ones, including unreviewed rows that
-        an ongoing batch call wrote a moment earlier. Rows keep their relative
-        order within their group.
-        """
-        staging = [r for r in rows if r.get("tier") == "staging" and r.get("id") not in protected]
-        others = [r for r in rows if r.get("tier") != "staging" and r.get("id") not in protected]
-        protected_rows = [r for r in rows if r.get("id") in protected]
-        overflow = len(rows) - MAX_KNOWLEDGE_ENTRIES
-        candidates = [r for r in staging + others if r is not new_row]
-        evicted = candidates[:max(overflow, 0)]
-        gone = {id(r) for r in evicted}
-        kept = (
-            [r for r in others if id(r) not in gone]
-            + [r for r in staging if id(r) not in gone]
-            + protected_rows
-        )
-        return kept, evicted
 
     def _archive_overflow_rows(
         self, entry_type: str, rows: list[dict], reason: str = "capacity_overflow"
@@ -1692,6 +1719,9 @@ class Engram(
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_lesson)
 
+        for _field in _capacity.SYSTEM_FIELDS:
+            new_lesson.pop(_field, None)
+
         new_lesson = self._repair_incoming_text(new_lesson)
         new_lesson["timestamp"] = new_lesson.get("timestamp") or _now_iso()
         new_lesson = self._ensure_fields(new_lesson, "lesson")
@@ -1705,7 +1735,6 @@ class Engram(
         )
 
         result_box: dict[str, dict] = {}
-        overflow_box: dict[str, list[str]] = {}
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
             archived_twin = self._batch_archived_twin("lesson", new_lesson)
@@ -1821,29 +1850,18 @@ class Engram(
                 new_lesson, same_scope_lessons, semantic_neighbors, best_sim
             )
 
+            self._redirect_when_verified_full(new_lesson, lessons)
             lessons.append(new_lesson)
-            if len(lessons) > MAX_KNOWLEDGE_ENTRIES:
-                # Over the cap: move the oldest non-protected rows (staging
-                # first) to the overflow archive; the row being written now is
-                # never a candidate. A version-chain HEAD (an id with supersedes
-                # out-edges) is never a candidate, and when the protected set is
-                # UNKNOWABLE (relation store unreadable) nothing is moved —
-                # fail closed, never open.
-                protected = self._version_chain_head_ids()
-                if protected is None:
-                    result_box["result"] = new_lesson
-                    return lessons  # fail closed: cap may temporarily exceed
-                lessons, evicted = self._select_overflow(lessons, new_lesson, protected)
-                # Archive BEFORE the active file is rewritten (see above).
-                overflow_box["ids"] = self._archive_overflow_rows("lesson", evicted)
             result_box["result"] = new_lesson
             return lessons
 
-        self._update_entries(path, "lesson", _mutate_lessons)
+        outcome = self._update_entries(
+            path, "lesson", _mutate_lessons,
+            capacity_ctx=_capacity.CapacityContext(source_tool=new_lesson.get("source_tool", "")),
+        )
         result = result_box["result"]
         if result.get("status") == "duplicate":
             return result
-        archived_ids = overflow_box.get("ids") or []
 
         summary = new_lesson.get("summary", "")
         if _audit_metadata_only:
@@ -1860,37 +1878,54 @@ class Engram(
                 detail=f"[{_gate_note}] {summary[:100]}",
                 source_tool=new_lesson.get("source_tool", ""),
             )
-        self._record_overflow("knowledge/lessons", archived_ids, new_lesson.get("source_tool", ""))
         if new_lesson.get("domain"):
             for _d in new_lesson["domain"].split(","):
                 _d = _d.strip()
                 if _d:
                     self.increment_domain_usage(_d)
-        return self._with_overflow_ids(new_lesson, archived_ids)
+        return self._with_capacity_result(new_lesson, outcome)
 
-    def _record_overflow(self, resource: str, archived_ids: list[str], source_tool: str) -> None:
-        """Audit each archived id (id and reason only) and add it to the open batch's list."""
-        for archived_id in archived_ids:
+    def _audit_capacity_moves(self, entry_type: str, outcome: CapacityOutcome, source_tool: str = "") -> None:
+        """Audit each archived row (id and reason only) and add it to the open batch's list."""
+        resource = f"knowledge/{entry_type}s"
+        for archived_id, reason in outcome.archived:
             self._audit.log(
                 "archive", resource,
-                detail=f"capacity_overflow id={archived_id}",
+                detail=f"{reason} id={archived_id}",
                 source_tool=source_tool,
             )
         batch = _OVERFLOW_BATCH.get()
         if batch is not None:
-            batch["archived"].extend(archived_ids)
+            batch["archived"].extend(outcome.archived_ids)
+
+    def _redirect_when_verified_full(self, new_row: dict, rows: list[dict]) -> None:
+        """Send a new verified row to the review queue when the verified budget is full."""
+        if new_row.get("tier") != "verified":
+            return
+        limits = _capacity.limits_from_env()
+        budget = sum(
+            1 for row in rows
+            if row is not new_row and _capacity.pool_of(row) in (_capacity.POOL_V, _capacity.POOL_QD)
+        )
+        if budget < limits.hard_cap:
+            return
+        new_row["tier"] = "staging"
+        new_row["memory_state"] = "staging"
+        new_row["approval_status"] = "pending"
+        new_row["approval_required"] = True
+        new_row["approval_reason"] = "capacity"
+        self._refresh_labeling(new_row)
 
     @staticmethod
-    def _with_overflow_ids(row: dict, archived_ids: list[str]) -> dict:
-        """Return ``row`` with ``overflow_archived_ids`` when rows were archived.
-
-        The key is added to a copy (never to the stored row) and only when rows
-        were actually archived, so results below the cap keep their key set.
-        """
+    def _with_capacity_result(row: dict, outcome: CapacityOutcome) -> dict:
+        """The write result: archived ids and, when the row itself went to the archive, its placement."""
+        archived_ids = outcome.archived_ids
         if not archived_ids:
             return row
         out = dict(row)
         out["overflow_archived_ids"] = list(archived_ids)
+        if row.get("id") in outcome.placed_ids:
+            out["placement"] = "archived"
         return out
 
     def get_lessons(
@@ -2126,6 +2161,9 @@ class Engram(
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_decision)
 
+        for _field in _capacity.SYSTEM_FIELDS:
+            new_decision.pop(_field, None)
+
         new_decision = self._repair_incoming_text(new_decision)
         # Sanitize project field regardless of input path (dict or kwargs)
         if new_decision.get("project"):
@@ -2146,7 +2184,7 @@ class Engram(
 
         result_box: dict[str, dict] = {}
         supersedes_box: dict[str, str | None] = {}
-        overflow_box: dict[str, list[str]] = {}
+        decision_ctx = _capacity.CapacityContext(source_tool=new_decision.get("source_tool", ""))
 
         def _mutate_decisions(decisions: list[dict]) -> list[dict]:
             archived_twin = self._batch_archived_twin("decision", new_decision)
@@ -2230,38 +2268,21 @@ class Engram(
                 new_decision, same_scope_decisions, semantic_neighbors, best_sim
             )
 
+            self._redirect_when_verified_full(new_decision, decisions)
             decisions.append(new_decision)
-            if len(decisions) > MAX_KNOWLEDGE_ENTRIES:
-                # v4.20/4.20.1: HEAD protection + fail-closed, same as the
-                # lesson eviction above — AND the pending supersede target of
-                # THIS insertion is protected before its edge is written
-                # (v4.20.0 could evict the very HEAD this new decision is
-                # about to supersede, because edges land after insertion).
-                protected = self._version_chain_head_ids()
-                if protected is None:
-                    result_box["result"] = new_decision
-                    supersedes_box["target"] = auto_supersedes_target
-                    return decisions  # fail closed: cap may temporarily exceed
-                # v4.20.1: protect BOTH the auto-detected target AND an
-                # explicitly supplied supersedes id — the explicit field is
-                # only resolved into an edge AFTER insertion+eviction ran.
-                pending_target = str(
-                    new_decision.get("supersedes") or auto_supersedes_target or ""
-                )
-                if pending_target:
-                    protected = set(protected) | {pending_target}
-                decisions, evicted = self._select_overflow(decisions, new_decision, protected)
-                # Archive BEFORE the active file is rewritten (see _select_overflow).
-                overflow_box["ids"] = self._archive_overflow_rows("decision", evicted)
+            # The decision this write is about to supersede is never moved out
+            # by the same write (explicit ``supersedes`` or auto-detected).
+            decision_ctx.supersede_target = str(
+                new_decision.get("supersedes") or auto_supersedes_target or ""
+            )
             result_box["result"] = new_decision
             supersedes_box["target"] = auto_supersedes_target
             return decisions
 
-        self._update_entries(path, "decision", _mutate_decisions)
+        outcome = self._update_entries(path, "decision", _mutate_decisions, capacity_ctx=decision_ctx)
         result = result_box["result"]
         if result.get("status") == "duplicate":
             return result
-        archived_ids = overflow_box.get("ids") or []
         title = new_decision.get("question", "") or new_decision.get("title", "")
         if _audit_metadata_only:
             self._audit.log(
@@ -2275,7 +2296,6 @@ class Engram(
                 detail=f"[{_gate_note}] {title[:100]}",
                 source_tool=new_decision.get("source_tool", ""),
             )
-        self._record_overflow("knowledge/decisions", archived_ids, new_decision.get("source_tool", ""))
 
         # Auto-supersedes: build a directed edge in the decision thread.
         # Priority: (1) explicit ``supersedes`` field in the input,
@@ -2315,7 +2335,7 @@ class Engram(
             except Exception:
                 pass  # edge is advisory; the decision itself is the hard write
 
-        return self._with_overflow_ids(new_decision, archived_ids)
+        return self._with_capacity_result(new_decision, outcome)
 
     def get_decisions(
         self,
