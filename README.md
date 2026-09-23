@@ -733,6 +733,12 @@ Exports are **owner-gated** when `ENGRAM_GOVERNANCE=1` (see
 [docs/governance.md](docs/governance.md)). There is no cloud copy and no hidden memory:
 what you export is exactly what is on your disk.
 
+**Storage limits.** Reviewed memories are never moved out because the store is
+full; unreviewed ones wait in a review queue for at least 7 days, and anything
+moved out goes to an append-only overflow archive you can restore from
+(`engram retention plan` shows the counts, `engram retention restore <id>`
+brings an entry back).
+
 **Local data sovereignty.** Backup and restore cover *only* the Engram directory
 — `engram backup-plan` prints a metadata-only list of what to copy before an
 upgrade (it reads no stored knowledge bodies and never reaches outside the
@@ -915,6 +921,7 @@ piia-engram dock-status      # Zero-write Dock owner-console status (--json)
 piia-engram repair-encoding  # Dry-run scan for garbled / mojibake text
 piia-engram repair-encoding --apply  # Repair reversible cases with a backup
 piia-engram backup-plan      # Metadata-only plan of what to copy before upgrading (local-only)
+piia-engram retention plan   # Read-only: memory counts per pool and what the next write would archive
 piia-engram export-agents-md # Export verified, non-sensitive knowledge as an AGENTS.md/CLAUDE.md block
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)
 piia-engram stats --log      # Append stats snapshot to local log

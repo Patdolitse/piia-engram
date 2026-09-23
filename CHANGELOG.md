@@ -6,6 +6,35 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.21.0] - 2026-09-24
+
+### Changed
+- **Storage limits for lessons and decisions** (replaces the 200-row cap of 4.20.2):
+  - Reviewed, active memories are never moved out because a type is full. They have a hard cap (default 1000 per type). At the cap a new memory goes to the review queue instead, and promoting another memory is refused with `capacity_full`; nothing is written.
+  - Unreviewed memories (the review queue) have their own share (default 100) and stay at least 7 days before the capacity rules may move them to the overflow archive. When the queue reaches its ceiling (default 200), a new unreviewed memory goes straight to the archive and the reply says so (`placement: "archived"`).
+  - Retired memories (outdated, rejected or soft-archived) move to the archive after 30 days, or earlier when there are more than 100.
+  - 200 per type is now the point where tidying up is suggested, not a hard limit. All limits can be changed with environment variables: `ENGRAM_CAP_SOFT`, `ENGRAM_CAP_HARD`, `ENGRAM_REVIEW_QUEUE_MAX`, `ENGRAM_REVIEW_QUEUE_CEILING`, `ENGRAM_REVIEW_MIN_STAY_DAYS`, `ENGRAM_RETIRED_GRACE_DAYS`, `ENGRAM_RETIRED_MAX`.
+  - Capacity handling no longer depends on reading version-chain relations. The row being written is still never the one moved out, and the decision a write supersedes is still kept.
+- **Version history lives in the archive**: when you edit a memory, the previous version is stored in the overflow archive as `<id>-prev-v<version>` instead of in the active file. `get_knowledge_history`, decision history and decision threads read the archive too, so history stays complete. Editing a history snapshot still returns `snapshot_immutable`; editing another archived entry returns `archived` with a hint to restore it first.
+- **An unreviewed revision no longer hides the memory it revises**: until the revision is approved, the original keeps appearing in recall, the resume brief and decision history.
+- **Imports follow the same rules as writes**: rows are no longer cut by position. Queue rows beyond the ceiling go to the archive, and an import that would take reviewed memories over the hard cap is refused with nothing written, unless you run `engram import <file> --apply --yes --allow-over-cap` (command line only). An overwrite import moves the local entries it replaces into the archive and keeps your local relations. The export's archive section is imported too, and entries without ids are not duplicated when the same file is imported again. An import writes its parts in one locked step; if it is interrupted, running the same import again finishes it. Import previews show how many entries would move to or be placed in the archive.
+- `update_knowledge` accepts only `active`, `outdated` or `rejected` as a status.
+- Relevant-lesson selection ranks every visible lesson, not only the newest 200.
+
+### Added
+- `engram retention plan [--json]`: a read-only view of reviewed, queued, demoted and retired counts, the archive by reason, and which entries the next write would move. `engram retention restore <id>` brings an archived entry back (the hard cap and the queue ceiling still apply).
+- The Dock recycle bin also lists soft-archived entries that were moved to the archive and can restore them; version snapshots are no longer listed there.
+- `engram doctor` and the MCP `doctor` tool report the same counts, entries with future timestamps, torn archive lines and interrupted imports. The health report lists the pools next to the archive, and the weekly recap counts the week's archive moves.
+
+### Fixed
+- Internal bookkeeping fields (such as `snapshot_of` or the capacity timestamps) can no longer be set through MCP payloads.
+- Reads no longer wait for a busy write; the access count update is skipped instead.
+- Content that is already in the archive is not captured again (unreviewed writes, MEMORY.md import, onboarding), and reconcile matches archived entries by exact text only.
+- A batch that revises a decision it has just archived keeps the revision link.
+- An entry archived more than once reads back in its latest state; `backup-plan` counts torn archive lines; the integrity check treats relations to archived entries as valid.
+- The project context shows only list-valued tech stack and known issues; sentence splitting keeps file names, versions and URLs intact.
+- `docs/trust.md` explains what "verified" means.
+
 ## [4.20.2] - 2026-09-23
 
 ### Fixed

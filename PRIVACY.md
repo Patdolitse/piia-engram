@@ -32,7 +32,7 @@ Default implementation: local files only. Telemetry is off by default; when enab
 | Your profile (name, role, preferences) | `~/.engram/identity/profile.json` | AI tools know who you are |
 | Lessons learned | `~/.engram/knowledge/lessons.json` | AI tools remember your experience |
 | Key decisions | `~/.engram/knowledge/decisions.json` | AI tools understand your reasoning |
-| Lessons and decisions moved out by the 200-row cap | `~/.engram/knowledge/overflow_archive/{lessons,decisions}.jsonl` | Nothing is dropped when a type is full; append-only, encrypted like the active files when encryption is on, not pruned automatically, included in `export_all` |
+| Lessons and decisions moved out of the active files (storage limits, entries an overwrite import replaced, earlier versions of edited entries) | `~/.engram/knowledge/overflow_archive/{lessons,decisions}.jsonl` | Nothing is dropped; append-only, encrypted like the active files when encryption is on, not pruned automatically, included in `export_all` (earlier versions excepted); `engram retention plan` shows what is there |
 | Playbooks | `~/.engram/playbooks/{id}.json` + `~/.engram/playbooks/_index.json` | Reusable multi-step procedures |
 | Project snapshots | `~/.engram/projects/` | Per-project context |
 | Session history | `~/.engram/contexts/{tool}/` | Cross-session continuity |
