@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 from .continuity_digest import build_session_digest, sanitize_digest_value
 from .storage import (
+    overflow_batch,
     DECISION_TRIGGERS,
     DOMAIN_KEYWORDS,
     LESSON_TRIGGERS,
@@ -427,6 +428,7 @@ class ContextMixin:
     # Free-form ingestion
     # ------------------------------------------------------------------
 
+    @overflow_batch
     def ingest_notes(self, text: str, source_tool: str = "", domain: str = "") -> dict:
         """Parse free-form notes and extract lesson/decision candidates."""
         lines = text.splitlines()
@@ -644,6 +646,7 @@ class ContextMixin:
             "skipped_low_quality": skipped_low_quality,
         }
 
+    @overflow_batch
     def commit_candidates(
         self, candidates: list[dict] | None, source_tool: str = "onboarding",
     ) -> dict:
@@ -718,6 +721,7 @@ class ContextMixin:
             "saved_ids": saved_ids,
         }
 
+    @overflow_batch
     def extract_session_insights(
         self,
         summary: str,

@@ -24,6 +24,7 @@ from .search_index import (
     vector_backend_available,
 )
 from .storage import (
+    overflow_batch,
     CONFLICT_C_CEILING,
     CONFLICT_Q_THRESHOLD,
     DOMAIN_KEYWORDS,
@@ -1156,6 +1157,7 @@ class RetrievalMixin:
     # Bulk add operations
     # ------------------------------------------------------------------
 
+    @overflow_batch
     def bulk_add_lessons(self, lessons: list, source_tool: str = "") -> dict:
         """Add multiple lessons while reusing add_lesson validation and dedupe."""
         if not isinstance(lessons, list):
@@ -1197,11 +1199,14 @@ class RetrievalMixin:
                     })
                 else:
                     saved += 1
-                    results.append({
+                    entry = {
                         "status": "saved",
                         "id": result.get("id"),
                         "summary": result.get("summary", summary),
-                    })
+                    }
+                    if result.get("overflow_archived_ids"):
+                        entry["overflow_archived_ids"] = result["overflow_archived_ids"]
+                    results.append(entry)
             except Exception as exc:
                 errors += 1
                 results.append({
@@ -1218,6 +1223,7 @@ class RetrievalMixin:
             "results": results,
         }
 
+    @overflow_batch
     def bulk_add_decisions(self, decisions: list, source_tool: str = "") -> dict:
         """Add multiple decisions while reusing add_decision validation and dedupe."""
         if not isinstance(decisions, list):
@@ -1263,11 +1269,14 @@ class RetrievalMixin:
                     })
                 else:
                     saved += 1
-                    results.append({
+                    entry = {
                         "status": "saved",
                         "id": result.get("id"),
                         "title": self._entry_identity_text(result, "decision") or title,
-                    })
+                    }
+                    if result.get("overflow_archived_ids"):
+                        entry["overflow_archived_ids"] = result["overflow_archived_ids"]
+                    results.append(entry)
             except Exception as exc:
                 errors += 1
                 results.append({

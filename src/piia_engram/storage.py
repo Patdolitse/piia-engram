@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -9,9 +10,11 @@ import os
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import portalocker
 
@@ -546,6 +549,101 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
 
 def _write_json(path: Path, data: Any) -> None:
     _atomic_write_json(path, data)
+
+
+def _append_jsonl_lines(path: Path, lines: list[str]) -> None:
+    """Append JSON lines to ``path`` under the per-directory write lock, then fsync.
+
+    Append-only: existing lines are never rewritten, so the cost of a write is
+    the size of the new lines. If an earlier append was torn (no trailing
+    newline), a newline is written first so the torn line stays separate and
+    readers can skip it.
+    """
+    if not lines:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.parent / ".engram-write.lock"
+    payload = ("\n".join(lines) + "\n").encode("utf-8")
+    try:
+        with portalocker.Lock(lock_path, "a", timeout=5):
+            needs_separator = False
+            if path.is_file() and path.stat().st_size > 0:
+                with open(path, "rb") as existing:
+                    existing.seek(-1, os.SEEK_END)
+                    needs_separator = existing.read(1) != b"\n"
+            with open(path, "ab") as f:
+                if needs_separator:
+                    f.write(b"\n")
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+    except portalocker.LockException as exc:
+        raise RuntimeError(f"无法获取文件锁（超时 5s）：{path.parent.name}/{path.name}") from exc
+
+
+def _read_jsonl_rows(path: Path) -> tuple[list[dict], int]:
+    """Read a JSONL file written by :func:`_append_jsonl_lines`.
+
+    Returns (rows, skipped): object lines in file order, plus the number of
+    non-empty lines that were not a JSON object (for example a torn append).
+    """
+    if not path.is_file():
+        return [], 0
+    rows: list[dict] = []
+    skipped = 0
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                value = json.loads(text)
+            except ValueError:
+                skipped += 1
+                continue
+            if isinstance(value, dict):
+                rows.append(value)
+            else:
+                skipped += 1
+    return rows, skipped
+
+
+# -- write batches -----------------------------------------------------------
+# Rows written during one batch call (bulk add, note ingestion, session
+# extraction, reconcile) must not push each other out at the knowledge cap, and
+# the ids the cap moved to the overflow archive are reported once per batch.
+
+_OVERFLOW_BATCH: ContextVar[dict | None] = ContextVar("piia_engram_overflow_batch", default=None)
+
+
+@contextmanager
+def overflow_batch_scope() -> Iterator[dict]:
+    """Open a write batch (nested scopes join the outermost one)."""
+    current = _OVERFLOW_BATCH.get()
+    if current is not None:
+        yield current
+        return
+    state: dict = {"rows": set(), "archived": []}
+    token = _OVERFLOW_BATCH.set(state)
+    try:
+        yield state
+    finally:
+        _OVERFLOW_BATCH.reset(token)
+
+
+def overflow_batch(method):
+    """Run ``method`` as one write batch; add ``overflow_archived_ids`` to a dict result."""
+    @functools.wraps(method)
+    def wrapper(*args, **kwargs):
+        outermost = _OVERFLOW_BATCH.get() is None
+        with overflow_batch_scope() as state:
+            result = method(*args, **kwargs)
+        if outermost and state["archived"] and isinstance(result, dict) \
+                and "overflow_archived_ids" not in result:
+            result = dict(result)
+            result["overflow_archived_ids"] = list(state["archived"])
+        return result
+    return wrapper
 
 
 def _now_iso() -> str:

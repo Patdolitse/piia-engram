@@ -31,6 +31,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import reconcile_proposal as _rp
+from .storage import overflow_batch
 
 APPLY_ACTION = "reconcile_import_apply"
 CONFLICTS_PREVIEW_ACTION = "reconcile_conflicts_preview"
@@ -59,6 +60,7 @@ def _load_existing(eng) -> list[dict[str, Any]]:
     return existing
 
 
+@overflow_batch
 def apply_reconcile(
     eng,
     candidates: list[dict[str, Any]] | None,
@@ -240,6 +242,15 @@ def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) ->
                     "knowledge/reconcile_import",
                     detail=f"{entry_type}:{new_id} source={source or 'memory_files'}",
                 )
+                # The capacity-overflow audit (id and reason only) was muted with
+                # the rest of add_*'s audit above; record it here.
+                for archived_id in result.get("overflow_archived_ids") or []:
+                    original_log(
+                        "archive",
+                        f"knowledge/{entry_type}s",
+                        detail=f"capacity_overflow id={archived_id}",
+                        source_tool=tool,
+                    )
             return new_id
     return ""
 

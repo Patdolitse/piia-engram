@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .storage import MAX_KNOWLEDGE_ENTRIES, _now_iso
+from .storage import MAX_KNOWLEDGE_ENTRIES, _now_iso, overflow_batch
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
 # Migration helper: import from old oca_memory.py
 # ---------------------------------------------------------------------------
 
+@overflow_batch
 def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
     """Import knowledge from old .oca/memory/ into Engram.
 
@@ -331,6 +332,7 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     }
 
 
+@overflow_batch
 def import_from_openclaw(
     engram: "Engram",
     soul_path: str = "",

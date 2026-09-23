@@ -384,15 +384,18 @@ def build_backup_plan(root: str | Path) -> dict[str, Any]:
     # files; it is listed next to them so a backup plan shows both.
     candidates = [(dataset, knowledge / f"{dataset}.json") for dataset in _BACKUP_DATASETS]
     candidates += [
-        (f"{dataset}_overflow_archive", knowledge / "overflow_archive" / f"{dataset}.json")
+        (f"{dataset}_overflow_archive", knowledge / "overflow_archive" / f"{dataset}.jsonl")
         for dataset in _BACKUP_DATASETS
     ]
     for dataset, active in candidates:
         if not active.is_file():
             continue
-        data, status = _read_json_file(active)
-        entries = len(data) if status == "ok" and isinstance(data, list) else None
         raw = active.read_bytes()
+        if active.suffix == ".jsonl":
+            entries = sum(1 for line in raw.splitlines() if line.strip())
+        else:
+            data, status = _read_json_file(active)
+            entries = len(data) if status == "ok" and isinstance(data, list) else None
         datasets.append({
             "dataset": dataset,
             "file_name": active.relative_to(knowledge).as_posix(),

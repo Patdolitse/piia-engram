@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 
-from .storage import SIMILARITY_THRESHOLD, _project_id
+from .storage import SIMILARITY_THRESHOLD, _project_id, overflow_batch
 
 
 class ReconcileMixin:
@@ -90,6 +90,7 @@ class ReconcileMixin:
                 pass
         return True  # default True for backward compatibility
 
+    @overflow_batch
     def reconcile_memories(self, *, project_folder: str = "") -> dict:
         """Scan external AI tool memory dirs and auto-import missing items.
 
@@ -130,6 +131,9 @@ class ReconcileMixin:
         for d in existing_decisions:
             existing_summaries.add(d.get("question", ""))
             existing_summaries.add(d.get("choice", ""))
+        # Rows the capacity cap archived were already captured once; re-importing
+        # them on every start would grow the archive without bound.
+        existing_summaries |= self._overflow_archive_texts()
         existing_summaries.discard("")
 
         for glob_pattern in self._CLAUDE_MEMORY_GLOBS:
@@ -410,6 +414,7 @@ class ReconcileMixin:
     # AI config file sync
     # ------------------------------------------------------------------
 
+    @overflow_batch
     def reconcile_ai_configs(
         self,
         *,
@@ -449,6 +454,8 @@ class ReconcileMixin:
         for d in existing_decisions:
             existing_summaries.add(d.get("question", ""))
             existing_summaries.add(d.get("choice", ""))
+        # Already-captured rows now in the overflow archive are not re-imported.
+        existing_summaries |= self._overflow_archive_texts()
         existing_summaries.discard("")
 
         # Collect all config files to scan

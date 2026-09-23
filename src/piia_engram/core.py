@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -60,6 +61,9 @@ from .storage import (  # noqa: F401 — re-exports
     _read_json,
     _update_json,
     _write_json,
+    _append_jsonl_lines,
+    _read_jsonl_rows,
+    _OVERFLOW_BATCH,
     DataCorruptionError,
     SkipWrite,
     strip_untrusted_trust_fields,
@@ -672,6 +676,7 @@ class Engram(
         marker = ENC_PREFIX_V2C.encode("ascii")
         for pattern in (
             "knowledge/*.json",
+            "knowledge/overflow_archive/*.jsonl",
             "playbooks/*.json",
             "playbooks/executions/*.json",
         ):
@@ -1488,13 +1493,15 @@ class Engram(
 
     # -- capacity overflow ---------------------------------------------------
     # A knowledge file holds at most MAX_KNOWLEDGE_ENTRIES rows. Rows pushed out
-    # by the cap are moved to knowledge/overflow_archive/<type>s.json instead of
-    # being dropped. The archive does not count toward the cap, is created only
-    # when an overflow happens, and is written (under its own directory lock)
-    # BEFORE the active file is rewritten, so an interruption can leave a row in
-    # both files but never in neither.
+    # by the cap are moved to knowledge/overflow_archive/<type>s.jsonl instead of
+    # being dropped. The archive is append-only (one at-rest row per line; lines
+    # are never rewritten or removed), does not count toward the cap, is created
+    # only when an overflow happens, and is appended (under its own directory
+    # lock) BEFORE the active file is rewritten, so an interruption can leave a
+    # row in both files but never in neither.
 
-    _OVERFLOW_ARCHIVE_FILES = {"lesson": "lessons.json", "decision": "decisions.json"}
+    _OVERFLOW_ARCHIVE_FILES = {"lesson": "lessons.jsonl", "decision": "decisions.jsonl"}
+    _OVERFLOW_FIELDS = ("overflow_archived_at", "overflow_archive_reason")
 
     def _overflow_archive_path(self, entry_type: str) -> Path:
         try:
@@ -1530,58 +1537,73 @@ class Engram(
     def _archive_overflow_rows(
         self, entry_type: str, rows: list[dict], reason: str = "capacity_overflow"
     ) -> list[str]:
-        """Persist ``rows`` (in-memory plaintext form) to the overflow archive.
+        """Append ``rows`` (in-memory plaintext form) to the overflow archive.
 
-        Stored in the same at-rest form as the active file (encrypted when
-        corpus encryption is on). A row whose id is already archived is
-        replaced, so a retried write does not duplicate it. Returns the ids.
+        Each row is normalized, stamped with ``overflow_archived_at`` and
+        ``overflow_archive_reason`` and stored in the same at-rest form as the
+        active file (encrypted when corpus encryption is on). Nothing already in
+        the archive is rewritten. Returns the ids of the archived rows.
         """
         if not rows:
             return []
         stamp = _now_iso()
-        archived: list[dict] = []
+        lines: list[str] = []
+        ids: list[str] = []
         for row in rows:
-            item = deepcopy(row)
+            item = self._ensure_fields(deepcopy(row), entry_type)
             item["overflow_archived_at"] = stamp
             item["overflow_archive_reason"] = reason
-            archived.append(item)
-        new_ids = {r.get("id") for r in archived if r.get("id")}
-
-        def _append(current: Any) -> list[dict]:
-            existing = self._entries_for_locked_mutation(current, entry_type)
-            kept = [e for e in existing if e.get("id") not in new_ids]
-            return self._entries_for_storage(kept + archived, entry_type)
-
-        _update_json(self._overflow_archive_path(entry_type), _append, default=[])
-        return [str(r.get("id", "")) for r in rows]
+            stored = self._entries_for_storage([item], entry_type)[0]
+            lines.append(json.dumps(stored, ensure_ascii=False))
+            ids.append(str(item.get("id", "")))
+        _append_jsonl_lines(self._overflow_archive_path(entry_type), lines)
+        return ids
 
     def _read_overflow_archive(self, entry_type: str) -> list[dict]:
-        """Return the overflow archive of ``entry_type`` in plaintext (read-only)."""
-        path = self._overflow_archive_path(entry_type)
-        if not path.is_file():
-            return []
-        data = _read_json(path)
-        if not isinstance(data, list):
-            return []
+        """Return the overflow archive of ``entry_type`` in plaintext, oldest first.
+
+        Read-only. Lines that do not parse (a torn append) are skipped. A line
+        whose content repeats an earlier line apart from the overflow stamp (a
+        retried write) is listed once; rows that share an id but differ in
+        content are all kept.
+        """
+        raw_rows, _skipped = _read_jsonl_rows(self._overflow_archive_path(entry_type))
         rows: list[dict] = []
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
+        seen: set[str] = set()
+        for entry in raw_rows:
             item = self._ensure_fields(dict(entry), entry_type)
             if self._corpus_key:
                 item = self._crypto.decrypt_entry(item, self._corpus_key, entry_type)
+            identity = json.dumps(
+                {k: v for k, v in item.items() if k not in self._OVERFLOW_FIELDS},
+                sort_keys=True, ensure_ascii=False, default=str,
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
             rows.append(item)
         return rows
 
+    def _overflow_archive_texts(self) -> set[str]:
+        """Identity texts (lesson summaries, decision questions and choices) of archived rows."""
+        texts: set[str] = set()
+        for row in self._read_overflow_archive("lesson"):
+            texts.add(str(row.get("summary", "") or ""))
+        for row in self._read_overflow_archive("decision"):
+            texts.add(str(row.get("question", "") or ""))
+            texts.add(str(row.get("choice", "") or ""))
+        texts.discard("")
+        return texts
+
     def get_overflow_archived(self, kind: str, entry_id: str) -> dict | None:
-        """Return a row the capacity cap moved to the overflow archive, or None.
+        """Return the most recently archived row with ``entry_id``, or None.
 
         ``kind`` is "lesson" or "decision". Read-only; archived rows are never
         returned by search, recall or the regular list calls.
         """
         if kind not in self._OVERFLOW_ARCHIVE_FILES:
             raise ValueError(f"kind must be 'lesson' or 'decision', got {kind!r}")
-        for row in self._read_overflow_archive(kind):
+        for row in reversed(self._read_overflow_archive(kind)):
             if row.get("id") == entry_id:
                 return self._display_sanitize_one(row, kind)
         return None
@@ -1762,6 +1784,10 @@ class Engram(
                 if protected is None:
                     result_box["result"] = new_lesson
                     return lessons  # fail closed: cap may temporarily exceed
+                batch = _OVERFLOW_BATCH.get()
+                if batch and batch["rows"]:
+                    # rows written earlier in the same batch call stay put
+                    protected = set(protected) | batch["rows"]
                 lessons, evicted = self._select_overflow(lessons, new_lesson, protected)
                 # Archive BEFORE the active file is rewritten (see above).
                 overflow_box["ids"] = self._archive_overflow_rows("lesson", evicted)
@@ -1789,30 +1815,39 @@ class Engram(
                 detail=f"[{_gate_note}] {summary[:100]}",
                 source_tool=new_lesson.get("source_tool", ""),
             )
+        self._record_overflow(
+            "knowledge/lessons", archived_ids, new_lesson.get("id", ""), new_lesson.get("source_tool", "")
+        )
         if new_lesson.get("domain"):
             for _d in new_lesson["domain"].split(","):
                 _d = _d.strip()
                 if _d:
                     self.increment_domain_usage(_d)
-        return self._report_overflow(
-            "knowledge/lessons", archived_ids, new_lesson, new_lesson.get("source_tool", "")
-        )
+        return self._with_overflow_ids(new_lesson, archived_ids)
 
-    def _report_overflow(
-        self, resource: str, archived_ids: list[str], row: dict, source_tool: str
-    ) -> dict:
-        """Audit each archived id and return ``row`` with ``overflow_archived_ids``.
-
-        The key is added to a copy (never to the stored row) and only when rows
-        were actually archived, so results below the cap keep their key set.
-        Audit details carry the id and the reason only, never row content.
-        """
+    def _record_overflow(
+        self, resource: str, archived_ids: list[str], new_id: str, source_tool: str
+    ) -> None:
+        """Audit each archived id (id and reason only) and update the open batch."""
         for archived_id in archived_ids:
             self._audit.log(
                 "archive", resource,
                 detail=f"capacity_overflow id={archived_id}",
                 source_tool=source_tool,
             )
+        batch = _OVERFLOW_BATCH.get()
+        if batch is not None:
+            if new_id:
+                batch["rows"].add(str(new_id))
+            batch["archived"].extend(archived_ids)
+
+    @staticmethod
+    def _with_overflow_ids(row: dict, archived_ids: list[str]) -> dict:
+        """Return ``row`` with ``overflow_archived_ids`` when rows were archived.
+
+        The key is added to a copy (never to the stored row) and only when rows
+        were actually archived, so results below the cap keep their key set.
+        """
         if not archived_ids:
             return row
         out = dict(row)
@@ -2165,6 +2200,10 @@ class Engram(
                 )
                 if pending_target:
                     protected = set(protected) | {pending_target}
+                batch = _OVERFLOW_BATCH.get()
+                if batch and batch["rows"]:
+                    # rows written earlier in the same batch call stay put
+                    protected = set(protected) | batch["rows"]
                 decisions, evicted = self._select_overflow(decisions, new_decision, protected)
                 # Archive BEFORE the active file is rewritten (see _select_overflow).
                 overflow_box["ids"] = self._archive_overflow_rows("decision", evicted)
@@ -2190,6 +2229,10 @@ class Engram(
                 detail=f"[{_gate_note}] {title[:100]}",
                 source_tool=new_decision.get("source_tool", ""),
             )
+        self._record_overflow(
+            "knowledge/decisions", archived_ids, new_decision.get("id", ""),
+            new_decision.get("source_tool", ""),
+        )
 
         # Auto-supersedes: build a directed edge in the decision thread.
         # Priority: (1) explicit ``supersedes`` field in the input,
@@ -2229,9 +2272,7 @@ class Engram(
             except Exception:
                 pass  # edge is advisory; the decision itself is the hard write
 
-        return self._report_overflow(
-            "knowledge/decisions", archived_ids, new_decision, new_decision.get("source_tool", "")
-        )
+        return self._with_overflow_ids(new_decision, archived_ids)
 
     def get_decisions(
         self,

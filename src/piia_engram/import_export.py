@@ -699,6 +699,12 @@ class ImportExportMixin:
             return rows, []
         cut = len(rows) - MAX_KNOWLEDGE_ENTRIES
         archived = self._archive_overflow_rows(entry_type, rows[:cut])
+        for archived_id in archived:
+            self._audit.log(
+                "archive", f"knowledge/{entry_type}s",
+                detail=f"capacity_overflow id={archived_id}",
+                source_tool="import",
+            )
         return rows[cut:], archived
 
     @staticmethod
@@ -753,10 +759,14 @@ class ImportExportMixin:
                 "tools": self._export_tools(),
             },
             "projects": {},
-            # Rows the per-type cap moved out of the active knowledge files.
+            # Rows the per-type cap moved out of the active knowledge files
+            # (HEADs only, like the knowledge section above).
             "overflow_archive": {
-                "lessons": self._read_overflow_archive("lesson"),
-                "decisions": self._read_overflow_archive("decision"),
+                kind + "s": [
+                    row for row in self._read_overflow_archive(kind)
+                    if row.get("status") != "superseded" and "snapshot_of" not in row
+                ]
+                for kind in ("lesson", "decision")
             },
         }
 
