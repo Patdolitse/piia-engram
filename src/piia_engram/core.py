@@ -1615,14 +1615,14 @@ class Engram(
             return None
         return target
 
-    # -- capacity overflow ---------------------------------------------------
-    # A knowledge file holds at most MAX_KNOWLEDGE_ENTRIES rows. Rows pushed out
-    # by the cap are moved to knowledge/overflow_archive/<type>s.jsonl instead of
-    # being dropped. The archive is append-only (one at-rest row per line; lines
-    # are never rewritten or removed), does not count toward the cap, is created
-    # only when an overflow happens, and is appended (under its own directory
-    # lock) BEFORE the active file is rewritten, so an interruption can leave a
-    # row in both files but never in neither.
+    # -- overflow archive ----------------------------------------------------
+    # Rows the capacity rules (capacity.py) move out of lessons.json /
+    # decisions.json, rows a write drops, and history snapshots go to
+    # knowledge/overflow_archive/<type>s.jsonl instead of being lost. The
+    # archive is append-only (one at-rest row per line; lines are never
+    # rewritten or removed), is created on first use, and is appended (under its
+    # own directory lock) BEFORE the active file is rewritten, so an
+    # interruption can leave a row in both files but never in neither.
 
     _OVERFLOW_ARCHIVE_FILES = {"lesson": "lessons.jsonl", "decision": "decisions.jsonl"}
     _OVERFLOW_FIELDS = ("overflow_archived_at", "overflow_archive_reason")

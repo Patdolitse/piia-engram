@@ -403,15 +403,17 @@ def test_a_failed_archive_write_fails_the_whole_write(_full_stores, tmp_path, mo
     assert _archived_ids(root, kind) == []
 
 
-def test_an_unreadable_relation_store_moves_nothing_extra(_full_stores, tmp_path, monkeypatch):
-    from piia_engram import knowledge_ops
+def test_an_unreadable_relation_store_does_not_change_capacity_moves(_full_stores, tmp_path, monkeypatch):
+    # v4.21 removed the 4.20.1 HEAD protection: capacity never reads relation edges.
+    from piia_engram import governance_store
+
+    def _unreadable(self):
+        raise OSError("relation store unreadable")
 
     root, seeded, engram = _copy_store(_full_stores, "decision", tmp_path, monkeypatch)
-    monkeypatch.setattr(knowledge_ops.KnowledgeOpsMixin, "_version_chain_head_ids", lambda self: None)
-    new = _add(engram, "decision", _row("decision", 911, "N", tier="verified"))
-    assert len(_active_ids(root, "decision")) == QUOTA + 1
-    assert "overflow_archived_ids" not in new
-    assert not _archive_path(root, "decision").exists()
+    monkeypatch.setattr(governance_store.RelationStore, "all_edges", _unreadable)
+    new = _queue_write(engram, "decision", 911)
+    assert new["overflow_archived_ids"] == [seeded[0]]
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -607,7 +609,10 @@ def test_a_batch_keeps_its_pending_supersede_target(_full_stores, tmp_path, monk
     # the first row moves the oldest queue row; the second skips its own supersede target
     assert result["overflow_archived_ids"] == [seeded[0], seeded[2]]
     assert {seeded[1], new_id} <= set(_active_ids(root, "decision"))
-    assert {"src": new_id, "rel": "supersedes", "dst": seeded[1]} in RelationStore(root).all_edges()
+    # an unreviewed row records the supersede; the edge waits for its promotion
+    assert RelationStore(root).all_edges() == []
+    stored = next(r for r in _read_json(_active_path(root, "decision")) if r["id"] == new_id)
+    assert stored["pending_supersedes"] == seeded[1]
 
 
 def test_moves_keep_the_remaining_rows_in_write_order(tmp_path, monkeypatch):

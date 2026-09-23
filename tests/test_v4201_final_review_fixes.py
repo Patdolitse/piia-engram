@@ -161,33 +161,25 @@ def test_ast_tripwire_catches_raw_fstring_ddl(tmp_path: Path):
 
 
 # ---------------------------------------------------------------- 6
-def test_eviction_blocked_when_relation_store_unreadable(tmp_path: Path, monkeypatch):
-    from piia_engram.storage import MAX_KNOWLEDGE_ENTRIES
+def test_capacity_moves_do_not_read_the_relation_store(tmp_path: Path, monkeypatch):
+    """v4.21 removed the 4.20.1 HEAD protection: capacity rules never read
+    relation edges, so an unreadable relation store neither blocks nor widens
+    a move."""
+    from piia_engram import governance_store
+
+    monkeypatch.setenv("ENGRAM_REVIEW_QUEUE_MAX", "2")
+    monkeypatch.setenv("ENGRAM_REVIEW_MIN_STAY_DAYS", "0")
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+
+    def _unreadable(self):
+        raise OSError("relation store unreadable")
 
     eng = Engram(tmp_path)
-    for i in range(MAX_KNOWLEDGE_ENTRIES):
-        eng.add_lesson({"summary": f"filler {i}", "domain": "ops"})
-
-    # make the relation inventory UNKNOWABLE (simulate corruption: the
-    # helper's internal guard has already converted the failure to None)
-    from piia_engram import knowledge_ops
-
-    monkeypatch.setattr(
-        knowledge_ops.KnowledgeOpsMixin, "_version_chain_head_ids", lambda self: None
-    )
-
-    # adding one more must NOT evict while the protected set is unknowable:
-    # fail-closed means the eviction is skipped entirely (cap may temporarily
-    # exceed) rather than proceeding with an empty protected set.
-    before = json.loads(
-        (tmp_path / "knowledge" / "lessons.json").read_text(encoding="utf-8")
-    )
-    eng.add_lesson({"summary": "one more lesson", "domain": "ops"})
-    after = json.loads(
-        (tmp_path / "knowledge" / "lessons.json").read_text(encoding="utf-8")
-    )
-    assert len(after) == len(before) + 1, (
-        "eviction must be blocked when the protected set cannot be determined")
+    first = eng.add_lesson({"summary": "first queued lesson", "domain": "ops", "tier": "staging"})["id"]
+    eng.add_lesson({"summary": "second queued lesson", "domain": "ops", "tier": "staging"})
+    monkeypatch.setattr(governance_store.RelationStore, "all_edges", _unreadable)
+    third = eng.add_lesson({"summary": "third queued lesson", "domain": "ops", "tier": "staging"})
+    assert third["overflow_archived_ids"] == [first]
 
 
 def test_decision_pending_supersede_survives_eviction(tmp_path: Path):
