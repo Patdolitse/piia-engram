@@ -284,12 +284,9 @@ def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) ->
     audit = getattr(eng, "_audit", None)
     original_log = getattr(audit, "log", None)
     try:
-        # The generic add_lesson/add_decision audit path records a title/body
-        # prefix. This owner apply path has a stricter metadata-only contract, so
-        # suppress the underlying content-bearing audit and emit a metadata-only
-        # reconcile_import record after a successful import.
-        if callable(original_log):
-            audit.log = lambda *args, **kwargs: None
+        # This owner apply path has a metadata-only audit contract: add_* writes
+        # its own record without content, and the capacity moves keep their
+        # id-and-reason audit events.
         if entry_type == "decision":
             result = eng.add_decision(
                 str(candidate.get("question") or ""),
@@ -297,6 +294,7 @@ def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) ->
                 reasoning=str(candidate.get("reasoning") or ""),
                 source_tool=tool,
                 tier="staging",
+                _audit_metadata_only=True,
             )
         else:
             result = eng.add_lesson(
@@ -305,12 +303,10 @@ def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) ->
                 detail=str(candidate.get("detail") or ""),
                 source_tool=tool,
                 tier="staging",
+                _audit_metadata_only=True,
             )
     except Exception:  # pragma: no cover - defensive
         return ""
-    finally:
-        if callable(original_log):
-            audit.log = original_log
     if isinstance(result, dict):
         if result.get("status") == "duplicate":
             return ""
@@ -322,15 +318,6 @@ def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) ->
                     "knowledge/reconcile_import",
                     detail=f"{entry_type}:{new_id} source={source or 'memory_files'}",
                 )
-                # The capacity-overflow audit (id and reason only) was muted with
-                # the rest of add_*'s audit above; record it here.
-                for archived_id in result.get("overflow_archived_ids") or []:
-                    original_log(
-                        "archive",
-                        f"knowledge/{entry_type}s",
-                        detail=f"capacity_overflow id={archived_id}",
-                        source_tool=tool,
-                    )
             return new_id
     return ""
 

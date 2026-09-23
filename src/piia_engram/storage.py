@@ -19,6 +19,7 @@ from typing import Any, Iterator
 import portalocker
 
 from .capacity import SYSTEM_FIELDS as _CAPACITY_SYSTEM_FIELDS
+from .capacity import UPDATABLE_STATUSES as _CALLER_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,9 @@ def strip_untrusted_trust_fields(payload: Any) -> Any:
     keep their legitimate ``tier`` escape hatch, which lives in core.
     """
     if isinstance(payload, dict):
+        # "superseded" and unknown values are written by the system only.
+        if "status" in payload and payload.get("status") not in _CALLER_STATUSES:
+            payload.pop("status", None)
         for _field in UNTRUSTED_TRUST_FIELDS:
             payload.pop(_field, None)
             if "." not in _field:

@@ -1319,7 +1319,7 @@ class KnowledgeOpsMixin:
             return entry
 
         updated_secondary = self._update_knowledge_item(
-            secondary_type, secondary_id, _archive_secondary
+            secondary_type, secondary_id, _archive_secondary, keep_ids=frozenset({primary_id})
         )
         if updated_secondary is None:
             return {"error": f"Secondary item not found: {secondary_id}"}
@@ -1376,7 +1376,9 @@ class KnowledgeOpsMixin:
                 return "tool", tool
         return None, None
 
-    def _update_knowledge_item(self, item_type: str, item_id: str, mutator) -> dict | None:
+    def _update_knowledge_item(
+        self, item_type: str, item_id: str, mutator, *, keep_ids: frozenset = frozenset()
+    ) -> dict | None:
         """Update one lesson, decision, or playbook without stale whole-list writes."""
         if item_type == "playbook":
             return self._update_playbook_file_by_id(item_id, mutator)
@@ -1400,7 +1402,10 @@ class KnowledgeOpsMixin:
             result_box["result"] = None
             return entries
 
-        self._update_entries(path, item_type, _mutate)
+        self._update_entries(
+            path, item_type, _mutate,
+            capacity_ctx=_capacity.CapacityContext(keep_ids=frozenset({item_id}) | keep_ids),
+        )
         return result_box.get("result")
 
     def _knowledge_title(self, item_type: str | None, item: dict | None) -> str:

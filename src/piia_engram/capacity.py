@@ -185,6 +185,8 @@ class CapacityContext:
     # (row, reason) pairs the mutator archives in the same write, e.g. a local
     # row a replace import overwrites with a different body under the same id.
     extra_archive: list = field(default_factory=list)
+    # Rows the caller is working on (the target of an edit or merge): never moved.
+    keep_ids: frozenset = frozenset()
     # Plan even when nothing changed (read-only previews of the next pass).
     force: bool = False
 
@@ -342,6 +344,8 @@ def plan_capacity(
     exempt = set() if ctx.import_mode else set(changed)
     if ctx.supersede_target:
         exempt |= {key for key, _ in after_keyed if key[0] == ctx.supersede_target}
+    if ctx.keep_ids:
+        exempt |= {key for key, _ in after_keyed if key[0] in ctx.keep_ids}
 
     indexed = [(index, key, row) for index, (key, row) in enumerate(after_keyed)]
     moves: list[tuple[tuple[str, int], dict, str]] = []

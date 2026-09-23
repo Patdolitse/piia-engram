@@ -1662,6 +1662,16 @@ class Engram(
             batch["archived_rows"][entry_type].extend(items)
         return ids
 
+    def _avoid_archived_id(self, row: dict, entry_type: str) -> None:
+        """Give a new row another id when its id already belongs to an archived row."""
+        taken = self._archive_ids(entry_type)
+        rid = str(row.get("id") or "")
+        counter = 1
+        while rid in taken:
+            rid = hashlib.sha256(f"{row.get('id')}:{counter}".encode("utf-8")).hexdigest()[:12]
+            counter += 1
+        row["id"] = rid
+
     def _archived_identity_twin(self, entry_type: str, new_row: dict) -> dict | None:
         """An archived row with the same identity text (and choice) in the same project scope."""
         identity = self._entry_identity_text(new_row, entry_type)
@@ -2005,6 +2015,7 @@ class Engram(
         new_lesson = self._repair_incoming_text(new_lesson)
         new_lesson["timestamp"] = new_lesson.get("timestamp") or _now_iso()
         new_lesson = self._ensure_fields(new_lesson, "lesson")
+        self._avoid_archived_id(new_lesson, "lesson")
         _gate_note = self._apply_write_risk_gate(new_lesson, tier_explicit=tier_explicit)
 
         # Round-3: embedding neighbors of the identity text, computed BEFORE the
@@ -2423,11 +2434,14 @@ class Engram(
             result_box["not_found"] = True
             return lessons
 
+        outcome_box: dict[str, CapacityOutcome] = {}
         refusal = self._capacity_refusal(
-            lambda: self._update_entries(
+            lambda: outcome_box.setdefault("outcome", self._update_entries(
                 path, "lesson", _mutate_lessons,
-                capacity_ctx=_capacity.CapacityContext(on_queue_full="refuse"),
-            ),
+                capacity_ctx=_capacity.CapacityContext(
+                    on_queue_full="refuse", keep_ids=frozenset({lesson_id})
+                ),
+            )),
             lesson_id,
         )
         if refusal is not None:
@@ -2449,7 +2463,7 @@ class Engram(
                 "knowledge/version_snapshot",
                 detail=f"lesson {lesson_id} supersedes {snapshot_id}",
             )
-        return result
+        return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
     def archive_lesson(self, lesson_id: str) -> dict:
         """Mark a lesson as outdated without deleting it."""
@@ -2509,6 +2523,7 @@ class Engram(
 
         new_decision["timestamp"] = new_decision.get("timestamp") or _now_iso()
         new_decision = self._ensure_fields(new_decision, "decision")
+        self._avoid_archived_id(new_decision, "decision")
         _gate_note = self._apply_write_risk_gate(new_decision, tier_explicit=tier_explicit)
 
         new_title = self._entry_identity_text(new_decision, "decision")
@@ -2859,11 +2874,14 @@ class Engram(
             result_box["not_found"] = True
             return decisions
 
+        outcome_box: dict[str, CapacityOutcome] = {}
         refusal = self._capacity_refusal(
-            lambda: self._update_entries(
+            lambda: outcome_box.setdefault("outcome", self._update_entries(
                 path, "decision", _mutate_decisions,
-                capacity_ctx=_capacity.CapacityContext(on_queue_full="refuse"),
-            ),
+                capacity_ctx=_capacity.CapacityContext(
+                    on_queue_full="refuse", keep_ids=frozenset({decision_id})
+                ),
+            )),
             decision_id,
         )
         if refusal is not None:
@@ -2885,7 +2903,7 @@ class Engram(
                 "knowledge/version_snapshot",
                 detail=f"decision {decision_id} supersedes {snapshot_id}",
             )
-        return result
+        return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
     def archive_decision(self, decision_id: str) -> dict:
         """Mark a decision as outdated without deleting it."""

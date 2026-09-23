@@ -578,6 +578,14 @@ class ImportExportMixin:
             item.update(outcome="skipped", reason="existing_not_active", new_id=src)
             return
         version_hash = self._import_version_hash(incoming, kind)
+        if str(existing.get("import_version_hash") or "") == version_hash:
+            # The existing row is this very version, materialized by an earlier
+            # (possibly interrupted) run: do not add another; make sure its edge exists.
+            target = str(existing.get("supersedes") or "")
+            if target and _capacity.pool_of(existing) == _capacity.POOL_V:
+                new_edges.append((existing_id, target))
+            item.update(outcome="skipped", reason="already_materialized", new_id=existing_id)
+            return
         candidate = next(
             (
                 r for r in rows
@@ -679,6 +687,28 @@ class ImportExportMixin:
             source_tool="import",
             removed_reason=_capacity.REASON_REMOVED if merge else _capacity.REASON_IMPORT_REPLACE,
         )
+
+    def _missing_import_version_edges(self, edges: list[dict]) -> list[tuple[str, str]]:
+        """Supersedes edges of reviewed materialized import versions that are not written yet.
+
+        An import interrupted between the knowledge files and relations.json
+        leaves such rows behind; a re-run adds their edges.
+        """
+        present = {(e.get("src"), e.get("dst")) for e in edges if e.get("rel") == "supersedes"}
+        missing: list[tuple[str, str]] = []
+        for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            rows = self._read_entries(self._knowledge_dir / name, kind, migrate=False)
+            ids = {str(row.get("id") or "") for row in rows}
+            for row in rows:
+                target = str(row.get("supersedes") or "")
+                src = str(row.get("id") or "")
+                if not (row.get("import_version_hash") and target and src):
+                    continue
+                if _capacity.pool_of(row) != _capacity.POOL_V or (src, target) in present:
+                    continue
+                if target in ids or target in self._archive_ids(kind):
+                    missing.append((src, target))
+        return missing
 
     def _import_capacity_preview(
         self,
@@ -891,6 +921,8 @@ class ImportExportMixin:
                 report[section] = f"{section}({sign}{stats['added']}{note})"
             for kind, rows in archive_in.items():
                 self._import_archive_segment(kind, rows)
+            if merge:
+                new_edges.extend(self._missing_import_version_edges(edges))
             if relations_in is not None or new_edges:
                 relations_text = self._import_relations_locked(relations_in, new_edges, merge=merge)
                 if relations_text is not None:

@@ -62,6 +62,13 @@ def _overflow_note(result: object) -> str:
     if result.get("placement") == "archived":
         notes.append(" · 待审队列已满：本条已直接放入溢出归档（未删除，可恢复）")
         ids = [archived_id for archived_id in ids if archived_id != result.get("id")]
+    placed = {
+        item.get("id") for item in result.get("results") or []
+        if isinstance(item, dict) and item.get("status") == "archived"
+    }
+    if placed:
+        notes.append(f" · 待审队列已满：{len(placed)} 条新条目已直接放入溢出归档（未删除，可恢复）")
+        ids = [archived_id for archived_id in ids if archived_id not in placed]
     if ids:
         notes.append(f" · 容量已满：{len(ids)} 条较早的条目已移入溢出归档（未删除）")
     return "".join(notes)

@@ -114,27 +114,31 @@ class RetrievalMixin:
         suggested = 0
         for entry_type, path_name in [("lesson", "lessons.json"), ("decision", "decisions.json")]:
             path = self._knowledge_dir / path_name
-            entries = self._read_entries(path, entry_type)
-            if not entries:
+            if not path.is_file():
                 continue
-            changed = False
-            for entry in entries:
-                tier = entry.get("tier", "verified")
-                if tier == "staging":
+            marked = {"count": 0}
+
+            def _suggest(entries: list[dict], _marked: dict = marked) -> list[dict]:
+                _marked["count"] = 0
+                for entry in entries:
+                    if entry.get("tier", "verified") != "staging":
+                        continue
                     access = entry.get("access_count", 0)
-                    if access >= self._REVIEW_SUGGEST_ACCESS_COUNT:
-                        reason = f"referenced {access} times"
-                        if (
-                            entry.get("promotion_suggested") is not True
-                            or entry.get("promotion_reason") != reason
-                        ):
-                            entry["promotion_suggested"] = True
-                            entry["promotion_suggested_at"] = _now_iso()
-                            entry["promotion_reason"] = reason
-                            suggested += 1
-                            changed = True
-            if changed:
-                self._write_entries(path, entries, entry_type)
+                    if access < self._REVIEW_SUGGEST_ACCESS_COUNT:
+                        continue
+                    reason = f"referenced {access} times"
+                    if (
+                        entry.get("promotion_suggested") is not True
+                        or entry.get("promotion_reason") != reason
+                    ):
+                        entry["promotion_suggested"] = True
+                        entry["promotion_suggested_at"] = _now_iso()
+                        entry["promotion_reason"] = reason
+                        _marked["count"] += 1
+                return entries
+
+            self._update_entries(path, entry_type, _suggest)
+            suggested += marked["count"]
 
         # Playbooks are also excluded from access-count promotion. Playbook
         # errors can cause operational harm, so promotion requires explicit
@@ -1226,7 +1230,7 @@ class RetrievalMixin:
                 else:
                     saved += 1
                     entry = {
-                        "status": "saved",
+                        "status": "archived" if result.get("placement") == "archived" else "saved",
                         "id": result.get("id"),
                         "summary": result.get("summary", summary),
                     }
@@ -1296,7 +1300,7 @@ class RetrievalMixin:
                 else:
                     saved += 1
                     entry = {
-                        "status": "saved",
+                        "status": "archived" if result.get("placement") == "archived" else "saved",
                         "id": result.get("id"),
                         "title": self._entry_identity_text(result, "decision") or title,
                     }
