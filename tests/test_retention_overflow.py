@@ -366,8 +366,14 @@ def test_import_archival_is_audited(_full_stores, tmp_path, monkeypatch):
     assert details == [f"capacity_overflow id={seeded[0]}", f"capacity_overflow id={seeded[1]}"]
 
 
-def test_encrypted_store_archives_ciphertext_and_exports_plaintext(tmp_path, monkeypatch):
+ENCRYPTED_FIELDS = {"lesson": ("summary", "detail"), "decision": ("question", "choice", "reasoning")}
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_encrypted_store_archives_ciphertext_and_exports_plaintext(tmp_path, monkeypatch, kind):
     pytest.importorskip("cryptography")
+    from piia_engram.crypto import ENC_PREFIX_V2C
+
     root = tmp_path / "store"
     monkeypatch.setenv("ENGRAM_DIR", str(root))
     monkeypatch.setenv("ENGRAM_SECRET", "overflow-archive-test-key")
@@ -377,17 +383,21 @@ def test_encrypted_store_archives_ciphertext_and_exports_plaintext(tmp_path, mon
         pytest.skip("corpus encryption not active in this environment")
     first = None
     for i in range(MAX_KNOWLEDGE_ENTRIES + 1):
-        row = _add(engram, "lesson", _row("lesson", i, "ENC", tier="verified"))
+        row = _add(engram, kind, _row(kind, i, "ENC", tier="verified"))
         first = first or row["id"]
-    raw = _archive_lines(root, "lesson")
+    plain = _row(kind, 0, "ENC")
+    raw = _archive_lines(root, kind)
     assert [r["id"] for r in raw] == [first]
-    assert raw[0]["summary"] != _words(0, "ENC") and raw[0]["detail"] != "detail " + _words(0, "ENC-d")
-    assert engram.get_overflow_archived("lesson", first)["summary"] == _words(0, "ENC")
+    for field in ENCRYPTED_FIELDS[kind]:
+        assert str(raw[0][field]).startswith(ENC_PREFIX_V2C), field
+        assert plain[field] not in _archive_path(root, kind).read_text(encoding="utf-8"), field
+    archived = engram.get_overflow_archived(kind, first)
+    assert all(archived[field] == plain[field] for field in ENCRYPTED_FIELDS[kind])
     exported = json.loads(Path(engram.export_all(str(tmp_path / "export.json"))).read_text(encoding="utf-8"))
-    assert exported["overflow_archive"]["lessons"][0]["summary"] == _words(0, "ENC")
+    assert all(exported["overflow_archive"][f"{kind}s"][0][f] == plain[f] for f in ENCRYPTED_FIELDS[kind])
     # the missing-salt guard sees ciphertext that survives only in the archive
-    for kind in KINDS:
-        _active_path(root, kind).write_text("[]", encoding="utf-8")
+    for other in KINDS:
+        _active_path(root, other).write_text("[]", encoding="utf-8")
     assert engram._has_existing_ciphertext()
 
 
