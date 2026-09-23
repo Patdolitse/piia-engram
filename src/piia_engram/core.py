@@ -1554,6 +1554,7 @@ class Engram(
         stamp = _now_iso()
         lines: list[str] = []
         ids: list[str] = []
+        items: list[dict] = []
         for row in rows:
             item = self._ensure_fields(deepcopy(row), entry_type)
             item["overflow_archived_at"] = stamp
@@ -1561,8 +1562,35 @@ class Engram(
             stored = self._entries_for_storage([item], entry_type)[0]
             lines.append(json.dumps(stored, ensure_ascii=False))
             ids.append(str(item.get("id", "")))
+            items.append(item)
         _append_jsonl_lines(self._overflow_archive_path(entry_type), lines)
+        batch = _OVERFLOW_BATCH.get()
+        if batch is not None:
+            batch["archived_rows"][entry_type].extend(items)
         return ids
+
+    def _batch_archived_twin(self, entry_type: str, new_row: dict) -> dict | None:
+        """A row the open batch call already moved to the archive with the same content, or None.
+
+        Same identity text in the same project scope (and, for decisions, the
+        same choice). Duplicate checks read the active file only, so without
+        this a batch could write a row again right after archiving it.
+        """
+        batch = _OVERFLOW_BATCH.get()
+        if batch is None:
+            return None
+        identity = self._entry_identity_text(new_row, entry_type)
+        if not identity:
+            return None
+        choice = (new_row.get("choice") or "").strip().lower()
+        for row in reversed(batch["archived_rows"][entry_type]):
+            if self._entry_identity_text(row, entry_type) != identity:
+                continue
+            if entry_type == "decision" and (row.get("choice") or "").strip().lower() != choice:
+                continue
+            if self._entries_share_project_scope(new_row, row):
+                return row
+        return None
 
     def _read_overflow_archive(self, entry_type: str) -> list[dict]:
         """Return the overflow archive of ``entry_type`` in plaintext, oldest first.
@@ -1676,6 +1704,18 @@ class Engram(
         overflow_box: dict[str, list[str]] = {}
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
+            archived_twin = self._batch_archived_twin("lesson", new_lesson)
+            if archived_twin is not None:
+                result_box["result"] = {
+                    "status": "duplicate",
+                    "similarity": 1.0,
+                    "existing_id": archived_twin.get("id"),
+                    "existing_summary": archived_twin.get("summary"),
+                    "message": "与本批次刚移入溢出归档的条目相同，未重复添加",
+                    "likely_revision": False,
+                    "in_overflow_archive": True,
+                }
+                return lessons
             # Three-tier dedup: exact duplicate / semantically related / pass
             same_scope_lessons = [
                 self._ensure_fields(existing, "lesson")
@@ -2105,6 +2145,17 @@ class Engram(
         overflow_box: dict[str, list[str]] = {}
 
         def _mutate_decisions(decisions: list[dict]) -> list[dict]:
+            archived_twin = self._batch_archived_twin("decision", new_decision)
+            if archived_twin is not None:
+                result_box["result"] = {
+                    "status": "duplicate",
+                    "similarity": 1.0,
+                    "existing_id": archived_twin.get("id"),
+                    "existing_title": self._entry_identity_text(archived_twin, "decision"),
+                    "message": "与本批次刚移入溢出归档的决策相同，未重复添加",
+                    "in_overflow_archive": True,
+                }
+                return decisions
             # Three-tier dedup for decisions.
             # >= (not strict >) so that when multiple entries share the same
             # similarity (e.g. same question text, sim=1.0), the LAST entry

@@ -60,10 +60,15 @@ def _archived_existing(eng) -> list[dict[str, Any]]:
             archived = eng._read_overflow_archive(kind)
         except Exception:  # pragma: no cover - defensive
             continue
-        rows.extend(
-            row for row in archived
-            if row.get("status") == "active" and eng._entry_visible_for_project(row, None)
-        )
+        for row in archived:
+            try:
+                visible = row.get("status") == "active" and eng._entry_visible_for_project(row, None)
+            except Exception:
+                # A malformed legacy field (e.g. an unusable project path)
+                # skips that row instead of aborting the whole classification.
+                continue
+            if visible:
+                rows.append(row)
     return rows
 
 

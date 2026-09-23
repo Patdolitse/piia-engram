@@ -611,7 +611,8 @@ def _read_jsonl_rows(path: Path) -> tuple[list[dict], int]:
 # -- write batches -----------------------------------------------------------
 # One batch call (bulk add, note ingestion, session extraction, reconcile)
 # reports every id the knowledge cap moved to the overflow archive during the
-# call, including rows the call itself wrote earlier.
+# call, including rows the call itself wrote earlier, and keeps those rows in
+# memory so a later item of the same call that repeats one is a duplicate.
 
 _OVERFLOW_BATCH: ContextVar[dict | None] = ContextVar("piia_engram_overflow_batch", default=None)
 
@@ -623,7 +624,7 @@ def overflow_batch_scope() -> Iterator[dict]:
     if current is not None:
         yield current
         return
-    state: dict = {"archived": []}
+    state: dict = {"archived": [], "archived_rows": {"lesson": [], "decision": []}}
     token = _OVERFLOW_BATCH.set(state)
     try:
         yield state

@@ -480,6 +480,51 @@ def test_an_oversized_mixed_batch_takes_its_staging_rows_first_but_never_the_cur
     assert saved_ids[-1] in _active_ids(root, kind)
 
 
+def _in_both_files(root: Path, kind: str) -> set[str]:
+    return set(_active_ids(root, kind)) & set(_archived_ids(root, kind))
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_batch_does_not_write_again_what_it_just_archived(_full_stores, tmp_path, monkeypatch, kind):
+    root, seeded, engram = _copy_store(_full_stores, kind, tmp_path, monkeypatch)
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    repeat = _row(kind, 0, "TWIN")
+    result = _bulk(engram, kind, [repeat, _row(kind, 1, "TWIN"), dict(repeat)])
+    first, _, third = result["results"]
+    assert first["status"] == "saved"
+    assert first["id"] in _archived_ids(root, kind)
+    assert third["status"] == "duplicate"
+    assert _in_both_files(root, kind) == set()
+    assert _archived_ids(root, kind).count(first["id"]) == 1
+
+
+def test_a_batch_still_saves_a_revised_decision_or_another_projects_row(_full_stores, tmp_path, monkeypatch):
+    root, seeded, engram = _copy_store(_full_stores, "decision", tmp_path, monkeypatch)
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    first = _row("decision", 0, "REV")
+    revised = dict(first, choice=_words(0, "REV-other"))
+    result = engram.bulk_add_decisions([first, _row("decision", 1, "REV"), revised])
+    assert [item["status"] for item in result["results"]] == ["saved", "saved", "saved"]
+
+    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path / "p", monkeypatch)
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    shared = _row("lesson", 0, "PRJ")
+    rows = [dict(shared, project="alpha-service"), _row("lesson", 1, "PRJ"), dict(shared, project="beta-service")]
+    result = engram.bulk_add_lessons(rows)
+    assert [item["status"] for item in result["results"]] == ["saved", "saved", "saved"]
+
+
+def test_an_oversized_batch_does_not_write_a_repeat_again(tmp_path, monkeypatch):
+    root, engram = _fresh(tmp_path, monkeypatch)
+    rows = [_row("lesson", i, "BIGR", tier="verified", timestamp="2026-09-23T00:00:00Z")
+            for i in range(MAX_KNOWLEDGE_ENTRIES + 1)]
+    result = engram.bulk_add_lessons(rows + [dict(rows[0])])
+    assert result["results"][-1]["status"] == "duplicate"
+    assert len(_active_ids(root, "lesson")) == MAX_KNOWLEDGE_ENTRIES
+    assert _in_both_files(root, "lesson") == set()
+    assert result["overflow_archived_ids"] == [result["results"][0]["id"]]
+
+
 def test_a_batch_keeps_a_version_chain_head_at_the_cap(_full_stores, tmp_path, monkeypatch):
     from piia_engram.governance_store import RelationStore
 
@@ -657,6 +702,50 @@ def test_reconcile_counts_only_archived_rows_the_list_calls_would_return(tmp_pat
         "duplicate", "import", "import", "import", "duplicate", "import", "import"]
 
 
+def test_reconcile_apply_does_not_import_again_what_it_just_archived(_full_stores, tmp_path, monkeypatch):
+    from piia_engram.reconcile_apply import apply_reconcile
+
+    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
+    a, b = _candidate("lesson", 986, "TW"), _candidate("lesson", 987, "TW")
+    payload = apply_reconcile(engram, [a, b, dict(a)], dry_run=False, confirm=True)
+    assert payload["counts"]["imported"] == 2
+    assert payload["items"][2]["imported_id"] == ""
+    assert _in_both_files(root, "lesson") == set()
+
+
+def test_reconcile_skips_an_archived_row_it_cannot_classify(tmp_path, monkeypatch):
+    from piia_engram.reconcile_apply import _archived_existing, apply_reconcile
+
+    root, engram = _fresh(tmp_path, monkeypatch)
+    engram._archive_overflow_rows("lesson", [
+        {"id": "l-bad", "summary": _words(0, "ODD"), "status": "active", "project_folder": "E:/proj\x00x"},
+        {"id": "l-good", "summary": _words(1, "ODD"), "status": "active"},
+    ])
+    assert [row["id"] for row in _archived_existing(engram)] == ["l-good"]
+    plan = apply_reconcile(engram, [{"summary": _words(1, "ODD")}])
+    assert [item["action"] for item in plan["items"]] == ["duplicate"]
+
+
+def test_dashboard_reconcile_report_counts_an_archived_row_as_present(_full_stores, tmp_path, monkeypatch, capsys):
+    from piia_engram.setup_wizard import _run_dashboard
+
+    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    oldest = engram.get_lessons(limit=None, _update_access=False)[0]
+    assert oldest["id"] == seeded[0]
+    mem_dir = tmp_path / "fake_claude" / "projects" / "p" / "memory"
+    mem_dir.mkdir(parents=True)
+    (mem_dir / "note.md").write_text(
+        f"---\nname: n\ndescription: d\ntype: feedback\n---\n\n{oldest['summary']}\n", encoding="utf-8")
+    monkeypatch.setattr(Engram, "_CLAUDE_MEMORY_GLOBS", [str(mem_dir / "*.md")])
+    _add(engram, "lesson", _row("lesson", 988, "N", tier="verified"))
+    assert seeded[0] in _archived_ids(root, "lesson")
+    capsys.readouterr()
+    assert _run_dashboard(["--json"]) == 0
+    dash = json.loads(capsys.readouterr().out)
+    assert dash["readiness"]["reconcile"] == {"import": 0, "duplicate": 1, "conflict": 0}
+
+
 def test_reconcile_apply_digest_mentions_rows_moved_to_the_archive(_full_stores, tmp_path, monkeypatch):
     from piia_engram.reconcile_apply import apply_reconcile, render_reconcile_apply_text
 
@@ -678,12 +767,23 @@ def test_startup_sync_message_counts_rows_moved_to_the_archive(_full_stores, tmp
         (mem_dir / f"note_{i}.md").write_text(
             f"---\nname: note {i}\ndescription: d\ntype: feedback\n---\n\n{_words(i, 'SYNC')}\n", encoding="utf-8")
     engram._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
-    monkeypatch.setattr(engram, "reconcile_ai_configs", lambda: {"imported": 0})
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "CLAUDE.md").write_text(
+        "# Rules\n\n## Formatting\nAlways run the formatter on every changed Python file before review.\n\n"
+        "## Tests\nRun the full test suite before merging any change into the main branch.\n",
+        encoding="utf-8")
+    engram._discover_project_roots = lambda: [project]
+    engram._AI_GLOBAL_CONFIGS = []
     server = _serve(engram, monkeypatch)
+    capsys.readouterr()
     server._run_startup_sync()
     err = capsys.readouterr().err
-    assert "memories=2" in err
-    assert "moved to overflow archive=2" in err
+    configs = int(err.split("configs=")[1].split(",")[0])
+    assert "memories=2" in err and configs >= 1
+    # each staging write at the cap moves exactly one row, so the total covers both syncs
+    assert f"moved to overflow archive={2 + configs}" in err
+    assert len(_archive_lines(root, "lesson")) == 2 + configs
 
 
 # -- MCP replies --------------------------------------------------------------------
