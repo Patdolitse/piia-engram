@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from .recovery import _knowledge_dir, _read_json_file  # reuse vetted JSON reader
+from .storage import _read_jsonl_rows
 
 _DATASETS = ("lessons", "decisions", "playbooks")
 _INDEX_FILE = "search_index.db"
@@ -199,6 +200,10 @@ def scan_integrity(root: str | Path, *, now: datetime | None = None) -> dict[str
     store_ids: set[str] = set()
     for _, ids in scanned:
         store_ids.update(ids)
+    # Rows in the overflow archive still exist: edges into it are not dangling.
+    for name in ("lessons.jsonl", "decisions.jsonl"):
+        archived, _torn = _read_jsonl_rows(knowledge_dir / "overflow_archive" / name)
+        store_ids.update(str(row["id"]) for row in archived if row.get("id"))
 
     index = _scan_index(root_path, knowledge_dir)
     ledger = _scan_ledger(root_path)

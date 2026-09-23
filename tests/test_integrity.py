@@ -93,6 +93,22 @@ def test_dangling_relations_detected(root):
     assert "dangling_relations" in codes
 
 
+def test_an_edge_into_the_overflow_archive_is_not_dangling(root):
+    archive = root / "knowledge" / "overflow_archive"
+    archive.mkdir(parents=True)
+    (archive / "lessons.jsonl").write_text(
+        json.dumps({"id": "L-archived", "summary": "moved"}) + "\n" + '{"id": "torn', encoding="utf-8"
+    )
+    (archive / "decisions.jsonl").write_text(json.dumps({"id": "D-archived"}) + "\n", encoding="utf-8")
+    _write_json(root / "knowledge" / "relations.json", [
+        {"src": "L1", "rel": "supersedes", "dst": "L-archived"},
+        {"src": "D-archived", "rel": "led_to", "dst": "D1"},
+    ])
+    report = integrity.scan_integrity(root)
+    assert report["relations"]["dangling_edges"] == 0
+    assert "dangling_relations" not in {p["code"] for p in report["problems"]}
+
+
 def test_relation_cycle_detected(root):
     # a<->b cycle; both ids exist so it's not dangling, just a cycle.
     _write_json(root / "knowledge" / "lessons.json", [
