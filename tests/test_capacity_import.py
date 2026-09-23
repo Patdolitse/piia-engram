@@ -174,3 +174,65 @@ def test_import_moves_are_audited_with_id_and_reason_only(engram: Engram, tmp_pa
     events = [json.loads(line) for line in lines if line]
     archive = [(e["resource"], e["detail"], e.get("source_tool")) for e in events if e.get("action") == "archive"]
     assert archive == [("knowledge/lessons", "review_queue_full id=aud-0", "import")]
+
+
+# -- gate and counts ---------------------------------------------------------------------
+
+
+def _over_cap_backup(engram: Engram, tmp_path: Path, monkeypatch) -> str:
+    monkeypatch.setenv("ENGRAM_CAP_SOFT", "2")
+    monkeypatch.setenv("ENGRAM_CAP_HARD", "2")
+    engram.add_lesson(_row("lesson", 1, "LOCAL", tier="verified"))
+    incoming = [dict(_row("lesson", i, "BIG", tier="verified"), id=f"big-{i}") for i in range(3)]
+    return _backup(tmp_path, "big", {"lessons": incoming, "relations": [{"src": "a", "rel": "led_to", "dst": "b"}]})
+
+
+def test_an_import_over_the_hard_cap_is_refused_and_writes_nothing(engram: Engram, tmp_path, monkeypatch):
+    backup = _over_cap_backup(engram, tmp_path, monkeypatch)
+    before = (engram._knowledge_dir / "lessons.json").read_bytes()
+    result = engram.import_all(backup, merge=True)
+    assert result["error"] == "capacity_full"
+    assert result["kind"] == "lesson"
+    assert (engram._knowledge_dir / "lessons.json").read_bytes() == before
+    assert RelationStore(engram.root).all_edges() == []
+    assert not (engram._knowledge_dir / ".import-pending.json").exists()
+
+
+def test_the_owner_can_allow_an_import_over_the_hard_cap(engram: Engram, tmp_path, monkeypatch):
+    backup = _over_cap_backup(engram, tmp_path, monkeypatch)
+    result = engram.import_all(backup, merge=True, allow_over_cap=True)
+    assert result["status"] == "success"
+    assert len(_active(engram, "lesson")) == 4
+
+
+def test_the_mcp_import_tool_cannot_allow_an_import_over_the_cap():
+    import inspect
+
+    from piia_engram import mcp_server
+
+    tool = getattr(mcp_server.import_engram, "fn", mcp_server.import_engram)
+    assert "allow_over_cap" not in inspect.signature(tool).parameters
+
+
+def test_a_dry_run_reports_what_the_capacity_rules_would_do(engram: Engram, tmp_path, monkeypatch):
+    for name, value in {"ENGRAM_REVIEW_QUEUE_MAX": "2", "ENGRAM_REVIEW_QUEUE_CEILING": "3",
+                        "ENGRAM_REVIEW_MIN_STAY_DAYS": "7"}.items():
+        monkeypatch.setenv(name, value)
+    incoming = [dict(_row("lesson", i, "Q", tier="staging"), id=f"q-{i}") for i in range(5)]
+    backup = _backup(tmp_path, "b", {"lessons": incoming})
+    preview = engram.import_all(backup, merge=True, dry_run=True)
+    assert preview["capacity"]["lesson"] == {"refused": False, "moved_to_archive": 0, "placed_in_archive": 2}
+    assert _active(engram, "lesson") == []
+
+
+def test_the_cli_text_shows_capacity_counts_and_the_refusal(engram: Engram, tmp_path, monkeypatch):
+    from piia_engram.cli_commands import _render_import_result_text
+
+    backup = _over_cap_backup(engram, tmp_path, monkeypatch)
+    preview_text = _render_import_result_text(engram.import_all(backup, merge=True, dry_run=True))
+    assert "lesson: refused (reviewed memories would exceed the hard cap 2; --allow-over-cap overrides)" in preview_text
+    refused_text = _render_import_result_text(engram.import_all(backup, merge=True))
+    assert "error: capacity_full" in refused_text
+    assert "--allow-over-cap" in refused_text
+    applied = _render_import_result_text(engram.import_all(backup, merge=True, allow_over_cap=True))
+    assert "imported: lessons(+3)" in applied

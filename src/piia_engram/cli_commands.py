@@ -1780,8 +1780,31 @@ def _render_import_result_text(payload: dict) -> str:
             )
     if conflicts:
         lines.append(f"  conflicts: {len(conflicts)} (metadata only; values withheld)")
+    capacity = payload.get("capacity") if isinstance(payload.get("capacity"), dict) else {}
+    if capacity:
+        lines.append("  capacity:")
+        for kind, counts in sorted(capacity.items()):
+            if counts.get("refused"):
+                lines.append(
+                    f"    - {kind}: refused (reviewed memories would exceed the hard cap "
+                    f"{counts.get('hard_cap')}; --allow-over-cap overrides)"
+                )
+            else:
+                lines.append(
+                    f"    - {kind}: move_to_archive={counts.get('moved_to_archive', 0)} "
+                    f"place_in_archive={counts.get('placed_in_archive', 0)}"
+                )
+    imported = payload.get("imported") if isinstance(payload.get("imported"), list) else []
+    if imported:
+        lines.append(f"  imported: {', '.join(str(item) for item in imported)}")
     if payload.get("error"):
         lines.append(f"  error: {payload['error']}")
+    if payload.get("error") == "capacity_full":
+        lines.append(
+            f"  {payload.get('kind', '')}: reviewed memories would exceed the hard cap "
+            f"{payload.get('hard_cap')}; nothing was imported. Tidy up first, or re-run with "
+            "--allow-over-cap to import anyway."
+        )
     if dry_run and not payload.get("requires_confirmation"):
         lines.append("  run 'engram import <backup.json> --apply --yes' to apply")
     return "\n".join(lines)
@@ -1802,8 +1825,10 @@ def _run_import_backup(args: list[str]) -> int:
             "  engram import <backup.json> [--json]\n"
             "  engram import <backup.json> --apply --yes [--json]\n"
             "  engram import <backup.json> --apply --yes --materialize-version-chain [--json]\n"
-            "  engram import <backup.json> --overwrite --apply --yes [--json]\n\n"
-            "Default is metadata-only preview. --overwrite maps to merge=False."
+            "  engram import <backup.json> --overwrite --apply --yes [--json]\n"
+            "  engram import <backup.json> --apply --yes --allow-over-cap [--json]\n\n"
+            "Default is metadata-only preview. --overwrite maps to merge=False.\n"
+            "--allow-over-cap imports even when reviewed memories would exceed the hard cap."
         )
         return 0 if args and args[0] in {"-h", "--help"} else 2
 
@@ -1812,7 +1837,9 @@ def _run_import_backup(args: list[str]) -> int:
     confirm = "--yes" in args
     overwrite = "--overwrite" in args
     materialize_version_chain = "--materialize-version-chain" in args
+    allow_over_cap = "--allow-over-cap" in args
     known_flags = {
+        "--allow-over-cap",
         "--json",
         "--apply",
         "--yes",
@@ -1846,7 +1873,9 @@ def _run_import_backup(args: list[str]) -> int:
     eng = Engram(root=root)
 
     if apply and not confirm:
-        payload = eng.import_all(backup_path, merge=merge, dry_run=True)
+        payload = eng.import_all(
+            backup_path, merge=merge, dry_run=True, allow_over_cap=allow_over_cap
+        )
         payload["requires_confirmation"] = True
         payload["confirmation_hint"] = "re-run with --apply --yes to mutate the local store"
         if json_output:
@@ -1860,6 +1889,7 @@ def _run_import_backup(args: list[str]) -> int:
         merge=merge,
         dry_run=not apply,
         materialize_version_chain=materialize_version_chain and merge,
+        allow_over_cap=allow_over_cap,
     )
     if json_output:
         print(json.dumps(payload, ensure_ascii=False, indent=2))

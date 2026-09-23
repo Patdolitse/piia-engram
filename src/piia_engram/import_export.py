@@ -713,6 +713,35 @@ class ImportExportMixin:
         placed = len(plan.placed_ids)
         return {"refused": False, "moved_to_archive": len(plan.archive) - placed, "placed_in_archive": placed}
 
+    def _import_capacity_summary(
+        self,
+        data: dict,
+        *,
+        merge: bool,
+        materialize: bool,
+        conflicts: list[dict],
+        input_path: str,
+        allow_over_cap: bool,
+    ) -> dict:
+        """Per kind: rows the import would move to the archive, place there, or a refusal."""
+        knowledge = data.get("knowledge") if isinstance(data.get("knowledge"), dict) else {}
+        items = self._materialize_items(knowledge, conflicts) if merge and materialize else []
+        edges = RelationStore(self.root).all_edges()
+        summary: dict[str, dict] = {}
+        for section, kind in self._IMPORT_ROW_SECTIONS:
+            if not knowledge.get(section):
+                continue
+            archive_keys = {
+                self._import_identity_key(row, kind) for row in self._archive_rows_cached(kind)
+            }
+            summary[kind] = self._import_capacity_preview(
+                kind, self._prepare_import_rows(kind, knowledge.get(section)),
+                merge=merge, archive_keys=archive_keys,
+                items=[i for i in items if i["_kind"] == kind], edges=edges,
+                input_path=input_path, allow_over_cap=allow_over_cap,
+            )
+        return summary
+
     def _import_archive_segment(self, kind: str, rows: list[dict]) -> int:
         """Append the export's archived rows that this store does not have yet."""
         if not rows:
@@ -993,6 +1022,14 @@ class ImportExportMixin:
 
         plan = self._build_import_plan(data, merge=merge, input_path=input_path)
         if dry_run:
+            plan["capacity"] = self._import_capacity_summary(
+                data,
+                merge=merge,
+                materialize=materialize_version_chain,
+                conflicts=plan.get("conflicts", []),
+                input_path=input_path,
+                allow_over_cap=allow_over_cap,
+            )
             return plan
 
         # Lessons, decisions, their archive segment and relations first, in one
