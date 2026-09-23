@@ -84,6 +84,10 @@ AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`
 
 You can review, edit, archive, or reject staged knowledge anytime via `review_staging`; playbook review remains explicit before trusted use. Cold-start `get_resume_brief` surfaces the pending-review count (including high-risk items) so nothing sensitive slips in silently.
 
+### What "verified" means
+
+`verified` means an entry was accepted, either by you or automatically by the low/medium-risk policy above. It does not mean Engram has checked that the entry is still true of your code today. Freshness anchors (`check_anchors`) confirm that a referenced file still exists, or that a dependency is still declared in a manifest; they do not compare file contents or versions. Treat a verified entry as a trusted starting point, and confirm code-specific details against the repository when it matters.
+
 This is different from agent-owned memory systems where the agent continuously rewrites its own long-term memory. Engram treats durable memory as a user-owned asset and keeps the sensitive writes behind your review.
 
 Playbooks follow the same trust boundary. Engram normalizes Playbooks into a versioned structural contract and can track execution outcomes, but it does not silently execute workflows. Host AI tools receive Playbooks as passive references, walk through steps in their own runtime, and can report step status back so the result is visible as `pending`, `partial`, `succeeded`, or `failed`.

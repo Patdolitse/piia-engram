@@ -43,7 +43,7 @@ Claude Code、Codex、Cursor、Windsurf 等 MCP 兼容工具可以从同一层 A
 
 - **无云账号：** `pip` 安装，核心数据留在你的机器上。
 - **本地文件：** 身份与知识保存在 `~/.engram/` 下的 JSON/Markdown 文件中。
-- **用户确认：** AI 在本地写入；高风险条目（凭据、shell 命令、MCP 配置、权限规则）会留待你审核，低/中风险自动吸收但全程可审计、可回退。设 `ENGRAM_APPROVAL=strict` 可让所有写入都先送审。
+- **用户确认：** AI 在本地写入；高风险条目（凭据、shell 命令、MCP 配置、权限规则）会留待你审核，低/中风险自动吸收但全程可审计、可回退。设 `ENGRAM_APPROVAL=strict` 可让所有写入都先送审。“已通过”（verified）表示经你或上述策略接受，并不代表已对照你当前的代码重新核实。
 - **边界公开：** 见 [信任模型](docs/trust.md)、[隐私说明](PRIVACY.md) 和 [安全说明](SECURITY.md)。
 
 想看安全的公开演示？见 [跨工具接续 Demo](docs/cross-tool-continuity-demo.md)。
