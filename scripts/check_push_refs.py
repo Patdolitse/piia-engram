@@ -51,24 +51,9 @@ def _git_ok(*args: str) -> bool:
     return subprocess.run(["git", *args], capture_output=True).returncode == 0
 
 
-def _term_list_path(sanitize) -> Path | None:
-    """The local term list: the worktree's own, else the main checkout's."""
-    local = Path(sanitize._INTERNAL_PATTERNS_FILE)
-    if local.is_file():
-        return local
-    try:
-        common = Path(_git("rev-parse", "--path-format=absolute", "--git-common-dir"))
-    except subprocess.CalledProcessError:
-        return None
-    shared = common.parent / sanitize._INTERNAL_PATTERNS_FILE
-    return shared if shared.is_file() else None
-
-
 def _patterns(sanitize):
     patterns = list(sanitize._BUILT_IN_PATTERNS) + list(sanitize._INTERNAL_DISCLOSURE_PATTERNS)
-    term_list = _term_list_path(sanitize)
-    if term_list is not None:
-        patterns += sanitize._load_internal_patterns_file(term_list)
+    patterns += sanitize._load_internal_patterns_file()
     return patterns, sanitize._load_custom_terms()
 
 

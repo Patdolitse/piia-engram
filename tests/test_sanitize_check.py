@@ -689,3 +689,15 @@ def test_messages_only_cli_exits_one_on_a_hit(sc, history, monkeypatch):
     assert sc.main() == 1
     monkeypatch.setattr("sys.argv", [a for a in argv if a != "--tag-messages"])
     assert sc.main() == 0
+
+
+def test_linked_worktree_falls_back_to_the_main_checkout_term_list(sc, history, monkeypatch, tmp_path):
+    repo, _old, _base = history
+    (repo / ".sanitizeignore").write_text(f"high:{_CANARY}\n", encoding="utf-8")
+    linked = tmp_path / "linked"
+    _git(repo, "worktree", "add", "-q", "-b", "feature", str(linked))
+    assert not (linked / ".sanitizeignore").exists()
+    monkeypatch.chdir(linked)
+    loaded = sc._load_internal_patterns_file()
+    assert [sev for _label, _pat, sev in loaded] == ["high"]
+    assert loaded[0][1].search(_CANARY)

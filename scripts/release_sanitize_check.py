@@ -237,6 +237,26 @@ _INTERNAL_DISCLOSURE_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
 _INTERNAL_PATTERNS_FILE = ".sanitizeignore"
 
 
+def _internal_patterns_path() -> Path | None:
+    """The local term list: the current checkout's, else the main checkout's.
+
+    A linked worktree has no copy of the gitignored list, so fall back to the
+    one next to the shared git directory instead of scanning without it.
+    """
+    local = Path(_INTERNAL_PATTERNS_FILE)
+    if local.is_file():
+        return local
+    try:
+        common = subprocess.check_output(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            text=True, encoding="utf-8", stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    shared = Path(common).parent / _INTERNAL_PATTERNS_FILE
+    return shared if shared.is_file() else None
+
+
 def _load_internal_patterns_file(
     path: Path | None = None,
 ) -> list[tuple[str, re.Pattern[str], str]]:
@@ -247,7 +267,9 @@ def _load_internal_patterns_file(
     ``high:`` to make an exact private term block release even when
     ``--strict`` is not set.
     """
-    path = Path(path) if path is not None else Path(_INTERNAL_PATTERNS_FILE)
+    path = Path(path) if path is not None else _internal_patterns_path()
+    if path is None:
+        return []
     if not path.is_file():
         return []
     out: list[tuple[str, re.Pattern[str], str]] = []
