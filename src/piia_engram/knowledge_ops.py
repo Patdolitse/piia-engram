@@ -1201,6 +1201,7 @@ class KnowledgeOpsMixin:
                 result_box["result"] = {
                     "id": item_id, "type": kind, "changed": True,
                     "from_tier": from_tier, "to_tier": entry.get("tier"),
+                    "status": entry.get("status", "active"),
                     "from_overflow_archive": True,
                 }
                 return entries

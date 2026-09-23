@@ -1933,6 +1933,7 @@ class Engram(
             "limits": asdict(limits),
             "kinds": kinds,
             "import_pending": (self._knowledge_dir / self._IMPORT_PENDING_MARKER).is_file(),
+            "limits_problem": _capacity.limits_env_problem(),
         }
 
     def _find_lineage_record(self, item_id: str) -> tuple[str | None, dict | None, str]:

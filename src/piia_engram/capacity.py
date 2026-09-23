@@ -118,6 +118,23 @@ def limits_from_env(env: Mapping[str, str] | None = None) -> Limits:
     return limits if limits_are_valid(limits) else Limits()
 
 
+def limits_env_problem(env: Mapping[str, str] | None = None) -> str | None:
+    """Why the limit settings in the environment were ignored, or None when they apply."""
+    source = os.environ if env is None else env
+    values: dict[str, int] = {}
+    for name, var in _ENV_LIMITS.items():
+        raw = str(source.get(var, "") or "").strip()
+        if not raw:
+            continue
+        try:
+            values[name] = int(raw)
+        except ValueError:
+            return f"{var}={raw!r} is not a whole number; all limits use their defaults"
+    if values and not limits_are_valid(replace(Limits(), **values)):
+        return "the ENGRAM_CAP_* / ENGRAM_REVIEW_* / ENGRAM_RETIRED_* settings do not fit together; all limits use their defaults"
+    return None
+
+
 def pool_of(row: Mapping[str, Any]) -> str:
     status = row.get("status") or "active"
     tier = row.get("tier")
@@ -431,6 +448,8 @@ def preview_moves(rows: list[dict], *, kind: str, now: datetime, limits: Limits)
 def summary_lines(status: Mapping[str, Any]) -> list[str]:
     """Plain-text lines for ``Engram.capacity_status()`` (ids and counts only)."""
     lines: list[str] = []
+    if status.get("limits_problem"):
+        lines.append(f"limit settings ignored: {status['limits_problem']}")
     if status.get("import_pending"):
         lines.append("an import was interrupted: run the same `engram import` again to finish it")
     for kind, info in status.get("kinds", {}).items():
@@ -454,8 +473,10 @@ def summary_lines(status: Mapping[str, Any]) -> list[str]:
 def doctor_finding(status: Mapping[str, Any]) -> dict[str, str]:
     """``{"status": PASS|WARN, "detail": ...}`` for the doctor reports."""
     limits = status.get("limits", {})
-    warn = bool(status.get("import_pending"))
+    warn = bool(status.get("import_pending") or status.get("limits_problem"))
     parts: list[str] = []
+    if status.get("limits_problem"):
+        parts.append(f"limit settings ignored: {status['limits_problem']}")
     if status.get("import_pending"):
         parts.append("interrupted import: re-run it")
     for kind, info in status.get("kinds", {}).items():

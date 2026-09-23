@@ -1740,8 +1740,9 @@ def _run_backup_plan(args: list[str]) -> int:
     if plan["knowledge_datasets"]:
         print("  knowledge datasets:")
         for ds in plan["knowledge_datasets"]:
+            torn = f" torn_lines={ds['torn_lines']}" if ds.get("torn_lines") else ""
             print(
-                f"    - {ds['file_name']}: entries={ds['entries']} "
+                f"    - {ds['file_name']}: entries={ds['entries']}{torn} "
                 f"bytes={ds['bytes']} sha256={ds['sha256_12']}"
             )
     print(f"  external files included: {plan['external_files_included']} "
@@ -1854,8 +1855,9 @@ def _run_retention(args: list[str]) -> int:
         elif result.get("error"):
             print(f"restore failed: {result['error']}")
         elif result.get("changed"):
-            print(f"restored {result.get('type')} {rest[1]}: "
-                  f"{result.get('from_tier')} -> {result.get('to_tier')}")
+            status_note = f", status {result['status']}" if result.get("status") else ""
+            print(f"restored {result.get('type')} {rest[1]}: tier "
+                  f"{result.get('from_tier')} -> {result.get('to_tier')}{status_note}")
         else:
             print(f"{rest[1]} is already active; nothing to restore")
         return 1 if result.get("error") else 0

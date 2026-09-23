@@ -236,3 +236,10 @@ def test_the_cli_text_shows_capacity_counts_and_the_refusal(engram: Engram, tmp_
     assert "--allow-over-cap" in refused_text
     applied = _render_import_result_text(engram.import_all(backup, merge=True, allow_over_cap=True))
     assert "imported: lessons(+3)" in applied
+
+
+def test_the_refused_import_text_has_a_status(engram: Engram, tmp_path, monkeypatch):
+    from piia_engram.cli_commands import _render_import_result_text
+
+    text = _render_import_result_text(engram.import_all(_over_cap_backup(engram, tmp_path, monkeypatch), merge=True))
+    assert text.splitlines()[0] == "Engram import apply - refused"

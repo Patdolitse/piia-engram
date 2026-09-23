@@ -150,3 +150,39 @@ def test_a_withheld_write_ack_keeps_the_archive_count():
     assert out["overflow_archived_count"] == 2
     assert out["placement"] == "archived"
     assert "summary" not in out and "overflow_archived_ids" not in out
+
+
+def test_conflicting_limit_settings_are_reported(engram: Engram, monkeypatch):
+    from piia_engram import capacity
+
+    monkeypatch.setenv("ENGRAM_CAP_HARD", "50")
+    status = engram.capacity_status()
+    assert "do not fit together" in status["limits_problem"]
+    assert status["limits"]["hard_cap"] == 1000
+    assert capacity.doctor_finding(status)["status"] == "WARN"
+    assert any("limit settings ignored" in line for line in capacity.summary_lines(status))
+    monkeypatch.setenv("ENGRAM_CAP_HARD", "x")
+    assert "not a whole number" in engram.capacity_status()["limits_problem"]
+    monkeypatch.delenv("ENGRAM_CAP_HARD")
+    assert engram.capacity_status()["limits_problem"] is None
+
+
+def test_backup_plan_text_shows_torn_lines(engram: Engram, monkeypatch, capsys):
+    from piia_engram.cli_commands import _run_backup_plan
+
+    _seed(engram)
+    monkeypatch.setenv("ENGRAM_DIR", str(engram.root))
+    _run_backup_plan([])
+    assert "overflow_archive/lessons.jsonl: entries=1 torn_lines=1" in capsys.readouterr().out
+
+
+def test_restore_output_names_tier_and_status(engram: Engram, monkeypatch, capsys):
+    from piia_engram.cli_commands import _run_retention
+
+    lesson = engram.add_lesson({"summary": "a retired lesson that gets archived", "domain": "x", "tier": "verified"})
+    engram.update_knowledge(lesson["id"], {"status": "outdated"})
+    path = engram._knowledge_dir / "lessons.json"
+    engram._update_entries(path, "lesson", lambda rows: [r for r in rows if r["id"] != lesson["id"]])
+    monkeypatch.setenv("ENGRAM_DIR", str(engram.root))
+    assert _run_retention(["restore", lesson["id"]]) == 0
+    assert "tier verified -> verified, status outdated" in capsys.readouterr().out

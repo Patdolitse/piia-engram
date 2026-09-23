@@ -916,6 +916,7 @@ class ImportExportMixin:
                 )
                 if preview["refused"]:
                     return {
+                        "status": "refused",
                         "error": "capacity_full",
                         "kind": kind,
                         "hard_cap": preview["hard_cap"],
