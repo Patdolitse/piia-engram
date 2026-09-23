@@ -423,6 +423,9 @@ def _load_relation_edges(eng: Any) -> list[dict]:
     if root is None:
         return []
     try:
+        honored = getattr(eng, "_honored_relation_edges", None)
+        if callable(honored):
+            return honored()
         from .governance_store import RelationStore
 
         return RelationStore(root).all_edges()

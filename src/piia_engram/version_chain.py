@@ -45,6 +45,26 @@ def resolve_heads(seed_id: str, edges: Iterable[dict]) -> list[str]:
     return list(thread.get("heads", []))
 
 
+def honored_edges(edges: Iterable[dict], reviewed_ids: set[str]) -> list[dict]:
+    """Drop ``supersedes`` edges that would let an unreviewed row hide a reviewed one.
+
+    An edge is dropped only when its target is in ``reviewed_ids`` and its
+    source is not (ADR-0002 I10). Every other edge passes unchanged, in order.
+    """
+    kept: list[dict] = []
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        if (
+            edge.get("rel") == "supersedes"
+            and edge.get("dst") in reviewed_ids
+            and edge.get("src") not in reviewed_ids
+        ):
+            continue
+        kept.append(edge)
+    return kept
+
+
 def _superseded_set(edges: list[dict]) -> set[str]:
     """All ids that are the target of *some* supersedes edge (globally obsolete)."""
     return _dt.superseded_ids(edges, scope=None)

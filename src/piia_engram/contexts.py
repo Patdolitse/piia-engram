@@ -2032,7 +2032,8 @@ class ContextStoreMixin:
                 from . import decision_thread as _dt
                 from . import version_chain as _vc
 
-                edges = RelationStore(root).all_edges()
+                honored = getattr(self, "_honored_relation_edges", None)
+                edges = honored() if callable(honored) else RelationStore(root).all_edges()
                 version_superseded = _dt.superseded_ids(edges, scope=None)
                 version_heads = _vc.head_ids(edges)
         except Exception:

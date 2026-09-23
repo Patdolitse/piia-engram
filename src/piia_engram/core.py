@@ -1764,6 +1764,38 @@ class Engram(
             counter += 1
         return candidate
 
+    def _reviewed_ids(self) -> set[str]:
+        """Ids of the reviewed, active lessons and decisions (pool V)."""
+        ids: set[str] = set()
+        for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            for row in self._read_entries(self._knowledge_dir / name, kind, migrate=False):
+                if row.get("id") and _capacity.pool_of(row) == _capacity.POOL_V:
+                    ids.add(str(row["id"]))
+        return ids
+
+    def _honored_relation_edges(self) -> list[dict]:
+        """Relation edges for readers that hide superseded rows or pick a current version.
+
+        A ``supersedes`` edge from a row that is not reviewed never hides a
+        reviewed row (ADR-0002 I10); such edges exist from before v4.21.
+        """
+        from .governance_store import RelationStore
+        from . import version_chain as _vc
+
+        return _vc.honored_edges(RelationStore(self.root).all_edges(), self._reviewed_ids())
+
+    def _archived_only_rows(self, entry_type: str) -> dict[str, dict]:
+        """Current archived rows whose id is not in the active file (a restored row is active)."""
+        name = "lessons.json" if entry_type == "lesson" else "decisions.json"
+        active = {
+            str(row["id"])
+            for row in self._read_entries(self._knowledge_dir / name, entry_type, migrate=False)
+            if row.get("id")
+        }
+        return {
+            rid: row for rid, row in self._archive_current_rows(entry_type).items() if rid not in active
+        }
+
     def _find_lineage_record(self, item_id: str) -> tuple[str | None, dict | None, str]:
         """Find a lesson or decision by id, active files first, then the archive.
 

@@ -217,3 +217,85 @@ def test_a_decision_placed_in_the_archive_writes_no_edge(engram: Engram, monkeyp
     assert _supersedes_edges(engram) == set()
     archived = engram._archive_current_rows("decision")[placed["id"]]
     assert archived["pending_supersedes"] == old
+
+
+# -- honored edges: the read side of I10 -------------------------------------------------
+
+
+def _legacy_edge(engram: Engram, src: str, dst: str) -> None:
+    from piia_engram.governance_store import RelationStore
+
+    RelationStore(engram.root).add_relation(src, "supersedes", dst)
+
+
+def test_honored_edges_drop_only_unreviewed_rows_superseding_reviewed_rows():
+    from piia_engram import version_chain
+
+    edges = [
+        {"src": "q", "rel": "supersedes", "dst": "v"},
+        {"src": "v2", "rel": "supersedes", "dst": "v"},
+        {"src": "q", "rel": "supersedes", "dst": "q0"},
+        {"src": "q", "rel": "led_to", "dst": "v"},
+    ]
+    assert version_chain.honored_edges(edges, {"v", "v2"}) == edges[1:]
+
+
+def test_a_legacy_unreviewed_edge_does_not_hide_a_reviewed_lesson_from_recall(engram: Engram):
+    from piia_engram import recall_service
+
+    reviewed = engram.add_lesson({"summary": "importer uses bounded queues"}, domain="x", tier="verified")["id"]
+    unreviewed = engram.add_lesson({"summary": "importer uses unbounded queues"}, domain="x", tier="staging")["id"]
+    _legacy_edge(engram, unreviewed, reviewed)
+    sources = recall_service.gather_recall_sources(engram, query="importer bounded queues")
+    assert sources["collapsed_count"] == 0
+    ids = {item.get("id") for item in sources["relevant"] + sources["query_knowledge"]}
+    assert reviewed in ids
+
+
+def test_a_legacy_unreviewed_edge_does_not_hide_a_reviewed_decision_from_the_resume_brief(engram: Engram):
+    reviewed = _decision(engram, "JSON lines", tier="verified")["id"]
+    unreviewed = engram.add_decision({"question": "Unrelated queued decision?", "choice": "Maybe",
+                                      "reasoning": "Legacy edge source.", "tier": "staging"})["id"]
+    _legacy_edge(engram, unreviewed, reviewed)
+    assert "JSON lines" in engram.get_resume_brief()["markdown"]
+
+
+# -- decision history and thread over active plus archive (I3) --------------------------
+
+QUESTION = "Which storage format should the queue use?"
+
+
+def _drop_from_active(engram: Engram, kind: str, item_id: str) -> None:
+    path = engram._knowledge_dir / f"{kind}s.json"
+    engram._update_entries(path, kind, lambda rows: [r for r in rows if r["id"] != item_id])
+
+
+def test_decision_history_keeps_the_reviewed_decision_current(engram: Engram):
+    reviewed = _decision(engram, "JSON lines", tier="verified")["id"]
+    unreviewed = _decision(engram, "SQLite", tier="staging")["id"]
+    _legacy_edge(engram, unreviewed, reviewed)
+    history = engram.get_decision_history(QUESTION)
+    assert history["current"]["id"] == reviewed
+    assert {r["id"] for r in history["revisions"]} == {reviewed, unreviewed}
+
+
+def test_an_archived_decision_stays_in_its_history_and_thread(engram: Engram):
+    older = _decision(engram, "JSON lines", tier="staging")["id"]
+    newer = _decision(engram, "SQLite", tier="verified")["id"]
+    assert _supersedes_edges(engram) == {(newer, older)}
+    _drop_from_active(engram, "decision", older)
+    history = engram.get_decision_history(QUESTION)
+    by_id = {r["id"]: r for r in history["revisions"]}
+    assert by_id[older]["status"] == "superseded"
+    assert by_id[older]["archived"] is True
+    assert history["current"]["id"] == newer
+    thread = engram.get_decision_thread(newer)
+    summaries = {row["id"]: row.get("summary") for row in thread["order"]}
+    assert summaries[older]
+
+
+def test_decision_history_falls_back_to_the_archive_when_nothing_is_active(engram: Engram):
+    only = _decision(engram, "JSON lines", tier="staging")["id"]
+    _drop_from_active(engram, "decision", only)
+    history = engram.get_decision_history(QUESTION)
+    assert history["current"]["id"] == only

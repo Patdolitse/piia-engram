@@ -585,14 +585,18 @@ class RetrievalMixin:
         evolved: idea → … → decision → implementation, with superseded items
         flagged and the current head(s) surfaced). Read-only."""
         from .decision_thread import build_thread
-        from .governance_store import RelationStore
 
         entries = {
             str(e["id"]): e
             for e in self._all_indexable_entries()
             if e.get("id")
         }
-        edges = RelationStore(self.root).all_edges()
+        # Rows moved to the overflow archive keep their place in the thread.
+        for kind in ("lesson", "decision"):
+            for archived_id, row in self._archived_only_rows(kind).items():
+                if not self._is_snapshot_record(row):
+                    entries.setdefault(archived_id, row)
+        edges = self._honored_relation_edges()
         self._audit.log("read", "knowledge/decision_thread", detail=str(seed_id))
         return build_thread(seed_id, edges, entries=entries)
 
@@ -620,14 +624,14 @@ class RetrievalMixin:
               "revision_count": int,
             }
         """
-        from .governance_store import RelationStore
-
         path = self._knowledge_dir / "decisions.json"
         decisions = self._read_entries(path, "decision")
+        # Rows moved to the overflow archive stay part of the history.
+        archived_rows = self._archived_only_rows("decision")
 
         # Find all decisions matching the question text.
         matches: list[dict] = []
-        for d in decisions:
+        for d in decisions + list(archived_rows.values()):
             d = self._ensure_fields(d, "decision")
             q_text = self._entry_identity_text(d, "decision")
             sim = self._bigram_similarity(question, q_text)
@@ -641,7 +645,7 @@ class RetrievalMixin:
                     "current": None, "revision_count": 0}
 
         # Load supersedes edges to determine which decisions are obsolete.
-        edges = RelationStore(self.root).all_edges()
+        edges = self._honored_relation_edges()
         match_ids = {str(d["id"]) for d in matches if d.get("id")}
 
         # Build superseded_by map: dst → src (the old decision → its replacement).
@@ -668,11 +672,29 @@ class RetrievalMixin:
             }
             if did in superseded_by:
                 row["superseded_by"] = superseded_by[did]
+            if did in archived_rows:
+                row["archived"] = True
             revisions.append(row)
 
-        # Current = the most recent non-superseded decision.
-        active = [r for r in revisions if r["status"] == "active"]
-        current = active[-1] if active else None
+        # Current: the latest reviewed decision that is not superseded; else
+        # the latest other active-file one; else the archived one with the
+        # highest version. Unreviewed rows never displace a reviewed one.
+        reviewed = self._reviewed_ids()
+        open_rows = [r for r in revisions if r["status"] == "active"]
+        reviewed_rows = [r for r in open_rows if r["id"] in reviewed]
+        active_rows = [r for r in open_rows if r["id"] not in archived_rows]
+        archived_revisions = [r for r in revisions if r["id"] in archived_rows]
+        if reviewed_rows:
+            current = reviewed_rows[-1]
+        elif active_rows:
+            current = active_rows[-1]
+        elif archived_revisions:
+            current = max(
+                archived_revisions,
+                key=lambda r: (r["status"] == "active", self._archive_rank(archived_rows[r["id"]])),
+            )
+        else:
+            current = None
 
         self._audit.log("read", "knowledge/decision_history",
                         detail=f"query={question[:60]} found={len(revisions)}")
