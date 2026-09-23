@@ -30,7 +30,6 @@ from .storage import (
     DOMAIN_KEYWORDS,
     FIELD_WEIGHTS,
     HYBRID_RELEVANCE_THRESHOLD,
-    MAX_KNOWLEDGE_ENTRIES,
     SEARCH_RELEVANCE_THRESHOLD,
     SEMANTIC_NEIGHBOR_THRESHOLD,
     SIMILARITY_THRESHOLD,
@@ -1001,12 +1000,15 @@ class RetrievalMixin:
         3. 最终按时间倒序在各组内排列
 
         Returns: 最多 limit 条教训（相关度排序）
+
+        v4.21: ranks every visible lesson (not only the newest 200), and
+        only the lessons it returns count as read.
         """
         all_lessons = self.get_lessons(
-            limit=MAX_KNOWLEDGE_ENTRIES,
+            limit=None,
             project_folder=project_folder,
             tier=tier,
-            _update_access=_update_access,
+            _update_access=False,
         )
         if not all_lessons:
             return []
@@ -1053,7 +1055,9 @@ class RetrievalMixin:
         n_universal = min(len(universal), max(1, int(limit * 0.3)))
         n_other = limit - n_relevant - n_universal
 
-        result = relevant[:n_relevant] + universal[:n_universal] + other[:n_other]
+        result = (relevant[:n_relevant] + universal[:n_universal] + other[:n_other])[:limit]
+        if _update_access and result:
+            self._record_lesson_reads(result)
         # Display-only result (never written back); ensure no leaked ciphertext
         # is surfaced even on the non-owner path where get_lessons was called
         # with _update_access=False and therefore did not sanitize. Idempotent

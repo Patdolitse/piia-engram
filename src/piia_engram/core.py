@@ -2238,20 +2238,7 @@ class Engram(
             result.append(lesson)
         result = result[-limit:] if limit is not None else result
         if _update_access and result:
-            now = _now_iso()
-            selected_ids = {lesson.get("id") for lesson in result if lesson.get("id")}
-            for lesson in result:
-                lesson["last_reviewed"] = now
-                lesson["access_count"] = lesson.get("access_count", 0) + 1
-
-            def _bump_access(entries: list[dict]) -> list[dict]:
-                for entry in entries:
-                    if entry.get("id") in selected_ids:
-                        entry["last_reviewed"] = now
-                        entry["access_count"] = entry.get("access_count", 0) + 1
-                return entries
-
-            self._update_entries(path, "lesson", _bump_access, blocking=False)
+            self._record_lesson_reads(result)
         self._audit.log("read", "knowledge/lessons", detail=f"returned {len(result)} items")
         if _update_access:
             # Model-facing read: never surface raw ciphertext as content.
@@ -2259,6 +2246,25 @@ class Engram(
             # recoverable ciphertext untouched.)
             result = self._display_sanitize(result, "lesson")
         return result
+
+    def _record_lesson_reads(self, lessons: list[dict]) -> None:
+        """Count a read of ``lessons`` (best-effort; skipped while a writer holds the lock)."""
+        now = _now_iso()
+        selected_ids = {lesson.get("id") for lesson in lessons if lesson.get("id")}
+        for lesson in lessons:
+            lesson["last_reviewed"] = now
+            lesson["access_count"] = lesson.get("access_count", 0) + 1
+
+        def _bump_access(entries: list[dict]) -> list[dict]:
+            for entry in entries:
+                if entry.get("id") in selected_ids:
+                    entry["last_reviewed"] = now
+                    entry["access_count"] = entry.get("access_count", 0) + 1
+            return entries
+
+        self._update_entries(
+            self._knowledge_dir / "lessons.json", "lesson", _bump_access, blocking=False
+        )
 
     def update_lesson(
         self, lesson_id: str, updates: dict, expected_version: int | None = None

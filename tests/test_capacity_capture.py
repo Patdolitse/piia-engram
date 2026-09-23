@@ -93,3 +93,22 @@ def test_reconcile_matches_archived_rows_by_exact_text_only(engram: Engram):
     ], dry_run=True)
     actions = [item["action"] for item in result["items"]]
     assert actions == ["duplicate", "import"]
+
+
+# -- read budget: relevance over every visible lesson ----------------------------------
+
+
+def test_relevant_lessons_rank_every_visible_lesson_and_count_only_returned_reads(engram: Engram):
+    from knowledge_seed import raw_write_json
+
+    rows = [{"id": "L-old-arch", "summary": "oldest architecture lesson", "domain": "架构", "tier": "verified",
+             "status": "active", "timestamp": "2026-01-01T00:00:00Z"}]
+    rows += [{"id": f"L-{i:03d}", "summary": f"filler lesson {i}", "domain": "misc", "tier": "verified",
+              "status": "active", "timestamp": f"2026-02-01T00:{i // 60:02d}:{i % 60:02d}Z"} for i in range(210)]
+    raw_write_json(engram._knowledge_dir / "lessons.json", rows)
+    picked = engram.get_relevant_lessons(limit=8)
+    assert "L-old-arch" in [r["id"] for r in picked]
+    stored = {r["id"]: r for r in engram._read_entries(engram._knowledge_dir / "lessons.json", "lesson",
+                                                        migrate=False)}
+    counted = {i for i, r in stored.items() if r.get("access_count", 0) > 0}
+    assert counted == {r["id"] for r in picked}
