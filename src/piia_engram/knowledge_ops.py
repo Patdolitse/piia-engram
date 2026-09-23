@@ -54,6 +54,24 @@ class KnowledgeOpsMixin:
             }
         return None
 
+    def _archived_update_error(self, item_id: str) -> dict | None:
+        """The error for an update whose target is only in the overflow archive, else None."""
+        _kind, row, where = self._find_lineage_record(item_id)
+        if where != "archive" or row is None:
+            return None
+        if self._is_snapshot_record(row):
+            return {
+                "error": "snapshot_immutable",
+                "item_id": item_id,
+                "message": "history snapshots are immutable; revise the HEAD via update_knowledge or read history via get_knowledge_history",
+            }
+        return {
+            "error": "archived",
+            "item_id": item_id,
+            "hint": "retention restore",
+            "message": "this entry is in the overflow archive; restore it before editing",
+        }
+
     def update_knowledge(
         self, item_id: str, updates: dict, expected_version: int | None = None
     ) -> dict:
@@ -67,7 +85,7 @@ class KnowledgeOpsMixin:
         """
         item_type, item = self._find_item_by_id(item_id)
         if item_type is None:
-            return {"error": f"Item not found: {item_id}"}
+            return self._archived_update_error(item_id) or {"error": f"Item not found: {item_id}"}
         refusal = self._reject_update_payload(item or {}, updates)
         if refusal is not None:
             return refusal
@@ -169,9 +187,20 @@ class KnowledgeOpsMixin:
         ``{"error": "version_not_found", ...}``, never a nearest neighbor.
         """
         item_type, item = self._find_item_by_id(item_id)
+        if item is None:
+            item_type, item, _where = self._find_lineage_record(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
         head_version = int(item.get("version") or 1)
+        records: dict[str, dict] = {}
+        if item_type in {"lesson", "decision"}:
+            # Snapshots live in the archive since v4.21; older ones may still
+            # be in the active file. One read of each.
+            records = self._archive_current_rows(item_type)
+            filename = "lessons.json" if item_type == "lesson" else "decisions.json"
+            for entry in self._read_entries(self._knowledge_dir / filename, item_type):
+                if entry.get("id"):
+                    records[str(entry["id"])] = entry
 
         from .governance_store import RelationStore
 
@@ -185,7 +214,10 @@ class KnowledgeOpsMixin:
         total_body_size = 0
         body_fields = self._HISTORY_BODY_FIELDS.get(item_type, ())
         for snapshot_id in snapshot_ids:
-            record = self._load_history_record(item_type, snapshot_id)
+            if item_type == "playbook":
+                record = self._load_history_record(item_type, snapshot_id)
+            else:
+                record = records.get(str(snapshot_id))
             if record is None:
                 continue
             total_body_size += len(

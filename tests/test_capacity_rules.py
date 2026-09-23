@@ -181,6 +181,16 @@ def test_removed_rows_the_caller_already_archived_are_not_archived_again():
     assert [r["id"] for r in plan.rows] == ["r0"]
 
 
+def test_a_new_snapshot_goes_straight_to_the_archive_and_a_legacy_one_stays():
+    legacy = _row(8, tier="archived", status="superseded", snapshot_of="r0")
+    before = [_row(0), legacy]
+    head = dict(before[0], summary="edited")
+    snapshot = _row(9, tier="archived", status="superseded", snapshot_of="r0")
+    plan = _plan([dict(r) for r in before], [head, dict(legacy), snapshot])
+    assert [(r["id"], reason) for r, reason in plan.archive] == [("r9", cap.REASON_SNAPSHOT)]
+    assert [r["id"] for r in plan.rows] == ["r0", "r8"]
+
+
 def test_supersede_target_and_changed_rows_are_exempt():
     old = _iso(NOW - timedelta(days=30))
     before = [_row(i, tier="staging", queued_at=old, ingested_at=old) for i in range(3)]

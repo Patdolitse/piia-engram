@@ -25,9 +25,11 @@ def test_update_lesson_snapshots_previous_content_and_links_version(tmp_path: Pa
     assert updated["id"] == lesson["id"]
     assert updated["summary"] == "new lesson wording"
 
-    raw = _raw_lessons(tmp_path)
-    assert len(raw) == 2
-    snapshot = next(item for item in raw if item["id"] != lesson["id"])
+    # v4.21: the snapshot goes to the overflow archive, not the active file.
+    assert [item["id"] for item in _raw_lessons(tmp_path)] == [lesson["id"]]
+    [snapshot] = eng._read_overflow_archive("lesson")
+    assert snapshot["id"] == f"{lesson['id']}-prev-v1"
+    assert snapshot["overflow_archive_reason"] == "snapshot"
     assert snapshot["summary"] == "old lesson wording"
     assert snapshot["detail"] == "old detail"
     assert snapshot["status"] == "superseded"

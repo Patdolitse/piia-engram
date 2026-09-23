@@ -48,6 +48,7 @@ REASON_QUEUE_FULL = "review_queue_full"
 REASON_RETIRED_OVERFLOW = "retired_overflow"
 REASON_RETIRED_GRACE = "retired_grace"
 REASON_REMOVED = "removed"
+REASON_SNAPSHOT = "snapshot"
 
 
 @dataclass(frozen=True)
@@ -315,6 +316,12 @@ def plan_capacity(
     moved: set[tuple[str, int]] = set()
     placed: list[str] = []
 
+    # A new history snapshot never stays in the active file.
+    for _index, key, row in indexed:
+        if key not in before_pool and row.get("snapshot_of"):
+            moves.append((key, row, REASON_SNAPSHOT))
+            moved.add(key)
+
     def _queued_order(item):
         index, _key, row = item
         return (queue_category(row), parse_time(row.get("queued_at")) or now, index)
@@ -347,7 +354,7 @@ def plan_capacity(
             placed.append(key[0])
 
     # Retired rows.
-    retired = [item for item in indexed if pool_of(item[2]) == POOL_R]
+    retired = [item for item in indexed if pool_of(item[2]) == POOL_R and item[1] not in moved]
     movable = sorted(
         (item for item in retired if item[1] not in exempt),
         key=lambda item: (parse_time(item[2].get("retired_at")) or now, item[0]),

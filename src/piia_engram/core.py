@@ -102,7 +102,10 @@ class CapacityOutcome:
 
     @property
     def archived_ids(self) -> list[str]:
-        return [row_id for row_id, _reason in self.archived]
+        """Rows moved for capacity reasons (history snapshots are not a capacity event)."""
+        return [
+            row_id for row_id, reason in self.archived if reason != _capacity.REASON_SNAPSHOT
+        ]
 
 
 def _strip_untrusted_freshness_provenance(entry: dict[str, Any]) -> None:
@@ -1711,6 +1714,18 @@ class Engram(
                 current[rid] = row
         return current
 
+    def _next_snapshot_id(
+        self, entry_type: str, item_id: str, version: int, active_ids: set[str]
+    ) -> str:
+        """``<id>-prev-v<version>``, suffixed when an active or archived row has that id."""
+        taken = set(active_ids) | self._archive_ids(entry_type)
+        base = f"{item_id}-prev-v{version}"
+        candidate, counter = base, 2
+        while candidate in taken:
+            candidate = f"{base}-{counter}"
+            counter += 1
+        return candidate
+
     def _find_lineage_record(self, item_id: str) -> tuple[str | None, dict | None, str]:
         """Find a lesson or decision by id, active files first, then the archive.
 
@@ -2176,13 +2191,9 @@ class Engram(
                     return lessons
                 lesson["last_updated"] = now
                 if content_changed:
-                    suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
-                    base_id = f"{lesson_id}-prev-{suffix}"
-                    snapshot_id = base_id
-                    counter = 2
-                    while snapshot_id in existing_ids:
-                        snapshot_id = f"{base_id}-{counter}"
-                        counter += 1
+                    snapshot_id = self._next_snapshot_id(
+                        "lesson", lesson_id, current_version, existing_ids
+                    )
                     snapshot = dict(before)
                     snapshot["id"] = snapshot_id
                     snapshot["status"] = "superseded"
@@ -2203,6 +2214,7 @@ class Engram(
                 result_box["new_tier"] = new_tier
                 return lessons
             result_box["result"] = {"error": f"Lesson not found: {lesson_id}"}
+            result_box["not_found"] = True
             return lessons
 
         refusal = self._capacity_refusal(
@@ -2214,6 +2226,8 @@ class Engram(
         )
         if refusal is not None:
             return refusal
+        if result_box.get("not_found"):
+            return self._archived_update_error(lesson_id) or result_box["result"]
         result = result_box["result"]
         if result_box.get("tier_changed"):
             self._audit.log(
@@ -2607,13 +2621,9 @@ class Engram(
                     return decisions
                 decision["last_updated"] = now
                 if content_changed:
-                    suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
-                    base_id = f"{decision_id}-prev-{suffix}"
-                    snapshot_id = base_id
-                    counter = 2
-                    while snapshot_id in existing_ids:
-                        snapshot_id = f"{base_id}-{counter}"
-                        counter += 1
+                    snapshot_id = self._next_snapshot_id(
+                        "decision", decision_id, current_version, existing_ids
+                    )
                     snapshot = dict(before)
                     snapshot["id"] = snapshot_id
                     snapshot["status"] = "superseded"
@@ -2634,6 +2644,7 @@ class Engram(
                 result_box["new_tier"] = new_tier
                 return decisions
             result_box["result"] = {"error": f"Decision not found: {decision_id}"}
+            result_box["not_found"] = True
             return decisions
 
         refusal = self._capacity_refusal(
@@ -2645,6 +2656,8 @@ class Engram(
         )
         if refusal is not None:
             return refusal
+        if result_box.get("not_found"):
+            return self._archived_update_error(decision_id) or result_box["result"]
         result = result_box["result"]
         if result_box.get("tier_changed"):
             self._audit.log(
