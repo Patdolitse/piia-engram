@@ -10,7 +10,7 @@ import os
 import shutil
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
@@ -477,6 +477,51 @@ def _check_knowledge_write(path: Path) -> None:
     logger.warning(message)
 
 
+_HELD_DIRECTORY_LOCKS: ContextVar[frozenset] = ContextVar(
+    "engram_held_directory_locks", default=frozenset()
+)
+
+
+def _lock_key(lock_path: Path) -> str:
+    return os.path.normcase(os.path.abspath(lock_path))
+
+
+def _directory_lock(lock_path: Path, **kwargs: Any):
+    """The directory write lock, or a no-op when this context already holds it."""
+    if _lock_key(lock_path) in _HELD_DIRECTORY_LOCKS.get():
+        return nullcontext()
+    return portalocker.Lock(lock_path, "a", **kwargs)
+
+
+@contextmanager
+def hold_directory_lock(directory: Path, *, timeout: float = 5) -> Iterator[None]:
+    """Hold ``directory``'s write lock across several writes.
+
+    Inside the block, ``_update_json``, ``_atomic_write_json`` and
+    ``_append_jsonl_lines`` on files in ``directory`` reuse the lock instead of
+    acquiring it again (portalocker is not re-entrant). Other threads and
+    processes still wait for it.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    lock_path = directory / ".engram-write.lock"
+    key = _lock_key(lock_path)
+    held = _HELD_DIRECTORY_LOCKS.get()
+    if key in held:
+        yield
+        return
+    try:
+        lock = portalocker.Lock(lock_path, "a", timeout=timeout)
+        lock.acquire()
+    except portalocker.LockException as exc:
+        raise RuntimeError(f"无法获取文件锁（超时 {timeout:g}s）：{directory.name}") from exc
+    token = _HELD_DIRECTORY_LOCKS.set(held | {key})
+    try:
+        yield
+    finally:
+        _HELD_DIRECTORY_LOCKS.reset(token)
+        lock.release()
+
+
 def _atomic_write_json(path: Path, data: Any) -> None:
     """Atomically write JSON with a file lock for concurrent writers."""
     _check_knowledge_write(path)
@@ -491,7 +536,7 @@ def _atomic_write_json(path: Path, data: Any) -> None:
     lock_path = path.parent / ".engram-write.lock"
 
     try:
-        with portalocker.Lock(lock_path, "a", timeout=5):
+        with _directory_lock(lock_path, timeout=5):
             try:
                 existing = path.read_text(encoding="utf-8") if path.is_file() else None
             except UnicodeDecodeError:
@@ -554,9 +599,9 @@ def _update_json(path: Path, mutator, *, default: Any = None, blocking: bool = T
     lock_path = path.parent / ".engram-write.lock"
     _default = {} if default is None else default
     lock = (
-        portalocker.Lock(lock_path, "a", timeout=5)
+        _directory_lock(lock_path, timeout=5)
         if blocking
-        else portalocker.Lock(lock_path, "a", timeout=0, fail_when_locked=True)
+        else _directory_lock(lock_path, timeout=0, fail_when_locked=True)
     )
     try:
         with lock:
@@ -623,7 +668,7 @@ def _append_jsonl_lines(path: Path, lines: list[str]) -> None:
     lock_path = path.parent / ".engram-write.lock"
     payload = ("\n".join(lines) + "\n").encode("utf-8")
     try:
-        with portalocker.Lock(lock_path, "a", timeout=5):
+        with _directory_lock(lock_path, timeout=5):
             needs_separator = False
             if path.is_file() and path.stat().st_size > 0:
                 with open(path, "rb") as existing:
