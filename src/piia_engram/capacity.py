@@ -171,6 +171,8 @@ class CapacityPlan:
     rows: list[dict]
     archive: list[tuple[dict, str]] = field(default_factory=list)
     placed_ids: list[str] = field(default_factory=list)
+    # (row id, target id): pending supersedes of rows that entered V in this write.
+    promoted_supersedes: list[tuple[str, str]] = field(default_factory=list)
 
 
 class CapacityRefused(Exception):
@@ -302,6 +304,13 @@ def plan_capacity(
             _stamp_transition(row, old, now)
             changed.add(key)
 
+    # A row entering V hands its pending supersede to the caller, which writes the edge.
+    promoted: list[tuple[str, str]] = []
+    for key, row in after_keyed:
+        old = before_pool.get(key)
+        if old not in (None, POOL_V) and pool_of(row) == POOL_V and row.get("pending_supersedes"):
+            promoted.append((key[0], str(row.pop("pending_supersedes"))))
+
     v_before = sum(1 for pool in before_pool.values() if pool in (POOL_V, POOL_QD))
     v_after = sum(1 for _, row in after_keyed if pool_of(row) in (POOL_V, POOL_QD))
     if v_after > limits.hard_cap and v_after > v_before and not ctx.owner_override:
@@ -382,4 +391,4 @@ def plan_capacity(
     ]
     archive += [(row, reason) for _key, row, reason in moves]
     rows = [row for key, row in after_keyed if key not in moved]
-    return CapacityPlan(rows=rows, archive=archive, placed_ids=placed)
+    return CapacityPlan(rows=rows, archive=archive, placed_ids=placed, promoted_supersedes=promoted)

@@ -191,6 +191,15 @@ def test_a_new_snapshot_goes_straight_to_the_archive_and_a_legacy_one_stays():
     assert [r["id"] for r in plan.rows] == ["r0", "r8"]
 
 
+def test_a_row_entering_v_hands_over_its_pending_supersede():
+    before = [_row(0, tier="staging", pending_supersedes="r5"), _row(1, tier="staging", pending_supersedes="r6")]
+    after = [dict(before[0], tier="verified"), dict(before[1])]
+    plan = _plan([dict(r) for r in before], after)
+    assert plan.promoted_supersedes == [("r0", "r5")]
+    assert "pending_supersedes" not in plan.rows[0]
+    assert plan.rows[1]["pending_supersedes"] == "r6"
+
+
 def test_supersede_target_and_changed_rows_are_exempt():
     old = _iso(NOW - timedelta(days=30))
     before = [_row(i, tier="staging", queued_at=old, ingested_at=old) for i in range(3)]

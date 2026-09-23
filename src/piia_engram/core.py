@@ -99,6 +99,7 @@ class CapacityOutcome:
 
     archived: list[tuple[str, str]] = field(default_factory=list)  # (id, reason)
     placed_ids: list[str] = field(default_factory=list)
+    promoted_supersedes: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def archived_ids(self) -> list[str]:
@@ -1561,6 +1562,7 @@ class Engram(
                     for archived_id in self._archive_overflow_rows(entry_type, rows, reason=reason):
                         outcome.archived.append((archived_id, reason))
                 outcome.placed_ids = list(plan.placed_ids)
+                outcome.promoted_supersedes = list(plan.promoted_supersedes)
                 updated = plan.rows
             # A mutation that changes nothing (not-found, no-op, rejected
             # payload) must not rewrite the file. The comparison is at the
@@ -1575,7 +1577,43 @@ class Engram(
         with knowledge_write_allowed():
             _update_json(path, _locked, default=[], blocking=blocking)
         self._audit_capacity_moves(entry_type, outcome, ctx.source_tool)
+        self._commit_promoted_supersedes(outcome)
         return outcome
+
+    def _commit_promoted_supersedes(self, outcome: CapacityOutcome) -> None:
+        """Write the supersedes edges of rows that were promoted into V (best-effort)."""
+        for src, dst in outcome.promoted_supersedes:
+            try:
+                added = self._commit_version_edge(src, dst)
+            except Exception:
+                continue  # the edge is advisory; the promotion itself is the hard write
+            if added:
+                self._audit.log(
+                    "write", "knowledge/relations",
+                    detail=f"{src} supersedes {dst} (pending edge written on promotion)",
+                )
+
+    def _supersede_target_row(
+        self, new_row: dict, target_id: str, active: list[dict] | None = None
+    ) -> dict | None:
+        """The decision ``target_id`` (active, else archived) if it shares the new row's project scope."""
+        if active is None:
+            active = self._read_entries(
+                self._knowledge_dir / "decisions.json", "decision", migrate=False
+            )
+        target = next(
+            (
+                self._ensure_fields(dict(row), "decision")
+                for row in active
+                if str(row.get("id") or "") == target_id
+            ),
+            None,
+        )
+        if target is None:
+            target = self._archive_current_rows("decision").get(target_id)
+        if target is None or not self._entries_share_project_scope(new_row, target):
+            return None
+        return target
 
     # -- capacity overflow ---------------------------------------------------
     # A knowledge file holds at most MAX_KNOWLEDGE_ENTRIES rows. Rows pushed out
@@ -2401,12 +2439,16 @@ class Engram(
             )
 
             self._redirect_when_verified_full(new_decision, decisions)
-            decisions.append(new_decision)
             # The decision this write is about to supersede is never moved out
             # by the same write (explicit ``supersedes`` or auto-detected).
-            decision_ctx.supersede_target = str(
-                new_decision.get("supersedes") or auto_supersedes_target or ""
-            )
+            target = str(new_decision.get("supersedes") or auto_supersedes_target or "")
+            decision_ctx.supersede_target = target
+            # An unreviewed decision must not hide a reviewed one: it records
+            # the supersede, and the edge is written when it is promoted.
+            if target and _capacity.pool_of(new_decision) != _capacity.POOL_V:
+                if self._supersede_target_row(new_decision, target, decisions) is not None:
+                    new_decision["pending_supersedes"] = target
+            decisions.append(new_decision)
             result_box["result"] = new_decision
             supersedes_box["target"] = auto_supersedes_target
             return decisions
@@ -2433,24 +2475,13 @@ class Engram(
         # Priority: (1) explicit ``supersedes`` field in the input,
         #           (2) auto-detected same-question conflict (different choice).
         # Best-effort: a failed edge write must NEVER block the decision write.
+        # Unreviewed decisions (queued, or placed in the archive) only carry
+        # ``pending_supersedes``; the edge is written when they are promoted.
         supersedes_id = new_decision.get("supersedes") or supersedes_box.get("target")
-        if supersedes_id:
+        if supersedes_id and _capacity.pool_of(new_decision) == _capacity.POOL_V:
             try:
-                target_decision = next(
-                    (
-                        self._ensure_fields(existing, "decision")
-                        for existing in self._read_entries(
-                            self._knowledge_dir / "decisions.json",
-                            "decision",
-                            migrate=False,
-                        )
-                        if str(existing.get("id") or "") == str(supersedes_id)
-                    ),
-                    None,
-                )
-                if target_decision and self._entries_share_project_scope(
-                    new_decision, target_decision
-                ):
+                target_decision = self._supersede_target_row(new_decision, str(supersedes_id))
+                if target_decision is not None:
                     # v4.19.1: decision-thread edges are INTERNAL version
                     # lineage — write via RelationStore directly (the
                     # caller-facing add_relation now refuses supersedes).

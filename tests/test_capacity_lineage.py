@@ -136,3 +136,84 @@ def test_updating_an_archived_row_points_to_restore(engram: Engram, via: str):
     assert result["error"] == "archived"
     assert result["item_id"] == lesson_id
     assert result["hint"] == "retention restore"
+
+
+# -- pending supersede: unreviewed rows never hide reviewed rows (I10) -------------------
+
+
+def _supersedes_edges(engram: Engram) -> set[tuple[str, str]]:
+    from piia_engram.governance_store import RelationStore
+
+    return {(e["src"], e["dst"]) for e in RelationStore(engram.root).all_edges() if e["rel"] == "supersedes"}
+
+
+def _decision(engram: Engram, choice: str, **extra) -> dict:
+    return engram.add_decision(
+        {"question": "Which storage format should the queue use?", "choice": choice,
+         "reasoning": "Recorded for the lineage tests.", **extra}
+    )
+
+
+def _active_row(engram: Engram, kind: str, item_id: str) -> dict:
+    path = engram._knowledge_dir / f"{kind}s.json"
+    return next(r for r in engram._read_entries(path, kind, migrate=False) if r["id"] == item_id)
+
+
+def test_an_unreviewed_decision_records_a_pending_supersede_instead_of_an_edge(engram: Engram):
+    old = _decision(engram, "JSON lines", tier="verified")["id"]
+    new = _decision(engram, "SQLite", tier="staging")["id"]
+    assert _supersedes_edges(engram) == set()
+    assert _active_row(engram, "decision", new)["pending_supersedes"] == old
+
+
+def test_an_explicit_supersede_from_an_unreviewed_decision_is_pending_too(engram: Engram):
+    old = _decision(engram, "JSON lines", tier="verified")["id"]
+    other = engram.add_decision({"question": "Where should backups go?", "choice": "Local disk",
+                                 "reasoning": "Explicit supersede test.", "supersedes": old, "tier": "staging"})["id"]
+    assert _supersedes_edges(engram) == set()
+    assert _active_row(engram, "decision", other)["pending_supersedes"] == old
+
+
+def test_promotion_writes_the_pending_edge_and_clears_the_field(engram: Engram):
+    old = _decision(engram, "JSON lines", tier="verified")["id"]
+    new = _decision(engram, "SQLite", tier="staging")["id"]
+    assert engram.promote_knowledge(new)["status"] == "promoted"
+    assert _supersedes_edges(engram) == {(new, old)}
+    assert "pending_supersedes" not in _active_row(engram, "decision", new)
+
+
+def test_a_rejected_decision_never_writes_its_pending_edge(engram: Engram):
+    old = _decision(engram, "JSON lines", tier="verified")["id"]
+    new = _decision(engram, "SQLite", tier="staging")["id"]
+    assert "error" not in engram.update_knowledge(new, {"status": "rejected"})
+    assert _supersedes_edges(engram) == set()
+
+
+def test_a_reviewed_decision_writes_its_edge_at_once(engram: Engram):
+    old = _decision(engram, "JSON lines", tier="verified")["id"]
+    new = _decision(engram, "SQLite", tier="verified")["id"]
+    assert _supersedes_edges(engram) == {(new, old)}
+    assert "pending_supersedes" not in _active_row(engram, "decision", new)
+
+
+def test_a_supersede_target_in_the_archive_still_counts_as_present(engram: Engram):
+    old = _decision(engram, "JSON lines", tier="staging")["id"]
+    path = engram._knowledge_dir / "decisions.json"
+    engram._update_entries(path, "decision", lambda rows: [r for r in rows if r["id"] != old])
+    new = engram.add_decision({"question": "A different question entirely?", "choice": "Yes",
+                               "reasoning": "Archived target test.", "supersedes": old, "tier": "verified"})["id"]
+    assert _supersedes_edges(engram) == {(new, old)}
+
+
+def test_a_decision_placed_in_the_archive_writes_no_edge(engram: Engram, monkeypatch):
+    for name, value in {"ENGRAM_REVIEW_QUEUE_MAX": "1", "ENGRAM_REVIEW_QUEUE_CEILING": "1",
+                        "ENGRAM_REVIEW_MIN_STAY_DAYS": "7"}.items():
+        monkeypatch.setenv(name, value)
+    old = _decision(engram, "JSON lines", tier="verified")["id"]
+    engram.add_decision({"question": "Unrelated queued decision?", "choice": "Maybe",
+                         "reasoning": "Fills the queue.", "tier": "staging"})
+    placed = _decision(engram, "SQLite", tier="staging")
+    assert placed["placement"] == "archived"
+    assert _supersedes_edges(engram) == set()
+    archived = engram._archive_current_rows("decision")[placed["id"]]
+    assert archived["pending_supersedes"] == old
