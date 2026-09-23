@@ -1810,6 +1810,59 @@ def _render_import_result_text(payload: dict) -> str:
     return "\n".join(lines)
 
 
+def _run_retention(args: list[str]) -> int:
+    """Read-only retention plan, and owner restore from the overflow archive.
+
+    ``plan`` shows the reviewed / queued / demoted / retired counts, the
+    archive, and which rows the next write would move; it writes nothing.
+    ``restore <id>`` brings an archived row back to the active file (the
+    reviewed-memory hard cap and the review queue ceiling still apply).
+    """
+    import os as _os
+    from piia_engram import capacity as _capacity
+    from piia_engram.core import Engram
+
+    usage = (
+        "Usage:\n"
+        "  engram retention plan [--json]        What the capacity rules would move next (read-only)\n"
+        "  engram retention restore <id> [--json]  Bring an archived entry back\n"
+    )
+    json_output = "--json" in args
+    rest = [arg for arg in args if arg != "--json"]
+    if not rest or rest[0] in {"-h", "--help"}:
+        print(usage)
+        return 0 if rest else 2
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    if rest[0] == "plan" and len(rest) == 1:
+        status = Engram(root=root, read_only=True).capacity_status()
+        if json_output:
+            print(json.dumps(status, ensure_ascii=False, indent=2))
+        else:
+            limits = status["limits"]
+            print(
+                "Engram retention plan (read-only) - "
+                f"hard cap {limits['hard_cap']}, review queue {limits['review_queue_max']}"
+                f"/{limits['review_queue_ceiling']}, retired max {limits['r_max']}"
+            )
+            for line in _capacity.summary_lines(status):
+                print(f"  {line}")
+        return 0
+    if rest[0] == "restore" and len(rest) == 2:
+        result = Engram(root=root).restore_lifecycle_archive(rest[1])
+        if json_output:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif result.get("error"):
+            print(f"restore failed: {result['error']}")
+        elif result.get("changed"):
+            print(f"restored {result.get('type')} {rest[1]}: "
+                  f"{result.get('from_tier')} -> {result.get('to_tier')}")
+        else:
+            print(f"{rest[1]} is already active; nothing to restore")
+        return 1 if result.get("error") else 0
+    print(usage)
+    return 2
+
+
 def _run_import_backup(args: list[str]) -> int:
     """Preview/apply a full Engram JSON backup import.
 

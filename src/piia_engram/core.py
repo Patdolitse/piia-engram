@@ -1869,6 +1869,57 @@ class Engram(
             rid: row for rid, row in self._archive_current_rows(entry_type).items() if rid not in active
         }
 
+    _CAPACITY_TIME_FIELDS = (
+        "created_at", "timestamp", "last_updated", "ingested_at", "queued_at",
+        "retired_at", "demoted_at", "rejected_at",
+    )
+
+    def capacity_status(self) -> dict:
+        """Read-only capacity report: pools, archive and the next pass's moves.
+
+        Counts and ids only. Nothing is written; the moves are what the next
+        lessons / decisions write would do under the current limits.
+        """
+        from collections import Counter
+        from dataclasses import asdict
+
+        limits = _capacity.limits_from_env()
+        now = datetime.now(timezone.utc)
+        kinds: dict[str, dict] = {}
+        for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            path = self._knowledge_dir / name
+            raw = _read_json(path) if path.is_file() else []
+            rows = self._entries_for_locked_mutation(raw if isinstance(raw, list) else [], kind)
+            pools = Counter(_capacity.pool_of(row) for row in rows)
+            future = 0
+            for row in rows:
+                times = (_capacity.parse_time(row.get(f)) for f in self._CAPACITY_TIME_FIELDS)
+                if any(t is not None and t > now for t in times):
+                    future += 1
+            archived = self._archive_rows_cached(kind)
+            _parsed, torn = _read_jsonl_rows(self._overflow_archive_path(kind))
+            moves = _capacity.preview_moves(rows, kind=kind, now=now, limits=limits)
+            kinds[kind] = {
+                "verified": pools[_capacity.POOL_V],
+                "demoted": pools[_capacity.POOL_QD],
+                "queued": pools[_capacity.POOL_Q],
+                "retired": pools[_capacity.POOL_R],
+                "archived": len(archived),
+                "archived_by_reason": dict(Counter(
+                    str(row.get("overflow_archive_reason") or "") for row in archived
+                )),
+                "archive_torn_lines": torn,
+                "future_timestamps": future,
+                "next_moves": [
+                    {"id": str(row.get("id") or ""), "reason": reason} for row, reason in moves
+                ],
+            }
+        return {
+            "limits": asdict(limits),
+            "kinds": kinds,
+            "import_pending": (self._knowledge_dir / self._IMPORT_PENDING_MARKER).is_file(),
+        }
+
     def _find_lineage_record(self, item_id: str) -> tuple[str | None, dict | None, str]:
         """Find a lesson or decision by id, active files first, then the archive.
 

@@ -22,6 +22,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
@@ -183,6 +185,8 @@ class CapacityContext:
     # (row, reason) pairs the mutator archives in the same write, e.g. a local
     # row a replace import overwrites with a different body under the same id.
     extra_archive: list = field(default_factory=list)
+    # Plan even when nothing changed (read-only previews of the next pass).
+    force: bool = False
 
 
 @dataclass
@@ -301,7 +305,7 @@ def plan_capacity(
         key not in before_map or pool_of(before_map[key]) != pool_of(row)
         for key, row in after_keyed
     )
-    if not raw_change:
+    if not raw_change and not ctx.force:
         return CapacityPlan(rows=after, archive=list(ctx.extra_archive))
 
     for _, row in before_keyed:
@@ -409,3 +413,65 @@ def plan_capacity(
     archive += [(row, reason) for _key, row, reason in moves]
     rows = [row for key, row in after_keyed if key not in moved]
     return CapacityPlan(rows=rows, archive=archive, placed_ids=placed, promoted_supersedes=promoted)
+
+
+def preview_moves(rows: list[dict], *, kind: str, now: datetime, limits: Limits) -> list[tuple[dict, str]]:
+    """What the next capacity pass would move from ``rows``; changes nothing."""
+    plan = plan_capacity(
+        deepcopy(rows), deepcopy(rows), kind=kind, now=now, limits=limits,
+        ctx=CapacityContext(force=True),
+    )
+    return list(plan.archive)
+
+
+def summary_lines(status: Mapping[str, Any]) -> list[str]:
+    """Plain-text lines for ``Engram.capacity_status()`` (ids and counts only)."""
+    lines: list[str] = []
+    if status.get("import_pending"):
+        lines.append("an import was interrupted: run the same `engram import` again to finish it")
+    for kind, info in status.get("kinds", {}).items():
+        lines.append(
+            f"{kind}: verified={info['verified']} queued={info['queued']} demoted={info['demoted']} "
+            f"retired={info['retired']} archived={info['archived']}"
+        )
+        moves = Counter(move["reason"] for move in info.get("next_moves", []))
+        if moves:
+            detail = ", ".join(f"{reason}={count}" for reason, count in sorted(moves.items()))
+            lines.append(f"  next pass would move {sum(moves.values())} ({detail})")
+        else:
+            lines.append("  next pass would move nothing")
+        if info.get("future_timestamps"):
+            lines.append(f"  future timestamps: {info['future_timestamps']} (treated as now)")
+        if info.get("archive_torn_lines"):
+            lines.append(f"  torn archive lines: {info['archive_torn_lines']} (skipped when read)")
+    return lines
+
+
+def doctor_finding(status: Mapping[str, Any]) -> dict[str, str]:
+    """``{"status": PASS|WARN, "detail": ...}`` for the doctor reports."""
+    limits = status.get("limits", {})
+    warn = bool(status.get("import_pending"))
+    parts: list[str] = []
+    if status.get("import_pending"):
+        parts.append("interrupted import: re-run it")
+    for kind, info in status.get("kinds", {}).items():
+        text = (
+            f"{kind}: verified={info['verified']}/{limits.get('hard_cap')} "
+            f"queued={info['queued']}/{limits.get('review_queue_max')} "
+            f"retired={info['retired']} archived={info['archived']}"
+        )
+        if info.get("next_moves"):
+            text += f", next pass moves {len(info['next_moves'])}"
+        if info.get("future_timestamps"):
+            text += f", future timestamps {info['future_timestamps']}"
+        if info.get("archive_torn_lines"):
+            text += f", torn archive lines {info['archive_torn_lines']}"
+        parts.append(text)
+        if (
+            info["verified"] >= int(limits.get("hard_cap") or 0)
+            or info["queued"] > int(limits.get("review_queue_max") or 0)
+            or info.get("future_timestamps")
+            or info.get("archive_torn_lines")
+        ):
+            warn = True
+    return {"status": "WARN" if warn else "PASS", "detail": "; ".join(parts)}

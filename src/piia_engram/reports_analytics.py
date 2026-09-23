@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from . import capacity as _capacity
 from . import provenance as _provenance
 from .export_redaction import redact_export_text
 from .storage import (
-    MAX_KNOWLEDGE_ENTRIES,
     SCHEMA_VERSION,
     STALE_KNOWLEDGE_DAYS,
     STALE_DECAY_MULTIPLIERS,
@@ -28,6 +28,18 @@ class AnalyticsMixin:
             return _provenance.compute_freshness(item).get("skip_decay") is True
         except Exception:
             return False
+
+    def _health_capacity_counts(self) -> dict:
+        """Pools next to the overflow archive, per kind (counts only; a large archive is not a fault)."""
+        status_fn = getattr(self, "capacity_status", None)
+        if not callable(status_fn):
+            return {}
+        try:
+            kinds = status_fn().get("kinds", {})
+        except Exception:
+            return {}
+        keys = ("verified", "queued", "demoted", "retired", "archived")
+        return {kind: {key: info.get(key, 0) for key in keys} for kind, info in kinds.items()}
 
     def get_health_report(self) -> dict:
         """Generate a health report for the knowledge asset."""
@@ -69,8 +81,12 @@ class AnalyticsMixin:
                     })
 
         warnings = []
-        if len(active_lessons) > 150:
-            warnings.append(f"教训数量较多（{len(active_lessons)}/{MAX_KNOWLEDGE_ENTRIES}），建议清理过时条目")
+        limits = _capacity.limits_from_env()
+        reviewed = sum(1 for lesson in active_lessons if _capacity.pool_of(lesson) == _capacity.POOL_V)
+        if reviewed > limits.soft_cap:
+            warnings.append(
+                f"已审核教训较多（{reviewed}/{limits.hard_cap}），到上限后新教训会先进待审区，建议清理过时条目"
+            )
         if duplicates:
             warnings.append(f"发现 {len(duplicates)} 对近似重复教训，建议合并")
         if outdated_lessons:
@@ -135,6 +151,7 @@ class AnalyticsMixin:
                 "active_decisions": len(active_decisions),
                 "outdated_decisions": len(outdated_decisions),
             },
+            "capacity": self._health_capacity_counts(),
             "domain_distribution": domain_counts,
             "source_distribution": source_counts,
             "potential_duplicates": duplicates[:10],

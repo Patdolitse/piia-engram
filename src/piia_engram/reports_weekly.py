@@ -54,6 +54,20 @@ def render_weekly_text(recap: dict[str, Any]) -> str:
     if titles:
         lines.append("Daily log: " + "; ".join(str(t) for t in titles[:3]))
 
+    capacity = recap.get("capacity") or {}
+    moved = capacity.get("moved_to_archive") or {}
+    n_moved = sum(int(n or 0) for n in moved.values())
+    placed = int(capacity.get("placed_in_archive", 0) or 0)
+    demoted = int(capacity.get("demoted", 0) or 0)
+    if n_moved or placed or demoted:
+        detail = ", ".join(f"{reason} {n}" for reason, n in sorted(moved.items()))
+        lines.append(
+            f"Capacity: moved to the overflow archive: {n_moved}"
+            + (f" ({detail})" if detail else "")
+            + f", placed there: {placed}, review queue: {capacity.get('queue_remaining', 0)}, "
+            f"demoted: {demoted}"
+        )
+
     resurface = recap.get("resurface")
     if resurface:
         lines.append(f"Resurface: {resurface.get('summary', '')}")
@@ -250,7 +264,7 @@ def build_weekly_recap(
             "domain": picked.get("domain", ""),
         }
 
-    return {
+    recap = {
         "start": cutoff.strftime("%Y-%m-%d"),
         "end": now.strftime("%Y-%m-%d"),
         "counts": {
@@ -264,3 +278,40 @@ def build_weekly_recap(
         "daily_log_titles": daily_log_titles,
         "resurface": resurface,
     }
+    capacity = _weekly_capacity(engram, cutoff)
+    if capacity is not None:
+        recap["capacity"] = capacity
+    return recap
+
+
+def _weekly_capacity(engram: Any, cutoff: datetime) -> dict[str, Any] | None:
+    """This week's archive moves by reason, direct placements, queue size and demotions."""
+    status_fn = getattr(engram, "capacity_status", None)
+    rows_fn = getattr(engram, "_archive_rows_cached", None)
+    if not callable(status_fn) or not callable(rows_fn):
+        return None
+    try:
+        status = status_fn()
+        moved: dict[str, int] = {}
+        placed = 0
+        for kind in ("lesson", "decision"):
+            for row in rows_fn(kind):
+                ts = _parse_ts(row.get("overflow_archived_at"))
+                if ts is None or ts < cutoff:
+                    continue
+                reason = str(row.get("overflow_archive_reason") or "")
+                if reason == "snapshot":
+                    continue  # version history, not a capacity move
+                if reason == "review_queue_full":
+                    placed += 1
+                else:
+                    moved[reason] = moved.get(reason, 0) + 1
+        kinds = list(status.get("kinds", {}).values())
+        return {
+            "moved_to_archive": moved,
+            "placed_in_archive": placed,
+            "queue_remaining": sum(int(k.get("queued", 0)) for k in kinds),
+            "demoted": sum(int(k.get("demoted", 0)) for k in kinds),
+        }
+    except Exception:
+        return None

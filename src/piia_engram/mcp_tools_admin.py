@@ -1501,6 +1501,18 @@ async def doctor(output_format: str = "markdown") -> str:
         "detail": f"lessons={len(lessons)}, decisions={len(decisions)}",
     })
 
+    # 3.5 v4.21 capacity: pools, archive and what the next pass would move
+    try:
+        from piia_engram.capacity import doctor_finding
+
+        checks.append({"name": "capacity", **doctor_finding(S._get_engram().capacity_status())})
+    except Exception as exc:
+        checks.append({
+            "name": "capacity",
+            "status": "WARN",
+            "detail": f"capacity status unavailable: {S._safe_err(exc)}",
+        })
+
     # 4. Stale knowledge
     # NOTE: get_knowledge_overview() returns {"digest", "health", "stale"} — the
     # health-report payload (incl. items_needing_review / items_to_archive /

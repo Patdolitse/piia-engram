@@ -718,6 +718,23 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         problems += 1
         return problems
 
+    # 2.5 v4.21 capacity: pools, archive, interrupted imports (read-only)
+    try:
+        from piia_engram import capacity as _capacity
+
+        cap_status = eng.capacity_status()
+        finding = _capacity.doctor_finding(cap_status)
+        mark = "[ok]" if finding["status"] == "PASS" else "[--]"
+        print(f"    {mark} Capacity: {finding['detail']}")
+        if cap_status.get("import_pending"):
+            print("    [!!] An import was interrupted; run the same `engram import` again to finish it")
+            problems += 1
+        if any(info.get("next_moves") for info in cap_status["kinds"].values()):
+            print("         Run 'engram retention plan' to see which entries the next write moves.")
+    except Exception as exc:
+        print(f"    [!!] Capacity check failed: {exc}")
+        problems += 1
+
     # 3. 身份数据读取
     try:
         profile = eng.get_profile()

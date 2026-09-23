@@ -2967,6 +2967,7 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     _run_backup_plan,
     _render_import_result_text,
     _run_import_backup,
+    _run_retention,
     _run_export_agents_md,
     _run_recall,
     _run_dock_resume,
@@ -3154,6 +3155,8 @@ def main() -> None:
         sys.exit(_run_backup_plan(args[1:]))
     elif args[0] == "import":
         sys.exit(_run_import_backup(args[1:]))
+    elif args[0] == "retention":
+        sys.exit(_run_retention(args[1:]))
     elif args[0] == "export-agents-md":
         sys.exit(_run_export_agents_md(args[1:]))
     elif args[0] == "recall":
@@ -3271,6 +3274,7 @@ def main() -> None:
             "  engram recover-json <dataset>  Dry-run metadata scan for corrupt JSON backups\n"
             "  engram backup-plan      Metadata-only local backup plan (--json for raw)\n"
             "  engram import <backup.json>  Metadata-only import preview (--apply --yes to write)\n"
+            "  engram retention plan   What the capacity rules would move next (read-only; restore <id>)\n"
             "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"
             "  engram dock-status      Zero-write owner-console status for a desktop client (--json)\n"

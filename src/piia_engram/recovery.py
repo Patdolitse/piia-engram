@@ -391,18 +391,25 @@ def build_backup_plan(root: str | Path) -> dict[str, Any]:
         if not active.is_file():
             continue
         raw = active.read_bytes()
+        torn = None
         if active.suffix == ".jsonl":
-            entries = sum(1 for line in raw.splitlines() if line.strip())
+            from .storage import _read_jsonl_rows
+
+            parsed, torn = _read_jsonl_rows(active)
+            entries = len(parsed)
         else:
             data, status = _read_json_file(active)
             entries = len(data) if status == "ok" and isinstance(data, list) else None
-        datasets.append({
+        item = {
             "dataset": dataset,
             "file_name": active.relative_to(knowledge).as_posix(),
             "entries": entries,
             "bytes": len(raw),
             "sha256_12": hashlib.sha256(raw).hexdigest()[:12],
-        })
+        }
+        if torn is not None:
+            item["torn_lines"] = torn
+        datasets.append(item)
 
     return {
         "root": str(root_path),

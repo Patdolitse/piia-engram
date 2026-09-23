@@ -518,6 +518,24 @@ def govern_owner_only(
     return out, receipt
 
 
+def _withheld_write_ack(payload: dict, *, tool: str, trust: str) -> dict:
+    """A title/body-free write acknowledgement that keeps the capacity outcome counts."""
+    out = {
+        "success": payload.get("success", True),
+        "governance_withheld": True,
+        "tool": tool,
+        "trust_level": trust,
+        "reason": "stored item title/body withheld at current trust level",
+    }
+    archived = payload.get("overflow_archived_ids")
+    if isinstance(archived, list) and archived:
+        out["overflow_archived_count"] = len(archived)
+    for key in ("placement", "capacity"):
+        if key in payload:
+            out[key] = payload[key]
+    return out
+
+
 def govern_write_ack(
     root,
     payload,
@@ -558,13 +576,7 @@ def govern_write_ack(
     elif isinstance(payload, dict) and payload.get("error"):
         out = payload  # error strings only echo the caller's own IDs
     elif isinstance(payload, dict):
-        out = {
-            "success": payload.get("success", True),
-            "governance_withheld": True,
-            "tool": tool,
-            "trust_level": trust,
-            "reason": "stored item title/body withheld at current trust level",
-        }
+        out = _withheld_write_ack(payload, tool=tool, trust=trust)
         withheld = 1
     elif isinstance(payload, str):
         out = _ACK_WITHHELD
