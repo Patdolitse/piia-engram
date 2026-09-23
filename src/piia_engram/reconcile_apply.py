@@ -57,6 +57,14 @@ def _load_existing(eng) -> list[dict[str, Any]]:
             existing.extend(eng.get_decisions(limit=None, _update_access=False) or [])
         except Exception:  # pragma: no cover - defensive
             pass
+    # Rows the capacity cap archived were already imported once; classify
+    # against them too so an apply does not re-import them.
+    if hasattr(eng, "_read_overflow_archive"):
+        for kind in ("lesson", "decision"):
+            try:
+                existing.extend(eng._read_overflow_archive(kind))
+            except Exception:  # pragma: no cover - defensive
+                pass
     return existing
 
 

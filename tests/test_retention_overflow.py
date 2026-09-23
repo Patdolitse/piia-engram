@@ -394,15 +394,74 @@ def test_encrypted_store_archives_ciphertext_and_exports_plaintext(tmp_path, mon
 # -- batches and re-capture ---------------------------------------------------------
 
 
-def test_a_batch_never_pushes_out_its_own_rows(_full_stores, tmp_path, monkeypatch):
-    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
+def _bulk(engram: Engram, kind: str, rows: list[dict]) -> dict:
+    return engram.bulk_add_lessons(rows) if kind == "lesson" else engram.bulk_add_decisions(rows)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_batch_never_pushes_out_its_own_rows(_full_stores, tmp_path, monkeypatch, kind):
+    root, seeded, engram = _copy_store(_full_stores, kind, tmp_path, monkeypatch)
     monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
-    result = engram.bulk_add_lessons([_row("lesson", i, "BATCH") for i in range(3)])
+    result = _bulk(engram, kind, [_row(kind, i, "BATCH") for i in range(3)])
     saved_ids = [item["id"] for item in result["results"] if item["status"] == "saved"]
     assert len(saved_ids) == 3
-    assert set(saved_ids) <= set(_active_ids(root, "lesson"))
+    assert set(saved_ids) <= set(_active_ids(root, kind))
     assert result["overflow_archived_ids"] == seeded[:3]
     assert [item["overflow_archived_ids"] for item in result["results"]] == [[s] for s in seeded[:3]]
+
+
+def test_a_batch_keeps_its_rows_in_write_order(_full_stores, tmp_path, monkeypatch):
+    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    result = engram.bulk_add_lessons([_row("lesson", i, "ORDER") for i in range(5)])
+    saved_ids = [item["id"] for item in result["results"]]
+    active = _active_ids(root, "lesson")
+    assert [i for i in active if i in saved_ids] == saved_ids
+    # after the batch, the oldest staging row is the first one pushed out
+    later = _add(engram, "lesson", _row("lesson", 970, "N"))
+    assert later["overflow_archived_ids"] == [saved_ids[0]]
+
+
+def test_a_batch_larger_than_the_cap_still_keeps_the_cap(tmp_path, monkeypatch):
+    root = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    engram = Engram(root=root)
+    result = engram.bulk_add_lessons([_row("lesson", i, "BIG", tier="verified") for i in range(MAX_KNOWLEDGE_ENTRIES + 5)])
+    saved_ids = [item["id"] for item in result["results"] if item["status"] == "saved"]
+    assert len(saved_ids) == MAX_KNOWLEDGE_ENTRIES + 5
+    assert len(_active_ids(root, "lesson")) == MAX_KNOWLEDGE_ENTRIES
+    assert result["overflow_archived_ids"] == saved_ids[:5]
+    assert _archived_ids(root, "lesson") == saved_ids[:5]
+
+
+def test_every_batch_writer_runs_as_one_batch():
+    from piia_engram import compat, reconcile_apply
+
+    for func in (Engram.bulk_add_lessons, Engram.bulk_add_decisions, Engram.ingest_notes,
+                 Engram.commit_candidates, Engram.extract_session_insights, Engram.reconcile_memories,
+                 Engram.reconcile_ai_configs, compat.migrate_from_oca_memory, compat.import_from_openclaw,
+                 reconcile_apply.apply_reconcile):
+        assert getattr(func, "__wrapped__", None) is not None, func.__qualname__
+
+
+def test_config_recapture_skips_rules_already_in_the_archive(_full_stores, tmp_path, monkeypatch):
+    root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "CLAUDE.md").write_text(
+        "# Rules\n\n## Formatting\nAlways run the formatter on every changed Python file before review.\n\n"
+        "## Tests\nRun the full test suite before merging any change into the main branch.\n",
+        encoding="utf-8")
+    engram._discover_project_roots = lambda: [project]
+    first = engram.reconcile_ai_configs()["imported"]
+    assert first >= 1
+    for i in range(first):  # push the captured staging rows into the archive
+        _add(engram, "lesson", _row("lesson", 975 + i, "N", tier="verified"))
+    archived_before = len(_archive_lines(root, "lesson"))
+    assert engram.reconcile_ai_configs()["imported"] == 0
+    assert len(_archive_lines(root, "lesson")) == archived_before
 
 
 def test_recapture_skips_rows_already_in_the_archive(_full_stores, tmp_path, monkeypatch):

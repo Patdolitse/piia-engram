@@ -1512,19 +1512,29 @@ class Engram(
 
     @staticmethod
     def _select_overflow(
-        rows: list[dict], new_row: dict | None, protected: set[str]
+        rows: list[dict],
+        new_row: dict | None,
+        protected: set[str],
+        batch_ids: frozenset[str] | set[str] = frozenset(),
     ) -> tuple[list[dict], list[dict]]:
         """Split ``rows`` into (kept, evicted) for a list over the cap.
 
         Eviction order is unchanged from earlier releases (oldest non-protected
         staging first, then oldest non-protected non-staging), except that the
-        row written by the current call is never a candidate.
+        row written by the current call is never a candidate, and rows written
+        earlier in the same batch call (``batch_ids``) are taken only when
+        nothing else is left, oldest first, so the cap still holds. Rows keep
+        their relative order within their group.
         """
         staging = [r for r in rows if r.get("tier") == "staging" and r.get("id") not in protected]
         others = [r for r in rows if r.get("tier") != "staging" and r.get("id") not in protected]
         protected_rows = [r for r in rows if r.get("id") in protected]
         overflow = len(rows) - MAX_KNOWLEDGE_ENTRIES
-        candidates = [r for r in staging if r is not new_row] + [r for r in others if r is not new_row]
+
+        def _pick(group: list[dict], from_batch: bool) -> list[dict]:
+            return [r for r in group if r is not new_row and (r.get("id") in batch_ids) == from_batch]
+
+        candidates = _pick(staging, False) + _pick(others, False) + _pick(staging, True) + _pick(others, True)
         evicted = candidates[:max(overflow, 0)]
         gone = {id(r) for r in evicted}
         kept = (
@@ -1785,10 +1795,9 @@ class Engram(
                     result_box["result"] = new_lesson
                     return lessons  # fail closed: cap may temporarily exceed
                 batch = _OVERFLOW_BATCH.get()
-                if batch and batch["rows"]:
-                    # rows written earlier in the same batch call stay put
-                    protected = set(protected) | batch["rows"]
-                lessons, evicted = self._select_overflow(lessons, new_lesson, protected)
+                lessons, evicted = self._select_overflow(
+                    lessons, new_lesson, protected, batch["rows"] if batch else frozenset()
+                )
                 # Archive BEFORE the active file is rewritten (see above).
                 overflow_box["ids"] = self._archive_overflow_rows("lesson", evicted)
             result_box["result"] = new_lesson
@@ -2201,10 +2210,9 @@ class Engram(
                 if pending_target:
                     protected = set(protected) | {pending_target}
                 batch = _OVERFLOW_BATCH.get()
-                if batch and batch["rows"]:
-                    # rows written earlier in the same batch call stay put
-                    protected = set(protected) | batch["rows"]
-                decisions, evicted = self._select_overflow(decisions, new_decision, protected)
+                decisions, evicted = self._select_overflow(
+                    decisions, new_decision, protected, batch["rows"] if batch else frozenset()
+                )
                 # Archive BEFORE the active file is rewritten (see _select_overflow).
                 overflow_box["ids"] = self._archive_overflow_rows("decision", evicted)
             result_box["result"] = new_decision

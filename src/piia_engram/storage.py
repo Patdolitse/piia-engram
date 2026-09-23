@@ -610,8 +610,9 @@ def _read_jsonl_rows(path: Path) -> tuple[list[dict], int]:
 
 # -- write batches -----------------------------------------------------------
 # Rows written during one batch call (bulk add, note ingestion, session
-# extraction, reconcile) must not push each other out at the knowledge cap, and
-# the ids the cap moved to the overflow archive are reported once per batch.
+# extraction, reconcile) are pushed out by later rows of the same call only when
+# nothing else is left at the knowledge cap, and the ids the cap moved to the
+# overflow archive are reported once per batch.
 
 _OVERFLOW_BATCH: ContextVar[dict | None] = ContextVar("piia_engram_overflow_batch", default=None)
 
