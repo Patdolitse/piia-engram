@@ -1687,46 +1687,75 @@ class Engram(
                 return row
         return None
 
-    def _read_overflow_archive(self, entry_type: str) -> list[dict]:
-        """Return the overflow archive of ``entry_type`` in plaintext, oldest first.
+    @staticmethod
+    def _archive_signature(path: Path) -> tuple[int, str] | None:
+        """File size plus a hash of its first and last 4 KB, or None when absent."""
+        try:
+            size = path.stat().st_size
+            with open(path, "rb") as f:
+                head = f.read(4096)
+                if size > 8192:
+                    f.seek(-4096, os.SEEK_END)
+                tail = f.read(4096)
+        except OSError:
+            return None
+        return size, hashlib.sha256(head + b"|" + tail).hexdigest()
 
-        Read-only. Lines that do not parse (a torn append) are skipped. A line
-        whose content repeats an earlier line apart from the overflow stamp (a
-        retried write) is listed once; rows that share an id but differ in
-        content are all kept.
+    def _archive_rows_cached(self, entry_type: str) -> list[dict]:
+        """Parsed, decrypted archive rows, shared across calls; callers must not mutate them.
+
+        The key is ``(id, content_digest)``: a later line with the same key
+        replaces the earlier one and takes its own position, so a row archived
+        again reads back in its latest state. Rows that share an id but differ
+        in body are all kept. Torn lines are skipped. The parse is reused while
+        the file size and its first and last 4 KB are unchanged.
         """
-        raw_rows, _skipped = _read_jsonl_rows(self._overflow_archive_path(entry_type))
-        rows: list[dict] = []
-        seen: set[str] = set()
+        path = self._overflow_archive_path(entry_type)
+        signature = self._archive_signature(path)
+        if signature is None:
+            return []
+        cache = self.__dict__.setdefault("_archive_cache", {})
+        hit = cache.get(entry_type)
+        if hit is not None and hit[0] == signature:
+            return hit[1]
+        raw_rows, _skipped = _read_jsonl_rows(path)
+        slots: list[dict | None] = []
+        latest: dict[tuple[str, str], int] = {}
         for entry in raw_rows:
             item = self._ensure_fields(dict(entry), entry_type)
             if self._corpus_key:
                 item = self._crypto.decrypt_entry(item, self._corpus_key, entry_type)
-            identity = json.dumps(
-                {k: v for k, v in item.items() if k not in self._OVERFLOW_FIELDS},
-                sort_keys=True, ensure_ascii=False, default=str,
-            )
-            if identity in seen:
-                continue
-            seen.add(identity)
-            rows.append(item)
+            key = (str(item.get("id") or ""), _capacity.content_digest(item, entry_type))
+            if key in latest:
+                slots[latest[key]] = None
+            latest[key] = len(slots)
+            slots.append(item)
+        rows = [row for row in slots if row is not None]
+        cache[entry_type] = (signature, rows)
         return rows
+
+    def _read_overflow_archive(self, entry_type: str) -> list[dict]:
+        """Return the overflow archive of ``entry_type`` in plaintext, oldest first.
+
+        Read-only; the rows are copies. See ``_archive_rows_cached`` for the
+        dedup rule.
+        """
+        return deepcopy(self._archive_rows_cached(entry_type))
 
     def _overflow_archive_texts(self) -> set[str]:
         """Identity texts (lesson summaries, decision questions and choices) of archived rows."""
         texts: set[str] = set()
-        for row in self._read_overflow_archive("lesson"):
+        for row in self._archive_rows_cached("lesson"):
             texts.add(str(row.get("summary", "") or ""))
-        for row in self._read_overflow_archive("decision"):
+        for row in self._archive_rows_cached("decision"):
             texts.add(str(row.get("question", "") or ""))
             texts.add(str(row.get("choice", "") or ""))
         texts.discard("")
         return texts
 
     def _archive_ids(self, entry_type: str) -> set[str]:
-        """Ids in the overflow archive of ``entry_type`` (raw read, no decryption)."""
-        raw_rows, _skipped = _read_jsonl_rows(self._overflow_archive_path(entry_type))
-        return {str(row["id"]) for row in raw_rows if row.get("id")}
+        """Ids in the overflow archive of ``entry_type``."""
+        return {str(row["id"]) for row in self._archive_rows_cached(entry_type) if row.get("id")}
 
     @staticmethod
     def _archive_rank(row: dict) -> tuple[int, datetime]:

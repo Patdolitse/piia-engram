@@ -362,3 +362,36 @@ def test_restoring_an_archived_snapshot_is_refused(engram: Engram):
     lesson_id = engram.add_lesson({"summary": "text before the edit"}, domain="x")["id"]
     engram.update_knowledge(lesson_id, {"summary": "text after the edit"})
     assert engram.restore_lifecycle_archive(f"{lesson_id}-prev-v1")["error"] == "snapshot_immutable"
+
+
+# -- archive reads: (id, content digest) key, latest line wins, cached -----------------
+
+
+def test_a_row_archived_again_with_new_metadata_reads_back_in_its_latest_state(engram: Engram):
+    row = {"id": "L-re", "summary": "same body", "tier": "staging", "status": "active"}
+    _raw_archive(engram, "lesson", [row, dict(row, status="outdated"), {"id": "L-other", "summary": "x"}])
+    rows = engram._read_overflow_archive("lesson")
+    assert [(r["id"], r["status"]) for r in rows] == [("L-re", "outdated"), ("L-other", "active")]
+    assert engram.get_overflow_archived("lesson", "L-re")["status"] == "outdated"
+
+
+def test_rows_with_one_id_and_different_bodies_are_all_kept(engram: Engram):
+    _raw_archive(engram, "lesson", [{"id": "L-v", "summary": "body one"}, {"id": "L-v", "summary": "body two"}])
+    assert [r["summary"] for r in engram._read_overflow_archive("lesson")] == ["body one", "body two"]
+
+
+def test_an_unchanged_archive_is_parsed_once(engram: Engram, monkeypatch):
+    from piia_engram import core as core_mod
+
+    calls = []
+    real = core_mod._read_jsonl_rows
+    monkeypatch.setattr(core_mod, "_read_jsonl_rows", lambda path: calls.append(path) or real(path))
+    _raw_archive(engram, "lesson", [{"id": "L-c", "summary": "cached"}])
+    engram._read_overflow_archive("lesson")
+    engram._overflow_archive_texts()
+    engram._archive_ids("lesson")
+    lesson_calls = [p for p in calls if p.name == "lessons.jsonl"]
+    assert len(lesson_calls) == 1
+    _raw_archive(engram, "lesson", [{"id": "L-d", "summary": "appended"}])
+    assert "L-d" in engram._archive_ids("lesson")
+    assert len([p for p in calls if p.name == "lessons.jsonl"]) == 2

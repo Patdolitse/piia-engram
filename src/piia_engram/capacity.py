@@ -19,6 +19,8 @@ Pools (counted per kind):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -39,6 +41,20 @@ SYSTEM_FIELDS = (
     "approval_reason",
     "pending_supersedes",
 )
+
+# Body fields that identify a row's content (the archive dedup key uses them).
+BODY_FIELDS = {
+    "lesson": ("summary", "detail", "domain"),
+    "decision": ("title", "question", "choice", "reasoning", "alternatives"),
+}
+
+
+def content_digest(row: Mapping[str, Any], kind: str) -> str:
+    """sha256 of the row's normalized body fields."""
+    body = {name: row.get(name) for name in BODY_FIELDS[kind]}
+    text = json.dumps(body, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
 
 # Status values a caller may set through an update.
 UPDATABLE_STATUSES = frozenset({"active", "outdated", "rejected"})
