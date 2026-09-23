@@ -1,7 +1,7 @@
 """Regression: a project-id hash that matches a PII shape must not be
 redacted in the digest source block (breaks exact-scope filtering).
 
-Root cause (Codex investigation ENG-CORE-013): a 12-hex project hash like
+Root cause: a 12-hex project hash like
 "13834567890a" matches the CN mobile-phone pattern; sanitize_digest_value
 rewrites it to [REDACTED]a; the exact-scope filter then excludes the
 project's own digest because the source id no longer matches the canonical

@@ -74,7 +74,7 @@ v4.19.0 发布后 Codex 终审发现的合同保真度缺口（全部由在 `mai
 - 冷启动上下文仅取 verified：staging 的 lessons/decisions/playbooks 不再出现在 `generate_context`/`quick_context`；tier 过滤下沉检索层。
 
 ### 修复
-- **PII 形状项目哈希脱敏不再破坏 scope 过滤**（ENG-CORE-013）：12-hex 项目哈希匹配中国手机号模式时被脱敏改写 source.project_id，导致 exact-scope 过滤排除项目自身的会话摘要。内部已验证项目标识现在原样保留，摘要正文仍过完整脱敏。这是确定性召回缺陷（PII 形状哈希 3/3 复现），非间歇性 flake。
+- **PII 形状项目哈希脱敏不再破坏 scope 过滤**：12-hex 项目哈希匹配中国手机号模式时被脱敏改写 source.project_id，导致 exact-scope 过滤排除项目自身的会话摘要。内部已验证项目标识现在原样保留，摘要正文仍过完整脱敏。这是确定性召回缺陷（PII 形状哈希 3/3 复现），非间歇性 flake。
 - **项目身份三态机**：畸形 `.git` 文件（内容损坏/空/悬空 gitdir 目标）现在终止步进回退路径哈希身份，不再继续向上继承无关祖先仓库。只有真正缺失的 marker（ENOENT/ENOTDIR）继续向上；不可判定的（EACCES/EPERM/EIO/ELOOP/EBADF）全部关闭。
 - 跨行秘密对：状态机读取归一化后的前一行（零宽/同形字符混淆键形态无法绕过配对），跨 block/message 边界持续，检测到对时同时移除键行和值行。
 - 整体复扫在任何脱敏触发后永不返回原始摘要。
