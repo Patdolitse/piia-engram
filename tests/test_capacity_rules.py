@@ -173,6 +173,14 @@ def test_removed_rows_are_archived_as_a_backstop():
     assert [(r["id"], reason) for r, reason in plan.archive] == [("r1", cap.REASON_REMOVED)]
 
 
+def test_removed_rows_the_caller_already_archived_are_not_archived_again():
+    before = [_row(i) for i in range(4)]
+    after = [dict(before[0])]
+    plan = _plan([dict(r) for r in before], after, skip_archive_ids=frozenset({"r1", "r3"}))
+    assert [(r["id"], reason) for r, reason in plan.archive] == [("r2", cap.REASON_REMOVED)]
+    assert [r["id"] for r in plan.rows] == ["r0"]
+
+
 def test_supersede_target_and_changed_rows_are_exempt():
     old = _iso(NOW - timedelta(days=30))
     before = [_row(i, tier="staging", queued_at=old, ingested_at=old) for i in range(3)]

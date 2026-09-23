@@ -655,7 +655,9 @@ class ImportExportMixin:
             )
             if not edge_present:
                 if added_entry:
-                    self._write_entries(path, original_entries, entry_type)
+                    self._write_entries(
+                        path, original_entries, entry_type, skip_archive_ids={new_id}
+                    )
                 return {"outcome": "skipped", "reason": "relation_failed"}
 
             final_entries = []
@@ -675,7 +677,9 @@ class ImportExportMixin:
                     pass
             if added_entry:
                 try:
-                    self._write_entries(path, original_entries, entry_type)
+                    self._write_entries(
+                        path, original_entries, entry_type, skip_archive_ids={new_id}
+                    )
                 except Exception:
                     pass
             return {"outcome": "skipped", "reason": "write_failed"}
@@ -934,11 +938,15 @@ class ImportExportMixin:
                 # Keep the last MAX_KNOWLEDGE_ENTRIES; rows pushed out go to the
                 # overflow archive (written first) instead of being dropped.
                 kept, archived = self._split_import_overflow("lesson", existing)
-                self._write_entries(self._knowledge_dir / "lessons.json", kept, "lesson")
+                self._write_entries(
+                    self._knowledge_dir / "lessons.json", kept, "lesson", skip_archive_ids=archived
+                )
                 imported.append(f"lessons(+{new_count}{self._archived_note(archived)})")
             else:
                 kept, archived = self._split_import_overflow("lesson", list(knowledge["lessons"]))
-                self._write_entries(self._knowledge_dir / "lessons.json", kept, "lesson")
+                self._write_entries(
+                    self._knowledge_dir / "lessons.json", kept, "lesson", skip_archive_ids=archived
+                )
                 imported.append(f"lessons({len(kept)}{self._archived_note(archived)})")
 
         if knowledge.get("decisions"):
@@ -956,11 +964,15 @@ class ImportExportMixin:
                         existing_questions.add(decision.get("question", ""))
                         new_count += 1
                 kept, archived = self._split_import_overflow("decision", existing)
-                self._write_entries(self._knowledge_dir / "decisions.json", kept, "decision")
+                self._write_entries(
+                    self._knowledge_dir / "decisions.json", kept, "decision", skip_archive_ids=archived
+                )
                 imported.append(f"decisions(+{new_count}{self._archived_note(archived)})")
             else:
                 kept, archived = self._split_import_overflow("decision", list(knowledge["decisions"]))
-                self._write_entries(self._knowledge_dir / "decisions.json", kept, "decision")
+                self._write_entries(
+                    self._knowledge_dir / "decisions.json", kept, "decision", skip_archive_ids=archived
+                )
                 imported.append(f"decisions({len(kept)}{self._archived_note(archived)})")
 
         if knowledge.get("domains"):
