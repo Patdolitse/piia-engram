@@ -10,7 +10,7 @@ from typing import Any
 from . import capacity as _capacity
 from . import freshness_anchors as _freshness_anchors
 from . import provenance as _provenance
-from .storage import _now_iso
+from .storage import _now_iso, overflow_batch
 
 
 class KnowledgeOpsMixin:
@@ -303,6 +303,7 @@ class KnowledgeOpsMixin:
             return f"This project depends on `{ref}`."
         return f"This project includes the file `{ref}`."
 
+    @overflow_batch
     def create_onboard_candidates(
         self,
         anchors: list[dict],
@@ -326,6 +327,15 @@ class KnowledgeOpsMixin:
                 ref_str = prov.get("anchor_ref")
                 if isinstance(ref_str, str) and ref_str:
                     index[ref_str] = entry
+        # A candidate the capacity rules moved to the archive was already
+        # proposed once: it counts as existing and is not created again.
+        archived_refs: set[str] = set()
+        for entry in self._archived_only_rows("lesson").values():
+            prov = entry.get("provenance")
+            if isinstance(prov, dict) and prov.get("anchor_project_id") == repo_id:
+                ref_str = prov.get("anchor_ref")
+                if isinstance(ref_str, str) and ref_str and ref_str not in index:
+                    archived_refs.add(ref_str)
 
         created: list[dict] = []
         existing = 0
@@ -344,6 +354,9 @@ class KnowledgeOpsMixin:
             anchor_ref = anchor.get("anchor_ref") or _freshness_anchors.format_anchor_ref(kind, ref)
             claim = self._onboard_claim_text(kind, ref, detail)
 
+            if anchor_ref in archived_refs:
+                existing += 1
+                continue
             prior = index.get(anchor_ref)
             if prior is not None:
                 prior_prov = prior.get("provenance") if isinstance(prior.get("provenance"), dict) else {}

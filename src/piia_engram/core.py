@@ -1672,6 +1672,34 @@ class Engram(
             batch["archived_rows"][entry_type].extend(items)
         return ids
 
+    def _archived_identity_twin(self, entry_type: str, new_row: dict) -> dict | None:
+        """An archived row with the same identity text (and choice) in the same project scope."""
+        identity = self._entry_identity_text(new_row, entry_type)
+        if not identity:
+            return None
+        choice = (new_row.get("choice") or "").strip().lower()
+        for row in reversed(self._archive_rows_cached(entry_type)):
+            if self._is_snapshot_record(row):
+                continue
+            if self._entry_identity_text(row, entry_type) != identity:
+                continue
+            if entry_type == "decision" and (row.get("choice") or "").strip().lower() != choice:
+                continue
+            if self._entries_share_project_scope(new_row, row):
+                return row
+        return None
+
+    def _archived_duplicate_result(self, entry_type: str, row: dict) -> dict:
+        return {
+            "status": "duplicate",
+            "similarity": 1.0,
+            "existing_id": row.get("id"),
+            "existing_title": self._entry_identity_text(row, entry_type),
+            "message": "与溢出归档中的条目相同，未重复添加（可从回收站恢复） / "
+                       "Same as an entry in the overflow archive; not added again (restore it instead)",
+            "in_overflow_archive": True,
+        }
+
     def _batch_archived_revision(self, new_row: dict) -> dict | None:
         """A same-question decision with another choice that the open batch archived, or None."""
         batch = _OVERFLOW_BATCH.get()
@@ -2062,6 +2090,12 @@ class Engram(
             )
 
             self._redirect_when_verified_full(new_lesson, lessons)
+            # A queued capture already in the archive is not placed there again.
+            if _capacity.pool_of(new_lesson) != _capacity.POOL_V:
+                archived_copy = self._archived_identity_twin("lesson", new_lesson)
+                if archived_copy is not None:
+                    result_box["result"] = self._archived_duplicate_result("lesson", archived_copy)
+                    return lessons
             lessons.append(new_lesson)
             result_box["result"] = new_lesson
             return lessons
@@ -2533,6 +2567,12 @@ class Engram(
             )
 
             self._redirect_when_verified_full(new_decision, decisions)
+            # A queued capture already in the archive is not placed there again.
+            if _capacity.pool_of(new_decision) != _capacity.POOL_V:
+                archived_copy = self._archived_identity_twin("decision", new_decision)
+                if archived_copy is not None:
+                    result_box["result"] = self._archived_duplicate_result("decision", archived_copy)
+                    return decisions
             # The decision this write is about to supersede is never moved out
             # by the same write (explicit ``supersedes`` or auto-detected).
             target = str(new_decision.get("supersedes") or auto_supersedes_target or "")

@@ -85,8 +85,57 @@ def _load_existing(eng) -> list[dict[str, Any]]:
             existing.extend(eng.get_decisions(limit=None, _update_access=False) or [])
         except Exception:  # pragma: no cover - defensive
             pass
-    existing.extend(_archived_existing(eng))
     return existing
+
+
+def _archived_exact_index(eng) -> dict[tuple, str]:
+    """Exact keys of archived rows -> id.
+
+    ``("lesson", summary)``, ``("decision", question, choice)`` and, for
+    conflicts, ``("question", question)``.
+    """
+    index: dict[tuple, str] = {}
+    for row in _archived_existing(eng):
+        row_id = str(row.get("id") or "")
+        if row.get("question"):
+            question = str(row.get("question") or "").strip()
+            index[("decision", question, str(row.get("choice") or "").strip())] = row_id
+            index[("question", question)] = row_id
+        else:
+            index[("lesson", str(row.get("summary") or "").strip())] = row_id
+    return index
+
+
+def _mark_archived_duplicates(eng, candidates: list[dict[str, Any]], verdicts: list[dict]) -> None:
+    """Archived rows match only by exact text.
+
+    Same text is a duplicate; a decision with the same question and another
+    choice is a conflict. Archived rows are not part of the similarity
+    classification, so a near-miss against an archived row never blocks an
+    import.
+    """
+    index = _archived_exact_index(eng)
+    if not index:
+        return
+    for idx, verdict in enumerate(verdicts):
+        if verdict.get("action") == "duplicate" or idx >= len(candidates):
+            continue
+        candidate = candidates[idx]
+        if candidate.get("question"):
+            key = ("decision", str(candidate.get("question") or "").strip(),
+                   str(candidate.get("choice") or "").strip())
+        else:
+            key = ("lesson", str(candidate.get("summary") or "").strip())
+        match = index.get(key)
+        if match is not None:
+            verdict.update(action="duplicate", reason="in_overflow_archive",
+                           best_score=1.0, match_id=match)
+            continue
+        if key[0] == "decision" and verdict.get("action") != "conflict":
+            match = index.get(("question", key[1]))
+            if match is not None:
+                verdict.update(action="conflict", reason="in_overflow_archive",
+                               best_score=1.0, match_id=match)
 
 
 @overflow_batch
@@ -117,6 +166,7 @@ def apply_reconcile(
 
     proposal = _rp.build_reconcile_proposal(candidates, existing, source=source)
     verdicts = proposal.get("items", [])
+    _mark_archived_duplicates(eng, candidates, verdicts)
 
     # action -> apply outcome counts (metadata only).
     counts = {"import": 0, "duplicate": 0, "conflict": 0, "skip": 0,
@@ -197,6 +247,7 @@ def preview_reconcile_conflicts(
     if existing is None:
         existing = _load_existing(eng)
     proposal = _rp.build_reconcile_proposal(candidates, existing, source=source)
+    _mark_archived_duplicates(eng, candidates, proposal.get("items", []))
     conflicts = [
         {
             "candidate_ref": idx,

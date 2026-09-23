@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .storage import MAX_KNOWLEDGE_ENTRIES, _now_iso, overflow_batch
+from .storage import _now_iso, overflow_batch
 
 logger = logging.getLogger(__name__)
 
@@ -421,8 +421,12 @@ def import_from_openclaw(
         if p.is_file():
             content = p.read_text(encoding="utf-8")
             existing_summaries = {
-                l.get("summary", "") for l in engram.get_lessons(limit=MAX_KNOWLEDGE_ENTRIES, _update_access=False)
+                l.get("summary", "") for l in engram.get_lessons(limit=None, _update_access=False)
             }
+            # Lessons already moved to the overflow archive are not imported again.
+            archived_texts = getattr(engram, "_overflow_archive_texts", None)
+            if callable(archived_texts):
+                existing_summaries |= archived_texts()
             new_count = 0
             current_section = ""
             for line in content.split("\n"):
