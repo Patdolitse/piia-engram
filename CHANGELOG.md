@@ -6,6 +6,19 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.20.2] - 2026-09-23
+
+### Fixed
+- **No silent loss at the knowledge cap**: each knowledge type (lessons, decisions) keeps at most 200 active rows. Before this release, a write into a full type silently dropped a row — the oldest one or, with strict approval on, the new row itself — while still reporting success. Rows pushed out by the cap now move to an append-only overflow archive (`knowledge/overflow_archive/`) instead of being deleted, and the row being written is never the one pushed out. The archive is written before the active file, keeps the store's at-rest encryption, never rewrites earlier entries, and is not pruned automatically.
+- **Batches keep their own rows**: rows written in one batch call (bulk writes, note ingestion, session extraction, config and memory reconciliation, imports from other tools) are never pushed out by later rows of the same call.
+- **Overflow is visible**: the write result carries `overflow_archived_ids` whenever rows were archived, batch results list them too, the MCP replies of `add_lesson`, `add_decision` and `memory_store` say how many rows were moved, and each archived row gets an audit entry holding only its id and the reason.
+- **Archived rows stay reachable**: `Engram.get_overflow_archived(kind, id)` returns an archived row; `export_all` includes the archive under `overflow_archive`; `backup-plan` lists the archive files. Search, recall and list calls keep returning active rows only, and automatic re-capture skips content that is already in the archive.
+- **Imports over the cap archive instead of truncating**: an import that would exceed 200 rows of a type archives the rows it pushes out and reports how many rows were written and archived.
+- Playbook pointers in recall always stay within the playbook share of the budget, including the first pointer; `context_preview` shows the playbook bucket under its own label.
+- The agent-transcripts fallback accepts only the exact `<uuid>/<same-uuid>.jsonl` shape as the final path segment; session ids must be plain `[A-Za-z0-9._-]` (look-alike Unicode characters fall back to a timestamp id).
+- Vector-index DDL comes only from a fixed table of statements; no SQL is built from values at run time.
+- Cap handling fails closed when the set of protected rows cannot be read, and never moves out a decision that the current write is about to supersede, whether that target was detected automatically or given explicitly.
+
 ## [4.20.0] - 2026-08-30
 
 ### Added

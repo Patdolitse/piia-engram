@@ -1,8 +1,7 @@
-"""v4.20.1 contract fixes: negative controls from the Codex FINAL review of v4.20.0.
+"""Contract fixes shipped after 4.20.0: negative controls for four contract gaps.
 
-The review (codex_final_420_out.md in the session working directory) found
-4 NOT items. These controls pin the corrected contracts; each is red on the
-v4.20.0 release commit (8a9e697) by construction:
+These controls pin the corrected contracts; each is red on the 4.20.0 release
+commit (8a9e697) by construction:
 
   1. the playbook budget sub-cap is HARD: the FIRST playbook item also pays
      against the 25% cap (a 100-token budget can never return a 209-token
