@@ -611,7 +611,7 @@ def run_review(argv: list[str] | None = None) -> int:
             return 1
         result = eng.promote_knowledge(item_id)
         if result.get("status") != "promoted":
-            print(f"Review item could not be promoted: {item_id}")
+            print(f"Review item could not be promoted: {item_id} ({result.get('status')})")
             return 1
         print(f"Promoted review item: {item_id}")
         return 0

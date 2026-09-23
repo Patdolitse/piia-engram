@@ -1898,6 +1898,29 @@ class Engram(
         if batch is not None:
             batch["archived"].extend(outcome.archived_ids)
 
+    @staticmethod
+    def _capacity_refusal(write, item_id: str) -> dict | None:
+        """Run ``write``; return an error dict instead of raising a capacity refusal."""
+        try:
+            write()
+        except _capacity.CapacityRefused as exc:
+            return {
+                "error": "capacity_full",
+                "item_id": item_id,
+                "kind": exc.kind,
+                "hard_cap": exc.hard_cap,
+                "message": "reviewed entries are at their limit; retire or archive some before adding more",
+            }
+        except _capacity.QueueFull as exc:
+            return {
+                "error": "review_queue_full",
+                "item_id": item_id,
+                "kind": exc.kind,
+                "ceiling": exc.ceiling,
+                "message": "the review queue is full; review or archive queued entries first",
+            }
+        return None
+
     def _redirect_when_verified_full(self, new_row: dict, rows: list[dict]) -> None:
         """Send a new verified row to the review queue when the verified budget is full."""
         if new_row.get("tier") != "verified":
@@ -2095,7 +2118,15 @@ class Engram(
             result_box["result"] = {"error": f"Lesson not found: {lesson_id}"}
             return lessons
 
-        self._update_entries(path, "lesson", _mutate_lessons)
+        refusal = self._capacity_refusal(
+            lambda: self._update_entries(
+                path, "lesson", _mutate_lessons,
+                capacity_ctx=_capacity.CapacityContext(on_queue_full="refuse"),
+            ),
+            lesson_id,
+        )
+        if refusal is not None:
+            return refusal
         result = result_box["result"]
         if result_box.get("tier_changed"):
             self._audit.log(
@@ -2515,7 +2546,15 @@ class Engram(
             result_box["result"] = {"error": f"Decision not found: {decision_id}"}
             return decisions
 
-        self._update_entries(path, "decision", _mutate_decisions)
+        refusal = self._capacity_refusal(
+            lambda: self._update_entries(
+                path, "decision", _mutate_decisions,
+                capacity_ctx=_capacity.CapacityContext(on_queue_full="refuse"),
+            ),
+            decision_id,
+        )
+        if refusal is not None:
+            return refusal
         result = result_box["result"]
         if result_box.get("tier_changed"):
             self._audit.log(

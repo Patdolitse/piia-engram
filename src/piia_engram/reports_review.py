@@ -561,7 +561,14 @@ function copyResult() {{
                 confirmation_source="human",
             )
 
-        updated = self._update_knowledge_item(item_type, item_id, _promote)
+        box: dict = {}
+        refusal = self._capacity_refusal(
+            lambda: box.setdefault("updated", self._update_knowledge_item(item_type, item_id, _promote)),
+            item_id,
+        )
+        if refusal is not None:
+            return {"status": refusal["error"], "id": item_id, "message": refusal["message"]}
+        updated = box.get("updated")
         if mismatch["hit"]:
             return {"status": "tier_mismatch", "id": item_id}
         if updated is not None:

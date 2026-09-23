@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from . import capacity as _capacity
 from . import freshness_anchors as _freshness_anchors
 from . import provenance as _provenance
 from .storage import _now_iso
@@ -556,7 +557,14 @@ class KnowledgeOpsMixin:
             updated["provenance"] = prov
             return updated
 
-        updated = self._update_knowledge_item(item_type, item_id, _mark)
+        box: dict[str, Any] = {}
+        refusal = self._capacity_refusal(
+            lambda: box.setdefault("updated", self._update_knowledge_item(item_type, item_id, _mark)),
+            item_id,
+        )
+        if refusal is not None:
+            return refusal
+        updated = box.get("updated")
         if updated is None:
             return {"error": f"Item not found: {item_id}"}
         self._audit.log("write", "knowledge/onboard-accept", detail=item_id)
@@ -1107,7 +1115,15 @@ class KnowledgeOpsMixin:
                 result_box["result"] = None
                 return entries
 
-            self._update_entries(path, kind, _mutate_entries)
+            refusal = self._capacity_refusal(
+                lambda: self._update_entries(
+                    path, kind, _mutate_entries,
+                    capacity_ctx=_capacity.CapacityContext(on_queue_full="refuse"),
+                ),
+                item_id,
+            )
+            if refusal is not None:
+                return refusal
             result = result_box.get("result")
             if result is None:
                 continue
