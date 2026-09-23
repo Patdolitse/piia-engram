@@ -63,6 +63,16 @@ _LESSON_EVIDENCE_RE = re.compile(
 
 _EXPLICIT_LESSON_RE = re.compile(r"^\s*(?:lesson|lessons learned|经验|教训|复盘)\s*[:：]", re.IGNORECASE)
 
+# Chinese and full-width terminators and newlines always end a sentence; an
+# ASCII '.', '!' or '?' ends one only before whitespace or the end of the text,
+# so file names, versions, decimals and URLs stay inside their sentence.
+_SENTENCE_BOUNDARY_RE = re.compile(r"[。！？\n]+|[.!?]+(?=\s|$)")
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split text into raw sentence pieces (not stripped; may contain empties)."""
+    return _SENTENCE_BOUNDARY_RE.split(str(text or ""))
+
 
 def strip_session_noise_blocks(text: str) -> str:
     """Remove copied prompts, quoted/code blocks, and delegation envelopes."""

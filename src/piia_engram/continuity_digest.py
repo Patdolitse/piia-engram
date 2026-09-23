@@ -19,6 +19,7 @@ from .session_filters import (
     has_explicit_decision_signal,
     has_lesson_outcome_signal,
     is_process_or_delegation_sentence,
+    split_sentences,
     strip_session_noise_blocks,
 )
 
@@ -177,7 +178,7 @@ def _extract_changed_files(text: str) -> list[dict]:
 def _extract_decisions_lessons(text: str) -> tuple[list[dict], list[dict]]:
     decisions: list[dict] = []
     lessons: list[dict] = []
-    for raw in re.split(r"[。！？.!?\n]+", strip_session_noise_blocks(text)):
+    for raw in split_sentences(strip_session_noise_blocks(text)):
         sentence = raw.strip()
         if len(sentence) < 6:
             continue

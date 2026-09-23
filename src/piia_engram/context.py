@@ -36,6 +36,7 @@ from .session_filters import (
     has_explicit_decision_signal,
     has_lesson_outcome_signal,
     is_process_or_delegation_sentence,
+    split_sentences,
     strip_session_noise_blocks,
 )
 from .sensitivity import _SECRET_VALUE_RE  # audited high-confidence credential shapes
@@ -575,7 +576,7 @@ class ContextMixin:
             return {"candidates": [], "skipped": 0, "skipped_low_quality": 0}
 
         candidate_text = strip_session_noise_blocks(text)
-        sentences = re.split(r"[。！？.!?\n]+", candidate_text)
+        sentences = split_sentences(candidate_text)
         candidates: list[dict] = []
         skipped = skipped_low_quality = 0
         seen: set[tuple[str, str]] = set()
@@ -758,7 +759,7 @@ class ContextMixin:
             }
 
         candidate_summary = strip_session_noise_blocks(summary)
-        sentences = re.split(r"[。！？.!?\n]+", candidate_summary)
+        sentences = split_sentences(candidate_summary)
         saved_lessons = saved_decisions = duplicates = skipped = skipped_low_quality = 0
         rejected_by_output_guard = 0
         rejected_quality = _empty_rejected_quality_summary()
@@ -1206,7 +1207,7 @@ class ContextMixin:
     def _extract_pitfalls(self, text: str) -> list[str]:
         """Extract pitfall/caveat sentences from text."""
         pitfalls = []
-        sentences = re.split(r"[。！？.!?\n]+", text)
+        sentences = split_sentences(text)
         for sentence in sentences:
             sentence = sentence.strip()
             if not sentence or len(sentence) < 8:
