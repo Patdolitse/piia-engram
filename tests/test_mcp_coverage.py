@@ -13,6 +13,7 @@ import pytest
 
 from piia_engram import mcp_server
 from piia_engram.core import Engram
+from knowledge_seed import raw_write_json
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +80,7 @@ class TestReadToolsCoverage:
         dup["id"] = "dup-mcp-test"
         dup["summary"] = base.replace("和超时设置", "与超时配置")
         lessons.append(dup)
-        eng._atomic_write(lessons_path, lessons)
+        raw_write_json(lessons_path, lessons)
         result = _run(mcp_server.explore_knowledge(
             mode="merge_candidates", threshold=0.4, limit=5
         ))

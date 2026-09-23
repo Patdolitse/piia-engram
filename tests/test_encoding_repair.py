@@ -201,3 +201,19 @@ def test_add_lesson_repairs_high_confidence_mojibake_before_persisting(tmp_path:
     assert result["summary"] == "发布流程测试"
     stored = json.loads((tmp_path / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
     assert stored[0]["summary"] == "发布流程测试"
+
+
+def test_repair_leaves_the_overflow_archive_untouched(tmp_path: Path):
+    from piia_engram.encoding_repair import repair_engram_root, scan_engram_root
+
+    archive = tmp_path / "knowledge" / "overflow_archive" / "lessons.jsonl"
+    archive.parent.mkdir(parents=True)
+    line = json.dumps({"id": "a1", "summary": _gbk_mojibake("发布流程测试")}, ensure_ascii=False)
+    archive.write_text(line + "\n", encoding="utf-8")
+    before = archive.read_bytes()
+
+    assert scan_engram_root(tmp_path).findings == []
+    report = repair_engram_root(tmp_path, apply=True)
+
+    assert report.changed_files == []
+    assert archive.read_bytes() == before

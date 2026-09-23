@@ -14,7 +14,7 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from .storage import _write_json
+from .storage import _update_json, _write_json, knowledge_write_allowed
 
 
 _COMMON_CJK_TERMS = (
@@ -79,6 +79,10 @@ _SKIP_KEYS = {
 }
 
 _TEXT_SUFFIXES = {".json", ".jsonl", ".md", ".txt"}
+# Backups are copies; the overflow archive is written by Engram in UTF-8 and is
+# append-only, so neither is scanned or rewritten.
+_SKIPPED_DIRS = {"backups", "overflow_archive"}
+_KNOWLEDGE_FILES = {"lessons.json", "decisions.json"}
 
 
 def _build_markers() -> tuple[str, ...]:
@@ -304,7 +308,7 @@ def _iter_json_files(root: Path) -> list[Path]:
         if not path.is_file() or path.suffix.lower() not in _TEXT_SUFFIXES:
             continue
         rel_parts = set(path.relative_to(root).parts)
-        if "backups" in rel_parts or path.name.startswith("."):
+        if rel_parts & _SKIPPED_DIRS or path.name.startswith("."):
             continue
         if ".corrupt." in path.name:
             continue
@@ -429,6 +433,11 @@ def repair_engram_root(
             shutil.copy2(path, backup_path)
         if isinstance(normalized, str):
             path.write_text(normalized, encoding="utf-8")
+        elif path.parent.name == "knowledge" and path.name in _KNOWLEDGE_FILES:
+            # Re-read and repair under the write lock so a concurrent write
+            # between the scan and this repair is kept, not overwritten.
+            with knowledge_write_allowed():
+                _update_json(path, lambda current: normalize_entry_text(current)[0], default=[])
         else:
             _write_json(path, normalized)
         changed_files.append(path)

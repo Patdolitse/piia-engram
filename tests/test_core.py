@@ -21,6 +21,7 @@ from piia_engram.core import (
     migrate_from_oca_memory,
 )
 from piia_engram.storage import _project_id
+from knowledge_seed import raw_write_json
 
 
 def make_engram(tmp_path: Path) -> Engram:
@@ -856,7 +857,7 @@ def test_last_reviewed_updated_on_read(tmp_path: Path):
     old_review = (datetime.now() - timedelta(days=40)).isoformat()
     lessons[0]["last_reviewed"] = old_review
     lessons[0]["access_count"] = 0
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     lessons = engram.get_lessons()
 
@@ -877,7 +878,7 @@ def test_get_stale_knowledge(tmp_path: Path):
     lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
     stale_review = (datetime.now() - timedelta(days=40)).isoformat()
     lessons[0]["last_reviewed"] = stale_review
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     stale = engram.get_stale_knowledge(days=30)
 
@@ -895,7 +896,7 @@ def test_review_knowledge_updates_review_metadata(tmp_path: Path):
     old_review = (datetime.now() - timedelta(days=45)).isoformat()
     lessons[0]["last_reviewed"] = old_review
     lessons[0]["access_count"] = 1
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     reviewed = engram.review_knowledge(lesson["id"])
 
@@ -926,7 +927,7 @@ def test_get_stale_knowledge_limit(tmp_path: Path):
     stale_review = (datetime.now() - timedelta(days=60)).isoformat()
     for lesson in lessons:
         lesson["last_reviewed"] = stale_review
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     stale = engram.get_stale_knowledge(days=30, limit=1)
     none = engram.get_stale_knowledge(days=30, limit=0)
@@ -950,7 +951,7 @@ def test_health_report_lifecycle_recommendations(tmp_path: Path):
         if lesson["id"] == archive["id"]:
             lesson["last_reviewed"] = (datetime.now() - timedelta(days=90)).isoformat()
             lesson["access_count"] = 0
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     health = engram.get_health_report()
 
@@ -975,7 +976,7 @@ def test_generate_context_warns_when_many_stale_items(tmp_path: Path):
     lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
     for lesson in lessons:
         lesson["last_reviewed"] = stale_review
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     context = engram.generate_context()
 
@@ -992,7 +993,7 @@ def test_generate_context_omits_warning_when_few_stale_items(tmp_path: Path):
     lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
     for lesson in lessons:
         lesson["last_reviewed"] = stale_review
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     context = engram.generate_context()
 
@@ -1816,7 +1817,7 @@ def test_health_score_stale_items_reduce_freshness(tmp_path: Path):
     lessons_path = tmp_path / "knowledge" / "lessons.json"
     lessons = json.loads(lessons_path.read_text(encoding="utf-8"))
     lessons[0]["last_reviewed"] = (datetime.now() - timedelta(days=60)).isoformat()
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     report = engram.get_health_report()
     dims = report["dimensions"]
@@ -1835,7 +1836,7 @@ def test_health_score_duplicates_reduce_cleanliness(tmp_path: Path):
     dup["id"] = "dup-manual-id"
     dup["summary"] = base + "之一"
     lessons.append(dup)
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     report = engram.get_health_report()
     assert len(report["potential_duplicates"]) >= 1
@@ -1866,7 +1867,7 @@ def test_suggest_merges_finds_duplicates(tmp_path: Path):
     dup["id"] = "dup-suggest-test"
     dup["summary"] = base.replace("单元测试", "测试")
     lessons.append(dup)
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     result = engram.suggest_merges(threshold=0.4)
     assert result["total_candidates"] >= 1
@@ -1902,7 +1903,7 @@ def test_suggest_merges_recommends_higher_access_as_primary(tmp_path: Path):
     dup["summary"] = base.replace("规范格式", "的格式规范")
     dup["access_count"] = 10
     lessons.append(dup)
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     result = engram.suggest_merges(threshold=0.4)
     assert result["total_candidates"] >= 1
@@ -1923,7 +1924,7 @@ def test_suggest_merges_limit(tmp_path: Path):
         dup["id"] = f"dup-limit-{i}"
         dup["summary"] = f"{base}第{i}版"
         lessons.append(dup)
-    engram._atomic_write(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     result = engram.suggest_merges(threshold=0.3, limit=2)
     assert len(result["suggestions"]) <= 2
@@ -4335,8 +4336,7 @@ def test_lesson_eviction_overflow(tmp_path: Path):
             "tier": tier,
             "timestamp": f"2026-01-{(i % 28) + 1:02d}T00:00:00",
         })
-    from piia_engram.storage import _write_json
-    _write_json(path, entries)
+    raw_write_json(path, entries)
 
     # Add one more → triggers eviction
     result = engram.add_lesson("溢出测试条目", domain="overflow")
@@ -4364,8 +4364,7 @@ def test_decision_eviction_overflow(tmp_path: Path):
             "tier": tier,
             "timestamp": f"2026-01-{(i % 28) + 1:02d}T00:00:00",
         })
-    from piia_engram.storage import _write_json
-    _write_json(path, entries)
+    raw_write_json(path, entries)
 
     result = engram.add_decision({"question": "溢出决策", "choice": "测试"})
     assert "status" not in result or result.get("status") != "duplicate"

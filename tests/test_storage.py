@@ -9,6 +9,7 @@ import portalocker
 import pytest
 
 from piia_engram.storage import (
+    knowledge_write_allowed,
     DataCorruptionError,
     _atomic_write_json,
     _engram_root,
@@ -153,7 +154,8 @@ def test_atomic_write_json_backs_up_existing_engram_file(tmp_path, monkeypatch):
     path.parent.mkdir(parents=True)
     path.write_text('{"items": ["old"]}\n', encoding="utf-8")
 
-    _atomic_write_json(path, {"items": ["new"]})
+    with knowledge_write_allowed():
+        _atomic_write_json(path, {"items": ["new"]})
 
     backups = list((tmp_path / "backups" / "file_safety" / "engram_root").glob("lessons.json.*.bak"))
     assert len(backups) == 1
@@ -172,7 +174,8 @@ def test_update_json_backs_up_existing_engram_file(tmp_path, monkeypatch):
     path.parent.mkdir(parents=True)
     path.write_text('{"items": []}\n', encoding="utf-8")
 
-    _update_json(path, lambda current: {"items": current["items"] + ["new"]})
+    with knowledge_write_allowed():
+        _update_json(path, lambda current: {"items": current["items"] + ["new"]})
 
     backups = list((tmp_path / "backups" / "file_safety" / "engram_root").glob("decisions.json.*.bak"))
     assert len(backups) == 1

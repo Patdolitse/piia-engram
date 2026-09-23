@@ -434,8 +434,45 @@ def _maybe_backup_before_engram_json_replace(path: Path, candidate_text: str) ->
         raise
 
 
+# -- knowledge write guard ---------------------------------------------------
+# lessons.json and decisions.json are written only by the capacity core
+# (Engram._update_entries), which applies the capacity rules. Any other write
+# is a bug: tests fail on it, production logs a warning.
+
+_KNOWLEDGE_FILES = frozenset({"lessons.json", "decisions.json"})
+_KNOWLEDGE_WRITE_ALLOWED: ContextVar[bool] = ContextVar(
+    "piia_engram_knowledge_write_allowed", default=False
+)
+
+
+class UnguardedKnowledgeWrite(RuntimeError):
+    """A lessons or decisions file was written outside the capacity core."""
+
+
+@contextmanager
+def knowledge_write_allowed() -> Iterator[None]:
+    """Allow writes to the lessons and decisions files inside this block."""
+    token = _KNOWLEDGE_WRITE_ALLOWED.set(True)
+    try:
+        yield
+    finally:
+        _KNOWLEDGE_WRITE_ALLOWED.reset(token)
+
+
+def _check_knowledge_write(path: Path) -> None:
+    if path.name not in _KNOWLEDGE_FILES or path.parent.name != "knowledge":
+        return
+    if _KNOWLEDGE_WRITE_ALLOWED.get():
+        return
+    message = f"{path.name} written outside the capacity core"
+    if os.environ.get("ENGRAM_TEST") == "1":
+        raise UnguardedKnowledgeWrite(message)
+    logger.warning(message)
+
+
 def _atomic_write_json(path: Path, data: Any) -> None:
     """Atomically write JSON with a file lock for concurrent writers."""
+    _check_knowledge_write(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     candidate_text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     fd, tmp_name = tempfile.mkstemp(
@@ -491,7 +528,7 @@ class SkipWrite(Exception):
     """
 
 
-def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
+def _update_json(path: Path, mutator, *, default: Any = None, blocking: bool = True) -> Any:
     """Atomic read-modify-write under ONE lock.
 
     Plain ``_read_json`` + ``_atomic_write_json`` is NOT safe for concurrent
@@ -500,12 +537,22 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
     per-directory write lock across read → ``mutator(current)`` → atomic
     replace, so updates serialize correctly. ``mutator`` returns the new data,
     or raises :class:`SkipWrite` to abort with no write.
+
+    With ``blocking=False`` the call gives up at once when another writer holds
+    the lock: the mutator is not called, nothing is written, and the call
+    returns ``None``. Used for best-effort writes on read paths.
     """
+    _check_knowledge_write(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.parent / ".engram-write.lock"
     _default = {} if default is None else default
+    lock = (
+        portalocker.Lock(lock_path, "a", timeout=5)
+        if blocking
+        else portalocker.Lock(lock_path, "a", timeout=0, fail_when_locked=True)
+    )
     try:
-        with portalocker.Lock(lock_path, "a", timeout=5):
+        with lock:
             # Read current state INSIDE the lock. Fail CLOSED on corruption:
             # _read_json backs up the bad file and raises DataCorruptionError.
             # We must NOT silently fall back to the default and then overwrite
@@ -543,6 +590,10 @@ def _update_json(path: Path, mutator, *, default: Any = None) -> Any:
                     tmp_path.unlink()
                 raise
             return new_data
+    except portalocker.AlreadyLocked:
+        if not blocking:
+            return None
+        raise RuntimeError(f"无法获取文件锁（超时 5s）：{path.name}")
     except portalocker.LockException as exc:
         raise RuntimeError(f"无法获取文件锁（超时 5s）：{path.name}") from exc
 

@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from piia_engram.core import Engram
+from knowledge_seed import raw_write_json
 
 
 def _make_engram(tmp_path: Path) -> Engram:
@@ -707,7 +708,7 @@ def test_promote_knowledge(tmp_path: Path):
     for entry in data:
         if entry.get("id") == lesson_id:
             entry["tier"] = "staging"
-    _write_json(lessons_path, data)
+    raw_write_json(lessons_path, data)
 
     result = engram.promote_knowledge(lesson_id)
     assert result.get("status") == "promoted"
@@ -731,7 +732,7 @@ def test_apply_review_with_promote(tmp_path: Path):
     for entry in data:
         if entry.get("id") == lesson_id:
             entry["tier"] = "staging"
-    _write_json(lessons_path, data)
+    raw_write_json(lessons_path, data)
 
     review_data = {
         "promote": [{"id": lesson_id, "type": "lesson"}],
@@ -836,7 +837,7 @@ def test_evaluate_tiers_suggests_by_access_without_promoting(tmp_path: Path):
     for entry in data:
         if entry.get("id") == lesson_id:
             entry["access_count"] = 3
-    _write_json(lessons_path, data)
+    raw_write_json(lessons_path, data)
 
     result = engram.evaluate_tiers()
     assert result["promoted"] == 0
@@ -880,7 +881,7 @@ def test_get_staging_summary(tmp_path: Path):
     lessons = _read_json(lessons_path)
     for entry in lessons:
         entry["tier"] = "staging"
-    _write_json(lessons_path, lessons)
+    raw_write_json(lessons_path, lessons)
 
     summary = e.get_staging_summary()
     assert summary["total_staging"] == 3
@@ -918,7 +919,7 @@ def test_staging_reminder_in_context(tmp_path: Path):
     data = _read_json(path)
     for entry in data:
         entry["tier"] = "staging"
-    _write_json(path, data)
+    raw_write_json(path, data)
 
     ctx = e.generate_context()
     assert "staging_review_reminder" in ctx
@@ -939,7 +940,7 @@ def test_no_staging_reminder_when_few(tmp_path: Path):
     data = _read_json(path)
     for entry in data:
         entry["tier"] = "staging"
-    _write_json(path, data)
+    raw_write_json(path, data)
 
     ctx = e.generate_context()
     assert "staging_review_reminder" not in ctx

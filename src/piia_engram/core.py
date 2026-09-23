@@ -66,6 +66,7 @@ from .storage import (  # noqa: F401 — re-exports
     _OVERFLOW_BATCH,
     DataCorruptionError,
     SkipWrite,
+    knowledge_write_allowed,
     strip_untrusted_trust_fields,
 )
 from .retrieval import RetrievalMixin
@@ -1360,7 +1361,8 @@ class Engram(
         if self._corpus_key:
             entries = [self._crypto.encrypt_entry(e, self._corpus_key, entry_type)
                        for e in entries]
-        _write_json(path, entries)
+        with knowledge_write_allowed():
+            _write_json(path, entries)
 
     def _write_playbook_file(self, path: Path, pb: dict):
         """Write a single playbook file with corpus encryption if enabled."""
@@ -1415,7 +1417,8 @@ class Engram(
                     raise SkipWrite()
                 return migrated
 
-            _update_json(path, _migrate_locked, default=[])
+            with knowledge_write_allowed():
+                _update_json(path, _migrate_locked, default=[])
 
         # Decrypt content fields for in-memory use
         if self._corpus_key:
@@ -1489,7 +1492,8 @@ class Engram(
                 raise SkipWrite()
             return self._entries_for_storage(updated, entry_type)
 
-        _update_json(path, _locked, default=[])
+        with knowledge_write_allowed():
+            _update_json(path, _locked, default=[])
 
     # -- capacity overflow ---------------------------------------------------
     # A knowledge file holds at most MAX_KNOWLEDGE_ENTRIES rows. Rows pushed out
