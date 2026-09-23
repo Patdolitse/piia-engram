@@ -31,6 +31,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - Reads no longer wait for a busy write; the access count update is skipped instead.
 - Content that is already in the archive is not captured again (unreviewed writes, MEMORY.md import, onboarding), and reconcile matches archived entries by exact text only.
 - A batch that revises a decision it has just archived keeps the revision link.
+- Editing or merging an entry never moves that same entry to the archive, and the edit reply lists any other entries the write moved. Batch results mark entries placed straight in the archive as `archived`.
 - An entry archived more than once reads back in its latest state; `backup-plan` counts torn archive lines; the integrity check treats relations to archived entries as valid.
 - The project context shows only list-valued tech stack and known issues; sentence splitting keeps file names, versions and URLs intact.
 - `docs/trust.md` explains what "verified" means.
