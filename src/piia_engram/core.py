@@ -1433,7 +1433,7 @@ class Engram(
                 return migrated
 
             with knowledge_write_allowed():
-                _update_json(path, _migrate_locked, default=[])
+                _update_json(path, _migrate_locked, default=[], blocking=False)
 
         # Decrypt content fields for in-memory use
         if self._corpus_key:
@@ -1993,7 +1993,7 @@ class Engram(
                         entry["access_count"] = entry.get("access_count", 0) + 1
                 return entries
 
-            self._update_entries(path, "lesson", _bump_access)
+            self._update_entries(path, "lesson", _bump_access, blocking=False)
         self._audit.log("read", "knowledge/lessons", detail=f"returned {len(result)} items")
         if _update_access:
             # Model-facing read: never surface raw ciphertext as content.
@@ -2417,7 +2417,7 @@ class Engram(
                         entry["access_count"] = entry.get("access_count", 0) + 1
                 return entries
 
-            self._update_entries(path, "decision", _bump_access)
+            self._update_entries(path, "decision", _bump_access, blocking=False)
         self._audit.log("read", "knowledge/decisions", detail=f"returned {len(result)} items")
         if _update_access:
             # Model-facing read: never surface raw ciphertext as content.

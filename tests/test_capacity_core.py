@@ -205,3 +205,34 @@ def test_a_failed_archive_append_fails_the_whole_write(tmp_path, monkeypatch, ki
         _add(engram, kind, 3, "X", tier="staging")
     assert [r["id"] for r in _active(tmp_path, kind)] == ids
     assert _archive(tmp_path, kind) == []
+
+
+# -- reads never block on the knowledge write lock -----------------------------
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_reads_do_not_wait_for_the_knowledge_write_lock(tmp_path, monkeypatch, kind):
+    _limits(monkeypatch)
+    engram = Engram(root=tmp_path)
+    _add(engram, kind, 0, "R", tier="verified")
+    lister = engram.get_lessons if kind == "lesson" else engram.get_decisions
+    with portalocker.Lock(tmp_path / "knowledge" / ".engram-write.lock", "a", timeout=5):
+        started = time.monotonic()
+        rows = lister()
+        elapsed = time.monotonic() - started
+    assert len(rows) == 1
+    assert elapsed < 1.0
+
+
+def test_a_legacy_row_read_does_not_wait_for_the_lock(tmp_path, monkeypatch):
+    from knowledge_seed import raw_write_json
+
+    _limits(monkeypatch)
+    engram = Engram(root=tmp_path)
+    raw_write_json(tmp_path / "knowledge" / "lessons.json", [{"summary": "legacy row without fields"}])
+    with portalocker.Lock(tmp_path / "knowledge" / ".engram-write.lock", "a", timeout=5):
+        started = time.monotonic()
+        rows = engram.get_lessons(_update_access=False)
+        elapsed = time.monotonic() - started
+    assert len(rows) == 1
+    assert elapsed < 1.0
