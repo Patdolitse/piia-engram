@@ -1665,6 +1665,11 @@ class Engram(
     def _avoid_archived_id(self, row: dict, entry_type: str) -> None:
         """Give a new row another id when its id already belongs to an archived row."""
         taken = self._archive_ids(entry_type)
+        if str(row.get("id") or "") not in taken:
+            return
+        name = "lessons.json" if entry_type == "lesson" else "decisions.json"
+        raw = _read_json(self._knowledge_dir / name) if (self._knowledge_dir / name).is_file() else []
+        taken = taken | {str(r.get("id") or "") for r in raw if isinstance(r, dict)}
         rid = str(row.get("id") or "")
         counter = 1
         while rid in taken:

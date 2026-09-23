@@ -595,7 +595,7 @@ class ImportExportMixin:
             None,
         )
         if candidate is None:
-            ids = {str(r.get("id") or "") for r in rows if r.get("id")}
+            ids = {str(r.get("id") or "") for r in rows if r.get("id")} | self._archive_ids(kind)
             candidate = deepcopy(incoming)
             desired_id = str(candidate.get("id") or "")
             if desired_id and desired_id not in ids and desired_id != existing_id:
@@ -688,11 +688,35 @@ class ImportExportMixin:
             removed_reason=_capacity.REASON_REMOVED if merge else _capacity.REASON_IMPORT_REPLACE,
         )
 
+    def _reid_rows_taken_by_the_archive(self, incoming: dict[str, list[dict]]) -> dict[str, str]:
+        """Give incoming rows a new id when a different archived row has theirs.
+
+        The archived row would otherwise drop out of the recycle bin and
+        restore. A row whose id and body match the archived one keeps its id
+        (it is that entry). Returns old id -> new id for the file's relations.
+        """
+        id_map: dict[str, str] = {}
+        for kind, rows in incoming.items():
+            archived = {
+                (str(row.get("id") or ""), _capacity.content_digest(row, kind))
+                for row in self._archive_rows_cached(kind)
+            }
+            archived_ids = {key[0] for key in archived}
+            for row in rows:
+                rid = str(row.get("id") or "")
+                if rid not in archived_ids or (rid, _capacity.content_digest(row, kind)) in archived:
+                    continue
+                self._avoid_archived_id(row, kind)
+                id_map[rid] = str(row["id"])
+        return id_map
+
     def _missing_import_version_edges(self, edges: list[dict]) -> list[tuple[str, str]]:
         """Supersedes edges of reviewed materialized import versions that are not written yet.
 
         An import interrupted between the knowledge files and relations.json
-        leaves such rows behind; a re-run adds their edges.
+        leaves such rows behind; only a re-run of that import (the pending
+        marker is still there) adds their edges, so an edge the owner removed
+        on purpose is not brought back by a later import.
         """
         present = {(e.get("src"), e.get("dst")) for e in edges if e.get("rel") == "supersedes"}
         missing: list[tuple[str, str]] = []
@@ -706,7 +730,10 @@ class ImportExportMixin:
                     continue
                 if _capacity.pool_of(row) != _capacity.POOL_V or (src, target) in present:
                     continue
-                if target in ids or target in self._archive_ids(kind):
+                target_row = next((r for r in rows if str(r.get("id") or "") == target), None)
+                if target_row is None:
+                    target_row = self._archive_current_rows(kind).get(target)
+                if target_row is not None and self._entries_share_project_scope(row, target_row):
                     missing.append((src, target))
         return missing
 
@@ -859,6 +886,12 @@ class ImportExportMixin:
             for section, kind in self._IMPORT_ROW_SECTIONS
         }
         relations_in = validate_edges(knowledge.get("relations") or []) if "relations" in knowledge else None
+        id_map = self._reid_rows_taken_by_the_archive(incoming)
+        if id_map and relations_in is not None:
+            relations_in = [
+                dict(edge, src=id_map.get(edge["src"], edge["src"]), dst=id_map.get(edge["dst"], edge["dst"]))
+                for edge in relations_in
+            ]
         items = self._materialize_items(knowledge, conflicts) if merge and materialize else []
         report: dict[str, Any] = {}
         if merge and materialize:
@@ -893,6 +926,7 @@ class ImportExportMixin:
                         ),
                     }
             marker = self._knowledge_dir / self._IMPORT_PENDING_MARKER
+            resuming = marker.is_file()
             _write_json(marker, {
                 "mode": "merge" if merge else "overwrite",
                 "source": _metadata_source(input_path),
@@ -921,7 +955,7 @@ class ImportExportMixin:
                 report[section] = f"{section}({sign}{stats['added']}{note})"
             for kind, rows in archive_in.items():
                 self._import_archive_segment(kind, rows)
-            if merge:
+            if merge and resuming:
                 new_edges.extend(self._missing_import_version_edges(edges))
             if relations_in is not None or new_edges:
                 relations_text = self._import_relations_locked(relations_in, new_edges, merge=merge)

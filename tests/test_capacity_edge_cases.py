@@ -135,3 +135,37 @@ def test_a_new_row_never_takes_the_id_of_an_archived_row(engram: Engram):
     added = engram.add_lesson({"id": "L-taken", "summary": "a different new lesson", "domain": "x"})
     assert added["id"] != "L-taken"
     assert engram.restore_lifecycle_archive("L-taken")["changed"] is True
+
+
+def test_a_normal_merge_import_does_not_re_add_a_removed_version_edge(engram: Engram, tmp_path):
+    local = engram.add_lesson({"summary": "materialize topic for edge removal", "detail": "local body",
+                               "domain": "imp", "tier": "verified"})
+    backup = tmp_path / "b.json"
+    backup.write_text(json.dumps({"schema_version": "2.0", "knowledge": {"lessons": [
+        {"id": "L-in", "summary": "materialize topic for edge removal", "detail": "incoming body",
+         "domain": "imp", "tier": "verified"}]}}), encoding="utf-8")
+    engram.import_all(str(backup), merge=True, materialize_version_chain=True)
+    RelationStore(engram.root).remove_relation("L-in", "supersedes", local["id"])
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"schema_version": "2.0", "knowledge": {"lessons": [
+        {"id": "L-other", "summary": "an unrelated imported lesson", "domain": "imp"}]}}), encoding="utf-8")
+    engram.import_all(str(other), merge=True)
+    assert [e for e in RelationStore(engram.root).all_edges() if e["rel"] == "supersedes"] == []
+
+
+def test_an_imported_row_never_takes_the_id_of_a_different_archived_row(engram: Engram, tmp_path):
+    _append_jsonl_lines(engram._overflow_archive_path("lesson"), [json.dumps(
+        {"id": "L-taken", "summary": "archived and restorable", "tier": "archived",
+         "archived_from_tier": "verified", "status": "active"})])
+    backup = tmp_path / "b.json"
+    backup.write_text(json.dumps({"schema_version": "2.0", "knowledge": {
+        "lessons": [{"id": "L-taken", "summary": "a different imported lesson", "domain": "imp"},
+                    {"id": "L-peer", "summary": "its related lesson", "domain": "imp"}],
+        "relations": [{"src": "L-taken", "rel": "led_to", "dst": "L-peer"}]}}), encoding="utf-8")
+    engram.import_all(str(backup), merge=True)
+    active = {r["summary"]: r["id"] for r in engram._read_entries(
+        engram._knowledge_dir / "lessons.json", "lesson", migrate=False)}
+    new_id = active["a different imported lesson"]
+    assert new_id != "L-taken"
+    assert {(e["src"], e["dst"]) for e in RelationStore(engram.root).all_edges()} == {(new_id, "L-peer")}
+    assert engram.restore_lifecycle_archive("L-taken")["changed"] is True
