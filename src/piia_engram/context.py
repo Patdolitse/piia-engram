@@ -1624,11 +1624,13 @@ class ContextMixin:
                     ph.append(f"- 项目: {proj['title']}")
                 if proj.get("session_count"):
                     ph.append(f"- 已协作 {proj['session_count']} 次")
-                if proj.get("tech_stack"):
-                    ph.append(f"- 技术栈: {', '.join(proj['tech_stack'])}")
-                if proj.get("known_issues"):
+                tech_stack = proj.get("tech_stack")
+                if isinstance(tech_stack, list) and tech_stack:
+                    ph.append(f"- 技术栈: {', '.join(str(t) for t in tech_stack)}")
+                known_issues = proj.get("known_issues")
+                if isinstance(known_issues, list) and known_issues:
                     ph.append("- 已知问题:")
-                    for issue in proj["known_issues"][:3]:
+                    for issue in known_issues[:3]:
                         ph.append(f"  - {issue}")
                 sections["project"] = "\n".join(ph)
 

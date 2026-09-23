@@ -3853,6 +3853,35 @@ def test_generate_context_project_section(tmp_path: Path):
     assert "性能问题" in ctx
 
 
+def test_generate_context_project_section_skips_string_list_fields(tmp_path: Path):
+    """tech_stack / known_issues stored as a plain string are not lists: they
+    must not be rendered character by character."""
+    engram = make_engram(tmp_path)
+    engram.save_project_snapshot("E:/test-project", {
+        "title": "Test Project",
+        "tech_stack": "Python, FastAPI",
+        "known_issues": "slow startup",
+    })
+    ctx = engram.generate_context(project_folder="E:/test-project")
+    assert "Test Project" in ctx
+    assert "P, y, t, h, o, n" not in ctx
+    assert "- 技术栈:" not in ctx
+    assert "- 已知问题:" not in ctx
+
+
+def test_generate_context_project_section_renders_non_string_items(tmp_path: Path):
+    """Non-string list items are rendered as text instead of raising."""
+    engram = make_engram(tmp_path)
+    engram.save_project_snapshot("E:/test-project", {
+        "title": "Test Project",
+        "tech_stack": ["Python", 3.12],
+        "known_issues": [42],
+    })
+    ctx = engram.generate_context(project_folder="E:/test-project")
+    assert "- 技术栈: Python, 3.12" in ctx
+    assert "  - 42" in ctx
+
+
 def test_generate_context_decisions_partial_fields(tmp_path: Path):
     """Decisions with missing question or choice should still render."""
     engram = make_engram(tmp_path)
