@@ -145,8 +145,13 @@ def dock_archived_list_payload(eng: Any) -> dict:
     try:
         results: list[dict] = []
         for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
-            for it in eng._read_entries(eng._knowledge_dir / fname, kind):
-                if it.get("tier") == "archived":
+            # Soft-archived rows in the active file, then those the capacity
+            # rules moved to the overflow archive. Version snapshots are
+            # history, not deleted entries, and are never listed.
+            active = eng._read_entries(eng._knowledge_dir / fname, kind)
+            archived = list(eng._archived_only_rows(kind).values())
+            for it in active + archived:
+                if it.get("tier") == "archived" and not eng._is_snapshot_record(it):
                     results.append({
                         "kind": kind,
                         "title": _mem_title(kind, it),

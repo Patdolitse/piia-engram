@@ -1166,7 +1166,74 @@ class KnowledgeOpsMixin:
                     detail=f"{kind} {item_id}: archived -> {result.get('to_tier')}",
                 )
             return result
+        restored = self._restore_from_overflow_archive(item_id, ts)
+        if restored is not None:
+            return restored
         return {"error": f"Item not found: {item_id}"}
+
+    def _restore_from_overflow_archive(self, item_id: str, ts: str) -> dict | None:
+        """Put an archived row back into its active file, or None when it is not archived.
+
+        A soft-archived row returns to its prior tier. The V cap and the review
+        queue ceiling refuse with typed errors and nothing written. The archive
+        keeps its line (append-only); readers prefer the active row. Snapshots
+        are immutable history and are never restored.
+        """
+        for kind, fname in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            row = self._archived_only_rows(kind).get(item_id)
+            if row is None:
+                continue
+            if self._is_snapshot_record(row):
+                return {
+                    "error": "snapshot_immutable",
+                    "item_id": item_id,
+                    "message": "history snapshots stay in the archive; read them via get_knowledge_history",
+                }
+            entry = {k: v for k, v in row.items() if k not in self._OVERFLOW_FIELDS}
+            from_tier = entry.get("tier") if isinstance(entry.get("tier"), str) else ""
+            if from_tier == "archived":
+                prior = entry.get("archived_from_tier")
+                entry["tier"] = prior if prior in {"staging", "verified"} else "staging"
+                entry.pop("archived_at", None)
+                entry.pop("archived_from_tier", None)
+            entry["last_updated"] = ts
+            entry = self._ensure_fields(entry, kind)
+            result_box: dict[str, Any] = {}
+
+            def _mutate_entries(entries: list[dict]) -> list[dict]:
+                if any(str(e.get("id") or "") == item_id for e in entries):
+                    result_box["result"] = {
+                        "id": item_id, "type": kind, "changed": False,
+                        "from_tier": from_tier, "to_tier": from_tier,
+                    }
+                    return entries
+                entries.append(entry)
+                result_box["result"] = {
+                    "id": item_id, "type": kind, "changed": True,
+                    "from_tier": from_tier, "to_tier": entry.get("tier"),
+                    "from_overflow_archive": True,
+                }
+                return entries
+
+            path = self._knowledge_dir / fname
+            refusal = self._capacity_refusal(
+                lambda: self._update_entries(
+                    path, kind, _mutate_entries,
+                    capacity_ctx=_capacity.CapacityContext(on_queue_full="refuse"),
+                ),
+                item_id,
+            )
+            if refusal is not None:
+                return refusal
+            result = result_box["result"]
+            if result.get("changed"):
+                self._audit.log(
+                    "write",
+                    "knowledge/lifecycle_restore",
+                    detail=f"{kind} {item_id}: overflow archive -> {result.get('to_tier')}",
+                )
+            return result
+        return None
 
     def review_knowledge(self, knowledge_id: str) -> dict:
         """Mark a lesson, decision, or playbook as reviewed without changing its content."""

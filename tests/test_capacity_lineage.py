@@ -299,3 +299,66 @@ def test_decision_history_falls_back_to_the_archive_when_nothing_is_active(engra
     _drop_from_active(engram, "decision", only)
     history = engram.get_decision_history(QUESTION)
     assert history["current"]["id"] == only
+
+
+# -- recycle bin and restore from the archive -------------------------------------------
+
+
+def _recycle_bin_ids(engram: Engram) -> list[str]:
+    from piia_engram.dock_ui.contracts import dock_archived_list_payload
+
+    payload = dock_archived_list_payload(engram)
+    assert payload["ok"] is True
+    return sorted(r["id"] for r in payload["results"])
+
+
+def _soft_archive_then_move(engram: Engram, lesson_id: str) -> None:
+    assert engram.soft_archive_knowledge_tier(lesson_id, allow_verified=True)["changed"] is True
+    _drop_from_active(engram, "lesson", lesson_id)
+
+
+def test_the_recycle_bin_lists_soft_archived_rows_in_either_file_and_no_snapshot(engram: Engram):
+    from knowledge_seed import raw_write_json
+
+    in_active = engram.add_lesson({"summary": "soft archived, still in the active file"}, domain="x", tier="verified")["id"]
+    engram.soft_archive_knowledge_tier(in_active, allow_verified=True)
+    moved = engram.add_lesson({"summary": "soft archived, then moved to the archive"}, domain="x", tier="verified")["id"]
+    _soft_archive_then_move(engram, moved)
+    edited = engram.add_lesson({"summary": "edited lesson, version one"}, domain="x")["id"]
+    engram.update_knowledge(edited, {"summary": "edited lesson, version two"})
+    path = engram._knowledge_dir / "lessons.json"
+    rows = engram._read_entries(path, "lesson", migrate=False)
+    rows.append({"id": f"{edited}-prev-legacy", "summary": "legacy snapshot", "tier": "archived",
+                 "status": "superseded", "snapshot_of": edited})
+    raw_write_json(path, rows)
+    assert _recycle_bin_ids(engram) == sorted([in_active, moved])
+
+
+def test_restore_from_the_archive_returns_the_row_to_its_prior_tier(engram: Engram):
+    moved = engram.add_lesson({"summary": "a reviewed lesson that was moved"}, domain="x", tier="verified")["id"]
+    _soft_archive_then_move(engram, moved)
+    result = engram.restore_lifecycle_archive(moved)
+    assert (result["changed"], result["to_tier"]) == (True, "verified")
+    row = _active_row(engram, "lesson", moved)
+    assert row["tier"] == "verified"
+    for name in ("archived_from_tier", "archived_at", "overflow_archive_reason", "overflow_archived_at"):
+        assert name not in row
+    assert moved not in _recycle_bin_ids(engram)
+    assert engram.restore_lifecycle_archive(moved)["changed"] is False
+
+
+def test_restore_from_the_archive_at_the_hard_cap_is_refused(engram: Engram, monkeypatch):
+    monkeypatch.setenv("ENGRAM_CAP_SOFT", "1")
+    monkeypatch.setenv("ENGRAM_CAP_HARD", "1")
+    moved = engram.add_lesson({"summary": "a reviewed lesson that was moved"}, domain="x", tier="verified")["id"]
+    _soft_archive_then_move(engram, moved)
+    engram.add_lesson({"summary": "another reviewed lesson takes the only slot"}, domain="x", tier="verified")
+    before = (engram._knowledge_dir / "lessons.json").read_bytes()
+    assert engram.restore_lifecycle_archive(moved)["error"] == "capacity_full"
+    assert (engram._knowledge_dir / "lessons.json").read_bytes() == before
+
+
+def test_restoring_an_archived_snapshot_is_refused(engram: Engram):
+    lesson_id = engram.add_lesson({"summary": "text before the edit"}, domain="x")["id"]
+    engram.update_knowledge(lesson_id, {"summary": "text after the edit"})
+    assert engram.restore_lifecycle_archive(f"{lesson_id}-prev-v1")["error"] == "snapshot_immutable"
