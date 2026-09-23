@@ -9,16 +9,16 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import capacity as _capacity
 from .decision_thread import validate_edges
 from .governance_store import RelationStore, ResolutionStore
 from .storage import (
     DEFAULT_TRUST_BOUNDARIES,
     ENCRYPTED_PROFILE_FIELDS,
-    MAX_KNOWLEDGE_ENTRIES,
     SCHEMA_VERSION,
     _ALLOWED_PREFERENCES_FIELDS,
     _ALLOWED_PROFILE_FIELDS,
@@ -26,7 +26,9 @@ from .storage import (
     _ALLOWED_TRUST_FIELDS,
     _now_iso,
     _read_json,
+    _update_json,
     _write_json,
+    hold_directory_lock,
 )
 
 
@@ -464,149 +466,128 @@ class ImportExportMixin:
         seed = f"import-version:{section}:{existing_id}:{version_hash}"
         return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
 
-    def _materialize_version_chain_candidates(
-        self,
-        data: dict,
-        conflicts: list[dict],
-        *,
-        input_path: str,
-    ) -> dict:
-        """Apply opt-in import conflict -> supersedes-chain materialization.
+    # -- lessons, decisions and relations in one locked section ---------------
+    # An import holds the knowledge lock once: it writes a pending marker, then
+    # lessons and decisions through the capacity core (import rules: no new-row
+    # exemption), the export's archive segment, and relations, and removes the
+    # marker. A crash leaves the marker; running the same import again is
+    # idempotent. Nothing is rolled back.
 
-        This is owner-confirmed import-only behavior. It consumes the existing
-        metadata-only conflict plan and returns only metadata: ids, counts, and
-        reason codes, never incoming or local bodies.
+    _IMPORT_PENDING_MARKER = ".import-pending.json"
+    _IMPORT_ROW_SECTIONS = (("lessons", "lesson"), ("decisions", "decision"))
+
+    @staticmethod
+    def _import_identity_key(row: dict, kind: str) -> str:
+        """The merge dedup key: a lesson's summary, a decision's question."""
+        return str(row.get("summary" if kind == "lesson" else "question") or "")
+
+    def _prepare_import_rows(self, kind: str, rows: Any) -> list[dict]:
+        """Normalized copies of the incoming rows; a row without an id gets a stable one.
+
+        The id is derived from the row's identity text, so importing the same
+        file again finds the same rows instead of adding copies.
         """
-        payload = {
-            "enabled": True,
-            "materialized": 0,
-            "skipped": 0,
-            "items": [],
-        }
-        knowledge = data.get("knowledge", {}) if isinstance(data, dict) else {}
-        sections = {
-            "lessons": ("lesson", "lessons.json"),
-            "decisions": ("decision", "decisions.json"),
-        }
+        prepared: list[dict] = []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            item = deepcopy(row)
+            if not item.get("id"):
+                extra = item.get("choice") if kind == "decision" else item.get("domain")
+                seed = f"import:{kind}:{self._entry_identity_text(item, kind)}\n{extra or ''}"
+                item["id"] = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+            prepared.append(self._ensure_fields(item, kind))
+        return prepared
 
+    def _import_digest(self, row: dict, kind: str) -> tuple[str, str]:
+        normalized = self._ensure_fields(deepcopy(row), kind)
+        return str(normalized.get("id") or ""), _capacity.content_digest(normalized, kind)
+
+    def _materialize_items(self, knowledge: dict, conflicts: list[dict]) -> list[dict]:
+        """Version-chain candidates from the dry-run conflicts, in conflict order."""
+        items: list[dict] = []
         for conflict in conflicts:
             section = str(conflict.get("section") or "")
-            if section not in sections:
+            kind = {"lessons": "lesson", "decisions": "decision"}.get(section)
+            if kind is None:
                 continue
             if conflict.get("resolution") != "review_version_chain_candidate":
                 continue
             if conflict.get("candidate_relation") != "supersedes":
                 continue
-
-            existing_id = str(conflict.get("existing_id") or "")
-            incoming_id = str(conflict.get("incoming_id") or "")
             item = {
                 "section": section,
-                "existing_id": existing_id,
-                "incoming_id": incoming_id,
+                "existing_id": str(conflict.get("existing_id") or ""),
+                "incoming_id": str(conflict.get("incoming_id") or ""),
                 "changed_fields": list(conflict.get("changed_fields") or []),
                 "outcome": "skipped",
                 "reason": "",
+                "_kind": kind,
             }
             incoming_items = knowledge.get(section)
-            if not existing_id or not incoming_id or not isinstance(incoming_items, list):
+            if not item["existing_id"] or not item["incoming_id"] or not isinstance(incoming_items, list):
                 item["reason"] = "missing_ids"
-                payload["skipped"] += 1
-                payload["items"].append(item)
-                continue
-
-            incoming = next(
-                (
-                    candidate for candidate in incoming_items
-                    if isinstance(candidate, dict)
-                    and str(candidate.get("id") or "") == incoming_id
-                ),
-                None,
-            )
-            if not isinstance(incoming, dict):
-                item["reason"] = "incoming_not_found"
-                payload["skipped"] += 1
-                payload["items"].append(item)
-                continue
-
-            entry_type, filename = sections[section]
-            result = self._materialize_one_version_entry(
-                section,
-                entry_type,
-                filename,
-                incoming,
-                existing_id=existing_id,
-                incoming_id=incoming_id,
-                input_path=input_path,
-            )
-            item.update(result)
-            if item["outcome"] == "materialized":
-                payload["materialized"] += 1
             else:
-                payload["skipped"] += 1
-            payload["items"].append(item)
+                incoming = next(
+                    (
+                        candidate for candidate in incoming_items
+                        if isinstance(candidate, dict)
+                        and str(candidate.get("id") or "") == item["incoming_id"]
+                    ),
+                    None,
+                )
+                if isinstance(incoming, dict):
+                    item["_incoming"] = deepcopy(incoming)
+                else:
+                    item["reason"] = "incoming_not_found"
+            items.append(item)
+        return items
 
-        return payload
-
-    def _materialize_one_version_entry(
+    def _materialize_in_rows(
         self,
-        section: str,
-        entry_type: str,
-        filename: str,
-        incoming: dict,
-        *,
-        existing_id: str,
-        incoming_id: str,
+        kind: str,
+        rows: list[dict],
+        item: dict,
+        edges: list[dict],
+        new_edges: list[tuple[str, str]],
         input_path: str,
-    ) -> dict:
-        from .governance_store import RelationStore
+    ) -> None:
+        """Add one version-chain candidate to ``rows`` inside the import section.
 
-        path = self._knowledge_dir / filename
-        original_entries = self._read_entries(path, entry_type, migrate=False)
-        existing = next(
-            (entry for entry in original_entries if str(entry.get("id") or "") == existing_id),
-            None,
-        )
-        if not isinstance(existing, dict):
-            return {"outcome": "skipped", "reason": "existing_not_found"}
-
-        version_hash = self._import_version_hash(incoming, entry_type)
-        relation_store = RelationStore(self.root)
-        existing_edges = relation_store.all_edges()
-        existing_edge_src = next(
-            (
-                edge["src"] for edge in existing_edges
-                if edge.get("rel") == "supersedes"
-                and edge.get("dst") == existing_id
-            ),
-            "",
-        )
+        A reviewed candidate retires the row it replaces and adds the edge. An
+        unreviewed one records ``pending_supersedes`` and leaves that row
+        active; the edge is written when the candidate is promoted.
+        """
+        incoming = item.get("_incoming")
+        if not isinstance(incoming, dict):
+            return
+        section = item["section"]
+        existing_id = item["existing_id"]
+        existing = next((r for r in rows if str(r.get("id") or "") == existing_id), None)
+        if existing is None:
+            item.update(outcome="skipped", reason="existing_not_found")
+            return
         if existing.get("status") != "active":
-            return {
-                "outcome": "skipped",
-                "reason": "existing_not_active",
-                "new_id": existing_edge_src,
-            }
-
-        ids = {str(entry.get("id") or "") for entry in original_entries if entry.get("id")}
-        materialized = next(
+            src = next(
+                (
+                    edge["src"] for edge in edges
+                    if edge.get("rel") == "supersedes" and edge.get("dst") == existing_id
+                ),
+                "",
+            )
+            item.update(outcome="skipped", reason="existing_not_active", new_id=src)
+            return
+        version_hash = self._import_version_hash(incoming, kind)
+        candidate = next(
             (
-                entry for entry in original_entries
-                if str(entry.get("supersedes") or "") == existing_id
-                and str(entry.get("import_version_hash") or "") == version_hash
+                r for r in rows
+                if str(r.get("supersedes") or "") == existing_id
+                and str(r.get("import_version_hash") or "") == version_hash
             ),
             None,
         )
-
-        candidate: dict | None = None
-        added_entry = False
-        new_id = ""
-        entries_for_relation = original_entries
-        if isinstance(materialized, dict):
-            new_id = str(materialized.get("id") or "")
-            if not new_id:
-                return {"outcome": "skipped", "reason": "materialized_id_missing"}
-        else:
+        if candidate is None:
+            ids = {str(r.get("id") or "") for r in rows if r.get("id")}
             candidate = deepcopy(incoming)
             desired_id = str(candidate.get("id") or "")
             if desired_id and desired_id not in ids and desired_id != existing_id:
@@ -614,7 +595,8 @@ class ImportExportMixin:
             else:
                 new_id = self._materialized_import_id(section, existing_id, version_hash)
                 if new_id in ids:
-                    return {"outcome": "skipped", "reason": "id_collision"}
+                    item.update(outcome="skipped", reason="id_collision")
+                    return
                 if desired_id:
                     candidate["source_import_id"] = desired_id
             candidate["id"] = new_id
@@ -633,87 +615,274 @@ class ImportExportMixin:
             provenance["import_source"] = source_name
             provenance["supersedes"] = existing_id
             candidate["provenance"] = provenance
-            candidate = self._ensure_fields(candidate, entry_type)
-            entries_for_relation = original_entries + [candidate]
-            added_entry = True
+            candidate = self._ensure_fields(candidate, kind)
+            rows.append(candidate)
+        new_id = str(candidate.get("id") or "")
+        if not new_id:
+            item.update(outcome="skipped", reason="materialized_id_missing")
+            return
+        if _capacity.pool_of(candidate) == _capacity.POOL_V:
+            existing["status"] = "outdated"
+            existing["last_updated"] = _now_iso()
+            self._ensure_fields(existing, kind)
+            new_edges.append((new_id, existing_id))
+            item.update(outcome="materialized", reason="", new_id=new_id)
+        else:
+            candidate["pending_supersedes"] = existing_id
+            item.update(outcome="materialized", reason="", new_id=new_id, pending_review=True)
 
-        relation_added = False
-        try:
-            if added_entry:
-                self._write_entries(path, entries_for_relation, entry_type)
+    def _import_row_mutator(
+        self,
+        kind: str,
+        incoming: list[dict],
+        *,
+        merge: bool,
+        ctx: _capacity.CapacityContext,
+        stats: dict,
+        archive_keys: set[str],
+        items: list[dict],
+        edges: list[dict],
+        new_edges: list[tuple[str, str]],
+        input_path: str,
+    ):
+        """The lessons / decisions mutator of an import, recomputed on the current rows."""
 
-            # v4.19.1: import dedup supersedes is internal lineage — write via
-            # RelationStore directly (caller-facing add_relation refuses it).
-            from .governance_store import RelationStore as _RS
+        def _mutate(current: list[dict]) -> list[dict]:
+            stats["added"] = 0
+            if not merge:
+                wanted = {self._import_digest(row, kind) for row in incoming}
+                wanted_ids = {key[0] for key in wanted}
+                for local in current:
+                    key = self._import_digest(local, kind)
+                    if key not in wanted and key[0] in wanted_ids:
+                        ctx.extra_archive.append((local, _capacity.REASON_IMPORT_REPLACE))
+                stats["added"] = len(incoming)
+                return [deepcopy(row) for row in incoming]
+            seen = {self._import_identity_key(row, kind) for row in current} | archive_keys
+            for row in incoming:
+                key = self._import_identity_key(row, kind)
+                if key in seen:
+                    continue
+                current.append(deepcopy(row))
+                seen.add(key)
+                stats["added"] += 1
+            for item in items:
+                self._materialize_in_rows(kind, current, item, edges, new_edges, input_path)
+            return current
 
-            relation_added = _RS(self.root).add_relation(new_id, "supersedes", existing_id)
-            edge_present = any(
-                edge.get("src") == new_id
-                and edge.get("rel") == "supersedes"
-                and edge.get("dst") == existing_id
-                for edge in relation_store.all_edges()
-            )
-            if not edge_present:
-                if added_entry:
-                    self._write_entries(
-                        path, original_entries, entry_type, skip_archive_ids={new_id}
-                    )
-                return {"outcome": "skipped", "reason": "relation_failed"}
+        return _mutate
 
-            final_entries = []
-            for entry in entries_for_relation:
-                updated = dict(entry)
-                if str(updated.get("id") or "") == existing_id:
-                    updated["status"] = "outdated"
-                    updated["last_updated"] = _now_iso()
-                    updated = self._ensure_fields(updated, entry_type)
-                final_entries.append(updated)
-            self._write_entries(path, final_entries, entry_type)
-        except Exception:
-            if relation_added:
-                try:
-                    self.remove_relation(new_id, "supersedes", existing_id)
-                except Exception:
-                    pass
-            if added_entry:
-                try:
-                    self._write_entries(
-                        path, original_entries, entry_type, skip_archive_ids={new_id}
-                    )
-                except Exception:
-                    pass
-            return {"outcome": "skipped", "reason": "write_failed"}
-
-        self._audit.log(
-            "write",
-            "knowledge/import_version_chain",
-            detail=f"{section}:{new_id} supersedes {existing_id}",
+    def _import_context(self, *, merge: bool, allow_over_cap: bool) -> _capacity.CapacityContext:
+        return _capacity.CapacityContext(
+            import_mode=True,
+            owner_override=allow_over_cap,
+            source_tool="import",
+            removed_reason=_capacity.REASON_REMOVED if merge else _capacity.REASON_IMPORT_REPLACE,
         )
-        return {"outcome": "materialized", "reason": "", "new_id": new_id}
 
-    def _split_import_overflow(
-        self, entry_type: str, rows: list[dict]
-    ) -> tuple[list[dict], list[str]]:
-        """Keep the last MAX_KNOWLEDGE_ENTRIES rows; archive the rest first.
-
-        Returns (kept rows, archived ids). The overflow archive is written
-        before the caller rewrites the active file, so a row is never lost.
-        """
-        if len(rows) <= MAX_KNOWLEDGE_ENTRIES:
-            return rows, []
-        cut = len(rows) - MAX_KNOWLEDGE_ENTRIES
-        archived = self._archive_overflow_rows(entry_type, rows[:cut])
-        for archived_id in archived:
-            self._audit.log(
-                "archive", f"knowledge/{entry_type}s",
-                detail=f"capacity_overflow id={archived_id}",
-                source_tool="import",
+    def _import_capacity_preview(
+        self,
+        kind: str,
+        incoming: list[dict],
+        *,
+        merge: bool,
+        archive_keys: set[str],
+        items: list[dict],
+        edges: list[dict],
+        input_path: str,
+        allow_over_cap: bool,
+    ) -> dict:
+        """What the capacity rules would do to ``kind`` for this import; writes nothing."""
+        filename = "lessons.json" if kind == "lesson" else "decisions.json"
+        raw = _read_json(self._knowledge_dir / filename)
+        current = self._entries_for_locked_mutation(raw if isinstance(raw, list) else [], kind)
+        ctx = self._import_context(merge=merge, allow_over_cap=allow_over_cap)
+        mutate = self._import_row_mutator(
+            kind, incoming, merge=merge, ctx=ctx, stats={"added": 0},
+            archive_keys=archive_keys, items=deepcopy(items), edges=edges,
+            new_edges=[], input_path=input_path,
+        )
+        after = mutate(deepcopy(current))
+        try:
+            plan = _capacity.plan_capacity(
+                deepcopy(current), after, kind=kind, now=datetime.now(timezone.utc),
+                limits=_capacity.limits_from_env(), ctx=ctx,
             )
-        return rows[cut:], archived
+        except _capacity.CapacityRefused as exc:
+            return {"refused": True, "hard_cap": exc.hard_cap, "verified_active": exc.verified_active}
+        placed = len(plan.placed_ids)
+        return {"refused": False, "moved_to_archive": len(plan.archive) - placed, "placed_in_archive": placed}
 
-    @staticmethod
-    def _archived_note(archived_ids: list[str]) -> str:
-        return f", archived {len(archived_ids)}" if archived_ids else ""
+    def _import_archive_segment(self, kind: str, rows: list[dict]) -> int:
+        """Append the export's archived rows that this store does not have yet."""
+        if not rows:
+            return 0
+        filename = "lessons.json" if kind == "lesson" else "decisions.json"
+        active_ids = {
+            str(row.get("id") or "")
+            for row in self._read_entries(self._knowledge_dir / filename, kind, migrate=False)
+        }
+        present = {
+            (str(row.get("id") or ""), _capacity.content_digest(row, kind))
+            for row in self._archive_rows_cached(kind)
+        }
+        by_reason: dict[str, list[dict]] = {}
+        for row in rows:
+            key = (str(row.get("id") or ""), _capacity.content_digest(row, kind))
+            if key[0] in active_ids or key in present:
+                continue
+            present.add(key)
+            by_reason.setdefault(str(row.get("overflow_archive_reason") or "imported"), []).append(row)
+        written = 0
+        for reason, group in by_reason.items():
+            written += len(self._archive_overflow_rows(kind, group, reason=reason, preserve_stamp=True))
+        return written
+
+    def _import_relations_locked(
+        self,
+        relations_in: list[dict] | None,
+        new_edges: list[tuple[str, str]],
+        *,
+        merge: bool,
+    ) -> str | None:
+        """Merge: local edges plus new file edges. Replace: file edges plus every local edge."""
+        counts = {"added": 0}
+
+        def _key(edge: dict) -> tuple:
+            return edge.get("src"), edge.get("rel"), edge.get("dst")
+
+        def _mutate(current: Any) -> list[dict]:
+            local = [edge for edge in (current if isinstance(current, list) else []) if isinstance(edge, dict)]
+            if relations_in is None or merge:
+                merged = {_key(edge): edge for edge in local}
+                for edge in relations_in or []:
+                    if _key(edge) not in merged:
+                        merged[_key(edge)] = edge
+                        counts["added"] += 1
+            else:
+                merged = {_key(edge): edge for edge in relations_in}
+                for edge in local:
+                    merged.setdefault(_key(edge), edge)
+            for src, dst in new_edges:
+                merged.setdefault((src, "supersedes", dst), {"src": src, "rel": "supersedes", "dst": dst})
+            return list(merged.values())
+
+        _update_json(self._knowledge_dir / "relations.json", _mutate, default=[])
+        if relations_in is None:
+            return None
+        return f"relations(+{counts['added']})" if merge else f"relations({len(relations_in)})"
+
+    def _import_knowledge_rows(
+        self,
+        data: dict,
+        knowledge: dict,
+        *,
+        merge: bool,
+        materialize: bool,
+        conflicts: list[dict],
+        input_path: str,
+        allow_over_cap: bool,
+    ) -> dict:
+        """Import lessons, decisions, the archive segment and relations in one locked section.
+
+        Returns the ``imported`` text per section and the materialization
+        payload, or ``{"error": "capacity_full", ...}`` with nothing written
+        when reviewed memories would exceed the hard cap.
+        """
+        incoming = {
+            kind: self._prepare_import_rows(kind, knowledge.get(section))
+            for section, kind in self._IMPORT_ROW_SECTIONS
+            if knowledge.get(section)
+        }
+        segment = data.get("overflow_archive") if isinstance(data.get("overflow_archive"), dict) else {}
+        archive_in = {
+            kind: self._prepare_import_rows(kind, segment.get(section))
+            for section, kind in self._IMPORT_ROW_SECTIONS
+        }
+        relations_in = validate_edges(knowledge.get("relations") or []) if "relations" in knowledge else None
+        items = self._materialize_items(knowledge, conflicts) if merge and materialize else []
+        report: dict[str, Any] = {}
+        if merge and materialize:
+            report["version_chain_materialization"] = {
+                "enabled": True, "materialized": 0, "skipped": 0, "items": [],
+            }
+        if not incoming and not any(archive_in.values()) and relations_in is None and not items:
+            return report
+
+        new_edges: list[tuple[str, str]] = []
+        with hold_directory_lock(self._knowledge_dir):
+            edges = RelationStore(self.root).all_edges()
+            archive_keys = {
+                kind: {self._import_identity_key(row, kind) for row in self._archive_rows_cached(kind)}
+                for _section, kind in self._IMPORT_ROW_SECTIONS
+            }
+            for kind, rows in incoming.items():
+                preview = self._import_capacity_preview(
+                    kind, rows, merge=merge, archive_keys=archive_keys[kind],
+                    items=[i for i in items if i["_kind"] == kind], edges=edges,
+                    input_path=input_path, allow_over_cap=allow_over_cap,
+                )
+                if preview["refused"]:
+                    return {
+                        "error": "capacity_full",
+                        "kind": kind,
+                        "hard_cap": preview["hard_cap"],
+                        "verified_active": preview["verified_active"],
+                        "message": (
+                            "importing would put more reviewed memories in the store than the hard cap; "
+                            "nothing was imported (the owner can allow it with engram import --allow-over-cap)"
+                        ),
+                    }
+            marker = self._knowledge_dir / self._IMPORT_PENDING_MARKER
+            _write_json(marker, {
+                "mode": "merge" if merge else "overwrite",
+                "source": _metadata_source(input_path),
+                "started_at": _now_iso(),
+            })
+            for section, kind in self._IMPORT_ROW_SECTIONS:
+                rows = incoming.get(kind)
+                if rows is None:
+                    continue
+                ctx = self._import_context(merge=merge, allow_over_cap=allow_over_cap)
+                stats = {"added": 0}
+                filename = "lessons.json" if kind == "lesson" else "decisions.json"
+                outcome = self._update_entries(
+                    self._knowledge_dir / filename,
+                    kind,
+                    self._import_row_mutator(
+                        kind, rows, merge=merge, ctx=ctx, stats=stats,
+                        archive_keys=archive_keys[kind],
+                        items=[i for i in items if i["_kind"] == kind], edges=edges,
+                        new_edges=new_edges, input_path=input_path,
+                    ),
+                    capacity_ctx=ctx,
+                )
+                note = f", archived {len(outcome.archived_ids)}" if outcome.archived_ids else ""
+                sign = "+" if merge else ""
+                report[section] = f"{section}({sign}{stats['added']}{note})"
+            for kind, rows in archive_in.items():
+                self._import_archive_segment(kind, rows)
+            if relations_in is not None or new_edges:
+                relations_text = self._import_relations_locked(relations_in, new_edges, merge=merge)
+                if relations_text is not None:
+                    report["relations"] = relations_text
+            marker.unlink(missing_ok=True)
+
+        if items:
+            payload = report["version_chain_materialization"]
+            for item in items:
+                item.pop("_incoming", None)
+                item.pop("_kind", None)
+                if item["outcome"] == "materialized":
+                    payload["materialized"] += 1
+                    detail = f"{item['section']}:{item['new_id']} supersedes {item['existing_id']}"
+                    if item.get("pending_review"):
+                        detail += " (pending review)"
+                    self._audit.log("write", "knowledge/import_version_chain", detail=detail)
+                else:
+                    payload["skipped"] += 1
+                payload["items"].append(item)
+        return report
 
     def export_all(self, output_path: str | None = None) -> str:
         """导出整个 Engram 为单一 JSON 文件。
@@ -798,6 +967,7 @@ class ImportExportMixin:
         merge: bool = True,
         dry_run: bool = False,
         materialize_version_chain: bool = False,
+        allow_over_cap: bool = False,
     ) -> dict:
         """从备份文件导入 Engram 数据。
 
@@ -807,6 +977,8 @@ class ImportExportMixin:
             dry_run: True=只返回元数据预览，不写入任何 Engram 数据。
             materialize_version_chain: True=在 merge apply 时，将 dry-run
                 标出的 same-key 分歧知识导入为 supersedes 版本链。
+            allow_over_cap: True=已审记忆超过硬上限时仍然导入（只由 Owner
+                在命令行显式放行；MCP 工具从不传入）。
 
         Returns:
             导入结果摘要。
@@ -822,6 +994,21 @@ class ImportExportMixin:
         plan = self._build_import_plan(data, merge=merge, input_path=input_path)
         if dry_run:
             return plan
+
+        # Lessons, decisions, their archive segment and relations first, in one
+        # locked section: a refused import writes nothing at all.
+        knowledge = data.get("knowledge", {})
+        rows_report = self._import_knowledge_rows(
+            data,
+            knowledge if isinstance(knowledge, dict) else {},
+            merge=merge,
+            materialize=materialize_version_chain,
+            conflicts=plan.get("conflicts", []),
+            input_path=input_path,
+            allow_over_cap=allow_over_cap,
+        )
+        if rows_report.get("error"):
+            return rows_report
 
         imported = []
 
@@ -919,61 +1106,9 @@ class ImportExportMixin:
             imported.append("trust_boundaries")
 
         # Knowledge
-        knowledge = data.get("knowledge", {})
-
-        if knowledge.get("lessons"):
-            if merge:
-                existing = self._read_entries(
-                    self._knowledge_dir / "lessons.json",
-                    "lesson",
-                    migrate=False,
-                )
-                existing_summaries = {l.get("summary", "") for l in existing}
-                new_count = 0
-                for lesson in knowledge["lessons"]:
-                    if lesson.get("summary") not in existing_summaries:
-                        existing.append(lesson)
-                        existing_summaries.add(lesson.get("summary", ""))
-                        new_count += 1
-                # Keep the last MAX_KNOWLEDGE_ENTRIES; rows pushed out go to the
-                # overflow archive (written first) instead of being dropped.
-                kept, archived = self._split_import_overflow("lesson", existing)
-                self._write_entries(
-                    self._knowledge_dir / "lessons.json", kept, "lesson", skip_archive_ids=archived
-                )
-                imported.append(f"lessons(+{new_count}{self._archived_note(archived)})")
-            else:
-                kept, archived = self._split_import_overflow("lesson", list(knowledge["lessons"]))
-                self._write_entries(
-                    self._knowledge_dir / "lessons.json", kept, "lesson", skip_archive_ids=archived
-                )
-                imported.append(f"lessons({len(kept)}{self._archived_note(archived)})")
-
-        if knowledge.get("decisions"):
-            if merge:
-                existing = self._read_entries(
-                    self._knowledge_dir / "decisions.json",
-                    "decision",
-                    migrate=False,
-                )
-                existing_questions = {d.get("question", "") for d in existing}
-                new_count = 0
-                for decision in knowledge["decisions"]:
-                    if decision.get("question") not in existing_questions:
-                        existing.append(decision)
-                        existing_questions.add(decision.get("question", ""))
-                        new_count += 1
-                kept, archived = self._split_import_overflow("decision", existing)
-                self._write_entries(
-                    self._knowledge_dir / "decisions.json", kept, "decision", skip_archive_ids=archived
-                )
-                imported.append(f"decisions(+{new_count}{self._archived_note(archived)})")
-            else:
-                kept, archived = self._split_import_overflow("decision", list(knowledge["decisions"]))
-                self._write_entries(
-                    self._knowledge_dir / "decisions.json", kept, "decision", skip_archive_ids=archived
-                )
-                imported.append(f"decisions({len(kept)}{self._archived_note(archived)})")
+        for section in ("lessons", "decisions"):
+            if section in rows_report:
+                imported.append(rows_report[section])
 
         if knowledge.get("domains"):
             if merge:
@@ -1018,25 +1153,8 @@ class ImportExportMixin:
                     raise
             imported.append(f"playbooks(+{new_count})" if merge else f"playbooks({len(knowledge['playbooks'])})")
 
-        if "relations" in knowledge:
-            incoming_relations = validate_edges(knowledge.get("relations") or [])
-            if merge:
-                existing = RelationStore(self.root).all_edges()
-                by_key = {
-                    (edge["src"], edge["rel"], edge["dst"]): edge
-                    for edge in existing
-                }
-                added = 0
-                for edge in incoming_relations:
-                    key = (edge["src"], edge["rel"], edge["dst"])
-                    if key not in by_key:
-                        by_key[key] = edge
-                        added += 1
-                _write_json(self._knowledge_dir / "relations.json", list(by_key.values()))
-                imported.append(f"relations(+{added})")
-            else:
-                _write_json(self._knowledge_dir / "relations.json", incoming_relations)
-                imported.append(f"relations({len(incoming_relations)})")
+        if "relations" in rows_report:
+            imported.append(rows_report["relations"])
 
         if "conflict_resolutions" in knowledge:
             store = ResolutionStore(self.root)
@@ -1086,11 +1204,7 @@ class ImportExportMixin:
 
         version_chain_materialization = None
         if merge and materialize_version_chain:
-            version_chain_materialization = self._materialize_version_chain_candidates(
-                data,
-                plan.get("conflicts", []),
-                input_path=input_path,
-            )
+            version_chain_materialization = rows_report["version_chain_materialization"]
             imported.append(
                 "version_chains"
                 f"(+{version_chain_materialization.get('materialized', 0)})"

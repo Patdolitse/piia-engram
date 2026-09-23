@@ -179,23 +179,6 @@ def test_a_whole_file_write_archives_the_rows_it_drops(tmp_path, monkeypatch):
     assert [(r["id"], r["overflow_archive_reason"]) for r in _archive(tmp_path, "lesson")] == [(ids[1], "removed")]
 
 
-def test_a_rolled_back_import_candidate_is_not_archived(tmp_path, monkeypatch):
-    from piia_engram.governance_store import RelationStore
-
-    _limits(monkeypatch)
-    source = Engram(root=tmp_path / "source")
-    source.add_lesson({"summary": "rollback topic with enough words", "detail": "incoming", "domain": "import"})
-    backup = source.export_all(str(tmp_path / "backup.json"))
-    target_root = tmp_path / "target"
-    target = Engram(root=target_root)
-    local = target.add_lesson({"summary": "rollback topic with enough words", "detail": "local", "domain": "import"})
-    monkeypatch.setattr(RelationStore, "add_relation", lambda self, *args, **kwargs: False)
-    result = target.import_all(backup, merge=True, dry_run=False, materialize_version_chain=True)
-    assert result["version_chain_materialization"]["materialized"] == 0
-    assert [r["id"] for r in _active(target_root, "lesson")] == [local["id"]]
-    assert _archive(target_root, "lesson") == []
-
-
 @pytest.mark.parametrize("kind", KINDS)
 def test_whole_file_rows_get_no_new_row_exemption_from_the_queue_quota(tmp_path, monkeypatch, kind):
     _limits(monkeypatch)

@@ -334,5 +334,7 @@ def test_export_import_native_includes_relations_and_conflict_resolutions(tmp_pa
     replacement_path = tmp_path / "replacement.json"
     replacement_path.write_text(json.dumps(replacement, ensure_ascii=False), encoding="utf-8")
     target.import_all(str(replacement_path), merge=False)
-    assert RelationStore(target.root).all_edges() == []
+    # v4.21: a replace import keeps every local edge next to the file's edges
+    # (replaced rows stay reachable in the overflow archive).
+    assert RelationStore(target.root).all_edges() == RelationStore(source.root).all_edges()
     assert ResolutionStore(target.root).all_records() == {}

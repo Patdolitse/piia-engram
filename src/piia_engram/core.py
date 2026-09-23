@@ -1635,7 +1635,12 @@ class Engram(
         return self._knowledge_dir / "overflow_archive" / name
 
     def _archive_overflow_rows(
-        self, entry_type: str, rows: list[dict], reason: str = "capacity_overflow"
+        self,
+        entry_type: str,
+        rows: list[dict],
+        reason: str = "capacity_overflow",
+        *,
+        preserve_stamp: bool = False,
     ) -> list[str]:
         """Append ``rows`` (in-memory plaintext form) to the overflow archive.
 
@@ -1652,8 +1657,11 @@ class Engram(
         items: list[dict] = []
         for row in rows:
             item = self._ensure_fields(deepcopy(row), entry_type)
-            item["overflow_archived_at"] = stamp
-            item["overflow_archive_reason"] = reason
+            # Rows written back from an export keep their original stamp and reason.
+            if not (preserve_stamp and item.get("overflow_archived_at")):
+                item["overflow_archived_at"] = stamp
+            if not (preserve_stamp and item.get("overflow_archive_reason")):
+                item["overflow_archive_reason"] = reason
             stored = self._entries_for_storage([item], entry_type)[0]
             lines.append(json.dumps(stored, ensure_ascii=False))
             ids.append(str(item.get("id", "")))

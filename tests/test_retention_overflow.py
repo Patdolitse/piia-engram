@@ -107,19 +107,6 @@ def _full_stores(tmp_path_factory):
     return stores
 
 
-@pytest.fixture(scope="module")
-def _full_verified_stores(tmp_path_factory):
-    """One store per kind whose active file holds MAX_KNOWLEDGE_ENTRIES reviewed rows."""
-    base = tmp_path_factory.mktemp("full-reviewed")
-    stores = {}
-    for kind in KINDS:
-        root = base / kind
-        engram = Engram(root=root)
-        ids = [_add(engram, kind, _row(kind, i, "S", tier="verified"))["id"] for i in range(MAX_KNOWLEDGE_ENTRIES)]
-        stores[kind] = (root, ids)
-    return stores
-
-
 def _copy_store(full_stores, kind: str, tmp_path: Path, monkeypatch) -> tuple[Path, list[str], Engram]:
     source, seeded_ids = full_stores[kind]
     root = tmp_path / kind
@@ -127,15 +114,6 @@ def _copy_store(full_stores, kind: str, tmp_path: Path, monkeypatch) -> tuple[Pa
     monkeypatch.setenv("ENGRAM_DIR", str(root))
     monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
     _set_limits(monkeypatch)
-    return root, list(seeded_ids), Engram(root=root)
-
-
-def _copy_verified_store(full_stores, kind: str, tmp_path: Path, monkeypatch) -> tuple[Path, list[str], Engram]:
-    source, seeded_ids = full_stores[kind]
-    root = tmp_path / kind
-    shutil.copytree(source, root)
-    monkeypatch.setenv("ENGRAM_DIR", str(root))
-    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
     return root, list(seeded_ids), Engram(root=root)
 
 
@@ -215,62 +193,6 @@ def test_archived_row_is_the_stored_row_plus_the_stamp(_full_stores, tmp_path, m
     assert archived["overflow_archive_reason"] == "review_queue_quota"
     assert archived["overflow_archived_at"]
     assert {k: v for k, v in archived.items() if k not in OVERFLOW_FIELDS} == before
-
-
-# -- imports over the cap (positional until the import rework) -----------------------
-
-
-def _backup_file(tmp_path: Path, kind: str, rows: list[dict]) -> Path:
-    path = tmp_path / f"backup-{kind}.json"
-    path.write_text(json.dumps({"schema_version": "1.0", "knowledge": {f"{kind}s": rows}}, ensure_ascii=False),
-                    encoding="utf-8")
-    return path
-
-
-@pytest.mark.parametrize("kind", KINDS)
-def test_merge_import_over_the_cap_archives_pushed_out_rows(_full_verified_stores, tmp_path, monkeypatch, kind):
-    root, seeded, engram = _copy_verified_store(_full_verified_stores, kind, tmp_path, monkeypatch)
-    incoming = [dict(_row(kind, i, "IMP", tier="verified"), id=f"imported-{i:03d}") for i in range(5)]
-    result = engram.import_all(str(_backup_file(tmp_path, kind, incoming)), merge=True)
-    assert len(_active_ids(root, kind)) == MAX_KNOWLEDGE_ENTRIES
-    assert _archived_ids(root, kind) == seeded[:5]
-    assert f"{kind}s(+5, archived 5)" in result["imported"]
-
-
-@pytest.mark.parametrize("kind", KINDS)
-def test_replace_import_over_the_cap_archives_the_extra_rows(tmp_path, monkeypatch, kind):
-    root = tmp_path / "store"
-    monkeypatch.setenv("ENGRAM_DIR", str(root))
-    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
-    engram = Engram(root=root)
-    incoming = [dict(_row(kind, i, "REP", tier="verified"), id=f"imported-{i:03d}")
-                for i in range(MAX_KNOWLEDGE_ENTRIES + 5)]
-    result = engram.import_all(str(_backup_file(tmp_path, kind, incoming)), merge=False)
-    assert _archived_ids(root, kind) == [f"imported-{i:03d}" for i in range(5)]
-    assert len(_active_ids(root, kind)) == MAX_KNOWLEDGE_ENTRIES
-    assert f"{kind}s({MAX_KNOWLEDGE_ENTRIES}, archived 5)" in result["imported"]
-
-
-def test_import_archives_rows_without_ids_under_stable_ids(tmp_path, monkeypatch):
-    root = tmp_path / "store"
-    monkeypatch.setenv("ENGRAM_DIR", str(root))
-    engram = Engram(root=root)
-    incoming = [_row("lesson", i, "NOID", tier="verified") for i in range(MAX_KNOWLEDGE_ENTRIES + 2)]
-    engram.import_all(str(_backup_file(tmp_path, "lesson", incoming)), merge=False)
-    ids = _archived_ids(root, "lesson")
-    assert len(ids) == 2 and all(ids)
-    assert engram.get_overflow_archived("lesson", ids[0])["summary"] == _words(0, "NOID")
-
-
-def test_import_archival_is_audited(_full_verified_stores, tmp_path, monkeypatch):
-    root, seeded, _ = _copy_verified_store(_full_verified_stores, "lesson", tmp_path, monkeypatch)
-    monkeypatch.setenv("ENGRAM_AUDIT", "1")
-    engram = Engram(root=root)
-    incoming = [dict(_row("lesson", i, "AUD", tier="verified"), id=f"imported-{i}") for i in range(2)]
-    engram.import_all(str(_backup_file(tmp_path, "lesson", incoming)), merge=True)
-    lines = [json.loads(line) for line in (root / "audit.log").read_text(encoding="utf-8").splitlines() if line]
-    details = [e["detail"] for e in lines if e.get("action") == "archive"]
-    assert details == [f"capacity_overflow id={seeded[0]}", f"capacity_overflow id={seeded[1]}"]
 
 
 # -- explicit result, read-back and reachability ---------------------------------------

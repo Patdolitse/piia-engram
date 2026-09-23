@@ -65,6 +65,7 @@ REASON_RETIRED_OVERFLOW = "retired_overflow"
 REASON_RETIRED_GRACE = "retired_grace"
 REASON_REMOVED = "removed"
 REASON_SNAPSHOT = "snapshot"
+REASON_IMPORT_REPLACE = "import_replace"
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,11 @@ class CapacityContext:
     # Removed rows the caller archived itself (the positional import split)
     # or is rolling back; the removed-row backstop skips them.
     skip_archive_ids: frozenset = frozenset()
+    # Reason recorded for rows the mutator drops (replace imports use import_replace).
+    removed_reason: str = REASON_REMOVED
+    # (row, reason) pairs the mutator archives in the same write, e.g. a local
+    # row a replace import overwrites with a different body under the same id.
+    extra_archive: list = field(default_factory=list)
 
 
 @dataclass
@@ -299,7 +305,7 @@ def plan_capacity(
         for key, row in after_keyed
     )
     if not raw_change:
-        return CapacityPlan(rows=after)
+        return CapacityPlan(rows=after, archive=list(ctx.extra_archive))
 
     for _, row in before_keyed:
         _backfill(row, now, clamp_existing=False)
@@ -402,9 +408,10 @@ def plan_capacity(
                 total -= 1
 
     archive = [
-        (row, REASON_REMOVED) for row in removed
+        (row, ctx.removed_reason) for row in removed
         if str(row.get("id") or "") not in ctx.skip_archive_ids
     ]
+    archive += list(ctx.extra_archive)
     archive += [(row, reason) for _key, row, reason in moves]
     rows = [row for key, row in after_keyed if key not in moved]
     return CapacityPlan(rows=rows, archive=archive, placed_ids=placed, promoted_supersedes=promoted)
