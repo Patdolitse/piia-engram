@@ -262,10 +262,39 @@ def test_archive_keeps_the_at_rest_form_of_an_encrypted_store(tmp_path, monkeypa
     assert engram.get_overflow_archived("lesson", first)["summary"] == _words(0, "ENC")
 
 
-def test_write_reply_mentions_archived_rows_only_when_there_are_some():
-    from piia_engram.mcp_tools_write import _overflow_note
+def _serve(engram: Engram, monkeypatch):
+    import asyncio
 
-    assert _overflow_note({"id": "x"}) == ""
-    assert _overflow_note(None) == ""
-    note = _overflow_note({"overflow_archived_ids": ["a", "b"]})
-    assert "2" in note
+    from piia_engram import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_engram", engram)
+    monkeypatch.setenv("ENGRAM_HEARTBEAT_INTERVAL", "0")
+    old_session = mcp_server._session
+    old_session._stop_event.set()
+    if old_session._heartbeat_thread is not None:
+        old_session._heartbeat_thread.join(timeout=2.0)
+    monkeypatch.setattr(mcp_server, "_session", mcp_server._SessionTracker())
+    return mcp_server, asyncio.run
+
+
+def test_write_replies_mention_archived_rows_only_when_there_are_some(_full_stores, tmp_path, monkeypatch):
+    root, seeded, engram = _copy_store(_full_stores, "lessons", tmp_path, monkeypatch)
+    server, run = _serve(engram, monkeypatch)
+    reply = run(server.add_lesson(summary=_words(910, "L"), domain="cap-test", user_confirmed=True))
+    assert "1 条较早的条目已移入溢出归档" in reply
+    assert seeded[0] in _archived_ids(root, "lessons")
+
+    small_root = tmp_path / "small"
+    small = Engram(root=small_root)
+    server, run = _serve(small, monkeypatch)
+    quiet = run(server.add_lesson(summary=_words(911, "L"), domain="cap-test", user_confirmed=True))
+    assert "溢出归档" not in quiet
+
+
+def test_memory_store_decision_reply_mentions_archived_rows(_full_stores, tmp_path, monkeypatch):
+    root, seeded, engram = _copy_store(_full_stores, "decisions", tmp_path, monkeypatch)
+    server, run = _serve(engram, monkeypatch)
+    content = json.dumps({"question": _words(912, "Q"), "choice": _words(912, "C")}, ensure_ascii=False)
+    reply = run(server.memory_store(kind="decision", content_json=content, user_confirmed=True))
+    assert "溢出归档" in reply
+    assert seeded[0] in _archived_ids(root, "decisions")

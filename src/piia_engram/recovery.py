@@ -380,8 +380,14 @@ def build_backup_plan(root: str | Path) -> dict[str, Any]:
 
     datasets: list[dict[str, Any]] = []
     knowledge = _knowledge_dir(root_path)
-    for dataset in _BACKUP_DATASETS:
-        active = knowledge / f"{dataset}.json"
+    # The overflow archive holds rows the per-type cap moved out of the active
+    # files; it is listed next to them so a backup plan shows both.
+    candidates = [(dataset, knowledge / f"{dataset}.json") for dataset in _BACKUP_DATASETS]
+    candidates += [
+        (f"{dataset}_overflow_archive", knowledge / "overflow_archive" / f"{dataset}.json")
+        for dataset in _BACKUP_DATASETS
+    ]
+    for dataset, active in candidates:
         if not active.is_file():
             continue
         data, status = _read_json_file(active)
@@ -389,7 +395,7 @@ def build_backup_plan(root: str | Path) -> dict[str, Any]:
         raw = active.read_bytes()
         datasets.append({
             "dataset": dataset,
-            "file_name": active.name,
+            "file_name": active.relative_to(knowledge).as_posix(),
             "entries": entries,
             "bytes": len(raw),
             "sha256_12": hashlib.sha256(raw).hexdigest()[:12],

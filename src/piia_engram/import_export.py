@@ -687,6 +687,24 @@ class ImportExportMixin:
         )
         return {"outcome": "materialized", "reason": "", "new_id": new_id}
 
+    def _split_import_overflow(
+        self, entry_type: str, rows: list[dict]
+    ) -> tuple[list[dict], list[str]]:
+        """Keep the last MAX_KNOWLEDGE_ENTRIES rows; archive the rest first.
+
+        Returns (kept rows, archived ids). The overflow archive is written
+        before the caller rewrites the active file, so a row is never lost.
+        """
+        if len(rows) <= MAX_KNOWLEDGE_ENTRIES:
+            return rows, []
+        cut = len(rows) - MAX_KNOWLEDGE_ENTRIES
+        archived = self._archive_overflow_rows(entry_type, rows[:cut])
+        return rows[cut:], archived
+
+    @staticmethod
+    def _archived_note(archived_ids: list[str]) -> str:
+        return f", archived {len(archived_ids)}" if archived_ids else ""
+
     def export_all(self, output_path: str | None = None) -> str:
         """导出整个 Engram 为单一 JSON 文件。
 
@@ -735,6 +753,11 @@ class ImportExportMixin:
                 "tools": self._export_tools(),
             },
             "projects": {},
+            # Rows the per-type cap moved out of the active knowledge files.
+            "overflow_archive": {
+                "lessons": self._read_overflow_archive("lesson"),
+                "decisions": self._read_overflow_archive("decision"),
+            },
         }
 
         # 导出所有项目快照
@@ -898,12 +921,15 @@ class ImportExportMixin:
                         existing.append(lesson)
                         existing_summaries.add(lesson.get("summary", ""))
                         new_count += 1
-                # Keep last MAX_KNOWLEDGE_ENTRIES
-                self._write_entries(self._knowledge_dir / "lessons.json", existing[-MAX_KNOWLEDGE_ENTRIES:], "lesson")
-                imported.append(f"lessons(+{new_count})")
+                # Keep the last MAX_KNOWLEDGE_ENTRIES; rows pushed out go to the
+                # overflow archive (written first) instead of being dropped.
+                kept, archived = self._split_import_overflow("lesson", existing)
+                self._write_entries(self._knowledge_dir / "lessons.json", kept, "lesson")
+                imported.append(f"lessons(+{new_count}{self._archived_note(archived)})")
             else:
-                self._write_entries(self._knowledge_dir / "lessons.json", knowledge["lessons"][-MAX_KNOWLEDGE_ENTRIES:], "lesson")
-                imported.append(f"lessons({len(knowledge['lessons'])})")
+                kept, archived = self._split_import_overflow("lesson", list(knowledge["lessons"]))
+                self._write_entries(self._knowledge_dir / "lessons.json", kept, "lesson")
+                imported.append(f"lessons({len(kept)}{self._archived_note(archived)})")
 
         if knowledge.get("decisions"):
             if merge:
@@ -919,11 +945,13 @@ class ImportExportMixin:
                         existing.append(decision)
                         existing_questions.add(decision.get("question", ""))
                         new_count += 1
-                self._write_entries(self._knowledge_dir / "decisions.json", existing[-MAX_KNOWLEDGE_ENTRIES:], "decision")
-                imported.append(f"decisions(+{new_count})")
+                kept, archived = self._split_import_overflow("decision", existing)
+                self._write_entries(self._knowledge_dir / "decisions.json", kept, "decision")
+                imported.append(f"decisions(+{new_count}{self._archived_note(archived)})")
             else:
-                self._write_entries(self._knowledge_dir / "decisions.json", knowledge["decisions"][-MAX_KNOWLEDGE_ENTRIES:], "decision")
-                imported.append(f"decisions({len(knowledge['decisions'])})")
+                kept, archived = self._split_import_overflow("decision", list(knowledge["decisions"]))
+                self._write_entries(self._knowledge_dir / "decisions.json", kept, "decision")
+                imported.append(f"decisions({len(kept)}{self._archived_note(archived)})")
 
         if knowledge.get("domains"):
             if merge:

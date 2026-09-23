@@ -1486,6 +1486,106 @@ class Engram(
 
         _update_json(path, _locked, default=[])
 
+    # -- capacity overflow ---------------------------------------------------
+    # A knowledge file holds at most MAX_KNOWLEDGE_ENTRIES rows. Rows pushed out
+    # by the cap are moved to knowledge/overflow_archive/<type>s.json instead of
+    # being dropped. The archive does not count toward the cap, is created only
+    # when an overflow happens, and is written (under its own directory lock)
+    # BEFORE the active file is rewritten, so an interruption can leave a row in
+    # both files but never in neither.
+
+    _OVERFLOW_ARCHIVE_FILES = {"lesson": "lessons.json", "decision": "decisions.json"}
+
+    def _overflow_archive_path(self, entry_type: str) -> Path:
+        try:
+            name = self._OVERFLOW_ARCHIVE_FILES[entry_type]
+        except KeyError:
+            raise ValueError(f"no overflow archive for entry type {entry_type!r}") from None
+        return self._knowledge_dir / "overflow_archive" / name
+
+    @staticmethod
+    def _select_overflow(
+        rows: list[dict], new_row: dict | None, protected: set[str]
+    ) -> tuple[list[dict], list[dict]]:
+        """Split ``rows`` into (kept, evicted) for a list over the cap.
+
+        Eviction order is unchanged from earlier releases (oldest non-protected
+        staging first, then oldest non-protected non-staging), except that the
+        row written by the current call is never a candidate.
+        """
+        staging = [r for r in rows if r.get("tier") == "staging" and r.get("id") not in protected]
+        others = [r for r in rows if r.get("tier") != "staging" and r.get("id") not in protected]
+        protected_rows = [r for r in rows if r.get("id") in protected]
+        overflow = len(rows) - MAX_KNOWLEDGE_ENTRIES
+        candidates = [r for r in staging if r is not new_row] + [r for r in others if r is not new_row]
+        evicted = candidates[:max(overflow, 0)]
+        gone = {id(r) for r in evicted}
+        kept = (
+            [r for r in others if id(r) not in gone]
+            + [r for r in staging if id(r) not in gone]
+            + protected_rows
+        )
+        return kept, evicted
+
+    def _archive_overflow_rows(
+        self, entry_type: str, rows: list[dict], reason: str = "capacity_overflow"
+    ) -> list[str]:
+        """Persist ``rows`` (in-memory plaintext form) to the overflow archive.
+
+        Stored in the same at-rest form as the active file (encrypted when
+        corpus encryption is on). A row whose id is already archived is
+        replaced, so a retried write does not duplicate it. Returns the ids.
+        """
+        if not rows:
+            return []
+        stamp = _now_iso()
+        archived: list[dict] = []
+        for row in rows:
+            item = deepcopy(row)
+            item["overflow_archived_at"] = stamp
+            item["overflow_archive_reason"] = reason
+            archived.append(item)
+        new_ids = {r.get("id") for r in archived if r.get("id")}
+
+        def _append(current: Any) -> list[dict]:
+            existing = self._entries_for_locked_mutation(current, entry_type)
+            kept = [e for e in existing if e.get("id") not in new_ids]
+            return self._entries_for_storage(kept + archived, entry_type)
+
+        _update_json(self._overflow_archive_path(entry_type), _append, default=[])
+        return [str(r.get("id", "")) for r in rows]
+
+    def _read_overflow_archive(self, entry_type: str) -> list[dict]:
+        """Return the overflow archive of ``entry_type`` in plaintext (read-only)."""
+        path = self._overflow_archive_path(entry_type)
+        if not path.is_file():
+            return []
+        data = _read_json(path)
+        if not isinstance(data, list):
+            return []
+        rows: list[dict] = []
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            item = self._ensure_fields(dict(entry), entry_type)
+            if self._corpus_key:
+                item = self._crypto.decrypt_entry(item, self._corpus_key, entry_type)
+            rows.append(item)
+        return rows
+
+    def get_overflow_archived(self, kind: str, entry_id: str) -> dict | None:
+        """Return a row the capacity cap moved to the overflow archive, or None.
+
+        ``kind`` is "lesson" or "decision". Read-only; archived rows are never
+        returned by search, recall or the regular list calls.
+        """
+        if kind not in self._OVERFLOW_ARCHIVE_FILES:
+            raise ValueError(f"kind must be 'lesson' or 'decision', got {kind!r}")
+        for row in self._read_overflow_archive(kind):
+            if row.get("id") == entry_id:
+                return self._display_sanitize_one(row, kind)
+        return None
+
     def add_lesson(
         self,
         lesson: dict | str,
@@ -1546,6 +1646,7 @@ class Engram(
         )
 
         result_box: dict[str, dict] = {}
+        overflow_box: dict[str, list[str]] = {}
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
             # Three-tier dedup: exact duplicate / semantically related / pass
@@ -1651,32 +1752,19 @@ class Engram(
 
             lessons.append(new_lesson)
             if len(lessons) > MAX_KNOWLEDGE_ENTRIES:
-                # Evict staging items first, then oldest; never drop verified.
-                # v4.20/4.20.1: a version-chain HEAD (an id with supersedes
-                # out-edges) is never an eviction candidate, and when the
-                # protected set is UNKNOWABLE (relation store unreadable) the
-                # eviction is SKIPPED entirely — fail closed, never open.
+                # Over the cap: move the oldest non-protected rows (staging
+                # first) to the overflow archive; the row being written now is
+                # never a candidate. A version-chain HEAD (an id with supersedes
+                # out-edges) is never a candidate, and when the protected set is
+                # UNKNOWABLE (relation store unreadable) nothing is moved —
+                # fail closed, never open.
                 protected = self._version_chain_head_ids()
                 if protected is None:
                     result_box["result"] = new_lesson
                     return lessons  # fail closed: cap may temporarily exceed
-                staging = [
-                    l for l in lessons
-                    if l.get("tier") == "staging" and l.get("id") not in protected
-                ]
-                verified = [
-                    l for l in lessons
-                    if l.get("tier") != "staging" and l.get("id") not in protected
-                ]
-                protected_rows = [l for l in lessons if l.get("id") in protected]
-                overflow = len(lessons) - MAX_KNOWLEDGE_ENTRIES
-                if len(staging) >= overflow:
-                    staging = staging[overflow:]  # drop oldest staging
-                else:
-                    remaining = overflow - len(staging)
-                    staging = []
-                    verified = verified[remaining:]  # drop oldest verified as last resort
-                lessons = verified + staging + protected_rows
+                lessons, evicted = self._select_overflow(lessons, new_lesson, protected)
+                # Archive BEFORE the active file is rewritten (see above).
+                overflow_box["ids"] = self._archive_overflow_rows("lesson", evicted)
             result_box["result"] = new_lesson
             return lessons
 
@@ -1684,6 +1772,7 @@ class Engram(
         result = result_box["result"]
         if result.get("status") == "duplicate":
             return result
+        archived_ids = overflow_box.get("ids") or []
 
         summary = new_lesson.get("summary", "")
         if _audit_metadata_only:
@@ -1705,7 +1794,30 @@ class Engram(
                 _d = _d.strip()
                 if _d:
                     self.increment_domain_usage(_d)
-        return new_lesson
+        return self._report_overflow(
+            "knowledge/lessons", archived_ids, new_lesson, new_lesson.get("source_tool", "")
+        )
+
+    def _report_overflow(
+        self, resource: str, archived_ids: list[str], row: dict, source_tool: str
+    ) -> dict:
+        """Audit each archived id and return ``row`` with ``overflow_archived_ids``.
+
+        The key is added to a copy (never to the stored row) and only when rows
+        were actually archived, so results below the cap keep their key set.
+        Audit details carry the id and the reason only, never row content.
+        """
+        for archived_id in archived_ids:
+            self._audit.log(
+                "archive", resource,
+                detail=f"capacity_overflow id={archived_id}",
+                source_tool=source_tool,
+            )
+        if not archived_ids:
+            return row
+        out = dict(row)
+        out["overflow_archived_ids"] = list(archived_ids)
+        return out
 
     def get_lessons(
         self,
@@ -1960,6 +2072,7 @@ class Engram(
 
         result_box: dict[str, dict] = {}
         supersedes_box: dict[str, str | None] = {}
+        overflow_box: dict[str, list[str]] = {}
 
         def _mutate_decisions(decisions: list[dict]) -> list[dict]:
             # Three-tier dedup for decisions.
@@ -2052,23 +2165,9 @@ class Engram(
                 )
                 if pending_target:
                     protected = set(protected) | {pending_target}
-                staging = [
-                    d for d in decisions
-                    if d.get("tier") == "staging" and d.get("id") not in protected
-                ]
-                verified = [
-                    d for d in decisions
-                    if d.get("tier") != "staging" and d.get("id") not in protected
-                ]
-                protected_rows = [d for d in decisions if d.get("id") in protected]
-                overflow = len(decisions) - MAX_KNOWLEDGE_ENTRIES
-                if len(staging) >= overflow:
-                    staging = staging[overflow:]
-                else:
-                    remaining = overflow - len(staging)
-                    staging = []
-                    verified = verified[remaining:]
-                decisions = verified + staging + protected_rows
+                decisions, evicted = self._select_overflow(decisions, new_decision, protected)
+                # Archive BEFORE the active file is rewritten (see _select_overflow).
+                overflow_box["ids"] = self._archive_overflow_rows("decision", evicted)
             result_box["result"] = new_decision
             supersedes_box["target"] = auto_supersedes_target
             return decisions
@@ -2077,6 +2176,7 @@ class Engram(
         result = result_box["result"]
         if result.get("status") == "duplicate":
             return result
+        archived_ids = overflow_box.get("ids") or []
         title = new_decision.get("question", "") or new_decision.get("title", "")
         if _audit_metadata_only:
             self._audit.log(
@@ -2129,7 +2229,9 @@ class Engram(
             except Exception:
                 pass  # edge is advisory; the decision itself is the hard write
 
-        return new_decision
+        return self._report_overflow(
+            "knowledge/decisions", archived_ids, new_decision, new_decision.get("source_tool", "")
+        )
 
     def get_decisions(
         self,
