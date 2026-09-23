@@ -15,6 +15,9 @@ Run from the repo root:
 
     python scripts/release_sanitize_check.py
     python scripts/release_sanitize_check.py --commit-messages   # also scan git log
+    # pre-push scope: only the commits and annotated tags about to be pushed
+    python scripts/release_sanitize_check.py --internal --strict --messages-only \\
+        --commit-range origin/main..HEAD --tag-messages
     python scripts/release_sanitize_check.py --strict            # exit 1 on any hit
 
 Exit code:
@@ -234,7 +237,9 @@ _INTERNAL_DISCLOSURE_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
 _INTERNAL_PATTERNS_FILE = ".sanitizeignore"
 
 
-def _load_internal_patterns_file() -> list[tuple[str, re.Pattern[str], str]]:
+def _load_internal_patterns_file(
+    path: Path | None = None,
+) -> list[tuple[str, re.Pattern[str], str]]:
     """Load project-specific internal-disclosure regexes from
     ``.sanitizeignore`` if present.
 
@@ -242,7 +247,7 @@ def _load_internal_patterns_file() -> list[tuple[str, re.Pattern[str], str]]:
     ``high:`` to make an exact private term block release even when
     ``--strict`` is not set.
     """
-    path = Path(_INTERNAL_PATTERNS_FILE)
+    path = Path(path) if path is not None else Path(_INTERNAL_PATTERNS_FILE)
     if not path.is_file():
         return []
     out: list[tuple[str, re.Pattern[str], str]] = []
@@ -439,14 +444,40 @@ def _scan_file_multiline(
     return hits
 
 
-def _scan_commit_messages(
+def _scan_message_text(
+    name: str,
+    text: str,
     custom: list[re.Pattern[str]],
     patterns: list[tuple[str, re.Pattern[str], str]],
 ) -> list[tuple[str, str, str, str]]:
-    """Return list of (sha, label, severity, snippet)."""
+    """Scan one commit or tag message; return (name, label, severity, snippet)."""
+    hits: list[tuple[str, str, str, str]] = []
+    for label, pat, severity in patterns:
+        m = pat.search(text)
+        if m:
+            hits.append((name, label, severity, m.group(0)[:80]))
+    for i, pat in enumerate(custom):
+        m = pat.search(text)
+        if m:
+            hits.append((name, f"custom#{i+1}", "warn", m.group(0)[:80]))
+    return hits
+
+
+def _scan_commit_messages(
+    custom: list[re.Pattern[str]],
+    patterns: list[tuple[str, re.Pattern[str], str]],
+    *,
+    rev_range: str | None = None,
+) -> list[tuple[str, str, str, str]]:
+    """Return list of (sha, label, severity, snippet).
+
+    Scans every commit (``git log --all``) unless ``rev_range`` limits the scan
+    to one range, for example ``origin/main..HEAD`` before a push.
+    """
+    selector = [rev_range] if rev_range else ["--all"]
     try:
         out = subprocess.check_output(
-            ["git", "log", "--all", "--format=%H%n%s%n%b%n---END---"],
+            ["git", "log", *selector, "--format=%H%n%s%n%b%n---END---"],
             text=True, encoding="utf-8",
         )
     except subprocess.CalledProcessError:
@@ -457,14 +488,7 @@ def _scan_commit_messages(
     for line in out.splitlines():
         if line == "---END---":
             text = "\n".join(current_body)
-            for label, pat, severity in patterns:
-                m = pat.search(text)
-                if m:
-                    hits.append((current_sha[:10], label, severity, m.group(0)[:80]))
-            for i, pat in enumerate(custom):
-                m = pat.search(text)
-                if m:
-                    hits.append((current_sha[:10], f"custom#{i+1}", "warn", m.group(0)[:80]))
+            hits += _scan_message_text(current_sha[:10], text, custom, patterns)
             current_sha = ""
             current_body = []
         elif not current_sha:
@@ -474,10 +498,61 @@ def _scan_commit_messages(
     return hits
 
 
+def _scan_tag_messages(
+    custom: list[re.Pattern[str]],
+    patterns: list[tuple[str, re.Pattern[str], str]],
+    *,
+    rev_range: str | None = None,
+) -> list[tuple[str, str, str, str]]:
+    """Scan annotated tag messages; return (tag, label, severity, snippet).
+
+    With ``rev_range`` only tags whose commit lies in that range are scanned.
+    Lightweight tags carry no message of their own and are skipped.
+    """
+    try:
+        listing = subprocess.check_output(
+            ["git", "for-each-ref", "refs/tags",
+             "--format=%(refname:short)%09%(objecttype)%09%(*objectname)"],
+            text=True, encoding="utf-8",
+        )
+        in_range: set[str] | None = None
+        if rev_range:
+            in_range = set(subprocess.check_output(
+                ["git", "rev-list", rev_range], text=True, encoding="utf-8",
+            ).split())
+    except subprocess.CalledProcessError:
+        return []
+    hits: list[tuple[str, str, str, str]] = []
+    for row in listing.splitlines():
+        parts = row.split("\t")
+        if len(parts) != 3 or parts[1] != "tag":
+            continue
+        name, _kind, commit = parts
+        if in_range is not None and commit not in in_range:
+            continue
+        try:
+            message = subprocess.check_output(
+                ["git", "for-each-ref", f"refs/tags/{name}", "--format=%(contents)"],
+                text=True, encoding="utf-8",
+            )
+        except subprocess.CalledProcessError:
+            continue
+        hits += _scan_message_text(name, message, custom, patterns)
+    return hits
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else "")
     ap.add_argument("--commit-messages", action="store_true",
                     help="Also scan git commit messages (slower)")
+    ap.add_argument("--commit-range", metavar="RANGE",
+                    help="Scan the commit messages in RANGE only "
+                         "(for example origin/main..HEAD before a push)")
+    ap.add_argument("--tag-messages", action="store_true",
+                    help="Also scan annotated tag messages (limited to "
+                         "--commit-range when given)")
+    ap.add_argument("--messages-only", action="store_true",
+                    help="Skip the file scan; scan only the requested messages")
     ap.add_argument("--strict", action="store_true",
                     help="Exit code 1 if any hit is found (including warn-level)")
     ap.add_argument("--staged", action="store_true",
@@ -510,7 +585,10 @@ def main() -> int:
     total_high = 0
     total_warn = 0
 
-    if args.staged:
+    if args.messages_only:
+        scan_label = ""
+        files = []
+    elif args.staged:
         scan_label = "staged files"
         files = _git_staged_files()
         if not files:
@@ -520,7 +598,8 @@ def main() -> int:
         scan_label = "working tree"
         files = _git_tracked_files()
 
-    print(f"\n== Scanning {scan_label} ==")
+    if scan_label:
+        print(f"\n== Scanning {scan_label} ==")
     for path in files:
         rel = str(path).replace("\\", "/")
         if _should_skip(rel):
@@ -556,11 +635,25 @@ def main() -> int:
             else:
                 total_warn += 1
 
+    message_scans = []
     if args.commit_messages:
-        print("\n== Scanning commit messages ==")
-        for sha, label, severity, snippet in _scan_commit_messages(custom, patterns):
+        message_scans.append(("commit messages", _scan_commit_messages(custom, patterns)))
+    if args.commit_range:
+        message_scans.append((
+            f"commit messages in {args.commit_range}",
+            _scan_commit_messages(custom, patterns, rev_range=args.commit_range),
+        ))
+    if args.tag_messages:
+        scope = f" in {args.commit_range}" if args.commit_range else ""
+        message_scans.append((
+            f"annotated tag messages{scope}",
+            _scan_tag_messages(custom, patterns, rev_range=args.commit_range),
+        ))
+    for title, found in message_scans:
+        print(f"\n== Scanning {title} ==")
+        for name, label, severity, snippet in found:
             marker = "[HIGH]" if severity == "high" else "[warn]"
-            print(f"  {marker} {sha} {label}: {snippet}")
+            print(f"  {marker} {name} {label}: {snippet}")
             if severity == "high":
                 total_high += 1
             else:

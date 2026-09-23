@@ -222,3 +222,14 @@ def test_ci_test_job_parity():
         f"  ci.yml   : {expected}\n"
         f"  readiness: {actual}"
     )
+
+
+def test_default_checks_scan_the_messages_about_to_be_pushed():
+    mod = _load()
+    checks = dict(mod.EXTRA_CHECKS)
+    assert "push_scope_scan" in checks
+    command = " ".join(checks["push_scope_scan"])
+    assert "release_sanitize_check.py" in command
+    assert "--messages-only" in command
+    assert "--commit-range origin/main..HEAD" in command
+    assert "--tag-messages" in command

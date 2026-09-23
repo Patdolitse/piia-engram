@@ -63,6 +63,11 @@ EXTRA_CHECKS = (
     ("product_boundary", [sys.executable, "scripts/check_product_boundary.py"]),
     ("publish_allowlist", [sys.executable, "scripts/check_publish_allowlist.py"]),
     ("public_release_surface", [sys.executable, "scripts/check_public_release_surface.py"]),
+    # Commit and annotated tag messages about to be pushed, checked against the
+    # local term lists too (run after `git fetch origin`).
+    ("push_scope_scan",
+     [sys.executable, "scripts/release_sanitize_check.py", "--internal", "--strict",
+      "--messages-only", "--commit-range", "origin/main..HEAD", "--tag-messages"]),
 )
 
 DEFAULT_CHECKS = CI_TEST_JOB_CHECKS + EXTRA_CHECKS

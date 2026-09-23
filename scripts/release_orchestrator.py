@@ -121,6 +121,10 @@ def _all_steps() -> list[dict]:
               "python scripts/run_memory_evals.py --json"),
         _step("sanitize", LOCAL, "Secret + strategy disclosure scan",
               "python scripts/release_sanitize_check.py --internal --strict"),
+        _step("push_scope_scan", LOCAL, "Commit and tag messages about to be pushed",
+              "python scripts/release_sanitize_check.py --internal --strict "
+              "--messages-only --commit-range origin/main..HEAD --tag-messages",
+              timeout_hint="seconds; run after `git fetch origin` so origin/main is current"),
         _step("allowlist", LOCAL, "Default-deny publish allowlist",
               "python scripts/check_publish_allowlist.py"),
         _step("gate", LOCAL, "Review-evidence gate",
@@ -170,9 +174,14 @@ def _all_steps() -> list[dict]:
                          "Not checkable locally -- verify once on pypi.org.",
               preflight_covered=False, probe=None),
         # ---- REMOTE: irreversible, user-gated ------------------------------
-        _step("git_push", REMOTE, "Push commit + tag",
-              "git push origin main --tags",
+        _step("git_push", REMOTE, "Push the release commit, then its one tag",
+              "git push origin <RELEASE_SHA>:refs/heads/main && "
+              "git push origin refs/tags/vX.Y.Z   "
+              "# explicit refspecs only; never push all tags, all refs, or with force",
               auth_required=True, auth_kind=DEVICE_FLOW, token_env="GITHUB_TOKEN",
+              stall_risk="a bulk tag push would publish local-only tags; the "
+                         "pre-push guard (scripts/check_push_refs.py) refuses "
+                         "tags not reachable from main",
               timeout_hint="fast if gh/git auth is live"),
         _step("gh_release", REMOTE, "Create GitHub Release (triggers publish.yml)",
               "gh release create vX.Y.Z --title ... --notes-file <public-notes.md>",
@@ -205,6 +214,7 @@ def _all_steps() -> list[dict]:
 
 
 _PUBLISH_FAST_STEP_IDS = {
+    "push_scope_scan",
     "gh_auth",
     "mcp_publisher_auth",
     "mcp_version_match",

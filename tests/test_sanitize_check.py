@@ -604,3 +604,88 @@ def test_credential_shapes_in_sync_with_sensitivity(sc):
     for name, tok in samples.items():
         assert sc._LIVE_CREDENTIAL_RE.search(tok), f"scanner misses {name}: {tok}"
         assert sv._SECRET_VALUE_RE.search(tok), f"sensitivity misses {name}: {tok}"
+
+
+# ── commit-range and tag-message scanning (pre-push scope) ──
+
+_CANARY = "PRIVATE_CANARY_" + "DO_NOT_RELEASE"
+
+
+def _git(cwd: Path, *args: str) -> str:
+    import os
+    import subprocess
+
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+    proc = subprocess.run(
+        ["git", *args], cwd=cwd, env=env, check=True,
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    return proc.stdout.strip()
+
+
+def _commit(repo: Path, name: str, message: str) -> str:
+    (repo / name).write_text(name, encoding="utf-8")
+    _git(repo, "add", name)
+    _git(repo, "commit", "-q", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def history(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "core.autocrlf", "false")
+    old = _commit(repo, "old.txt", f"chore: old commit naming {_CANARY}")
+    base = _commit(repo, "base.txt", "chore: base")
+    return repo, old, base
+
+
+def _canary_patterns():
+    return [("local#1", re.compile(_CANARY), "high")]
+
+
+def test_commit_range_scan_reports_only_commits_in_range(sc, history, monkeypatch):
+    repo, _old, base = history
+    new = _commit(repo, "new.txt", f"fix: new commit naming {_CANARY}")
+    monkeypatch.chdir(repo)
+    hits = sc._scan_commit_messages([], _canary_patterns(), rev_range=f"{base}..HEAD")
+    assert [h[0] for h in hits] == [new[:10]]
+
+
+def test_commit_range_scan_is_clean_when_range_is_clean(sc, history, monkeypatch):
+    repo, _old, base = history
+    _commit(repo, "new.txt", "fix: neutral message")
+    monkeypatch.chdir(repo)
+    assert sc._scan_commit_messages([], _canary_patterns(), rev_range=f"{base}..HEAD") == []
+
+
+def test_tag_message_scan_reads_annotated_tags_in_range(sc, history, monkeypatch):
+    repo, _old, base = history
+    _commit(repo, "new.txt", "fix: neutral message")
+    _git(repo, "tag", "-a", "v9.9.9", "-m", f"release naming {_CANARY}")
+    _git(repo, "tag", "light-tag")
+    _git(repo, "tag", "-a", "old-tag", base + "~1", "-m", f"old naming {_CANARY}")
+    monkeypatch.chdir(repo)
+    hits = sc._scan_tag_messages([], _canary_patterns(), rev_range=f"{base}..HEAD")
+    assert [h[0] for h in hits] == ["v9.9.9"]
+
+
+def test_messages_only_cli_exits_one_on_a_hit(sc, history, monkeypatch):
+    repo, _old, base = history
+    _commit(repo, "new.txt", "fix: neutral message")
+    _git(repo, "tag", "-a", "v9.9.9", "-m", f"release naming {_CANARY}")
+    (repo / ".sanitizeignore").write_text(f"high:{_CANARY}\n", encoding="utf-8")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(repo))
+    monkeypatch.setenv("USERPROFILE", str(repo))
+    argv = ["release_sanitize_check.py", "--internal", "--strict", "--messages-only",
+            "--commit-range", f"{base}..HEAD", "--tag-messages"]
+    monkeypatch.setattr("sys.argv", argv)
+    assert sc.main() == 1
+    monkeypatch.setattr("sys.argv", [a for a in argv if a != "--tag-messages"])
+    assert sc.main() == 0

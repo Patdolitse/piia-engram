@@ -125,6 +125,27 @@ class TestChecklist:
         assert "manual" in step["title"].lower()
         assert "Glama" in step["title"]
 
+    def test_git_push_uses_explicit_refspecs_only(self, mod):
+        step = {s["id"]: s for s in mod.build_checklist()}["git_push"]
+        command = step["command"].split("#", 1)[0]
+        assert ":refs/heads/main" in command
+        assert "refs/tags/vX.Y.Z" in command
+        for bulk in ("--tags", "--all", "--mirror", "--follow-tags", "--force", "--prune"):
+            assert bulk not in command
+
+    def test_push_scope_scan_runs_locally_before_push(self, mod):
+        steps = mod.build_checklist()
+        ids = [s["id"] for s in steps]
+        step = {s["id"]: s for s in steps}["push_scope_scan"]
+        assert step["phase"] == mod.LOCAL
+        assert "--commit-range origin/main..HEAD" in step["command"]
+        assert "--tag-messages" in step["command"]
+        assert ids.index("push_scope_scan") < ids.index("git_push")
+
+    def test_publish_fast_mode_keeps_push_scope_scan(self, mod):
+        ids = [s["id"] for s in mod.build_checklist(mod.MODE_PUBLISH_FAST)]
+        assert "push_scope_scan" in ids
+
     def test_github_release_uses_notes_file_not_inline_markdown(self, mod):
         step = {s["id"]: s for s in mod.build_checklist()}["gh_release"]
         assert "--notes-file" in step["command"]
