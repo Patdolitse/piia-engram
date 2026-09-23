@@ -1682,6 +1682,54 @@ class Engram(
         texts.discard("")
         return texts
 
+    def _archive_ids(self, entry_type: str) -> set[str]:
+        """Ids in the overflow archive of ``entry_type`` (raw read, no decryption)."""
+        raw_rows, _skipped = _read_jsonl_rows(self._overflow_archive_path(entry_type))
+        return {str(row["id"]) for row in raw_rows if row.get("id")}
+
+    @staticmethod
+    def _archive_rank(row: dict) -> tuple[int, datetime]:
+        try:
+            version = int(row.get("version") or 1)
+        except (TypeError, ValueError):
+            version = 1
+        stamp = _capacity.parse_time(row.get("overflow_archived_at"))
+        return version, stamp or datetime.min.replace(tzinfo=timezone.utc)
+
+    def _archive_current_rows(self, entry_type: str) -> dict[str, dict]:
+        """The current archived row per id: highest ``version``, then the latest archive stamp.
+
+        Ties keep the later line, since the archive is append-only.
+        """
+        current: dict[str, dict] = {}
+        for row in self._read_overflow_archive(entry_type):
+            rid = str(row.get("id") or "")
+            if not rid:
+                continue
+            held = current.get(rid)
+            if held is None or self._archive_rank(row) >= self._archive_rank(held):
+                current[rid] = row
+        return current
+
+    def _find_lineage_record(self, item_id: str) -> tuple[str | None, dict | None, str]:
+        """Find a lesson or decision by id, active files first, then the archive.
+
+        Returns ``(kind, row, where)`` with ``where`` = ``"active"`` or
+        ``"archive"``, or ``(None, None, "")``. Each archive is read at most once.
+        """
+        item_id = str(item_id or "")
+        if not item_id:
+            return None, None, ""
+        for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
+            for row in self._read_entries(self._knowledge_dir / name, kind, migrate=False):
+                if str(row.get("id") or "") == item_id:
+                    return kind, row, "active"
+        for kind in self._OVERFLOW_ARCHIVE_FILES:
+            row = self._archive_current_rows(kind).get(item_id)
+            if row is not None:
+                return kind, row, "archive"
+        return None, None, ""
+
     def get_overflow_archived(self, kind: str, entry_id: str) -> dict | None:
         """Return the most recently archived row with ``entry_id``, or None.
 
