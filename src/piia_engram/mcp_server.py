@@ -1187,22 +1187,44 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
     "search_knowledge": "read",
 }
 
+_DEFAULT_SERVER_INSTRUCTIONS = (
+    "Engram — the user's personal memory layer across all AI tools.\n\n"
+    "Memory lifecycle (act on each phase without waiting for the user to ask):\n\n"
+    "1. STARTUP  — get_user_context: inject user identity & context at conversation start.\n"
+    "2. RETRIEVAL — search_knowledge / get_relevant_knowledge: look up past knowledge mid-conversation.\n"
+    "3. WRITEBACK — memory_store (or add_lesson / add_decision / add_playbook): persist new knowledge.\n"
+    "4. SESSION END — wrap_up_session: save session context & sync.\n\n"
+    "Quick reference:\n"
+    "- Conversation start → get_user_context(level='standard')\n"
+    "- Need past knowledge → search_knowledge(query, filters_json='{\"tier\":\"verified\"}')\n"
+    "- Learned something reusable → memory_store(kind='lesson', content_json=...)\n"
+    "- Decision made → memory_store(kind='decision', content_json=...)\n"
+    "- Conversation end → wrap_up_session\n"
+)
+
+_STRICT_SERVER_INSTRUCTIONS = (
+    "Engram — the user's personal memory layer across all AI tools.\n\n"
+    "This store runs with ENGRAM_APPROVAL=strict: the Owner approves every memory.\n\n"
+    "- Read freely: get_user_context, search_knowledge, get_relevant_knowledge.\n"
+    "- Write only as a proposal: one claim per row (add_lesson / add_decision / memory_store),\n"
+    "  searched first so you do not propose a duplicate, and only when it is worth keeping.\n"
+    "  Proposals wait in the review queue; the Owner decides with the local engram review CLI.\n"
+    "- Do not propose session logs, progress notes or anything already in files or git;\n"
+    "  keep session checkpoints in project-local notes.\n"
+    "- Editing, approving, archiving, merging and identity changes are refused over MCP.\n"
+)
+
+
+def server_instructions() -> str:
+    """Instructions served to MCP clients; strict mode drops the auto-write lifecycle."""
+    if _gov_rt._strict_mode.approval_strict():
+        return _STRICT_SERVER_INSTRUCTIONS
+    return _DEFAULT_SERVER_INSTRUCTIONS
+
+
 mcp = FastMCP(
     "engram",
-    instructions=(
-        "Engram — the user's personal memory layer across all AI tools.\n\n"
-        "Memory lifecycle (act on each phase without waiting for the user to ask):\n\n"
-        "1. STARTUP  — get_user_context: inject user identity & context at conversation start.\n"
-        "2. RETRIEVAL — search_knowledge / get_relevant_knowledge: look up past knowledge mid-conversation.\n"
-        "3. WRITEBACK — memory_store (or add_lesson / add_decision / add_playbook): persist new knowledge.\n"
-        "4. SESSION END — wrap_up_session: save session context & sync.\n\n"
-        "Quick reference:\n"
-        "- Conversation start → get_user_context(level='standard')\n"
-        "- Need past knowledge → search_knowledge(query, filters_json='{\"tier\":\"verified\"}')\n"
-        "- Learned something reusable → memory_store(kind='lesson', content_json=...)\n"
-        "- Decision made → memory_store(kind='decision', content_json=...)\n"
-        "- Conversation end → wrap_up_session\n"
-    ),
+    instructions=server_instructions(),
 )
 
 

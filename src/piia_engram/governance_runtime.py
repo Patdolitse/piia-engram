@@ -43,6 +43,7 @@ from .governance import (
 from .governance_store import GrantStore
 from .permission_profile_vnext import CallerContext, resolve_effective_profile
 from .sensitivity import VALID_LEVELS, annotate_items
+from . import strict_mode as _strict_mode
 from .storage import DataCorruptionError
 
 _TRUTHY = ("1", "true", "yes", "on")
@@ -797,6 +798,9 @@ def maybe_refuse_write(root, *, tool: str, agent_id: str = "",
     are gated separately by :func:`maybe_refuse_owner_write` /
     :func:`maybe_refuse_export`, which permit ONLY ``private-self``.
     """
+    strict_refusal = _strict_mode.maybe_refuse(root, tool=tool)
+    if strict_refusal is not None:
+        return strict_refusal
     if not governance_enabled():
         return None
     ct = current_client_type() if client_type is None else (client_type or "")
@@ -852,6 +856,9 @@ def maybe_refuse_export(root, *, tool: str, agent_id: str = "",
     file" exfil path in agents that also hold filesystem access). Returns
     ``None`` (proceed) when governance is OFF or the caller is the owner.
     """
+    strict_refusal = _strict_mode.maybe_refuse(root, tool=tool)
+    if strict_refusal is not None:
+        return strict_refusal
     if not governance_enabled():
         return None
     aid, trust, revoked, grant_error = resolve_caller(
@@ -890,6 +897,9 @@ def maybe_refuse_owner_write(root, *, tool: str, agent_id: str = "",
     otherwise records a receipt and returns the refusal string, which the MCP
     handler MUST return instead of executing the write.
     """
+    strict_refusal = _strict_mode.maybe_refuse(root, tool=tool)
+    if strict_refusal is not None:
+        return strict_refusal
     if not governance_enabled():
         return None
     aid, trust, revoked, grant_error = resolve_caller(
