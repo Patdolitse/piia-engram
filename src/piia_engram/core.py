@@ -2025,23 +2025,36 @@ class Engram(
         return None
 
     def _archive_with_reject(self, kind: str, item_id: str, owner_reject: str, archive) -> dict:
-        """Archive a row; tombstone it only for an explicit Owner reject mark."""
-        before = None
+        """Archive a row; tombstone it only for an explicit Owner reject mark.
+
+        The tombstone is written FIRST, so the Owner's rejection holds even if the
+        status write that follows never lands. That window is visible, not silent:
+        doctor lists a tombstoned row that is still pending, and re-applying the
+        same reject mark finishes it (the tombstone append is idempotent).
+        """
         if owner_reject:
             _t, before = self._find_item_by_id(item_id)
-        result = archive()
-        if (
-            owner_reject
-            and isinstance(before, dict)
-            and before.get("tier") == "staging"
-            and isinstance(result, dict)
-            and not result.get("error")
+            if isinstance(before, dict) and before.get("tier") == "staging":
+                _tombstones.append(
+                    self.root, kind, before, via=owner_reject,
+                    prior_rejection_id=str(before.get("reproposal_of_rejected") or ""),
+                )
+        return archive()
+
+    def tombstoned_but_pending(self) -> list[dict]:
+        """Rows an Owner reject mark tombstoned whose status write did not land."""
+        stones = {r.get("id"): r for r in _tombstones.load(self.root)}
+        if not stones:
+            return []
+        out = []
+        for kind, rows in (
+            ("lesson", self.get_lessons(limit=None, _update_access=False)),
+            ("decision", self.get_decisions(limit=None, _update_access=False)),
         ):
-            _tombstones.append(
-                self.root, kind, before, via=owner_reject,
-                prior_rejection_id=str(before.get("reproposal_of_rejected") or ""),
-            )
-        return result
+            for row in rows:
+                if row.get("id") in stones:
+                    out.append({"id": row.get("id"), "kind": kind, "tier": row.get("tier")})
+        return out
 
     def add_lesson(
         self,

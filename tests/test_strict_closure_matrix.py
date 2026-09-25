@@ -555,6 +555,28 @@ def test_reject_mark_writes_a_text_free_tombstone(eng, tmp_path):
     assert summary not in json.dumps(stone)
 
 
+def test_crash_after_tombstone_is_visible_and_reapplying_finishes_it(eng, tmp_path, monkeypatch):
+    row = eng.add_lesson("rejected while the status write crashes", domain="t")
+    real_update = Engram.update_lesson
+
+    def crash(self, *args, **kwargs):
+        raise OSError("simulated crash between tombstone and status write")
+
+    monkeypatch.setattr(Engram, "update_lesson", crash)
+    with pytest.raises(OSError):
+        eng.archive_knowledge(row["id"], _owner_reject="cli:owner")
+    monkeypatch.setattr(Engram, "update_lesson", real_update)
+
+    assert [s["id"] for s in _tombstones(tmp_path)] == [row["id"]]
+    assert eng.add_lesson("rejected while the status write crashes", domain="t")["status"] == "rejected_before"
+    assert [u["id"] for u in eng.tombstoned_but_pending()] == [row["id"]]
+
+    _reject(eng, row["id"])
+
+    assert eng.tombstoned_but_pending() == []
+    assert [s["id"] for s in _tombstones(tmp_path)] == [row["id"]]
+
+
 def test_approve_writes_no_tombstone(eng, tmp_path):
     row = eng.add_lesson("a proposal the owner accepts", domain="t")
 

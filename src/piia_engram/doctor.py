@@ -735,6 +735,19 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] Capacity check failed: {exc}")
         problems += 1
 
+    # 2.55 rejection tombstones whose status write did not land (a crash window)
+    try:
+        unfinished = eng.tombstoned_but_pending()
+        if unfinished:
+            ids = ", ".join(item["id"] for item in unfinished[:10])
+            print(f"    [!!] Rejected but still active: {len(unfinished)} row(s) ({ids})")
+            print("         Finish them: engram review apply <marks.json> --operator <name> --yes"
+                  " with a reject mark per id")
+            problems += 1
+    except Exception as exc:
+        print(f"    [!!] Tombstone check failed: {exc}")
+        problems += 1
+
     # 2.6 reconcile: an ENGRAM_RECONCILE=1 that the config overrides is reported
     try:
         from piia_engram.reconcile import reconcile_env_conflict_note
