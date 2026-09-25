@@ -16,6 +16,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from . import capacity as _capacity
+from . import strict_mode as _strict_mode
+from . import tombstones as _tombstones
 from . import provenance as _provenance
 
 # All constants and I/O utilities live in storage.py — re-exported here
@@ -1270,7 +1272,10 @@ class Engram(
         # This must run *before* honoring an explicit tier: otherwise a caller
         # (or content injected into ``content_json``) could smuggle
         # tier="verified" and silently bypass the owner's strict gate.
-        if os.environ.get("ENGRAM_APPROVAL", "").strip().lower() == "strict":
+        if _strict_mode.approval_strict(self.root):
+            for _key in [k for k in entry if k.startswith(("promotion_", "promoted_", "approval_"))]:
+                entry.pop(_key, None)
+            entry.pop("user_confirmed", None)
             entry["tier"] = "staging"
             entry["memory_state"] = "staging"
             entry["approval_status"] = "pending"
@@ -1703,6 +1708,8 @@ class Engram(
             "message": "与溢出归档中的条目相同，未重复添加（可从回收站恢复） / "
                        "Same as an entry in the overflow archive; not added again (restore it instead)",
             "in_overflow_archive": True,
+            "where": "archive",
+            "reason": row.get("overflow_archive_reason") or "",
         }
 
     def _batch_archived_revision(self, new_row: dict) -> dict | None:
@@ -1968,6 +1975,74 @@ class Engram(
                 return self._display_sanitize_one(row, kind)
         return None
 
+    def _insert_guard(self, kind: str, entry: dict, rows: list[dict]) -> dict | None:
+        """Single insert-point check for new lesson/decision rows (every route).
+
+        * rejected_before: an Owner reject mark tombstoned this claim (same h1 and
+          scope). Permanent; citing the rejection as ``supersedes`` does not help.
+        * duplicate_retired: the same claim sits retired (not active) in this file.
+          Revocable: restoring the row lifts the block. Overflow-archive copies keep
+          their 4.21.0 rule (a queued write is a duplicate, a reviewed write is not);
+          that response now also names where and why the copy was archived.
+        A re-proposal with different text that cites a tombstoned id is staged and
+        flagged ``reproposal_of_rejected``.
+        """
+        stone = _tombstones.lookup(self.root, kind, entry)
+        if stone is not None:
+            self._audit.log(
+                "refused", f"knowledge/{kind}s",
+                detail=f"rejected_before rejection_id={stone.get('id')}",
+                source_tool=str(entry.get("source_tool") or ""),
+            )
+            return {
+                "status": "rejected_before",
+                "rejection_id": stone.get("id"),
+                "message": "The Owner rejected this before; it is not proposed again.",
+            }
+        h1, _h2 = _tombstones.claim_hashes(kind, entry)
+        scope = _tombstones.scope_of(entry)
+        retired = None
+        for row in rows:
+            if (row.get("status") or "active") == "active":
+                continue
+            if _tombstones.scope_of(row) == scope and _tombstones.claim_hashes(kind, row)[0] == h1:
+                retired = {"existing_id": row.get("id"), "where": "retired",
+                           "reason": row.get("status") or "outdated"}
+                break
+        if retired is not None:
+            self._audit.log(
+                "refused", f"knowledge/{kind}s",
+                detail=f"duplicate_retired existing_id={retired['existing_id']} where={retired['where']}",
+                source_tool=str(entry.get("source_tool") or ""),
+            )
+            return {"status": "duplicate_retired", **retired,
+                    "message": "The same entry is retired; the Owner can restore it."}
+        for key in ("supersedes", "pending_supersedes"):
+            cited = str(entry.get(key) or "")
+            if cited and _tombstones.by_id(self.root, cited) is not None:
+                entry.pop(key, None)
+                entry["reproposal_of_rejected"] = cited
+        return None
+
+    def _archive_with_reject(self, kind: str, item_id: str, owner_reject: str, archive) -> dict:
+        """Archive a row; tombstone it only for an explicit Owner reject mark."""
+        before = None
+        if owner_reject:
+            _t, before = self._find_item_by_id(item_id)
+        result = archive()
+        if (
+            owner_reject
+            and isinstance(before, dict)
+            and before.get("tier") == "staging"
+            and isinstance(result, dict)
+            and not result.get("error")
+        ):
+            _tombstones.append(
+                self.root, kind, before, via=owner_reject,
+                prior_rejection_id=str(before.get("reproposal_of_rejected") or ""),
+            )
+        return result
+
     def add_lesson(
         self,
         lesson: dict | str,
@@ -2034,6 +2109,10 @@ class Engram(
         result_box: dict[str, dict] = {}
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
+            guard = self._insert_guard("lesson", new_lesson, lessons)
+            if guard is not None:
+                result_box["result"] = guard
+                return lessons
             archived_twin = self._batch_archived_twin("lesson", new_lesson)
             if archived_twin is not None:
                 result_box["result"] = {
@@ -2163,7 +2242,7 @@ class Engram(
             capacity_ctx=_capacity.CapacityContext(source_tool=new_lesson.get("source_tool", "")),
         )
         result = result_box["result"]
-        if result.get("status") == "duplicate":
+        if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
             return result
 
         summary = new_lesson.get("summary", "")
@@ -2471,9 +2550,10 @@ class Engram(
             )
         return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
-    def archive_lesson(self, lesson_id: str) -> dict:
+    def archive_lesson(self, lesson_id: str, *, _owner_reject: str = "") -> dict:
         """Mark a lesson as outdated without deleting it."""
-        return self.update_lesson(lesson_id, {"status": "outdated"})
+        return self._archive_with_reject("lesson", lesson_id, _owner_reject,
+                                         lambda: self.update_lesson(lesson_id, {"status": "outdated"}))
 
     def add_decision(
         self,
@@ -2546,6 +2626,10 @@ class Engram(
         decision_ctx = _capacity.CapacityContext(source_tool=new_decision.get("source_tool", ""))
 
         def _mutate_decisions(decisions: list[dict]) -> list[dict]:
+            guard = self._insert_guard("decision", new_decision, decisions)
+            if guard is not None:
+                result_box["result"] = guard
+                return decisions
             archived_twin = self._batch_archived_twin("decision", new_decision)
             if archived_twin is not None:
                 result_box["result"] = {
@@ -2657,7 +2741,7 @@ class Engram(
 
         outcome = self._update_entries(path, "decision", _mutate_decisions, capacity_ctx=decision_ctx)
         result = result_box["result"]
-        if result.get("status") == "duplicate":
+        if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
             return result
         title = new_decision.get("question", "") or new_decision.get("title", "")
         if _audit_metadata_only:
@@ -2911,9 +2995,10 @@ class Engram(
             )
         return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
-    def archive_decision(self, decision_id: str) -> dict:
+    def archive_decision(self, decision_id: str, *, _owner_reject: str = "") -> dict:
         """Mark a decision as outdated without deleting it."""
-        return self.update_decision(decision_id, {"status": "outdated"})
+        return self._archive_with_reject("decision", decision_id, _owner_reject,
+                                         lambda: self.update_decision(decision_id, {"status": "outdated"}))
 
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""
