@@ -450,7 +450,12 @@ async def export_engram(
     if err:
         return f"错误: {err}"
     try:
-        path = S._get_engram().export_all(output_path)
+        # Strict: an agent-triggered export never carries pending proposals;
+        # the Owner's full backup is a local export (plan V4 amendment A5).
+        path = S._get_engram().export_all(
+            output_path,
+            exclude_pending=S._gov_rt._strict_mode.approval_strict(S._get_engram().root),
+        )
         return f"导出成功: {path}"
     except Exception as e:
         return f"导出失败: {S._safe_err(e)}"
