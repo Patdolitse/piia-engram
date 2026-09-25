@@ -9,6 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from . import strict_mode as _strict_mode
+from . import tombstones as _tombstones
 from .storage import (
     SIMILARITY_THRESHOLD,
     _ALLOWED_PLAYBOOK_UPDATE_FIELDS,
@@ -34,6 +36,16 @@ _PLAYBOOK_CONTENT_FIELDS: frozenset = frozenset({
 
 def _stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+
+
+
+def _playbook_queue_max() -> int:
+    import os
+
+    try:
+        return max(1, int(os.environ.get("ENGRAM_PLAYBOOK_QUEUE_MAX", "10")))
+    except ValueError:
+        return 10
 
 
 class PlaybookMixin:
@@ -517,6 +529,84 @@ class PlaybookMixin:
             entry["builtin_name"] = pb.get("builtin_name", "")
         return self._apply_playbook_scope(entry, self._normalize_playbook_scope(pb))
 
+    @staticmethod
+    def is_pending_playbook(row: dict | None) -> bool:
+        return isinstance(row, dict) and row.get("tier") == "staging"
+
+    def _hide_pending_playbooks(self) -> bool:
+        """Pending playbooks are hidden from use only under strict (unset = 4.21.0)."""
+        return _strict_mode.approval_strict(self.root)
+
+    def pending_playbook_count(self) -> int:
+        count = 0
+        for entry in self._read_playbook_index():
+            if entry.get("status") != "active":
+                continue
+            if self.is_pending_playbook(self._read_playbook_by_id(entry.get("id", ""))):
+                count += 1
+        return count
+
+    def _playbook_insert_guard(self, new_pb: dict) -> dict | None:
+        stone = _tombstones.lookup(self.root, "playbook", new_pb)
+        if stone is not None:
+            self._audit.log("refused", "playbooks", detail=f"rejected_before rejection_id={stone.get('id')}",
+                            source_tool=str(new_pb.get("source_tool") or ""))
+            return {"status": "rejected_before", "rejection_id": stone.get("id"),
+                    "message": "The Owner rejected this procedure before; it is not proposed again."}
+        h1 = _tombstones.claim_hashes("playbook", new_pb)[0]
+        scope = _tombstones.scope_of(new_pb)
+        for entry in self._read_playbook_index():
+            if entry.get("status", "active") == "active":
+                continue
+            row = self._read_playbook_by_id(entry.get("id", ""))
+            if (
+                row is not None
+                and _tombstones.scope_of(row) == scope
+                and _tombstones.claim_hashes("playbook", row)[0] == h1
+            ):
+                self._audit.log("refused", "playbooks",
+                                detail=f"duplicate_retired existing_id={row.get('id')} where=retired",
+                                source_tool=str(new_pb.get("source_tool") or ""))
+                return {"status": "duplicate_retired", "existing_id": row.get("id"), "where": "retired",
+                        "reason": row.get("status"),
+                        "message": "The same procedure is retired; the Owner can restore it."}
+        return None
+
+    def approve_playbook(self, playbook_id: str) -> dict:
+        """Owner approval: a pending playbook becomes verified; an approved update
+        proposal retires the row it replaces."""
+        pb = self._read_playbook_by_id(playbook_id)
+        if pb is None:
+            return {"status": "not_found", "id": playbook_id}
+        if not self.is_pending_playbook(pb):
+            return {"status": "not_staging", "id": playbook_id}
+        if _tombstones.by_id(self.root, playbook_id) or _tombstones.lookup(self.root, "playbook", pb):
+            return {"status": "rejected_before", "id": playbook_id}
+        now = _now_iso()
+
+        def _approve(row):
+            row["tier"] = "verified"
+            row["approval_status"] = "approved"
+            row["promoted_at"] = now
+            row["promotion_reason"] = "owner_review"
+            return row
+
+        self._update_playbook_file_by_id(playbook_id, _approve)
+        old_id = str(pb.get("pending_supersedes") or "")
+        if old_id and self._read_playbook_by_id(old_id) is not None:
+            self.archive_playbook(old_id)
+        self._audit.log("write", "playbooks", detail=f"approved {playbook_id}")
+        return {"status": "promoted", "id": playbook_id, "retired": old_id or None}
+
+    def reject_playbook(self, playbook_id: str, *, _owner_reject: str) -> dict:
+        """Owner reject mark: tombstone first, then archive the pending row."""
+        pb = self._read_playbook_by_id(playbook_id)
+        if pb is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+        if self.is_pending_playbook(pb):
+            _tombstones.append(self.root, "playbook", pb, via=_owner_reject)
+        return self.archive_playbook(playbook_id)
+
     def add_playbook(
         self,
         playbook: dict,
@@ -528,8 +618,14 @@ class PlaybookMixin:
 
         Each playbook is stored as an individual file in ~/.engram/playbooks/.
         An index file (_index.json) is maintained for fast search.
+
+        This is the single insert point for new playbook rows. Under strict every
+        row is a pending proposal (tier=staging, approval_status=pending) and
+        caller trust fields are ignored; tombstoned and retired procedures are
+        refused in every mode; a strict pending queue is capped.
         """
         allow_internal_provenance = extra.pop("_allow_internal_provenance", False) is True
+        update_of = str(extra.pop("_update_proposal_of", "") or "")
         new_pb = dict(playbook)
         if source_tool:
             new_pb["source_tool"] = source_tool
@@ -547,6 +643,20 @@ class PlaybookMixin:
 
         new_pb["timestamp"] = new_pb.get("timestamp") or _now_iso()
         new_pb = self._ensure_playbook_fields(new_pb)
+        strict = _strict_mode.approval_strict(self.root)
+        if strict:
+            for key in [k for k in new_pb if k.startswith(("promotion_", "promoted_", "approval_"))]:
+                new_pb.pop(key, None)
+            new_pb.pop("user_confirmed", None)
+            new_pb["status"] = "active"
+            new_pb["tier"] = "staging"
+            new_pb["approval_status"] = "pending"
+        if update_of:
+            new_pb["pending_supersedes"] = update_of
+
+        refusal = self._playbook_insert_guard(new_pb)
+        if refusal is not None:
+            return refusal
 
         # Duplicate detection against existing playbooks
         index = self._read_playbook_index()
@@ -554,6 +664,8 @@ class PlaybookMixin:
         for entry in index:
             if entry.get("status") != "active":
                 continue
+            if update_of and entry.get("id") == update_of:
+                continue  # an update proposal replaces this row; it is not a duplicate
             if not self._same_playbook_scope(new_pb, entry):
                 continue
             sim = self._bigram_similarity(new_title, entry.get("title", ""))
@@ -603,9 +715,22 @@ class PlaybookMixin:
                         }
                 return result
 
+        if strict:
+            cap = _playbook_queue_max()
+            if self.pending_playbook_count() >= cap:
+                self._audit.log("refused", "playbooks", detail=f"queue_full pending playbooks cap={cap}",
+                                source_tool=str(new_pb.get("source_tool") or ""))
+                return {"status": "queue_full", "kind": "playbook", "cap": cap,
+                        "message": "The pending playbook queue is full; nothing was dropped."}
+
         self._write_playbook_and_index(new_pb)
 
-        self._audit.log("write", "playbooks", detail=new_title[:100])
+        if self.is_pending_playbook(new_pb) and strict:
+            # A pending proposal's text stays out of agent-readable surfaces,
+            # including get_audit_log: record the id only.
+            self._audit.log("write", "playbooks", detail=f"pending proposal {new_pb.get('id')}")
+        else:
+            self._audit.log("write", "playbooks", detail=new_title[:100])
         if new_pb.get("domain"):
             for _d in new_pb["domain"].split(","):
                 _d = _d.strip()
@@ -725,12 +850,14 @@ class PlaybookMixin:
                 if domain not in pb_domains:
                     continue
             pb = self._read_playbook_by_id(entry.get("id", ""))
+            if pb and self._hide_pending_playbooks() and self.is_pending_playbook(pb):
+                continue
             if pb and self._playbook_visible_for_project(pb, project_folder):
                 result.append(pb)
 
         result = result[-limit:] if limit is not None else result
 
-        if _update_access and result:
+        if _update_access and result and not getattr(self, "_read_only", False):
             now = _now_iso()
             for pb in result:
                 def _bump_access(p, _now=now):
@@ -764,6 +891,8 @@ class PlaybookMixin:
         projects are refused unless confirm_cross_project=True. Calls without a
         project context preserve the legacy direct-ID behavior.
         """
+        if self._hide_pending_playbooks() and self.is_pending_playbook(self._read_playbook_by_id(playbook_id)):
+            return {"error": f"Playbook not found: {playbook_id}", "status": "pending"}
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
@@ -1668,8 +1797,14 @@ class PlaybookMixin:
         scope_type: str = "all",
         include_content: bool = False,
         limit: int | None = None,
+        include_pending: bool = False,
     ) -> dict:
-        """List Playbooks for management UI/API surfaces, including hidden items."""
+        """List Playbooks for management UI/API surfaces, including hidden items.
+
+        Under strict, pending proposals are left out unless ``include_pending`` is
+        set -- only the Owner's local CLI does that.
+        """
+        hide_pending = self._hide_pending_playbooks() and not include_pending
         status_filter = self._normalize_playbook_status_filter(status)
         scope_filter = str(scope_type or "all").strip().lower()
         valid_statuses = {"all", "active", "outdated", "staging", "deleted"}
@@ -1683,6 +1818,8 @@ class PlaybookMixin:
 
         items: list[dict] = []
         for pb in self._export_playbooks():
+            if hide_pending and self.is_pending_playbook(pb):
+                continue
             pb_status = self._normalize_playbook_status_filter(pb.get("status", "active"))
             if status_filter != "all" and pb_status != status_filter:
                 continue
@@ -2015,6 +2152,9 @@ class PlaybookMixin:
         Returns:
             ``{playbook_id, title, execution_plan: [{order, action, status}], parameters_used}``
         """
+        if self._hide_pending_playbooks() and self.is_pending_playbook(self._read_playbook_by_id(playbook_id)):
+            return {"status": "pending_not_executable", "id": playbook_id,
+                    "message": "This playbook is a pending proposal; it runs only after Owner approval."}
         pb = self.get_playbook(
             playbook_id,
             _update_access=True,

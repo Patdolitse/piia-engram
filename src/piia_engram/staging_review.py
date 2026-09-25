@@ -85,7 +85,7 @@ def batch_review_staging(
             continue
 
         item_type, item = eng._find_item_by_id(item_id)
-        if item is None or item_type not in {"lesson", "decision"}:
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
             items.append(_item(idx, item_id, action, "not_found"))
             counts["failed"] += 1
             continue
@@ -132,13 +132,20 @@ def batch_review_staging(
 
     changed = False
     for it in planned:
+        owner_reject = via or "core:batch_review_staging"
         if it["action"] == "approve":
-            result = eng.promote_knowledge(it["id"])
+            if it.get("type") == "playbook":
+                result = eng.approve_playbook(it["id"])
+            else:
+                result = eng.promote_knowledge(it["id"])
             ok = result.get("status") == "promoted"
         else:
             # An explicit reject mark: the only core path (with the CLI apply and
             # the backfill) that writes a permanent tombstone.
-            result = eng.archive_knowledge(it["id"], _owner_reject=via or "core:batch_review_staging")
+            if it.get("type") == "playbook":
+                result = eng.reject_playbook(it["id"], _owner_reject=owner_reject)
+            else:
+                result = eng.archive_knowledge(it["id"], _owner_reject=owner_reject)
             ok = not result.get("error")
         if ok:
             it["status"] = "applied"

@@ -34,7 +34,9 @@ STRICT_ALLOWLIST: dict[str, str] = {
     # proposals: knowledge rows they create land in staging
     "add_lesson": "proposal",
     "add_decision": "proposal",
-    "memory_store": "proposal",  # kind=playbook refused
+    "memory_store": "proposal",
+    "add_playbook": "proposal",  # plan V4 (v): playbooks are proposals too
+    "manage_playbook": "proposal",  # update only; archive/delete/restore refused inside
     "ingest_notes": "proposal",
     "extract_session_insights": "proposal",
     "wrap_up_session": "proposal",
@@ -220,7 +222,7 @@ def test_strict_allowlist_names_only_real_mutating_tools():
 def test_default_refuse_covers_the_owner_verbs():
     refused = set(_refused_tools())
     owner_verbs = {
-        "add_playbook", "manage_playbook", "update_identity", "update_knowledge",
+        "update_identity", "update_knowledge",
         "confirm_knowledge", "merge_knowledge", "archive_knowledge", "manage_relation",
         "import_engram", "onboard_accept", "manage_caller_trust", "save_project_snapshot",
     }
@@ -257,17 +259,9 @@ def test_unset_mode_never_returns_the_strict_refusal(mcp, tool_name):
     assert not _is_strict_refusal(_run(func(**_dummy_kwargs(func))))
 
 
-def test_strict_memory_store_playbook_refused_lesson_staged(mcp, monkeypatch):
+def test_strict_memory_store_lesson_is_staged(mcp, monkeypatch):
     m, root = mcp
     monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
-
-    before = _snapshot(root)
-    refused = _run(m.memory_store(
-        kind="playbook", content_json=json.dumps({"title": "t", "steps": ["a", "b", "c"]}),
-        user_confirmed=True,
-    ))
-    assert _is_strict_refusal(refused)
-    assert _snapshot(root) == before
 
     _run(m.memory_store(
         kind="lesson", content_json=json.dumps({"summary": "strict proposal lands in staging"}),
