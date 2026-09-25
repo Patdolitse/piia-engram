@@ -1657,7 +1657,7 @@ class ContextMixin:
 
         # Auto-reconcile (filesystem-scanning side effects — only at "full" level).
         # Skipping these is the main latency win for quick/standard cold start.
-        if _wants("sync"):
+        if _wants("sync") and not getattr(self, "_read_only", False):
             sync_msgs: list[str] = []
             try:
                 reconcile = self.reconcile_memories()

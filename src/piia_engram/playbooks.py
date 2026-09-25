@@ -11,6 +11,7 @@ from typing import Any
 
 from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
+from .storage import ReadOnlyStoreError
 from .storage import (
     SIMILARITY_THRESHOLD,
     _ALLOWED_PLAYBOOK_UPDATE_FIELDS,
@@ -126,6 +127,8 @@ class PlaybookMixin:
 
     def _update_playbook_file_by_id(self, playbook_id: str, mutator) -> dict | None:
         """Apply ``mutator`` to one playbook file under that file's write lock."""
+        if getattr(self, "_read_only", False):
+            raise ReadOnlyStoreError(f"read-only handle: refused write to playbook {playbook_id}")
         path = self._playbooks_dir / f"{playbook_id}.json"
         if not path.exists():
             return None
@@ -1079,9 +1082,13 @@ class PlaybookMixin:
     def _write_playbook_and_index(self, pb: dict) -> None:
         """Persist a playbook and keep the lightweight index in sync.
 
+        Refused on a read-only handle (a backstop behind the verb guard).
+
         Body is written first; if the index update fails the body file is
         removed so no orphaned body can accumulate without an index entry.
         """
+        if getattr(self, "_read_only", False):
+            raise ReadOnlyStoreError("read-only handle: refused playbook write")
         playbook_id = str(pb.get("id") or "")
         if not playbook_id:
             raise ValueError("missing playbook id")
