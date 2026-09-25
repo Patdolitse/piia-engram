@@ -45,7 +45,7 @@ STRICT_MCP_ALLOWLIST = frozenset({
 OWNER_CLI_HINT = "engram review apply <marks.json> --operator <name> --yes"
 
 
-def approval_strict() -> bool:
+def approval_strict(root=None) -> bool:
     return os.environ.get("ENGRAM_APPROVAL", "").strip().lower() == "strict"
 
 

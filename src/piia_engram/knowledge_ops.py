@@ -1007,16 +1007,16 @@ class KnowledgeOpsMixin:
         self._audit.log("write", "knowledge/validate", detail=item_id)
         return updated
 
-    def archive_knowledge(self, item_id: str) -> dict:
+    def archive_knowledge(self, item_id: str, *, _owner_reject: str = "") -> dict:
         """Archive a lesson, decision, or playbook by ID (auto-detects type)."""
         item_type, _ = self._find_item_by_id(item_id)
         if item_type is None:
             return {"error": f"Item not found: {item_id}"}
         if item_type == "lesson":
-            return self.archive_lesson(item_id)
+            return self.archive_lesson(item_id, _owner_reject=_owner_reject)
         if item_type == "playbook":
             return self.archive_playbook(item_id)
-        return self.archive_decision(item_id)
+        return self.archive_decision(item_id, _owner_reject=_owner_reject)
 
     def soft_archive_knowledge_tier(
         self,

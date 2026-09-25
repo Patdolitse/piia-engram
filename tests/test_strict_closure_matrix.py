@@ -792,26 +792,39 @@ def test_retired_row_blocks_the_same_text_revocably(tmp_path, monkeypatch, mode)
     assert _tombstones(tmp_path) == []
 
 
-def test_archived_row_blocks_with_its_reason(tmp_path, monkeypatch):
-    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
-    eng = Engram(root=tmp_path)
-    archive = tmp_path / "knowledge" / "overflow_archive"
-    archive.mkdir(parents=True)
+def _seed_archive_row(root: Path) -> None:
+    archive = root / "knowledge" / "overflow_archive"
+    archive.mkdir(parents=True, exist_ok=True)
     (archive / "lessons.jsonl").write_text(json.dumps({
         "id": "0123456789ab", "summary": "expired unreviewed proposal", "status": "active",
         "tier": "staging", "overflow_archive_reason": "review_queue_quota",
         "overflow_archived_at": "2026-09-25T06:15:00Z",
     }) + "\n", encoding="utf-8")
 
+
+def test_strict_proposal_matching_an_archived_row_names_where_and_why(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    eng = Engram(root=tmp_path)
+    _seed_archive_row(tmp_path)
+
     again = eng.add_lesson("expired unreviewed proposal", domain="t")
 
-    assert again.get("status") == "duplicate_retired"
+    assert again.get("status") == "duplicate"
+    assert again.get("in_overflow_archive") is True
     assert again.get("where") == "archive"
     assert again.get("reason") == "review_queue_quota"
-    assert any(
-        a.get("action") == "refused" and "duplicate_retired" in json.dumps(a) for a in _audit(tmp_path)
-    )
+
+
+def test_unset_reviewed_write_still_passes_an_archived_copy(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    eng = Engram(root=tmp_path)
+    _seed_archive_row(tmp_path)
+
+    again = eng.add_lesson("expired unreviewed proposal", domain="t")
+
+    assert again.get("tier") == "verified"  # 4.21.0: a reviewed write is not blocked
 
 
 _MEMORY_BODY = """\

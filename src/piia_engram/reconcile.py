@@ -40,6 +40,10 @@ def _reconcile_config_value():
     return cfg.get("reconcile_authorized")
 
 
+# Insert outcomes that add no row: an existing duplicate, a tombstoned claim, or a
+# retired one. Reconcile counts them as duplicates.
+_NOT_IMPORTED = frozenset({"duplicate", "rejected_before", "duplicate_retired"})
+
 RECONCILE_ENV_OVERRIDDEN = "reconcile_env_overridden_by_config"
 
 
@@ -279,7 +283,7 @@ class ReconcileMixin:
                     tier="staging",
                     project_folder=project_folder or None,
                 )
-                if result.get("status") != "duplicate":
+                if result.get("status") not in _NOT_IMPORTED:
                     imported += 1
                     sources.append(mem_file.name)
                     existing_summaries.add(summary_candidate)
@@ -609,7 +613,7 @@ class ReconcileMixin:
                     tier="staging",
                     project_folder=project_folder or None,
                 )
-                if result.get("status") != "duplicate":
+                if result.get("status") not in _NOT_IMPORTED:
                     imported += 1
                     sources.append(f"{cfg.parent.name}/{cfg.name}")
                     existing_summaries.add(summary_candidate)

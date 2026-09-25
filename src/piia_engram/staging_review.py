@@ -45,6 +45,7 @@ def batch_review_staging(
     filters: dict[str, Any] | None = None,
     limit: int = 50,
     offset: int = 0,
+    via: str = "core:batch_review_staging",
 ) -> dict[str, Any]:
     """Preview or apply staging approve/reject actions.
 
@@ -127,7 +128,9 @@ def batch_review_staging(
             result = eng.promote_knowledge(it["id"])
             ok = result.get("status") == "promoted"
         else:
-            result = eng.archive_knowledge(it["id"])
+            # An explicit reject mark: the only core path (with the CLI apply and
+            # the backfill) that writes a permanent tombstone.
+            result = eng.archive_knowledge(it["id"], _owner_reject=via or "core:batch_review_staging")
             ok = not result.get("error")
         if ok:
             it["status"] = "applied"

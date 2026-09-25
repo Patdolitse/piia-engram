@@ -464,6 +464,7 @@ async def review_staging(
             filters=filters,
             limit=limit,
             offset=offset,
+            via=f"mcp:{S._gov_rt.current_client_type() or 'unknown'}",
         )
         return S._json(S._gov_rt.maybe_govern_write_ack(
             S._get_engram().root, result, tool="review_staging",
