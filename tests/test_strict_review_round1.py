@@ -303,3 +303,94 @@ def test_untombstone_needs_an_operator_and_lets_the_claim_back(env, monkeypatch,
     again = m._engram.add_lesson("a rejection the owner withdraws, reworded", domain="t")
     assert again.get("status") != "rejected_before"
     assert any(a.get("verb") == "untombstone" for a in _audit(root))
+
+
+# ---------------------------------------------------------------------------
+# Review round 2
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["strict", None])
+def test_session_draft_never_merges_into_a_retired_playbook(env, monkeypatch, mode):
+    m, root = env
+    retired = m._engram.add_playbook({"title": "Release steps", "steps": ["build", "test", "upload"],
+                                      "tier": "staging"})
+    m._engram.archive_playbook(retired["id"])
+    path = root / "playbooks" / f"{retired['id']}.json"
+    before = path.read_bytes()
+    if mode:
+        monkeypatch.setenv("ENGRAM_APPROVAL", mode)
+    real = Engram.add_playbook
+
+    def retired_twin(self, playbook, *args, **kwargs):
+        return {"status": "duplicate_retired", "existing_id": retired["id"], "where": "retired"}
+
+    monkeypatch.setattr(Engram, "add_playbook", retired_twin)
+    result = m._engram.extract_playbook_from_session(
+        "Steps: 1. first build the package, 2. then run the tests, 3. then upload the wheel."
+    )
+    monkeypatch.setattr(Engram, "add_playbook", real)
+
+    assert result is None
+    assert path.read_bytes() == before
+    assert not [p for p in (root / "playbooks").glob("*-prev-*")]
+
+
+def test_merge_and_content_update_refuse_a_non_active_playbook(env):
+    m, root = env
+    pb = m._engram.add_playbook({"title": "Old procedure", "steps": ["a", "b", "c"]})
+    m._engram.archive_playbook(pb["id"])
+    path = root / "playbooks" / f"{pb['id']}.json"
+    before = path.read_bytes()
+
+    assert m._engram.merge_playbooks(pb["id"], {"title": "x", "steps": ["d"]}).get("error") == "not_active"
+    assert m._engram.update_playbook(pb["id"], {"description": "edit"}).get("error") == "not_active"
+    assert path.read_bytes() == before
+    restored = m._engram.restore_playbook(pb["id"], dry_run=False, confirm=True)
+    assert not restored.get("error")
+
+
+def test_concurrent_tombstone_appends_are_all_kept(env):
+    import threading
+
+    from piia_engram import tombstones
+
+    m, root = env
+    rows = [{"id": f"id{i:010d}", "summary": f"claim number {i}"} for i in range(40)]
+    threads = [threading.Thread(target=tombstones.append, args=(root, "lesson", row), kwargs={"via": "t"})
+               for row in rows]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert {s["id"] for s in tombstones.load(root)} == {r["id"] for r in rows}
+
+
+def test_untombstone_is_refused_with_audit_off_and_receipted_first(env, monkeypatch, capsys):
+    m, root = env
+    row = _rejected_lesson(m, "a rejection kept while audit is off")
+    monkeypatch.setenv("ENGRAM_AUDIT", "0")
+    code, _ = _cli(monkeypatch, capsys, "untombstone", row["id"], "--operator", "owner", "--yes")
+    assert code != 0
+    monkeypatch.setenv("ENGRAM_AUDIT", "1")
+    from piia_engram import tombstones
+
+    def boom(_root, _id):
+        raise OSError("remove failed")
+
+    monkeypatch.setattr(tombstones, "remove", boom)
+    with pytest.raises(OSError):
+        _cli(monkeypatch, capsys, "untombstone", row["id"], "--operator", "owner", "--yes")
+    assert any(a.get("verb") == "untombstone" for a in _audit(root))
+
+
+@pytest.mark.parametrize("framed", ["Lesson: never commit on friday", "教训：never commit on friday",
+                                    "  NOTE : Never commit on Friday."])
+def test_a_label_prefix_does_not_get_around_a_tombstone(env, framed):
+    m, root = env
+    row = _rejected_lesson(m, "never commit on friday")
+
+    again = m._engram.add_lesson(framed, domain="t")
+
+    assert again.get("status") == "rejected_before" and again.get("rejection_id") == row["id"]
