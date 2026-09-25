@@ -484,3 +484,28 @@ def test_cli_tombstone_backfill_is_idempotent(eng, tmp_path, monkeypatch, capsys
     _cli(monkeypatch, capsys, "tombstone", "--ids-file", str(ids_file), "--yes")
     assert [s["id"] for s in _tombstones(tmp_path)] == [row["id"]]
     assert eng.add_lesson("rejected before tombstones existed", domain="t")["status"] == "rejected_before"
+
+
+# ---------------------------------------------------------------------------
+# 6. served MCP instructions: no auto-write lifecycle under strict
+# ---------------------------------------------------------------------------
+
+
+def test_strict_server_instructions_drop_the_auto_write_lifecycle(monkeypatch):
+    import piia_engram.mcp_server as mcp_server
+
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    text = mcp_server.server_instructions()
+
+    assert "without waiting for the user to ask" not in text
+    assert "wrap_up_session" not in text
+    assert "propose" in text.lower()
+
+
+def test_default_server_instructions_are_unchanged(monkeypatch):
+    import piia_engram.mcp_server as mcp_server
+
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+
+    assert mcp_server.server_instructions() == mcp_server.mcp.instructions
+    assert "wrap_up_session" in mcp_server.server_instructions()
