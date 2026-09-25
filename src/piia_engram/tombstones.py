@@ -1,4 +1,8 @@
-"""Rejection tombstones: text-free, permanent records of an Owner reject mark.
+"""Rejection tombstones: text-free records of an Owner reject mark.
+
+Tombstones act at insert time only: they refuse a NEW row with the same claim;
+they never remove an existing row. Only the Owner withdraws one
+(``engram review untombstone <id>``).
 
 A tombstone is written only by an explicit reject mark -- review_staging batch
 reject, ``engram review apply`` reject, or the backfill -- never by capacity
@@ -154,3 +158,30 @@ def append(root, kind: str, row: dict, *, via: str, prior_rejection_id: str = ""
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=True) + "\n")
     return record
+
+
+def remove(root, item_id: str) -> bool:
+    """Drop one tombstone (the Owner's untombstone verb); atomic rewrite."""
+    path = _path(root)
+    if not path.is_file():
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines()
+    kept = []
+    removed = False
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            kept.append(line)
+            continue
+        if isinstance(record, dict) and record.get("id") == item_id:
+            removed = True
+            continue
+        kept.append(line)
+    if removed:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text("".join(k + "\n" for k in kept), encoding="utf-8")
+        import os
+
+        os.replace(tmp, path)
+    return removed

@@ -846,8 +846,13 @@ async def wrap_up_session(
             committed={"playbook_draft": bool(results.get("playbook_draft"))},
         )
 
-    # Step 2: Save project snapshot (if project_folder provided)
-    if project_folder:
+    # Step 2: Save project snapshot (if project_folder provided). Under strict the
+    # snapshot is skipped, like the save_project_snapshot tool itself: session
+    # state belongs in project-local notes, and snapshots are the Owner's.
+    if project_folder and S._gov_rt._strict_mode.approval_strict(S._get_engram().root):
+        results["project_snapshot"] = {"saved": False, "skipped": "strict_owner_only"}
+        maintenance["save_project_snapshot"] = {"status": "skipped", "reason": "strict_owner_only"}
+    elif project_folder:
         stage_start = _stage_start("save_project_snapshot")
         snapshot_stage_status = "ok"
         snapshot_stage_error = ""

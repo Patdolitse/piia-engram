@@ -328,11 +328,14 @@ def _sweep_tools() -> list[str]:
     return sorted(set(names) - _SWEEP_SKIP)
 
 
-def _sweep_kwargs(func) -> dict:
+def _sweep_kwargs(func, pending_id: str = "") -> dict:
     import inspect
 
     kwargs = {}
     for name, param in inspect.signature(func).parameters.items():
+        if pending_id and name in ("playbook_id", "knowledge_id", "item_id", "id"):
+            kwargs[name] = pending_id  # the real pending id (N8)
+            continue
         if name in ("query", "topic", "text", "question", "keyword", "q"):
             # words of the pending playbook, never the token itself, so a tool that
             # echoes its query cannot produce a false leak
@@ -349,11 +352,11 @@ def _sweep_kwargs(func) -> dict:
 def test_strict_token_leak_sweep(env, monkeypatch, tool_name):
     m, root = env
     _strict(monkeypatch)
-    _pending_with_token(m)
+    pid = _pending_with_token(m)
     func = getattr(m, tool_name)
 
     try:
-        response = _run(func(**_sweep_kwargs(func)))
+        response = _run(func(**_sweep_kwargs(func, pid)))
     except Exception as exc:  # a dummy argument may be rejected
         response = str(exc)
 

@@ -47,7 +47,6 @@ STRICT_ALLOWLIST: dict[str, str] = {
     "save_agent_context": "checkpoint files only",
     "start_project": "project registry",
     "register_tool": "tool registry",
-    "check_anchors": "anchor check",
     "user_portrait": "derived portrait snapshot, never identity/profile.json",
     # exports: files on disk, never knowledge rows
     "export_engram": "export",
@@ -344,15 +343,35 @@ _NON_PROPOSAL_ALLOWED = sorted(
 )
 
 
+def _seeded_kwargs(func, ids: dict, root: Path) -> dict:
+    """Dummy args, but real ids and paths so a tool reaches its real code path (N8)."""
+    import inspect
+
+    kwargs = _dummy_kwargs(func)
+    for name in inspect.signature(func).parameters:
+        if name == "playbook_id":
+            kwargs[name] = ids["playbook"]
+        elif name in ("knowledge_id", "item_id", "entry_id", "lesson_id"):
+            kwargs[name] = ids["lesson"]
+        elif name in ("project_folder", "project_root", "root"):
+            kwargs[name] = str(root.parent)
+    return kwargs
+
+
 @pytest.mark.parametrize("tool_name", _NON_PROPOSAL_ALLOWED)
 def test_strict_allowlisted_tools_never_change_knowledge_or_identity(mcp, monkeypatch, tool_name):
     m, root = mcp
+    ids = {
+        "lesson": m._engram.add_lesson("seeded verified lesson for the sweep", domain="t")["id"],
+        "playbook": m._engram.add_playbook({"title": "Seeded sweep procedure", "steps": ["a", "b", "c"]})["id"],
+    }
+    m._engram.add_decision("seeded sweep question?", "yes", "because")
     monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
     func = getattr(m, tool_name)
 
     before = _knowledge_and_identity(root)
     try:
-        _run(func(**_dummy_kwargs(func)))
+        _run(func(**_seeded_kwargs(func, ids, root)))
     except Exception:
         pass
 

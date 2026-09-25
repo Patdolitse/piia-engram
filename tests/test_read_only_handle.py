@@ -144,6 +144,7 @@ def test_mcp_read_tools_on_a_read_only_handle_never_write(seeded, guard_spy, mon
 
     monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "claude_code")
     m._engram = Engram(seeded, read_only=True)
+    before = _snapshot(seeded)
     func = getattr(m, tool_name)
     kwargs = {}
     for pname, param in inspect.signature(func).parameters.items():
@@ -158,6 +159,7 @@ def test_mcp_read_tools_on_a_read_only_handle_never_write(seeded, guard_spy, mon
         pass
 
     assert guard_spy == [], f"{tool_name} called write verbs {guard_spy} on a read-only handle"
+    assert _snapshot(seeded) == before, f"{tool_name} changed the store through a read-only handle"
 
 
 def test_default_handles_still_write(seeded):

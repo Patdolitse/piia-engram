@@ -135,7 +135,14 @@ def _schedule_startup_sync(mode: str) -> None:
     thread.start()
 
 
-from piia_engram.beta_tracker import track_event as _beta
+from piia_engram.beta_tracker import track_event as _track_beta_event
+
+
+def _beta(event: str, **data) -> None:
+    """Beta usage event; skipped when the store handle is read-only."""
+    if _engram is not None and getattr(_engram, "_read_only", False):
+        return
+    _track_beta_event(event, **data)
 from piia_engram import provenance as _provenance
 from piia_engram.continuity_digest import build_session_digest as _build_session_digest
 
@@ -1210,6 +1217,9 @@ _STRICT_SERVER_INSTRUCTIONS = (
     "- Read freely: get_user_context, search_knowledge, get_relevant_knowledge.\n"
     "- Write only as a proposal: one claim per row (add_lesson / add_decision / memory_store),\n"
     "  searched first so you do not propose a duplicate, and only when it is worth keeping.\n"
+    "- Label every proposal with its type in domain (type:rule, type:preference,\n"
+    "  type:project_fact, type:lesson or type:decision; playbooks: rule, lesson or project_fact)\n"
+    "  and say in detail / description why it is worth keeping.\n"
     "  Proposals wait in the review queue; the Owner decides with the local engram review CLI.\n"
     "- Do not propose session logs, progress notes or anything already in files or git;\n"
     "  keep session checkpoints in project-local notes.\n"
@@ -1219,7 +1229,7 @@ _STRICT_SERVER_INSTRUCTIONS = (
 
 def server_instructions() -> str:
     """Instructions served to MCP clients; strict mode drops the auto-write lifecycle."""
-    if _gov_rt._strict_mode.approval_strict():
+    if _gov_rt._strict_mode.approval_strict(_engram.root if _engram is not None else None):
         return _STRICT_SERVER_INSTRUCTIONS
     return _DEFAULT_SERVER_INSTRUCTIONS
 

@@ -1225,7 +1225,15 @@ class RetrievalMixin:
                     item["source_tool"] = source_tool
 
                 result = self.add_lesson(item)
-                if result.get("status") == "duplicate":
+                if result.get("status") in ("rejected_before", "duplicate_retired", "queue_full") or result.get("error"):
+                    errors += 1
+                    results.append({
+                        "status": result.get("status") or "error",
+                        "reason": result.get("error") or result.get("message", ""),
+                        "rejection_id": result.get("rejection_id"),
+                        "existing_id": result.get("existing_id"),
+                    })
+                elif result.get("status") == "duplicate":
                     duplicates += 1
                     results.append({
                         "status": "duplicate",
@@ -1295,7 +1303,15 @@ class RetrievalMixin:
                     item["source_tool"] = source_tool
 
                 result = self.add_decision(item)
-                if result.get("status") == "duplicate":
+                if result.get("status") in ("rejected_before", "duplicate_retired", "queue_full") or result.get("error"):
+                    errors += 1
+                    results.append({
+                        "status": result.get("status") or "error",
+                        "reason": result.get("error") or result.get("message", ""),
+                        "rejection_id": result.get("rejection_id"),
+                        "existing_id": result.get("existing_id"),
+                    })
+                elif result.get("status") == "duplicate":
                     duplicates += 1
                     results.append({
                         "status": "duplicate",

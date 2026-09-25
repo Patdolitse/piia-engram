@@ -2008,6 +2008,8 @@ class Engram(
         for row in rows:
             if (row.get("status") or "active") == "active":
                 continue
+            if row.get("snapshot_of") or row.get("status") == "superseded":
+                continue  # a version snapshot of a live row, not a retired claim
             if _tombstones.scope_of(row) == scope and _tombstones.claim_hashes(kind, row)[0] == h1:
                 retired = {"existing_id": row.get("id"), "where": "retired",
                            "reason": row.get("status") or "outdated"}
@@ -2057,6 +2059,9 @@ class Engram(
             for row in rows:
                 if row.get("id") in stones:
                     out.append({"id": row.get("id"), "kind": kind, "tier": row.get("tier")})
+        for entry in self._read_playbook_index():
+            if entry.get("id") in stones and entry.get("status", "active") == "active":
+                out.append({"id": entry.get("id"), "kind": "playbook", "tier": "staging"})
         return out
 
     def add_lesson(

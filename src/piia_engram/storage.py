@@ -498,6 +498,11 @@ def _directory_lock(lock_path: Path, **kwargs: Any):
 
 
 
+# Insert outcomes that add no row: an existing duplicate, a tombstoned claim, a
+# retired twin, or a full queue. Callers count them as "not added", never saved.
+NOT_ADDED_STATUSES = frozenset({"duplicate", "rejected_before", "duplicate_retired", "queue_full"})
+
+
 class ReadOnlyStoreError(RuntimeError):
     """A write reached a store entry point through an Engram(read_only=True) handle."""
 
