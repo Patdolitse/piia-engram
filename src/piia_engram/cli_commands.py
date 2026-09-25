@@ -193,6 +193,9 @@ def _print_review_usage() -> None:
         "  engram review show <id>\n"
         "  engram review approve <id> --yes\n"
         "  engram review archive <id> --yes\n"
+        "  engram review export --out <dir>\n"
+        "  engram review apply <marks.json> [--operator <name> --yes]\n"
+        "  engram review tombstone --ids-file <file> [--go-ref <ref>] [--operator <name> --yes]\n"
     )
 
 
@@ -579,6 +582,11 @@ def run_review(argv: list[str] | None = None) -> int:
     if args and args[0] in ("-h", "--help"):
         _print_review_usage()
         return 0
+
+    from piia_engram import review_cli
+
+    if args and args[0] in review_cli.VERBS:
+        return review_cli.VERBS[args[0]](args[1:])
 
     from piia_engram.core import Engram
 
