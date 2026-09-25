@@ -735,6 +735,17 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] Capacity check failed: {exc}")
         problems += 1
 
+    # 2.6 reconcile: an ENGRAM_RECONCILE=1 that the config overrides is reported
+    try:
+        from piia_engram.reconcile import reconcile_env_conflict_note
+
+        note = reconcile_env_conflict_note()
+        if note:
+            print(f"    [!] Reconcile: {note}")
+    except Exception as exc:
+        print(f"    [!!] Reconcile check failed: {exc}")
+        problems += 1
+
     # 3. 身份数据读取
     try:
         profile = eng.get_profile()
