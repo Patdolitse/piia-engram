@@ -24,6 +24,16 @@ except ValueError:
     AUDIT_MAX_BYTES = 16 * 1024 * 1024
 
 
+def _effective_mode(root: Path) -> str:
+    """"strict" | "default", recorded on every entry so a mode change stays visible."""
+    try:
+        from .strict_mode import approval_strict
+
+        return "strict" if approval_strict(root) else "default"
+    except Exception:
+        return "unknown"
+
+
 def audit_enabled_by_env() -> bool:
     """Same rule as Engram(): ENGRAM_AUDIT wins; otherwise off under ENGRAM_TEST=1."""
     value = os.environ.get("ENGRAM_AUDIT", "").strip().lower()
@@ -95,6 +105,7 @@ class AuditLogger:
             "detail": detail[:200] if detail else "",
             "source_tool": source_tool,
             "pid": os.getpid(),
+            "mode": _effective_mode(self.log_path.parent),
         }
         for key, value in (extra or {}).items():
             entry.setdefault(key, value)

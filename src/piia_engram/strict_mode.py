@@ -47,8 +47,87 @@ STRICT_MCP_ALLOWLIST = frozenset({
 OWNER_CLI_HINT = "engram review apply <marks.json> --operator <name> --yes"
 
 
-def approval_strict(root=None) -> bool:
+MARKER = "approval_mode.json"
+_LATCH_WARNED: set[str] = set()
+
+
+def _env_strict() -> bool:
     return os.environ.get("ENGRAM_APPROVAL", "").strip().lower() == "strict"
+
+
+def _store_root(root=None) -> Path:
+    if root:
+        return Path(root)
+    configured = os.environ.get("ENGRAM_DIR", "").strip()
+    return Path(configured) if configured else Path.home() / ".engram"
+
+
+def approval_strict(root=None) -> bool:
+    """Effective strict: ENGRAM_APPROVAL=strict, or the store is latched.
+
+    A store that once ran strict carries ``approval_mode.json`` and stays strict
+    until the Owner clears it with ``engram review strict-marker --clear``.
+    """
+    if _env_strict():
+        return True
+    return (_store_root(root) / MARKER).is_file()
+
+
+def latch_note(root=None) -> str:
+    """Non-empty when the store is latched but ENGRAM_APPROVAL is not strict."""
+    if _env_strict() or not (_store_root(root) / MARKER).is_file():
+        return ""
+    return (
+        "strict is latched by approval_mode.json while ENGRAM_APPROVAL is unset; this store "
+        "stays strict. To leave strict mode on purpose: engram review strict-marker --clear "
+        "--operator <name> --yes"
+    )
+
+
+def bootstrap(root, *, source: str) -> str:
+    """Process start (MCP server, CLI apply): latch under strict, or report a latch.
+
+    Writes the marker only when ENGRAM_APPROVAL=strict -- atomically, under the
+    store root's write lock, keeping ``strict_first_seen_at``. Tool calls never
+    call this. Returns the latch note (empty when there is nothing to report).
+    """
+    import platform
+    from datetime import datetime, timezone
+
+    from .storage import _update_json
+
+    store = _store_root(root)
+    if _env_strict():
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def _latch(current):
+            data = dict(current) if isinstance(current, dict) else {}
+            data.setdefault("strict_first_seen_at", now)
+            data["strict_last_seen_at"] = now
+            data["last_host"] = platform.node()
+            data["last_source"] = source
+            return data
+
+        store.mkdir(parents=True, exist_ok=True)
+        _update_json(store / MARKER, _latch, default={})
+        return ""
+    note = latch_note(store)
+    if note and str(store) not in _LATCH_WARNED:
+        _LATCH_WARNED.add(str(store))
+        from .audit import AuditLogger, audit_enabled_by_env
+
+        AuditLogger(store / "audit.log", enabled=audit_enabled_by_env()).log(
+            "warn", "strict_mode", detail="strict_latched_env_unset", source_tool=source,
+        )
+    return note
+
+
+def clear_marker(root) -> bool:
+    path = _store_root(root) / MARKER
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
 
 
 def refuse(root, *, tool: str, detail: str = "") -> str:

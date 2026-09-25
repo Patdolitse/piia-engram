@@ -748,6 +748,17 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] Tombstone check failed: {exc}")
         problems += 1
 
+    # 2.58 strict latch: a latched store with ENGRAM_APPROVAL unset stays strict
+    try:
+        from piia_engram import strict_mode as _strict_mode
+
+        latch = _strict_mode.latch_note(eng.root)
+        if latch:
+            print(f"    [!] Strict mode: {latch}")
+    except Exception as exc:
+        print(f"    [!!] Strict latch check failed: {exc}")
+        problems += 1
+
     # 2.6 reconcile: an ENGRAM_RECONCILE=1 that the config overrides is reported
     try:
         from piia_engram.reconcile import reconcile_env_conflict_note
