@@ -278,6 +278,9 @@ def run_apply(args: list[str]) -> int:
         print(error)
         return 2
     eng = _engram(read_only=False)
+    from . import strict_mode as _strict_mode
+
+    _strict_mode.bootstrap(eng.root, source="cli")
     result = batch_review_staging(
         eng, decisions, dry_run=False, confirm=True, via=f"cli:{attribution['operator']}",
         limit=len(decisions) or 1,
@@ -398,7 +401,32 @@ def run_tombstone(args: list[str]) -> int:
     return 0
 
 
-VERBS = {"export": run_export, "apply": run_apply, "tombstone": run_tombstone}
+def run_strict_marker(args: list[str]) -> int:
+    """``engram review strict-marker --clear`` -- the audited way out of a strict latch."""
+    from . import strict_mode as _strict_mode
+
+    if "--clear" not in args:
+        print("Usage: engram review strict-marker --clear [--operator <name> --yes]")
+        return 2
+    eng = _engram(read_only="--yes" not in args)
+    latched = (Path(eng.root) / _strict_mode.MARKER).is_file()
+    pending = len(_pending(eng))
+    if "--yes" not in args:
+        _print({"status": "dry_run", "latched": latched, "pending": pending})
+        return 0
+    attribution, error = _attribution(args)
+    if error:
+        print(error)
+        return 2
+    cleared = _strict_mode.clear_marker(eng.root)
+    counts = {"cleared": int(cleared), "pending": pending}
+    _receipt(eng, "strict-marker-clear", attribution, counts)
+    _print({"status": "applied", **counts})
+    return 0
+
+
+VERBS = {"export": run_export, "apply": run_apply, "tombstone": run_tombstone,
+         "strict-marker": run_strict_marker}
 
 
 def run_playbook_list(args: list[str]) -> int:

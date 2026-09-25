@@ -1651,6 +1651,10 @@ def main() -> None:
     _note = _reconcile_note()
     if _note:
         print(f"[engram] warning: {_note}", file=sys.stderr)
+    if _engram is not None:
+        _latch = _gov_rt._strict_mode.bootstrap(_engram.root, source="mcp")
+        if _latch:
+            print(f"[engram] warning: {_latch}", file=sys.stderr)
     _schedule_startup_sync(_startup_sync_mode(_is_ephemeral))
 
     if args.transport == "sse":
