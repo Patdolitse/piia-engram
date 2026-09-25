@@ -24,6 +24,16 @@ except ValueError:
     AUDIT_MAX_BYTES = 16 * 1024 * 1024
 
 
+def audit_enabled_by_env() -> bool:
+    """Same rule as Engram(): ENGRAM_AUDIT wins; otherwise off under ENGRAM_TEST=1."""
+    value = os.environ.get("ENGRAM_AUDIT", "").strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    return os.environ.get("ENGRAM_TEST", "").strip().lower() not in ("1", "true", "yes")
+
+
 class AuditLogger:
     """Lightweight audit logger."""
 
@@ -53,6 +63,7 @@ class AuditLogger:
         resource: str,
         detail: str = "",
         source_tool: str = "",
+        extra: dict | None = None,
     ) -> None:
         """Record an audit entry.
 
@@ -61,6 +72,8 @@ class AuditLogger:
             resource: Resource accessed, e.g. "identity/profile", "knowledge/lessons"
             detail: Extra detail, e.g. modified field names
             source_tool: Calling tool identifier
+            extra: Additional metadata-only fields (never stored bodies), e.g. an
+                attributed CLI receipt; core keys are never overwritten.
         """
         if not self.enabled or not self.log_path:
             return
@@ -83,6 +96,8 @@ class AuditLogger:
             "source_tool": source_tool,
             "pid": os.getpid(),
         }
+        for key, value in (extra or {}).items():
+            entry.setdefault(key, value)
         try:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             from .file_safety import rotate_if_oversized

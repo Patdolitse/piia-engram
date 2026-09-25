@@ -115,6 +115,9 @@ async def memory_store(
         S._track("memory_store", success=False)
         return "kind 必须是字符串。可用: lesson, decision, playbook"
     kind = kind.strip().lower()
+    if kind == "playbook" and S._gov_rt._strict_mode.approval_strict():
+        S._track("memory_store", success=False)
+        return S._gov_rt._strict_mode.refuse(S._get_engram().root, tool="memory_store", detail="kind=playbook")
 
     if items_json:
         # Batch path (absorbs the former bulk_add_knowledge tool).

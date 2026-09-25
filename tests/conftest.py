@@ -22,6 +22,20 @@ os.environ["ENGRAM_DIR"] = str(
     Path(tempfile.mkdtemp(prefix="engram-collect-")) / "engram-home"
 )
 
+# Machine-wide behaviour switches (a developer box may export
+# ENGRAM_APPROVAL=strict, ENGRAM_RECONCILE=0, ...) must not leak into the suite:
+# mcp_server reads some of them at import time. Tests that need one set it
+# themselves with monkeypatch.
+_MACHINE_BEHAVIOUR_ENV = (
+    "ENGRAM_APPROVAL",
+    "ENGRAM_RECONCILE",
+    "ENGRAM_GOVERNANCE",
+    "ENGRAM_CLIENT_TYPE",
+    "ENGRAM_MCP_STARTUP_SYNC",
+)
+for _name in _MACHINE_BEHAVIOUR_ENV:
+    os.environ.pop(_name, None)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _subprocess_pythonpath() -> None:
@@ -72,3 +86,5 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """
     monkeypatch.setenv("ENGRAM_TEST", "1")
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-home"))
+    for name in _MACHINE_BEHAVIOUR_ENV:
+        monkeypatch.delenv(name, raising=False)

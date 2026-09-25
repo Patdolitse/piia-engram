@@ -80,6 +80,12 @@ DERIVED_DIRS = {"logs", "contexts", "exports", "daily", "metrics", "operations",
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _audit_on(monkeypatch):
+    """Refusals and receipts are asserted through audit.log (off by default in tests)."""
+    monkeypatch.setenv("ENGRAM_AUDIT", "1")
+
+
 def _run(coro):
     return asyncio.run(coro)
 
@@ -1006,5 +1012,7 @@ def test_default_server_instructions_are_unchanged(monkeypatch):
     monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
     m = _mcp_server()
 
-    assert m.server_instructions() == m.mcp.instructions
-    assert "wrap_up_session" in m.server_instructions()
+    text = m.server_instructions()
+    assert text == m._DEFAULT_SERVER_INSTRUCTIONS
+    assert "act on each phase without waiting for the user to ask" in text  # 4.21.0 text
+    assert "wrap_up_session" in text
