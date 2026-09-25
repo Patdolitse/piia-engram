@@ -542,6 +542,13 @@ function copyResult() {{
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision"}:
             return {"status": "not_found", "id": item_id}
+        # A tombstoned claim is never promoted: an unfinished reject (tombstone
+        # written, status write lost) must not turn into an approval.
+        from . import tombstones as _tombstones
+
+        stone = _tombstones.by_id(self.root, item_id) or _tombstones.lookup(self.root, item_type, item)
+        if stone is not None:
+            return {"status": "rejected_before", "id": item_id, "rejection_id": stone.get("id")}
 
         ts = _now_iso()
         mismatch = {"hit": False}
