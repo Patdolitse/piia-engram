@@ -23,6 +23,7 @@ from . import tombstones as _tombstones
 from .staging_review import batch_review_staging
 
 MEM_TYPES = ("rule", "preference", "project_fact", "lesson", "decision")
+PLAYBOOK_TYPES = ("rule", "lesson", "project_fact")
 _TYPE_ORDER = {t: i for i, t in enumerate(("rule", "preference", "decision", "project_fact", "lesson"))}
 _DETAIL_CAP = 500
 
@@ -109,6 +110,8 @@ def _pending(eng) -> list[tuple[str, dict]]:
         ("decision", eng.get_decisions(limit=None, _update_access=False)),
     ):
         rows.extend((kind, row) for row in items if row.get("tier") == "staging")
+    listing = eng.list_playbooks_for_management(status="active", include_content=True, include_pending=True)
+    rows.extend(("playbook", pb) for pb in listing.get("items", []) if pb.get("tier") == "staging")
     return rows
 
 
@@ -122,10 +125,15 @@ def _card(n: int, kind: str, row: dict, root) -> list[str]:
     mem_type = _type_label(row)
     if not mem_type:
         flags.append("missing type")
-    detail = str(row.get("detail") or row.get("reasoning") or "").strip()
+    detail = str(row.get("detail") or row.get("reasoning") or row.get("description") or "").strip()
     if not detail:
         flags.append("missing rationale")
-    claim = row.get("summary") if kind == "lesson" else f"{row.get('question', '')} -> {row.get('choice', '')}"
+    if kind == "lesson":
+        claim = row.get("summary")
+    elif kind == "playbook":
+        claim = row.get("title")
+    else:
+        claim = f"{row.get('question', '')} -> {row.get('choice', '')}"
     scope = f"project:{row.get('project') or row.get('project_id')}" if row.get("project_id") else "global"
     lines = [
         f"### {n}. {kind} `{row.get('id')}`" + (f"  [{'; '.join(flags)}]" if flags else ""),
@@ -136,6 +144,15 @@ def _card(n: int, kind: str, row: dict, root) -> list[str]:
     ]
     if detail:
         lines.append(f"- why / detail: {detail[:_DETAIL_CAP]}")
+    if kind == "playbook":
+        if row.get("pending_supersedes"):
+            lines.append(f"- relation: SUPERSEDES {row['pending_supersedes']}")
+        triggers = row.get("triggers") or []
+        lines.append(f"- triggers: {', '.join(str(t) for t in triggers[:3])}")
+        lines.append("- steps (full):")
+        for i, step in enumerate(row.get("steps") or [], 1):
+            text = step.get("action", "") if isinstance(step, dict) else str(step)
+            lines.append(f"  {i}. {text}")
     lines.append(f"- source: {row.get('source_tool') or 'unknown'}, queued {row.get('queued_at') or row.get('timestamp') or '?'}")
     lines.append("")
     return lines
@@ -161,8 +178,13 @@ def run_export(args: list[str]) -> int:
     pending = sorted(_pending(eng), key=_sort_key)
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    from .playbooks import _playbook_queue_max
+
+    pending_playbooks = sum(1 for kind, _row in pending if kind == "playbook")
     lines = [
         "# Engram review file",
+        "",
+        f"pending playbooks {pending_playbooks}/{_playbook_queue_max()}",
         "",
         f"Pending proposals: {len(pending)}. Mark each id in marks.json as approve | reject | "
         f"edit-type:<{'|'.join(MEM_TYPES)}>, then run:",
@@ -199,7 +221,7 @@ def _parse_marks(path: Path) -> tuple[list[dict], str]:
         mark = str(entry.get("mark") or entry.get("action") or "").strip().lower()
         if not item_id:
             return [], "a mark has no id"
-        if mark in ("approve", "reject"):
+        if mark in ("approve", "reject", "retire", "restore"):
             marks.append({"id": item_id, "mark": mark})
         elif mark.startswith("edit-type:"):
             mem_type = mark[len("edit-type:"):]
@@ -227,6 +249,16 @@ def run_apply(args: list[str]) -> int:
         return 2
     decisions = [{"id": m["id"], "action": m["mark"]} for m in marks if m["mark"] in ("approve", "reject")]
     edits = [m for m in marks if m["mark"] == "edit-type"]
+    lifecycle = [m for m in marks if m["mark"] in ("retire", "restore")]
+    probe = _engram(read_only=True)
+    for m in edits + lifecycle:
+        kind, _row = probe._find_item_by_id(m["id"])
+        if kind == "playbook" and m["mark"] == "edit-type" and m["type"] not in PLAYBOOK_TYPES:
+            print(f"playbook {m['id']}: type must be one of {', '.join(PLAYBOOK_TYPES)}")
+            return 2
+        if m["mark"] in ("retire", "restore") and kind != "playbook":
+            print(f"{m['mark']} applies to playbooks only: {m['id']}")
+            return 2
 
     if "--yes" not in args:
         eng = _engram(read_only=True)
@@ -234,7 +266,8 @@ def run_apply(args: list[str]) -> int:
         missing = [m["id"] for m in edits if eng._find_item_by_id(m["id"])[1] is None]
         _print({
             "status": "dry_run",
-            "counts": {**preview["counts"], "edit_type": len(edits), "edit_type_not_found": len(missing)},
+            "counts": {**preview["counts"], "edit_type": len(edits), "edit_type_not_found": len(missing),
+                       "lifecycle": len(lifecycle)},
             "items": [{"id": i["id"], "action": i["action"], "status": i["status"]} for i in preview["items"]],
             "not_found": missing,
         })
@@ -252,16 +285,28 @@ def run_apply(args: list[str]) -> int:
     edited, edit_failed = 0, []
     for m in edits:
         kind, row = eng._find_item_by_id(m["id"])
-        if row is None or kind not in ("lesson", "decision"):
+        if row is None or kind not in ("lesson", "decision", "playbook"):
             edit_failed.append(m["id"])
             continue
-        update = eng.update_lesson if kind == "lesson" else eng.update_decision
+        update = {"lesson": eng.update_lesson, "decision": eng.update_decision,
+                  "playbook": eng.update_playbook}[kind]
         outcome = update(m["id"], {"domain": _relabel(row.get("domain", ""), m["type"])})
         if isinstance(outcome, dict) and outcome.get("error"):
             edit_failed.append(m["id"])
         else:
             edited += 1
-    counts = {**result["counts"], "edit_type": edited, "edit_type_failed": len(edit_failed)}
+    lifecycle_done, lifecycle_failed = 0, []
+    for m in lifecycle:
+        if m["mark"] == "retire":
+            outcome = eng.archive_playbook(m["id"])  # an archive, never a tombstone
+        else:
+            outcome = eng.restore_playbook(m["id"], dry_run=False, confirm=True)
+        if isinstance(outcome, dict) and outcome.get("error"):
+            lifecycle_failed.append(m["id"])
+        else:
+            lifecycle_done += 1
+    counts = {**result["counts"], "edit_type": edited, "edit_type_failed": len(edit_failed),
+              "lifecycle": lifecycle_done, "lifecycle_failed": len(lifecycle_failed)}
     _receipt(eng, "apply", attribution, counts)
     _print({
         "status": "applied",
@@ -354,3 +399,16 @@ def run_tombstone(args: list[str]) -> int:
 
 
 VERBS = {"export": run_export, "apply": run_apply, "tombstone": run_tombstone}
+
+
+def run_playbook_list(args: list[str]) -> int:
+    """``engram playbook list [--tier staging|verified]`` -- the Owner's read-only view."""
+    tier = _option(args, "--tier")
+    eng = _engram(read_only=True)
+    listing = eng.list_playbooks_for_management(status="all", include_content=True, include_pending=True)
+    items = [pb for pb in listing.get("items", []) if not tier or pb.get("tier", "verified") == tier]
+    for pb in items:
+        print(f"{pb.get('id')}  tier={pb.get('tier', 'verified')}  status={pb.get('status', 'active')}  "
+              f"{pb.get('title', '')}")
+    print(f"{len(items)} playbook(s)")
+    return 0

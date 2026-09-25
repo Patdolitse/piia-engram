@@ -115,9 +115,6 @@ async def memory_store(
         S._track("memory_store", success=False)
         return "kind 必须是字符串。可用: lesson, decision, playbook"
     kind = kind.strip().lower()
-    if kind == "playbook" and S._gov_rt._strict_mode.approval_strict():
-        S._track("memory_store", success=False)
-        return S._gov_rt._strict_mode.refuse(S._get_engram().root, tool="memory_store", detail="kind=playbook")
 
     if items_json:
         # Batch path (absorbs the former bulk_add_knowledge tool).
@@ -538,8 +535,13 @@ async def add_playbook(
         # Dedup-reject echoes the matched stored playbook's ``existing_title`` —
         # gate it like any write-echo (see add_lesson).
         return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_playbook"))
-    if result.get("error"):
+    if result.get("error") or result.get("status") in ("rejected_before", "duplicate_retired", "queue_full"):
         return S._json(result)
+    if S._gov_rt._strict_mode.approval_strict(S._get_engram().root):
+        return S._json({
+            "status": "pending", "id": result.get("id"), "tier": result.get("tier", "staging"),
+            "message": "Playbook proposal saved; it is used only after the Owner approves it.",
+        })
     tier = result.get("tier", "staging")
     return f"[Engram] Playbook 已记录 · tier={tier} · 可召回: {title} (triggers: {triggers})"
 
@@ -570,6 +572,41 @@ _EXECUTION_USAGE_POLICY = (
     "step, verify the result with the user before proceeding. Do not skip "
     "steps or execute all at once."
 )
+
+
+_PROPOSAL_DROP_FIELDS = frozenset({
+    "id", "timestamp", "created_at", "last_updated", "last_reviewed", "access_count", "version",
+    "tier", "memory_state", "approval_status", "approval_required", "promoted_at", "promotion_reason",
+    "pending_supersedes", "status", "snapshot_of", "superseded_by", "superseded_at", "labeling",
+})
+
+
+def _playbook_update_proposal(playbook_id: str, updates: dict) -> str:
+    """Strict: an update is a new pending row holding the full merged content."""
+    eng = S._get_engram()
+    current = eng._read_playbook_by_id(playbook_id)
+    if current is None:
+        return S._json({"error": f"Playbook not found: {playbook_id}"})
+    merged = {k: v for k, v in current.items() if k not in _PROPOSAL_DROP_FIELDS}
+    merged.update(updates)
+    # A fresh id: the default id is derived from title + timestamp and could
+    # collide with the row this proposal replaces.
+    import hashlib as _hashlib
+    import time as _time
+
+    merged["id"] = _hashlib.sha256(
+        f"proposal:{playbook_id}:{_time.time_ns()}".encode("utf-8")
+    ).hexdigest()[:12]
+    result = S._locked_engram_call(
+        eng.add_playbook, merged, allow_similar_new=True, _update_proposal_of=playbook_id,
+    )
+    S._track("manage_playbook", success=not result.get("error"))
+    if result.get("error") or result.get("status"):
+        return S._json(result)
+    return S._json({
+        "status": "pending", "id": result.get("id"), "pending_supersedes": playbook_id,
+        "message": "Update proposal saved; the current playbook stays in use until the Owner approves.",
+    })
 
 
 def _inject_usage_policy(item, policy=_PLAYBOOK_USAGE_POLICY):
@@ -758,6 +795,12 @@ async def manage_playbook(
         return refusal
 
     action = action.strip().lower()
+    _strict = S._gov_rt._strict_mode
+    if _strict.approval_strict(S._get_engram().root):
+        if action in ("archive", "delete", "restore"):
+            return _strict.refuse(S._get_engram().root, tool="manage_playbook", detail=f"action={action}")
+        if action == "update" and status:
+            return _strict.refuse(S._get_engram().root, tool="manage_playbook", detail="field: status")
     if action == "update":
         updates: dict = {}
         if title:
@@ -795,6 +838,8 @@ async def manage_playbook(
             updates["status"] = status
         if not updates:
             return "未提供任何更新字段。 / No update fields provided."
+        if _strict.approval_strict(S._get_engram().root):
+            return _playbook_update_proposal(playbook_id, updates)
         try:
             result = S._locked_engram_call(S._get_engram().update_playbook, playbook_id, updates)
             S._track("manage_playbook", success=True)

@@ -26,6 +26,8 @@ STRICT_MCP_ALLOWLIST = frozenset({
     "extract_session_insights",
     "wrap_up_session",
     "onboard_repo",
+    "add_playbook",  # a pending proposal under strict (plan V4 (v))
+    "manage_playbook",  # update becomes a proposal; archive/delete/restore refused in the tool
     # no knowledge change
     "review_staging",  # list and dry-run only; enforced inside the tool
     "playbook_execution",

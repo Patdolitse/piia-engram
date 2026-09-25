@@ -553,6 +553,10 @@ def run_playbook(argv: list[str] | None = None) -> int:
         return 0
     if args[0] == "scope":
         return _run_playbook_scope(args[1:])
+    if args[0] == "list":
+        from piia_engram import review_cli
+
+        return review_cli.run_playbook_list(args[1:])
     if args[0] != "install" or len(args) < 2:
         _print_playbook_usage()
         return 2

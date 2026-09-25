@@ -900,6 +900,11 @@ class RetrievalMixin:
                 e for e in self._read_playbook_index()
                 if e.get("status") == "active"
             ]
+            if self._hide_pending_playbooks():
+                index_entries = [
+                    e for e in index_entries
+                    if not self.is_pending_playbook(self._read_playbook_by_id(e.get("id", "")))
+                ]
             if terms:
                 lower_terms = [t.lower() for t in terms]
                 def _index_matches(entry):
