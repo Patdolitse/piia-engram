@@ -317,13 +317,13 @@ def test_strict_search_drops_pending_playbooks_in_every_scope(env, monkeypatch):
         assert TOKEN not in _run(m.search_knowledge(query="Pending procedure step one", scope=scope)), scope
 
 
-_SWEEP_SKIP = {"export_engram"}  # full-store backup export: complete by design (Owner dump)
+_SWEEP_SKIP: set[str] = set()  # A5: export_engram is swept too; strict MCP exports skip pending
 
 
 def _sweep_tools() -> list[str]:
     m = _mcp()
     names = [n for n, c in m.TOOL_GOVERNANCE_CLASS.items() if c == "read"]
-    names += ["get_playbooks", "search_knowledge", "export_knowledge_report", "get_identity_card",
+    names += ["get_playbooks", "search_knowledge", "export_engram", "export_knowledge_report", "get_identity_card",
               "refresh_quick_context", "request_outline_review"]
     return sorted(set(names) - _SWEEP_SKIP)
 
@@ -563,3 +563,13 @@ def test_read_only_get_playbooks_leaves_the_store_byte_identical(env, monkeypatc
     Engram(root, read_only=True).get_playbooks(limit=None)
 
     assert _snapshot(root, skip=()) == before
+
+
+def test_unset_export_engram_is_complete(env):
+    m, root = env
+    draft = m._engram.add_playbook({"title": f"Draft {TOKEN}", "steps": ["a", "b", "c"], "tier": "staging"})
+
+    path = m._engram.export_all(str(root.parent / "full.json"))
+
+    assert TOKEN in Path(path).read_text(encoding="utf-8")
+    assert draft["id"]

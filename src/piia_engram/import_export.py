@@ -950,7 +950,7 @@ class ImportExportMixin:
                 payload["items"].append(item)
         return report
 
-    def export_all(self, output_path: str | None = None) -> str:
+    def export_all(self, output_path: str | None = None, *, exclude_pending: bool = False) -> str:
         """导出整个 Engram 为单一 JSON 文件。
 
         包含：identity、knowledge、projects 所有数据。
@@ -958,6 +958,8 @@ class ImportExportMixin:
 
         Args:
             output_path: 导出文件路径。默认存到 ~/.engram/exports/engram_backup_<date>.json
+            exclude_pending: 严格模式下经 MCP 导出时为 True：不导出待审提案
+                （lesson / decision / playbook 的 tier=staging 行）。本地完整备份不受影响。
 
         Returns:
             导出文件的完整路径。
@@ -983,14 +985,19 @@ class ImportExportMixin:
                     l for l in self._read_entries(
                         self._knowledge_dir / "lessons.json", "lesson")
                     if l.get("status") != "superseded" and "snapshot_of" not in l
+                    and not (exclude_pending and l.get("tier") == "staging")
                 ],
                 "decisions": [
                     d for d in self._read_entries(
                         self._knowledge_dir / "decisions.json", "decision")
                     if d.get("status") != "superseded" and "snapshot_of" not in d
+                    and not (exclude_pending and d.get("tier") == "staging")
                 ],
                 "domains": self.get_domains(),
-                "playbooks": self._export_playbooks(),
+                "playbooks": [
+                    pb for pb in self._export_playbooks()
+                    if not (exclude_pending and pb.get("tier") == "staging")
+                ],
                 "relations": RelationStore(self.root).all_edges(),
                 "conflict_resolutions": ResolutionStore(self.root).all_records(),
             },
@@ -1004,6 +1011,7 @@ class ImportExportMixin:
                 kind + "s": [
                     row for row in self._read_overflow_archive(kind)
                     if row.get("status") != "superseded" and "snapshot_of" not in row
+                    and not (exclude_pending and row.get("tier") == "staging")
                 ]
                 for kind in ("lesson", "decision")
             },
