@@ -453,8 +453,15 @@ def run_untombstone(args: list[str]) -> int:
     if error:
         print(error)
         return 2
+    from .audit import audit_enabled_by_env
+
+    if not audit_enabled_by_env():
+        print("Refusing to withdraw a rejection while audit logging is off (ENGRAM_AUDIT=0):"
+              " it must leave a receipt.")
+        return 2
+    # Receipt first: if the removal fails, the attempt is still on record.
+    _receipt(eng, "untombstone", attribution, {"id": ids[0]})
     removed = _tombstones.remove(eng.root, ids[0])
-    _receipt(eng, "untombstone", attribution, {"removed": int(removed)})
     _print({"status": "applied", "id": ids[0], "removed": int(removed)})
     return 0
 

@@ -46,10 +46,19 @@ def _is_cjk(ch: str) -> bool:
     )
 
 
+# A leading label ("Lesson: ...", "教训：...") is framing, not the claim.
+_LABEL_PREFIX_RE = re.compile(
+    r"^\s*(?:lesson|lessons|learned|decision|decided|rule|note|takeaway|insight|tip|"
+    r"教训|经验|决策|决定|规则|注意|心得|要点|结论)\s*[:：]\s*",
+    re.IGNORECASE,
+)
+
+
 def normalize(text: str) -> str:
-    """Casefold, drop markdown and punctuation, collapse whitespace."""
+    """Casefold, drop a leading label, markdown and punctuation, collapse whitespace."""
     kept = []
-    for ch in unicodedata.normalize("NFKC", str(text or "")).casefold():
+    text = _LABEL_PREFIX_RE.sub("", unicodedata.normalize("NFKC", str(text or "")))
+    for ch in text.casefold():
         if ch in _MARKDOWN_CHARS or unicodedata.category(ch).startswith("P"):
             continue
         kept.append(ch)
@@ -136,10 +145,23 @@ def by_id(root, item_id: str) -> dict | None:
     return None
 
 
+def _locked(root):
+    from .storage import hold_directory_lock
+
+    return hold_directory_lock(_path(root).parent, timeout=30)
+
+
 def append(root, kind: str, row: dict, *, via: str, prior_rejection_id: str = "") -> dict | None:
-    """Append one tombstone for ``row``; idempotent per id."""
+    """Append one tombstone for ``row``; idempotent per id; under the knowledge dir lock."""
     item_id = str(row.get("id") or "")
-    if not item_id or by_id(root, item_id) is not None:
+    if not item_id:
+        return None
+    with _locked(root):
+        return _append_locked(root, kind, row, item_id, via=via, prior_rejection_id=prior_rejection_id)
+
+
+def _append_locked(root, kind: str, row: dict, item_id: str, *, via: str, prior_rejection_id: str) -> dict | None:
+    if by_id(root, item_id) is not None:
         return None
     h1, h2 = claim_hashes(kind, row)
     record: dict[str, Any] = {
@@ -161,10 +183,15 @@ def append(root, kind: str, row: dict, *, via: str, prior_rejection_id: str = ""
 
 
 def remove(root, item_id: str) -> bool:
-    """Drop one tombstone (the Owner's untombstone verb); atomic rewrite."""
+    """Drop one tombstone (the Owner's untombstone verb); atomic, under the dir lock."""
     path = _path(root)
     if not path.is_file():
         return False
+    with _locked(root):
+        return _remove_locked(path, item_id)
+
+
+def _remove_locked(path: Path, item_id: str) -> bool:
     lines = path.read_text(encoding="utf-8").splitlines()
     kept = []
     removed = False

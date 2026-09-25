@@ -1650,6 +1650,15 @@ class PlaybookMixin:
         updates = self._repair_incoming_text(dict(updates))
 
         current = self._read_playbook_by_id(playbook_id)
+        if (
+            current is not None
+            and current.get("status", "active") != "active"
+            and not current.get("snapshot_of")  # snapshots keep their own snapshot_immutable error
+            and any(key != "status" for key in updates)
+        ):
+            # Only a status change (archive / restore) may touch a non-active row.
+            return {"error": "not_active", "id": playbook_id,
+                    "message": "Restore the playbook before editing it."}
         if current is None:
             return {"error": f"Playbook not found: {playbook_id}"}
         refusal = self._reject_update_payload(current, updates)
@@ -1963,6 +1972,9 @@ class PlaybookMixin:
         are union-merged. The target playbook is updated in-place.
         """
         target = self._read_playbook_by_id(target_id)
+        if target is not None and target.get("status", "active") != "active":
+            return {"error": "not_active", "id": target_id,
+                    "message": "A retired or deleted playbook is never merged into."}
         if target is None:
             return {"error": f"Playbook not found: {target_id}"}
 
