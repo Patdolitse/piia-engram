@@ -33,9 +33,12 @@ def test_import_export_methods_are_mixin_backed():
     """Import/export behavior should live outside the core facade."""
     from piia_engram.import_export import ImportExportMixin
 
+    import inspect
+
     assert issubclass(Engram, ImportExportMixin)
-    assert Engram.export_all is ImportExportMixin.export_all
-    assert Engram.import_all is ImportExportMixin.import_all
+    # 4.21.1: store-write verbs carry the read-only guard; the body stays on the mixin.
+    assert inspect.unwrap(Engram.export_all) is ImportExportMixin.export_all
+    assert inspect.unwrap(Engram.import_all) is ImportExportMixin.import_all
 
 
 def test_init_creates_structure(tmp_path: Path):

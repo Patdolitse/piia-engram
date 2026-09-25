@@ -532,6 +532,8 @@ class _SessionTracker:
             }
             for c in self.calls[-30:]
         ]
+        if _engram is None or getattr(_engram, "_read_only", False):
+            return  # a read-only store gets no session checkpoints
         try:
             _locked_engram_call(
                 _engram.save_agent_context,

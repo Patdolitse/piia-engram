@@ -497,6 +497,11 @@ def _directory_lock(lock_path: Path, **kwargs: Any):
     return portalocker.Lock(lock_path, "a", **kwargs)
 
 
+
+class ReadOnlyStoreError(RuntimeError):
+    """A write reached a store entry point through an Engram(read_only=True) handle."""
+
+
 @contextmanager
 def hold_directory_lock(directory: Path, *, timeout: float = 5) -> Iterator[None]:
     """Hold ``directory``'s write lock across several writes.

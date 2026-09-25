@@ -16,6 +16,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from . import capacity as _capacity
+from .storage import ReadOnlyStoreError
 from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
 from . import provenance as _provenance
@@ -1527,6 +1528,8 @@ class Engram(
         ``blocking=False`` the call does nothing when another writer holds the
         lock.
         """
+        if self._read_only:
+            raise ReadOnlyStoreError(f"read-only handle: refused write to {path.name}")
         outcome = CapacityOutcome()
         ctx = capacity_ctx or _capacity.CapacityContext()
 
@@ -2387,7 +2390,7 @@ class Engram(
                 continue
             result.append(lesson)
         result = result[-limit:] if limit is not None else result
-        if _update_access and result:
+        if _update_access and result and not self._read_only:
             self._record_lesson_reads(result)
         self._audit.log("read", "knowledge/lessons", detail=f"returned {len(result)} items")
         if _update_access:
@@ -2398,7 +2401,12 @@ class Engram(
         return result
 
     def _record_lesson_reads(self, lessons: list[dict]) -> None:
-        """Count a read of ``lessons`` (best-effort; skipped while a writer holds the lock)."""
+        """Count a read of ``lessons`` (best-effort; skipped while a writer holds the lock).
+
+        A read-only handle never counts reads: it must not write the store.
+        """
+        if self._read_only:
+            return
         now = _now_iso()
         selected_ids = {lesson.get("id") for lesson in lessons if lesson.get("id")}
         for lesson in lessons:
@@ -2834,7 +2842,7 @@ class Engram(
                     continue
             result.append(decision)
         result = result[-limit:] if limit is not None else result
-        if _update_access and result:
+        if _update_access and result and not self._read_only:
             now = _now_iso()
             selected_ids = {decision.get("id") for decision in result if decision.get("id")}
             for decision in result:
@@ -3183,3 +3191,83 @@ class Engram(
                     "session_count": data.get("session_count", 0),
                 })
         return result
+
+
+# ---------------------------------------------------------------------------
+# Read-only handles (4.21.1, plan amendment A6)
+#
+# Engram(read_only=True) promises that the store is never written. Every public
+# method is classified below; a write verb called on a read-only handle returns
+# {"error": "read_only"} and writes nothing. The write entry points
+# (_update_entries, the playbook file writers) raise ReadOnlyStoreError as a
+# backstop for anything that reaches them unguarded. A public method that is in
+# neither list fails tests/test_read_only_handle.py.
+# ---------------------------------------------------------------------------
+
+STORE_WRITE_METHODS = frozenset({
+    "accept_onboard_candidate", "accept_onboard_candidates", "add_decision", "add_lesson",
+    "add_playbook", "add_relation", "append_daily_log", "apply_legacy_playbook_scope_suggestions",
+    "apply_review", "apply_session_digest_backfill", "approve_playbook", "archive_decision",
+    "archive_knowledge", "archive_lesson", "archive_playbook", "bulk_add_decisions",
+    "bulk_add_knowledge", "bulk_add_lessons", "commit_candidates", "confirm_knowledge",
+    "create_onboard_candidate", "create_onboard_candidates", "delete_playbook", "evaluate_tiers",
+    "export_all",
+    "export_identity_card", "export_knowledge_report", "export_review_page",
+    "extract_playbook_from_session", "extract_session_insights", "import_all",
+    "increment_domain_usage", "ingest_notes", "install_builtin_playbook", "link_knowledge",
+    "mark_validated_knowledge", "merge_knowledge", "merge_playbooks", "onboard_repo",
+    "prepare_playbook_execution", "promote_knowledge", "purge_search_index", "rebuild_index",
+    "reconcile_ai_configs", "reconcile_memories", "refresh_quick_context", "register_tool",
+    "reject_playbook", "remove_relation", "remove_tool", "resolve_playbook_scope_review",
+    "restore_lifecycle_archive", "restore_playbook", "revalidate_anchors", "revoke_caller",
+    "rollback_playbook_scope_migration", "save_agent_context", "save_execution_plan",
+    "save_project_snapshot", "save_user_portrait", "set_caller_trust",
+    "soft_archive_knowledge_tier", "unlink_knowledge", "update_decision", "update_domain",
+    "update_execution_step", "update_knowledge", "update_lesson", "update_playbook",
+    "update_preferences", "update_profile", "update_quality_standards", "update_tool",
+    "update_trust_boundaries", "update_work_style",
+})
+
+READ_ONLY_SAFE_METHODS = frozenset({
+    "available_builtin_playbooks", "build_agent_context_pack", "build_project_resume_pack",
+    "build_user_portrait", "build_user_portrait_rich", "builtin_playbook_template",
+    "capacity_status", "classify_legacy_playbooks", "classify_rarity", "collect_memory_candidates",
+    "compare_user_portraits", "detect_active_decision_conflicts",
+    "extract_candidates", "find_similar_knowledge", "find_tool", "generate_context",
+    "generate_review_page", "get_daily_log", "get_decision_history", "get_decision_thread",
+    "get_decisions", "get_domains", "get_execution_status", "get_health_report",
+    "get_knowledge_digest", "get_knowledge_history", "get_knowledge_inheritance",
+    "get_knowledge_overview", "get_latest_portrait", "get_lessons", "get_overflow_archived",
+    "get_permission_profile", "get_playbook", "get_playbook_scope_review_queue", "get_playbooks",
+    "get_preferences", "get_previous_portrait", "get_profile", "get_project_snapshot",
+    "get_quality_standards", "get_recent_context", "get_recent_playbooks", "get_related_knowledge",
+    "get_relevant_lessons", "get_resume_brief", "get_safe_profile", "get_session_digest",
+    "get_staging_summary", "get_stale_knowledge", "get_stats", "get_trust_boundaries",
+    "get_unclean_exit_marker", "get_work_style", "is_pending_playbook", "list_agent_sessions",
+    "list_playbooks_for_management", "list_projects", "list_tools", "list_user_portraits",
+    "pending_playbook_count", "preview_session_digest_backfill", "render_portrait_growth",
+    "render_user_portrait", "render_user_portrait_html", "review_knowledge", "search_knowledge",
+    "suggest_merges", "tombstoned_but_pending",
+})
+
+
+def _read_only_guard(method):
+    import functools
+
+    @functools.wraps(method)
+    def guarded(self, *args, **kwargs):
+        if getattr(self, "_read_only", False):
+            return {
+                "error": "read_only",
+                "method": method.__name__,
+                "message": "This Engram handle is read-only; nothing was written.",
+            }
+        return method(self, *args, **kwargs)
+
+    guarded.__engram_write_verb__ = True
+    return guarded
+
+
+for _name in sorted(STORE_WRITE_METHODS):
+    setattr(Engram, _name, _read_only_guard(getattr(Engram, _name)))
+del _name
