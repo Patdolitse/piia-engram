@@ -1644,6 +1644,13 @@ def main() -> None:
     # the AI tool never calls get_user_context.
     # Skip in ephemeral containers — no AI tool configs to scan.
     # Startup sync policy: background by default, eager/off by env override.
+    try:
+        from piia_engram.reconcile import reconcile_env_conflict_note as _reconcile_note
+    except ImportError:
+        from reconcile import reconcile_env_conflict_note as _reconcile_note  # type: ignore[no-redef]
+    _note = _reconcile_note()
+    if _note:
+        print(f"[engram] warning: {_note}", file=sys.stderr)
     _schedule_startup_sync(_startup_sync_mode(_is_ephemeral))
 
     if args.transport == "sse":

@@ -15,6 +15,45 @@ from pathlib import Path
 from .storage import SIMILARITY_THRESHOLD, _project_id, overflow_batch
 
 
+def _reconcile_env() -> str:
+    env = os.environ.get("ENGRAM_RECONCILE", "").strip().lower()
+    if env in ("0", "false", "off", "no"):
+        return "off"
+    if env in ("1", "true", "on", "yes"):
+        return "on"
+    return ""
+
+
+def _reconcile_config_value():
+    """``reconcile_authorized`` from telemetry_config.json, or None when absent."""
+    cfg_path = Path(os.environ.get("ENGRAM_DIR", "").strip() or
+                    Path.home() / ".engram") / "telemetry_config.json"
+    if not cfg_path.is_file():
+        return None
+    try:
+        import json as _json
+        cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(cfg, dict) or "reconcile_authorized" not in cfg:
+        return None
+    return cfg.get("reconcile_authorized")
+
+
+RECONCILE_ENV_OVERRIDDEN = "reconcile_env_overridden_by_config"
+
+
+def reconcile_env_conflict_note() -> str:
+    """Non-empty when ENGRAM_RECONCILE=1 is set but the config keeps reconcile off."""
+    if _reconcile_env() == "on" and _reconcile_config_value() is False:
+        return (
+            "ENGRAM_RECONCILE=1 is set, but reconcile_authorized=false in "
+            "telemetry_config.json wins: reconcile stays off. Remove the variable, "
+            "or change the config key if reconcile should run."
+        )
+    return ""
+
+
 class ReconcileMixin:
     """Auto-reconcile external AI memory & configs into Engram."""
 
@@ -62,33 +101,34 @@ class ReconcileMixin:
     # Memory file sync
     # ------------------------------------------------------------------
 
+    def _note_reconcile_env_conflict(self) -> None:
+        """Receipt for an ignored ENGRAM_RECONCILE=1, so the override is never silent."""
+        if not reconcile_env_conflict_note():
+            return
+        audit = getattr(self, "_audit", None)
+        if audit is not None:
+            audit.log("warn", "reconcile", detail=RECONCILE_ENV_OVERRIDDEN)
+
     @staticmethod
     def _reconcile_authorized() -> bool:
         """Check if the user has authorized auto-reconcile of external AI files.
 
-        Returns True if:
-        - ENGRAM_RECONCILE env var is set to a truthy value, OR
-        - ~/.engram/telemetry_config.json has "reconcile_authorized": true
-
-        The authorization is requested during `engram setup` and can be
-        changed with ENGRAM_RECONCILE=0 env var.
+        - ENGRAM_RECONCILE=0 (or false/off/no) always disables it.
+        - ``"reconcile_authorized": false`` in telemetry_config.json disables it
+          too, and wins over ENGRAM_RECONCILE=1: an env var may turn reconcile
+          off, never on against the config (see reconcile_env_conflict_note).
+        - Otherwise ENGRAM_RECONCILE=1 or the config value enables it; with
+          neither set it defaults to enabled for existing users.
         """
-        env = os.environ.get("ENGRAM_RECONCILE", "").strip().lower()
-        if env in ("0", "false", "off", "no"):
+        env = _reconcile_env()
+        if env == "off":
             return False
-        if env in ("1", "true", "on", "yes"):
+        configured = _reconcile_config_value()
+        if configured is False:
+            return False
+        if env == "on":
             return True
-        # Check persisted config
-        cfg_path = Path(os.environ.get("ENGRAM_DIR", "").strip() or
-                        Path.home() / ".engram") / "telemetry_config.json"
-        if cfg_path.is_file():
-            try:
-                import json as _json
-                cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
-                return cfg.get("reconcile_authorized", True)  # default True for existing users
-            except Exception:
-                pass
-        return True  # default True for backward compatibility
+        return True if configured is None else bool(configured)
 
     @overflow_batch
     def reconcile_memories(self, *, project_folder: str = "") -> dict:
@@ -101,6 +141,7 @@ class ReconcileMixin:
         ENGRAM_RECONCILE=1 env var).
         """
         if not self._reconcile_authorized():
+            self._note_reconcile_env_conflict()
             result = {"imported": 0, "duplicates": 0, "scanned_files": 0,
                       "skipped_large": 0, "sources": [],
                       "skipped_reason": "reconcile not authorized"}
@@ -432,6 +473,7 @@ class ReconcileMixin:
         ENGRAM_RECONCILE=1 env var).
         """
         if not self._reconcile_authorized():
+            self._note_reconcile_env_conflict()
             result = {"imported": 0, "duplicates": 0, "scanned_files": 0,
                       "sources": [],
                       "skipped_reason": "reconcile not authorized",
