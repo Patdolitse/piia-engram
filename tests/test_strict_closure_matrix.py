@@ -330,6 +330,35 @@ def test_strict_playbook_execution_writes_run_logs_and_usage_counter_only(mcp, m
     assert _rows(root) == []
 
 
+def _knowledge_and_identity(root: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for sub in ("knowledge", "identity"):
+        for p in sorted((root / sub).rglob("*")):
+            if p.is_file():
+                out[str(p.relative_to(root))] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
+
+
+_NON_PROPOSAL_ALLOWED = sorted(
+    name for name, role in STRICT_ALLOWLIST.items() if role != "proposal" and name != "review_staging"
+)
+
+
+@pytest.mark.parametrize("tool_name", _NON_PROPOSAL_ALLOWED)
+def test_strict_allowlisted_tools_never_change_knowledge_or_identity(mcp, monkeypatch, tool_name):
+    m, root = mcp
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    func = getattr(m, tool_name)
+
+    before = _knowledge_and_identity(root)
+    try:
+        _run(func(**_dummy_kwargs(func)))
+    except Exception:
+        pass
+
+    assert _knowledge_and_identity(root) == before, f"{tool_name} changed knowledge/ or identity/"
+
+
 # ---------------------------------------------------------------------------
 # 3. read sweep: no read tool writes knowledge or identity under strict
 # ---------------------------------------------------------------------------
@@ -394,6 +423,47 @@ def test_strict_core_add_lesson_and_decision_strip_trust_fields(eng, tmp_path):
         (row,) = _rows(tmp_path, kind)
         assert row["tier"] == "staging"
         assert "promotion_reason" not in row and "promoted_at" not in row
+
+
+_TRUST_KWARGS = {
+    "tier": "verified",
+    "status": "active",
+    "user_confirmed": True,
+    "approval_status": "approved",
+    "approval_required": False,
+    "promotion_reason": "user_confirmed",
+    "promoted_at": "2026-01-01T00:00:00Z",
+}
+
+
+@pytest.mark.parametrize("route", sorted(["add_lesson", "add_decision", "memory_store",
+                                           "memory_store_bulk", "ingest_notes",
+                                           "extract_session_insights", "wrap_up_session",
+                                           "onboard_repo", "reconcile"]))
+def test_strict_insert_point_ignores_trust_fields_on_every_route(mcp, monkeypatch, route):
+    m, root = mcp
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    real_lesson, real_decision = Engram.add_lesson, Engram.add_decision
+
+    def lesson_with_trust(self, *args, **kwargs):
+        return real_lesson(self, *args, **{**kwargs, **_TRUST_KWARGS})
+
+    def decision_with_trust(self, *args, **kwargs):
+        return real_decision(self, *args, **{**kwargs, **_TRUST_KWARGS})
+
+    monkeypatch.setattr(Engram, "add_lesson", lesson_with_trust)
+    monkeypatch.setattr(Engram, "add_decision", decision_with_trust)
+
+    STAGED_ROUTES[route](m, root)
+
+    created = _rows(root, "lesson") + _rows(root, "decision")
+    assert created, f"route {route} created no rows"
+    for row in created:
+        assert row["tier"] == "staging", route
+        assert row.get("approval_status") == "pending", route
+        assert "promotion_reason" not in row and "promoted_at" not in row, route
+        assert row.get("user_confirmed") is not True, route
 
 
 def test_unset_memory_store_trust_fields_behaviour_is_pinned(mcp):
@@ -485,6 +555,34 @@ def test_approve_writes_no_tombstone(eng, tmp_path):
     batch_review_staging(eng, [{"id": row["id"], "action": "approve"}], dry_run=False, confirm=True)
 
     assert _tombstones(tmp_path) == []
+
+
+def test_unset_archive_knowledge_over_mcp_and_core_never_tombstones(mcp):
+    import inspect
+
+    m, root = mcp
+    via_mcp = m._engram.add_lesson("archived over mcp", domain="t")
+    via_core = m._engram.add_lesson("archived over core", domain="t")
+    params = set(inspect.signature(m.archive_knowledge).parameters)
+    assert params == {"item_id"}, "the MCP tool must not accept a reason or internal flag"
+
+    _run(m.archive_knowledge(item_id=via_mcp["id"]))
+    m._engram.archive_knowledge(via_core["id"])
+
+    statuses = {r["id"]: r["status"] for r in _rows(root)}
+    assert statuses[via_mcp["id"]] != "active" and statuses[via_core["id"]] != "active"
+    assert _tombstones(root) == []
+
+
+def test_unset_mcp_batch_reject_tombstone_names_the_caller(mcp):
+    m, root = mcp
+    row = m._engram.add_lesson("x", domain="t", tier="staging")
+    actions = json.dumps([{"id": row["id"], "action": "reject"}])
+
+    _run(m.review_staging(action="batch", actions_json=actions, dry_run=False, confirm=True))
+
+    (stone,) = _tombstones(root)
+    assert stone["via"].startswith("mcp:")
 
 
 def test_plain_archive_of_a_staging_row_writes_no_tombstone(eng, tmp_path):
@@ -646,23 +744,21 @@ def test_every_staged_route_passes_the_tombstone_check(mcp, monkeypatch, route):
         assert tombstones.claim_hashes(kind, row)[0] in checked, f"{route} inserted an unchecked {kind}"
 
 
-def test_unset_mode_honours_a_seeded_tombstone(tmp_path, monkeypatch):
+def test_unset_mode_honours_a_tombstone_left_by_a_strict_reject(tmp_path, monkeypatch):
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
     eng = Engram(root=tmp_path)
-    from piia_engram import tombstones
-
-    h1, h2 = tombstones.claim_hashes("lesson", {"summary": "seeded rejected claim"})
-    (tmp_path / "knowledge").mkdir(exist_ok=True)
-    (tmp_path / "knowledge" / "tombstones.jsonl").write_text(json.dumps({
-        "id": "abc123abc123", "kind": "lesson", "scope": "global", "h1": h1, "h2": h2,
-        "rejected_at": "2026-09-25T14:21:00Z", "via": "backfill:test",
-    }) + "\n", encoding="utf-8")
+    row = eng.add_lesson("seeded rejected claim", domain="t")
+    _reject(eng, row["id"])
+    monkeypatch.delenv("ENGRAM_APPROVAL")
 
     result = eng.add_lesson("Seeded rejected claim.", domain="t")
 
-    assert result["status"] == "rejected_before"
-    assert result["rejection_id"] == "abc123abc123"
+    assert result.get("status") == "rejected_before"
+    assert result.get("rejection_id") == row["id"]
+    assert any(
+        a.get("action") == "refused" and "rejected_before" in json.dumps(a) for a in _audit(tmp_path)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -688,6 +784,28 @@ def test_retired_row_blocks_the_same_text_revocably(tmp_path, monkeypatch, mode)
     assert again["status"] == "duplicate_retired"
     assert again["existing_id"] == row["id"]
     assert _tombstones(tmp_path) == []
+
+
+def test_archived_row_blocks_with_its_reason(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    eng = Engram(root=tmp_path)
+    archive = tmp_path / "knowledge" / "overflow_archive"
+    archive.mkdir(parents=True)
+    (archive / "lessons.jsonl").write_text(json.dumps({
+        "id": "0123456789ab", "summary": "expired unreviewed proposal", "status": "active",
+        "tier": "staging", "overflow_archive_reason": "review_queue_quota",
+        "overflow_archived_at": "2026-09-25T06:15:00Z",
+    }) + "\n", encoding="utf-8")
+
+    again = eng.add_lesson("expired unreviewed proposal", domain="t")
+
+    assert again.get("status") == "duplicate_retired"
+    assert again.get("where") == "archive"
+    assert again.get("reason") == "review_queue_quota"
+    assert any(
+        a.get("action") == "refused" and "duplicate_retired" in json.dumps(a) for a in _audit(tmp_path)
+    )
 
 
 _MEMORY_BODY = """\
@@ -777,6 +895,7 @@ def test_cli_apply_dry_run_by_default_then_applies_with_operator(eng, tmp_path, 
     receipt = json.dumps(receipts[-1])
     for field in ("operator", "isatty", "ppid", "parent_name", "host"):
         assert field in receipt
+    assert receipts[-1].get("isatty") is False  # pytest stdin is not a TTY; accepted with --operator
 
 
 def test_cli_yes_without_operator_is_refused(eng, tmp_path, monkeypatch, capsys):
@@ -830,6 +949,19 @@ def test_cli_export_sorts_reproposals_first_and_leaves_store_unchanged(eng, tmp_
     assert ids[0] == repro["id"]
     text = (out_dir / "review.md").read_text(encoding="utf-8")
     assert f"re-proposal of rejected {first['id']}" in text
+
+
+def test_cli_export_flags_a_cjk_near_rejected_variant(eng, tmp_path, monkeypatch, capsys):
+    first = eng.add_lesson("先备份再删除原文件", domain="t")
+    _reject(eng, first["id"])
+    variant = eng.add_lesson("先备份 再删除 原文件", domain="t")
+    assert variant.get("status") != "rejected_before"
+    out_dir = tmp_path / "review-out"
+
+    code, _out = _cli(monkeypatch, capsys, "export", "--out", str(out_dir))
+
+    assert code == 0
+    assert f"near-rejected {first['id']}" in (out_dir / "review.md").read_text(encoding="utf-8")
 
 
 def test_cli_tombstone_backfill(eng, tmp_path, monkeypatch, capsys):
