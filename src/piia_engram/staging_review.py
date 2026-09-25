@@ -93,6 +93,14 @@ def batch_review_staging(
             items.append(_item(idx, item_id, action, "not_staging", item_type=item_type))
             counts["noop"] += 1
             continue
+        if action == "approve":
+            from . import tombstones as _tombstones
+
+            if _tombstones.by_id(eng.root, item_id) or _tombstones.lookup(eng.root, item_type, item):
+                # Unfinished reject: only re-applying the reject mark resolves it.
+                items.append(_item(idx, item_id, action, "rejected_before", item_type=item_type))
+                counts["failed"] += 1
+                continue
 
         items.append(_item(idx, item_id, action, "planned", item_type=item_type))
         counts["planned"] += 1

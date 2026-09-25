@@ -577,6 +577,27 @@ def test_crash_after_tombstone_is_visible_and_reapplying_finishes_it(eng, tmp_pa
     assert [s["id"] for s in _tombstones(tmp_path)] == [row["id"]]
 
 
+def test_unfinished_reject_cannot_be_approved(eng, tmp_path, monkeypatch):
+    row = eng.add_lesson("half rejected proposal", domain="t")
+    real_update = Engram.update_lesson
+
+    def fail(self, *args, **kwargs):
+        return {"error": "simulated failed status write"}
+
+    monkeypatch.setattr(Engram, "update_lesson", fail)
+    eng.archive_knowledge(row["id"], _owner_reject="cli:owner")
+    monkeypatch.setattr(Engram, "update_lesson", real_update)
+    approve = [{"id": row["id"], "action": "approve"}]
+
+    dry = batch_review_staging(eng, approve)
+    assert [i["status"] for i in dry["items"]] == ["rejected_before"]
+    applied = batch_review_staging(eng, approve, dry_run=False, confirm=True)
+    assert applied["counts"]["applied"] == 0
+    assert eng.promote_knowledge(row["id"])["status"] == "rejected_before"
+    (still,) = eng.get_lessons(limit=None, _update_access=False)
+    assert still["tier"] == "staging"
+
+
 def test_approve_writes_no_tombstone(eng, tmp_path):
     row = eng.add_lesson("a proposal the owner accepts", domain="t")
 
