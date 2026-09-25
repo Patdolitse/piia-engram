@@ -748,6 +748,20 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] Tombstone check failed: {exc}")
         problems += 1
 
+    # 2.57 tombstones from another hash version protect nothing until migrated
+    try:
+        from piia_engram import tombstones as _tombstones
+
+        stale = _tombstones.stale_version_ids(eng.root)
+        if stale:
+            print(f"    [!!] Rejection records from an older hash version: {len(stale)}"
+                  f" (hv != {_tombstones.HASH_VERSION}); they refuse nothing until re-written"
+                  " with engram review tombstone --ids-file")
+            problems += 1
+    except Exception as exc:
+        print(f"    [!!] Tombstone version check failed: {exc}")
+        problems += 1
+
     # 2.58 strict latch: a latched store with ENGRAM_APPROVAL unset stays strict
     try:
         from piia_engram import strict_mode as _strict_mode
