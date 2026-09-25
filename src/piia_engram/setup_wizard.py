@@ -1,6 +1,7 @@
 """Engram 安装向导 — engram setup / engram doctor 命令入口。"""
 
 from __future__ import annotations
+from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
 
 import importlib.util
 import hashlib
@@ -1946,7 +1947,7 @@ def _apply_seed_templates(engram, tech_stack: str) -> int:
                 t["summary"], domain=t["domain"],
                 source_tool="engram_setup", tier="staging",
             )
-            if result.get("status") != "duplicate":
+            if result.get("status") not in _NOT_ADDED:
                 added += 1
         except Exception:
             pass
@@ -2070,7 +2071,7 @@ def _run_seed_knowledge_onboarding(
 
     for lesson in lesson_inputs:
         result = engram.add_lesson(lesson, domain="setup", source_tool="engram_setup")
-        if result.get("status") != "duplicate":
+        if result.get("status") not in _NOT_ADDED:
             lessons_added += 1
 
     # --- Seed templates (auto-inject best practices) ---

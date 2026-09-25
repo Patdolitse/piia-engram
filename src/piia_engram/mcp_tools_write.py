@@ -30,6 +30,17 @@ def _confirmation_required(kind: str, title: str, content) -> str:
     })
 
 
+# Insert outcomes that add no row. They are returned to the agent as they are
+# (status, rejection_id / existing_id, where, reason), never as "recorded".
+_REFUSED_INSERT_STATUSES = frozenset({"rejected_before", "duplicate_retired", "queue_full"})
+
+
+def _insert_refused(result) -> bool:
+    return isinstance(result, dict) and (
+        result.get("status") in _REFUSED_INSERT_STATUSES or bool(result.get("error"))
+    )
+
+
 def _is_user_confirmed(value) -> bool:
     if value is True:
         return True
@@ -222,6 +233,8 @@ async def memory_store(
             )
             label = content.get("summary", "")[:60]
             S._track("memory_store", success=True)
+            if _insert_refused(result):
+                return S._json(result)
             if result.get("status") == "duplicate":
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
@@ -231,6 +244,8 @@ async def memory_store(
             result = S._locked_engram_call(S._get_engram().add_decision, content)
             label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
             S._track("memory_store", success=True)
+            if _insert_refused(result):
+                return S._json(result)
             if result.get("status") == "duplicate":
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
@@ -242,6 +257,8 @@ async def memory_store(
             )
             label = content.get("title", "")[:60]
             S._track("memory_store", success=True)
+            if _insert_refused(result):
+                return S._json(result)
             if result.get("status") == "duplicate":
                 # v4.19.1: surface the revision/new-entry guidance payload
                 # (gated like every write-echo) instead of swallowing it.
@@ -326,6 +343,8 @@ async def add_lesson(
     except Exception as exc:
         S._track("add_lesson", success=False)
         return f"添加教训失败: {S._safe_err(exc)}"
+    if _insert_refused(result):
+        return S._json(result)
     if result.get("status") == "duplicate":
         # The dedup-reject payload echoes the MATCHED stored item's
         # ``existing_summary`` (content the caller never supplied) — a low-trust
@@ -417,6 +436,8 @@ async def add_decision(
     except Exception as exc:
         S._track("add_decision", success=False)
         return f"添加决策失败: {S._safe_err(exc)}"
+    if _insert_refused(result):
+        return S._json(result)
     if result.get("status") == "duplicate":
         # Dedup-reject echoes the matched stored decision's ``existing_title`` —
         # gate it like any write-echo (see add_lesson).
@@ -531,6 +552,8 @@ async def add_playbook(
     except Exception as exc:
         S._track("add_playbook", success=False)
         return f"添加 Playbook 失败: {S._safe_err(exc)}"
+    if _insert_refused(result):
+        return S._json(result)
     if result.get("status") == "duplicate":
         # Dedup-reject echoes the matched stored playbook's ``existing_title`` —
         # gate it like any write-echo (see add_lesson).

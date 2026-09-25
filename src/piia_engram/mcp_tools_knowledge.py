@@ -415,7 +415,7 @@ async def review_staging(
     action = action.strip().lower()
     # Strict: agents may list and preview, never decide. Approve/reject/refresh
     # is the Owner's, through the local `engram review` CLI.
-    if S._gov_rt._strict_mode.approval_strict() and not (
+    if S._gov_rt._strict_mode.approval_strict(S._get_engram().root) and not (
         action == "list" or (action == "batch" and dry_run is True)
     ):
         return S._gov_rt._strict_mode.refuse(

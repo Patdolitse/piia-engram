@@ -13,6 +13,7 @@ Top-level functions:
 """
 
 from __future__ import annotations
+from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
 
 import json
 import logging
@@ -502,11 +503,11 @@ class ContextMixin:
                         "notes", line, trigger_reason, source_tool, 0.75, quality,
                     ),
                 })
-                if result.get("status") == "duplicate":
+                if result.get("status") in _NOT_ADDED:
                     duplicates += 1
                     results.append({
                         "type": "decision",
-                        "status": "duplicate",
+                        "status": result.get("status", "duplicate"),
                         "title": line,
                         "existing_id": result.get("existing_id"),
                         "domain": item_domain,
@@ -530,11 +531,11 @@ class ContextMixin:
                         "notes", line, trigger_reason, source_tool, 0.75, quality,
                     ),
                 })
-                if result.get("status") == "duplicate":
+                if result.get("status") in _NOT_ADDED:
                     duplicates += 1
                     results.append({
                         "type": "lesson",
-                        "status": "duplicate",
+                        "status": result.get("status", "duplicate"),
                         "summary": line,
                         "existing_id": result.get("existing_id"),
                         "domain": item_domain,
@@ -696,7 +697,7 @@ class ContextMixin:
                     "title": text, "choice": "", "domain": item_domain,
                     "source_tool": source_tool, "extraction": meta,
                 })
-                if isinstance(res, dict) and res.get("status") == "duplicate":
+                if isinstance(res, dict) and res.get("status") in _NOT_ADDED:
                     duplicates += 1
                 else:
                     saved_decisions += 1
@@ -707,7 +708,7 @@ class ContextMixin:
                     "summary": text, "domain": item_domain,
                     "source_tool": source_tool, "extraction": meta,
                 })
-                if isinstance(res, dict) and res.get("status") == "duplicate":
+                if isinstance(res, dict) and res.get("status") in _NOT_ADDED:
                     duplicates += 1
                 else:
                     saved_lessons += 1
@@ -940,11 +941,11 @@ class ContextMixin:
                     _allow_internal_provenance=True,
                     _audit_metadata_only=capture_origin == "hook_content_digest",
                 )
-                if result.get("status") == "duplicate":
+                if result.get("status") in _NOT_ADDED:
                     duplicates += 1
                     results.append({
                         "type": "decision",
-                        "status": "duplicate",
+                        "status": result.get("status", "duplicate"),
                         "title": sentence[:80],
                         "existing_id": result.get("existing_id"),
                     })
@@ -987,11 +988,11 @@ class ContextMixin:
                     _allow_internal_provenance=True,
                     _audit_metadata_only=capture_origin == "hook_content_digest",
                 )
-                if result.get("status") == "duplicate":
+                if result.get("status") in _NOT_ADDED:
                     duplicates += 1
                     results.append({
                         "type": "lesson",
-                        "status": "duplicate",
+                        "status": result.get("status", "duplicate"),
                         "summary": sentence[:80],
                         "existing_id": result.get("existing_id"),
                     })
@@ -1367,7 +1368,7 @@ class ContextMixin:
         # Save via add_playbook (inherits duplicate detection)
         result = self.add_playbook(playbook, source_tool=source_tool)
 
-        if result.get("status") == "duplicate":
+        if result.get("status") in _NOT_ADDED:
             # Cross-session merge: if the existing playbook is staging, merge instead
             existing_id = result.get("existing_id")
             if existing_id:

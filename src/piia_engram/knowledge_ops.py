@@ -1512,6 +1512,9 @@ class KnowledgeOpsMixin:
     def get_related_knowledge(self, item_id: str) -> dict:
         """Return all knowledge items linked to a lesson, decision, or playbook id."""
         lessons, decisions, playbooks = self._read_link_collections()
+        if self._hide_pending_playbooks():
+            # strict: a pending playbook is not visible to agents, not even by id
+            playbooks = [pb for pb in playbooks if not self.is_pending_playbook(pb)]
         item_type, item = self._find_item_in_collections(item_id, lessons, decisions, playbooks)
         if item is None or item_type is None:
             return {"error": f"Item not found: {item_id}"}

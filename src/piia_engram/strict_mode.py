@@ -21,7 +21,7 @@ STRICT_MCP_ALLOWLIST = frozenset({
     # proposals: the knowledge rows they create are forced into staging
     "add_lesson",
     "add_decision",
-    "memory_store",  # kind=playbook is refused inside the tool
+    "memory_store",  # every kind, playbooks included, is a pending proposal
     "ingest_notes",
     "extract_session_insights",
     "wrap_up_session",
@@ -34,8 +34,9 @@ STRICT_MCP_ALLOWLIST = frozenset({
     "save_agent_context",
     "start_project",
     "register_tool",
-    "check_anchors",
     "user_portrait",
+    # check_anchors is NOT here: a failed anchor demotes verified rows and
+    # adopt_legacy writes provenance, both Owner decisions (engram anchors check).
     # exports: files on disk, never knowledge rows
     "export_engram",
     "export_knowledge_report",
@@ -56,10 +57,13 @@ def _env_strict() -> bool:
 
 
 def _store_root(root=None) -> Path:
+    """The store the check is about: the caller's root, else the same resolution
+    Engram itself uses (ENGRAM_DIR with ~ expanded, else ~/.engram or legacy ~/.piia)."""
     if root:
         return Path(root)
-    configured = os.environ.get("ENGRAM_DIR", "").strip()
-    return Path(configured) if configured else Path.home() / ".engram"
+    from .storage import _engram_root
+
+    return _engram_root()
 
 
 def approval_strict(root=None) -> bool:
@@ -150,6 +154,6 @@ def refuse(root, *, tool: str, detail: str = "") -> str:
 
 def maybe_refuse(root, *, tool: str) -> str | None:
     """Default-refuse gate for mutating MCP tools under strict."""
-    if not approval_strict() or tool in STRICT_MCP_ALLOWLIST:
+    if not approval_strict(root) or tool in STRICT_MCP_ALLOWLIST:
         return None
     return refuse(root, tool=tool)

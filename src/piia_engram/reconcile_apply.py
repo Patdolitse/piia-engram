@@ -27,6 +27,7 @@ mutation tool (no public/agent mutation surface).
 """
 
 from __future__ import annotations
+from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
 
 from typing import Any
 
@@ -308,7 +309,7 @@ def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) ->
     except Exception:  # pragma: no cover - defensive
         return ""
     if isinstance(result, dict):
-        if result.get("status") == "duplicate":
+        if result.get("status") in _NOT_ADDED:
             return ""
         new_id = result.get("id")
         if isinstance(new_id, str) and new_id:

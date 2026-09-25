@@ -418,15 +418,49 @@ def run_strict_marker(args: list[str]) -> int:
     if error:
         print(error)
         return 2
+    from .audit import audit_enabled_by_env
+
+    if not audit_enabled_by_env():
+        print("Refusing to clear the strict latch while audit logging is off (ENGRAM_AUDIT=0):"
+              " the clear must leave a receipt.")
+        return 2
+    # Receipt first: if the delete fails, the attempt is still on record.
+    _receipt(eng, "strict-marker-clear", attribution, {"latched": int(latched), "pending": pending})
     cleared = _strict_mode.clear_marker(eng.root)
-    counts = {"cleared": int(cleared), "pending": pending}
-    _receipt(eng, "strict-marker-clear", attribution, counts)
-    _print({"status": "applied", **counts})
+    _print({"status": "applied", "cleared": int(cleared), "pending": pending})
+    return 0
+
+
+def run_untombstone(args: list[str]) -> int:
+    """``engram review untombstone <id>`` -- the Owner withdraws a rejection.
+
+    Tombstones only act at insert time (they refuse a new row with the same
+    claim); removing one lets that claim be proposed again. Dry run by default.
+    """
+    ids = [a for a in args if not a.startswith("--") and a != _option(args, "--operator")]
+    if len(ids) != 1:
+        print("Usage: engram review untombstone <id> [--operator <name> --yes]")
+        return 2
+    eng = _engram(read_only="--yes" not in args)
+    stone = _tombstones.by_id(eng.root, ids[0])
+    if stone is None:
+        _print({"status": "not_found", "id": ids[0]})
+        return 1
+    if "--yes" not in args:
+        _print({"status": "dry_run", "id": ids[0], "kind": stone.get("kind"), "via": stone.get("via")})
+        return 0
+    attribution, error = _attribution(args)
+    if error:
+        print(error)
+        return 2
+    removed = _tombstones.remove(eng.root, ids[0])
+    _receipt(eng, "untombstone", attribution, {"removed": int(removed)})
+    _print({"status": "applied", "id": ids[0], "removed": int(removed)})
     return 0
 
 
 VERBS = {"export": run_export, "apply": run_apply, "tombstone": run_tombstone,
-         "strict-marker": run_strict_marker}
+         "strict-marker": run_strict_marker, "untombstone": run_untombstone}
 
 
 def run_playbook_list(args: list[str]) -> int:
