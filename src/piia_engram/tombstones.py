@@ -28,6 +28,10 @@ from pathlib import Path
 from typing import Any
 
 FILENAME = "tombstones.jsonl"
+# Version of normalize()/claim_hashes(). A record from another version cannot be
+# compared: it never matches, doctor reports it, and it must be migrated (re-hash
+# from the row) before it protects anything again. Bump on any normalize change.
+HASH_VERSION = 2
 
 _MARKDOWN_CHARS = set("`*_#>|~^")
 _WS_RE = re.compile(r"\s+")
@@ -56,10 +60,12 @@ _LABEL_PREFIX_RE = re.compile(
 
 def normalize(text: str) -> str:
     """Casefold, drop a leading label, markdown and punctuation, collapse whitespace."""
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    text = "".join(ch for ch in text if ch not in _MARKDOWN_CHARS)  # "**Lesson:**" -> "Lesson:"
+    text = _LABEL_PREFIX_RE.sub("", text)
     kept = []
-    text = _LABEL_PREFIX_RE.sub("", unicodedata.normalize("NFKC", str(text or "")))
     for ch in text.casefold():
-        if ch in _MARKDOWN_CHARS or unicodedata.category(ch).startswith("P"):
+        if unicodedata.category(ch).startswith("P"):
             continue
         kept.append(ch)
     return _WS_RE.sub(" ", "".join(kept)).strip()
@@ -124,16 +130,23 @@ def lookup(root, kind: str, row: dict) -> dict | None:
     h1, _h2 = claim_hashes(kind, row)
     scope = scope_of(row)
     for record in load(root):
+        if record.get("hv") != HASH_VERSION:
+            continue
         if record.get("h1") == h1 and record.get("scope", "global") == scope:
             return record
     return None
+
+
+def stale_version_ids(root) -> list[str]:
+    """Tombstones written by another hash version: they match nothing until migrated."""
+    return [str(r.get("id")) for r in load(root) if r.get("hv") != HASH_VERSION]
 
 
 def near(root, kind: str, row: dict) -> dict | None:
     """A tombstone whose token set matches (h2) -- a flag for the review export only."""
     _h1, h2 = claim_hashes(kind, row)
     for record in load(root):
-        if record.get("h2") == h2:
+        if record.get("hv") == HASH_VERSION and record.get("h2") == h2:
             return record
     return None
 
@@ -170,6 +183,7 @@ def _append_locked(root, kind: str, row: dict, item_id: str, *, via: str, prior_
         "scope": scope_of(row),
         "h1": h1,
         "h2": h2,
+        "hv": HASH_VERSION,
         "rejected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "via": via,
     }

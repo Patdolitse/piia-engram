@@ -386,7 +386,8 @@ def test_untombstone_is_refused_with_audit_off_and_receipted_first(env, monkeypa
 
 
 @pytest.mark.parametrize("framed", ["Lesson: never commit on friday", "教训：never commit on friday",
-                                    "  NOTE : Never commit on Friday."])
+                                    "  NOTE : Never commit on Friday.", "**Lesson:** never commit on friday",
+                                    "__决策__：never commit on friday"])
 def test_a_label_prefix_does_not_get_around_a_tombstone(env, framed):
     m, root = env
     row = _rejected_lesson(m, "never commit on friday")
@@ -394,3 +395,26 @@ def test_a_label_prefix_does_not_get_around_a_tombstone(env, framed):
     again = m._engram.add_lesson(framed, domain="t")
 
     assert again.get("status") == "rejected_before" and again.get("rejection_id") == row["id"]
+
+
+def test_tombstones_carry_a_hash_version_and_other_versions_match_nothing(env, monkeypatch, capsys):
+    from piia_engram import tombstones
+
+    m, root = env
+    row = _rejected_lesson(m, "a claim rejected under the current hashing")
+    (stone,) = tombstones.load(root)
+    assert stone["hv"] == tombstones.HASH_VERSION
+
+    old = dict(stone, id="old000000001", hv=1)
+    path = root / "knowledge" / "tombstones.jsonl"
+    path.write_text(json.dumps(old) + "\n", encoding="utf-8")  # only a stale-version record left
+
+    assert m._engram.add_lesson("a claim rejected under the current hashing", domain="t").get("status") \
+        != "rejected_before"
+    assert tombstones.stale_version_ids(root) == ["old000000001"]
+    from piia_engram import setup_wizard  # noqa: F401
+    from piia_engram.doctor import _run_functional_checks
+
+    _run_functional_checks()
+    assert "older hash version" in capsys.readouterr().out
+    assert row["id"]
