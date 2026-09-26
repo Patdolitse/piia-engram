@@ -685,18 +685,193 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
 }
 
 
+_INSTRUCTION_MARKER_V1 = "<!-- piia-engram:auto-injected -->"
+
+# Strict approval mode (4.21.2): the injected text matches what the MCP server
+# serves under strict -- agents read and propose; they never auto-save.
+_STRICT_SNIPPET_BODY = {
+    "zh": (
+        "## Engram 记忆层（严格模式：只读 + 提案）\n\n"
+        "本机已安装 Piia Engram，并处于严格模式：AI 写入的记忆只是提案，"
+        "Owner 用本地 `engram review` 命令审批后才生效。\n\n"
+        "- 会话开始需要接续上一轮工作时，调用 `get_resume_brief`；涉及历史偏好或跨会话连续性时，"
+        "调用 `get_user_context` 或 `search_knowledge`。新任务、明确指令、纯技术问题直接做。\n"
+        "- 只提案值得长期保留的内容，一条一个主张：先用 `search_knowledge` 查重；在 domain 里写类型"
+        "（type:rule、type:preference、type:project_fact、type:lesson 或 type:decision），"
+        "在 detail 里写为什么值得保留。\n"
+        "- 会话日志、进度、检查点，以及文件或 git 里已有的内容，不要提案；写进项目自己的笔记。\n"
+        "- 不要用 `wrap_up_session`、`extract_session_insights`、`save_agent_context` 做自动保存。\n"
+        "- 批准、驳回、编辑、合并、导入和身份修改由 Owner 在本地完成，MCP 会拒绝这些操作。\n"
+    ),
+    "en": (
+        "## Engram Memory Layer (strict mode: read + propose)\n\n"
+        "Piia Engram is installed and runs in strict mode: anything an AI writes is only a "
+        "proposal, and it takes effect after the Owner approves it with the local "
+        "`engram review` command.\n\n"
+        "- Session start: when resuming earlier work, call `get_resume_brief`; for past "
+        "preferences or cross-session continuity, call `get_user_context` or `search_knowledge`. "
+        "New tasks, explicit instructions and plain technical questions need neither.\n"
+        "- Propose only what is worth keeping, one claim per row: run `search_knowledge` first so "
+        "you do not propose a duplicate; label the type in domain (type:rule, type:preference, "
+        "type:project_fact, type:lesson or type:decision) and say in detail why it is worth keeping.\n"
+        "- Do not propose session logs, progress notes, checkpoints, or anything already in files "
+        "or git; keep those in the project's own notes.\n"
+        "- Do not use `wrap_up_session`, `extract_session_insights` or `save_agent_context` as an "
+        "auto-save.\n"
+        "- Approving, rejecting, editing, merging, importing and identity changes are the Owner's, "
+        "done locally; MCP refuses them.\n"
+    ),
+}
+_STRICT_CURSOR_HEADER = {
+    "zh": "---\ndescription: Engram 记忆层（严格模式）— AI 只读和提案，Owner 审批\nglobs:\nalwaysApply: true\n---\n\n",
+    "en": (
+        "---\ndescription: Engram memory layer (strict mode) — AI reads and proposes, the Owner approves\n"
+        "globs:\nalwaysApply: true\n---\n\n"
+    ),
+}
+
+# Fingerprints (see _snippet_fingerprint) of every default snippet Engram has
+# shipped, v=1 and v=2 markers, v3.29.0 through 4.21.1, taken from the git history
+# of _INSTRUCTION_SNIPPETS. Text inside the markers (or a whole Cursor .mdc) that
+# matches none of these, nor a current default, is the Owner's own text: setup and
+# doctor --fix never overwrite it.
+_KNOWN_DEFAULT_SNIPPET_FINGERPRINTS = frozenset({
+    "529b34416a92b9da0e2607143f5d5e8c06742c9c0878a73e5a9fbfd149e9fdde",  # claude_code en
+    "957ca30ddf6f57d96f38fdbf1178835f5b257b052c2b2736961a84f9a46c3e37",  # claude_code en
+    "08e54ff4d8e3c5f369012d8439d322192cb4237f8f43a72cb41159285095fbec",  # claude_code en
+    "ef8ef919ba33f5b20b866ef482f2d31ce336976766caf6a29b811c9f4db2200e",  # claude_code en (v=1)
+    "2f2dfd6af5a443540147db0ef715a2a7004ac5b68ac40c8c7c0c64692719a690",  # claude_code zh
+    "fb943a261d8cd5234968d2980bd48bc8bb27f20244569da194aad108510c37ec",  # claude_code zh
+    "39b716d8570ef39662c95ae1d9a12e5ba4c88ad66aef327a5c2c58fd91c01cd4",  # claude_code zh
+    "fd0cefe4be140517c49f25eafc615c2793d3b8b450ef64dd3d79ba3ad2a665a8",  # claude_code zh (v=1)
+    "4f507579f20d44f5784e2c1a30e71a139b80d238a0a9e27d38e959c910a2a10b",  # codex en
+    "1da9c049ab07d7d23e1af9bd98a224df4cc8339ff6a5ba146e9000f03b731c5d",  # codex en
+    "1d28cc1771cbdf66204154a5c6826625d78188d4c1773032cba42496be2ef6f9",  # codex en
+    "6b462350c496f0b19a96a193f71371faefd00fe1f3f67ff3f7657429d12345da",  # codex en (v=1)
+    "4de02c36759cc45e0d91afc9aeeadb0f15f544370fafb22df6521b5828f106c1",  # codex zh
+    "24c8b513464682a47a8028751f0a8dfee0205ee0199ea46570d8e28ec8ba0eb8",  # codex zh
+    "1578304153ecbecca6c740a49c58bc54ca44a8f105da42c868279e4e999e7f30",  # codex zh
+    "dc4dbdca94bca3f57cd0c46ab0afb64e93f8eaced8b15f6e1cc77ca71c22ab4a",  # codex zh (v=1)
+    "7973c83f5ccdf796df99a96b1b1eaafba7d4df6f779baa4efa3086205f1bfdfe",  # cursor en
+    "b4c9edbcc8ee3931c8063507ebd97eee0a6ba8ae6b3fa423d340a58cdaf8da69",  # cursor en
+    "c2f681ec42985c5d9a5b8ffa2a02d1a6bc12b3d9a1a47e1d55ad40a8fa69dddf",  # cursor en
+    "095d82a59682e6a3fe7f2e78285f853f37ab88885f3a6ded013e49385d2c2794",  # cursor en (v=1)
+    "fc8a33cd3013047188b3682dc8b37ccdd218ee91db8171c87abf72a80fbedb59",  # cursor zh
+    "db816259e00cabfdfd6b71c88c47b6094111bca58077d8f5ae511bb0e952c150",  # cursor zh
+    "2f9726bbc8712efcc7c7e71a4389ae05fadc73e180618dcfb9b939d434a8c948",  # cursor zh
+    "2c96003231fba4b3e2e104be62b6d98397d3bff092a7ae441b2b20342e2066a6",  # cursor zh (v=1)
+    "0110cef84aea9035490de5b60d232c35927d243417433c1c72c7d2da86a3446a",  # windsurf en
+    "36c2213ae602665e481d5ba939d7a3f776f008d1f678d8bc20df52264e8fc31f",  # windsurf en
+    "d0633df1649062d8b5cca3da675dcf807618861bd6758a49f8d7656c4557f673",  # windsurf en
+    "ca30baf0a71d1080411a41321b6a7fd95b047bcadadca23ad547321e7621bc9c",  # windsurf zh
+    "613fad067069ddbc3b26ce9b71e966cab24016f67386e1db45cdc95496032f50",  # windsurf zh
+    "66333fa4d8336c1467172889489fccc10c01f2ff37e87e61d579bda107c99a82",  # windsurf zh
+})
+
+
+def _snippet_fingerprint(text: str) -> str:
+    """sha256 of snippet text, line endings, trailing spaces and edge blank lines normalized."""
+    lines = [line.rstrip() for line in str(text).replace("\r\n", "\n").split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def _snippet_strict(root=None) -> bool:
+    """Effective strict approval for the store the snippet speaks for."""
+    try:
+        from piia_engram import strict_mode as _strict_mode
+
+        return _strict_mode.approval_strict(root)
+    except Exception:
+        return False
+
+
+def _instruction_snippet_text(tool_id: str, lang: str = "zh", *, strict: bool = False) -> str:
+    """The default snippet for a tool: the whole .mdc for Cursor, else the marked block."""
+    lang = "zh" if lang == "zh" else "en"
+    if strict:
+        body = _STRICT_SNIPPET_BODY[lang]
+        if tool_id == "cursor":
+            return _STRICT_CURSOR_HEADER[lang] + body
+        return f"\n{_INSTRUCTION_MARKER}\n{body}{_INSTRUCTION_MARKER_END}\n"
+    snippet = _INSTRUCTION_SNIPPETS[tool_id][f"snippet_{lang}"]
+    return snippet.format(marker=_INSTRUCTION_MARKER, marker_end=_INSTRUCTION_MARKER_END)
+
+
+def _snippet_inner(tool_id: str, text: str) -> str:
+    if tool_id == "cursor":
+        return text
+    return text.replace(_INSTRUCTION_MARKER, "").replace(_INSTRUCTION_MARKER_END, "")
+
+
+def _default_fingerprints(tool_id: str, *, strict: bool | None = None) -> set[str]:
+    """Fingerprints of the current defaults (one mode, or both when strict is None)."""
+    modes = (False, True) if strict is None else (strict,)
+    return {
+        _snippet_fingerprint(_snippet_inner(tool_id, _instruction_snippet_text(tool_id, lang, strict=mode)))
+        for lang in ("zh", "en")
+        for mode in modes
+    }
+
+
+def _marked_block(content: str, marker: str) -> tuple[int, int, str] | None:
+    """(start, end, inner) of the block opened by ``marker``; end takes one trailing newline."""
+    start = content.find(marker)
+    if start < 0:
+        return None
+    end_pos = content.find(_INSTRUCTION_MARKER_END, start)
+    if end_pos < 0:
+        return None
+    end = end_pos + len(_INSTRUCTION_MARKER_END)
+    if end < len(content) and content[end] == "\n":
+        end += 1
+    return start, end, content[start + len(marker):end_pos]
+
+
+def _is_default_snippet(tool_id: str, text: str) -> bool:
+    fp = _snippet_fingerprint(text)
+    return fp in _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS or fp in _default_fingerprints(tool_id)
+
+
+def _instruction_snippet_state(tool_id: str, content: str, *, strict: bool = False) -> str:
+    """missing | current | stale_default | custom, for a tool's instruction file content.
+
+    ``current`` is a default for this mode (either language); ``stale_default`` is
+    any other text Engram shipped (an older version or the other mode); ``custom``
+    is text the Owner wrote or edited -- setup and doctor --fix never overwrite it.
+    """
+    content = content or ""
+    if tool_id == "cursor":
+        if not content.strip():
+            return "missing"
+        inner = content
+    else:
+        block = _marked_block(content, _INSTRUCTION_MARKER) or _marked_block(content, _INSTRUCTION_MARKER_V1)
+        if block is None:
+            return "missing"
+        inner = block[2]
+    if _snippet_fingerprint(inner) in _default_fingerprints(tool_id, strict=strict):
+        return "current"
+    return "stale_default" if _is_default_snippet(tool_id, inner) else "custom"
+
+
 def _inject_instruction_snippet(
     tool_id: str,
     lang: str = "zh",
     *,
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    strict: bool | None = None,
 ) -> str | None:
     """Inject Engram instruction snippet into a tool's native instruction file.
 
-    Returns the file path on success, or None if skipped/failed.
-    Uses marker comments to detect existing snippets and update them.
-    Cursor uses .mdc files (no marker needed — entire file is ours).
+    Returns the file path on success, or None if skipped/failed. Marked text (a
+    v=2 or v=1 block) or a Cursor .mdc that is not a default Engram shipped is the
+    Owner's own and stays byte-for-byte unchanged (None). Under strict approval
+    the strict (read + propose) text is written.
     """
     snippet_info = _INSTRUCTION_SNIPPETS.get(tool_id)
     if not snippet_info:
@@ -704,20 +879,22 @@ def _inject_instruction_snippet(
 
     home = Path.home()
     target_path: Path = snippet_info["path_fn"](home)
-    snippet_key = "snippet_zh" if lang == "zh" else "snippet_en"
-    snippet = snippet_info[snippet_key]
-
-    # Format markers into snippet
-    snippet = snippet.format(
-        marker=_INSTRUCTION_MARKER,
-        marker_end=_INSTRUCTION_MARKER_END,
-    )
+    if strict is None:
+        strict = _snippet_strict(file_safety_root)
+    snippet = _instruction_snippet_text(tool_id, lang, strict=strict)
 
     try:
+        existing = ""
+        if target_path.is_file():
+            existing = target_path.read_text(encoding="utf-8")
+        if _instruction_snippet_state(tool_id, existing, strict=strict) == "custom":
+            logger.info("instruction snippet for %s is customized; left unchanged", tool_id)
+            return None
+
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         if tool_id == "cursor":
-            # Cursor .mdc: entire file is ours, just overwrite
+            # Cursor .mdc: the whole file is ours (a default one), just overwrite
             _write_config_text_with_backup(
                 target_path,
                 snippet,
@@ -726,24 +903,23 @@ def _inject_instruction_snippet(
             )
             return str(target_path)
 
-        # For CLAUDE.md / AGENTS.md: append or replace marked section
-        existing = ""
-        if target_path.is_file():
-            existing = target_path.read_text(encoding="utf-8")
-
-        if _INSTRUCTION_MARKER in existing:
-            # Replace existing snippet
-            start = existing.index(_INSTRUCTION_MARKER)
-            end_marker_pos = existing.find(_INSTRUCTION_MARKER_END, start)
-            if end_marker_pos >= 0:
-                end = end_marker_pos + len(_INSTRUCTION_MARKER_END)
-                # Include trailing newline if present
-                if end < len(existing) and existing[end] == "\n":
-                    end += 1
-                existing = existing[:start] + existing[end:]
-
-        # Append snippet
-        new_content = existing.rstrip("\n") + "\n" + snippet
+        # CLAUDE.md / AGENTS.md: replace the default block in place (a default v=1
+        # block too, and drop it when a v=2 block also exists), else append.
+        new_content = existing
+        block = _marked_block(new_content, _INSTRUCTION_MARKER)
+        legacy = _marked_block(new_content, _INSTRUCTION_MARKER_V1)
+        if legacy is not None and _is_default_snippet(tool_id, legacy[2]):
+            if block is None:
+                block = legacy
+            else:
+                new_content = new_content[:legacy[0]] + new_content[legacy[1]:]
+                block = _marked_block(new_content, _INSTRUCTION_MARKER)
+        if block is not None:
+            new_content = new_content[:block[0]] + snippet.lstrip("\n") + new_content[block[1]:]
+        else:
+            new_content = new_content.rstrip("\n") + "\n" + snippet
+        if new_content == existing:
+            return str(target_path)
         _write_config_text_with_backup(
             target_path,
             new_content,
@@ -1480,6 +1656,28 @@ def _parse_toml_mcp_minimal(text: str) -> dict:
     return {"mcp_servers": servers}
 
 
+# Env keys setup computes itself; every other key already in a client's engram env
+# block is the Owner's (ENGRAM_APPROVAL, ENGRAM_RECONCILE, queue caps, cache paths,
+# ...) and survives a rewrite. MCP clients such as Claude Desktop and Codex pass the
+# server only this block, not the user's environment, so dropping a key silently
+# turns its setting off for the MCP server (4.21.2).
+_SETUP_MANAGED_ENV_KEYS = frozenset({
+    "PYTHONIOENCODING", "ENGRAM_TOOLS", "PYTHONPATH", "ENGRAM_DIR", "ENGRAM_SEARCH",
+})
+
+
+def _carried_env(existing_env: dict, *, store_root=None) -> dict[str, str]:
+    """Owner env keys to keep on a rewrite, plus ENGRAM_APPROVAL=strict for a strict store."""
+    carried = {
+        str(key): str(value)
+        for key, value in (existing_env or {}).items()
+        if key not in _SETUP_MANAGED_ENV_KEYS and value is not None
+    }
+    if _snippet_strict(store_root):
+        carried["ENGRAM_APPROVAL"] = "strict"
+    return carried
+
+
 def _write_mcp_config(
     config_path: Path,
     python_path: str,
@@ -1550,6 +1748,7 @@ def _write_mcp_config(
     preserved_search = (extra_env or {}).get("ENGRAM_SEARCH") or existing_env.get("ENGRAM_SEARCH")
     if preserved_search:
         env["ENGRAM_SEARCH"] = str(preserved_search)
+    env.update(_carried_env(existing_env, store_root=preserved_data_dir or file_safety_root))
 
     entry: dict = {
         "command": python_path,
@@ -1629,6 +1828,9 @@ def _write_mcp_config_toml(
     preserved_search = (extra_env or {}).get("ENGRAM_SEARCH") or existing_env.get("ENGRAM_SEARCH")
     if preserved_search:
         engram_block.append(f'ENGRAM_SEARCH = {toml_string(str(preserved_search))}')
+    for key, value in _carried_env(existing_env, store_root=preserved_data_dir or file_safety_root).items():
+        toml_key = key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else toml_string(key)
+        engram_block.append(f'{toml_key} = {toml_string(value)}')
 
     inserted = False
     i = 0
@@ -2571,6 +2773,7 @@ def _apply_external_configs(
     # Inject instruction snippets into each tool's native instruction file
     # so AI proactively calls Engram (not relying solely on MCP instructions)
     injected = []
+    kept_custom = []
     for tool_id in configured_tool_ids:
         result = _inject_instruction_snippet(
             tool_id,
@@ -2580,6 +2783,20 @@ def _apply_external_configs(
         )
         if result:
             injected.append(result)
+        elif tool_id in _INSTRUCTION_SNIPPETS:
+            target = _INSTRUCTION_SNIPPETS[tool_id]["path_fn"](Path.home())
+            try:
+                text = target.read_text(encoding="utf-8") if target.is_file() else ""
+            except OSError:
+                text = ""
+            if _instruction_snippet_state(tool_id, text) == "custom":
+                kept_custom.append(str(target))
+    if kept_custom:
+        print()
+        print(_t("  📝 保留了你自己改过的 Engram 指令段（未覆盖）：",
+                 "  📝 Kept your own Engram instruction block (not overwritten):"))
+        for path in kept_custom:
+            print(f"    {path}")
     if injected:
         print()
         print(_t("  📝 已注入 AI 指令（确保 AI 主动调用 Engram）：",

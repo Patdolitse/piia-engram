@@ -40,6 +40,90 @@ def _reconcile_config_value():
     return cfg.get("reconcile_authorized")
 
 
+# 4.21.2: an imported memory keeps its whole body. The source files are capped at
+# _RECONCILE_MAX_FILE_SIZE, so this only bites on config sections; when it does,
+# the cut is marked in the text itself, with the source hash, never silent.
+_RECONCILE_DETAIL_MAX = 10_240
+
+
+def _bounded_detail(text: str, *, source: str = "") -> str:
+    text = str(text or "")
+    if len(text) <= _RECONCILE_DETAIL_MAX:
+        return text
+    import hashlib
+
+    digest = hashlib.sha256((source or text).encode("utf-8")).hexdigest()[:16]
+    return (
+        text[:_RECONCILE_DETAIL_MAX]
+        + f"\n[truncated: kept {_RECONCILE_DETAIL_MAX} of {len(text)} characters; source sha256 {digest}]"
+    )
+
+
+def _parse_memory_file(content: str) -> dict | None:
+    """Summary, full detail and frontmatter type of one AI memory file.
+
+    The summary is the frontmatter ``description`` when there is one, else the first
+    paragraph (not the first hard-wrapped line); the detail is the whole body.
+    ``legacy_summary`` is what 4.21.1 and earlier used as the summary (the first
+    line) -- dedup and rejection checks look at it too, so a reworded summary
+    cannot bring back a memory already imported or rejected.
+    """
+    lines = content.splitlines()
+    start_idx = 0
+    front: dict[str, str] = {}
+    if lines and lines[0].strip() == "---":
+        for i, fmline in enumerate(lines[1:], 1):
+            fms = fmline.strip()
+            if fms == "---":
+                start_idx = i + 1
+                break
+            key, sep, value = fms.partition(":")
+            if sep and key.strip():
+                front.setdefault(key.strip().lower(), value.strip().strip("\"'"))
+        else:
+            start_idx = 0
+            front = {}
+
+    def _keep(stripped: str) -> bool:
+        return bool(stripped) and not stripped.startswith("#") and not stripped.startswith("```") and stripped != "---"
+
+    body_lines = [line.strip() for line in lines[start_idx:] if _keep(line.strip())]
+    if not body_lines:
+        return None
+    paragraph: list[str] = []
+    for line in lines[start_idx:]:
+        stripped = line.strip()
+        if _keep(stripped):
+            paragraph.append(stripped)
+        elif paragraph:
+            break
+    description = front.get("description", "")
+    if len(re.sub(r"[*_`\[\]()]", "", description).strip()) >= 5:
+        summary = description
+    else:
+        summary = " ".join(paragraph)
+    return {
+        "summary": summary[:200],
+        "legacy_summary": body_lines[0][:200],
+        "detail": _bounded_detail("\n".join(body_lines), source=content),
+        "fm_type": front.get("type", ""),
+    }
+
+
+def _rejected_before(root, summary: str) -> bool:
+    """A lesson tombstone for this exact summary in any scope (auto-import skips it)."""
+    from . import tombstones as _tombstones
+
+    if not summary:
+        return False
+    h1, _h2 = _tombstones.claim_hashes("lesson", {"summary": summary})
+    return any(
+        record.get("hv") == _tombstones.HASH_VERSION and record.get("kind", "lesson") == "lesson"
+        and record.get("h1") == h1
+        for record in _tombstones.load(root)
+    )
+
+
 # Insert outcomes that add no row: an existing duplicate, a tombstoned claim, or a
 # retired one. Reconcile counts them as duplicates.
 _NOT_IMPORTED = frozenset({"duplicate", "rejected_before", "duplicate_retired"})
@@ -213,40 +297,14 @@ class ReconcileMixin:
                 except (OSError, UnicodeDecodeError):
                     continue
 
-                # Extract core content (skip YAML frontmatter)
-                body_lines = []
-                fm_type = ""
-                lines = content.splitlines()
-                start_idx = 0
-                # YAML frontmatter: only valid at the very beginning of file
-                if lines and lines[0].strip() == "---":
-                    for i, fmline in enumerate(lines[1:], 1):
-                        fms = fmline.strip()
-                        if fms == "---":
-                            start_idx = i + 1
-                            break
-                        if fms.startswith("type:"):
-                            fm_type = fms.split(":", 1)[1].strip()
-                    else:
-                        # No closing --- found, treat entire file as content
-                        start_idx = 0
-                for line in lines[start_idx:]:
-                    stripped = line.strip()
-                    if (
-                        stripped
-                        and not stripped.startswith("#")
-                        and not stripped.startswith("```")
-                        and stripped != "---"  # skip horizontal rules
-                    ):
-                        body_lines.append(stripped)
-
-                if not body_lines:
+                parsed = _parse_memory_file(content)
+                if parsed is None:
                     continue
-
-                # Use first meaningful line as summary candidate
+                summary_candidate = parsed["summary"]
+                fm_type = parsed["fm_type"]
                 # Strip markdown formatting for better similarity matching
-                summary_candidate = body_lines[0][:200]
                 clean_candidate = re.sub(r"[*_`\[\]()]", "", summary_candidate).strip()
+                clean_legacy = re.sub(r"[*_`\[\]()]", "", parsed["legacy_summary"]).strip()
 
                 # Skip entries with no meaningful text after cleanup
                 if len(clean_candidate) < 5:
@@ -256,13 +314,19 @@ class ReconcileMixin:
                 is_dup = False
                 for existing in existing_summaries:
                     clean_existing = re.sub(r"[*_`\[\]()]", "", existing).strip()
-                    sim = self._bigram_similarity(clean_candidate, clean_existing)
+                    sim = max(
+                        self._bigram_similarity(clean_candidate, clean_existing),
+                        self._bigram_similarity(clean_legacy, clean_existing),
+                    )
                     if sim >= SIMILARITY_THRESHOLD:
                         is_dup = True
                         duplicates += 1
                         break
 
                 if is_dup:
+                    continue
+                if _rejected_before(self.root, parsed["legacy_summary"]):
+                    duplicates += 1  # rejected under its 4.21.1 summary
                     continue
 
                 # Auto-import as lesson
@@ -274,11 +338,10 @@ class ReconcileMixin:
                 elif fm_type == "reference":
                     domain = "reference"
 
-                detail = "\n".join(body_lines[1:])[:500] if len(body_lines) > 1 else ""
                 result = self.add_lesson(
                     summary_candidate,
                     domain=domain,
-                    detail=detail,
+                    detail=parsed["detail"],
                     source_tool="auto_reconcile",
                     tier="staging",
                     project_folder=project_folder or None,
@@ -335,33 +398,11 @@ class ReconcileMixin:
                 except (OSError, UnicodeDecodeError):
                     continue
 
-                body_lines: list[str] = []
-                fm_type = ""
-                lines = content.splitlines()
-                start_idx = 0
-                if lines and lines[0].strip() == "---":
-                    for i, fmline in enumerate(lines[1:], 1):
-                        fms = fmline.strip()
-                        if fms == "---":
-                            start_idx = i + 1
-                            break
-                        if fms.startswith("type:"):
-                            fm_type = fms.split(":", 1)[1].strip()
-                    else:
-                        start_idx = 0
-                for line in lines[start_idx:]:
-                    stripped = line.strip()
-                    if (
-                        stripped
-                        and not stripped.startswith("#")
-                        and not stripped.startswith("```")
-                        and stripped != "---"
-                    ):
-                        body_lines.append(stripped)
-                if not body_lines:
+                parsed = _parse_memory_file(content)
+                if parsed is None:
                     continue
-
-                summary_candidate = body_lines[0][:200]
+                summary_candidate = parsed["summary"]
+                fm_type = parsed["fm_type"]
                 clean_candidate = re.sub(r"[*_`\[\]()]", "", summary_candidate).strip()
                 if len(clean_candidate) < 5:
                     continue
@@ -369,10 +410,10 @@ class ReconcileMixin:
                 domain = "auto_reconcile"
                 if fm_type in {"project", "feedback", "reference"}:
                     domain = fm_type
-                detail = "\n".join(body_lines[1:])[:500] if len(body_lines) > 1 else ""
                 candidates.append({
                     "summary": summary_candidate,
-                    "detail": detail,
+                    "legacy_summary": parsed["legacy_summary"],
+                    "detail": parsed["detail"],
                     "domain": domain,
                     "source": mem_file.name,
                 })
@@ -608,7 +649,7 @@ class ReconcileMixin:
                 result = self.add_lesson(
                     summary_candidate,
                     domain="ai_config",
-                    detail=section_body[:500],
+                    detail=_bounded_detail(section_body, source=content),
                     source_tool="config_scan",
                     tier="staging",
                     project_folder=project_folder or None,

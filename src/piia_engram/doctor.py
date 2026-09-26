@@ -60,6 +60,65 @@ def _detect_installed_tools() -> list[dict]:
     return results
 
 
+# Settings an MCP server reads from its environment. Claude Desktop and Codex pass
+# the server only the env block of its config entry, not the user's environment.
+_CLIENT_ENV_WATCHED = (
+    "ENGRAM_APPROVAL",
+    "ENGRAM_RECONCILE",
+    "ENGRAM_REVIEW_QUEUE_MAX",
+    "ENGRAM_REVIEW_QUEUE_CEILING",
+)
+
+
+def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> list[tuple[dict, dict]]:
+    """(tool, {var: wanted}) for configured clients whose engram env block misses a setting.
+
+    Under strict approval ENGRAM_APPROVAL=strict belongs in every block; a watched
+    variable set in this shell but absent (or different) in a block would not reach
+    that client's MCP server either.
+    """
+    user_env = os.environ if user_env is None else user_env
+    findings = []
+    for tool in tools:
+        if tool.get("status") != "configured":
+            continue
+        entry = (tool.get("servers") or {}).get("engram")
+        env = entry.get("env") if isinstance(entry, dict) else None
+        env = env if isinstance(env, dict) else {}
+        missing: dict[str, str] = {}
+        if strict and str(env.get("ENGRAM_APPROVAL", "")).strip().lower() != "strict":
+            missing["ENGRAM_APPROVAL"] = "strict"
+        for var in _CLIENT_ENV_WATCHED:
+            wanted = str(user_env.get(var, "") or "").strip()
+            if wanted and var not in missing and str(env.get(var, "")).strip() != wanted:
+                missing[var] = wanted
+        if missing:
+            findings.append((tool, missing))
+    return findings
+
+
+def _print_client_env_findings(findings: list[tuple[dict, dict]]) -> None:
+    print()
+    W._safe_print("  -- MCP Client Env --\n")
+    if not findings:
+        print("    [ok] Engram settings reach every configured client's MCP server")
+        return
+    for tool, missing in findings:
+        names = ", ".join(missing)
+        W._safe_print(
+            f"    [--] {tool['name']}: engram env block lacks {names}; "
+            "its MCP server may not see them"
+        )
+        W._safe_print(f"         Add to the engram entry's env in {tool['config_path']}:")
+        if tool.get("format") == "toml":
+            for var, value in missing.items():
+                W._safe_print(f'           {var} = "{value}"')
+        else:
+            W._safe_print("           " + ", ".join(f'"{var}": "{value}"' for var, value in missing.items()))
+    print("         Claude Desktop and Codex pass the server only this block. Restart the client")
+    print("         afterwards. Doctor does not edit client configs for this.")
+
+
 def _file_sha256_12(path: Path) -> str:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
@@ -192,6 +251,7 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
             })
 
     home = Path.home()
+    snippet_strict = W._snippet_strict()
     instruction_files: list[dict] = []
     for tool_id, info in W._INSTRUCTION_SNIPPETS.items():
         path = Path(info["path_fn"](home))
@@ -216,6 +276,7 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
             "exists": exists,
             "has_marker": has_marker,
             "has_resume_brief": W._SNIPPET_FRESHNESS_TOKEN in content,
+            "snippet_state": W._instruction_snippet_state(tool_id, content, strict=snippet_strict),
             "line_count": len(content.splitlines()) if content else 0,
             "sha256_12": _file_sha256_12(path) if exists else "",
         })
@@ -262,7 +323,7 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
         "instruction_files_found": sum(1 for row in instruction_files if row["exists"]),
         "instruction_files_fresh": sum(
             1 for row in instruction_files
-            if row["exists"] and row["has_resume_brief"]
+            if row["exists"] and row["snippet_state"] in ("current", "custom")
         ),
         "project_rule_files": sum(1 for row in project_rules if row["scope"] == "project"),
         "legacy_server_configs": sum(1 for row in mcp_configs if row["legacy_servers"]),
@@ -709,9 +770,11 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         problems += 1
         return problems  # 后续检查都依赖 core
 
-    # 2. Engram 实例化（读取 ~/.engram/）
+    # 2. Engram 实例化（读取 ~/.engram/）。Without --fix doctor only looks: a
+    # read-only open stamps no session state and appends no audit receipts, so
+    # the store directory is byte-for-byte unchanged (4.21.2).
     try:
-        eng = Engram()
+        eng = Engram(read_only=not fix)
         print(f"    [ok] Engram initialized ({eng.root})")
     except Exception as exc:
         print(f"    [!!] Engram init failed: {exc}")
@@ -872,7 +935,16 @@ def _run_functional_checks(*, fix: bool = False) -> int:
 
     # 5. MCP server 工具注册
     try:
-        from piia_engram import mcp_server  # noqa: F811
+        prior_import_mode = os.environ.get("ENGRAM_IMPORT_READ_ONLY")
+        if not fix:
+            os.environ["ENGRAM_IMPORT_READ_ONLY"] = "1"
+        try:
+            from piia_engram import mcp_server  # noqa: F811
+        finally:
+            if prior_import_mode is None:
+                os.environ.pop("ENGRAM_IMPORT_READ_ONLY", None)
+            else:
+                os.environ["ENGRAM_IMPORT_READ_ONLY"] = prior_import_mode
 
         tool_count = len(mcp_server.mcp._tool_manager._tools)
         print(f"    [ok] MCP server: {tool_count} tools registered")
@@ -911,16 +983,17 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     problems += W._run_continuity_checks(eng)
 
     # 6. AI instruction snippet injection status
-    # v3.31 P0: doctor now checks BOTH presence AND freshness. A snippet
-    # that lacks _SNIPPET_FRESHNESS_TOKEN ("get_resume_brief") was injected
-    # by v3.30 or earlier and is missing the cross-tool resume directive;
-    # doctor --fix overwrites it with the current snippet.
+    # v3.31 P0: presence AND freshness. 4.21.2: a block counts by what it holds --
+    # the current default for this mode is up to date; any other default Engram
+    # shipped (older, pre-v3.31, or the non-strict text under strict approval) is
+    # stale and doctor --fix replaces it; text the Owner wrote is never touched.
     print()
     W._safe_print("  -- AI Instruction Snippets --\n")
     home = Path.home()
+    strict = W._snippet_strict(eng.root)
     snippet_found = False
     missing_snippets: list[str] = []  # path missing OR file lacks snippet
-    stale_snippets: list[str] = []    # snippet present but missing freshness token
+    stale_snippets: list[str] = []    # a default Engram shipped, not the current one
     for tool_id, info in W._INSTRUCTION_SNIPPETS.items():
         target_path = info["path_fn"](home)
         if not target_path.is_file():
@@ -933,26 +1006,29 @@ def _run_functional_checks(*, fix: bool = False) -> int:
             W._safe_print(f"    [--] {tool_id}: file exists but unreadable")
             continue
 
-        # Cursor mdc is entirely ours; everything else uses the marker.
-        if tool_id == "cursor":
-            present = bool(content.strip())
-        else:
-            present = W._INSTRUCTION_MARKER in content or (
-                # back-compat: also match v=1 marker before bump
-                "<!-- piia-engram:auto-injected -->" in content
-            )
-
-        if not present:
+        state = W._instruction_snippet_state(tool_id, content, strict=strict)
+        if state == "missing":
             W._safe_print(f"    [--] {tool_id}: file exists but no Engram snippet")
             missing_snippets.append(tool_id)
-            continue
-
-        if W._SNIPPET_FRESHNESS_TOKEN not in content:
-            W._safe_print(
-                f"    [stale] {tool_id}: snippet missing "
-                f"'{W._SNIPPET_FRESHNESS_TOKEN}' directive (pre-v3.31)"
-            )
+        elif state == "stale_default":
+            if strict:
+                why = "default text that auto-saves; strict approval wants read + propose"
+                if W._SNIPPET_FRESHNESS_TOKEN not in content:
+                    why = f"missing '{W._SNIPPET_FRESHNESS_TOKEN}' directive (pre-v3.31)"
+            elif W._SNIPPET_FRESHNESS_TOKEN not in content:
+                why = f"missing '{W._SNIPPET_FRESHNESS_TOKEN}' directive (pre-v3.31)"
+            else:
+                why = "an older default snippet"
+            W._safe_print(f"    [stale] {tool_id}: {why}")
             stale_snippets.append(tool_id)
+        elif state == "custom":
+            W._safe_print(f"    [ok] {tool_id}: your own Engram block in {target_path} (left as is)")
+            if W._SNIPPET_FRESHNESS_TOKEN not in content:
+                W._safe_print(
+                    f"         It does not mention '{W._SNIPPET_FRESHNESS_TOKEN}'; "
+                    "AI may not resume across tools."
+                )
+            snippet_found = True
         else:
             W._safe_print(f"    [ok] {tool_id}: snippet up to date in {target_path}")
             snippet_found = True
@@ -976,6 +1052,7 @@ def _run_functional_checks(*, fix: bool = False) -> int:
                 lang=lang,
                 file_safety_root=eng.root,
                 authorized_external_write=True,
+                strict=strict,
             )
             if result:
                 action = "refreshed" if tool_id in stale_snippets else "fixed"
@@ -988,8 +1065,8 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print()
         if stale_snippets:
             print(
-                "    [info] Stale snippets detected — missing the "
-                "cross-tool resume directive."
+                "    [info] Stale snippets detected — an older or non-strict "
+                "default text."
             )
         else:
             print("    [info] Missing AI instruction snippets.")
@@ -999,6 +1076,14 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print()
         print("    [info] No AI instruction snippets found.")
         print("           Run 'engram setup' to inject them.")
+
+    # 6.5 4.21.2: settings the MCP clients never pass to the server
+    try:
+        _print_client_env_findings(
+            _client_env_findings(_detect_installed_tools(), strict=strict)
+        )
+    except Exception as exc:
+        W._safe_print(f"    [--] Client env check skipped: {exc}")
 
     # ── Claude Code Hooks (Stop / PreCompact / SessionStart) ──
     # v3.30 M7: doctor must check all three events the setup wizard
