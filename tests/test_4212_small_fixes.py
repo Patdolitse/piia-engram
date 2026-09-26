@@ -265,14 +265,13 @@ def test_setup_rewrite_keeps_owner_env_keys_in_toml_and_adds_strict(home, tmp_pa
 
     W._write_mcp_config_toml(cfg, sys.executable, "", authorized_external_write=True)
 
-    import tomllib
-
-    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    data = W._read_mcp_config(cfg, fmt="toml")  # tomllib is 3.11+; this runs on 3.10 too
     env = data["mcp_servers"]["engram"]["env"]
     assert env["ENGRAM_RECONCILE"] == "0"
     assert env["DO_NOT_TRACK"] == "0"
     assert env["ENGRAM_APPROVAL"] == "strict"
-    assert data["mcp_servers"]["engram"]["tools"]["search_knowledge"]["approval_mode"] == "approve"
+    text = cfg.read_text(encoding="utf-8")  # the 3.10 fallback parser skips sub-tables
+    assert '[mcp_servers.engram.tools.search_knowledge]\napproval_mode = "approve"' in text
 
 
 def test_doctor_names_settings_a_client_env_block_misses(home, monkeypatch):
