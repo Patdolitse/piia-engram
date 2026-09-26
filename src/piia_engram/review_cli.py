@@ -238,6 +238,24 @@ def _relabel(domain: str, mem_type: str) -> str:
     return ",".join(parts + [f"type:{mem_type}"])
 
 
+_RETIRED_STATUSES = frozenset({"outdated", "archived", "deleted", "retired"})
+
+
+def _mark_state(eng, mark: dict) -> str:
+    """planned | already_applied | not_found for an edit-type / retire / restore mark,
+    judged by the row as it is now -- so a re-run preview shows nothing left to do."""
+    kind, row = eng._find_item_by_id(mark["id"])
+    if row is None:
+        return "not_found"
+    if mark["mark"] == "edit-type":
+        labels = [p.strip() for p in str(row.get("domain", "") or "").split(",") if p.strip().startswith("type:")]
+        return "already_applied" if labels == [f"type:{mark['type']}"] else "planned"
+    status = str(row.get("status", "active") or "active").strip().lower()
+    if mark["mark"] == "retire":
+        return "already_applied" if status in _RETIRED_STATUSES else "planned"
+    return "already_applied" if status == "active" else "planned"
+
+
 def run_apply(args: list[str]) -> int:
     paths = [a for a in args if not a.startswith("--") and a != _option(args, "--operator")]
     if not paths:
@@ -263,11 +281,28 @@ def run_apply(args: list[str]) -> int:
     if "--yes" not in args:
         eng = _engram(read_only=True)
         preview = batch_review_staging(eng, decisions, dry_run=True, limit=len(decisions) or 1)
-        missing = [m["id"] for m in edits if eng._find_item_by_id(m["id"])[1] is None]
+        edit_states = {m["id"]: _mark_state(eng, m) for m in edits}
+        life_states = {m["id"]: _mark_state(eng, m) for m in lifecycle}
+        missing = [i for i, st in edit_states.items() if st == "not_found"]
+        pending = (
+            preview["counts"]["planned"]
+            + sum(1 for st in edit_states.values() if st == "planned")
+            + sum(1 for st in life_states.values() if st == "planned")
+        )
         _print({
             "status": "dry_run",
-            "counts": {**preview["counts"], "edit_type": len(edits), "edit_type_not_found": len(missing),
-                       "lifecycle": len(lifecycle)},
+            "counts": {
+                **preview["counts"],
+                "edit_type": len(edits),
+                "edit_type_planned": sum(1 for st in edit_states.values() if st == "planned"),
+                "edit_type_already_applied": sum(1 for st in edit_states.values() if st == "already_applied"),
+                "edit_type_not_found": len(missing),
+                "lifecycle": len(lifecycle),
+                "lifecycle_planned": sum(1 for st in life_states.values() if st == "planned"),
+                "lifecycle_already_applied": sum(1 for st in life_states.values() if st == "already_applied"),
+                "lifecycle_not_found": sum(1 for st in life_states.values() if st == "not_found"),
+                "pending": pending,
+            },
             "items": [{"id": i["id"], "action": i["action"], "status": i["status"]} for i in preview["items"]],
             "not_found": missing,
         })
@@ -285,11 +320,14 @@ def run_apply(args: list[str]) -> int:
         eng, decisions, dry_run=False, confirm=True, via=f"cli:{attribution['operator']}",
         limit=len(decisions) or 1,
     )
-    edited, edit_failed = 0, []
+    edited, edit_failed, already = 0, [], 0
     for m in edits:
         kind, row = eng._find_item_by_id(m["id"])
         if row is None or kind not in ("lesson", "decision", "playbook"):
             edit_failed.append(m["id"])
+            continue
+        if _mark_state(eng, m) == "already_applied":
+            already += 1  # no second version snapshot for an unchanged label
             continue
         update = {"lesson": eng.update_lesson, "decision": eng.update_decision,
                   "playbook": eng.update_playbook}[kind]
@@ -300,6 +338,9 @@ def run_apply(args: list[str]) -> int:
             edited += 1
     lifecycle_done, lifecycle_failed = 0, []
     for m in lifecycle:
+        if _mark_state(eng, m) == "already_applied":
+            already += 1
+            continue
         if m["mark"] == "retire":
             outcome = eng.archive_playbook(m["id"])  # an archive, never a tombstone
         else:
@@ -309,7 +350,8 @@ def run_apply(args: list[str]) -> int:
         else:
             lifecycle_done += 1
     counts = {**result["counts"], "edit_type": edited, "edit_type_failed": len(edit_failed),
-              "lifecycle": lifecycle_done, "lifecycle_failed": len(lifecycle_failed)}
+              "lifecycle": lifecycle_done, "lifecycle_failed": len(lifecycle_failed),
+              "already_applied": already}
     _receipt(eng, "apply", attribution, counts)
     _print({
         "status": "applied",

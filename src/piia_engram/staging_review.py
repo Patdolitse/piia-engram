@@ -35,6 +35,16 @@ def list_pending_staging(
     return _list_pending(eng, filters=filters, limit=limit, offset=offset)
 
 
+def _already_rejected(eng: Any, item_id: str, item: dict | None) -> bool:
+    from . import tombstones as _tombstones
+
+    if not _tombstones.by_id(eng.root, item_id):
+        return False
+    if item is None:
+        return True
+    return str(item.get("status", "active") or "active").strip().lower() != "active"
+
+
 def batch_review_staging(
     eng,
     actions: list[dict[str, Any]] | None,
@@ -85,6 +95,12 @@ def batch_review_staging(
             continue
 
         item_type, item = eng._find_item_by_id(item_id)
+        if action == "reject" and _already_rejected(eng, item_id, item):
+            # A reject that already landed (tombstone written, row gone or not
+            # active): nothing left to do, so a re-run reports it as such.
+            items.append(_item(idx, item_id, action, "already_applied", item_type=item_type))
+            counts["noop"] += 1
+            continue
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             items.append(_item(idx, item_id, action, "not_found"))
             counts["failed"] += 1

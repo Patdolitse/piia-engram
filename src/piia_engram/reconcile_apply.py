@@ -128,6 +128,8 @@ def _mark_archived_duplicates(eng, candidates: list[dict[str, Any]], verdicts: l
         else:
             key = ("lesson", str(candidate.get("summary") or "").strip())
         match = index.get(key)
+        if match is None and key[0] == "lesson" and candidate.get("legacy_summary"):
+            match = index.get(("lesson", str(candidate.get("legacy_summary") or "").strip()))
         if match is not None:
             verdict.update(action="duplicate", reason="in_overflow_archive",
                            best_score=1.0, match_id=match)
@@ -298,6 +300,10 @@ def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) ->
                 _audit_metadata_only=True,
             )
         else:
+            from .reconcile import _rejected_before
+
+            if _rejected_before(eng.root, str(candidate.get("legacy_summary") or "")):
+                return ""  # rejected under its 4.21.1 summary
             result = eng.add_lesson(
                 str(candidate.get("summary") or ""),
                 domain=str(candidate.get("domain") or ""),

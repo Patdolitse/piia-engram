@@ -19,8 +19,10 @@ from piia_engram import update_check as uc
 
 @pytest.fixture
 def _isolated_root(tmp_path, monkeypatch):
+    """The reminder's cache dir (ENGRAM_CACHE_DIR); the store lives elsewhere."""
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram"))
-    return tmp_path / "engram"
+    monkeypatch.setenv("ENGRAM_CACHE_DIR", str(tmp_path / "cache"))
+    return tmp_path / "cache"
 
 
 @pytest.fixture

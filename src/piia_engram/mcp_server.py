@@ -226,8 +226,11 @@ def _argv_requests_help(
 def _init_engram(root: Path | None = None) -> tuple[Engram | None, str | None]:
     """Create an Engram instance, returning (instance, None) on success or
     (None, error_message) if the store is corrupted / unreadable."""
+    # engram doctor (without --fix) imports this module only to count tools; it
+    # sets ENGRAM_IMPORT_READ_ONLY=1 so the import-time store handle is zero-write.
+    read_only = os.environ.get("ENGRAM_IMPORT_READ_ONLY", "").strip() == "1"
     try:
-        return Engram(root=root) if root else Engram(), None
+        return (Engram(root=root, read_only=read_only) if root else Engram(read_only=read_only)), None
     except Exception as exc:
         msg = f"{type(exc).__name__}: {exc}"
         logger.error(

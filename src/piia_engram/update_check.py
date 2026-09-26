@@ -64,8 +64,30 @@ def _engram_root() -> Path:
     return Path.home() / ".engram"
 
 
+def _cache_dir() -> Path:
+    """Per-user cache directory for the reminder -- never inside the memory store.
+
+    ``ENGRAM_CACHE_DIR`` wins; else the platform cache location
+    (%LOCALAPPDATA%/piia-engram/Cache, ~/Library/Caches/piia-engram,
+    $XDG_CACHE_HOME/piia-engram or ~/.cache/piia-engram). Keeping it out of
+    ENGRAM_DIR is what lets a read-only ``engram doctor`` leave the store untouched.
+    """
+    custom = os.environ.get("ENGRAM_CACHE_DIR", "").strip()
+    if custom:
+        return Path(custom).expanduser()
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA", "").strip()
+        if base:
+            return Path(base) / "piia-engram" / "Cache"
+        return Path.home() / "AppData" / "Local" / "piia-engram" / "Cache"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "piia-engram"
+    xdg = os.environ.get("XDG_CACHE_HOME", "").strip()
+    return (Path(xdg) if xdg else Path.home() / ".cache") / "piia-engram"
+
+
 def _cache_path() -> Path:
-    return _engram_root() / ".update_check.json"
+    return _cache_dir() / ".update_check.json"
 
 
 def is_disabled() -> bool:

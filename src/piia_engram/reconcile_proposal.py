@@ -105,11 +105,16 @@ def classify_candidate(
                         "entry_type": ctype,
                     }
 
-    # Duplicate check (any type): high text similarity to an existing entry.
+    # Duplicate check (any type): high text similarity to an existing entry. A
+    # memory-file candidate also carries its 4.21.1-style summary (first line), so
+    # an entry imported under that summary still counts as the same item.
+    legacy = str(candidate.get("legacy_summary") or "") if ctype == "lesson" else ""
     for ex in existing:
         if not isinstance(ex, dict):
             continue
         score = similarity(ctext, _candidate_text(ex))
+        if legacy:
+            score = max(score, similarity(legacy, _candidate_text(ex)))
         if score > best_score:
             best_score = score
             best_id = ex.get("id", "") if isinstance(ex.get("id"), str) else ""
