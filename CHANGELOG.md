@@ -6,6 +6,30 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.21.1] - 2026-09-26
+
+### Changed (with `ENGRAM_APPROVAL=strict`)
+- **Agents propose, you decide.** Lesson, decision and playbook writes over MCP are pending proposals. Editing, approving, archiving, merging, importing, identity and relation changes, and anchor checks are refused over MCP; the refusal names the local command to use.
+- **Playbooks are proposals too.** A pending playbook is invisible to agents and cannot be executed. An edit is a complete new proposal and the current version stays in use until you approve it. At most 10 pending playbooks (`ENGRAM_PLAYBOOK_QUEUE_MAX`); more are refused, never dropped.
+- **Strict latch.** A store that has run in strict mode stays strict (`approval_mode.json`) even if the variable is lost, until you clear it with `engram review strict-marker --clear --operator <name> --yes`.
+- In strict mode the server no longer tells agents to write automatically or to wrap up every session, `wrap_up_session` saves no project snapshot, and MCP `export_engram` leaves pending proposals out.
+
+### Added
+- Local review commands: `engram review export | apply | tombstone | untombstone | strict-marker`, and `engram playbook list --tier staging`. They are dry runs by default; applying needs `--operator <name> --yes` and leaves an audit record.
+- **Rejections stay rejected.** A proposal you reject with a reject mark leaves a text-free record, and the same claim, also with a leading label such as "Lesson:", is refused on every write path, including session extraction and background reconcile (`rejected_before`). `engram review untombstone <id>` withdraws a rejection.
+
+### Changed (in every mode)
+- `reconcile_authorized=false` in `telemetry_config.json` now wins over `ENGRAM_RECONCILE=1`; the override is reported at start-up, in the audit log and by doctor.
+- A retired entry (not a version snapshot) counts as a duplicate (`duplicate_retired`); restoring it lifts the block. Archive duplicates now also report `where` and `reason`.
+- MCP `review_staging` batch can approve or reject staging playbooks.
+- MCP write tools report a refused write as refused (JSON with `status`), never as recorded.
+- A retired playbook can no longer be edited or merged into; restore it first.
+- Every audit entry carries `mode` (`strict` or `default`). Doctor reports unfinished rejections, the strict latch and the reconcile override; the MCP server may print start-up warnings.
+- **Read-only handles never write.** `Engram(read_only=True)` refuses write methods (`error: read_only`) and no longer updates read counters, usage events or session checkpoints.
+
+### Guarantee
+MCP tool calls are enforced. Local command applies are logged and attributable. Direct shell or core-method access is neither prevented nor logged. On a latched store strict mode stays on until an audited clear; a process with shell access can delete the latch, which the audit history then shows as a mode change.
+
 ## [4.21.0] - 2026-09-24
 
 ### Changed

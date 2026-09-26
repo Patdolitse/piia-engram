@@ -6,6 +6,30 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.21.1] - 2026-09-26
+
+### 变更（开启 `ENGRAM_APPROVAL=strict` 时）
+- **AI 只提案，你来决定。** AI 通过 MCP 写入的经验、决策和操作手册都是待审提案；修改、批准、归档、合并、导入、改身份和关联、锚点检查，通过 MCP 一律拒绝，拒绝提示会指明该用的本地命令。
+- **操作手册也是提案。** 待审的操作手册对 AI 不可见、不可执行；修改会生成一份完整的新提案，旧版在你批准前照常使用。待审最多 10 份（`ENGRAM_PLAYBOOK_QUEUE_MAX`），超出直接拒收，不会丢弃。
+- **严格模式锁定。** 运行过严格模式的库会保持严格（`approval_mode.json`），即使环境变量丢失；只有 `engram review strict-marker --clear --operator <名字> --yes` 能解除。
+- 严格模式下，服务端不再让 AI 自动写入或每次收尾；`wrap_up_session` 不保存项目快照；MCP `export_engram` 不导出待审提案。
+
+### 新增
+- 本地审核命令：`engram review export | apply | tombstone | untombstone | strict-marker`，以及 `engram playbook list --tier staging`。默认只预览；真正执行需要 `--operator <名字> --yes`，并写入审计记录。
+- **驳回会一直有效。** 你用驳回标记驳回的提案会留下不含原文的记录；同样的内容（包括加了"教训："之类前缀的）从任何写入路径都会被拒绝（`rejected_before`），包括会话提取和后台对账。`engram review untombstone <id>` 可撤销驳回。
+
+### 变更（所有模式）
+- `telemetry_config.json` 里 `reconcile_authorized=false` 优先于 `ENGRAM_RECONCILE=1`；冲突会在启动时、审计日志和 doctor 中提示。
+- 已退役的条目（不含版本快照）参与去重（`duplicate_retired`），恢复该条即可解除。与归档重复时返回里多了 `where` 和 `reason`。
+- MCP `review_staging` 的批量操作可以批准或驳回待审操作手册。
+- MCP 写入工具遇到被拒的写入，如实返回 JSON（含 `status`），不再显示"已记录"。
+- 已下架的操作手册不能再修改或被合并，需先恢复。
+- 每条审计记录新增 `mode`（`strict` 或 `default`）。doctor 会报告未收尾的驳回、严格锁定和对账冲突；MCP 服务启动时可能输出警告。
+- **只读句柄绝不写入。** `Engram(read_only=True)` 拒绝写方法（`error: read_only`），也不再更新读取计数、使用事件和会话检查点。
+
+### 保证范围
+通过 MCP 工具的调用会被强制执行规则。本地命令的执行会记录操作人，事后可追溯。直接动 shell 或调用核心方法的操作，既拦不住也不会被记录。已锁定的库会一直保持严格，直到有人用带审计的命令解除；有 shell 权限的进程可以直接删掉锁定文件，审计历史里会显示模式发生了变化。
+
 ## [4.21.0] - 2026-09-24
 
 ### 变更
