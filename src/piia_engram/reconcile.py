@@ -114,13 +114,12 @@ def _rejected_before(root, summary: str, *, project_folder: str | None = None) -
     """A lesson tombstone for this exact summary in the scope the row would get.
 
     Same rule as the insert guard (tombstones.lookup: same h1, same scope), applied
-    to the 4.21.1-style first-line summary. Too short a line identifies nothing and
-    is not checked.
+    to the 4.21.1-style first-line summary.
     """
     from . import tombstones as _tombstones
     from .storage import _project_id
 
-    if len(_tombstones.normalize(summary or "")) < 8:
+    if not summary:
         return False
     row = {"summary": summary}
     if isinstance(project_folder, str) and project_folder.strip():
