@@ -6,6 +6,16 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.21.2] - 2026-09-26
+
+### 修复
+- **你自己改过的指令文字会保留。** `engram setup` 和 `engram doctor --fix` 不再覆盖你在 `CLAUDE.md` / `AGENTS.md` 里改过的 Engram 段落（Cursor 的 `engram.mdc` 同理）；只有 Engram 各版本自带的原样文字才会更新，旧标记遗留的默认段落会合并成一段。
+- **严格模式下的指令与严格模式一致。** 严格模式的库注入的文字是"只读 + 提案"，不再要求自动保存；doctor 会把旧的自动保存文字判为过期。
+- **客户端 env 设置不会被 setup 清掉。** 重写客户端的 MCP 配置时，你加的 env 项（例如 `ENGRAM_APPROVAL`、`ENGRAM_RECONCILE`、审核队列上限）全部保留；严格模式的库会补上 `ENGRAM_APPROVAL=strict`。doctor 会列出客户端 env 块缺少的设置：Claude Desktop 和 Codex 只把这一块传给服务，不传你的环境变量。
+- **`engram review apply` 的预览会显示已生效的项。** 已经生效的标记报为 `already_applied`，并给出 `pending` 合计；同一文件再执行一次不会再写新版本。
+- **不带 `--fix` 的 `engram doctor` 不再写入记忆库。** 它以只读方式打开库，版本检查缓存改放用户缓存目录（可用 `ENGRAM_CACHE_DIR` 指定），不再放在库里。
+- **导入的记忆保留全文。** 从记忆文件导入时，正文不再截到 500 字、摘要不再停在第一个换行：摘要取文件的 `description`（没有时取第一段），正文全部保留；确实需要截断时会在正文里标明。按旧摘要驳回过的记忆仍然保持驳回。
+
 ## [4.21.1] - 2026-09-26
 
 ### 变更（开启 `ENGRAM_APPROVAL=strict` 时）

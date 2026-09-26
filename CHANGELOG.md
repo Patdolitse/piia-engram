@@ -6,6 +6,16 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.21.2] - 2026-09-26
+
+### Fixed
+- **Your own instruction text is kept.** `engram setup` and `engram doctor --fix` no longer overwrite an Engram block in `CLAUDE.md` / `AGENTS.md` (or a Cursor `engram.mdc`) that you edited. Only text Engram itself shipped, in any earlier version, is refreshed; a leftover default block from the old marker is folded into one.
+- **Strict mode instructions match strict mode.** On a strict store the injected text tells agents to read and propose, not to save automatically, and doctor reports the old auto-save text as stale.
+- **Client env settings survive setup.** Rewriting a client's MCP config keeps every env key you added (for example `ENGRAM_APPROVAL`, `ENGRAM_RECONCILE` or the review-queue limits) and adds `ENGRAM_APPROVAL=strict` for a strict store. Doctor lists the settings a client's env block is missing: Claude Desktop and Codex pass the server only that block, not your environment.
+- **`engram review apply` preview shows what is already done.** Marks that already took effect are reported as `already_applied`, with a `pending` total, and applying the same file again writes no new versions.
+- **`engram doctor` without `--fix` writes nothing to the store.** It opens the store read-only, and the update-check cache now lives in the user cache directory (`ENGRAM_CACHE_DIR` to override) instead of the store.
+- **Imported memories keep their whole text.** Memory-file import no longer cuts the body at 500 characters or the summary at the first line break: the summary is the file's `description` (else its first paragraph) and the full body is kept. A cut that is still needed is marked in the text. A memory rejected under its old summary stays rejected.
+
 ## [4.21.1] - 2026-09-26
 
 ### Changed (with `ENGRAM_APPROVAL=strict`)
