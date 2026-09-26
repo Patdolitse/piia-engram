@@ -226,9 +226,14 @@ def _argv_requests_help(
 def _init_engram(root: Path | None = None) -> tuple[Engram | None, str | None]:
     """Create an Engram instance, returning (instance, None) on success or
     (None, error_message) if the store is corrupted / unreadable."""
-    # engram doctor (without --fix) imports this module only to count tools; it
-    # sets ENGRAM_IMPORT_READ_ONLY=1 so the import-time store handle is zero-write.
-    read_only = os.environ.get("ENGRAM_IMPORT_READ_ONLY", "").strip() == "1"
+    # engram doctor (without --fix) imports this module only to count tools and
+    # sets piia_engram._MCP_IMPORT_READ_ONLY around that import, so the import-time
+    # store handle is zero-write. A package attribute, not an env var: an env var
+    # could end up in a client's env block (setup keeps the Owner's keys) and turn
+    # a real server silently read-only.
+    import piia_engram as _pkg
+
+    read_only = getattr(_pkg, "_MCP_IMPORT_READ_ONLY", False) is True
     try:
         return (Engram(root=root, read_only=read_only) if root else Engram(read_only=read_only)), None
     except Exception as exc:

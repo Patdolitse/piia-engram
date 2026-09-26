@@ -435,8 +435,50 @@ def test_reconcile_skips_a_memory_rejected_under_its_old_summary(tmp_path):
     (mem / "failure.md").write_text(_LONG_MEMORY, encoding="utf-8")
     eng._CLAUDE_MEMORY_GLOBS = [str(mem / "*.md")]
 
-    assert eng.reconcile_memories()["imported"] == 0
+    result = eng.reconcile_memories()
+    assert result["imported"] == 0
+    assert result["rejected_under_old_summary"] == 1
     assert eng.get_lessons(limit=None, _update_access=False) == []
+
+
+def test_old_summary_rejection_is_scoped_like_the_insert_guard(tmp_path):
+    from piia_engram import tombstones
+    from piia_engram.reconcile import _rejected_before
+    from piia_engram.storage import _project_id
+
+    root = tmp_path / "store"
+    Engram(root=root)
+    line = "When a step fails, the final message"
+    project_a, project_b = str(tmp_path / "proj-a"), str(tmp_path / "proj-b")
+    tombstones.append(root, "lesson", {"id": "a1", "summary": line, "project_id": _project_id(project_a)},
+                      via="test")
+
+    assert _rejected_before(root, line, project_folder=project_a)
+    assert not _rejected_before(root, line, project_folder=project_b)
+    assert not _rejected_before(root, line)  # global scope
+    tombstones.append(root, "lesson", {"id": "g1", "summary": "Why:"}, via="test")
+    assert not _rejected_before(root, "Why:")  # too short to identify a memory
+
+
+def test_an_env_var_can_never_make_the_mcp_server_read_only(home, tmp_path, monkeypatch):
+    import piia_engram
+    from piia_engram import mcp_server
+
+    monkeypatch.setenv("ENGRAM_IMPORT_READ_ONLY", "1")  # e.g. carried in a client env block
+    eng, err = mcp_server._init_engram(tmp_path / "store")
+
+    assert err is None and eng._read_only is False
+    assert getattr(piia_engram, "_MCP_IMPORT_READ_ONLY", False) is False
+
+
+def test_doctor_resets_its_read_only_import_switch(home, tmp_path):
+    import piia_engram
+
+    Engram(root=tmp_path / "store")
+    with redirect_stdout(io.StringIO()):
+        doctor._run_functional_checks(fix=False)
+
+    assert piia_engram._MCP_IMPORT_READ_ONLY is False
 
 
 def test_overlong_detail_is_marked_never_cut_silently():

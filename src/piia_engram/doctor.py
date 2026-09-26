@@ -935,16 +935,16 @@ def _run_functional_checks(*, fix: bool = False) -> int:
 
     # 5. MCP server 工具注册
     try:
-        prior_import_mode = os.environ.get("ENGRAM_IMPORT_READ_ONLY")
-        if not fix:
-            os.environ["ENGRAM_IMPORT_READ_ONLY"] = "1"
+        import piia_engram as _pkg
+
+        # Without --fix the import opens the store read-only (see
+        # mcp_server._init_engram). The module then keeps that read-only handle
+        # for the rest of this doctor process, which only reads from it.
+        _pkg._MCP_IMPORT_READ_ONLY = not fix
         try:
             from piia_engram import mcp_server  # noqa: F811
         finally:
-            if prior_import_mode is None:
-                os.environ.pop("ENGRAM_IMPORT_READ_ONLY", None)
-            else:
-                os.environ["ENGRAM_IMPORT_READ_ONLY"] = prior_import_mode
+            _pkg._MCP_IMPORT_READ_ONLY = False
 
         tool_count = len(mcp_server.mcp._tool_manager._tools)
         print(f"    [ok] MCP server: {tool_count} tools registered")
