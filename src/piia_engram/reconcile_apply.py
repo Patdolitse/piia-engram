@@ -302,6 +302,7 @@ def _import_one(eng, candidate: dict[str, Any], entry_type: str, source: str) ->
         else:
             from .reconcile import _rejected_before
 
+            # The row is inserted without a project folder, so its scope is global.
             if _rejected_before(eng.root, str(candidate.get("legacy_summary") or "")):
                 return ""  # rejected under its 4.21.1 summary
             result = eng.add_lesson(

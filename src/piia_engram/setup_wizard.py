@@ -1667,7 +1667,11 @@ _SETUP_MANAGED_ENV_KEYS = frozenset({
 
 
 def _carried_env(existing_env: dict, *, store_root=None) -> dict[str, str]:
-    """Owner env keys to keep on a rewrite, plus ENGRAM_APPROVAL=strict for a strict store."""
+    """Owner env keys to keep on a rewrite, plus ENGRAM_APPROVAL=strict for a strict store.
+
+    Strict here is the effective mode: ENGRAM_APPROVAL=strict in the environment
+    setup runs in, or the store's approval_mode.json latch. setup reports which.
+    """
     carried = {
         str(key): str(value)
         for key, value in (existing_env or {}).items()
@@ -2944,6 +2948,15 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
                 tools,
                 interactive=not apply_external_config,
             )
+            if _snippet_strict(selected_data_dir):
+                from_env = os.environ.get("ENGRAM_APPROVAL", "").strip().lower() == "strict"
+                source = "ENGRAM_APPROVAL=strict" if from_env else "approval_mode.json"
+                print(_t(
+                    f"  🔒 严格模式（来自 {source}）：客户端配置写入 ENGRAM_APPROVAL=strict，"
+                    "指令段使用\"只读 + 提案\"写法",
+                    f"  🔒 Strict mode (from {source}): client configs get ENGRAM_APPROVAL=strict "
+                    "and the read + propose instructions",
+                ))
             success, failed = _apply_external_configs(
                 tools, python_path, mcp_server_path, selected_data_dir,
                 extra_env=extra_env,

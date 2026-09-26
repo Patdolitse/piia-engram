@@ -110,18 +110,22 @@ def _parse_memory_file(content: str) -> dict | None:
     }
 
 
-def _rejected_before(root, summary: str) -> bool:
-    """A lesson tombstone for this exact summary in any scope (auto-import skips it)."""
-    from . import tombstones as _tombstones
+def _rejected_before(root, summary: str, *, project_folder: str | None = None) -> bool:
+    """A lesson tombstone for this exact summary in the scope the row would get.
 
-    if not summary:
+    Same rule as the insert guard (tombstones.lookup: same h1, same scope), applied
+    to the 4.21.1-style first-line summary. Too short a line identifies nothing and
+    is not checked.
+    """
+    from . import tombstones as _tombstones
+    from .storage import _project_id
+
+    if len(_tombstones.normalize(summary or "")) < 8:
         return False
-    h1, _h2 = _tombstones.claim_hashes("lesson", {"summary": summary})
-    return any(
-        record.get("hv") == _tombstones.HASH_VERSION and record.get("kind", "lesson") == "lesson"
-        and record.get("h1") == h1
-        for record in _tombstones.load(root)
-    )
+    row = {"summary": summary}
+    if isinstance(project_folder, str) and project_folder.strip():
+        row["project_id"] = _project_id(project_folder)
+    return _tombstones.lookup(root, "lesson", row) is not None
 
 
 # Insert outcomes that add no row: an existing duplicate, a tombstoned claim, or a
@@ -239,6 +243,7 @@ class ReconcileMixin:
             return result
         imported = 0
         duplicates = 0
+        rejected_old_summary = 0
         scanned_files = 0
         skipped_large = 0
         skipped_scope = 0
@@ -325,8 +330,8 @@ class ReconcileMixin:
 
                 if is_dup:
                     continue
-                if _rejected_before(self.root, parsed["legacy_summary"]):
-                    duplicates += 1  # rejected under its 4.21.1 summary
+                if _rejected_before(self.root, parsed["legacy_summary"], project_folder=project_folder):
+                    rejected_old_summary += 1  # rejected under its 4.21.1 summary
                     continue
 
                 # Auto-import as lesson
@@ -360,6 +365,7 @@ class ReconcileMixin:
             "scanned_files": scanned_files,
             "imported": imported,
             "duplicates": duplicates,
+            "rejected_under_old_summary": rejected_old_summary,
             "skipped_large": skipped_large,
             "sources": sources,
         }

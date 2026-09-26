@@ -43,3 +43,12 @@ def test_isolated_dir_is_per_test(tmp_path: Path):
     # auto-cleaned), not a shared or home location.
     value = Path(os.environ["ENGRAM_DIR"]).resolve()
     assert str(value).startswith(str(tmp_path.resolve()))
+
+
+def test_update_check_cache_is_isolated_per_test(tmp_path: Path):
+    # 4.21.2 moved the update-check cache out of the store into the user's cache
+    # directory; the suite must never write the real one either.
+    from piia_engram import update_check
+
+    cache = update_check._cache_path().resolve()
+    assert str(cache).startswith(str(tmp_path.resolve()))

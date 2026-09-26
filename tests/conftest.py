@@ -21,6 +21,10 @@ os.environ["ENGRAM_TEST"] = "1"
 os.environ["ENGRAM_DIR"] = str(
     Path(tempfile.mkdtemp(prefix="engram-collect-")) / "engram-home"
 )
+# The update-check cache lives outside the store (4.21.2), in the user's cache
+# directory by default; the suite must never write there either.
+os.environ["ENGRAM_CACHE_DIR"] = str(Path(os.environ["ENGRAM_DIR"]).parent / "engram-cache")
+os.environ["ENGRAM_NO_UPDATE_CHECK"] = "1"
 
 # Machine-wide behaviour switches (a developer box may export
 # ENGRAM_APPROVAL=strict, ENGRAM_RECONCILE=0, ...) must not leak into the suite:
@@ -32,6 +36,15 @@ _MACHINE_BEHAVIOUR_ENV = (
     "ENGRAM_GOVERNANCE",
     "ENGRAM_CLIENT_TYPE",
     "ENGRAM_MCP_STARTUP_SYNC",
+    # capacity limits (4.21.x); a developer box may set them for its live store
+    "ENGRAM_CAP_SOFT",
+    "ENGRAM_CAP_HARD",
+    "ENGRAM_REVIEW_QUEUE_MAX",
+    "ENGRAM_REVIEW_QUEUE_CEILING",
+    "ENGRAM_REVIEW_MIN_STAY_DAYS",
+    "ENGRAM_RETIRED_GRACE_DAYS",
+    "ENGRAM_RETIRED_MAX",
+    "ENGRAM_PLAYBOOK_QUEUE_MAX",
 )
 for _name in _MACHINE_BEHAVIOUR_ENV:
     os.environ.pop(_name, None)
@@ -65,6 +78,7 @@ def _isolate_engram_store_session(tmp_path_factory) -> None:
     base = tmp_path_factory.mktemp("engram-session")
     os.environ["ENGRAM_TEST"] = "1"
     os.environ["ENGRAM_DIR"] = str(base / "engram-home")
+    os.environ["ENGRAM_CACHE_DIR"] = str(base / "engram-cache")
 
 
 @pytest.fixture(autouse=True)
@@ -86,5 +100,8 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """
     monkeypatch.setenv("ENGRAM_TEST", "1")
     monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-home"))
+    monkeypatch.setenv("ENGRAM_CACHE_DIR", str(tmp_path / "engram-cache"))
+    # No update check (no network, no cache write) unless a test turns it back on.
+    monkeypatch.setenv("ENGRAM_NO_UPDATE_CHECK", "1")
     for name in _MACHINE_BEHAVIOUR_ENV:
         monkeypatch.delenv(name, raising=False)
