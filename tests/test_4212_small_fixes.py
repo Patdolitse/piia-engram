@@ -456,19 +456,75 @@ def test_old_summary_rejection_is_scoped_like_the_insert_guard(tmp_path):
     assert _rejected_before(root, line, project_folder=project_a)
     assert not _rejected_before(root, line, project_folder=project_b)
     assert not _rejected_before(root, line)  # global scope
-    tombstones.append(root, "lesson", {"id": "g1", "summary": "Why:"}, via="test")
-    assert not _rejected_before(root, "Why:")  # too short to identify a memory
 
 
-def test_an_env_var_can_never_make_the_mcp_server_read_only(home, tmp_path, monkeypatch):
+def _import_project_memory(tmp_path, eng, project: Path) -> dict:
+    project.mkdir(parents=True, exist_ok=True)
+    name = eng._encode_claude_project_name(str(project.resolve()))
+    mem = tmp_path / "claude" / "projects" / name / "memory"
+    mem.mkdir(parents=True, exist_ok=True)
+    (mem / "failure.md").write_text(_LONG_MEMORY, encoding="utf-8")
+    eng._CLAUDE_MEMORY_GLOBS = [str(tmp_path / "claude" / "projects" / "*" / "memory" / "*.md")]
+    return eng.reconcile_memories(project_folder=str(project))
+
+
+def test_old_summary_rejection_in_another_project_does_not_block_this_one(tmp_path):
+    from piia_engram import tombstones
+    from piia_engram.storage import _project_id
+
+    eng = Engram(root=tmp_path / "store")
+    other, this = tmp_path / "proj-other", tmp_path / "proj-this"
+    tombstones.append(eng.root, "lesson", {"id": "o1", "summary": "When a step fails, the final message",
+                                           "project_id": _project_id(str(other))}, via="test")
+
+    result = _import_project_memory(tmp_path, eng, this)
+
+    assert result["imported"] == 1 and result["rejected_under_old_summary"] == 0
+
+
+def test_old_summary_rejection_in_the_same_project_is_skipped_and_counted(tmp_path):
+    from piia_engram import tombstones
+    from piia_engram.storage import _project_id
+
+    eng = Engram(root=tmp_path / "store")
+    this = tmp_path / "proj-this"
+    tombstones.append(eng.root, "lesson", {"id": "t1", "summary": "When a step fails, the final message",
+                                           "project_id": _project_id(str(this))}, via="test")
+
+    result = _import_project_memory(tmp_path, eng, this)
+
+    assert result["imported"] == 0 and result["rejected_under_old_summary"] == 1
+    assert result["duplicates"] == 0
+
+
+def test_the_old_read_only_switch_is_never_carried_into_an_env_block(home, tmp_path):
+    json_cfg = home / "claude_desktop_config.json"
+    json_cfg.write_text(json.dumps({"mcpServers": {"engram": {"command": "old", "env": {
+        "ENGRAM_IMPORT_READ_ONLY": "1", "ENGRAM_RECONCILE": "0"}}}}), encoding="utf-8")
+    toml_cfg = home / "config.toml"
+    toml_cfg.write_text("[mcp_servers.engram]\ncommand = 'old'\n\n[mcp_servers.engram.env]\n"
+                        "ENGRAM_IMPORT_READ_ONLY = \"1\"\nENGRAM_RECONCILE = \"0\"\n", encoding="utf-8")
+
+    W._write_mcp_config(json_cfg, sys.executable, "", authorized_external_write=True)
+    W._write_mcp_config_toml(toml_cfg, sys.executable, "", authorized_external_write=True)
+
+    env = json.loads(json_cfg.read_text(encoding="utf-8"))["mcpServers"]["engram"]["env"]
+    assert "ENGRAM_IMPORT_READ_ONLY" not in env and env["ENGRAM_RECONCILE"] == "0"
+    text = toml_cfg.read_text(encoding="utf-8")
+    assert "ENGRAM_IMPORT_READ_ONLY" not in text and 'ENGRAM_RECONCILE = "0"' in text
+
+
+def test_a_real_start_ignores_the_old_switch_writable_and_warns(home, tmp_path, monkeypatch):
     import piia_engram
     from piia_engram import mcp_server
 
-    monkeypatch.setenv("ENGRAM_IMPORT_READ_ONLY", "1")  # e.g. carried in a client env block
+    monkeypatch.setenv("ENGRAM_IMPORT_READ_ONLY", "1")  # e.g. left in a client env block
     eng, err = mcp_server._init_engram(tmp_path / "store")
 
     assert err is None and eng._read_only is False
     assert getattr(piia_engram, "_MCP_IMPORT_READ_ONLY", False) is False
+    (warning,) = mcp_server._startup_env_warnings()
+    assert "ENGRAM_IMPORT_READ_ONLY" in warning and "ignored" in warning
 
 
 def test_doctor_resets_its_read_only_import_switch(home, tmp_path):

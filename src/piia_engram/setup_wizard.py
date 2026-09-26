@@ -1664,6 +1664,9 @@ def _parse_toml_mcp_minimal(text: str) -> dict:
 _SETUP_MANAGED_ENV_KEYS = frozenset({
     "PYTHONIOENCODING", "ENGRAM_TOOLS", "PYTHONPATH", "ENGRAM_DIR", "ENGRAM_SEARCH",
 })
+# Never carried: a pre-release doctor switch that, in a client env block, would
+# have asked for a read-only server (the server now ignores it and warns).
+_NEVER_CARRIED_ENV_KEYS = frozenset({"ENGRAM_IMPORT_READ_ONLY"})
 
 
 def _carried_env(existing_env: dict, *, store_root=None) -> dict[str, str]:
@@ -1675,7 +1678,7 @@ def _carried_env(existing_env: dict, *, store_root=None) -> dict[str, str]:
     carried = {
         str(key): str(value)
         for key, value in (existing_env or {}).items()
-        if key not in _SETUP_MANAGED_ENV_KEYS and value is not None
+        if key not in _SETUP_MANAGED_ENV_KEYS and key not in _NEVER_CARRIED_ENV_KEYS and value is not None
     }
     if _snippet_strict(store_root):
         carried["ENGRAM_APPROVAL"] = "strict"
@@ -3479,7 +3482,8 @@ def main() -> None:
             "  engram setup            Interactive setup (read-only for external client configs)\n"
             "  engram setup --apply-external-config  Auto-configure AI clients with backups\n"
             "  engram setup --advanced Full interactive setup with privacy prompts\n"
-            "  engram doctor           Check config health (all AI tools)\n"
+            "  engram doctor           Check config health (all AI tools; no writes to the memory\n"
+            "                          store; the version check may go online and write its cache)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram capabilities     Content-free runtime capability fingerprint (--json/--require)\n"
             "  engram status           Show a redacted install + memory health summary\n"

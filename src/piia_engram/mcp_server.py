@@ -247,6 +247,18 @@ def _init_engram(root: Path | None = None) -> tuple[Engram | None, str | None]:
 __SENTINEL = object()
 
 
+def _startup_env_warnings(env=None) -> list[str]:
+    """Settings a real server start ignores, said out loud rather than silently."""
+    env = os.environ if env is None else env
+    warnings = []
+    if str(env.get("ENGRAM_IMPORT_READ_ONLY", "") or "").strip():
+        warnings.append(
+            "ENGRAM_IMPORT_READ_ONLY is set but ignored: the server opens the store "
+            "writable. Remove it from this client's env block."
+        )
+    return warnings
+
+
 def _require_engram(
     _engram: Engram | None | object = __SENTINEL,
     _init_error: str | None | object = __SENTINEL,
@@ -1671,6 +1683,8 @@ def main() -> None:
     _note = _reconcile_note()
     if _note:
         print(f"[engram] warning: {_note}", file=sys.stderr)
+    for _warning in _startup_env_warnings():
+        print(f"[engram] warning: {_warning}", file=sys.stderr)
     if _engram is not None:
         _latch = _gov_rt._strict_mode.bootstrap(_engram.root, source="mcp")
         if _latch:
