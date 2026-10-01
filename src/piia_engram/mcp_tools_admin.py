@@ -757,12 +757,21 @@ async def wrap_up_session(
                 project_folder=project_folder,
             )
             results["insights"] = insights
+            skipped_by_reason: dict = {}
             if isinstance(insights, dict):
+                # Skips sit next to the saves, so "snapshot saved" is never read as
+                # "knowledge saved".
                 insight_counts = {
                     "saved_lessons": _count_value(insights.get("saved_lessons")),
                     "saved_decisions": _count_value(insights.get("saved_decisions")),
+                    "duplicates": _count_value(insights.get("duplicates")),
+                    "skipped": _count_value(insights.get("skipped")),
                 }
-            maintenance["extract_session_insights"] = {"status": "ok", **insight_counts}
+                if isinstance(insights.get("skipped_by_reason"), dict):
+                    skipped_by_reason = dict(insights["skipped_by_reason"])
+            maintenance["extract_session_insights"] = {
+                "status": "ok", **insight_counts, "skipped_by_reason": skipped_by_reason,
+            }
         except Exception as exc:
             S.logger.warning("extract_session_insights failed: %s", exc)
             stage_status = "error"
@@ -777,7 +786,7 @@ async def wrap_up_session(
                 stage_start,
                 error=stage_error,
                 counts=insight_counts,
-                committed=insight_counts,
+                committed={k: v for k, v in insight_counts.items() if k.startswith("saved_")},
             )
 
     # Step 1.5: Auto-extract Playbook if session looks like a procedure

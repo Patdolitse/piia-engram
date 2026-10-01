@@ -18,6 +18,7 @@ from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
 import json
 import logging
 import re
+from collections import Counter
 from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
@@ -756,6 +757,7 @@ class ContextMixin:
                 "skipped_low_quality": 0,
                 "rejected_by_output_guard": 0,
                 "rejected_quality": _empty_rejected_quality_summary(),
+                "skipped_by_reason": {},
                 "results": [],
             }
 
@@ -810,11 +812,15 @@ class ContextMixin:
         prev_guard_sentence = ""
         for raw in sentences:
             sentence = raw.strip()
-            if not sentence or len(sentence) < 8:
+            if not sentence:
+                continue  # the empty piece after a final full stop is not a skipped candidate
+            if len(sentence) < 8:
                 skipped += 1
+                results.append({"status": "skipped", "reason": "too_short", "text": sentence[:80]})
                 continue
             if not self._has_content_chars(sentence):
                 skipped += 1
+                results.append({"status": "skipped", "reason": "no_content", "text": sentence[:80]})
                 continue
             window_sentence = prev_guard_sentence
             prev_guard_sentence = sentence
@@ -845,7 +851,7 @@ class ContextMixin:
 
             if not is_decision and not is_lesson:
                 skipped += 1
-                results.append({"status": "skipped", "text": sentence[:80]})
+                results.append({"status": "skipped", "reason": "no_trigger", "text": sentence[:80]})
                 continue
 
             candidate_type = "decision" if is_decision else "lesson"
@@ -1014,6 +1020,9 @@ class ContextMixin:
             "skipped_low_quality": skipped_low_quality,
             "rejected_by_output_guard": rejected_by_output_guard,
             "rejected_quality": rejected_quality,
+            "skipped_by_reason": dict(Counter(
+                str(r.get("reason") or "unknown") for r in results if r.get("status") == "skipped"
+            )),
             "results": results,
         }
 
