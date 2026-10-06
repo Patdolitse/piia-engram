@@ -2446,6 +2446,20 @@ def _run_seed_knowledge_onboarding(
 # Privacy & data preferences (telemetry opt-in + reconcile authorization)
 # ---------------------------------------------------------------------------
 
+def _turn_off_usage_ping() -> None:
+    """A "no" to statistics also turns the daily usage ping off (best effort).
+
+    The detailed-statistics opt-out already keeps the ping off; saving the ping
+    setting too covers an earlier explicit `engram telemetry on`.
+    """
+    try:
+        from piia_engram import usage_ping as _usage_ping
+
+        _usage_ping.set_enabled(False)
+    except Exception:
+        pass
+
+
 def _run_privacy_preferences(data_dir: str) -> None:
     """Ask user about auto-reconcile and anonymous usage statistics."""
     from piia_engram.telemetry import (
@@ -2455,8 +2469,11 @@ def _run_privacy_preferences(data_dir: str) -> None:
     cfg = _load_config()
 
     print(_t("\nStep 5 — 隐私与数据偏好", "\nStep 5 — Privacy & data preferences"))
-    print(_t("  你的数据默认只留在本机。以下可选功能需要你明确同意。\n",
-             "  Your data stays local by default. The following optional features require your explicit consent.\n"))
+    print(_t("  你的记忆只留在本机。Engram 每天发送一次匿名使用信号；下面第 [2] 或 [2b] 项选择“否”也会关闭它。",
+             "  Your memories stay on this machine. Engram sends one anonymous usage ping a day;"
+             " answering no to [2] or [2b] below also turns it off."))
+    print(_t("  以下可选功能需要你明确同意。\n",
+             "  The following optional features require your explicit consent.\n"))
 
     # --- Reconcile authorization ---
     print(_t("  [1] 跨工具记忆同步",
@@ -2535,12 +2552,15 @@ def _run_privacy_preferences(data_dir: str) -> None:
             print(_t("  ✅ 远程统计已开启\n",
                      "  ✅ Remote statistics enabled\n"))
         else:
-            print(_t("  ℹ️  仅本地统计。可随时运行 engram telemetry remote on 开启远程。\n",
-                     "  ℹ️  Local only. Run engram telemetry remote on to enable remote anytime.\n"))
+            _turn_off_usage_ping()
+            print(_t("  ℹ️  仅本地统计，每日使用信号也已关闭。可随时运行 engram telemetry remote on 开启远程。\n",
+                     "  ℹ️  Local only; the daily usage ping is off too."
+                     " Run engram telemetry remote on to enable remote anytime.\n"))
     else:
         set_remote_enabled(False)
-        print(_t("  ℹ️  未开启。可随时运行 engram telemetry on 改变。\n",
-                 "  ℹ️  Not enabled. Run engram telemetry on to change anytime.\n"))
+        _turn_off_usage_ping()
+        print(_t("  ℹ️  未开启，每日使用信号也已关闭。可随时运行 engram telemetry on 改变。\n",
+                 "  ℹ️  Not enabled; the daily usage ping is off too. Run engram telemetry on to change anytime.\n"))
 
     # Save reconcile pref to same config file
     cfg_all = _load_config()
@@ -2568,6 +2588,10 @@ def _run_privacy_defaults(data_dir: str) -> None:
              "      Includes: tool call counts, knowledge totals, weekly governance summary"))
     print(_t("      绝不包含：知识内容、prompt、文件路径、邮箱、IP",
              "      Never includes: knowledge content, prompts, file paths, email, IP"))
+    print(_t("      Engram 另外每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、"
+             "AI 客户端名称、日期）；这里选择“否”也会关闭它。",
+             "      Engram also sends one anonymous usage ping a day (random install ID, version, OS,"
+             " Python version, AI client name, date); answering no here also turns it off."))
     print(_t("      随时关闭：engram telemetry off\n",
              "      Disable anytime: engram telemetry off\n"))
 
@@ -2583,8 +2607,9 @@ def _run_privacy_defaults(data_dir: str) -> None:
         print(_t("  ✅ 已开启（含每周匿名反馈报告）\n",
                  "  ✅ Enabled (including weekly anonymous feedback reports)\n"))
     else:
-        print(_t("  ℹ️  未开启。可随时运行 engram telemetry on 改变。\n",
-                 "  ℹ️  Not enabled. Run engram telemetry on to change anytime.\n"))
+        _turn_off_usage_ping()
+        print(_t("  ℹ️  未开启，每日使用信号也已关闭。可随时运行 engram telemetry on 改变。\n",
+                 "  ℹ️  Not enabled; the daily usage ping is off too. Run engram telemetry on to change anytime.\n"))
 
 
 # ---------------------------------------------------------------------------
@@ -3318,28 +3343,87 @@ def _run_capabilities_cli(args: list[str]) -> int:
     return 0 if compatibility is None or compatibility["compatible"] else 1
 
 
+# Zero-write and machine-facing commands: no update reminder and no usage ping.
+# `doctor` prints its own richer version line, so the generic reminder would
+# double-print. The Dock contract commands are read-only or dry-run-by-default
+# JSON surfaces — the reminder would write .update_check.json into the store
+# (`dock-quality-action` only writes after an explicit --yes, never on its
+# default dry-run).
+_QUIET_COMMANDS = (
+    "doctor", "capabilities", "continuity", "dock-status", "dock-resume", "dock-quality",
+    "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search",
+    "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang",
+    "dock-onboard-scan", "weekly",
+)
+# No usage ping for these either (the update reminder still runs): `telemetry`
+# manages the ping itself; `watcher` is run by autostart / schedulers, which is
+# not use.
+_PING_SKIP_EXTRA = ("telemetry", "watcher")
+# Help and version requests are not use either; every dock-* command is a
+# machine-facing surface, including ones added after this list was written.
+_PING_SKIP_ARGS = ("-h", "--help", "help", "--version", "-V", "version")
+
+
+def _skips_usage_ping(command: str) -> bool:
+    return (command in _QUIET_COMMANDS or command in _PING_SKIP_EXTRA
+            or command in _PING_SKIP_ARGS or command.startswith("dock-"))
+
+
+def _start_usage_ping_cli() -> None:
+    """Daily anonymous usage ping for CLI runs; waits at most 1.5 s at exit."""
+    try:
+        import atexit
+
+        from piia_engram import usage_ping as _usage_ping
+
+        thread = _usage_ping.maybe_send("cli")
+        if thread is not None:
+            def _join() -> None:
+                try:
+                    thread.join(1.5)
+                except BaseException:
+                    pass
+
+            atexit.register(_join)
+    except Exception:
+        pass
+
+
+def _show_usage_notice(stream) -> None:
+    try:
+        from piia_engram import usage_ping as _usage_ping
+
+        _usage_ping.maybe_show_notice(stream)
+    except Exception:
+        pass
+
+
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
     args = sys.argv[1:]
     # Non-intrusive update reminder (stderr only, opt-out, 24h-cached, fail-silent).
-    # `doctor` prints its own richer version line, so skip the generic notice
-    # there to avoid a double-print. The Dock contract commands are read-only or
-    # dry-run-by-default JSON surfaces — the reminder would write .update_check.json
-    # into the store — so skip them too (`dock-quality-action` only writes after
-    # an explicit --yes, never on its default dry-run). Not reached by the MCP entry.
-    if not (args and args[0] in ("doctor", "capabilities", "continuity", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang", "dock-onboard-scan", "weekly")):
+    # Skipped for _QUIET_COMMANDS. Not reached by the MCP entry.
+    if not (args and args[0] in _QUIET_COMMANDS):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
             maybe_print_update_notice()
         except Exception:
             pass
-    if not args or args[0] == "setup":
+    is_setup = not args or args[0] == "setup"
+    # Daily usage ping: never for the commands _skips_usage_ping names; for setup
+    # only after its questions (a "no" to statistics must stop the first ping).
+    if not is_setup and not _skips_usage_ping(args[0]):
+        _show_usage_notice(sys.stderr)
+        _start_usage_ping_cli()
+    if is_setup:
         run_setup(
             advanced="--advanced" in args,
             apply_external_config="--apply-external-config" in args,
         )
+        _show_usage_notice(sys.stdout)
+        _start_usage_ping_cli()
     elif args[0] == "doctor":
         fix = "--fix" in args
         sys.exit(run_doctor(fix=fix))

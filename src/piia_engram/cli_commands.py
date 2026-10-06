@@ -1024,14 +1024,34 @@ def _render_first_value_funnel(events: list) -> str:
 
 def _run_telemetry_cli(sub_args: list[str]) -> None:
     """Handle `engram telemetry <subcommand>`."""
+    import sys
+
+    from piia_engram import usage_ping as _usage_ping
     from piia_engram.telemetry import (
         get_status, is_enabled, preview_payload, set_enabled,
         set_remote_enabled,
     )
 
+    def _save_ping_setting(enabled: bool) -> bool:
+        """Persist the daily ping on/off; report a failure without stopping the rest."""
+        try:
+            _usage_ping.set_enabled(enabled)
+            return True
+        except OSError as exc:
+            hint = "" if enabled else " Use ENGRAM_TELEMETRY=0 or DO_NOT_TRACK=1 instead."
+            print(f"  Could not save the daily ping setting: {exc}.{hint}", file=sys.stderr)
+            return False
+
     sub = sub_args[0] if sub_args else "status"
 
     if sub == "status":
+        ping = _usage_ping.status()
+        print(f"\n  Daily usage ping: {'ON' if ping['will_send'] else 'OFF'} "
+              f"(decided by: {ping['decided_by']})")
+        prefix = ping["install_id_prefix"]
+        print(f"  Install ID: {prefix + '…' if prefix else '(not created yet)'}")
+        print(f"  Last sent: {ping['last_sent'] or '(never)'}")
+        print(f"  Endpoint: {ping['endpoint']}")
         status = get_status()
         state = "ON" if status["enabled"] else "OFF"
         remote_state = "ON" if status.get("remote_enabled") else "OFF"
@@ -1048,6 +1068,8 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print()
 
     elif sub == "preview":
+        print("\n  Daily usage ping (sent at most once a day unless turned off):\n")
+        print(_usage_ping.preview())
         print("\n  Next payload (if enabled):\n")
         print(preview_payload())
         print()
@@ -1065,14 +1087,22 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             print()
 
     elif sub in ("off", "disable"):
+        ping_saved = _save_ping_setting(False)
         set_enabled(False)
         set_remote_enabled(False)
-        print("\n  ✅ Anonymous usage statistics disabled (local + remote).")
+        print()
+        if ping_saved:
+            print("  ✅ Daily usage ping disabled.")
+        print("  ✅ Anonymous usage statistics disabled (local + remote).")
         print("  No data will be logged or sent.\n")
 
     elif sub in ("on", "enable"):
+        ping_saved = _save_ping_setting(True)
         set_enabled(True)
-        print("\n  ✅ Anonymous usage statistics enabled.")
+        print()
+        if ping_saved:
+            print("  ✅ Daily usage ping enabled.")
+        print("  ✅ Anonymous usage statistics enabled.")
         print("  Run 'engram telemetry preview' to see what will be logged.")
         print("  Run 'engram telemetry remote on' to also enable remote sending.\n")
 
@@ -1086,8 +1116,12 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             print("  ✅ Remote anonymous statistics enabled.")
             print("  Data will be sent via HTTPS to Cloudflare Worker.\n")
         elif remote_sub in ("off", "disable"):
+            ping_saved = _save_ping_setting(False)
             set_remote_enabled(False)
-            print("\n  ✅ Remote sending disabled. Local logging continues if enabled.\n")
+            print()
+            if ping_saved:
+                print("  ✅ Daily usage ping disabled.")
+            print("  ✅ Remote sending disabled. Local logging continues if enabled.\n")
         else:
             status = get_status()
             remote_state = "ON" if status.get("remote_enabled") else "OFF"
@@ -1115,6 +1149,19 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             print(f"\n  Weekly feedback reports: {fb_state}")
             print("  Toggle: engram telemetry feedback on/off\n")
 
+    elif sub == "reset-id":
+        if _usage_ping.decision()[0]:
+            new_id = _usage_ping.reset_install_id()
+            if new_id:
+                print(f"\n  ✅ New install ID: {new_id[:8]}…\n")
+            else:
+                print("\n  Could not write the install ID file.\n")
+        elif _usage_ping.delete_install_id():
+            # Off: no new id is stored until the ping runs again.
+            print("\n  ✅ Install ID deleted. A new install ID will be created when the ping next runs.\n")
+        else:
+            print("\n  Could not delete the install ID file.\n")
+
     elif sub == "--show-payload":
         print("\n  Next payload (if enabled):\n")
         print(preview_payload())
@@ -1124,12 +1171,13 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print(
             "\nUsage:\n"
             "  engram telemetry status         Show current status\n"
+            "  engram telemetry reset-id       Create a new random install ID for the daily ping\n"
             "  engram telemetry funnel         Show the local first-value funnel\n"
             "  engram telemetry preview        Show what data will be logged\n"
-            "  engram telemetry on             Enable anonymous usage statistics\n"
-            "  engram telemetry off            Disable anonymous usage statistics\n"
+            "  engram telemetry on             Enable the daily ping and anonymous usage statistics\n"
+            "  engram telemetry off            Disable the daily ping and all usage statistics\n"
             "  engram telemetry remote on      Enable remote sending (Phase 2)\n"
-            "  engram telemetry remote off     Disable remote sending\n"
+            "  engram telemetry remote off     Disable remote sending and the daily ping\n"
             "  engram telemetry feedback on    Enable weekly feedback reports\n"
             "  engram telemetry feedback off   Disable weekly feedback reports\n"
         )
@@ -1221,7 +1269,24 @@ def _run_privacy_report() -> None:
         print("        (telemetry module not available)")
     print()
 
-    # 5. Reconcile
+    # 5. Daily usage ping
+    print("  [PING] Daily usage ping:")
+    try:
+        from piia_engram import usage_ping as _usage_ping
+
+        ping = _usage_ping.status()
+        print(f"        Status: {'ON' if ping['will_send'] else 'OFF'} (decided by: {ping['decided_by']})")
+        prefix = ping["install_id_prefix"]
+        print(f"        Install ID: {prefix + '…' if prefix else '(not created yet)'}")
+        print(f"        Last sent: {ping['last_sent'] or '(never)'}")
+        print(f"        Endpoint: {ping['endpoint']}")
+        print("        Sends once a day: random install ID, version, OS, Python version, AI client name, date")
+        print("        Turn off: engram telemetry off (or ENGRAM_TELEMETRY=0 / DO_NOT_TRACK=1)")
+    except Exception:
+        print("        (status not available)")
+    print()
+
+    # 6. Reconcile
     print("  [SYNC] Cross-tool sync:")
     try:
         from piia_engram.reconcile import ReconcileMixin
@@ -1233,14 +1298,16 @@ def _run_privacy_report() -> None:
         print("        (reconcile module not available)")
     print()
 
-    # 6. Network
+    # 7. Network
     print("  [NET]  Network requests:")
-    print("        Core Engram: ZERO network requests (local files only)")
+    print("        Engram's identity and knowledge tools: no network requests (local files only)")
+    print("        Default network calls: the daily usage ping and the CLI update check")
+    print("        Turn them off: engram telemetry off, ENGRAM_NO_UPDATE_CHECK=1")
     print("        Optional: read_web_content (user-initiated only, via local Reader service)")
-    print("        Optional: telemetry Phase 2 (NOT implemented, requires re-consent)")
+    print("        Optional: remote statistics and feedback reports (separate opt-ins)")
     print()
 
-    # 7. How to delete
+    # 8. How to delete
     print("  [DEL]  Delete all data:")
     print(f"        rm -rf {data_dir}")
     print("        (This removes ALL Engram data permanently)")

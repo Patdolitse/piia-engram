@@ -991,6 +991,29 @@ def _detect_mcp_client_once() -> None:
         pass  # not in a request context, or client didn't send info
 
 
+def _usage_ping_module():
+    try:
+        from piia_engram import usage_ping as _usage_ping
+    except ImportError:
+        return None
+    return _usage_ping
+
+
+def _start_usage_ping(client_name: str) -> None:
+    """Daily anonymous usage ping. usage_ping allows one attempt per process."""
+    module = _usage_ping_module()
+    if module is not None:
+        module.maybe_send(client_name)
+
+
+def _show_usage_notice() -> None:
+    """Notice on stderr at every start while the ping is on (stdout carries the
+    MCP protocol). Writes nothing, so the one-time CLI notice is still shown."""
+    module = _usage_ping_module()
+    if module is not None:
+        module.maybe_show_notice(sys.stderr, mark=False)
+
+
 def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None:
     """Record a tool call for telemetry and session auto-tracking.
 
@@ -1035,6 +1058,9 @@ def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None
                     return
             except Exception:
                 return
+    # Daily usage ping (network + a write to the user config dir): only past both
+    # governance checks above, so suppressed non-owner calls stay side-effect free.
+    _start_usage_ping(_session.client_info.get("name", "") or "unknown")
     if _tracker is not None:
         _tracker.record(tool_name, success=success)
         _track_count += 1
@@ -1690,6 +1716,7 @@ def main() -> None:
         if _latch:
             print(f"[engram] warning: {_latch}", file=sys.stderr)
     _schedule_startup_sync(_startup_sync_mode(_is_ephemeral))
+    _show_usage_notice()
 
     if args.transport == "sse":
         if not _HAS_STARLETTE:

@@ -49,6 +49,19 @@ _MACHINE_BEHAVIOUR_ENV = (
 for _name in _MACHINE_BEHAVIOUR_ENV:
     os.environ.pop(_name, None)
 
+# The daily usage ping keeps its state (install id, settings, notice marker) in
+# the per-user config dir, outside any store. Remember where that is for the
+# real profile BEFORE any fixture moves it, so a guard test can prove the suite
+# never creates or writes it.
+_PING_PROFILE_ENV = ("APPDATA", "XDG_CONFIG_HOME", "HOME", "USERPROFILE")
+REAL_PROFILE_ENV = {name: os.environ.get(name) for name in _PING_PROFILE_ENV}
+from piia_engram import usage_ping as _usage_ping  # noqa: E402  (after the env seal above)
+
+try:
+    REAL_PING_STATE_DIR = _usage_ping.state_dir()
+except Exception:  # no resolvable home: nothing real to protect
+    REAL_PING_STATE_DIR = None
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _subprocess_pythonpath() -> None:
@@ -105,3 +118,16 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("ENGRAM_NO_UPDATE_CHECK", "1")
     for name in _MACHINE_BEHAVIOUR_ENV:
         monkeypatch.delenv(name, raising=False)
+    # Usage ping state (written by e.g. `engram telemetry on/off`) goes to a
+    # throwaway dir, never the real %APPDATA% / ~/.config / ~/Library profile.
+    # The env covers subprocesses; the patch covers macOS, which uses Path.home().
+    ping_profile = tmp_path / "ping-profile"
+    monkeypatch.setenv("APPDATA", str(ping_profile / "AppData" / "Roaming"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(ping_profile / ".config"))
+    monkeypatch.setattr(_usage_ping, "state_dir", lambda: ping_profile / "piia-engram")
+
+
+@pytest.fixture
+def real_ping_state_dir():
+    """Where the usage ping state lives in the real profile (None if unresolvable)."""
+    return REAL_PING_STATE_DIR
