@@ -26,6 +26,7 @@ from typing import Any
 
 from . import governance_runtime as _gov_rt
 from . import recall as _recall
+from . import recall_policy as _recall_policy
 from . import version_chain as _vc
 
 # Profile fields surfaced in the identity slice, in display order. Kept to the
@@ -288,7 +289,21 @@ def gather_recall_sources(
     ``recent_activity``, ``relevant``, ``query_knowledge`` (both raw,
     post-version-collapse), ``playbooks`` (opt-in), ``collapsed_count`` and
     ``heads_present``.
+
+    Recall eligibility (auto_inject): only trusted rows are returned — pending,
+    superseded and archived rows never reach a recall payload, whatever
+    ``collapse_versions`` says (the flag is kept for compatibility).
+    ``collapsed_count`` counts the superseded rows left out, and
+    ``ineligible`` lists every row left out as ``{"row", "state",
+    "superseded_by"}`` (for the owner-facing Memory Lens only; never part of a
+    recall payload).
     """
+    # A live Engram applies the policy at the source and reports what it left
+    # out; duck-typed stand-ins get the same policy applied below.
+    live = callable(getattr(eng, "_recall_supersede_index", None))
+    dropped_relevant: list = []
+    superseded_hits = 0
+    ineligible: list[dict[str, Any]] = []
     # --- identity -------------------------------------------------------
     profile: dict[str, Any] | None = None
     getter = getattr(eng, "get_safe_profile", None) or getattr(eng, "get_profile", None)
@@ -312,10 +327,12 @@ def gather_recall_sources(
     relevant: list[dict[str, Any]] = []
     if hasattr(eng, "get_relevant_lessons"):
         try:
+            extra = {"_dropped": dropped_relevant} if live else {}
             relevant = eng.get_relevant_lessons(
                 project_folder=project_folder or None,
                 limit=limit,
                 _update_access=False,
+                **extra,
             ) or []
         except Exception:  # pragma: no cover - defensive
             relevant = []
@@ -329,9 +346,25 @@ def gather_recall_sources(
     playbook_query_hits: list[dict[str, Any]] = []
     if query and hasattr(eng, "search_knowledge"):
         try:
-            hits = eng.search_knowledge(query, scope="all", limit=limit) or {}
+            extra = {"include_pending": True, "include_superseded": True} if live else {}
+            hits = eng.search_knowledge(query, scope="all", limit=limit, **extra) or {}
         except Exception:  # pragma: no cover - defensive
             hits = {}
+        for group_name, state in (("pending", _recall_policy.PENDING),
+                                  ("superseded", _recall_policy.SUPERSEDED)):
+            group = hits.get(group_name) if isinstance(hits, dict) else None
+            if not isinstance(group, dict):
+                continue
+            for bucket in ("lessons", "decisions"):
+                for row in group.get(bucket) or []:
+                    if not isinstance(row, dict):
+                        continue
+                    if state == _recall_policy.SUPERSEDED:
+                        superseded_hits += 1
+                    ineligible.append({
+                        "row": row, "state": state,
+                        "superseded_by": str(row.get("superseded_by") or ""),
+                    })
         for bucket in ("lessons", "decisions"):
             rows = hits.get(bucket) if isinstance(hits, dict) else None
             if isinstance(rows, list):
@@ -384,23 +417,41 @@ def gather_recall_sources(
             deduped.append(pb)
         playbooks = deduped
 
-    # --- version collapse (prefer HEAD) ---------------------------------
-    collapsed_count = 0
+    # --- recall eligibility (auto_inject: trusted only; prefer HEAD) ------
+    edges = _load_relation_edges(eng)
+    if live:
+        try:
+            index = eng._recall_supersede_index()
+        except Exception:  # pragma: no cover - defensive
+            index = _recall_policy.build_supersede_index(edges)
+    else:
+        index = _recall_policy.build_supersede_index(edges)
+    collapsed_count = superseded_hits
+    for row, verdict in dropped_relevant:
+        state = getattr(verdict, "state", "")
+        if state == _recall_policy.SUPERSEDED:
+            collapsed_count += 1
+        ineligible.append({"row": row, "state": state,
+                           "superseded_by": getattr(verdict, "superseded_by", "")})
+    kept_buckets = []
+    for bucket in (relevant, query_knowledge, playbooks):
+        part = _recall_policy.partition(bucket, index)
+        collapsed_count += len(part.superseded)
+        kept_buckets.append(list(part.trusted))
+        for state in (_recall_policy.PENDING, _recall_policy.SUPERSEDED, _recall_policy.ARCHIVED):
+            for row in part.group(state):
+                ineligible.append({"row": row, "state": state,
+                                   "superseded_by": part.successor_of(row.get("id"))})
+    relevant, query_knowledge, playbooks = kept_buckets
     heads_present = 0
-    if collapse_versions:
-        edges = _load_relation_edges(eng)
-        if edges:
-            relevant, collapsed_rel = _vc.collapse_to_heads(relevant, edges)
-            query_knowledge, collapsed_q = _vc.collapse_to_heads(query_knowledge, edges)
-            playbooks, collapsed_pb = _vc.collapse_to_heads(playbooks, edges)
-            collapsed_count = len(collapsed_rel) + len(collapsed_q) + len(collapsed_pb)
-            # Render-only surfacing: how many *surviving* items are the current
-            # HEAD of a version chain (so the owner sees "this is the latest").
-            heads = _vc.head_ids(edges)
-            heads_present = sum(
-                1 for item in (relevant + query_knowledge + playbooks)
-                if isinstance(item, dict) and item.get("id") in heads
-            )
+    if edges:
+        # Render-only surfacing: how many *surviving* items are the current
+        # HEAD of a version chain (so the owner sees "this is the latest").
+        heads = _vc.head_ids(edges)
+        heads_present = sum(
+            1 for item in (relevant + query_knowledge + playbooks)
+            if isinstance(item, dict) and item.get("id") in heads
+        )
 
     return {
         "identity": identity,
@@ -410,6 +461,7 @@ def gather_recall_sources(
         "playbooks": playbooks,
         "collapsed_count": collapsed_count,
         "heads_present": heads_present,
+        "ineligible": ineligible,
     }
 
 

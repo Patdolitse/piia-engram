@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import recall_policy as _recall_policy
 from .continuity_digest import build_session_digest, sanitize_digest_value
 from .encoding_repair import repair_text
 from .storage import _atomic_write_json, _project_id, _project_id_aliases
@@ -1165,6 +1166,17 @@ class ContextStoreMixin:
                 "source": "project_snapshot",
             })
 
+        # A row replaced by a newer version is never trusted context.
+        try:
+            index_of = getattr(self, "_recall_supersede_index", None)
+            supersede_index = index_of() if callable(index_of) else _recall_policy.EMPTY_INDEX
+        except Exception:
+            supersede_index = _recall_policy.EMPTY_INDEX
+
+        def _superseded(row: dict) -> bool:
+            verdict = _recall_policy.classify(row, supersede_index)
+            return verdict.state == _recall_policy.SUPERSEDED
+
         try:
             try:
                 lessons = self.get_lessons(
@@ -1186,6 +1198,9 @@ class ContextStoreMixin:
                 continue
             if _context_entry_is_soft_archived(lesson):
                 _omit("lesson", "archived", "knowledge")
+                continue
+            if _superseded(lesson):
+                _omit("lesson", "superseded", "knowledge")
                 continue
             if project_folder and not _context_entry_visible_for_project(
                 lesson,
@@ -1250,6 +1265,9 @@ class ContextStoreMixin:
                 continue
             if _context_entry_is_soft_archived(decision):
                 _omit("decision", "archived", "knowledge")
+                continue
+            if _superseded(decision):
+                _omit("decision", "superseded", "knowledge")
                 continue
             if project_folder and not _context_entry_visible_for_project(
                 decision,
@@ -2023,21 +2041,26 @@ class ContextStoreMixin:
             sections_skipped.append(f"recent_context ({exc})")
 
         # ---- 5. Top lessons + decisions --------------------------------
-        version_superseded: set[str] = set()
+        # Recall eligibility (auto_inject): trusted rows only; the supersede
+        # index ignores edges from unreviewed rows and edges inside a cycle.
+        supersede_index = _recall_policy.EMPTY_INDEX
         version_heads: set[str] = set()
         try:
             root = getattr(self, "root", None)
             if root is not None:
                 from .governance_store import RelationStore
-                from . import decision_thread as _dt
                 from . import version_chain as _vc
 
                 honored = getattr(self, "_honored_relation_edges", None)
                 edges = honored() if callable(honored) else RelationStore(root).all_edges()
-                version_superseded = _dt.superseded_ids(edges, scope=None)
+                index_of = getattr(self, "_recall_supersede_index", None)
+                supersede_index = (
+                    index_of() if callable(index_of)
+                    else _recall_policy.build_supersede_index(edges)
+                )
                 version_heads = _vc.head_ids(edges)
         except Exception:
-            version_superseded = set()
+            supersede_index = _recall_policy.EMPTY_INDEX
             version_heads = set()
 
         try:
@@ -2068,7 +2091,7 @@ class ContextStoreMixin:
                         if L.get("tier") and L.get("tier") != "verified":
                             continue
                         lesson_id = L.get("id")
-                        if isinstance(lesson_id, str) and lesson_id in version_superseded:
+                        if _recall_policy.classify(L, supersede_index).state != _recall_policy.TRUSTED:
                             continue
                         summary = (L.get("summary") or "").strip()
                         if summary:
@@ -2116,7 +2139,7 @@ class ContextStoreMixin:
                         if D.get("tier") and D.get("tier") != "verified":
                             continue
                         decision_id = D.get("id")
-                        if isinstance(decision_id, str) and decision_id in version_superseded:
+                        if _recall_policy.classify(D, supersede_index).state != _recall_policy.TRUSTED:
                             continue
                         q = (D.get("question") or D.get("title") or "").strip()
                         c = (D.get("choice") or "").strip()

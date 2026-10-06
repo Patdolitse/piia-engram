@@ -118,6 +118,10 @@ try:
 except ImportError:
     import recall_service as _recall_service  # noqa: E402
 try:
+    from . import recall_policy as _recall_policy  # noqa: E402
+except ImportError:
+    import recall_policy as _recall_policy  # noqa: E402
+try:
     from . import context_governance as _context_governance  # noqa: E402
 except ImportError:
     import context_governance as _context_governance  # noqa: E402

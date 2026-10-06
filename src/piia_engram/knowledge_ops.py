@@ -10,6 +10,7 @@ from typing import Any
 from . import capacity as _capacity
 from . import freshness_anchors as _freshness_anchors
 from . import provenance as _provenance
+from . import recall_policy as _recall_policy
 from .storage import _now_iso, overflow_batch
 
 
@@ -162,12 +163,17 @@ class KnowledgeOpsMixin:
 
         ``version`` requests an exact by-version lookup — a miss returns
         ``{"error": "version_not_found", ...}``, never a nearest neighbor.
+
+        By-id read (recall eligibility): the result names the item's own state
+        (``eligibility``) and, when a newer version replaced it, its
+        ``superseded_by`` id; every snapshot names the row that superseded it.
         """
         item_type, item = self._find_item_by_id(item_id)
         if item is None:
             item_type, item, _where = self._find_lineage_record(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
+        verdict = _recall_policy.classify(item, self._recall_supersede_index())
         head_version = int(item.get("version") or 1)
         records: dict[str, dict] = {}
         if item_type in {"lesson", "decision"}:
@@ -218,6 +224,7 @@ class KnowledgeOpsMixin:
                 "snapshot_version": snapshot_version,
                 "superseded_at": record.get("superseded_at", ""),
                 "snapshot_of": record.get("snapshot_of", ""),
+                "superseded_by": str(record.get("superseded_by") or item_id),
                 "status": record.get("status", ""),
                 "tier": record.get("tier", ""),
             }
@@ -252,7 +259,7 @@ class KnowledgeOpsMixin:
                 "requested_version": version,
                 "head_version": head_version,
             }
-        return {
+        result = {
             "id": item_id,
             "type": item_type,
             "head_version": head_version,
@@ -261,7 +268,13 @@ class KnowledgeOpsMixin:
             "total_body_size": total_body_size,
             "pending_commits": len(pending),
             "pending_commit_ids": pending,
+            "eligibility": verdict.state,
         }
+        if verdict.superseded_by:
+            result["superseded_by"] = verdict.superseded_by
+        if verdict.state == _recall_policy.PENDING:
+            result["pending_untrusted"] = True
+        return result
 
     def create_onboard_candidate(
         self,
@@ -1519,6 +1532,14 @@ class KnowledgeOpsMixin:
         if item is None or item_type is None:
             return {"error": f"Item not found: {item_id}"}
 
+        # By-id read: every row comes back, labelled with its eligibility.
+        index = self._recall_supersede_index()
+
+        def _view(kind: str, row: dict) -> dict:
+            return _recall_policy.label(
+                self._knowledge_view(kind, row), _recall_policy.classify(row, index)
+            )
+
         related = []
         for related_id in item.get("related_ids", []):
             related_type, related_item = self._find_item_in_collections(
@@ -1528,10 +1549,10 @@ class KnowledgeOpsMixin:
                 playbooks,
             )
             if related_item is not None and related_type is not None:
-                related.append(self._knowledge_view(related_type, related_item))
+                related.append(_view(related_type, related_item))
 
         return {
-            "source": self._knowledge_view(item_type, item),
+            "source": _view(item_type, item),
             "related": related,
             "total": len(related),
         }

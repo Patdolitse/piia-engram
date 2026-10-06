@@ -20,6 +20,10 @@ from .storage import ReadOnlyStoreError
 from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
 from . import provenance as _provenance
+from . import recall_policy as _recall_policy
+
+# (store root, cycle ids) pairs already reported, so a cycle warns once per process.
+_SUPERSEDE_CYCLES_WARNED: set[tuple[str, frozenset]] = set()
 
 # All constants and I/O utilities live in storage.py — re-exported here
 # for backward compatibility (tests import from piia_engram.core).
@@ -1881,6 +1885,32 @@ class Engram(
         from . import version_chain as _vc
 
         return _vc.honored_edges(RelationStore(self.root).all_edges(), self._reviewed_ids())
+
+    def _recall_supersede_index(self) -> "_recall_policy.SupersedeIndex":
+        """Supersede index every recall surface classifies against.
+
+        Built from the honored edges, so an unreviewed row never hides a
+        reviewed one. A cycle of ``supersedes`` edges is logged once per store
+        and cycle set (audit ``warn``, ids only); its members keep their own
+        state. Never raises: a broken relation file yields an empty index.
+        """
+        try:
+            edges = self._honored_relation_edges()
+        except Exception:  # never break a read over a damaged relation file
+            edges = []
+        index = _recall_policy.build_supersede_index(edges)
+        if index.cycle_ids:
+            key = (str(self.root), index.cycle_ids)
+            if key not in _SUPERSEDE_CYCLES_WARNED:
+                _SUPERSEDE_CYCLES_WARNED.add(key)
+                try:
+                    self._audit.log(
+                        "warn", "knowledge/relations",
+                        detail="supersede_cycle ids=" + ",".join(sorted(index.cycle_ids)),
+                    )
+                except Exception:  # audit must never break a read
+                    pass
+        return index
 
     def _archived_only_rows(self, entry_type: str) -> dict[str, dict]:
         """Current archived rows whose id is not in the active file (a restored row is active)."""

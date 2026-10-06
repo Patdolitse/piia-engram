@@ -7233,11 +7233,15 @@ def test_search_knowledge_filters_by_tier(tmp_path: Path):
     engram.add_lesson({"summary": "staging draft about async error handling", "tier": "staging"})
     engram.add_lesson({"summary": "confirmed practice for async retry logic", "tier": "verified"})
 
-    staging_only = engram.search_knowledge("async", filters={"tier": "staging"})
+    staging_only = engram.search_knowledge(
+        "async", filters={"tier": "staging"}, include_pending=True
+    )
     verified_only = engram.search_knowledge("async", filters={"tier": "verified"})
 
-    assert len(staging_only["lessons"]) >= 1
-    assert all(l.get("tier") == "staging" for l in staging_only["lessons"])
+    # pending (staging) rows are a separate group, never in the result lists
+    assert staging_only["lessons"] == []
+    assert len(staging_only["pending"]["lessons"]) >= 1
+    assert all(l.get("tier") == "staging" for l in staging_only["pending"]["lessons"])
     assert len(verified_only["lessons"]) >= 1
     assert all(l.get("tier") == "verified" for l in verified_only["lessons"])
 

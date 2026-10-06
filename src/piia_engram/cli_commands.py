@@ -3085,6 +3085,7 @@ def _run_dock_search(args: list[str]) -> int:
             filters=None,
             project_folder=None,
             allow_hybrid_index=False,
+            include_pending=True,
         )
     except Exception as exc:  # never crash the Dock spawn — emit a usable error
         if want_json:
@@ -3122,32 +3123,40 @@ def _run_dock_search(args: list[str]) -> int:
         return "\n".join([p for p in parts if p])
 
     results = []
-    for kind in ("lessons", "decisions", "playbooks"):
-        for it in raw.get(kind, []):
-            entry = {
-                "kind": kind[:-1],  # lesson / decision / playbook
-                "title": _title(kind, it),
-                "tier": it.get("tier", ""),
-                "id": it.get("id", ""),
-                "copy": _copy(kind, it),
+    # Reviewed results first, then the items still waiting for review (never
+    # interleaved), each of those flagged pending_untrusted.
+    pending_group = raw.get("pending") if isinstance(raw.get("pending"), dict) else {}
+    ordered = [(kind, it, False) for kind in ("lessons", "decisions", "playbooks")
+               for it in raw.get(kind, [])]
+    ordered += [(kind, it, True) for kind in ("lessons", "decisions", "playbooks")
+                for it in (pending_group.get(kind) or [])]
+    for kind, it, is_pending in ordered:
+        entry = {
+            "kind": kind[:-1],  # lesson / decision / playbook
+            "title": _title(kind, it),
+            "tier": it.get("tier", ""),
+            "id": it.get("id", ""),
+            "copy": _copy(kind, it),
+        }
+        if is_pending:
+            entry["pending_untrusted"] = True
+        labeling = _dock_labeling_projection(it)
+        if labeling:
+            entry["labeling"] = labeling
+        # raw editable fields for the dock's inline edit (lesson/decision only)
+        if kind == "lessons":
+            entry["fields"] = {
+                "summary": it.get("summary", "") or "",
+                "detail": it.get("detail", "") or "",
             }
-            labeling = _dock_labeling_projection(it)
-            if labeling:
-                entry["labeling"] = labeling
-            # raw editable fields for the dock's inline edit (lesson/decision only)
-            if kind == "lessons":
-                entry["fields"] = {
-                    "summary": it.get("summary", "") or "",
-                    "detail": it.get("detail", "") or "",
-                }
-            elif kind == "decisions":
-                entry["fields"] = {
-                    # extraction-written decisions keep primary text in `title`
-                    "question": it.get("question") or it.get("title") or "",
-                    "choice": it.get("choice", "") or "",
-                    "reasoning": it.get("reasoning", "") or "",
-                }
-            results.append(entry)
+        elif kind == "decisions":
+            entry["fields"] = {
+                # extraction-written decisions keep primary text in `title`
+                "question": it.get("question") or it.get("title") or "",
+                "choice": it.get("choice", "") or "",
+                "reasoning": it.get("reasoning", "") or "",
+            }
+        results.append(entry)
 
     if want_json:
         print(json.dumps(

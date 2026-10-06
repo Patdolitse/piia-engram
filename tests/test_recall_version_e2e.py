@@ -109,8 +109,9 @@ def test_recall_ordering_is_stable_and_collapses_to_head():
     eng, edges = _fixture_engram()
     payload = _gather(eng, edges)
     labels = [k.get("summary") or k.get("choice") for k in payload["knowledge"]]
-    # v1 is superseded by v2 → dropped; order is relevant-first then query-only.
-    assert labels == ["current take", "another lesson", "query hit lesson", "no"]
+    # v1 is superseded by v2 → dropped; k3 is pending review → never recalled;
+    # order is relevant-first then query-only.
+    assert labels == ["current take", "query hit lesson", "no"]
     assert payload["meta"]["collapsed_versions"] == 1
 
 

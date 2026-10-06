@@ -117,8 +117,12 @@ def test_staging_excluded_for_non_owner_but_not_owner():
     assistant = build_context_preview(eng, role="assistant")
     assert assistant["knowledge"]["withheld_count"] == 1
     assert assistant["knowledge"]["withheld"][0]["withheld_reason"] == "staging_excluded"
+    # A pending row is never injected, for the owner either; the owner's
+    # preview names it with the review reason instead of exposing it.
     owner = build_context_preview(eng, role="owner")
-    assert owner["knowledge"]["withheld_count"] == 0
+    assert owner["knowledge"]["exposed_count"] == 0
+    assert owner["knowledge"]["withheld_count"] == 1
+    assert owner["knowledge"]["withheld"][0]["withheld_reason"] == "pending_review"
 
 
 def test_query_knowledge_is_merged_in():

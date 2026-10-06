@@ -391,6 +391,8 @@ class TestSearchTools:
             "filters": None,
             "allow_hybrid_index": True,
             "project_folder": None,
+            "include_pending": True,
+            "include_superseded": False,
         }
 
     @pytest.mark.parametrize(
@@ -1843,8 +1845,11 @@ def test_mcp_search_knowledge_filters_json_passes_filters(isolated_engram: Engra
         query="caching", filters_json='{"tier": "staging"}',
     ))
     parsed = json.loads(result)
-    assert len(parsed["lessons"]) >= 1
-    assert all(l.get("tier") == "staging" for l in parsed["lessons"])
+    # pending (staging) items come back in their own group, never mixed in
+    assert parsed["lessons"] == []
+    pending = parsed["pending"]["lessons"]
+    assert len(pending) >= 1
+    assert all(l.get("tier") == "staging" and l["pending_untrusted"] is True for l in pending)
 
 
 def test_mcp_search_knowledge_invalid_filters_json(isolated_engram: Engram):

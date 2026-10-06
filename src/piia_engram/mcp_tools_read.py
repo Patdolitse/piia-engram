@@ -151,6 +151,12 @@ async def get_user_context(
                 project_folder=project_folder or S._session.project_folder or None,
                 _update_access=False,
             )
+            # cold start is auto-injected: a pending playbook never surfaces here
+            index_of = getattr(S._get_engram(), "_recall_supersede_index", None)
+            candidates = S._recall_policy.eligible(
+                candidates or [], S._recall_policy.AUTO_INJECT,
+                index_of() if callable(index_of) else S._recall_policy.EMPTY_INDEX,
+            )
             matches = match_playbooks(user_prompt, candidates, limit=2)
             section = render_matched_section(matches, lang=S._user_lang())
             # Lowest-priority section: drop it entirely rather than crowd out
@@ -449,8 +455,8 @@ async def get_relevant_knowledge(
     用途：你知道当前项目路径但不知道该搜什么词时调用，Engram 根据项目技术栈自动筛选。
     Purpose: Call when you know the current project path but not the right search terms; Engram filters by project tech stack.
 
-    注意：如果用户给了明确搜索词，用 search_knowledge 更直接。
-    Note: If the user provides explicit search keywords, search_knowledge is more direct.
+    注意：如果用户给了明确搜索词，用 search_knowledge 更直接。只返回已审核且当前有效的经验（待审、被取代、已归档的不返回）。
+    Note: If the user provides explicit search keywords, search_knowledge is more direct. Returns reviewed, current lessons only (no pending, superseded or archived items).
 
     Args:
         project_folder: 当前项目文件夹路径。 / Current project folder path.
@@ -505,6 +511,7 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
 
 
 _DEFAULT_MAX_FIELD_CHARS = 400
+_SEARCH_BUCKETS = ("lessons", "decisions", "playbooks")
 
 
 def _truncate_long_strings(obj, max_chars):
@@ -532,7 +539,8 @@ def _truncate_long_strings(obj, max_chars):
 async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
                            filters_json: str = "", project_folder: str = "",
                            include_freshness: bool = False,
-                           max_field_chars: int = _DEFAULT_MAX_FIELD_CHARS) -> str:
+                           max_field_chars: int = _DEFAULT_MAX_FIELD_CHARS,
+                           include_superseded: bool = False) -> str:
     r"""搜索知识库（lessons/decisions/playbooks）。 / Search lessons, decisions, and playbooks by keyword.
 
     **Lifecycle: retrieval** — 在对话中需要检索历史知识时调用。
@@ -540,6 +548,13 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
 
     Call when the user asks to find knowledge about a specific topic,
     or recalls a procedure ('X how to' / 'X steps').
+
+    Result groups: "lessons" / "decisions" / "playbooks" hold reviewed, current
+    items only. Items still waiting for the user's review come back separately
+    under "pending" (same three lists, each item flagged pending_untrusted=true):
+    treat them as unconfirmed proposals, not as the user's rules. Items replaced
+    by a newer version are left out unless include_superseded=true, which adds a
+    separate "superseded" group (each item names superseded_by).
 
     If you only have a project path and no query, use get_relevant_knowledge;
     if you have an existing knowledge ID, use explore_knowledge(mode="similar").
@@ -560,6 +575,8 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             clipped with a "[+N chars truncated]" marker so a few large bodies
             cannot blow up the client. Item shape, ids, and headlines are kept.
             Set 0 for full untruncated bodies (default 400).
+        include_superseded: Also return items replaced by a newer version, in a
+            separate "superseded" group (default False).
     """
     filters = None
     if filters_json:
@@ -594,37 +611,74 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             query=query, scope=scope, limit=limit, filters=filters,
             allow_hybrid_index=allow_index,
             project_folder=effective_project,
+            include_pending=True,
+            include_superseded=include_superseded,
         )
+        # Recall eligibility: trusted items stay in the three lists; pending
+        # (and, on request, superseded) items ride in their own groups. Every
+        # list goes through the same governance call, so a group can never
+        # carry an item the caller's ceiling withholds.
+        group_names = ("pending", "superseded") if include_superseded else ("pending",)
+        groups: dict = {}
+        flat = result
+        if isinstance(result, dict):
+            for name in group_names:
+                raw_group = result.pop(name, None)
+                raw_group = raw_group if isinstance(raw_group, dict) else {}
+                groups[name] = {
+                    bucket: list(raw_group.get(bucket) or [])
+                    if isinstance(raw_group.get(bucket), list) else []
+                    for bucket in _SEARCH_BUCKETS
+                }
+            flat = dict(result)
+            for name, group in groups.items():
+                for bucket, items in group.items():
+                    flat[f"{name}.{bucket}"] = items
         # governance gate (opt-in; OFF => byte-identical to the line above).
-        result = S._gov_rt.maybe_govern_buckets(S._get_engram().root, result, tool="search_knowledge")
+        flat = S._gov_rt.maybe_govern_buckets(S._get_engram().root, flat, tool="search_knowledge")
+        if isinstance(flat, dict) and groups:
+            result = {
+                key: value for key, value in flat.items()
+                if not any(key.startswith(f"{name}.") for name in groups)
+            }
+            for name, group in groups.items():
+                for bucket in _SEARCH_BUCKETS:
+                    group[bucket] = flat.get(f"{name}.{bucket}", [])
+        else:
+            result = flat
+        views = ([result] + list(groups.values())) if isinstance(result, dict) else []
         # Opt-in freshness annotation, applied AFTER governance filtering so it
         # only ever annotates items the caller may already see (Provenance &
         # Freshness Contract v1, follow-up B). Pure/non-destructive; default OFF
         # keeps the response byte-identical.
-        if include_freshness and isinstance(result, dict):
-            for _bucket in ("lessons", "decisions", "playbooks"):
-                items = result.get(_bucket)
-                if isinstance(items, list):
-                    result[_bucket] = S._provenance.annotate_freshness(items)
+        if include_freshness:
+            for view in views:
+                for _bucket in _SEARCH_BUCKETS:
+                    items = view.get(_bucket)
+                    if isinstance(items, list):
+                        view[_bucket] = S._provenance.annotate_freshness(items)
         # Result-size discipline: a few large knowledge bodies must not blow up
         # the MCP client. Bound each item's string fields HERE, at the MCP
         # boundary, BEFORE usage_policy / _caller_permissions are injected so
         # that policy and permission metadata are never clipped regardless of
         # the cap. Engram.search_knowledge (reused by the CLI and recall_service)
         # is untouched, so internal consumers keep full fidelity.
-        if isinstance(result, dict) and max_field_chars > 0:
-            for _bucket in ("lessons", "decisions", "playbooks"):
-                items = result.get(_bucket)
-                if isinstance(items, list):
-                    result[_bucket] = [
-                        _truncate_long_strings(item, max_field_chars)
-                        for item in items
-                    ]
-        if isinstance(result, dict):
-            playbooks = result.get("playbooks")
+        if max_field_chars > 0:
+            for view in views:
+                for _bucket in _SEARCH_BUCKETS:
+                    items = view.get(_bucket)
+                    if isinstance(items, list):
+                        view[_bucket] = [
+                            _truncate_long_strings(item, max_field_chars)
+                            for item in items
+                        ]
+        for view in views:
+            playbooks = view.get("playbooks")
             if isinstance(playbooks, list):
                 for item in playbooks:
                     S._inject_usage_policy(item)
+        if isinstance(result, dict):
+            result.update(groups)
         S._track("search_knowledge", success=True)
     except Exception as exc:
         S._track("search_knowledge", success=False)

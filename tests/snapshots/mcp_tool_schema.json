@@ -1776,6 +1776,13 @@
           "required": false,
           "default": "_DEFAULT_MAX_FIELD_CHARS",
           "kind": "positional_or_keyword"
+        },
+        {
+          "name": "include_superseded",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
+          "kind": "positional_or_keyword"
         }
       ],
       "returns": "str"

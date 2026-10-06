@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
+from . import recall_policy as _recall_policy
 from .continuity_digest import build_session_digest, sanitize_digest_value
 from .storage import (
     overflow_batch,
@@ -1456,6 +1457,11 @@ class ContextMixin:
 
         # ── Build each section independently ──────────────────────────
         sections: dict[str, str] = {}
+        # Recall eligibility (auto_inject): cold start shows trusted rows only.
+        supersede_index = self._recall_supersede_index()
+
+        def _trusted(rows: list[dict]) -> list[dict]:
+            return _recall_policy.eligible(rows, _recall_policy.AUTO_INJECT, supersede_index)
 
         # Data fragmentation warning — surface before any content.
         if getattr(self, "data_orphans", None):
@@ -1573,10 +1579,14 @@ class ContextMixin:
 
         # Decisions
         if _wants("decisions"):
+            # superseded decisions (e.g. an older choice for the same question)
+            # never take one of the six slots
             decisions = [
-                d for d in self.get_decisions(limit=6, _update_access=False, tier="verified")
+                d for d in _trusted(
+                    self.get_decisions(limit=None, _update_access=False, tier="verified")
+                )
                 if (d.get("tier") or d.get("memory_state")) == "verified"
-            ]
+            ][-6:]
             if decisions:
                 dc: list[str] = ["\n## 已做的关键决策（请遵循）"]
                 for d in decisions:
@@ -1594,7 +1604,9 @@ class ContextMixin:
 
         # Recent playbooks
         if _wants("playbooks"):
-            recent_pbs = self.get_recent_playbooks(limit=5, project_folder=project_folder)
+            recent_pbs = _trusted(
+                self.get_recent_playbooks(limit=5, project_folder=project_folder)
+            )
             if recent_pbs:
                 pb_lines: list[str] = ["\n## 近期操作手册"]
                 for pb in recent_pbs:

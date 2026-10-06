@@ -37,6 +37,7 @@ from .permission_profile_vnext import (
     CallerContext,
     resolve_effective_profile,
 )
+from . import recall_policy as _recall_policy
 from .recall import _entry_type, merge_knowledge
 from .recall_service import gather_recall_sources
 from .safe_context import build_safe_context
@@ -62,6 +63,13 @@ ROLE_TRUST_ANCHORS: dict[str, str] = {
 DEFAULT_ROLE = "assistant"
 
 _REDACTION_PLACEHOLDER = "[REDACTED]"
+
+# withheld reason for a row the recall policy keeps out of every injection
+_INELIGIBLE_REASONS: dict[str, str] = {
+    "pending": "pending_review",
+    "superseded": "superseded",
+    "archived": "archived",
+}
 
 
 def _knowledge_digest(item: dict[str, Any]) -> dict[str, Any]:
@@ -166,6 +174,29 @@ def build_context_preview(
             withheld_items.append(digest)
         else:
             exposed_pre.append(digest)
+    # Rows the recall policy keeps out of every injection (awaiting review,
+    # replaced by a newer version, archived). The owner sees them here with
+    # the reason; a governance reason wins, as it does for eligible rows.
+    seen_ineligible: set[str] = set()
+    for entry in sources.get("ineligible") or []:
+        item = entry.get("row") if isinstance(entry, dict) else None
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("id") or id(item))
+        if key in seen_ineligible:
+            continue
+        seen_ineligible.add(key)
+        digest = _knowledge_digest(item)
+        state = str(entry.get("state") or "")
+        if _sens_rank(item.get("sensitivity", DEFAULT_SENSITIVITY)) > ceiling_rank:
+            digest["withheld_reason"] = "sensitivity_above_ceiling"
+        elif profile.staging_excluded and state == _recall_policy.PENDING:
+            digest["withheld_reason"] = "staging_excluded"
+        else:
+            digest["withheld_reason"] = _INELIGIBLE_REASONS.get(state, "not_eligible")
+        if entry.get("superseded_by"):
+            digest["superseded_by"] = str(entry["superseded_by"])
+        withheld_items.append(digest)
     # Withheld summaries are owner-facing metadata, but the report may be
     # saved/shared — scrub credential/PII shapes there too (not counted as
     # injection redaction hits; this is preview hygiene, not the send path).
@@ -210,6 +241,13 @@ def build_context_preview(
             )
 
     generated_at = (now or datetime.now()).replace(microsecond=0).isoformat()
+    knowledge_panel: dict[str, Any] = {
+        "exposed": exposed_digests,
+        "withheld": withheld_items,
+        "exposed_count": len(exposed_digests),
+        "withheld_count": len(withheld_items),
+        "trimmed_by_budget": trimmed_by_budget,
+    }
     return {
         "generated_at": generated_at,
         "level": level_key,
@@ -229,13 +267,7 @@ def build_context_preview(
             "exposed": safe_identity,
             "withheld_fields": withheld_fields,
         },
-        "knowledge": {
-            "exposed": exposed_digests,
-            "withheld": withheld_items,
-            "exposed_count": len(exposed_digests),
-            "withheld_count": len(withheld_items),
-            "trimmed_by_budget": trimmed_by_budget,
-        },
+        "knowledge": knowledge_panel,
         "redaction": {
             "placeholder": _REDACTION_PLACEHOLDER,
             "hits": redaction_hits,
@@ -258,6 +290,9 @@ def build_context_preview(
 _REASON_LABELS: dict[str, tuple[str, str]] = {
     "sensitivity_above_ceiling": ("敏感度高于该调用方上限", "above this caller's sensitivity ceiling"),
     "staging_excluded": ("暂存层对该调用方不可见", "staging tier hidden from this caller"),
+    "pending_review": ("待审，批准前不会注入", "awaiting review; never injected before approval"),
+    "superseded": ("已被新版本取代", "replaced by a newer version"),
+    "archived": ("已归档", "archived"),
 }
 _TYPE_LABELS: dict[str, tuple[str, str]] = {
     "lesson": ("经验", "lesson"),

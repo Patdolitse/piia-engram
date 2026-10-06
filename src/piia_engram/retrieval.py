@@ -16,6 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from . import recall_policy as _recall_policy
 from .search_index import (
     SearchIndex,
     _content_hash,
@@ -808,8 +809,19 @@ class RetrievalMixin:
     def search_knowledge(self, query: str, scope: str = "all", limit: int = 10,
                           filters: dict | None = None,
                           allow_hybrid_index: bool = True,
-                          project_folder: str | None = None) -> dict:
+                          project_folder: str | None = None,
+                          include_pending: bool = False,
+                          include_superseded: bool = False) -> dict:
         """Search lessons, decisions, and playbooks by weighted multi-term relevance.
+
+        Recall eligibility (explicit_search): the ``lessons`` / ``decisions`` /
+        ``playbooks`` lists hold trusted rows only. Pending rows come back in a
+        separate ``pending`` group (each flagged ``pending_untrusted``) when
+        ``include_pending`` is set; superseded rows in a separate
+        ``superseded`` group (each naming ``superseded_by``) when
+        ``include_superseded`` is set. Each group is ranked on its own, so the
+        groups never interleave. Archived rows are never returned. Under strict
+        approval a pending playbook stays hidden everywhere, as before.
 
         Args:
             query: Search keywords (space-separated).
@@ -829,9 +841,19 @@ class RetrievalMixin:
         """
         terms = [term for term in (query or "").lower().split() if term]
         results: dict = {"lessons": [], "decisions": [], "playbooks": []}
+        pending_group: dict = {"lessons": [], "decisions": [], "playbooks": []}
+        superseded_group: dict = {"lessons": [], "decisions": [], "playbooks": []}
+
+        def _with_groups(out: dict) -> dict:
+            if include_pending:
+                out["pending"] = pending_group
+            if include_superseded:
+                out["superseded"] = superseded_group
+            return out
+
         limit = max(0, int(limit))
         if not terms or limit == 0:
-            return results
+            return _with_groups(results)
 
         filters = filters or {}
 
@@ -873,27 +895,51 @@ class RetrievalMixin:
                 self._indexable_entries_for_project(project_folder)
             )
 
+        supersede_index = self._recall_supersede_index()
+
+        def _rank_groups(bucket: str, rows: list[dict]) -> None:
+            part = _recall_policy.partition(rows, supersede_index)
+            results[bucket] = self._rank_scope(part.trusted, terms, query, limit, hybrid_idx)
+            if include_pending and part.pending:
+                pending_group[bucket] = [
+                    _recall_policy.mark_pending(view)
+                    for view in self._rank_scope(part.pending, terms, query, limit, hybrid_idx)
+                ]
+            if include_superseded and part.superseded:
+                superseded_group[bucket] = [
+                    _recall_policy.mark_superseded(view, part.successor_of(view.get("id")))
+                    for view in self._rank_scope(part.superseded, terms, query, limit, hybrid_idx)
+                ]
+
+        def _live_or_requested_snapshot(row: dict) -> bool:
+            if row.get("status") == "active":
+                return True
+            # a legacy version snapshot still in the active file
+            return include_superseded and (
+                row.get("status") == "superseded" or bool(row.get("snapshot_of"))
+            )
+
         if scope in ("all", "lessons"):
             candidates = [
                 lesson for lesson in self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
                 if (
-                    lesson.get("status") == "active"
+                    _live_or_requested_snapshot(lesson)
                     and self._entry_visible_for_project(lesson, project_folder)
                     and _matches_filters(lesson)
                 )
             ]
-            results["lessons"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
+            _rank_groups("lessons", candidates)
 
         if scope in ("all", "decisions"):
             candidates = [
                 decision for decision in self._read_entries(self._knowledge_dir / "decisions.json", "decision")
                 if (
-                    decision.get("status") == "active"
+                    _live_or_requested_snapshot(decision)
                     and self._entry_visible_for_project(decision, project_folder)
                     and _matches_filters(decision)
                 )
             ]
-            results["decisions"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
+            _rank_groups("decisions", candidates)
 
         if scope in ("all", "playbooks"):
             index_entries = [
@@ -925,16 +971,17 @@ class RetrievalMixin:
                     and _matches_filters(pb)
                 ):
                     candidates.append(pb)
-            results["playbooks"] = self._rank_scope(candidates, terms, query, limit, hybrid_idx)
+            _rank_groups("playbooks", candidates)
 
         # Model-facing read: the ranked views are fresh copies (never written
         # back), so substitute a placeholder for any content field whose
         # decryption silently failed instead of surfacing raw ciphertext.
         if self._corpus_key:
-            results["lessons"] = self._display_sanitize(results["lessons"], "lesson")
-            results["decisions"] = self._display_sanitize(results["decisions"], "decision")
-            results["playbooks"] = self._display_sanitize(results["playbooks"], "playbook")
-        return results
+            for group in (results, pending_group, superseded_group):
+                group["lessons"] = self._display_sanitize(group["lessons"], "lesson")
+                group["decisions"] = self._display_sanitize(group["decisions"], "decision")
+                group["playbooks"] = self._display_sanitize(group["playbooks"], "playbook")
+        return _with_groups(results)
 
     def _rank_scope(self, candidates: list[dict], terms: list[str], query: str,
                     limit: int, hybrid_idx: "SearchIndex | None") -> list[dict]:
@@ -1000,7 +1047,8 @@ class RetrievalMixin:
     def get_relevant_lessons(self, project_folder: str | None = None,
                              limit: int = 8,
                              tier: str | None = None,
-                             _update_access: bool = True) -> list[dict]:
+                             _update_access: bool = True,
+                             _dropped: list | None = None) -> list[dict]:
         """根据项目技术栈智能筛选教训：相关领域优先，兼顾通用教训。
 
         策略：
@@ -1012,6 +1060,10 @@ class RetrievalMixin:
 
         v4.21: ranks every visible lesson (not only the newest 200), and
         only the lessons it returns count as read.
+
+        Recall eligibility (auto_inject): only trusted lessons are ranked —
+        pending, superseded and archived rows never take a slot. ``_dropped``
+        (internal) collects ``(row, Eligibility)`` for every row left out.
         """
         all_lessons = self.get_lessons(
             limit=None,
@@ -1019,6 +1071,17 @@ class RetrievalMixin:
             tier=tier,
             _update_access=False,
         )
+        if not all_lessons:
+            return []
+        index = self._recall_supersede_index()
+        trusted: list[dict] = []
+        for lesson in all_lessons:
+            verdict = _recall_policy.classify(lesson, index)
+            if verdict.state == _recall_policy.TRUSTED:
+                trusted.append(lesson)
+            elif _dropped is not None:
+                _dropped.append((lesson, verdict))
+        all_lessons = trusted
         if not all_lessons:
             return []
 
@@ -1142,6 +1205,14 @@ class RetrievalMixin:
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type is None:
             return {"error": f"Item not found: {item_id}"}
+        # By-id read: rows keep coming back (a proposal check must see pending
+        # near-duplicates), each labelled with its eligibility.
+        index = self._recall_supersede_index()
+
+        def _view(kind: str, row: dict) -> dict:
+            return _recall_policy.label(
+                self._knowledge_view(kind, row), _recall_policy.classify(row, index)
+            )
 
         source_text = str(
             item.get("summary")
@@ -1151,7 +1222,7 @@ class RetrievalMixin:
         )
         if not source_text:
             return {
-                "source": self._knowledge_view(item_type, item),
+                "source": _view(item_type, item),
                 "similar": [],
                 "total": 0,
             }
@@ -1176,14 +1247,14 @@ class RetrievalMixin:
                 )
                 similarity = self._bigram_similarity(source_text, candidate_text)
                 if similarity > 0.2:
-                    candidate = self._knowledge_view(entry_type, entry)
+                    candidate = _view(entry_type, entry)
                     candidate["similarity"] = round(similarity, 3)
                     candidates.append(candidate)
 
         candidates.sort(key=lambda candidate: candidate["similarity"], reverse=True)
         candidates = candidates[:max(0, int(limit))]
         return {
-            "source": self._knowledge_view(item_type, item),
+            "source": _view(item_type, item),
             "similar": candidates,
             "total": len(candidates),
         }

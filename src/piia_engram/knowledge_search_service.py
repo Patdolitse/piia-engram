@@ -24,8 +24,20 @@ def search_knowledge(
     filters: dict[str, Any] | None = None,
     project_folder: str | None = None,
     allow_hybrid_index: bool = True,
+    include_pending: bool = False,
+    include_superseded: bool = False,
 ) -> dict[str, Any]:
-    """Run the core knowledge search through a narrow application boundary."""
+    """Run the core knowledge search through a narrow application boundary.
+
+    ``include_pending`` / ``include_superseded`` ask for the separate pending /
+    superseded groups (recall eligibility, explicit search). They are passed
+    only when set, so a store without them keeps the plain call.
+    """
+    extra: dict[str, Any] = {}
+    if include_pending:
+        extra["include_pending"] = True
+    if include_superseded:
+        extra["include_superseded"] = True
     return eng.search_knowledge(
         query,
         scope=scope,
@@ -33,4 +45,5 @@ def search_knowledge(
         filters=filters,
         allow_hybrid_index=allow_hybrid_index,
         project_folder=project_folder,
+        **extra,
     )
