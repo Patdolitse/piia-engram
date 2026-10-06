@@ -602,13 +602,13 @@ class PlaybookMixin:
         self._audit.log("write", "playbooks", detail=f"approved {playbook_id}")
         return {"status": "promoted", "id": playbook_id, "retired": old_id or None}
 
-    def reject_playbook(self, playbook_id: str, *, _owner_reject: str) -> dict:
+    def reject_playbook(self, playbook_id: str, *, _owner_reject: str, _reject_reason: str = "") -> dict:
         """Owner reject mark: tombstone first, then archive the pending row."""
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
         if self.is_pending_playbook(pb):
-            _tombstones.append(self.root, "playbook", pb, via=_owner_reject)
+            _tombstones.append(self.root, "playbook", pb, via=_owner_reject, reason=_reject_reason)
         return self.archive_playbook(playbook_id)
 
     def add_playbook(

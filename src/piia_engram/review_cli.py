@@ -25,6 +25,8 @@ from . import write_provenance as _write_provenance
 from .staging_review import batch_review_staging
 
 MEM_TYPES = ("rule", "preference", "project_fact", "lesson", "decision")
+SUPERSEDE_PREFIX = "supersede:"
+REASON_MAX = _tombstones.REASON_MAX
 PLAYBOOK_TYPES = ("rule", "lesson", "project_fact")
 _TYPE_ORDER = {t: i for i, t in enumerate(("rule", "preference", "decision", "project_fact", "lesson"))}
 _DETAIL_CAP = 500
@@ -67,19 +69,30 @@ def _parent_name(ppid: int) -> str:
     return "unknown"
 
 
-def _attribution(args: list[str]) -> tuple[dict | None, str]:
+def _attribution(args: list[str], mode: str = "") -> tuple[dict | None, str]:
     """(receipt fields, error). --yes needs --operator, TTY or not."""
     operator = _option(args, "--operator").strip()
     if not operator:
         return None, "Refusing to apply without --operator <name> (every applying run is attributed)."
+    return attribution_record(operator, mode=mode), ""
+
+
+def attribution_record(operator: str, *, mode: str = "", isatty: bool | None = None) -> dict:
+    """Who applied, from where: operator, TTY flag, parent process, host (and the
+    apply ``route``, ``marks`` file or ``interactive``, when given)."""
     ppid = os.getppid()
-    return {
+    if isatty is None:
+        isatty = bool(sys.stdin.isatty()) if sys.stdin else False
+    record = {
         "operator": operator,
-        "isatty": bool(sys.stdin.isatty()) if sys.stdin else False,
+        "isatty": bool(isatty),
         "ppid": ppid,
         "parent_name": _parent_name(ppid),
         "host": platform.node(),
-    }, ""
+    }
+    if mode:
+        record["route"] = mode
+    return record
 
 
 def _receipt(eng, verb: str, attribution: dict, counts: dict) -> None:
@@ -213,11 +226,16 @@ def run_export(args: list[str]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _parse_marks(path: Path) -> tuple[list[dict], str]:
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return [], f"cannot read marks file: {exc}"
+def validate_marks(raw: Any) -> tuple[list[dict], str]:
+    """The marks list (as read from a marks file) checked and normalized.
+
+    One shape for both apply routes: ``engram review apply <marks.json>`` and
+    the interactive review, which builds the same list from the keys typed.
+    Each entry is ``{id, mark}`` with mark ``approve | reject | retire | restore
+    | edit-type:<type> | supersede:<old id>``; optional ``expected_version``
+    (approve / reject / supersede: skip the item if it changed since) and
+    ``reason`` (reject: the Owner's note, kept on the tombstone).
+    """
     if not isinstance(raw, list):
         return [], "marks file must be a JSON array of {id, mark}"
     marks = []
@@ -225,19 +243,44 @@ def _parse_marks(path: Path) -> tuple[list[dict], str]:
         if not isinstance(entry, dict):
             return [], "every mark must be an object"
         item_id = str(entry.get("id") or "").strip()
-        mark = str(entry.get("mark") or entry.get("action") or "").strip().lower()
+        raw_mark = str(entry.get("mark") or entry.get("action") or "").strip()
+        mark = raw_mark.lower()
         if not item_id:
             return [], "a mark has no id"
         if mark in ("approve", "reject", "retire", "restore"):
-            marks.append({"id": item_id, "mark": mark})
+            parsed = {"id": item_id, "mark": mark}
         elif mark.startswith("edit-type:"):
             mem_type = mark[len("edit-type:"):]
             if mem_type not in MEM_TYPES:
                 return [], f"unknown type {mem_type!r} for {item_id}; use one of {', '.join(MEM_TYPES)}"
-            marks.append({"id": item_id, "mark": "edit-type", "type": mem_type})
+            parsed = {"id": item_id, "mark": "edit-type", "type": mem_type}
+        elif mark.startswith(SUPERSEDE_PREFIX):
+            target = raw_mark[len(SUPERSEDE_PREFIX):].strip()
+            if not _dedup_review.safe_id(target):
+                return [], f"supersede needs the id of the entry it replaces: {item_id}"
+            parsed = {"id": item_id, "mark": "supersede", "target": target}
         else:
             return [], f"unknown mark {mark!r} for {item_id}"
+        if parsed["mark"] in REVIEW_MARKS:
+            version = entry.get("expected_version")
+            if version is not None:
+                if isinstance(version, bool) or not isinstance(version, int):
+                    return [], f"expected_version must be a whole number: {item_id}"
+                parsed["expected_version"] = version
+        if parsed["mark"] == "reject":
+            reason = _tombstones.clean_reason(entry.get("reason"))
+            if reason:
+                parsed["reason"] = reason
+        marks.append(parsed)
     return marks, ""
+
+
+def _parse_marks(path: Path) -> tuple[list[dict], str]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [], f"cannot read marks file: {exc}"
+    return validate_marks(raw)
 
 
 def _relabel(domain: str, mem_type: str) -> str:
@@ -263,6 +306,262 @@ def _mark_state(eng, mark: dict) -> str:
     return "already_applied" if status == "active" else "planned"
 
 
+# -- supersede ---------------------------------------------------------------
+
+SUPERSEDE_PROBLEMS = {
+    "self": "an entry cannot supersede itself",
+    "not_found": "the proposal is not in the store",
+    "target_not_found": "no entry with that id",
+    "type_mismatch": "the entry is of another kind or type",
+    "target_not_trusted": "the entry is not an approved (trusted) entry",
+    "scope_mismatch": "the entry belongs to another project scope",
+    "cycle": "that entry already supersedes this one (the chain would loop)",
+}
+
+
+def supersede_problem(eng, item_id: str, target_id: str) -> str:
+    """'' when the pending ``item_id`` may supersede ``target_id``, else a code.
+
+    The target must exist, be trusted (approved, active, not superseded), be the
+    same kind (lesson / decision / playbook) with the same ``type:`` label when
+    both carry one, share the proposal's project scope, not be the proposal, and
+    the new edge must not close a cycle of ``supersedes`` edges.
+    """
+    from . import recall_policy as _recall_policy
+    from .governance_store import RelationStore
+
+    item_id, target_id = str(item_id or ""), str(target_id or "")
+    if not _dedup_review.safe_id(target_id):
+        return "target_not_found"
+    if item_id == target_id:
+        return "self"
+    kind, row = eng._find_item_by_id(item_id)
+    if row is None or kind not in ("lesson", "decision", "playbook"):
+        return "not_found"
+    target_kind, target = eng._find_item_by_id(target_id)
+    if target is None:
+        return "target_not_found"
+    if target_kind != kind:
+        return "type_mismatch"
+    labels = (_type_label(row), _type_label(target))
+    if all(labels) and labels[0] != labels[1]:
+        return "type_mismatch"
+    edges = RelationStore(eng.root).all_edges()
+    index = _recall_policy.build_supersede_index(eng._honored_relation_edges())
+    if _recall_policy.classify(target, index).state != _recall_policy.TRUSTED:
+        return "target_not_trusted"
+    same_scope = (eng._same_playbook_scope(row, target) if kind == "playbook"
+                  else eng._entries_share_project_scope(row, target))
+    if not same_scope:
+        return "scope_mismatch"
+    proposed = [*edges, {"src": item_id, "rel": "supersedes", "dst": target_id}]
+    if item_id in _recall_policy.build_supersede_index(proposed).cycle_ids:
+        return "cycle"
+    return ""
+
+
+def _set_pending_supersede(eng, kind: str, item_id: str, target: str | None,
+                           expected_version: int | None) -> tuple[bool, Any]:
+    """Point a pending row's ``pending_supersedes`` at ``target`` (None removes it).
+
+    Under the row's write lock: only a still-pending row at the expected
+    version is changed. Returns (changed, previous value).
+    """
+    from .storage import SkipWrite
+
+    box: dict[str, Any] = {"changed": False, "previous": None}
+
+    def _mutate(entry: dict) -> dict:
+        version = int(entry.get("version") or 1)
+        if entry.get("tier") != "staging" or (expected_version is not None and version != expected_version):
+            raise SkipWrite
+        box["previous"] = entry.get("pending_supersedes")
+        if target is None:
+            entry.pop("pending_supersedes", None)
+        else:
+            entry["pending_supersedes"] = target
+        box["changed"] = True
+        return entry
+
+    eng._update_knowledge_item(kind, item_id, _mutate)
+    return box["changed"], box["previous"]
+
+
+def _supersede_linked(eng, kind: str, item_id: str, target: str) -> bool:
+    if kind == "playbook":
+        old = eng._read_playbook_by_id(target)
+        return old is None or str(old.get("status") or "active") != "active"
+    from .governance_store import RelationStore
+
+    return any(e.get("rel") == "supersedes" and e.get("src") == item_id and e.get("dst") == target
+               for e in RelationStore(eng.root).all_edges())
+
+
+# -- the apply function both routes share -------------------------------------
+
+REVIEW_MARKS = ("approve", "reject", "supersede")
+
+
+def _batch_row(mark: dict) -> dict:
+    row = {"id": mark["id"], "action": "reject" if mark["mark"] == "reject" else "approve"}
+    if "expected_version" in mark:
+        row["expected_version"] = mark["expected_version"]
+    if mark.get("reason"):
+        row["reason"] = mark["reason"]
+    return row
+
+
+def _new_counts() -> dict[str, int]:
+    return {"requested": 0, "approve": 0, "reject": 0, "planned": 0, "applied": 0, "noop": 0, "failed": 0,
+            "supersede": 0, "supersede_failed": 0}
+
+
+def _add_counts(counts: dict, more: dict) -> None:
+    for key, value in more.items():
+        if isinstance(value, int):
+            counts[key] = counts.get(key, 0) + value
+
+
+def _item_view(item: dict, mark: dict) -> dict:
+    view = {"id": item.get("id", mark["id"]), "action": mark["mark"], "status": item.get("status", "")}
+    if mark["mark"] == "supersede":
+        view["target"] = mark["target"]
+    return view
+
+
+def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str) -> dict:
+    """Run one approve / reject / supersede mark; returns its receipt item."""
+    row = _batch_row(mark)
+    if mark["mark"] != "supersede":
+        result = batch_review_staging(eng, [row], dry_run=dry_run, confirm=not dry_run, via=via,
+                                      limit=1, owner_cli=True)
+        _add_counts(counts, result["counts"])
+        return _item_view(result["items"][0], mark)
+
+    problem = supersede_problem(eng, mark["id"], mark["target"])
+    if problem:
+        _add_counts(counts, {"requested": 1, "approve": 1, "failed": 1, "supersede_failed": 1})
+        return _item_view({"id": mark["id"], "status": problem}, mark)
+    preview = batch_review_staging(eng, [row], dry_run=True, limit=1, owner_cli=True)
+    planned = preview["items"][0].get("status") == "planned"
+    if dry_run or not planned:
+        _add_counts(counts, preview["counts"])
+        if not planned:
+            counts["supersede_failed"] += 1
+        return _item_view(preview["items"][0], mark)
+
+    kind = preview["items"][0].get("type") or eng._find_item_by_id(mark["id"])[0]
+    changed, previous = _set_pending_supersede(eng, kind, mark["id"], mark["target"],
+                                               mark.get("expected_version"))
+    if not changed:
+        _add_counts(counts, {"requested": 1, "approve": 1, "planned": 1, "failed": 1, "supersede_failed": 1})
+        return _item_view({"id": mark["id"], "status": "version_conflict"}, mark)
+    result = batch_review_staging(eng, [row], dry_run=False, confirm=True, via=via, limit=1, owner_cli=True)
+    _add_counts(counts, result["counts"])
+    item = _item_view(result["items"][0], mark)
+    if item["status"] != "applied":
+        # Not approved after all: the row goes back to what it pointed at.
+        _set_pending_supersede(eng, kind, mark["id"], previous or None, None)
+        counts["supersede_failed"] += 1
+    elif _supersede_linked(eng, kind, mark["id"], mark["target"]):
+        counts["supersede"] += 1
+    else:
+        item["status"] = "applied_unlinked"
+        counts["supersede_failed"] += 1
+    return item
+
+
+def preview_marks(eng, marks: list[dict]) -> dict:
+    """The dry-run payload of ``engram review apply`` (read-only store)."""
+    reviews = [m for m in marks if m["mark"] in REVIEW_MARKS]
+    edits = [m for m in marks if m["mark"] == "edit-type"]
+    lifecycle = [m for m in marks if m["mark"] in ("retire", "restore")]
+    counts = _new_counts()
+    items = [_review_one(eng, m, counts, dry_run=True, via="") for m in reviews]
+    edit_states = {m["id"]: _mark_state(eng, m) for m in edits}
+    life_states = {m["id"]: _mark_state(eng, m) for m in lifecycle}
+    missing = [i for i, st in edit_states.items() if st == "not_found"]
+    pending = (
+        counts["planned"]
+        + sum(1 for st in edit_states.values() if st == "planned")
+        + sum(1 for st in life_states.values() if st == "planned")
+    )
+    return {
+        "status": "dry_run",
+        "counts": {
+            **counts,
+            "edit_type": len(edits),
+            "edit_type_planned": sum(1 for st in edit_states.values() if st == "planned"),
+            "edit_type_already_applied": sum(1 for st in edit_states.values() if st == "already_applied"),
+            "edit_type_not_found": len(missing),
+            "lifecycle": len(lifecycle),
+            "lifecycle_planned": sum(1 for st in life_states.values() if st == "planned"),
+            "lifecycle_already_applied": sum(1 for st in life_states.values() if st == "already_applied"),
+            "lifecycle_not_found": sum(1 for st in life_states.values() if st == "not_found"),
+            "pending": pending,
+        },
+        "items": items,
+        "not_found": missing,
+    }
+
+
+def apply_marks(eng, marks: list[dict], attribution: dict) -> dict:
+    """Apply validated marks and leave the audit receipt; returns the applied payload.
+
+    The one apply path: ``engram review apply --yes`` and the interactive
+    review both end here. Marks run one at a time in order, so if a run stops
+    part-way the receipt (written then too, with ``aborted``) counts what was done.
+    """
+    from . import strict_mode as _strict_mode
+
+    _strict_mode.bootstrap(eng.root, source="cli")
+    via = f"cli:{attribution['operator']}"
+    reviews = [m for m in marks if m["mark"] in REVIEW_MARKS]
+    edits = [m for m in marks if m["mark"] == "edit-type"]
+    lifecycle = [m for m in marks if m["mark"] in ("retire", "restore")]
+    counts: dict[str, Any] = {**_new_counts(), "edit_type": 0, "edit_type_failed": 0,
+                              "lifecycle": 0, "lifecycle_failed": 0, "already_applied": 0}
+    items: list[dict] = []
+    edit_failed: list[str] = []
+    try:
+        for m in reviews:
+            items.append(_review_one(eng, m, counts, dry_run=False, via=via))
+        for m in edits:
+            kind, row = eng._find_item_by_id(m["id"])
+            if row is None or kind not in ("lesson", "decision", "playbook"):
+                edit_failed.append(m["id"])
+                continue
+            if _mark_state(eng, m) == "already_applied":
+                counts["already_applied"] += 1  # no second version snapshot for an unchanged label
+                continue
+            update = {"lesson": eng.update_lesson, "decision": eng.update_decision,
+                      "playbook": eng.update_playbook}[kind]
+            outcome = update(m["id"], {"domain": _relabel(row.get("domain", ""), m["type"])})
+            if isinstance(outcome, dict) and outcome.get("error"):
+                edit_failed.append(m["id"])
+            else:
+                counts["edit_type"] += 1
+        for m in lifecycle:
+            if _mark_state(eng, m) == "already_applied":
+                counts["already_applied"] += 1
+                continue
+            if m["mark"] == "retire":
+                outcome = eng.archive_playbook(m["id"])  # an archive, never a tombstone
+            else:
+                outcome = eng.restore_playbook(m["id"], dry_run=False, confirm=True)
+            if isinstance(outcome, dict) and outcome.get("error"):
+                counts["lifecycle_failed"] += 1
+            else:
+                counts["lifecycle"] += 1
+    except BaseException:
+        counts["edit_type_failed"] = len(edit_failed)
+        _receipt(eng, "apply", attribution, {**counts, "aborted": 1})
+        raise
+    counts["edit_type_failed"] = len(edit_failed)
+    _receipt(eng, "apply", attribution, counts)
+    return {"status": "applied", "counts": counts, "items": items, "edit_type_failed": edit_failed}
+
+
 def run_apply(args: list[str]) -> int:
     paths = [a for a in args if not a.startswith("--") and a != _option(args, "--operator")]
     if not paths:
@@ -272,7 +571,6 @@ def run_apply(args: list[str]) -> int:
     if error:
         print(error)
         return 2
-    decisions = [{"id": m["id"], "action": m["mark"]} for m in marks if m["mark"] in ("approve", "reject")]
     edits = [m for m in marks if m["mark"] == "edit-type"]
     lifecycle = [m for m in marks if m["mark"] in ("retire", "restore")]
     probe = _engram(read_only=True)
@@ -286,86 +584,14 @@ def run_apply(args: list[str]) -> int:
             return 2
 
     if "--yes" not in args:
-        eng = _engram(read_only=True)
-        preview = batch_review_staging(eng, decisions, dry_run=True, limit=len(decisions) or 1)
-        edit_states = {m["id"]: _mark_state(eng, m) for m in edits}
-        life_states = {m["id"]: _mark_state(eng, m) for m in lifecycle}
-        missing = [i for i, st in edit_states.items() if st == "not_found"]
-        pending = (
-            preview["counts"]["planned"]
-            + sum(1 for st in edit_states.values() if st == "planned")
-            + sum(1 for st in life_states.values() if st == "planned")
-        )
-        _print({
-            "status": "dry_run",
-            "counts": {
-                **preview["counts"],
-                "edit_type": len(edits),
-                "edit_type_planned": sum(1 for st in edit_states.values() if st == "planned"),
-                "edit_type_already_applied": sum(1 for st in edit_states.values() if st == "already_applied"),
-                "edit_type_not_found": len(missing),
-                "lifecycle": len(lifecycle),
-                "lifecycle_planned": sum(1 for st in life_states.values() if st == "planned"),
-                "lifecycle_already_applied": sum(1 for st in life_states.values() if st == "already_applied"),
-                "lifecycle_not_found": sum(1 for st in life_states.values() if st == "not_found"),
-                "pending": pending,
-            },
-            "items": [{"id": i["id"], "action": i["action"], "status": i["status"]} for i in preview["items"]],
-            "not_found": missing,
-        })
+        _print(preview_marks(_engram(read_only=True), marks))
         return 0
 
-    attribution, error = _attribution(args)
+    attribution, error = _attribution(args, mode="marks")
     if error:
         print(error)
         return 2
-    eng = _engram(read_only=False)
-    from . import strict_mode as _strict_mode
-
-    _strict_mode.bootstrap(eng.root, source="cli")
-    result = batch_review_staging(
-        eng, decisions, dry_run=False, confirm=True, via=f"cli:{attribution['operator']}",
-        limit=len(decisions) or 1,
-    )
-    edited, edit_failed, already = 0, [], 0
-    for m in edits:
-        kind, row = eng._find_item_by_id(m["id"])
-        if row is None or kind not in ("lesson", "decision", "playbook"):
-            edit_failed.append(m["id"])
-            continue
-        if _mark_state(eng, m) == "already_applied":
-            already += 1  # no second version snapshot for an unchanged label
-            continue
-        update = {"lesson": eng.update_lesson, "decision": eng.update_decision,
-                  "playbook": eng.update_playbook}[kind]
-        outcome = update(m["id"], {"domain": _relabel(row.get("domain", ""), m["type"])})
-        if isinstance(outcome, dict) and outcome.get("error"):
-            edit_failed.append(m["id"])
-        else:
-            edited += 1
-    lifecycle_done, lifecycle_failed = 0, []
-    for m in lifecycle:
-        if _mark_state(eng, m) == "already_applied":
-            already += 1
-            continue
-        if m["mark"] == "retire":
-            outcome = eng.archive_playbook(m["id"])  # an archive, never a tombstone
-        else:
-            outcome = eng.restore_playbook(m["id"], dry_run=False, confirm=True)
-        if isinstance(outcome, dict) and outcome.get("error"):
-            lifecycle_failed.append(m["id"])
-        else:
-            lifecycle_done += 1
-    counts = {**result["counts"], "edit_type": edited, "edit_type_failed": len(edit_failed),
-              "lifecycle": lifecycle_done, "lifecycle_failed": len(lifecycle_failed),
-              "already_applied": already}
-    _receipt(eng, "apply", attribution, counts)
-    _print({
-        "status": "applied",
-        "counts": counts,
-        "items": [{"id": i["id"], "action": i["action"], "status": i["status"]} for i in result["items"]],
-        "edit_type_failed": edit_failed,
-    })
+    _print(apply_marks(_engram(read_only=False), marks, attribution))
     return 0
 
 
