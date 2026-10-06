@@ -1867,12 +1867,27 @@ class Engram(
         return candidate
 
     def _reviewed_ids(self) -> set[str]:
-        """Ids of the reviewed, active lessons and decisions (pool V)."""
+        """Ids of the reviewed, active lessons and decisions (pool V) and playbooks.
+
+        A playbook counts as reviewed when it is active and its own labels are
+        trusted (the recall policy's whitelist), so an unreviewed row cannot
+        hide a reviewed playbook either.
+        """
         ids: set[str] = set()
         for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
             for row in self._read_entries(self._knowledge_dir / name, kind, migrate=False):
                 if row.get("id") and _capacity.pool_of(row) == _capacity.POOL_V:
                     ids.add(str(row["id"]))
+        try:
+            for entry in self._read_playbook_index():
+                pid = str(entry.get("id") or "")
+                if not pid or entry.get("status") != "active":
+                    continue
+                pb = self._read_playbook_by_id(pid)
+                if isinstance(pb, dict) and _recall_policy.is_trusted(pb):
+                    ids.add(pid)
+        except Exception:  # a damaged playbook index never breaks a read
+            pass
         return ids
 
     def _honored_relation_edges(self) -> list[dict]:
@@ -1886,31 +1901,72 @@ class Engram(
 
         return _vc.honored_edges(RelationStore(self.root).all_edges(), self._reviewed_ids())
 
+    def _supersede_index_inputs(self) -> tuple:
+        """(mtime_ns, size) of every file the supersede index is built from."""
+        paths = [
+            self._knowledge_dir / "relations.json",
+            self._knowledge_dir / "lessons.json",
+            self._knowledge_dir / "decisions.json",
+        ]
+        try:
+            paths.extend(sorted(self._playbooks_dir.glob("*.json")))
+        except OSError:
+            pass
+        stamp = []
+        for path in paths:
+            try:
+                st = path.stat()
+                stamp.append((path.name, st.st_mtime_ns, st.st_size))
+            except OSError:
+                stamp.append((path.name, None, None))
+        return tuple(stamp)
+
     def _recall_supersede_index(self) -> "_recall_policy.SupersedeIndex":
         """Supersede index every recall surface classifies against.
 
         Built from the honored edges, so an unreviewed row never hides a
-        reviewed one. A cycle of ``supersedes`` edges is logged once per store
-        and cycle set (audit ``warn``, ids only); its members keep their own
-        state. Never raises: a broken relation file yields an empty index.
+        reviewed one, and cached until one of its input files changes (any
+        write changes a file's mtime or size). A cycle of ``supersedes`` edges
+        is logged as one audit ``warn`` (ids only) per store and cycle set in
+        this process; the key is remembered only once the line was actually
+        written, so a read-only open (which never writes audit.log) does not
+        use it up. Members of a cycle keep their own state. Never raises: a
+        broken relation file yields an empty index.
         """
-        try:
-            edges = self._honored_relation_edges()
-        except Exception:  # never break a read over a damaged relation file
-            edges = []
-        index = _recall_policy.build_supersede_index(edges)
+        stamp = self._supersede_index_inputs()
+        cached = getattr(self, "_supersede_index_cache", None)
+        if cached is not None and cached[0] == stamp:
+            index = cached[1]
+        else:
+            try:
+                edges = self._honored_relation_edges()
+            except Exception:  # never break a read over a damaged relation file
+                edges = []
+            index = _recall_policy.build_supersede_index(edges)
+            self._supersede_index_cache = (stamp, index)
         if index.cycle_ids:
-            key = (str(self.root), index.cycle_ids)
-            if key not in _SUPERSEDE_CYCLES_WARNED:
-                _SUPERSEDE_CYCLES_WARNED.add(key)
-                try:
-                    self._audit.log(
-                        "warn", "knowledge/relations",
-                        detail="supersede_cycle ids=" + ",".join(sorted(index.cycle_ids)),
-                    )
-                except Exception:  # audit must never break a read
-                    pass
+            self._warn_supersede_cycle(index.cycle_ids)
         return index
+
+    def _warn_supersede_cycle(self, cycle_ids: frozenset) -> None:
+        key = (str(self.root), cycle_ids)
+        if key in _SUPERSEDE_CYCLES_WARNED:
+            return
+        audit = getattr(self, "_audit", None)
+        log_path = getattr(audit, "log_path", None)
+        if audit is None or not getattr(audit, "enabled", False) or log_path is None:
+            return  # nothing would be written; keep the warning for a writer
+        try:
+            before = log_path.stat().st_size if log_path.exists() else 0
+            audit.log(
+                "warn", "knowledge/relations",
+                detail="supersede_cycle ids=" + ",".join(sorted(cycle_ids)),
+            )
+            written = log_path.exists() and log_path.stat().st_size > before
+        except Exception:  # audit must never break a read
+            written = False
+        if written:
+            _SUPERSEDE_CYCLES_WARNED.add(key)
 
     def _archived_only_rows(self, entry_type: str) -> dict[str, dict]:
         """Current archived rows whose id is not in the active file (a restored row is active)."""

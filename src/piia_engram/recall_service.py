@@ -271,6 +271,7 @@ def gather_recall_sources(
     limit: int = 8,
     collapse_versions: bool = True,
     include_playbooks: bool = False,
+    want_ineligible: bool = False,
 ) -> dict[str, Any]:
     """Fetch phase of recall: identity slice, recent activity, raw knowledge.
 
@@ -293,17 +294,37 @@ def gather_recall_sources(
     Recall eligibility (auto_inject): only trusted rows are returned — pending,
     superseded and archived rows never reach a recall payload, whatever
     ``collapse_versions`` says (the flag is kept for compatibility).
-    ``collapsed_count`` counts the superseded rows left out, and
-    ``ineligible`` lists every row left out as ``{"row", "state",
-    "superseded_by"}`` (for the owner-facing Memory Lens only; never part of a
-    recall payload).
+    ``collapsed_count`` counts the distinct superseded rows left out. With
+    ``want_ineligible`` (the owner-facing Memory Lens only) ``ineligible``
+    lists every distinct row left out as ``{"row", "state", "superseded_by"}``;
+    it is never part of a recall payload.
     """
     # A live Engram applies the policy at the source and reports what it left
     # out; duck-typed stand-ins get the same policy applied below.
     live = callable(getattr(eng, "_recall_supersede_index", None))
     dropped_relevant: list = []
-    superseded_hits = 0
     ineligible: list[dict[str, Any]] = []
+    superseded_ids: set[str] = set()
+    superseded_noid = 0
+    seen_ineligible: set[str] = set()
+
+    def _note_ineligible(row: dict[str, Any], state: str, successor: str) -> None:
+        """Record one left-out row once (by id), for the count and the preview."""
+        nonlocal superseded_noid
+        rid = row.get("id")
+        key = str(rid) if isinstance(rid, str) and rid else ""
+        if state == _recall_policy.SUPERSEDED:
+            if key:
+                superseded_ids.add(key)
+            else:
+                superseded_noid += 1
+        if not want_ineligible:
+            return
+        if key:
+            if key in seen_ineligible:
+                return
+            seen_ineligible.add(key)
+        ineligible.append({"row": row, "state": state, "superseded_by": successor})
     # --- identity -------------------------------------------------------
     profile: dict[str, Any] | None = None
     getter = getattr(eng, "get_safe_profile", None) or getattr(eng, "get_profile", None)
@@ -346,7 +367,11 @@ def gather_recall_sources(
     playbook_query_hits: list[dict[str, Any]] = []
     if query and hasattr(eng, "search_knowledge"):
         try:
-            extra = {"include_pending": True, "include_superseded": True} if live else {}
+            extra: dict[str, Any] = {}
+            if live:
+                extra["include_superseded"] = True
+                if want_ineligible:
+                    extra["include_pending"] = True
             hits = eng.search_knowledge(query, scope="all", limit=limit, **extra) or {}
         except Exception:  # pragma: no cover - defensive
             hits = {}
@@ -359,12 +384,7 @@ def gather_recall_sources(
                 for row in group.get(bucket) or []:
                     if not isinstance(row, dict):
                         continue
-                    if state == _recall_policy.SUPERSEDED:
-                        superseded_hits += 1
-                    ineligible.append({
-                        "row": row, "state": state,
-                        "superseded_by": str(row.get("superseded_by") or ""),
-                    })
+                    _note_ineligible(row, state, str(row.get("superseded_by") or ""))
         for bucket in ("lessons", "decisions"):
             rows = hits.get(bucket) if isinstance(hits, dict) else None
             if isinstance(rows, list):
@@ -426,23 +446,19 @@ def gather_recall_sources(
             index = _recall_policy.build_supersede_index(edges)
     else:
         index = _recall_policy.build_supersede_index(edges)
-    collapsed_count = superseded_hits
     for row, verdict in dropped_relevant:
-        state = getattr(verdict, "state", "")
-        if state == _recall_policy.SUPERSEDED:
-            collapsed_count += 1
-        ineligible.append({"row": row, "state": state,
-                           "superseded_by": getattr(verdict, "superseded_by", "")})
+        if isinstance(row, dict):
+            _note_ineligible(row, getattr(verdict, "state", ""),
+                             getattr(verdict, "superseded_by", ""))
     kept_buckets = []
     for bucket in (relevant, query_knowledge, playbooks):
         part = _recall_policy.partition(bucket, index)
-        collapsed_count += len(part.superseded)
         kept_buckets.append(list(part.trusted))
         for state in (_recall_policy.PENDING, _recall_policy.SUPERSEDED, _recall_policy.ARCHIVED):
             for row in part.group(state):
-                ineligible.append({"row": row, "state": state,
-                                   "superseded_by": part.successor_of(row.get("id"))})
+                _note_ineligible(row, state, part.successor_of(row.get("id")))
     relevant, query_knowledge, playbooks = kept_buckets
+    collapsed_count = len(superseded_ids) + superseded_noid
     heads_present = 0
     if edges:
         # Render-only surfacing: how many *surviving* items are the current

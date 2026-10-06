@@ -1082,7 +1082,8 @@ class ContextStoreMixin:
                 _omit(kind, "duplicate", str(item.get("source") or "knowledge"))
                 return
             review_seen.add(key)
-            review_needed.append(item)
+            # every review-needed entry is unreviewed: say so on the item
+            review_needed.append({**item, "pending_untrusted": True})
 
         def _review_priority(item: dict[str, str]) -> int:
             reason = str(item.get("reason") or "")

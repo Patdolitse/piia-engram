@@ -3124,12 +3124,15 @@ def _run_dock_search(args: list[str]) -> int:
 
     results = []
     # Reviewed results first, then the items still waiting for review (never
-    # interleaved), each of those flagged pending_untrusted.
+    # interleaved), each of those flagged pending_untrusted. Per kind the two
+    # together stay within --limit: pending items only fill the slots the
+    # reviewed results left free.
     pending_group = raw.get("pending") if isinstance(raw.get("pending"), dict) else {}
-    ordered = [(kind, it, False) for kind in ("lessons", "decisions", "playbooks")
-               for it in raw.get(kind, [])]
-    ordered += [(kind, it, True) for kind in ("lessons", "decisions", "playbooks")
-                for it in (pending_group.get(kind) or [])]
+    kinds = ("lessons", "decisions", "playbooks")
+    ordered = [(kind, it, False) for kind in kinds for it in raw.get(kind, [])]
+    for kind in kinds:
+        free = max(0, limit - len(raw.get(kind, []) or []))
+        ordered += [(kind, it, True) for it in (pending_group.get(kind) or [])[:free]]
     for kind, it, is_pending in ordered:
         entry = {
             "kind": kind[:-1],  # lesson / decision / playbook

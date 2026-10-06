@@ -1624,9 +1624,10 @@ class ContextMixin:
 
         # Recent playbooks
         if _wants("playbooks"):
+            # fetch a wider window, filter, then keep the five most recent
             recent_pbs = _trusted(
-                self.get_recent_playbooks(limit=5, project_folder=project_folder)
-            )
+                self.get_recent_playbooks(limit=50, project_folder=project_folder)
+            )[:5]
             if recent_pbs:
                 pb_lines: list[str] = ["\n## 近期操作手册"]
                 for pb in recent_pbs:

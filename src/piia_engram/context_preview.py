@@ -142,6 +142,7 @@ def build_context_preview(
         query=query,
         limit=budget["limit"],
         include_playbooks=include_playbooks,
+        want_ineligible=True,
     )
     identity = sources.get("identity", {})
     recent_activity = sources.get("recent_activity", {})
