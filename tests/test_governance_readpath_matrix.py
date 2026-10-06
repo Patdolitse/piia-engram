@@ -201,7 +201,7 @@ _MATRIX = [
     # _EXPORT_OWNER_ONLY (round-17 P1-2/P1-3): governing only their RETURN left
     # the secret-bearing file (exports/identity_card.md, knowledge_report_*.md)
     # on disk for a non-owner. They are now pre-write gated like export_engram.
-    ("get_user_context", "generate_context", "identity card\n" + SECRET, {}, "withhold"),
+    ("get_user_context", "generate_context_report", "identity card\n" + SECRET, {}, "withhold"),
     ("get_resume_brief", "get_resume_brief", "resume brief\n" + SECRET, {}, "withhold"),
     ("get_recall", "get_relevant_lessons", [_pub(), _sec()],
      {"project_folder": "/x"}, "withhold"),
@@ -355,7 +355,8 @@ def _call(tool_name, kwargs):
 def _patch_tool_method(gov_engram, monkeypatch, tool, method, fake):
     """Monkeypatch the engram method a tool reads from, plus any side-effect
     method that would otherwise touch the real filesystem in the matrix."""
-    monkeypatch.setattr(gov_engram, method, lambda *a, **k: fake, raising=False)
+    result = (fake, None) if method == "generate_context_report" else fake  # (text, omitted)
+    monkeypatch.setattr(gov_engram, method, lambda *a, **k: result, raising=False)
     if tool == "get_audit_log":
         # get_audit_log reads root/audit.log directly (no engram method). Write a
         # ledger line whose ``detail`` carries the stored-knowledge marker, the

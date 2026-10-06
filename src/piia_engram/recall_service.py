@@ -36,6 +36,11 @@ _IDENTITY_FIELDS = ("role", "language", "technical_level")
 _IDENTITY_LIST_FIELDS = ("preferences", "quality_standards", "work_patterns")
 
 
+# recent-playbook window: read this many, keep up to four trusted ones
+_PLAYBOOK_RECENT_WINDOW = 50
+_PLAYBOOK_RECENT_TRUSTED = 4
+
+
 def _identity_slice(profile: dict[str, Any] | None) -> dict[str, Any]:
     """Project a (safe) profile dict to the stable recall identity slice."""
     if not isinstance(profile, dict):
@@ -393,15 +398,40 @@ def gather_recall_sources(
         if isinstance(rows, list):
             playbook_query_hits.extend(r for r in rows if isinstance(r, dict))
 
+    # --- recall eligibility index (shared by the playbook window below) ----
+    edges = _load_relation_edges(eng)
+    if live:
+        try:
+            index = eng._recall_supersede_index()
+        except Exception:  # pragma: no cover - defensive
+            index = _recall_policy.build_supersede_index(edges)
+    else:
+        index = _recall_policy.build_supersede_index(edges)
+
     # --- playbook bucket (v4.20, opt-in) ----------------------------------
     playbooks: list[dict[str, Any]] = []
     if include_playbooks:
         recent_pbs: list[dict[str, Any]] = []
         if hasattr(eng, "get_recent_playbooks"):
             try:
-                recent_pbs = eng.get_recent_playbooks(
-                    limit=4, project_folder=project_folder or None
+                # Fetch a wider window, then cut to the four most recent
+                # trusted ones (as the cold start does): a run of superseded or
+                # pending playbooks must not crowd trusted ones out of the four.
+                # The rows ahead of the fourth trusted one stay in the list so
+                # the eligibility pass below still counts them as left out.
+                window = eng.get_recent_playbooks(
+                    limit=_PLAYBOOK_RECENT_WINDOW, project_folder=project_folder or None
                 ) or []
+                trusted_seen = 0
+                for pb in window:
+                    recent_pbs.append(pb)
+                    if (
+                        isinstance(pb, dict)
+                        and _recall_policy.classify(pb, index).state == _recall_policy.TRUSTED
+                    ):
+                        trusted_seen += 1
+                        if trusted_seen >= _PLAYBOOK_RECENT_TRUSTED:
+                            break
             except Exception:  # pragma: no cover - defensive
                 recent_pbs = []
         # project-scoped query hits: keep only playbooks visible for THIS
@@ -438,14 +468,6 @@ def gather_recall_sources(
         playbooks = deduped
 
     # --- recall eligibility (auto_inject: trusted only; prefer HEAD) ------
-    edges = _load_relation_edges(eng)
-    if live:
-        try:
-            index = eng._recall_supersede_index()
-        except Exception:  # pragma: no cover - defensive
-            index = _recall_policy.build_supersede_index(edges)
-    else:
-        index = _recall_policy.build_supersede_index(edges)
     for row, verdict in dropped_relevant:
         if isinstance(row, dict):
             _note_ineligible(row, getattr(verdict, "state", ""),

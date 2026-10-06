@@ -663,3 +663,79 @@ def test_resume_pack_keeps_superseded_rows_out_and_flags_review_items(env):
     assert all(item["pending_untrusted"] is True for item in pack["review_needed"])
     assert not tokens(json.dumps(brief["agent_context_pack"].get("trusted_context", []),
                                  ensure_ascii=False)) & NEVER_AUTO
+
+
+# ---------------------------------------------------------------------------
+# recall follow-ups: cache stamp, one trust rule for "reviewed", playbook window
+# ---------------------------------------------------------------------------
+
+
+def test_supersede_index_cache_sees_a_same_size_same_mtime_rewrite(env):
+    """A rewrite that keeps size and mtime still refreshes the index.
+
+    The new file is written beside the old one and moved over it, so only the
+    file identity (inode / file index, ctime) tells the two apart.
+    """
+    import os
+
+    m, eng, root, tmp_path = env
+    path = root / "knowledge" / "relations.json"
+    first = eng._recall_supersede_index()
+    assert first.successor("l-old") == "l-new"
+
+    before = path.stat()
+    original = path.read_bytes()
+    swapped = original.replace(b'"l-old"', b'"l-oXd"')
+    assert swapped != original and len(swapped) == len(original)
+    staged = path.with_name("relations.swap")
+    staged.write_bytes(swapped)
+    os.utime(staged, ns=(before.st_atime_ns, before.st_mtime_ns))
+    os.replace(staged, path)
+    after = path.stat()
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+
+    second = eng._recall_supersede_index()
+    assert second is not first
+    assert second.successor("l-old") == "" and second.successor("l-oXd") == "l-new"
+
+
+def test_reviewed_row_with_a_cased_tier_supersedes_an_unreviewed_row(tmp_path, monkeypatch):
+    """'reviewed' means the recall policy's whitelist, not an exact tier string."""
+    root = tmp_path / "engram"
+    (root / "knowledge").mkdir(parents=True)
+    raw_write_json(root / "knowledge" / "lessons.json", [
+        _lesson("l-cased", "zqlCased", tier="Verified"),
+        _lesson("l-draft", "zqlDraft", tier="staging"),
+    ])
+    raw_write_json(root / "knowledge" / "decisions.json", [])
+    RelationStore(root).add_relation("l-cased", "supersedes", "l-draft")
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    eng = Engram(root)
+    assert "l-cased" in eng._reviewed_ids()
+    assert eng._recall_supersede_index().successor("l-draft") == "l-cased"
+
+
+def test_superseded_playbooks_do_not_crowd_trusted_ones_out_of_get_recall(tmp_path, monkeypatch):
+    """The recent-playbook window is filtered by the policy before it is cut to four."""
+    root = tmp_path / "engram"
+    (root / "knowledge").mkdir(parents=True)
+    raw_write_json(root / "knowledge" / "lessons.json", [])
+    raw_write_json(root / "knowledge" / "decisions.json", [])
+    playbooks = [_playbook("pb-keeper", "zqpKeeper", "2026-10-01T00:00:00")]
+    edges = []
+    for i in range(1, 6):  # five newer playbooks, each superseded by pb-keeper
+        playbooks.append(_playbook(f"pb-gone-{i}", f"zqpGone{i}", f"2026-10-0{i + 1}T00:00:00"))
+        edges.append(f"pb-gone-{i}")
+    _write_playbooks(root, playbooks)
+    relations = RelationStore(root)
+    for pid in edges:
+        relations.add_relation("pb-keeper", "supersedes", pid)
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    eng = Engram(root)
+    from piia_engram import recall_service
+
+    sources = recall_service.gather_recall_sources(eng, include_playbooks=True)
+    assert [pb["id"] for pb in sources["playbooks"]] == ["pb-keeper"]
+    assert sources["collapsed_count"] == 5  # the five superseded ones are still counted

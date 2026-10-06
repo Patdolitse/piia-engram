@@ -1867,16 +1867,17 @@ class Engram(
         return candidate
 
     def _reviewed_ids(self) -> set[str]:
-        """Ids of the reviewed, active lessons and decisions (pool V) and playbooks.
+        """Ids of the reviewed rows: lessons, decisions and playbooks.
 
-        A playbook counts as reviewed when it is active and its own labels are
-        trusted (the recall policy's whitelist), so an unreviewed row cannot
-        hide a reviewed playbook either.
+        One rule for all three: a row is reviewed when its own labels are
+        trusted by the recall policy's whitelist (active; tier and memory state
+        empty or verified, any case), so an unreviewed row cannot hide a
+        reviewed one whatever its kind.
         """
         ids: set[str] = set()
         for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
             for row in self._read_entries(self._knowledge_dir / name, kind, migrate=False):
-                if row.get("id") and _capacity.pool_of(row) == _capacity.POOL_V:
+                if row.get("id") and _recall_policy.is_trusted(row):
                     ids.add(str(row["id"]))
         try:
             for entry in self._read_playbook_index():
@@ -1902,7 +1903,12 @@ class Engram(
         return _vc.honored_edges(RelationStore(self.root).all_edges(), self._reviewed_ids())
 
     def _supersede_index_inputs(self) -> tuple:
-        """(mtime_ns, size) of every file the supersede index is built from."""
+        """File stamp of every file the supersede index is built from.
+
+        mtime and size alone miss a rewrite that keeps both (a file replaced
+        within one timestamp tick, or with the time restored), so the file's
+        identity (inode / file index) and ctime are part of the stamp too.
+        """
         paths = [
             self._knowledge_dir / "relations.json",
             self._knowledge_dir / "lessons.json",
@@ -1916,9 +1922,9 @@ class Engram(
         for path in paths:
             try:
                 st = path.stat()
-                stamp.append((path.name, st.st_mtime_ns, st.st_size))
+                stamp.append((path.name, st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns))
             except OSError:
-                stamp.append((path.name, None, None))
+                stamp.append((path.name, None, None, None, None))
         return tuple(stamp)
 
     def _recall_supersede_index(self) -> "_recall_policy.SupersedeIndex":
@@ -1926,7 +1932,7 @@ class Engram(
 
         Built from the honored edges, so an unreviewed row never hides a
         reviewed one, and cached until one of its input files changes (any
-        write changes a file's mtime or size). A cycle of ``supersedes`` edges
+        write changes a file's mtime, size, identity or ctime). A cycle of ``supersedes`` edges
         is logged as one audit ``warn`` (ids only) per store and cycle set in
         this process; the key is remembered only once the line was actually
         written, so a read-only open (which never writes audit.log) does not

@@ -94,13 +94,24 @@ async def get_user_context(
     # `engram import-memories` command, which an empty store points to.
     eng = S._get_engram()
     try:
-        try:
-            eng.last_context_omitted = None  # this call's report only
-        except Exception:
-            pass
-        context = eng.generate_context(
-            project_folder, level=level, max_tokens=token_budget,
-        )
+        report = getattr(eng, "generate_context_report", None)
+        if callable(report):
+            # (text, omitted) come back together, so a concurrent call can
+            # never read another call's omission off the shared attribute.
+            context, omitted = report(
+                project_folder, max_tokens=token_budget, level=level,
+            )
+        else:
+            # Stand-in engines (test doubles, older embeddings) only have
+            # generate_context; they report the omission on the attribute.
+            try:
+                eng.last_context_omitted = None  # this call's report only
+            except Exception:
+                pass
+            context = eng.generate_context(
+                project_folder, level=level, max_tokens=token_budget,
+            )
+            omitted = getattr(eng, "last_context_omitted", None)
         S._track("get_user_context", success=True)
         S._beta("cold_start", level=level)
     except Exception as exc:
@@ -110,7 +121,6 @@ async def get_user_context(
     # Budget omissions: the core context ends with one omission line; take it
     # off here and restate it (merged with anything cut below) as the very
     # last line of the whole response.
-    omitted = getattr(eng, "last_context_omitted", None)
     omitted = omitted if isinstance(omitted, dict) else None
     core_line = S._recall_policy.omission_line(omitted)
     if core_line and isinstance(context, str) and context.endswith(core_line):

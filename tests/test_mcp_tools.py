@@ -828,7 +828,7 @@ class TestErrorHandling:
         def explode(*args, **kwargs):
             raise RuntimeError("synthetic failure")
 
-        monkeypatch.setattr(isolated_engram, "generate_context", explode)
+        monkeypatch.setattr(isolated_engram, "generate_context_report", explode)
         result = _run(mcp_server.get_user_context())
         assert "失败" in result or "synthetic failure" in result
 
@@ -1179,8 +1179,10 @@ class TestEmptyContextReturns:
     def test_get_user_context_returns_empty_sentinel(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
     ):
-        """Line 223: generate_context returns '' -> 'Engram 为空' message."""
-        monkeypatch.setattr(isolated_engram, "generate_context", lambda *a, **kw: "")
+        """Line 223: the context report is empty -> 'Engram 为空' message."""
+        monkeypatch.setattr(
+            isolated_engram, "generate_context_report", lambda *a, **kw: ("", None)
+        )
         result = _run(mcp_server.get_user_context())
         assert "Engram 为空" in result
 
@@ -1958,15 +1960,15 @@ def test_review_staging_batch_still_write_gated_for_external(
 def test_get_user_context_passes_token_budget(
     isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
 ):
-    """MCP get_user_context 的 token_budget 应传为 generate_context(max_tokens=...)。"""
+    """MCP get_user_context 的 token_budget 应传为 generate_context_report(max_tokens=...)。"""
     captured = {}
-    original = isolated_engram.generate_context
+    original = isolated_engram.generate_context_report
 
     def spy(project_folder=None, max_tokens=None, level="full"):
         captured["max_tokens"] = max_tokens
         return original(project_folder, max_tokens=max_tokens, level=level)
 
-    monkeypatch.setattr(isolated_engram, "generate_context", spy)
+    monkeypatch.setattr(isolated_engram, "generate_context_report", spy)
     _run(mcp_server.get_user_context(token_budget=42))
     assert captured.get("max_tokens") == 42
 
@@ -1985,8 +1987,10 @@ def test_get_user_context_truncates_user_prompt_to_token_budget(
     """user_prompt 过长且设置 token_budget 时应裁剪追加内容。"""
     monkeypatch.setattr(
         isolated_engram,
-        "generate_context",
-        lambda project_folder=None, level="standard", max_tokens=None: "context-body-" * 3,
+        "generate_context_report",
+        lambda project_folder=None, level="standard", max_tokens=None: (
+            "context-body-" * 3, None,
+        ),
     )
     prompt = "这是一个很长的问题" * 30
 

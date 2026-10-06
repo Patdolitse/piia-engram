@@ -163,10 +163,14 @@ What your AI receives follows the same rule everywhere:
 - Context it gets without asking (cold start, the resume brief, the
   session-start hooks, `get_recall`, `get_relevant_knowledge`) holds reviewed,
   current items only. Items waiting for review, items replaced by a newer
-  version and archived items are left out.
+  version and archived items are left out. Recall only trusts items that are
+  clearly marked reviewed: an unknown tier, a missing status or a rejected or
+  deprecated label keeps an item out.
 - `search_knowledge` lists items waiting for review in a separate `pending`
   group (each marked `pending_untrusted`), never mixed into the results.
   Replaced items are left out unless you pass `include_superseded=true`.
+  A `{"tier": "archived"}` filter returns nothing, and `engram dock-search`
+  shows at most `--limit` items per kind in total.
 - Reading one item by id (`get_knowledge_history`, `explore_knowledge`) still
   returns a replaced item and names the item that replaced it (`superseded_by`).
 - When a token budget cuts content, the response says what was left out

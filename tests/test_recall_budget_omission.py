@@ -232,3 +232,42 @@ def test_memory_lens_without_cut_has_no_trimmed(env):
     preview = build_context_preview(eng, role="owner", level="full", query=TOPIC)
     assert preview["knowledge"]["trimmed"] == []
     assert "omitted" not in preview["knowledge"]
+
+
+# --- the MCP cold start reads the report, not the shared attribute ---------------
+
+
+def test_mcp_user_context_uses_the_report_not_shared_state(env, monkeypatch):
+    """Concurrent calls must not read each other's omission: take it from the return value."""
+    m, eng, root, tmp_path = env
+    omitted = {"omitted_count": 2, "ids": ["l-x"], "sections": ["lessons"], "reason": "budget"}
+    line = "已省略 2 项（预算）：lessons"
+    monkeypatch.setattr(eng, "generate_context_report",
+                        lambda *a, **kw: (f"REPORTBODY\n\n{line}", omitted))
+
+    def _must_not_run(*a, **kw):
+        raise AssertionError("generate_context is the compatibility wrapper only")
+
+    monkeypatch.setattr(eng, "generate_context", _must_not_run)
+    eng.last_context_omitted = {"omitted_count": 99, "ids": [], "sections": ["stale"],
+                                "reason": "budget"}  # another call's leftover
+    text = _user_context(m, eng, tmp_path, token_budget=100000)
+    assert "REPORTBODY" in text
+    assert text.rstrip().splitlines()[-1] == line
+    assert "stale" not in text and "99" not in text
+
+
+def test_mcp_user_context_falls_back_when_the_engine_has_no_report(env, monkeypatch):
+    """A stand-in engine that only has generate_context (and the old attribute) still works."""
+    m, eng, root, tmp_path = env
+    line = "已省略 1 项（预算）：lessons"
+
+    def legacy(project_folder=None, max_tokens=None, level="standard"):
+        eng.last_context_omitted = {"omitted_count": 1, "ids": [], "sections": ["lessons"],
+                                    "reason": "budget"}
+        return f"LEGACYBODY\n\n{line}"
+
+    monkeypatch.setattr(type(eng), "generate_context_report", None)
+    monkeypatch.setattr(eng, "generate_context", legacy)
+    text = _user_context(m, eng, tmp_path, token_budget=100000)
+    assert "LEGACYBODY" in text and text.rstrip().splitlines()[-1] == line
