@@ -595,7 +595,9 @@ def render_recall_text(payload: dict[str, Any]) -> str:
                 "  context usage: "
                 f"returned={returned}, trimmed={trimmed}, budget={used}/{requested}"
             )
-    omission = _recall_policy.omission_line(meta.get("omitted") if isinstance(meta, dict) else None)
+    omission = _recall_policy.omission_line(
+        meta.get("omitted") if isinstance(meta, dict) else None, lang="en"
+    )
     if omission:
         lines.append(omission)
     return "\n".join(lines)

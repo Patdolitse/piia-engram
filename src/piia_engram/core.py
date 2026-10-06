@@ -3269,6 +3269,7 @@ READ_ONLY_SAFE_METHODS = frozenset({
     "capacity_status", "classify_legacy_playbooks", "classify_rarity", "collect_memory_candidates",
     "compare_user_portraits", "detect_active_decision_conflicts",
     "extract_candidates", "find_similar_knowledge", "find_tool", "generate_context",
+    "generate_context_report",
     "generate_review_page", "get_daily_log", "get_decision_history", "get_decision_thread",
     "get_decisions", "get_domains", "get_execution_status", "get_health_report",
     "get_knowledge_digest", "get_knowledge_history", "get_knowledge_inheritance",

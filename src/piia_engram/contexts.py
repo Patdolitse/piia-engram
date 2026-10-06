@@ -2435,16 +2435,24 @@ class ContextStoreMixin:
             return _recall_policy.omitted_info(ids=ids, sections=names, extra=extra)
 
         # A cut is reported in data (``omitted``) and as one line at the end of
-        # the brief; the line is paid for inside the same character budget.
+        # the brief (English, like the brief's headings); the line is paid for
+        # inside the same character budget. When the line cannot fit at all it
+        # is left out and the cut is reported in data only.
+        wrapper_len = len(wrapper_open) + len(wrapper_preamble) + len(wrapper_close)
         reserve = 0
         while True:
             included, parts, budget_skips, cut = _assemble(char_budget - reserve)
             omitted = _omitted(cut)
-            omission = _recall_policy.omission_line(omitted)
+            omission = _recall_policy.omission_line(omitted, lang="en")
             need = len(omission) + 2 if omission else 0
-            if need <= reserve or char_budget - need < 0:
+            if need <= reserve:
                 break
-            reserve = need
+            if wrapper_len + need > char_budget:
+                included, parts, budget_skips, cut = _assemble(char_budget)
+                omitted = _omitted(cut)
+                omission = ""
+                break
+            reserve = need  # strictly grows, bounded by char_budget
         sections_skipped.extend(budget_skips)
 
         body = "\n\n".join(parts)

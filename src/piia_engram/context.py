@@ -1417,6 +1417,9 @@ class ContextMixin:
     # Smart cold-start context generation
     # ------------------------------------------------------------------
 
+    # Upper bound on re-fits while reserving room for the omission line.
+    _OMISSION_FIT_MAX_ROUNDS = 64
+
     def generate_context(
         self,
         project_folder: str | None = None,
@@ -1424,6 +1427,28 @@ class ContextMixin:
         level: str = "full",
     ) -> str:
         """Generate a concise context block that any AI can consume.
+
+        Thin wrapper over :meth:`generate_context_report`. The budget omission
+        of the latest call stays readable as ``last_context_omitted`` for
+        callers that only receive the text (kept for compatibility).
+        """
+        text, omitted = self.generate_context_report(
+            project_folder, max_tokens=max_tokens, level=level,
+        )
+        self.last_context_omitted = omitted
+        return text
+
+    def generate_context_report(
+        self,
+        project_folder: str | None = None,
+        max_tokens: int | None = None,
+        level: str = "full",
+    ) -> tuple[str, dict | None]:
+        """Generate the cold-start context; return ``(text, omitted)``.
+
+        ``omitted`` is ``{omitted_count, ids, sections, reason}`` when the
+        token budget dropped sections (the text then ends with one omission
+        line, paid for inside the budget), else None.
 
         This is the magic moment — inject this into any AI's system prompt
         and it immediately "knows" you.
@@ -1445,9 +1470,6 @@ class ContextMixin:
                 Backward-compatible: defaults to "full" so existing callers
                 see no behaviour change.
         """
-        # Budget omissions of THIS call (ids and section names only); read by
-        # get_user_context to restate the one omission line at its very end.
-        self.last_context_omitted = None
         # Normalise level; unknown values fall back to full for safety.
         level = (level or "full").lower()
         if level not in self._LEVEL_SECTIONS:
@@ -1679,12 +1701,13 @@ class ContextMixin:
 
         # ── Assemble ──────────────────────────────────────────────────
         if not sections:
-            return ""
+            return "", None
 
         if max_tokens is None:
             # No budget — include all, display order
             parts = sorted(sections.items(), key=lambda kv: self._SECTION_DISPLAY.get(kv[0], 99))
-            return "\n".join(text for _, text in parts)
+            return "\n".join(text for _, text in parts), None
+        max_tokens = max(0, int(max_tokens))
 
         # Budget-limited — include by priority until exhausted
         by_priority = sorted(sections.items(), key=lambda kv: self._SECTION_PRIORITY.get(kv[0], 99))
@@ -1712,24 +1735,21 @@ class ContextMixin:
             return f"{body}\n\n{line}" if line else body
 
         # A cut ends with one line naming what was left out; that line is
-        # paid for inside the same budget (reserve grows until it fits).
+        # paid for inside the same budget (reserve grows strictly each round).
         reserve = 0
-        while True:
+        for _round in range(self._OMISSION_FIT_MAX_ROUNDS):
             kept, dropped = _fit(max_tokens - reserve)
             omitted = _omitted(dropped)
             line = _recall_policy.omission_line(omitted)
             text = _join(kept, line)
             if not line or self._estimate_tokens(text) <= max_tokens:
-                break
+                return text, omitted
             reserve += max(1, self._estimate_tokens(text) - max_tokens)
             if reserve > max_tokens:
-                # Not even the line fits: keep the plain cut, report it in data only.
-                kept, dropped = _fit(max_tokens)
-                omitted = _omitted(dropped)
-                text = _join(kept, "")
                 break
-        self.last_context_omitted = omitted
-        return text
+        # Not even the line fits: keep the plain cut, report it in data only.
+        kept, dropped = _fit(max_tokens)
+        return _join(kept, ""), _omitted(dropped)
 
     # ------------------------------------------------------------------
     # Quick-context snapshot file (cross-tool / offline fallback)

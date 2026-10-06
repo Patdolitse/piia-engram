@@ -256,8 +256,9 @@ def build_recall_payload(
         if not isinstance(entry, dict):
             continue
         if playbook_count >= _PLAYBOOK_MAX_ITEMS:
+            # a fixed item cap, not the budget: counted in playbooks.trimmed,
+            # never reported as a budget omission
             playbook_excluded += 1
-            _note_omitted(entry, "playbooks")
             continue
         view = _project_item(
             entry, include_freshness=include_freshness, now=now, include_trust=include_trust

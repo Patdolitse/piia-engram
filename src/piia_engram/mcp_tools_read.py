@@ -199,9 +199,19 @@ async def get_user_context(
     # from the first message. The section is appended BEFORE the governance
     # gate so owner callers see it in the full context; non-owner callers
     # get the gate's refusal string (they can use get_permission_profile).
+    # The omission line is paid for inside the token budget, measured on the
+    # content (the permissions note has always been outside it) with the
+    # core's estimator. When it does not fit, it is left out, as in the core.
+    omission = S._recall_policy.omission_line(omitted)
+    if omission and token_budget is not None:
+        estimate = getattr(eng, "_estimate_tokens", None)
+        if not callable(estimate):
+            def estimate(text: str) -> int:
+                return len(text) // 3
+        if estimate(f"{context}\n\n{omission}") > token_budget:
+            omission = ""
     perms = S._gov_rt.describe_caller_permissions(S._get_engram().root)
     context += S._format_permissions_section(perms)
-    omission = S._recall_policy.omission_line(omitted)
     if omission:
         context += "\n\n" + omission
 
