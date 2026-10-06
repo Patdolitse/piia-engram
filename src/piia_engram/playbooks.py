@@ -642,7 +642,7 @@ class PlaybookMixin:
             _strip_untrusted_freshness_provenance(new_pb)
         from . import write_provenance as _write_provenance
 
-        _write_provenance.stamp(new_pb)
+        _write_provenance.stamp(new_pb, allow_reserved=allow_internal_provenance)
         from .dedup_review import strip_caller_fields
 
         strip_caller_fields(new_pb)

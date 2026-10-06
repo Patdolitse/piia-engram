@@ -2233,7 +2233,7 @@ class Engram(
 
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_lesson)
-        _write_provenance.stamp(new_lesson)
+        _write_provenance.stamp(new_lesson, allow_reserved=allow_internal_provenance)
 
         for _field in _capacity.SYSTEM_FIELDS:
             new_lesson.pop(_field, None)
@@ -2750,7 +2750,7 @@ class Engram(
 
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_decision)
-        _write_provenance.stamp(new_decision)
+        _write_provenance.stamp(new_decision, allow_reserved=allow_internal_provenance)
 
         for _field in _capacity.SYSTEM_FIELDS:
             new_decision.pop(_field, None)

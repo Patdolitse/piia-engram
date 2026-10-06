@@ -612,6 +612,8 @@ _PROPOSAL_DROP_FIELDS = frozenset({
     "id", "timestamp", "created_at", "last_updated", "last_reviewed", "access_count", "version",
     "tier", "memory_state", "approval_status", "approval_required", "promoted_at", "promotion_reason",
     "pending_supersedes", "status", "snapshot_of", "superseded_by", "superseded_at", "labeling",
+    # The proposer is a new writer: the provenance stamp fills source_tool.
+    "source_tool",
 })
 
 

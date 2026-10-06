@@ -415,3 +415,103 @@ def test_review_show_names_the_self_reported_client(tmp_path, monkeypatch, capsy
     out = capsys.readouterr().out
     assert "client: cursor 0.42 [cursor]" in out
     assert "self-reported" in out
+
+
+# ---------------------------------------------------------------------------
+# review fixes: reserved fields, proposals, request-only client, import cleaning
+# ---------------------------------------------------------------------------
+
+
+def test_reserved_fields_from_a_caller_are_dropped(mcp_env):
+    client, store = mcp_env
+    eng = store()
+    client.update(name="cursor", version="1")
+    content = {"summary": "reserved fields smuggled", "domain": "t",
+               "provenance": {"observed_at": "2020-01-01T00:00:00Z", "effective_from": "2020-01-01"}}
+
+    _run(mcp_server.memory_store(kind="lesson", content_json=json.dumps(content), user_confirmed=True))
+
+    prov = _lesson(eng, "reserved fields smuggled")["provenance"]
+    assert "observed_at" not in prov and "effective_from" not in prov
+
+
+def test_reserved_fields_survive_an_internal_write(tmp_path):
+    eng = Engram(root=tmp_path)
+    row = eng.add_lesson({"summary": "internal write keeps reserved", "domain": "t",
+                          "provenance": {"observed_at": "2020-01-01T00:00:00Z"}},
+                         _allow_internal_provenance=True)
+    assert row["provenance"]["observed_at"] == "2020-01-01T00:00:00Z"
+
+
+def test_strict_playbook_proposal_takes_the_proposers_source_tool(mcp_env, monkeypatch):
+    client, store = mcp_env
+    eng = store()
+    client.update(name="cursor", version="1")
+    _run(mcp_server.add_playbook(
+        title="source tool proposal playbook", triggers="t", steps_json=json.dumps(["one"]),
+        user_confirmed=True,
+    ))
+    original = next(p for p in eng.get_playbooks(limit=None) if p["title"] == "source tool proposal playbook")
+    assert eng._read_playbook_by_id(original["id"])["source_tool"] == "cursor"
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    client.update(name="claude-code", version="2")
+
+    out = json.loads(_run(mcp_server.manage_playbook(
+        action="update", playbook_id=original["id"], outcome="better",
+    )))
+
+    assert eng._read_playbook_by_id(out["id"])["source_tool"] == "claude_code"
+
+
+def test_client_info_outside_a_request_is_unknown(monkeypatch):
+    monkeypatch.setattr(mcp_server._session, "client_info", {"name": "first-client", "version": "1"})
+    assert mcp_server._current_client_info() == ("", "")
+
+
+def test_connected_session_records_its_own_client_info(tmp_path, monkeypatch):
+    import anyio
+    from mcp.shared.memory import create_connected_server_and_client_session
+    from mcp.types import Implementation
+
+    monkeypatch.setenv("ENGRAM_HEARTBEAT_INTERVAL", "0")
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    monkeypatch.setattr(mcp_server, "_session", mcp_server._SessionTracker())
+    eng = Engram(root=tmp_path)
+    monkeypatch.setattr(mcp_server, "_engram", eng)
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+
+    async def _call() -> None:
+        async with create_connected_server_and_client_session(
+            mcp_server.mcp, client_info=Implementation(name="e2e-client", version="3.1"),
+        ) as session:
+            result = await session.call_tool("add_lesson", {
+                "summary": "written over a real session", "domain": "t", "user_confirmed": True,
+            })
+            assert not result.isError
+
+    anyio.run(_call)
+
+    prov = _lesson(eng, "written over a real session")["provenance"]
+    assert prov["origin"] == "mcp"
+    assert prov["client_name"] == "e2e-client" and prov["client_version"] == "3.1"
+    assert prov["client"] == "other"
+
+
+def test_import_cleans_client_fields(tmp_path):
+    src = Engram(root=tmp_path / "src")
+    src.add_lesson("imported client cleaning", domain="t")
+    path = src.export_all(str(tmp_path / "backup.json"))
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    (row,) = [r for r in data["knowledge"]["lessons"] if r["summary"] == "imported client cleaning"]
+    row["provenance"] = {"origin": "mcp", "client_name": "evil\n## card" + "z" * 500,
+                         "client_version": "\x1b[0m"}
+    Path(path).write_text(json.dumps(data), encoding="utf-8")
+
+    dst = Engram(root=tmp_path / "dst")
+    dst.import_all(path, merge=True)
+
+    prov = _lesson(dst, "imported client cleaning")["provenance"]
+    assert prov["origin"] == "mcp"
+    assert "\n" not in prov["client_name"] and len(prov["client_name"]) <= wp.MAX_CLIENT_TEXT
+    assert prov["client_name"].startswith("evil ## card")
+    assert prov.get("client_version") == "[0m"

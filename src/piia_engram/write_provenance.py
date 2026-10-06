@@ -20,7 +20,8 @@ updates may not change ``provenance`` or ``source_tool`` afterwards.
 
 Reserved: ``provenance.observed_at`` and ``provenance.effective_from`` are kept
 free for a later "when was this observed / since when does it hold" contract.
-Nothing writes or reads them yet.
+Nothing reads them yet, and a caller's values are dropped on insert (internal
+paths that pass ``allow_reserved`` keep them).
 """
 
 from __future__ import annotations
@@ -101,10 +102,11 @@ def current() -> dict[str, str]:
     return dict(record) if record else {"origin": ORIGIN_LOCAL}
 
 
-def stamp(entry: dict) -> dict:
+def stamp(entry: dict, *, allow_reserved: bool = False) -> dict:
     """Stamp a NEW row in place (call once, at the insert point).
 
-    Replaces any caller-supplied origin/client fields, and fills a missing
+    Replaces any caller-supplied origin/client fields, drops the reserved fields
+    unless ``allow_reserved`` (internal paths), and fills a missing
     ``source_tool`` with the normalized client label (MCP only).
     """
     if not isinstance(entry, dict):
@@ -114,6 +116,10 @@ def stamp(entry: dict) -> dict:
     provenance = dict(provenance) if isinstance(provenance, dict) else {}
     for key in CLIENT_FIELDS:
         provenance.pop(key, None)
+    if not allow_reserved:
+        for key in RESERVED_PROVENANCE_FIELDS:
+            provenance.pop(key, None)
+            entry.pop(f"provenance.{key}", None)
     provenance["origin"] = record["origin"]
     if record["origin"] == ORIGIN_MCP:
         if record.get("client_name"):
@@ -130,7 +136,8 @@ def stamp(entry: dict) -> dict:
 
 def stamp_imported(entry: dict) -> dict:
     """An imported row keeps an origin it already carries (a restored backup);
-    otherwise it is marked ``import``. Never given client fields it lacks."""
+    otherwise it is marked ``import``. Never given client fields it lacks; the
+    client fields it keeps are cleaned and capped like a fresh stamp."""
     if not isinstance(entry, dict):
         return entry
     provenance = entry.get("provenance")
@@ -139,6 +146,13 @@ def stamp_imported(entry: dict) -> dict:
         for key in CLIENT_FIELDS:
             provenance.pop(key, None)
         provenance["origin"] = ORIGIN_IMPORT
+    for key in ("client_name", "client_version", "client"):
+        if key in provenance:
+            value = clean_client_text(provenance[key])
+            if value:
+                provenance[key] = value
+            else:
+                provenance.pop(key)
     entry["provenance"] = provenance
     return entry
 

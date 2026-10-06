@@ -101,13 +101,17 @@ Each knowledge entry can carry trust-mode metadata:
 |---|---|
 | `memory_state` | Canonical lifecycle state: `staging`, `verified`, `rejected`, or `deprecated` |
 | `approval_status` | User-facing approval state derived from the memory state |
-| `provenance` | Metadata such as `source_tool`, `entry_type`, `created_at`, `domain`, and `project`, plus how the entry was written (`origin`: `mcp`, `cli`, `import` or `local`) and, for MCP writes, the client name and version the client reported. Set when the entry is written; updates cannot change it or `source_tool` |
+| `provenance` | Metadata such as `source_tool`, `entry_type`, `created_at`, `domain`, and `project`, plus how the entry was written (`origin`: `mcp`, `cli`, `import` or `local`) and, for MCP writes, the client name and version the client reported |
 | `risk_level` / `risk_flags` | A conservative local signal for risky memory text, such as credentials, executable commands, MCP config, permissions, or external URLs |
 | `approval_required` | True when the entry is staged or high-risk |
 
 These fields are additive. Existing `tier` and `status` values remain supported for backward compatibility.
 
-The client name and version are what the MCP client says about itself. Engram records them so you can see which tool proposed an entry, but they are self-reported, not verified: they never change an entry's risk, tier or review requirement.
+The client name and version are what the MCP client says about itself. Engram records them so you can see which tool proposed an entry, but they are self-reported, not verified.
+
+- The `origin` and client fields do not change after the entry is written, and `update_knowledge` refuses to change `provenance` or `source_tool`.
+- When an MCP write gives no `source_tool`, Engram fills it with the client label. That value only affects how the entry is labeled and shown; it does not affect the review tier, risk level or whether the entry can be recalled.
+- Restoring from your own backup keeps the provenance fields stored in the backup file (cleaned and length-capped); rows without an origin are marked `import`.
 
 ## Recovery and retention dry-runs
 

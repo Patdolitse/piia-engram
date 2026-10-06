@@ -85,14 +85,19 @@ The client fields are **self-reported by the client**. Any MCP client can send
 any name, so they are a label for the person reviewing the entry, not a trust or
 authorization signal: risk level, tier, the approval gate and recall do not read
 them. When an MCP write gives no `source_tool`, Engram fills it with the `client`
-label.
+label; that value only affects labeling and display, never the review tier, risk
+or recall eligibility. The client is read from the request that makes the write;
+a write outside any request records `unknown`.
 
-`provenance` and `source_tool` cannot be changed after the write:
-`update_knowledge` refuses an update that names them (`provenance_immutable`).
+`origin` and the client fields do not change after the write, and
+`update_knowledge` refuses an update that names `provenance` or `source_tool`
+(`provenance_immutable`). Restoring from your own backup keeps the provenance
+fields stored in the file (client fields cleaned and capped); a row without an
+origin is marked `import`.
 
 Reserved: `observed_at` and `effective_from` are kept for a later "when was this
-observed / since when does it hold" contract. Engram does not write or read them
-yet.
+observed / since when does it hold" contract. Engram does not read them yet, and
+values sent by a caller are dropped.
 
 ### Type / safety rules
 

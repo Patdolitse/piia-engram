@@ -48,9 +48,10 @@ def _env_flag_enabled(name: str) -> bool:
 def _current_client_info() -> tuple[str, str]:
     """clientInfo (name, version) the connected MCP client sent at initialize.
 
-    Read from the live request when there is one (so each session reports its
-    own client), else the first one this process saw; ("", "") when unknown.
-    The values are the client's own claim -- provenance only, never trust.
+    Read from the live request only, so each session reports its own client.
+    Outside a request (an atexit or heartbeat save) the answer is ("", ""),
+    recorded as ``unknown``: never borrowed from another session. The values
+    are the client's own claim -- provenance only, never trust.
     """
     try:
         params = mcp.get_context().session.client_params
@@ -59,8 +60,7 @@ def _current_client_info() -> tuple[str, str]:
             return str(getattr(info, "name", "") or ""), str(getattr(info, "version", "") or "")
     except Exception:
         pass  # not inside a request
-    info = _session.client_info if "_session" in globals() else {}
-    return str(info.get("name", "") or ""), str(info.get("version", "") or "")
+    return "", ""
 
 
 def _locked_engram_call(fn, *args, **kwargs):
