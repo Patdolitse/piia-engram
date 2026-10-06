@@ -1445,6 +1445,9 @@ class ContextMixin:
                 Backward-compatible: defaults to "full" so existing callers
                 see no behaviour change.
         """
+        # Budget omissions of THIS call (ids and section names only); read by
+        # get_user_context to restate the one omission line at its very end.
+        self.last_context_omitted = None
         # Normalise level; unknown values fall back to full for safety.
         level = (level or "full").lower()
         if level not in self._LEVEL_SECTIONS:
@@ -1457,6 +1460,8 @@ class ContextMixin:
 
         # ── Build each section independently ──────────────────────────
         sections: dict[str, str] = {}
+        # ids of the knowledge rows each section carries (budget omission report)
+        section_ids: dict[str, list[str]] = {}
         # Recall eligibility (auto_inject): cold start shows trusted rows only.
         supersede_index = self._recall_supersede_index()
 
@@ -1574,6 +1579,7 @@ class ContextMixin:
                 for l in lessons:
                     ll.append(f"- {l.get('summary', '')}")
                 sections["lessons"] = "\n".join(ll)
+                section_ids["lessons"] = [str(l.get("id")) for l in lessons if l.get("id")]
         else:
             lessons = []
 
@@ -1599,6 +1605,7 @@ class ContextMixin:
                     elif choice:
                         dc.append(f"- {choice}")
                 sections["decisions"] = "\n".join(dc)
+                section_ids["decisions"] = [str(d.get("id")) for d in decisions if d.get("id")]
         else:
             decisions = []
 
@@ -1620,6 +1627,7 @@ class ContextMixin:
                         line += f" [参数: {', '.join(params)}]"
                     pb_lines.append(line)
                 sections["playbooks"] = "\n".join(pb_lines)
+                section_ids["playbooks"] = [str(pb.get("id")) for pb in recent_pbs if pb.get("id")]
 
         # Conflicts
         if _wants("conflicts"):
@@ -1688,17 +1696,49 @@ class ContextMixin:
             return "\n".join(text for _, text in parts)
 
         # Budget-limited — include by priority until exhausted
-        budget = max_tokens
-        included: list[tuple[int, str]] = []
         by_priority = sorted(sections.items(), key=lambda kv: self._SECTION_PRIORITY.get(kv[0], 99))
-        for key, text in by_priority:
-            cost = self._estimate_tokens(text)
-            if cost <= budget:
-                included.append((self._SECTION_DISPLAY.get(key, 99), text))
-                budget -= cost
-        # Re-sort to display order
-        included.sort()
-        return "\n".join(text for _, text in included)
+
+        def _fit(budget: int) -> tuple[list[tuple[int, str]], list[str]]:
+            kept: list[tuple[int, str]] = []
+            dropped: list[str] = []
+            for key, text in by_priority:
+                cost = self._estimate_tokens(text)
+                if cost <= budget:
+                    kept.append((self._SECTION_DISPLAY.get(key, 99), text))
+                    budget -= cost
+                else:
+                    dropped.append(key)
+            kept.sort()  # display order
+            return kept, dropped
+
+        def _omitted(dropped: list[str]) -> dict | None:
+            ids = [i for key in dropped for i in section_ids.get(key, [])]
+            extra = sum(1 for key in dropped if not section_ids.get(key))
+            return _recall_policy.omitted_info(ids=ids, sections=dropped, extra=extra)
+
+        def _join(kept: list[tuple[int, str]], line: str) -> str:
+            body = "\n".join(text for _, text in kept)
+            return f"{body}\n\n{line}" if line else body
+
+        # A cut ends with one line naming what was left out; that line is
+        # paid for inside the same budget (reserve grows until it fits).
+        reserve = 0
+        while True:
+            kept, dropped = _fit(max_tokens - reserve)
+            omitted = _omitted(dropped)
+            line = _recall_policy.omission_line(omitted)
+            text = _join(kept, line)
+            if not line or self._estimate_tokens(text) <= max_tokens:
+                break
+            reserve += max(1, self._estimate_tokens(text) - max_tokens)
+            if reserve > max_tokens:
+                # Not even the line fits: keep the plain cut, report it in data only.
+                kept, dropped = _fit(max_tokens)
+                omitted = _omitted(dropped)
+                text = _join(kept, "")
+                break
+        self.last_context_omitted = omitted
+        return text
 
     # ------------------------------------------------------------------
     # Quick-context snapshot file (cross-tool / offline fallback)

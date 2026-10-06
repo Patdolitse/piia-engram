@@ -160,6 +160,7 @@ def build_context_preview(
 
     # --- panel ②: split raw knowledge into exposed vs withheld -----------
     exposed_pre: list[dict[str, Any]] = []
+    exposed_ids: list[str] = []  # parallel to exposed_pre (budget report only)
     withheld_items: list[dict[str, Any]] = []
     for item in merged:
         if not isinstance(item, dict):
@@ -174,6 +175,7 @@ def build_context_preview(
             withheld_items.append(digest)
         else:
             exposed_pre.append(digest)
+            exposed_ids.append(str(item.get("id") or ""))
     # Rows the recall policy keeps out of every injection (awaiting review,
     # replaced by a newer version, archived). The owner sees them here with
     # the reason; a governance reason wins, as it does for eligible rows.
@@ -208,6 +210,7 @@ def build_context_preview(
     # label (they are metadata-only; the lesson/decision split above never
     # touched them, so mislabeling as lessons is impossible).
     exposed_pre.extend(playbook_pointers)
+    exposed_ids.extend(str(pb.get("id") or "") for pb in playbook_pointers)
     raw_exposed_payload = {
         "identity": identity,
         "recent_activity": recent_activity,
@@ -219,6 +222,21 @@ def build_context_preview(
     safe_meta = safe.get("meta", {}).get("safe_context", {}) if isinstance(safe, dict) else {}
     safe_knowledge = safe.get("knowledge", []) if isinstance(safe, dict) else []
     trimmed_by_budget = max(0, len(exposed_pre) - len(safe_knowledge))
+    # The budget trims from the end, so the trimmed items are the tail. Only
+    # this owner-facing preview shows their summaries (scrubbed like withheld
+    # ones); injection surfaces report ids and section names only.
+    kept_n = len(exposed_pre) - trimmed_by_budget
+    trimmed_items = []
+    for digest in exposed_pre[kept_n:]:
+        shown = dict(digest)
+        shown["summary"] = redact_export_text(str(shown.get("summary") or shown.get("title") or ""))
+        trimmed_items.append(shown)
+    trimmed_ids = [i for i in exposed_ids[kept_n:] if i]
+    omitted = _recall_policy.omitted_info(
+        ids=trimmed_ids,
+        sections=["knowledge"] if trimmed_by_budget else [],
+        extra=trimmed_by_budget - len(trimmed_ids),
+    )
     # Digests come out of the SAFE (redacted) payload so the preview itself
     # never carries an unredacted secret.
     exposed_digests = [item for item in safe_knowledge if isinstance(item, dict)]
@@ -247,7 +265,10 @@ def build_context_preview(
         "exposed_count": len(exposed_digests),
         "withheld_count": len(withheld_items),
         "trimmed_by_budget": trimmed_by_budget,
+        "trimmed": trimmed_items,
     }
+    if omitted:
+        knowledge_panel["omitted"] = omitted
     return {
         "generated_at": generated_at,
         "level": level_key,
@@ -421,6 +442,18 @@ def render_context_preview_text(preview: dict[str, Any]) -> str:
             "  （没有超出该调用方上限的条目）",
             "  (none above this caller's ceiling)",
         ))
+
+    trimmed_items = knowledge.get("trimmed") or []
+    if trimmed_items:
+        lines.append(t(
+            f"因预算被裁掉的知识（{len(trimmed_items)} 条，仅摘要；AI 只会看到被省略的条数与 id）:",
+            f"Knowledge trimmed by budget ({len(trimmed_items)} items, summaries only; "
+            "the AI only sees the omitted count and ids):",
+        ))
+        for item in trimmed_items:
+            lines.append(
+                f"  - ({_label(_TYPE_LABELS, item.get('type'))}) {item.get('summary')}"
+            )
 
     staging = caller.get("staging_excluded")
     hits = redaction.get("hits", 0)

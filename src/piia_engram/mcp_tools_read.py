@@ -66,8 +66,9 @@ async def get_user_context(
     Args:
         project_folder: 当前项目文件夹路径（可选）。 / Current project folder path (optional).
         level: "quick" | "standard" | "full"，默认 "standard"。 / Tier — defaults to "standard".
-        token_budget: 上下文 token 预算（可选）。设定后按优先级裁剪 section，低优先级 section 先丢弃。不设则返回全量。
-            Optional token budget. When set, sections are included by priority until budget is exhausted.
+        token_budget: 上下文 token 预算（可选）。设定后按优先级裁剪 section，低优先级 section 先丢弃，末尾一行注明省略了什么。不设则返回全量。
+            Optional token budget. When set, sections are included by priority until budget is exhausted;
+            a cut ends the context with one line naming what was left out.
         user_prompt: 用户当前提问（可选）。传入后会追加到上下文末尾，并与已存 Playbook 的
             triggers 关键词匹配，命中时浮现「相关 Playbook」小节（标题 + ID；用 get_playbooks(mode="get") 查看完整步骤）。
             Optional current user prompt. Appended to the context and matched against stored
@@ -91,8 +92,13 @@ async def get_user_context(
     # Cold start only reads the store. It never scans other AI tools' rule or
     # memory files and never imports them: that is the Owner's explicit
     # `engram import-memories` command, which an empty store points to.
+    eng = S._get_engram()
     try:
-        context = S._get_engram().generate_context(
+        try:
+            eng.last_context_omitted = None  # this call's report only
+        except Exception:
+            pass
+        context = eng.generate_context(
             project_folder, level=level, max_tokens=token_budget,
         )
         S._track("get_user_context", success=True)
@@ -101,6 +107,14 @@ async def get_user_context(
         S._track("get_user_context", success=False)
         S.logger.warning("generate_context failed: %s", exc)
         return f"Engram 上下文加载失败: {S._safe_err(exc)}"
+    # Budget omissions: the core context ends with one omission line; take it
+    # off here and restate it (merged with anything cut below) as the very
+    # last line of the whole response.
+    omitted = getattr(eng, "last_context_omitted", None)
+    omitted = omitted if isinstance(omitted, dict) else None
+    core_line = S._recall_policy.omission_line(omitted)
+    if core_line and isinstance(context, str) and context.endswith(core_line):
+        context = context[: -len(core_line)].rstrip("\n")
     if (
         context
         and (token_budget is None or (len(context) + len(IMPORT_HINT)) // 3 <= token_budget)
@@ -166,6 +180,18 @@ async def get_user_context(
                 or (len(context) + len(section)) // 3 <= token_budget
             ):
                 context += section
+            elif section:
+                match_ids = []
+                for match in matches or []:
+                    if isinstance(match, dict) and match.get("playbook_id"):
+                        match_ids.append(match["playbook_id"])
+                omitted = S._recall_policy.merge_omitted(
+                    omitted,
+                    S._recall_policy.omitted_info(
+                        ids=match_ids, sections=["matched_playbooks"],
+                        extra=0 if match_ids else 1,
+                    ),
+                )
         except Exception as exc:
             S.logger.warning("playbook trigger matching failed: %s", exc)
 
@@ -175,6 +201,9 @@ async def get_user_context(
     # get the gate's refusal string (they can use get_permission_profile).
     perms = S._gov_rt.describe_caller_permissions(S._get_engram().root)
     context += S._format_permissions_section(perms)
+    omission = S._recall_policy.omission_line(omitted)
+    if omission:
+        context += "\n\n" + omission
 
     # Cold-start context is a rendered string bundling identity + top
     # lessons/decisions + snapshot — unfilterable by field. Gate owner-only.

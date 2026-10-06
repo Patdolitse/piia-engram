@@ -145,8 +145,9 @@ async def get_resume_brief(
     Args:
         project_folder: 项目文件夹路径（可选）。留空只返回身份卡。 /
             Project folder (optional). Empty returns identity-only.
-        token_budget: 输出 token 软上限（默认 2000，约 8000 字符）。 /
-            Soft cap for output tokens (default 2000 ≈ 8000 chars).
+        token_budget: 输出 token 软上限（默认 2000，约 8000 字符）。超出时结果带 omitted，正文末尾注明省略了什么。 /
+            Soft cap for output tokens (default 2000 ≈ 8000 chars). When it cuts content,
+            the result carries ``omitted`` and the brief ends with one line naming what was left out.
         include_resume_pack: Include structured ``project_resume_pack.v1`` in
             the JSON response. Defaults to false to preserve existing output.
         include_agent_context_pack: Include structured
@@ -205,8 +206,9 @@ async def get_recall(
     actionable memory bundle: identity slice, recent activity, relevant
     knowledge, and governance metadata.
 
-    只返回已审核且当前有效的知识。
-    Returns reviewed, current knowledge only.
+    只返回已审核且当前有效的知识；预算裁掉内容时 meta.omitted 给出 {omitted_count, ids, sections, reason}。
+    Returns reviewed, current knowledge only; when the budget drops items,
+    meta.omitted reports {omitted_count, ids, sections, reason} (no content).
 
     注意：该聚合视图可能组合多类知识和最近上下文，因此治理开启时仅 owner
     (private-self) 可读；非 owner 会在读取前被拒绝，不触发搜索或遥测写入。
