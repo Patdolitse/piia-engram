@@ -136,8 +136,11 @@ def stamp(entry: dict, *, allow_reserved: bool = False) -> dict:
 
 def stamp_imported(entry: dict) -> dict:
     """An imported row keeps an origin it already carries (a restored backup);
-    otherwise it is marked ``import``. Never given client fields it lacks; the
-    client fields it keeps are cleaned and capped like a fresh stamp."""
+    otherwise it is marked ``import``. A row whose origin is not ``mcp`` keeps no
+    client fields. An ``mcp`` row keeps its ``client_name`` / ``client_version``
+    (cleaned and capped like a fresh stamp) and its ``client`` label is derived
+    again from the name, so a row without ``client_name`` gets
+    ``client="unknown"``, as an MCP write without client info does."""
     if not isinstance(entry, dict):
         return entry
     provenance = entry.get("provenance")

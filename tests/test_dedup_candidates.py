@@ -642,12 +642,77 @@ def test_candidate_heading_stays_when_the_link_moved(eng):
     assert not any("difference" in line for line in lines)
 
 
-def test_candidate_marker_is_not_written_on_an_inactive_row(eng):
+@pytest.mark.parametrize(
+    "inactive",
+    [{"status": "outdated"}, {"status": "rejected"}, {"tier": "archived"}],
+    ids=["status-outdated", "status-rejected", "tier-archived"],
+)
+def test_candidate_marker_is_not_written_on_an_inactive_row(eng, inactive):
     eng.add_lesson({"summary": BASE, "domain": "t"})
 
-    archived = eng.add_lesson({"summary": NEAR, "domain": "t", "status": "outdated"})
+    archived = eng.add_lesson({"summary": NEAR, "domain": "t", **inactive})
 
     assert "duplicate_candidate" not in archived
+    stored = next((r for r in _lessons(eng) if r["id"] == archived.get("id")), {})
+    assert "duplicate_candidate" not in stored
+
+
+@pytest.mark.parametrize(
+    "inactive",
+    [{"status": "outdated"}, {"tier": "archived"}, {"memory_state": "rejected"},
+     {"memory_state": "deprecated"}],
+    ids=["status-outdated", "tier-archived", "memory-rejected", "memory-deprecated"],
+)
+def test_hold_duplicate_candidate_leaves_every_inactive_state_alone(eng, inactive):
+    # Insert normalizes memory_state from tier/status first, so a bare
+    # memory_state only reaches the guard on a row built elsewhere: call it directly.
+    entry = {"id": "pending00009", "summary": NEAR, "domain": "t", "status": "active",
+             "tier": "verified", **inactive}
+    before = dict(entry)
+    result_box: dict = {}
+
+    eng._hold_duplicate_candidate(entry, {"id": "earlier00001"}, 0.97, result_box)
+
+    assert entry == before
+    assert "duplicate_candidate" not in entry and result_box == {}
+
+
+def test_batch_archived_twin_matches_like_the_single_archived_twin(eng):
+    from piia_engram.storage import overflow_batch_scope
+
+    archived = [
+        {"id": "L-batch", "summary": "Re-run CI", "domain": "t"},
+        {"id": "L-scoped", "summary": "Pin the toolchain", "domain": "t", "project": "alpha-service"},
+    ]
+    probes = [
+        ({"summary": "rerun ci", "domain": "t"}, "L-batch"),
+        ({"summary": "RE-RUN CI.", "domain": "t"}, "L-batch"),
+        ({"summary": "Pin the toolchain", "domain": "t", "project": "beta-service"}, None),
+        ({"summary": "Pin the toolchain", "domain": "t", "project": "alpha-service"}, "L-scoped"),
+        ({"summary": "Re-run CI nightly", "domain": "t"}, None),
+    ]
+    decision_rows = [{"id": "D-batch", "title": "Shared title", "question": "Cache builds?", "choice": "yes"}]
+    decision_probes = [
+        ({"title": "Shared title", "question": "Cache tests?", "choice": "yes"}, None),
+        ({"title": "Other title", "question": "cache builds", "choice": "YES"}, "D-batch"),
+    ]
+
+    assert eng._batch_archived_twin("lesson", probes[0][0]) is None  # no open batch
+    with overflow_batch_scope() as state:
+        state["archived_rows"]["lesson"].extend(archived)
+        state["archived_rows"]["decision"].extend(decision_rows)
+        for kind, cases in (("lesson", probes), ("decision", decision_probes)):
+            for probe, expected in cases:
+                twin = eng._batch_archived_twin(kind, probe)
+                assert (twin or {}).get("id") == expected, (kind, probe)
+
+    # The single-row path (overflow archive file) judges the same pairs the same way.
+    _archive_rows(eng, "lesson", archived)
+    _archive_rows(eng, "decision", decision_rows)
+    for kind, cases in (("lesson", probes), ("decision", decision_probes)):
+        for probe, expected in cases:
+            twin = eng._archived_identity_twin(kind, probe)
+            assert (twin or {}).get("id") == expected, (kind, probe)
 
 
 def test_decision_tier_update_clears_the_candidate(eng):
