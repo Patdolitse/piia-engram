@@ -300,130 +300,6 @@ def _build_grouped_detail(sections: dict[str, list[str]]) -> str:
     return detail
 
 
-def _upsert_grouped_lesson(engram, summary: str, domain: str, detail: str) -> int:
-    """以 upsert 方式写入一条「setup 导入」分组 lesson。
-
-    为什么不直接 add_lesson：add_lesson 自带基于 *summary* 的相似度去重，
-    而分组 lesson 用的是固定模板 summary。第二次 `engram setup` 时新内容会
-    被判为与上次完全重复而被丢弃 → 规则更新永远无法落地（真 bug）。
-    因此这里按 source_tool=engram_setup + domain 找已存在的导入 lesson：
-    有就 update_lesson 刷新第一条（canonical）的 summary/detail（绕开 summary
-    去重、反映最新规则），没有才 add_lesson 新增。
-
-    迁移兼容：早期版本逐行导入会在同一 domain 留下多条 engram_setup lesson。
-    本函数更新 canonical 那条后，会把同 domain 其余 engram_setup 碎片标记为
-    outdated（status != "active" → 后续 get_lessons 不再返回），避免新旧并存
-    造成的陈旧碎片污染。归档而非删除，保留可审计的历史。
-
-    Returns: 1 表示已落地一条分组 lesson。
-    """
-    try:
-        existing = engram.get_lessons(
-            domain=domain,
-            source_tool="engram_setup",
-            limit=None,
-            _update_access=False,   # 只查不计访问
-            _migrate_fields=False,  # 只读，不回写旧知识文件
-        )
-    except Exception:
-        existing = []
-
-    existing_ids = [les["id"] for les in existing if les.get("id")]
-
-    if existing_ids:
-        canonical_id, *stragglers = existing_ids
-        engram.update_lesson(canonical_id, {"summary": summary, "detail": detail})
-        # 归档同 domain 残留的旧逐行导入碎片，避免新旧并存
-        for straggler_id in stragglers:
-            try:
-                engram.update_lesson(straggler_id, {"status": "outdated"})
-            except Exception:
-                pass
-    else:
-        engram.add_lesson(
-            summary,
-            domain=domain,
-            detail=detail,
-            source_tool="engram_setup",
-        )
-    return 1
-
-
-def _import_with_split(
-    rule_files: list[dict],
-    engram,
-) -> dict:
-    """将扫描到的规则文件按分流规则导入 Engram。
-
-    去碎片化：不再逐行存 lesson（那会制造大量低质量碎片），而是把所有
-    user 类规则汇成 *一条* user_preference lesson、所有 project 类规则汇成
-    *一条* project_rules lesson，detail 里按来源文件分节保留 provenance。
-    语言偏好仍单独提取写入 profile。
-
-    Returns: {user_count, project_count, skipped, files,
-              user_lessons, project_lessons}
-    """
-    user_sections: dict[str, list[str]] = {}
-    project_sections: dict[str, list[str]] = {}
-    skipped = 0
-    user_count = 0
-    project_count = 0
-    prefs_update: dict = {}
-
-    for rf in rule_files:
-        scope = rf["scope"]
-        label = _src_label(rf["path"])
-        for line in rf["lines"]:
-            category = _classify_line(line, scope)
-            stripped = line.strip()
-            if category == "user":
-                user_sections.setdefault(label, []).append(stripped)
-                user_count += 1
-                # 语言偏好 → profile（不影响其进入分组 lesson）
-                lower = stripped.lower()
-                if "中文" in stripped:
-                    prefs_update["language"] = "中文"
-                elif "english" in lower:
-                    prefs_update["language"] = "English"
-            elif category == "project":
-                project_sections.setdefault(label, []).append(stripped)
-                project_count += 1
-            else:
-                skipped += 1
-
-    if prefs_update:
-        engram.update_profile(prefs_update)
-
-    user_lessons = 0
-    project_lessons = 0
-
-    if user_sections:
-        user_lessons = _upsert_grouped_lesson(
-            engram,
-            _t("用户身份与偏好（Engram 从规则文件导入）",
-               "User identity & preferences (imported by Engram from rule files)"),
-            "user_preference",
-            _build_grouped_detail(user_sections),
-        )
-
-    if project_sections:
-        project_lessons = _upsert_grouped_lesson(
-            engram,
-            _t("项目规则（Engram 从规则文件导入）",
-               "Project rules (imported by Engram from rule files)"),
-            "project_rules",
-            _build_grouped_detail(project_sections),
-        )
-
-    return {
-        "user_count": user_count,
-        "project_count": project_count,
-        "skipped": skipped,
-        "files": [str(rf["path"]) for rf in rule_files],
-        "user_lessons": user_lessons,
-        "project_lessons": project_lessons,
-    }
-
 # ---------------------------------------------------------------------------
 # 工具检测配置
 # ---------------------------------------------------------------------------
@@ -2294,61 +2170,16 @@ def _run_seed_knowledge_onboarding(
             print(_t("     这些标记为 staging——使用 3 次后自动晋升为 verified。",
                      "     These are marked staging — review confirms what becomes verified."))
 
-    # Step 4.5 — 智能扫描 + 分流导入
-    print(_t("\n  智能导入规则文件",
-             "\n  Smart rule file import"))
-    rule_files = _scan_rule_files(cwd=current_dir)
-    import_result: dict = {"user_count": 0, "project_count": 0, "skipped": 0, "files": []}
-
-    if rule_files:
-        print(_t(f"\n  扫描到 {len(rule_files)} 个规则文件：",
-                 f"\n  Found {len(rule_files)} rule file(s):"))
-        for rf in rule_files:
-            scope_label = _t("全局", "global") if rf["scope"] == "global" else _t("项目", "project")
-            content_count = sum(1 for l in rf["lines"] if l.strip() and not l.strip().startswith("#"))
-            print(_t(f"  [{scope_label}] {rf['path']} ({content_count} 行有效内容)",
-                     f"  [{scope_label}] {rf['path']} ({content_count} content lines)"))
-
-        # 预览分流
-        user_preview = project_preview = skip_preview = 0
-        for rf in rule_files:
-            for line in rf["lines"]:
-                cat = _classify_line(line, rf["scope"])
-                if cat == "user":
-                    user_preview += 1
-                elif cat == "project":
-                    project_preview += 1
-                else:
-                    skip_preview += 1
-
-        print(_t("\n  分流预览：", "\n  Classification preview:"))
-        print(_t(f"    用户身份: {user_preview} 条",
-                 f"    User identity: {user_preview}"))
-        print(_t(f"    项目规则: {project_preview} 条",
-                 f"    Project rules: {project_preview}"))
-        print(_t(f"    跳过:     {skip_preview} 条",
-                 f"    Skipped:       {skip_preview}"))
-
-        import_result = _import_with_split(rule_files, engram)
-        rule_total = import_result["user_count"] + import_result["project_count"]
-        grouped_lessons = import_result["user_lessons"] + import_result["project_lessons"]
-        print(_t(f"\n  ✅ 已读取: {import_result['user_count']} 条身份规则 + {import_result['project_count']} 条项目规则",
-                 f"\n  ✅ Read: {import_result['user_count']} identity + {import_result['project_count']} project rules"))
-        if grouped_lessons > 0:
-            # 关键：N 条规则去碎片化后归整为 grouped_lessons 条记忆，不是丢了规则——
-            # 规则按来源文件分节保留在这几条记忆的 detail 里（极长文件可能截断）。
-            print(_t(f"  📦 已归整为 {grouped_lessons} 条记忆（{rule_total} 条规则去碎片化合并，按来源文件分节保留出处）。",
-                     f"  📦 Consolidated into {grouped_lessons} memory entr{'y' if grouped_lessons == 1 else 'ies'} "
-                     f"({rule_total} rules merged, kept under their source-file sections)."))
-            print(_t("  🔒 提示：规则原文已存入本地记忆。若文件含密钥/令牌/隐私，请运行 'engram review' 删除。",
-                     "  🔒 Note: rule text is stored verbatim in local memory. If files contain secrets/tokens/private info, run 'engram review' to remove."))
-            print(_t("  ✍️  导入内容仅作起点 — 如需纠正或删除，运行 'engram review' 复核。",
-                     "  ✍️  Imports are just a starting point — run 'engram review' to correct or remove anything."))
-    else:
-        print(_t("  未发现规则文件（CLAUDE.md / .cursorrules 等）。",
-                 "  No rule files found (CLAUDE.md / .cursorrules etc.)."))
-
-    total_imported = import_result["user_count"] + import_result["project_count"]
+    # Step 4.5 — rule files and memories from other AI tools: the same flow as
+    # `engram import-memories` (list first, review queue after a yes, receipt
+    # and audit line). Nothing is written as trusted memory and the profile is
+    # not changed from imported text.
+    print(_t("\n  导入已有的规则与记忆", "\n  Import existing rules and memories"))
+    import_payload = _offer_setup_import(str(root), project_roots=(current_dir,)) or {}
+    imported_items = [
+        item for item in import_payload.get("items", []) if item.get("status") == "imported"
+    ]
+    total_imported = len(imported_items)
 
     print("\n========================================")
     print(_t("  Engram 初始化完成！", "  Engram setup complete!"))
@@ -2362,8 +2193,8 @@ def _run_seed_knowledge_onboarding(
     print(_t(f"  经验：已录入 {lessons_added} 条",
              f"  Lessons: {lessons_added} recorded"))
     if total_imported > 0:
-        print(_t(f"  导入：{total_imported} 条规则（{import_result['user_count']} 条身份 + {import_result['project_count']} 条项目）",
-                 f"  Imported: {total_imported} rules ({import_result['user_count']} identity + {import_result['project_count']} project)"))
+        print(_t(f"  导入：{total_imported} 条，已放进待审区，用 engram review 批准",
+                 f"  Imported: {total_imported} items, waiting in the review queue; approve them with engram review"))
     if seed_count > 0:
         print(_t(f"  种子：{seed_count} 条最佳实践（staging 层级）",
                  f"  Seeds: {seed_count} best practices (staging tier)"))
@@ -2436,9 +2267,9 @@ def _run_seed_knowledge_onboarding(
         "lessons_added": lessons_added,
         "seed_count": seed_count,
         "env_signals": env_signals,
-        "imported_files": import_result["files"],
-        "import_user_count": import_result["user_count"],
-        "import_project_count": import_result["project_count"],
+        "imported_files": sorted({item["file"] for item in imported_items}),
+        "imported_to_review": total_imported,
+        "import_receipt": import_payload.get("receipt", ""),
     }
 
 
@@ -2460,7 +2291,7 @@ def _turn_off_usage_ping() -> None:
         pass
 
 
-def _offer_setup_import(data_dir: str) -> None:
+def _offer_setup_import(data_dir: str, *, project_roots: tuple = ()) -> dict | None:
     """Setup's import step: ask once; a yes runs `engram import-memories`.
 
     Engram never reads other AI tools' files on its own. Answering yes lists
@@ -2479,7 +2310,8 @@ def _offer_setup_import(data_dir: str) -> None:
     if not _yn(_t("  现在导入一次吗？", "  Import once now?"), default=False):
         print(_t("  ℹ️  未导入。以后可运行 engram import-memories。\n",
                  "  ℹ️  Nothing imported. Run engram import-memories any time.\n"))
-        return
+        return None
+    payload = None
     try:
         from piia_engram import memory_import
 
@@ -2493,18 +2325,20 @@ def _offer_setup_import(data_dir: str) -> None:
             _save_config(cfg)
             print(_t("  ℹ️  已重新允许读取其它 AI 工具的文件（reconcile_authorized=true）。",
                      "  ℹ️  Reading other AI tools' files is allowed again (reconcile_authorized=true)."))
-        memory_import.interactive_import(
+        payload = memory_import.interactive_import(
             lambda question: _yn(f"  {question}", default=False),
             out=lambda text: _safe_print("\n".join(f"  {line}" for line in text.splitlines())),
             root=Path(data_dir),
+            project_roots=tuple(project_roots),
         )
     except Exception as exc:
         print(_t(f"  ⚠️  导入未完成（{exc}）。可稍后运行 engram import-memories。",
                  f"  ⚠️  Import did not finish ({exc}). Run engram import-memories later."))
     print()
+    return payload
 
 
-def _run_privacy_preferences(data_dir: str) -> None:
+def _run_privacy_preferences(data_dir: str, *, offer_import: bool = True) -> None:
     """Offer a one-time import from other AI tools; ask about usage statistics."""
     from piia_engram.telemetry import set_enabled, set_remote_enabled
 
@@ -2515,7 +2349,8 @@ def _run_privacy_preferences(data_dir: str) -> None:
     print(_t("  以下可选功能需要你明确同意。\n",
              "  The following optional features require your explicit consent.\n"))
 
-    _offer_setup_import(data_dir)
+    if offer_import:
+        _offer_setup_import(data_dir)
 
     # --- Anonymous usage statistics ---
     print(_t("  [2] 匿名使用统计",
@@ -2582,13 +2417,14 @@ def _run_privacy_preferences(data_dir: str) -> None:
 
 
 
-def _run_privacy_defaults(data_dir: str) -> None:
+def _run_privacy_defaults(data_dir: str, *, offer_import: bool = True) -> None:
     """Offer a one-time import from other AI tools, then ask about telemetry."""
     from piia_engram.telemetry import (
         set_enabled, set_feedback_enabled, set_remote_enabled,
     )
 
-    _offer_setup_import(data_dir)
+    if offer_import:
+        _offer_setup_import(data_dir)
 
     # --- Ask about telemetry — one question, all-or-nothing ---
     print(_t("  [匿名使用统计]",
@@ -3025,10 +2861,11 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
     )
 
     # Step 3 — 隐私偏好
+    # The import offer was made in Step 2 (seed knowledge); not asked twice.
     if advanced:
-        _run_privacy_preferences(selected_data_dir)
+        _run_privacy_preferences(selected_data_dir, offer_import=False)
     else:
-        _run_privacy_defaults(selected_data_dir)
+        _run_privacy_defaults(selected_data_dir, offer_import=False)
 
     # 增强检索收尾：等种子知识录入后再建索引，索引才包含初始知识
     if hybrid_enabled:

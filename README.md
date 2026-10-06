@@ -229,8 +229,8 @@ The setup wizard will:
 2. Let you choose the Engram data folder (`~/.engram`, another drive, or a custom path)
 3. Detect your AI tools, list the exact config files it will touch, and write the MCP connection after a one-keystroke confirm (backed up first; decline leaves them untouched)
 4. Walk you through seed knowledge (role, tech stack, language)
-5. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
-6. Offer a one-time import of memories from your other AI tools (default no; lists them first, then the review queue), and in advanced mode (`engram setup --advanced`) your optional privacy preferences (anonymous statistics)
+5. Offer to import rules and memories from your other AI tools — `CLAUDE.md`, `.cursorrules`, memory files (default no; lists them first, then the review queue, approve with `engram review`)
+6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (anonymous statistics)
 7. **Preview your AI identity card** — immediate proof of value
 
 After setup writes the MCP connection (you confirm at the prompt first), restart your AI tool. Many clients can call `get_user_context` at startup; when a host does not do that proactively, an explicit `search_knowledge` or `get_resume_brief` call is still the expected L2 path.

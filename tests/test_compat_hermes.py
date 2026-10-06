@@ -105,4 +105,11 @@ def test_hermes_handoff_payload_after_openclaw_roundtrip(tmp_path: Path) -> None
     assert result["status"] == "success"
     assert payload["schema"] == "hermes_handoff_v1"
     assert payload["identity_summary"]["role"] == "local identity owner"
-    assert payload["lessons_count"] == 1
+    # Imported lessons wait in the review queue; the handoff carries only
+    # approved (verified) knowledge, so it counts the lesson after approval.
+    assert payload["lessons_count"] == 0
+    assert result["receipt"].startswith("import_receipts/")
+    staged = target.get_lessons(limit=None, _update_access=False)
+    assert [row.get("tier") for row in staged] == ["staging"]
+    target.update_lesson(staged[0]["id"], {"tier": "verified"})
+    assert hermes_handoff_payload(target)["lessons_count"] == 1

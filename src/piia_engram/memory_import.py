@@ -120,7 +120,7 @@ def _merge(payload: dict[str, Any], result: dict[str, Any]) -> None:
         payload.setdefault("overflow_archived_ids", []).extend(archived)
 
 
-def plan(eng, sources: tuple[str, ...] = SOURCES) -> dict[str, Any]:
+def plan(eng, sources: tuple[str, ...] = SOURCES, *, project_roots: tuple = ()) -> dict[str, Any]:
     """Preview what an import would add. Writes nothing.
 
     Pass a read-only handle (``Engram(read_only=True)``) for a zero-write
@@ -135,12 +135,14 @@ def plan(eng, sources: tuple[str, ...] = SOURCES) -> dict[str, Any]:
         _merge(payload, result)
         planned |= {item["summary"] for item in result.get("items") or []}
     if "configs" in sources:
-        _merge(payload, eng.plan_config_import(also_existing=frozenset(planned)))
+        _merge(payload, eng.plan_config_import(
+            also_existing=frozenset(planned), extra_project_roots=tuple(project_roots),
+        ))
     payload["count"] = len(payload["items"])
     return payload
 
 
-def run(eng, sources: tuple[str, ...] = SOURCES) -> dict[str, Any]:
+def run(eng, sources: tuple[str, ...] = SOURCES, *, project_roots: tuple = ()) -> dict[str, Any]:
     """Add the items to the review queue, then write the receipt and audit line."""
     payload = _empty_payload(sources, dry_run=False)
     if not payload["enabled"]:
@@ -148,28 +150,48 @@ def run(eng, sources: tuple[str, ...] = SOURCES) -> dict[str, Any]:
     if "memories" in sources:
         _merge(payload, eng.reconcile_memories())
     if "configs" in sources:
-        _merge(payload, eng.reconcile_ai_configs())
+        _merge(payload, eng.reconcile_ai_configs(extra_project_roots=tuple(project_roots)))
     payload["count"] = len(payload["items"])
+    payload["receipt"] = record_import(eng, payload)
+    return payload
+
+
+def record_import(
+    eng,
+    payload: dict[str, Any],
+    *,
+    command: str = COMMAND,
+    resource: str = "knowledge/import_memories",
+    source_tool: str = "engram_cli",
+) -> str:
+    """Receipt (when anything was imported) plus one audit line; returns the
+    receipt path relative to the store, or "".
+
+    ``payload`` needs ``items`` (``status == "imported"`` rows with ``id``,
+    ``source``, ``file``, ``content_sha256``), ``imported``, ``sources``,
+    ``duplicates`` and ``queue_full``.
+    """
     receipt_id = ""
+    receipt = ""
     if payload["imported"]:
-        receipt_id, path = write_receipt(eng.root, payload)
-        payload["receipt"] = f"{RECEIPT_DIR}/{path.name}"
+        receipt_id, path = write_receipt(eng.root, payload, command=command)
+        receipt = f"{RECEIPT_DIR}/{path.name}"
     audit = getattr(eng, "_audit", None)
     if audit is not None:
         audit.log(
             "import",
-            "knowledge/import_memories",
+            resource,
             detail=(
                 f"receipt={receipt_id or 'none'} imported={payload['imported']} "
                 f"duplicates={payload['duplicates']} queue_full={payload['queue_full']} "
-                f"sources={','.join(sources)}"
+                f"sources={','.join(payload['sources'])}"
             ),
-            source_tool="engram_cli",
+            source_tool=source_tool,
         )
-    return payload
+    return receipt
 
 
-def write_receipt(root: Path, payload: dict[str, Any]) -> tuple[str, Path]:
+def write_receipt(root: Path, payload: dict[str, Any], *, command: str = COMMAND) -> tuple[str, Path]:
     """Record a confirmed import: metadata only, never the imported text."""
     from .storage import _write_json
 
@@ -183,7 +205,7 @@ def write_receipt(root: Path, payload: dict[str, Any]) -> tuple[str, Path]:
         "schema": 1,
         "receipt_id": receipt_id,
         "created_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "command": COMMAND,
+        "command": command,
         "sources": payload["sources"],
         "imported": len(imported),
         "tier": "staging",
@@ -332,7 +354,7 @@ def render_preview(payload: dict[str, Any]) -> str:
 
 def render_result(payload: dict[str, Any]) -> str:
     lines = [_t(
-        f"已导入 {payload['imported']} 条到待审区（未生效，需审核）。",
+        f"已导入 {payload['imported']} 条，已放进待审区（审核前不生效）。",
         f"Imported {payload['imported']} items into the review queue (not trusted until reviewed).",
     )]
     if payload["duplicates"]:
@@ -350,7 +372,7 @@ def render_result(payload: dict[str, Any]) -> str:
     if payload["receipt"]:
         lines.append(_t(f"导入回执：{payload['receipt']}（存储目录内）",
                         f"Receipt: {payload['receipt']} (in the store directory)"))
-    lines.append(_t("审核：engram review", "Review them: engram review"))
+    lines.append(_t("用 engram review 批准。", "Approve them with engram review."))
     return "\n".join(lines)
 
 
@@ -360,8 +382,12 @@ def interactive_import(
     sources: tuple[str, ...] = SOURCES,
     out: Callable[[str], None] = print,
     root: Path | None = None,
+    project_roots: tuple = (),
 ) -> dict[str, Any]:
     """Preview, then import after ``ask`` says yes. ``ask=None`` imports without asking.
+
+    ``project_roots`` adds project folders whose rule files are read too
+    (``engram setup`` passes the current directory).
 
     Returns the import payload, or the preview with ``"status"`` set to
     ``disabled`` / ``nothing_to_import`` / ``declined``.
@@ -369,7 +395,7 @@ def interactive_import(
     from .core import Engram
 
     reader = Engram(root=root, read_only=True) if root is not None else Engram(read_only=True)
-    preview = plan(reader, sources)
+    preview = plan(reader, sources, project_roots=project_roots)
     out(render_preview(preview))
     if not preview["enabled"]:
         preview["status"] = "disabled"
@@ -386,7 +412,7 @@ def interactive_import(
         preview["status"] = "declined"
         return preview
     writer = Engram(root=root) if root is not None else Engram()
-    result = run(writer, sources)
+    result = run(writer, sources, project_roots=project_roots)
     result["status"] = "imported"
     out(render_result(result))
     return result

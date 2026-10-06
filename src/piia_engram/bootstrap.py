@@ -16,9 +16,8 @@ dependencies so it can run silently inside the MCP server.
 
 Safety:
 - Only triggers ONCE per store (writes a ``_bootstrap_done`` marker).
-- All imported content goes through the N3 risk-based write gate: low/medium
-  risk auto-verifies, high-risk (value-bearing credentials etc.) routes to
-  staging for owner review.
+- All imported content lands in the review queue (staging); the detected
+  language is reported but not written to the profile.
 - Never reads files larger than 1500 lines (same limit as setup_wizard).
 - Never modifies any file outside the Engram store.
 """
@@ -245,12 +244,8 @@ def _import_rules(engram: "Engram", rule_files: list[dict]) -> dict[str, Any]:
             else:
                 skipped += 1
 
-    # Write language to profile
-    if language:
-        try:
-            engram.update_profile({"language": language})
-        except Exception:
-            pass
+    # The detected language is reported, never written to the profile:
+    # imported text does not change identity.
 
     # Write grouped lessons (same pattern as setup_wizard)
     if user_sections:
@@ -259,7 +254,8 @@ def _import_rules(engram: "Engram", rule_files: list[dict]) -> dict[str, Any]:
             {"summary": "用户身份与偏好（首次连接自动导入）",
              "domain": "user_preference",
              "detail": detail,
-             "source_tool": "engram_bootstrap"},
+             "source_tool": "engram_bootstrap",
+             "tier": "staging"},
         )
 
     if project_sections:
@@ -268,7 +264,8 @@ def _import_rules(engram: "Engram", rule_files: list[dict]) -> dict[str, Any]:
             {"summary": "项目规则（首次连接自动导入）",
              "domain": "project_rules",
              "detail": detail,
-             "source_tool": "engram_bootstrap"},
+             "source_tool": "engram_bootstrap",
+             "tier": "staging"},
         )
 
     return {

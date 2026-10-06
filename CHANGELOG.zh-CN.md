@@ -10,7 +10,8 @@
 
 ### 变更
 - **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动（`get_user_context`、`get_resume_brief`、会话开始钩子）和 `wrap_up_session` 都不再读取或导入其它 AI 工具的记忆和规则文件。`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
-- `engram setup` 改为询问是否现在导入一次（默认否），不再开启自动导入。
+- `engram setup` 改为询问是否现在导入一次（默认否），不再开启自动导入；规则文件步骤不再直接写入已验证记忆或 profile 语言，导入的规则进入待审区并生成回执。
+- `engram reconcile apply --commit --yes` 改为与 `engram import-memories --source memories` 相同的导入（待审区、回执、审计）。从 OpenClaw `MEMORY.md` 导入的经验也进入待审区并生成回执。
 
 ### 新增
 - **`engram import-memories`。** 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区（`--dry-run`、`--yes`、`--source memories|configs`）。每次导入在 `import_receipts/` 写回执并记审计；重复运行不会重复导入。`engram doctor` 和 `engram status` 会显示可导入条数。

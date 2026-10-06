@@ -3077,6 +3077,13 @@ def test_import_from_openclaw_memory_md_lessons(tmp_path: Path):
     summaries = [l.get("summary", "") for l in lessons]
     assert "用 virtualenv 隔离依赖" in summaries
     assert "mock 要谨慎使用" in summaries
+    # Imported lessons wait in the review queue and the batch leaves a receipt.
+    imported = [l for l in lessons if l.get("source_tool") == "openclaw_import"]
+    assert len(imported) == 2 and {l.get("tier") for l in imported} == {"staging"}
+    receipt = json.loads((tmp_path / result["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["imported"] == 2
+    assert {item["id"] for item in receipt["items"]} == {l["id"] for l in imported}
+    assert "virtualenv" not in json.dumps(receipt, ensure_ascii=False)
 
 
 def test_import_from_openclaw_missing_files(tmp_path: Path):

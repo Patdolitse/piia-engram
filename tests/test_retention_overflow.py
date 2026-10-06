@@ -715,6 +715,12 @@ def test_dashboard_reconcile_report_counts_an_archived_row_as_present(_full_stor
 
     root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
     monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    # Never fall back to the real home's memory files (e.g. if another test
+    # reloaded piia_engram.core and the class patch below misses).
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+    monkeypatch.setenv("HOME", str(empty_home))
+    monkeypatch.setenv("USERPROFILE", str(empty_home))
     oldest = engram.get_lessons(limit=None, _update_access=False)[0]
     assert oldest["id"] == seeded[0]
     mem_dir = tmp_path / "fake_claude" / "projects" / "p" / "memory"

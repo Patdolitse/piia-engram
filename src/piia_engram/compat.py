@@ -93,6 +93,7 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
                         "detail": nm.get("what_could_have_happened", ""),
                         "domain": "safety",
                         "source_project": "migrated_from_oca_memory",
+                        "tier": "staging",  # imported lessons wait for review
                     })
                 migrated.append(f"near_misses ({len(near_misses)} entries)")
         except Exception as exc:
@@ -332,6 +333,14 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     }
 
 
+def _openclaw_receipt_item(path: Path, summary: str, entry_id: str) -> dict:
+    from .reconcile import _import_item
+
+    item = _import_item("openclaw", path, summary, "")
+    item.update(status="imported", id=entry_id)
+    return item
+
+
 @overflow_batch
 def import_from_openclaw(
     engram: "Engram",
@@ -350,10 +359,15 @@ def import_from_openclaw(
         memory_path: Path to MEMORY.md (optional).
         user_path: Path to USER.md (optional).
 
+    Lessons from MEMORY.md wait in the review queue (staging) and a confirmed
+    batch leaves an import receipt plus an audit line. USER.md / SOUL.md still
+    merge into identity directly (there is no identity review queue).
+
     Returns:
         Dict with import summary.
     """
     imported = []
+    receipt_items: list[dict] = []
 
     def _parse_md_bullets(text: str) -> list[str]:
         """Extract bullet point content from markdown."""
@@ -443,18 +457,37 @@ def import_from_openclaw(
                         domain = text[1:text.index("]")]
                         text = text[text.index("]") + 1:].strip()
                     if text and text not in existing_summaries:
-                        engram.add_lesson({
+                        result = engram.add_lesson({
                             "summary": text,
                             "domain": domain,
                             "source_tool": "openclaw_import",
+                            "tier": "staging",  # imports wait for review
                         })
                         existing_summaries.add(text)
-                        new_count += 1
+                        if isinstance(result, dict) and result.get("id") and result.get("status") not in (
+                            "duplicate", "rejected_before", "duplicate_retired", "queue_full"
+                        ):
+                            new_count += 1
+                            receipt_items.append(_openclaw_receipt_item(p, text, result["id"]))
             if new_count:
-                imported.append(f"MEMORY.md → lessons (+{new_count})")
+                imported.append(f"MEMORY.md → lessons (+{new_count}, review queue)")
+
+    receipt = ""
+    if receipt_items:
+        from .memory_import import record_import
+
+        receipt = record_import(
+            engram,
+            {"items": receipt_items, "imported": len(receipt_items), "sources": ["openclaw"],
+             "duplicates": 0, "queue_full": 0},
+            command='import_engram(format="openclaw")',
+            resource="knowledge/import_openclaw",
+            source_tool="openclaw_import",
+        )
 
     return {
         "status": "success" if imported else "no_new_data",
         "bridge_level": OPENCLAW_BRIDGE_LEVEL,
         "imported": imported,
+        "receipt": receipt,
     }

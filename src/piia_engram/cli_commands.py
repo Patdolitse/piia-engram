@@ -4985,18 +4985,84 @@ def run_conflicts(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _run_reconcile(args: list[str]) -> int:
-    """Reconcile proposal + owner-confirmed import-only apply (engram reconcile).
+def _reconcile_apply_payload(
+    result: dict, *, dry_run: bool, confirmed: bool, requires_confirmation: bool,
+) -> dict:
+    """``engram reconcile apply`` keeps its metadata-only payload shape.
 
-    ``engram reconcile`` (no subcommand) scans external AI memory files and
-    prints a metadata-only classification (import / duplicate / conflict / skip),
-    importing nothing. ``engram reconcile apply`` imports ONLY the novel
-    (``import``) candidates via the existing write API: dry-run by default,
-    ``--commit --yes`` to actually import. Duplicates and conflicts are never
-    applied (conflict resolution is deferred); no agent-facing tool is exposed.
+    The work itself is ``engram import-memories --source memories``: same
+    engine, review queue, receipt and audit line. Item text is never echoed.
+    """
+    if requires_confirmation:
+        outcome = "pending_confirmation"
+    elif dry_run:
+        outcome = "planned"
+    else:
+        outcome = "imported"
+    items = [
+        {
+            "candidate_ref": index,
+            "action": "import",
+            "reason": "",
+            "entry_type": "lesson",
+            "best_score": 0.0,
+            "match_id": "",
+            "outcome": outcome,
+            "imported_id": item.get("id", "") if outcome == "imported" else "",
+            "file": item.get("file", ""),
+            "content_sha256": item.get("content_sha256", ""),
+        }
+        for index, item in enumerate(result.get("items") or [])
+    ]
+    if not result.get("enabled", True):
+        status = "disabled"
+    elif requires_confirmation:
+        status = "confirmation_required"
+    elif dry_run:
+        status = "dry_run"
+    else:
+        status = "applied"
+    payload = {
+        "schema": 1,
+        "action": "reconcile_import_apply",
+        "source": "memory_files",
+        "flow": "import-memories",
+        "dry_run": dry_run,
+        "confirmed": confirmed,
+        "requires_confirmation": requires_confirmation,
+        "changed": int(result.get("imported", 0) or 0) > 0,
+        "status": status,
+        "disabled_by": result.get("disabled_by", ""),
+        "counts": {
+            "import": len(items),
+            "duplicate": int(result.get("duplicates", 0) or 0),
+            "conflict": 0,
+            "skip": 0,
+            "imported": int(result.get("imported", 0) or 0),
+            "failed": 0,
+            "queue_full": int(result.get("queue_full", 0) or 0),
+        },
+        "items": items,
+        "receipt": result.get("receipt", ""),
+    }
+    if result.get("overflow_archived_ids"):
+        payload["overflow_archived_ids"] = list(result["overflow_archived_ids"])
+    return payload
+
+
+def _run_reconcile(args: list[str]) -> int:
+    """Reconcile proposal, conflict preview, and the import of memory files.
+
+    ``engram reconcile`` (no subcommand) and ``engram reconcile conflicts`` are
+    metadata-only previews that write nothing. ``engram reconcile apply`` is
+    kept for compatibility and is now the same import as
+    ``engram import-memories --source memories``: dry-run by default,
+    ``--commit --yes`` adds the items to the review queue and writes an import
+    receipt and an audit line. No agent-facing tool is exposed.
     """
     import os as _os
     from piia_engram.core import Engram
+    from piia_engram import memory_import
     from piia_engram.reconcile_apply import (
         apply_reconcile,
         preview_reconcile_conflicts,
@@ -5010,20 +5076,43 @@ def _run_reconcile(args: list[str]) -> int:
             "  engram reconcile [--json]                 Metadata-only import proposal\n"
             "  engram reconcile conflicts [--json]       Metadata-only conflict preview\n"
             "  engram reconcile apply [--commit] [--yes] [--json]\n"
-            "                                            Owner-confirmed import-only apply\n"
-            "                                            (default = dry-run preview; --commit --yes to import)\n"
+            "                                            Import memory files into the review queue\n"
+            "                                            (default = dry-run preview; --commit --yes to import;\n"
+            "                                            same as engram import-memories --source memories)\n"
         )
         return 0
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
-    eng = Engram(root=root)
-    candidates = eng.collect_memory_candidates()
-
     json_output = "--json" in args
     apply = bool(args) and args[0] == "apply"
     conflicts = bool(args) and args[0] == "conflicts"
     confirm = "--yes" in args
     commit = apply and "--commit" in args
+
+    if apply:
+        if commit and confirm:
+            result = memory_import.run(Engram(root=root), ("memories",))
+            payload = _reconcile_apply_payload(
+                result, dry_run=False, confirmed=True, requires_confirmation=False,
+            )
+        else:
+            result = memory_import.plan(Engram(root=root, read_only=True), ("memories",))
+            payload = _reconcile_apply_payload(
+                result, dry_run=not commit, confirmed=confirm,
+                requires_confirmation=commit and result.get("enabled", True),
+            )
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(render_reconcile_apply_text(payload))
+            if payload["receipt"]:
+                print(f"  receipt: {payload['receipt']} (review queue; approve with engram review)")
+            if payload["status"] == "disabled":
+                print(f"  reading other AI tools' files is switched off ({payload['disabled_by']})")
+        return 1 if payload["requires_confirmation"] or payload["status"] == "disabled" else 0
+
+    eng = Engram(root=root)
+    candidates = eng.collect_memory_candidates()
 
     if conflicts:
         payload = preview_reconcile_conflicts(
@@ -5040,13 +5129,13 @@ def _run_reconcile(args: list[str]) -> int:
         eng, candidates,
         source="memory_files",
         confirm=confirm,
-        dry_run=not commit,
+        dry_run=True,
     )
     if json_output:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(render_reconcile_apply_text(payload))
-    return 1 if payload.get("requires_confirmation") else 0
+    return 0
 
 
 def _governance_root():

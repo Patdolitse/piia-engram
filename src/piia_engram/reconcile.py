@@ -447,9 +447,17 @@ class ReconcileMixin:
         """Zero-write preview of :meth:`reconcile_memories` (works on a read-only handle)."""
         return ReconcileMixin.reconcile_memories(self, dry_run=True, also_existing=also_existing)
 
-    def plan_config_import(self, *, also_existing: "set[str] | frozenset[str]" = frozenset()) -> dict:
+    def plan_config_import(
+        self,
+        *,
+        also_existing: "set[str] | frozenset[str]" = frozenset(),
+        extra_project_roots: "tuple | list" = (),
+    ) -> dict:
         """Zero-write preview of :meth:`reconcile_ai_configs` (works on a read-only handle)."""
-        return ReconcileMixin.reconcile_ai_configs(self, dry_run=True, also_existing=also_existing)
+        return ReconcileMixin.reconcile_ai_configs(
+            self, dry_run=True, also_existing=also_existing,
+            extra_project_roots=extra_project_roots,
+        )
 
     def _reconcile_existing_summaries(self, *, dry_run: bool = False) -> set[str]:
         """Texts an import is deduplicated against (access-neutral read).
@@ -611,6 +619,7 @@ class ReconcileMixin:
         project_folder: str = "",
         dry_run: bool = False,
         also_existing: "set[str] | frozenset[str]" = frozenset(),
+        extra_project_roots: "tuple | list" = (),
     ) -> dict:
         """Import rules from other AI tools' config files into the review queue.
 
@@ -620,7 +629,10 @@ class ReconcileMixin:
         sections and imports each meaningful one as a staging lesson, at most
         ``max_imports`` per run. ``dry_run=True`` returns the same plan and
         writes nothing; ``also_existing`` adds texts planned elsewhere in the
-        same run to the dedup set. ``items`` lists one dict per planned or
+        same run to the dedup set. ``extra_project_roots`` adds project folders
+        (e.g. the current directory during ``engram setup``) whose CLAUDE.md /
+        AGENTS.md / .cursorrules ... are read like discovered project roots.
+        ``items`` lists one dict per planned or
         imported section (see :meth:`reconcile_memories`).
 
         Honours the off switches (ENGRAM_RECONCILE=0 or
@@ -684,7 +696,9 @@ class ReconcileMixin:
 
         # Project-level configs
         if search_roots is None and not project_folder:
-            for root in self._discover_project_roots():
+            project_roots = list(self._discover_project_roots())
+            project_roots += [Path(root) for root in extra_project_roots]
+            for root in project_roots:
                 for fname in self._AI_CONFIG_FILENAMES:
                     candidate = root / fname
                     if candidate.is_file():

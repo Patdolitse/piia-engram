@@ -209,3 +209,81 @@ def test_auto_migrate_is_config_only_idempotent_and_audited(store):
     assert {rel: d for rel, d in _snapshot(store).items()
             if rel.split("/")[0] in ("knowledge", "identity")} == knowledge
     assert _imported_rows(store) == []
+
+
+# -- every import goes through review with a receipt -----------------------------
+
+
+def _verified_ids(root):
+    rows = Engram(root=root, read_only=True).get_lessons(limit=None, _update_access=False)
+    return {row["id"] for row in rows if (row.get("tier") or row.get("memory_state")) != "staging"}
+
+
+def test_setup_seed_import_uses_the_review_queue_and_writes_a_receipt(store, tmp_path, monkeypatch, capsys):
+    from piia_engram.setup_wizard import _run_seed_knowledge_onboarding
+
+    monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+    project = tmp_path / "work"
+    project.mkdir()
+    (project / "AGENTS.md").write_text(
+        "## Builds\nRun the release build only from a clean checkout of main.\n", encoding="utf-8"
+    )
+    verified_before = _verified_ids(store)
+    # role, tech stack, language, first lesson, import now?, import these?
+    _answers(monkeypatch, "", "", "", "", "y", "y")
+
+    summary = _run_seed_knowledge_onboarding(str(store), cwd=project)
+
+    out = capsys.readouterr().out
+    assert "engram review" in out
+    rows = _imported_rows(store)
+    assert len(rows) == summary["imported_to_review"] >= 6  # home samples + the project file
+    assert all((row.get("tier") or row.get("memory_state")) == "staging" for row in rows)
+    assert any(row["summary"].startswith("[AGENTS.md] Builds:") for row in rows)
+    assert _verified_ids(store) == verified_before  # no verified rows from setup
+    receipt = json.loads((store / summary["import_receipt"]).read_text(encoding="utf-8"))
+    assert receipt["imported"] == len(rows)
+    assert any(f["file"].endswith("work/AGENTS.md") for f in receipt["files"])
+    assert "language" not in Engram(root=store, read_only=True).get_profile()
+
+
+def test_setup_seed_step_default_no_imports_nothing(store, tmp_path, monkeypatch):
+    from piia_engram.setup_wizard import _run_seed_knowledge_onboarding
+
+    monkeypatch.setattr("piia_engram.setup_wizard._probe_environment", lambda cwd=None: {})
+    _answers(monkeypatch, "", "", "", "", "")
+    summary = _run_seed_knowledge_onboarding(str(store), cwd=tmp_path)
+
+    assert summary["imported_to_review"] == 0 and summary["import_receipt"] == ""
+    assert _imported_rows(store) == []
+    assert not (store / "import_receipts").exists()
+
+
+def test_privacy_step_does_not_ask_again_inside_setup(store, monkeypatch, capsys):
+    from piia_engram.setup_wizard import _run_privacy_defaults, _run_privacy_preferences
+
+    _answers(monkeypatch, "n", "n")
+    _run_privacy_preferences(str(store), offer_import=False)
+    _run_privacy_defaults(str(store), offer_import=False)
+    out = capsys.readouterr().out
+    assert "Import once now?" not in out and "现在导入一次吗" not in out
+
+
+def test_reconcile_apply_preview_writes_nothing_and_commit_writes_receipt(store, monkeypatch, capsys):
+    from piia_engram.setup_wizard import _run_reconcile
+
+    before = _snapshot(store)
+    assert _run_reconcile(["apply", "--json"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["dry_run"] is True and preview["counts"]["import"] == 2
+    assert _snapshot(store) == before
+
+    verified_before = _verified_ids(store)
+    assert _run_reconcile(["apply", "--commit", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "receipt: import_receipts/" in out
+    rows = _imported_rows(store)
+    assert len(rows) == 2 and {row["source_tool"] for row in rows} == {"auto_reconcile"}
+    assert all((row.get("tier") or row.get("memory_state")) == "staging" for row in rows)
+    assert _verified_ids(store) == verified_before
+    assert len(list((store / "import_receipts").glob("*.json"))) == 1
