@@ -98,10 +98,13 @@ def attribution_record(operator: str, *, mode: str = "", isatty: bool | None = N
     return record
 
 
-def _receipt(eng, verb: str, attribution: dict, counts: dict, reject_reasons: dict | None = None) -> None:
-    extra = {"verb": verb, **attribution, "counts": counts}
+def _receipt(eng, verb: str, attribution: dict, counts: dict, reject_reasons: dict | None = None,
+             more: dict | None = None) -> None:
+    extra = {"verb": verb, **attribution, "counts": counts, **(more or {})}
     if reject_reasons:
-        extra["reject_reasons"] = reject_reasons  # the Owner's own notes, cleaned and capped
+        # The Owner's own notes, cleaned and capped. Local audit only:
+        # get_audit_log over MCP drops this field.
+        extra["reject_reasons"] = reject_reasons
     eng._audit.log(
         "owner_cli",
         f"review/{verb}",
@@ -196,13 +199,15 @@ def _card(n: int, kind: str, row: dict, eng, lookup: dict[str, dict] | None = No
         "",
         f"- type: {mem_type or 'MISSING'}",
         f"- scope: {scope}",
+        f"- version: {_row_version(row)}",
         f"- claim: {claim}",
     ]
     if detail:
         lines.append(f"- why / detail: {detail[:_DETAIL_CAP]}")
+    if row.get("pending_supersedes"):
+        target = _dedup_review.safe_id(row.get("pending_supersedes")) or "(malformed id)"
+        lines.append(f"- relation: SUPERSEDES {target} (proposed; checked again on approval)")
     if kind == "playbook":
-        if row.get("pending_supersedes"):
-            lines.append(f"- relation: SUPERSEDES {row['pending_supersedes']}")
         triggers = row.get("triggers") or []
         lines.append(f"- triggers: {', '.join(str(t) for t in triggers[:3])}")
         lines.append("- steps (full):")
@@ -245,9 +250,16 @@ def run_export(args: list[str]) -> int:
         "",
         f"pending playbooks {pending_playbooks}/{_playbook_queue_max()}",
         "",
-        f"Pending proposals: {len(pending)}. Mark each id in marks.json as approve | reject | "
-        f"edit-type:<{'|'.join(MEM_TYPES)}>, then run:",
+        f"Pending proposals: {len(pending)}. Fill in marks-template.json (one entry per proposal; "
+        "save it as marks.json), then run:",
         "`engram review apply marks.json` (dry run), then add `--operator <name> --yes`.",
+        "",
+        f"mark: approve | reject | edit-type:<{'|'.join(MEM_TYPES)}> | supersede:<id> | retire | restore"
+        " | skip (leave it pending).",
+        "supersede:<id> approves the proposal as the replacement of the approved entry <id> (same kind and"
+        " scope; one proposal per entry in a run, and not an entry decided in the same run).",
+        "Optional fields: reason (reject only; your note, kept in this run's receipt, never on the"
+        " rejection record) and expected_version (the version below; the item is skipped if it changed).",
         "",
     ]
     for n, (kind, row) in enumerate(pending, 1):
@@ -256,6 +268,9 @@ def run_export(args: list[str]) -> int:
     (out_dir / "ids.json").write_text(
         json.dumps([row.get("id") for _kind, row in pending], indent=1), encoding="utf-8"
     )
+    template = [{"id": row.get("id"), "kind": kind, "mark": "skip", "expected_version": _row_version(row)}
+                for kind, row in pending]
+    (out_dir / "marks-template.json").write_text(json.dumps(template, indent=1), encoding="utf-8")
     _print({"status": "exported", "pending": len(pending), "out": str(out_dir)})
     return 0
 
@@ -271,10 +286,14 @@ def validate_marks(raw: Any) -> tuple[list[dict], str]:
     One shape for both apply routes: ``engram review apply <marks.json>`` and
     the interactive review, which builds the same list from the keys typed.
     Each entry is ``{id, mark}`` with mark ``approve | reject | retire | restore
-    | edit-type:<type> | supersede:<old id>``; optional ``expected_version``
+    | edit-type:<type> | supersede:<old id> | skip``; optional ``expected_version``
     (approve / reject / supersede: skip the item if it changed since) and
     ``reason`` (reject: the Owner's note, kept in the receipt of the run only;
-    the tombstone stays text-free).
+    the tombstone stays text-free). ``skip`` leaves the item pending.
+
+    A run names each supersede target once and never supersedes an entry that
+    is itself decided in the same run (the outcome would depend on the order);
+    targets an agent proposed are added by ``batch_target_problem``.
     """
     if not isinstance(raw, list):
         return [], "marks file must be a JSON array of {id, mark}"
@@ -287,7 +306,7 @@ def validate_marks(raw: Any) -> tuple[list[dict], str]:
         mark = raw_mark.lower()
         if not item_id:
             return [], "a mark has no id"
-        if mark in ("approve", "reject", "retire", "restore"):
+        if mark in ("approve", "reject", "retire", "restore", "skip"):
             parsed = {"id": item_id, "mark": mark}
         elif mark.startswith("edit-type:"):
             mem_type = mark[len("edit-type:"):]
@@ -312,7 +331,47 @@ def validate_marks(raw: Any) -> tuple[list[dict], str]:
             if reason:
                 parsed["reason"] = reason
         marks.append(parsed)
+    error = _target_problem(marks, {m["id"]: m["target"] for m in marks if m["mark"] == "supersede"})
+    if error:
+        return [], error
     return marks, ""
+
+
+def _target_problem(marks: list[dict], targets: dict[str, str]) -> str:
+    """'' or why the supersede targets of one run cannot be applied as given."""
+    seen: dict[str, str] = {}
+    for item_id, target in targets.items():
+        if target in seen:
+            return (f"{seen[target]} and {item_id} both supersede {target}; one entry is replaced by one"
+                    " proposal per run")
+        seen[target] = item_id
+    decided = {m["id"] for m in marks if m["mark"] in REVIEW_MARKS}
+    for item_id, target in targets.items():
+        if target in decided and target != item_id:  # superseding itself is refused per item
+            return (f"{item_id} supersedes {target}, which this run also decides; the result would depend"
+                    f" on the order: decide {target} first, then supersede it in a second run")
+    return ""
+
+
+def batch_target_problem(eng, marks: list[dict]) -> str:
+    """Like ``validate_marks``' target check, with the targets agents proposed:
+    an approve mark carries its row's ``pending_supersedes``. '' when fine."""
+    targets: dict[str, str] = {}
+    for m in marks:
+        if m["mark"] == "supersede":
+            targets[m["id"]] = m["target"]
+        elif m["mark"] == "approve":
+            _kind, row = eng._find_item_by_id(m["id"])
+            if isinstance(row, dict) and row.get("tier") == "staging" and row.get("pending_supersedes"):
+                targets[m["id"]] = str(row["pending_supersedes"])
+    return _target_problem(marks, targets)
+
+
+def _row_version(row: dict) -> int:
+    try:
+        return int(row.get("version") or 1)
+    except (TypeError, ValueError):
+        return 1
 
 
 def clean_reason(value: Any) -> str:
@@ -457,7 +516,7 @@ def _batch_row(mark: dict) -> dict:
 
 def _new_counts() -> dict[str, int]:
     return {"requested": 0, "approve": 0, "reject": 0, "planned": 0, "applied": 0, "noop": 0, "failed": 0,
-            "supersede": 0, "supersede_failed": 0}
+            "supersede": 0, "supersede_failed": 0, "approved_unlinked": 0}
 
 
 def _add_counts(counts: dict, more: dict) -> None:
@@ -475,46 +534,109 @@ def _item_view(item: dict, mark: dict) -> dict:
     return view
 
 
+def _proposed_target(row: dict | None) -> str:
+    """The ``pending_supersedes`` an agent put on a pending row ('' when none)."""
+    if not isinstance(row, dict) or row.get("tier") != "staging":
+        return ""
+    return str(row.get("pending_supersedes") or "")
+
+
+def _approve_with_link(eng, mark: dict, kind: str, target: str, counts: dict, *, via: str,
+                       set_target: bool) -> dict:
+    """Approve a pending row that supersedes ``target``; the link is written on promotion.
+
+    ``set_target``: the Owner chose the target (supersede mark), so the row
+    points at it first; otherwise the row already carries the agent's target.
+    A run stopped before the approval landed puts the row back as it was.
+    """
+    row = _batch_row(mark)
+    previous: Any = None
+    if set_target:
+        changed, previous = _set_pending_supersede(eng, kind, mark["id"], target, mark.get("expected_version"))
+        if not changed:
+            _add_counts(counts, {"requested": 1, "approve": 1, "planned": 1, "failed": 1, "supersede_failed": 1})
+            return _item_view({"id": mark["id"], "status": "version_conflict"}, mark)
+    try:
+        result = batch_review_staging(eng, [row], dry_run=False, confirm=True, via=via, limit=1, owner_cli=True)
+    except BaseException:
+        if set_target:
+            _set_pending_supersede(eng, kind, mark["id"], previous or None, None)
+        raise
+    _add_counts(counts, result["counts"])
+    item = _item_view(result["items"][0], mark)
+    item["target"] = target
+    if item["status"] != "applied":
+        if set_target:  # not approved after all: the row goes back to what it pointed at
+            _set_pending_supersede(eng, kind, mark["id"], previous or None, None)
+        if mark["mark"] == "supersede":
+            counts["supersede_failed"] += 1
+    elif _supersede_linked(eng, kind, mark["id"], target):
+        counts["supersede"] += 1
+    else:
+        item["status"] = "applied_unlinked"
+        item["unlinked_reason"] = "link_not_written"
+        counts["approved_unlinked"] += 1
+    return item
+
+
+def _approve_without_link(eng, mark: dict, kind: str, target: str, problem: str, counts: dict, *,
+                          via: str) -> dict:
+    """Approve a row whose agent-proposed target may not be superseded: the row is
+    approved, its ``pending_supersedes`` dropped, and no link is written."""
+    row = _batch_row(mark)
+    changed, previous = _set_pending_supersede(eng, kind, mark["id"], None, mark.get("expected_version"))
+    if not changed:
+        _add_counts(counts, {"requested": 1, "approve": 1, "planned": 1, "failed": 1})
+        return _item_view({"id": mark["id"], "status": "version_conflict"}, mark)
+    try:
+        result = batch_review_staging(eng, [row], dry_run=False, confirm=True, via=via, limit=1, owner_cli=True)
+    except BaseException:
+        _set_pending_supersede(eng, kind, mark["id"], previous or None, None)
+        raise
+    _add_counts(counts, result["counts"])
+    item = _item_view(result["items"][0], mark)
+    item["target"] = target
+    if item["status"] == "applied":
+        item["status"] = "applied_unlinked"
+        item["unlinked_reason"] = problem
+        counts["approved_unlinked"] += 1
+    else:
+        _set_pending_supersede(eng, kind, mark["id"], previous or None, None)
+    return item
+
+
 def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str) -> dict:
     """Run one approve / reject / supersede mark; returns its receipt item."""
     row = _batch_row(mark)
-    if mark["mark"] != "supersede":
-        result = batch_review_staging(eng, [row], dry_run=dry_run, confirm=not dry_run, via=via,
-                                      limit=1, owner_cli=True)
-        _add_counts(counts, result["counts"])
-        return _item_view(result["items"][0], mark)
-
-    problem = supersede_problem(eng, mark["id"], mark["target"])
-    if problem:
-        _add_counts(counts, {"requested": 1, "approve": 1, "failed": 1, "supersede_failed": 1})
-        return _item_view({"id": mark["id"], "status": problem}, mark)
+    if mark["mark"] == "supersede":
+        target = mark["target"]
+        problem = supersede_problem(eng, mark["id"], target)
+        if problem:
+            _add_counts(counts, {"requested": 1, "approve": 1, "failed": 1, "supersede_failed": 1})
+            return _item_view({"id": mark["id"], "status": problem}, mark)
+    else:
+        target = _proposed_target(eng._find_item_by_id(mark["id"])[1]) if mark["mark"] == "approve" else ""
+        problem = supersede_problem(eng, mark["id"], target) if target else ""
     preview = batch_review_staging(eng, [row], dry_run=True, limit=1, owner_cli=True)
     planned = preview["items"][0].get("status") == "planned"
     if dry_run or not planned:
         _add_counts(counts, preview["counts"])
-        if not planned:
+        item = _item_view(preview["items"][0], mark)
+        if target:
+            item["target"] = target
+            if problem:
+                item["unlinked_reason"] = problem  # approved without the link
+        if mark["mark"] == "supersede" and not planned:
             counts["supersede_failed"] += 1
-        return _item_view(preview["items"][0], mark)
-
+        return item
+    if not target:
+        result = batch_review_staging(eng, [row], dry_run=False, confirm=True, via=via, limit=1, owner_cli=True)
+        _add_counts(counts, result["counts"])
+        return _item_view(result["items"][0], mark)
     kind = preview["items"][0].get("type") or eng._find_item_by_id(mark["id"])[0]
-    changed, previous = _set_pending_supersede(eng, kind, mark["id"], mark["target"],
-                                               mark.get("expected_version"))
-    if not changed:
-        _add_counts(counts, {"requested": 1, "approve": 1, "planned": 1, "failed": 1, "supersede_failed": 1})
-        return _item_view({"id": mark["id"], "status": "version_conflict"}, mark)
-    result = batch_review_staging(eng, [row], dry_run=False, confirm=True, via=via, limit=1, owner_cli=True)
-    _add_counts(counts, result["counts"])
-    item = _item_view(result["items"][0], mark)
-    if item["status"] != "applied":
-        # Not approved after all: the row goes back to what it pointed at.
-        _set_pending_supersede(eng, kind, mark["id"], previous or None, None)
-        counts["supersede_failed"] += 1
-    elif _supersede_linked(eng, kind, mark["id"], mark["target"]):
-        counts["supersede"] += 1
-    else:
-        item["status"] = "applied_unlinked"
-        counts["supersede_failed"] += 1
-    return item
+    if problem:
+        return _approve_without_link(eng, mark, kind, target, problem, counts, via=via)
+    return _approve_with_link(eng, mark, kind, target, counts, via=via, set_target=mark["mark"] == "supersede")
 
 
 def preview_marks(eng, marks: list[dict]) -> dict:
@@ -551,15 +673,21 @@ def preview_marks(eng, marks: list[dict]) -> dict:
     }
 
 
-def apply_marks(eng, marks: list[dict], attribution: dict) -> dict:
+def apply_marks(eng, marks: list[dict], attribution: dict, *, progress: dict | None = None) -> dict:
     """Apply validated marks and leave the audit receipt; returns the applied payload.
 
     The one apply path: ``engram review apply --yes`` and the interactive
-    review both end here. Marks run one at a time in order, so if a run stops
-    part-way the receipt (written then too, with ``aborted``) counts what was done.
+    review both end here. A run whose supersede targets clash (see
+    ``batch_target_problem``) is refused before anything is written. Marks run
+    one at a time in order; if a run stops part-way the receipt (written then
+    too, with ``aborted``, the number of marks and the id being applied) counts
+    what was done, and ``progress["items"]`` holds the items applied so far.
     """
     from . import strict_mode as _strict_mode
 
+    problem = batch_target_problem(eng, marks)
+    if problem:
+        return {"status": "refused", "error": problem}
     _strict_mode.bootstrap(eng.root, source="cli")
     via = f"cli:{attribution['operator']}"
     reviews = [m for m in marks if m["mark"] in REVIEW_MARKS]
@@ -567,12 +695,15 @@ def apply_marks(eng, marks: list[dict], attribution: dict) -> dict:
     lifecycle = [m for m in marks if m["mark"] in ("retire", "restore")]
     counts: dict[str, Any] = {**_new_counts(), "edit_type": 0, "edit_type_failed": 0,
                               "lifecycle": 0, "lifecycle_failed": 0, "already_applied": 0}
-    items: list[dict] = []
+    items: list[dict] = progress.setdefault("items", []) if progress is not None else []
     edit_failed: list[str] = []
+    current = {"id": ""}
     try:
         for m in reviews:
+            current["id"] = m["id"]
             items.append(_review_one(eng, m, counts, dry_run=False, via=via))
         for m in edits:
+            current["id"] = m["id"]
             kind, row = eng._find_item_by_id(m["id"])
             if row is None or kind not in ("lesson", "decision", "playbook"):
                 edit_failed.append(m["id"])
@@ -588,6 +719,7 @@ def apply_marks(eng, marks: list[dict], attribution: dict) -> dict:
             else:
                 counts["edit_type"] += 1
         for m in lifecycle:
+            current["id"] = m["id"]
             if _mark_state(eng, m) == "already_applied":
                 counts["already_applied"] += 1
                 continue
@@ -601,11 +733,27 @@ def apply_marks(eng, marks: list[dict], attribution: dict) -> dict:
                 counts["lifecycle"] += 1
     except BaseException:
         counts["edit_type_failed"] = len(edit_failed)
-        _receipt(eng, "apply", attribution, {**counts, "aborted": 1}, _reject_reasons(reviews))
+        _receipt(eng, "apply", attribution, {**counts, "aborted": 1}, _reject_reasons(reviews),
+                 more={"total_marks": len(marks), "aborted_at": current["id"]})
         raise
     counts["edit_type_failed"] = len(edit_failed)
     _receipt(eng, "apply", attribution, counts, _reject_reasons(reviews))
     return {"status": "applied", "counts": counts, "items": items, "edit_type_failed": edit_failed}
+
+
+_DONE_STATUSES = frozenset({"applied", "applied_unlinked", "already_applied", "not_staging"})
+
+
+def all_failed(payload: dict) -> bool:
+    """Every mark of an applied run failed (none applied, none already done)."""
+    counts = payload.get("counts") or {}
+    items = payload.get("items") or []
+    done = (sum(1 for i in items if i.get("status") in _DONE_STATUSES)
+            + int(counts.get("edit_type", 0)) + int(counts.get("lifecycle", 0))
+            + int(counts.get("already_applied", 0)))
+    failed = (sum(1 for i in items if i.get("status") not in _DONE_STATUSES)
+              + int(counts.get("edit_type_failed", 0)) + int(counts.get("lifecycle_failed", 0)))
+    return failed > 0 and done == 0
 
 
 def run_apply(args: list[str]) -> int:
@@ -628,6 +776,10 @@ def run_apply(args: list[str]) -> int:
         if m["mark"] in ("retire", "restore") and kind != "playbook":
             print(f"{m['mark']} applies to playbooks only: {m['id']}")
             return 2
+    error = batch_target_problem(probe, marks)
+    if error:
+        print(error)
+        return 2
 
     if "--yes" not in args:
         _print(preview_marks(_engram(read_only=True), marks))
@@ -637,8 +789,12 @@ def run_apply(args: list[str]) -> int:
     if error:
         print(error)
         return 2
-    _print(apply_marks(_engram(read_only=False), marks, attribution))
-    return 0
+    payload = apply_marks(_engram(read_only=False), marks, attribution)
+    if payload.get("status") == "refused":  # the store changed since the check above
+        print(payload["error"])
+        return 2
+    _print(payload)
+    return 1 if all_failed(payload) else 0
 
 
 # ---------------------------------------------------------------------------

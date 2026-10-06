@@ -163,6 +163,18 @@ You stay in control of staged items at any time:
   It applies through the same path as `engram review apply` and leaves the same
   receipt. Without a terminal, use `engram review export --out <dir>` and
   `engram review apply <marks.json>`.
+- The export writes `review.md` (one card per proposal, with its version),
+  `ids.json` (the ids) and `marks-template.json`, one entry per proposal to fill
+  in and save as `marks.json`:
+  `{"id": "...", "mark": "approve", "expected_version": 2}`. `mark` is
+  `approve`, `reject`, `edit-type:<type>`, `supersede:<id>` (approve it as the
+  replacement of the approved entry `<id>`, same kind and scope), `retire`,
+  `restore` or `skip` (leave it pending). Optional fields: `reason` on a reject
+  (your note, kept in that run's receipt only, never on the rejection record)
+  and `expected_version` (the item is skipped if it changed since). A run may
+  replace each entry once and may not supersede an entry it also decides; such
+  a file is refused before anything is written. `engram review apply` exits
+  non-zero when every mark in the file failed.
 - Playbooks always require explicit review before trusted use; Engram never
   silently executes a workflow — it hands the steps to your AI tool as a passive
   reference and tracks the reported outcome.

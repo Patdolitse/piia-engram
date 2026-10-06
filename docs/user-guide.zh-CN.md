@@ -141,6 +141,15 @@ staged 条目始终在你掌控之中：
   `v` 查看全文、`q` 结束。确认汇总时输入 `y` 才写入；`n`、输入结束或 Ctrl+C 都不写入。
   它与 `engram review apply` 走同一条应用路径，回执相同。没有终端时改用
   `engram review export --out <目录>` 和 `engram review apply <marks.json>`。
+- 导出会生成 `review.md`（每条提案一张卡片，含版本号）、`ids.json`（id 列表）和
+  `marks-template.json`（每条提案一项，填好后另存为 `marks.json`）：
+  `{"id": "...", "mark": "approve", "expected_version": 2}`。`mark` 可取 `approve`、
+  `reject`、`edit-type:<类型>`、`supersede:<id>`（批准它，作为已批准条目 `<id>` 的替代，
+  须同种类、同作用域）、`retire`、`restore` 或 `skip`（保持待审）。可选字段：拒绝时的
+  `reason`（你的备注，只记在本次回执里，不写入拒绝记录）和 `expected_version`（条目在此之后
+  被改动则跳过）。一次运行里同一条目只能被取代一次，也不能取代本次同时被决定的条目；
+  这样的文件在写入任何内容之前就会被拒绝。文件里所有 mark 都失败时，`engram review apply`
+  以非零码退出。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。
 

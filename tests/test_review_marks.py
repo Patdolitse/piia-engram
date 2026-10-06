@@ -53,10 +53,10 @@ def _marks(tmp_path: Path, marks: list[dict]) -> Path:
     return path
 
 
-def _apply(tmp_path: Path, capsys, marks: list[dict], *, yes: bool = True) -> dict:
+def _apply(tmp_path: Path, capsys, marks: list[dict], *, yes: bool = True, code: int = 0) -> dict:
     capsys.readouterr()
     args = [str(_marks(tmp_path, marks))] + (["--operator", "owner", "--yes"] if yes else [])
-    assert review_cli.run_apply(args) == 0
+    assert review_cli.run_apply(args) == code
     return json.loads(capsys.readouterr().out)
 
 
@@ -148,7 +148,7 @@ def test_supersede_mark_to_a_bad_target_fails_without_writing(eng, tmp_path, cap
         {"id": new["id"], "mark": f"supersede:{pending['id']}"},
         {"id": new["id"], "mark": f"supersede:{new['id']}"},
         {"id": new["id"], "mark": f"supersede:{rule['id']}"},
-    ])
+    ], code=1)  # every mark failed
 
     assert [i["status"] for i in applied["items"]] == [
         "target_not_found", "target_not_trusted", "self", "type_mismatch"]
@@ -238,7 +238,7 @@ def test_expected_version_skips_an_item_edited_since(eng, tmp_path, capsys):
     seen = int(_row(eng, row["id"]).get("version") or 1)
     assert not eng.update_knowledge(row["id"], {"detail": "edited elsewhere"}).get("error")
 
-    applied = _apply(tmp_path, capsys, [{"id": row["id"], "mark": "approve", "expected_version": seen}])
+    applied = _apply(tmp_path, capsys, [{"id": row["id"], "mark": "approve", "expected_version": seen}], code=1)
 
     assert applied["items"][0]["status"] == "version_conflict"
     assert _row(eng, row["id"])["tier"] == "staging"
@@ -289,3 +289,193 @@ def test_a_run_that_stops_part_way_still_leaves_a_receipt(eng, tmp_path, monkeyp
     (receipt,) = _receipts(eng.root)
     assert receipt["counts"]["aborted"] == 1
     assert receipt["counts"]["applied"] == 1
+
+
+# ---------------------------------------------------------------------------
+# one supersede target per run; an agent-proposed target is checked on approval
+# ---------------------------------------------------------------------------
+
+
+def _trusted_decision(eng: Engram, question: str, choice: str) -> dict:
+    row = eng.add_decision({"question": question, "choice": choice})
+    _approve(eng, row["id"])
+    return _row(eng, row["id"])
+
+
+def _revision(eng: Engram, question: str, choice: str, old_id: str) -> dict:
+    """An agent's revision proposal: pending, carrying pending_supersedes."""
+    row = eng.add_decision({"question": question, "choice": choice, "supersedes": old_id})
+    stored = _row(eng, row["id"])
+    assert stored["tier"] == "staging" and stored.get("pending_supersedes") == old_id, stored
+    return stored
+
+
+def _supersede_edges(eng: Engram) -> list[tuple[str, str]]:
+    return [(e["src"], e["dst"]) for e in RelationStore(eng.root).all_edges() if e["rel"] == "supersedes"]
+
+
+def test_two_marks_superseding_one_entry_are_refused(eng, tmp_path, capsys):
+    old = _trusted_decision(eng, "Where do build caches live?", "on each runner")
+    owner_pick = eng.add_decision({"question": "Which store holds shared build caches?", "choice": "object store"})
+    agent_pick = _revision(eng, "Where do build caches live now?", "in the shared bucket", old["id"])
+    before = _knowledge(eng.root)
+    marks = [{"id": owner_pick["id"], "mark": f"supersede:{old['id']}"}, {"id": agent_pick["id"], "mark": "approve"}]
+
+    for extra in ([], ["--operator", "owner", "--yes"]):
+        capsys.readouterr()
+        assert review_cli.run_apply([str(_marks(tmp_path, marks)), *extra]) == 2
+        assert old["id"] in capsys.readouterr().out
+
+    assert _knowledge(eng.root) == before
+    assert review_cli.validate_marks([{"id": "a1", "mark": "supersede:old001"},
+                                      {"id": "b2", "mark": "supersede:old001"}])[1]
+
+
+def test_a_target_decided_in_the_same_run_is_refused():
+    error = review_cli.validate_marks([{"id": "a1", "mark": "approve"}, {"id": "b2", "mark": "supersede:a1"}])[1]
+    assert "a1" in error
+    assert review_cli.validate_marks([{"id": "b2", "mark": "supersede:a1"}, {"id": "a1", "mark": "reject"}])[1]
+
+
+def test_approving_a_revision_whose_target_is_gone_approves_it_without_the_link(eng, tmp_path, capsys):
+    old = _trusted_decision(eng, "Where do build caches live?", "on each runner")
+    late = _revision(eng, "Where do build caches live now?", "in the shared bucket", old["id"])
+    first = eng.add_decision({"question": "Which store holds shared build caches?", "choice": "object store"})
+    _apply(tmp_path, capsys, [{"id": first["id"], "mark": f"supersede:{old['id']}"}])
+
+    applied = _apply(tmp_path, capsys, [{"id": late["id"], "mark": "approve"}])
+
+    (item,) = applied["items"]
+    assert item["status"] == "applied_unlinked" and item["unlinked_reason"] == "target_not_trusted"
+    assert applied["counts"]["approved_unlinked"] == 1
+    assert _row(eng, late["id"])["tier"] == "verified"
+    assert "pending_supersedes" not in _row(eng, late["id"])
+    assert _supersede_edges(eng) == [(first["id"], old["id"])]
+
+
+def test_approving_a_valid_revision_writes_its_link(eng, tmp_path, capsys):
+    old = _trusted_decision(eng, "Where do build caches live?", "on each runner")
+    revision = _revision(eng, "Where do build caches live now?", "in the shared bucket", old["id"])
+
+    applied = _apply(tmp_path, capsys, [{"id": revision["id"], "mark": "approve"}])
+
+    (item,) = applied["items"]
+    assert item["status"] == "applied" and item["target"] == old["id"]
+    assert _supersede_edges(eng) == [(revision["id"], old["id"])]
+
+
+# ---------------------------------------------------------------------------
+# a run that stops part-way
+# ---------------------------------------------------------------------------
+
+
+def test_a_stop_during_a_supersede_puts_the_pending_link_back(eng, tmp_path, monkeypatch):
+    old = eng.add_lesson({"summary": "Store secrets in the CI settings page", "domain": "type:lesson"})
+    _approve(eng, old["id"])
+    new = eng.add_lesson({"summary": "Store secrets in the CI secret store", "domain": "type:lesson"})
+
+    def _boom(self, item_id, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Engram, "promote_knowledge", _boom)
+    marks, _ = review_cli.validate_marks([{"id": new["id"], "mark": f"supersede:{old['id']}"}])
+    with pytest.raises(KeyboardInterrupt):
+        review_cli.apply_marks(Engram(root=eng.root), marks, review_cli.attribution_record("owner", mode="marks"))
+
+    row = _row(eng, new["id"])
+    assert row["tier"] == "staging" and "pending_supersedes" not in row
+    (receipt,) = _receipts(eng.root)
+    assert receipt["counts"]["aborted"] == 1
+    assert receipt["total_marks"] == 1 and receipt["aborted_at"] == new["id"]
+
+
+# ---------------------------------------------------------------------------
+# version guard: checked again right before each write; never on an agent path
+# ---------------------------------------------------------------------------
+
+
+def test_version_is_checked_again_right_before_the_write(eng, monkeypatch):
+    first = eng.add_lesson({"summary": "First proposal in the batch", "domain": "type:lesson"})
+    second = eng.add_lesson({"summary": "Second proposal in the batch", "domain": "type:lesson"})
+    seen = int(_row(eng, second["id"]).get("version") or 1)
+    real = Engram.promote_knowledge
+
+    def _promote(self, item_id, **kwargs):
+        result = real(self, item_id, **kwargs)
+        if item_id == first["id"]:  # someone edits the second one meanwhile
+            Engram(root=eng.root).update_knowledge(second["id"], {"detail": "edited meanwhile"})
+        return result
+
+    monkeypatch.setattr(Engram, "promote_knowledge", _promote)
+    result = batch_review_staging(
+        eng, [{"id": first["id"], "action": "approve"},
+              {"id": second["id"], "action": "approve", "expected_version": seen}],
+        dry_run=False, confirm=True, owner_cli=True,
+    )
+
+    assert [i["status"] for i in result["items"]] == ["applied", "version_conflict"]
+    assert _row(eng, second["id"])["tier"] == "staging"
+
+
+def test_agent_batches_ignore_expected_version_and_reason(tmp_path, monkeypatch):
+    import asyncio
+
+    from piia_engram import mcp_server
+
+    root = tmp_path / "mcpstore"
+    root.mkdir()
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    monkeypatch.setenv("ENGRAM_AUDIT", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "claude_code")
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+    store = Engram(root=root)
+    monkeypatch.setattr(mcp_server, "_engram", store)
+    keep = store.add_lesson({"summary": "Agent batch approve", "domain": "t", "tier": "staging"})
+    drop = store.add_lesson({"summary": "Agent batch reject", "domain": "t", "tier": "staging"})
+    actions = [{"id": keep["id"], "action": "approve", "expected_version": 99},
+               {"id": drop["id"], "action": "reject", "expected_version": 99, "reason": "AGENT NOTE"}]
+
+    out = json.loads(asyncio.run(mcp_server.review_staging(
+        action="batch", actions_json=json.dumps(actions), dry_run=False, confirm=True)))
+
+    assert [i["status"] for i in out["items"]] == ["applied", "applied"]
+    assert "AGENT NOTE" not in (root / "knowledge" / "tombstones.jsonl").read_text(encoding="utf-8")
+    assert "AGENT NOTE" not in (root / "audit.log").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# exit codes; the export's marks help and template
+# ---------------------------------------------------------------------------
+
+
+def test_apply_returns_non_zero_only_when_every_mark_failed(eng, tmp_path, capsys):
+    row = eng.add_lesson({"summary": "A proposal that exists", "domain": "type:lesson"})
+    args = ["--operator", "owner", "--yes"]
+
+    assert review_cli.run_apply([str(_marks(tmp_path, [{"id": "nosuchid0001", "mark": "approve"}])), *args]) == 1
+    both = [{"id": "nosuchid0002", "mark": "approve"}, {"id": row["id"], "mark": "approve"}]
+    assert review_cli.run_apply([str(_marks(tmp_path, both)), *args]) == 0
+    again = [{"id": row["id"], "mark": "approve"}]
+    assert review_cli.run_apply([str(_marks(tmp_path, again)), *args]) == 0  # already done: not a failure
+    capsys.readouterr()
+
+
+def test_export_lists_every_mark_and_writes_a_template(eng, tmp_path, capsys):
+    row = eng.add_lesson({"summary": "Pin the toolchain version", "domain": "type:lesson"})
+    out = tmp_path / "export"
+
+    assert review_cli.run_export(["--out", str(out)]) == 0
+
+    text = (out / "review.md").read_text(encoding="utf-8")
+    for token in ("approve", "reject", "edit-type:", "supersede:<id>", "skip", "reason", "expected_version"):
+        assert token in text, token
+    assert json.loads((out / "ids.json").read_text(encoding="utf-8")) == [row["id"]]
+    template = json.loads((out / "marks-template.json").read_text(encoding="utf-8"))
+    assert template == [{"id": row["id"], "kind": "lesson", "mark": "skip", "expected_version": 1}]
+    marks, error = review_cli.validate_marks(template)
+    assert not error and marks == [{"id": row["id"], "mark": "skip"}]
+    before = _knowledge(eng.root)
+    capsys.readouterr()
+    assert review_cli.run_apply([str(out / "marks-template.json"), "--operator", "owner", "--yes"]) == 0
+    assert _knowledge(eng.root) == before
