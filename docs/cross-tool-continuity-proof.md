@@ -26,7 +26,7 @@ The code demo proves the loop with *simulated* clients against a synthetic store
 | MCP server | `piia_engram.mcp_server` | `piia_engram.mcp_server` |
 | Store (`ENGRAM_DIR`) | `<shared-store>` | `<shared-store>` |
 
-Both clients run the standard piia-engram MCP server and resolve to the **same local directory**. Nothing leaves the machine. The only thing connecting the two tools is one folder of JSON/Markdown files that the user owns.
+Both clients run the standard piia-engram MCP server and resolve to the **same local directory**. No memory data leaves the machine. The only thing connecting the two tools is one folder of JSON/Markdown files that the user owns.
 
 ## Step 1 — Claude Code writes the handoff
 

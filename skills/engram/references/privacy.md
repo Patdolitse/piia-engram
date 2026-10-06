@@ -29,10 +29,15 @@ operates within today.
 
 ## Telemetry
 
-- Telemetry is **off by default**. If enabled, it writes a **local log only**
-  with no network requests; **remote sending is a separate, explicit opt-in**.
+- Engram sends one anonymous usage ping a day (random install ID, version, OS,
+  Python version, AI client name, date). Turn it off with `engram telemetry off`,
+  `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers.
+- Detailed usage statistics and weekly feedback reports stay off unless you turn
+  them on; if enabled, local statistics write a **local log only** with no network
+  requests; **remote sending is a separate, explicit opt-in** and sends counts only.
 - Do not overstate the network boundary or call Engram unconditionally secure.
-  State the honest boundary instead: local-first storage with opt-in telemetry.
+  State the honest boundary instead: local-first storage, one anonymous daily
+  usage ping that can be turned off, and opt-in detailed telemetry.
 
 ## What not to store
 

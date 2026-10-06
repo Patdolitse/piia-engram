@@ -12,7 +12,8 @@
     "mcp_tools_core": 19,
     "mcp_tools_advanced": 40,
     "telemetry_default": "off",
-    "telemetry_remote_default": "off"
+    "telemetry_remote_default": "off",
+    "usage_ping_default": "on"
   },
   "product_boundary_contract": {
     "schema_version": 1,
@@ -91,8 +92,9 @@
     "mcp_tools_total": "python scripts/count_mcp_tools.py --json -> .total (AST count of @mcp.tool() async defs in src/piia_engram/mcp_server.py; equals ENGRAM_TOOLS=all registration)",
     "mcp_tools_core": "python scripts/count_mcp_tools.py --json -> .core (size of the TIER1_TOOLS frozenset in mcp_server.py, loaded by default when ENGRAM_TOOLS is unset / 'core')",
     "mcp_tools_advanced": "python scripts/count_mcp_tools.py --json -> .advanced (total - core)",
-    "telemetry_default": "PRIVACY.md and docs/telemetry-privacy.md: telemetry is off by default (inspect PRIVACY.md 'Off by default' language)",
-    "telemetry_remote_default": "PRIVACY.md: remote telemetry is a separate explicit opt-in, off by default (inspect 'engram telemetry remote on/off' language)"
+    "telemetry_default": "docs/telemetry-privacy.md: detailed usage statistics stay off unless turned on (inspect 'stay off unless you turn them on')",
+    "telemetry_remote_default": "PRIVACY.md: remote telemetry is a separate explicit opt-in, off by default (inspect 'engram telemetry remote on/off' language)",
+    "usage_ping_default": "docs/telemetry-privacy.md and README: one anonymous usage ping a day, off with DO_NOT_TRACK=1 (inspect 'one anonymous usage ping a day')"
   },
   "current_state_surfaces": [
     "README.md",

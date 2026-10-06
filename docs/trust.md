@@ -21,6 +21,7 @@ By default, Engram stores its core data under `~/.engram/`:
 | Project snapshots | `~/.engram/projects/` | Project-specific context |
 | Recent contexts and daily logs | `~/.engram/contexts/`, `~/.engram/daily/` | Cross-session continuity |
 | Optional telemetry log | `~/.engram/telemetry.log` | Local opt-in usage counts; remote sending is a separate opt-in |
+| Usage ping install ID | `piia-engram` folder under your user config directory | Random ID for the daily usage ping; `engram telemetry reset-id` makes a new one |
 
 The files are plain JSON or Markdown unless you explicitly enable optional field-level encryption for supported sensitive fields.
 
@@ -31,8 +32,8 @@ Core identity and knowledge tools do not upload your memory to a hosted Engram s
 By default:
 
 - No hosted account is required.
-- Telemetry is off.
-- Local telemetry, when enabled, writes a local log first; remote telemetry and weekly feedback reports require separate explicit opt-in.
+- Engram sends one anonymous usage ping a day (random install ID, version, OS, Python version, AI client name, date). Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers.
+- Detailed usage statistics are off unless you turn them on and write a local log first; remote telemetry and weekly feedback reports require separate explicit opt-in.
 - Knowledge content, prompts, AI responses, file paths, email addresses, and IP addresses are not collected by telemetry.
 - High-risk AI-suggested knowledge (credentials, executable commands, permission or MCP-config changes) is staged for your review before becoming verified, and unsupervised background writeback is always staged. Low/medium-risk items are auto-verified unless you set `ENGRAM_APPROVAL=strict`, which stages every write. See the risk-gated workflow below.
 - `engram setup` lists the external MCP client config files it would touch and asks for a one-keystroke confirm before writing; declining leaves every external config untouched. `engram setup --apply-external-config` skips the prompt for non-interactive/CI runs.

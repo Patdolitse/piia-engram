@@ -176,14 +176,17 @@ This is the heart of why Engram is local-first.
 folder you point `ENGRAM_DIR` at) as plain JSON/Markdown: identity, knowledge,
 playbooks, project snapshots, recent contexts, and daily logs.
 
-**What never happens by default:**
+**Defaults:**
 
 - No hosted account, no required subscription, no default cloud sync.
-- Telemetry is **off**. When you turn on local telemetry it writes a local log
-  first; sending anything remote (`engram telemetry remote on`) and weekly
-  feedback reports (`engram telemetry feedback on`) are **separate explicit
-  opt-ins**. Knowledge content, prompts, AI responses, file paths, emails, and
-  IP addresses are never collected.
+- Engram sends one anonymous usage ping a day (random install ID, version, OS,
+  Python version, AI client name, date). Turn it off with `engram telemetry off`,
+  `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers.
+- Detailed usage statistics stay off unless you turn them on and write a local
+  log first; remote sending (`engram telemetry remote on`) and weekly feedback
+  reports (`engram telemetry feedback on`) are **separate explicit opt-ins**.
+  Knowledge content, prompts, AI responses, file paths, emails, and IP addresses
+  are never collected.
 - Audit logging is **on by default**; it records read/write operations to a
   local `~/.engram/audit.log` (plain JSON-lines, never sent anywhere). Opt out
   with `ENGRAM_AUDIT=0`.
@@ -245,9 +248,11 @@ Full data-flow detail is in [Trust model](trust.md) and
 ## 7. FAQ
 
 **Will Engram upload my data?**
-No. Everything is in `~/.engram/`. Telemetry is off by default and, even when
-enabled, only ever sends anonymous counts after a separate opt-in — never your
-content.
+No. Your memories stay in `~/.engram/`. Engram sends one anonymous usage ping a
+day (random install ID, version, OS, Python version, AI client name, date); turn
+it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`.
+Detailed usage statistics stay off unless you turn them on and, even then, only
+ever send anonymous counts after a separate opt-in — never your content.
 
 **I switched AI tools — is my memory still there?**
 Yes. All tools connected to the Engram MCP read the same local store.

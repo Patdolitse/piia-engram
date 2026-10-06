@@ -118,7 +118,7 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | Optional field-level AES-256-GCM for supported profile fields; local files are plaintext JSON/Markdown by default |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls by default | **0** for identity and knowledge tools — except optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
+| Network calls by default | One anonymous usage ping a day (`engram telemetry off` or `DO_NOT_TRACK=1` turns it off); the `engram` command also checks PyPI for a newer version at most once a day in interactive terminals, and `engram doctor` checks on each run (`ENGRAM_NO_UPDATE_CHECK=1` turns it off); identity and knowledge tools make none, except the optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
 
 ---
 
@@ -815,7 +815,7 @@ The setup wizard detects your AI tools without changing their config files by de
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files, removes outdated server entries, and repairs broken paths in one step.
 
 **Does piia-engram send data to the cloud?**
-Not by default. Identity and knowledge tools use local files, and telemetry is **off by default**. Optional anonymous usage statistics can be enabled as a local log; remote telemetry and weekly feedback reports require separate explicit opt-in and send counts only, never knowledge content. You can inspect the next payload with `engram telemetry preview`, disable anytime with `engram telemetry off`, and turn remote sending off with `engram telemetry remote off`. See **[PRIVACY.md](PRIVACY.md)** for the full data flow diagram, what is and isn't collected, and your data rights.
+Your memories never leave your machine. Engram sends one anonymous usage ping a day (random install ID, version, OS, Python version, AI client name, date) so we know how many installs are active; it never contains memories, file paths, account details or command arguments, and the server does not store IP addresses. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (it is off in CI and in containers); `engram telemetry preview` shows the exact payload. Detailed statistics and feedback reports are separate opt-ins. See **[PRIVACY.md](PRIVACY.md)**.
 
 **How many MCP tools does piia-engram provide?**
 Two tiers, designed so most users only see 18 tools:

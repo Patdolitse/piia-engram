@@ -6,6 +6,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 新增
+- **每天一次匿名使用信号（默认开启）。** Engram 现在每天发送一次匿名信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），用来了解有多少安装在使用；不包含任何记忆内容、路径、账号或命令参数，服务器不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`；CI 和容器环境中自动不发；如果你以前关闭过详细统计，这个信号也保持关闭。`engram telemetry status / preview / reset-id` 可查看和控制。详细统计和反馈报告不变（仍需自行开启）。
+
 ## [4.21.2] - 2026-09-26
 
 ### 修复

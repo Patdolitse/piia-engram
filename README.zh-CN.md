@@ -119,7 +119,7 @@ pip install piia-engram && engram setup
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | 支持字段级 AES-256-GCM（可选）；本地文件默认是明文 JSON / Markdown |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
-| 默认网络调用 | 身份与知识工具默认 **0** —— 除可选的 `read_web_content` 外；远程 telemetry 与反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
+| 默认网络调用 | 每天一次匿名使用信号（`engram telemetry off` 或 `DO_NOT_TRACK=1` 可关闭）；`engram` 命令在交互式终端中每天最多向 PyPI 查询一次新版本，`engram doctor` 每次运行都会查询（`ENGRAM_NO_UPDATE_CHECK=1` 可关闭）；身份与知识工具不联网，可选的 `read_web_content` 除外；远程 telemetry 和每周反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
 
 客户端专项 setup 卡： [Claude Code](docs/integrations/claude-code.md)、[Codex](docs/integrations/codex.md)、[Cursor](docs/integrations/cursor.md)。证据等级采用 [客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0/L1 表示安装或协议可达，L2 表示观察到读/搜索行为，L3 增加 A/B 行为收益，L4 增加跨客户端连续性，L5 表示可公开引用的可复现证据。
 
@@ -761,7 +761,7 @@ engram setup
 在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令扫描所有已知 MCP 配置，移除旧版 server 条目并修复失效路径，一步完成。
 
 **piia-engram 会把数据发到云端吗？**
-默认不会。身份与知识工具使用本地文件，telemetry **默认关闭**。可选的匿名使用统计可作为本地日志开启；远程 telemetry 和每周反馈报告必须单独显式开启，只发送计数，绝不发送知识正文。随时用 `engram telemetry preview` 查看下一次 payload，用 `engram telemetry off` 关闭统计，用 `engram telemetry remote off` 关闭远程发送。详见 **[PRIVACY.md](PRIVACY.md)**。
+你的记忆不会离开你的电脑。Engram 每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），用来了解有多少安装在使用；不包含任何记忆内容、文件路径、账号信息或命令参数，服务器也不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`（CI 和容器环境中自动不发）；`engram telemetry preview` 可查看实际发送内容。详细统计和反馈报告需单独开启。详见 **[PRIVACY.md](PRIVACY.md)**。
 
 **piia-engram 有多少个 MCP 工具？**
 两层设计，大多数用户只会看到 19 个工具：

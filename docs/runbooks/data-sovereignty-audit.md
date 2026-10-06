@@ -48,7 +48,9 @@ Identity, lessons, decisions, playbooks, and contexts are stored as local files
 under the root. There is no implicit upload of this data. Optional telemetry is a
 separate, schema-validated, content-free contract (see
 `docs/telemetry-privacy.md` and the telemetry-contract runbooks); it carries no
-knowledge bodies.
+knowledge bodies. The daily anonymous usage ping (on by default; off with
+`DO_NOT_TRACK=1` or `engram telemetry off`) carries no identity or knowledge
+data either.
 
 ## 5. Reproduce the audit
 

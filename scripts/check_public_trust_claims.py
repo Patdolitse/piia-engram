@@ -46,11 +46,7 @@ def _rx(pattern: str) -> re.Pattern[str]:
 
 
 REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
-    RequiredClaim(
-        "README.md",
-        "default_identity_network_zero",
-        _rx(r"Network calls by default[^\n]{0,120}0[^\n]{0,120}identity and knowledge tools"),
-    ),
+    RequiredClaim("README.md", "usage_ping_disclosed", _rx(r"one anonymous usage ping a day")),
     RequiredClaim(
         "README.md",
         "remote_optin",
@@ -61,11 +57,7 @@ REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
         "plaintext_default",
         _rx(r"(plain JSON|local JSON files you own|All data lives in `~/.engram/`)"),
     ),
-    RequiredClaim(
-        "README.zh-CN.md",
-        "default_identity_network_zero",
-        re.compile(r"(默认不会|默认 0 次网络请求|默认零网络)", re.DOTALL),
-    ),
+    RequiredClaim("README.zh-CN.md", "usage_ping_disclosed", re.compile(r"每天发送一次匿名使用信号", re.DOTALL)),
     RequiredClaim(
         "README.zh-CN.md",
         "remote_optin",
@@ -76,11 +68,7 @@ REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
         "plaintext_default",
         re.compile(r"(明文 JSON|本地 JSON|本地明文)", re.DOTALL),
     ),
-    RequiredClaim(
-        "SECURITY.md",
-        "telemetry_off_default",
-        _rx(r"Telemetry is off by default"),
-    ),
+    RequiredClaim("SECURITY.md", "usage_ping_disclosed", _rx(r"one anonymous usage ping a day")),
     RequiredClaim(
         "SECURITY.md",
         "remote_optin",
@@ -116,11 +104,7 @@ REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
         "plaintext_without_secret",
         _rx(r"Without `?ENGRAM_SECRET`?[^\n]{0,120}plaintext"),
     ),
-    RequiredClaim(
-        "docs/telemetry-privacy.md",
-        "telemetry_off_default",
-        _rx(r"Telemetry is opt-in[^\n]{0,120}off by default"),
-    ),
+    RequiredClaim("docs/telemetry-privacy.md", "usage_ping_disclosed", _rx(r"one anonymous usage ping a day")),
     RequiredClaim(
         "docs/telemetry-privacy.md",
         "remote_optin",
@@ -131,11 +115,7 @@ REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
         "no_content",
         _rx(r"No lesson / decision / playbook content"),
     ),
-    RequiredClaim(
-        "docs/telemetry-privacy.md",
-        "no_stable_user_id",
-        _rx(r"No stable cross-day user ID"),
-    ),
+    RequiredClaim("docs/telemetry-privacy.md", "install_id_disclosed", _rx(r"random install ID")),
     RequiredClaim(
         "docs/trust.md",
         "plaintext_default",
@@ -182,13 +162,25 @@ REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
         "audit_default_on",
         _rx(r"audit logging is on by default"),
     ),
+    RequiredClaim("README.md", "usage_ping_optout", _rx(r"DO_NOT_TRACK=1")),
+    RequiredClaim("README.zh-CN.md", "usage_ping_optout", re.compile(r"DO_NOT_TRACK=1", re.DOTALL)),
+    RequiredClaim("PRIVACY.md", "usage_ping_disclosed", _rx(r"one anonymous usage ping a day")),
 )
 
 
 FORBIDDEN_CLAIMS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("absolute_no_network", _rx(r"\bEngram\s+(?:makes|performs|uses|does)\s+no\s+network\s+requests\b")),
     ("absolute_no_network", _rx(r"\bno\s+network\s+requests\s+are\s+made\b")),
-    ("telemetry_on_default", _rx(r"\btelemetry\s+is\s+on\s+by\s+default\b")),
+    # The daily usage ping is on by default (2026-10); old wording must not survive.
+    # Only sentence-initial, unqualified phrasings ("Telemetry is off ...") are
+    # stale; qualified ones ("Detailed telemetry is off by default") stay true.
+    ("stale_telemetry_off_default", re.compile(r"(?:^|(?<=[.;:!?|—-]))\s*\**telemetry\**\s+is\s+\**(?:off|opt-in)\b", re.I | re.M)),
+    ("stale_usage_stats_off_default", re.compile(r"(?:^|(?<=[.;:!?|—-]))\s*\**usage statistics\**\s+are\s+\**off\b", re.I | re.M)),
+    ("stale_zero_network_row", _rx(r"Network calls by default\s*\|\s*\**0\**\s")),
+    ("stale_nothing_leaves", _rx(r"\bNothing leaves the machine\b")),
+    ("zh_stale_telemetry_off", re.compile(r"(?:遥测|telemetry)\s*\**默认关闭")),
+    ("stale_no_stable_id", _rx(r"No stable cross-day user ID")),
+    ("zh_stale_zero_network", re.compile(r"默认零网络|默认 0 次网络请求|身份与知识工具默认 \*\*0\*\*")),
     ("remote_enabled_default", _rx(r"\bremote telemetry\b[^\n.]{0,120}\benabled by default\b")),
     ("feedback_enabled_default", _rx(r"\bfeedback\b[^\n.]{0,120}\benabled by default\b")),
     ("encrypted_by_default", _rx(r"\bencrypted by default\b")),
@@ -199,6 +191,19 @@ FORBIDDEN_CLAIMS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("audit_off_default", _rx(r"audit log(?:ging)?[^\n]{0,40}off by default")),
     ("audit_optin_label", _rx(r"Audit logging \(opt-in\)")),
     ("zh_audit_off_default", re.compile(r"审计[^\n]{0,20}默认关闭", re.DOTALL)),
+)
+
+# Public surfaces that carry no required claim but must not repeat a forbidden
+# one. A missing file here is skipped, not a setup error.
+FORBIDDEN_ONLY_SURFACES: tuple[str, ...] = (
+    "docs/comparison.md",
+    "docs/user-guide.md",
+    "docs/user-guide.zh-CN.md",
+    "docs/trust-evidence.md",
+    "skills/engram/SKILL.md",
+    "skills/engram/references/privacy.md",
+    ".cursor-plugin/README.md",
+    "CONTRIBUTING.md",
 )
 
 _NEGATION_CONTEXT = re.compile(
@@ -225,6 +230,11 @@ def _telemetry_endpoints(root: Path) -> dict[str, str]:
         if not m:
             raise SetupError(f"{name} not found in src/piia_engram/telemetry.py")
         found[key] = m.group(1)
+    ping = root / "src/piia_engram/usage_ping.py"
+    if ping.is_file():
+        m = re.search(r'^ENDPOINT\s*=\s*"([^"]*)"', ping.read_text(encoding="utf-8"), re.MULTILINE)
+        if m:
+            found["usage_ping"] = m.group(1)
     return found
 
 
@@ -241,6 +251,13 @@ def scan(root: Path | str = ".") -> dict:
     problems: list[dict] = []
     scanned_files = sorted({claim.file for claim in REQUIRED_CLAIMS})
     texts = {rel: _read(root, rel) for rel in scanned_files}
+    forbidden_texts = dict(texts)
+    for rel in FORBIDDEN_ONLY_SURFACES:
+        if rel in forbidden_texts:
+            continue
+        path = root / rel
+        if path.is_file():
+            forbidden_texts[rel] = path.read_text(encoding="utf-8", errors="replace")
     endpoints = _telemetry_endpoints(root)
 
     for claim in REQUIRED_CLAIMS:
@@ -251,7 +268,7 @@ def scan(root: Path | str = ".") -> dict:
                 "claim": claim.claim,
             })
 
-    for rel, text in texts.items():
+    for rel, text in forbidden_texts.items():
         for label, pattern in FORBIDDEN_CLAIMS:
             for m in pattern.finditer(text):
                 if _is_negated(text, m):
@@ -290,7 +307,9 @@ def scan(root: Path | str = ".") -> dict:
 
     return {
         "ok": not deduped,
-        "scanned": scanned_files + ["src/piia_engram/telemetry.py"],
+        "scanned": sorted(forbidden_texts)
+        + ["src/piia_engram/telemetry.py"]
+        + (["src/piia_engram/usage_ping.py"] if (root / "src/piia_engram/usage_ping.py").is_file() else []),
         "endpoints": endpoints,
         "problems": deduped,
     }
