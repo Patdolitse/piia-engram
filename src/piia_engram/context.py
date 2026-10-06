@@ -378,7 +378,6 @@ class ContextMixin:
         "domains": 10,
         "stale": 11,
         "staging": 12,
-        "sync": 13,
     }
     _SECTION_DISPLAY: dict[str, int] = {
         "fragmentation": 0,
@@ -394,13 +393,12 @@ class ContextMixin:
         "project": 10,
         "stale": 11,
         "staging": 12,
-        "sync": 13,
     }
 
     # Tiered context levels for cold-start latency control.
     # quick:    profile + preferences only — pure JSON reads, no scans.
     # standard: + quality, domains, top lessons/decisions, project snapshot.
-    # full:     everything (conflicts, stale, staging, auto-sync side effects).
+    # full:     everything (conflicts, stale and staging reminders).
     _LEVEL_SECTIONS: dict[str, set[str] | None] = {
         "quick": {"profile", "preferences"},
         "standard": {"profile", "preferences", "quality", "domains",
@@ -1439,9 +1437,10 @@ class ContextMixin:
                 - "quick": profile + preferences only (pure JSON reads,
                   no filesystem scans). Use for low-latency cold start.
                 - "standard": adds quality, domains, top lessons/decisions,
-                  and project snapshot. Skips expensive reconciliation.
-                - "full" (default): everything, including conflict detection,
-                  stale/staging warnings, and auto-reconcile side effects.
+                  and project snapshot.
+                - "full" (default): everything, including conflict detection
+                  and stale/staging warnings. No level reads other AI tools'
+                  files or imports anything (that is `engram import-memories`).
                 Backward-compatible: defaults to "full" so existing callers
                 see no behaviour change.
         """
@@ -1667,34 +1666,6 @@ class ContextMixin:
                     " 建议运行 review_knowledge 查看并确认或归档。"
                 )
 
-        # Auto-reconcile (filesystem-scanning side effects — only at "full" level).
-        # Skipping these is the main latency win for quick/standard cold start.
-        if _wants("sync") and not getattr(self, "_read_only", False):
-            sync_msgs: list[str] = []
-            try:
-                reconcile = self.reconcile_memories()
-                if reconcile["imported"] > 0:
-                    sync_msgs.append(
-                        f"- 记忆同步：导入了 {reconcile['imported']} 条外部 AI 记忆"
-                        f"（来源：{', '.join(reconcile['sources'][:5])}）"
-                    )
-            except Exception as exc:
-                logger.warning("reconcile_memories failed: %s", exc)
-
-            try:
-                cfg_sync = self.reconcile_ai_configs()
-                if cfg_sync["imported"] > 0:
-                    sync_msgs.append(
-                        f"- 配置对齐：从 {cfg_sync['scanned_files']} 个 AI 配置文件"
-                        f"导入了 {cfg_sync['imported']} 条规则"
-                        f"（来源：{', '.join(cfg_sync['sources'][:5])}）"
-                    )
-            except Exception as exc:
-                logger.warning("reconcile_ai_configs failed: %s", exc)
-
-            if sync_msgs:
-                sections["sync"] = "\n## auto_sync\n" + "\n".join(sync_msgs)
-
         # ── Assemble ──────────────────────────────────────────────────
         if not sections:
             return ""
@@ -1731,7 +1702,7 @@ class ContextMixin:
         Any AI tool — even one without the Engram MCP server connected —
         can `Read` this file to get the user's identity, preferences, and
         top knowledge. Default level is "standard" so the file stays under
-        a few KB and free of expensive reconcile output.
+        a few KB.
 
         Args:
             target: Override output path. Defaults to ``self.root / "quick_context.md"``.

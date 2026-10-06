@@ -742,7 +742,12 @@ def test_reconcile_apply_digest_mentions_rows_moved_to_the_archive(_full_stores,
     assert "overflow archive" not in render_reconcile_apply_text(quiet)
 
 
-def test_startup_sync_message_counts_rows_moved_to_the_archive(_full_stores, tmp_path, monkeypatch, capsys):
+def test_import_memories_reports_rows_moved_to_the_archive(_full_stores, tmp_path, monkeypatch):
+    # Formerly asserted on the server's startup-sync stderr line. Importing is
+    # now the explicit `engram import-memories` command; its result, printed
+    # summary and receipt carry the same capacity-cap count.
+    from piia_engram import memory_import
+
     root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
     monkeypatch.setenv("ENGRAM_RECONCILE", "1")
     mem_dir = tmp_path / "fake_claude" / "projects" / "p" / "memory"
@@ -759,15 +764,19 @@ def test_startup_sync_message_counts_rows_moved_to_the_archive(_full_stores, tmp
         encoding="utf-8")
     engram._discover_project_roots = lambda: [project]
     engram._AI_GLOBAL_CONFIGS = []
-    server = _serve(engram, monkeypatch)
-    capsys.readouterr()
-    server._run_startup_sync()
-    err = capsys.readouterr().err
-    configs = int(err.split("configs=")[1].split(",")[0])
-    assert "memories=2" in err and configs >= 1
+
+    payload = memory_import.run(engram)
+
+    memories = sum(1 for item in payload["items"] if item["source"] == "memories")
+    configs = sum(1 for item in payload["items"] if item["source"] == "configs")
+    assert memories == 2 and configs >= 1
     # the queue is full, so each unreviewed capture moves exactly one row
-    assert f"moved to overflow archive={2 + configs}" in err
+    assert len(payload["overflow_archived_ids"]) == 2 + configs
     assert len(_archive_lines(root, "lesson")) == 2 + configs
+    text = memory_import.render_result(payload)
+    assert f": {2 + configs}" in text or f"：{2 + configs}" in text
+    receipt = json.loads((root / payload["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["overflow_archived_ids"] == payload["overflow_archived_ids"]
 
 
 # -- MCP replies -----------------------------------------------------------------------

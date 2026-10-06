@@ -3912,19 +3912,25 @@ def test_generate_context_empty_returns_empty_string(tmp_path: Path):
     assert "身份画像未设置" in ctx
 
 
-def test_generate_context_reconcile_failure_graceful(tmp_path: Path):
-    """generate_context should not crash if reconcile raises."""
+def test_generate_context_never_calls_the_import_engine(tmp_path: Path):
+    """Cold start (any level) never imports other AI tools' files.
+
+    It used to call reconcile at level "full" and only had to survive a
+    failure there; now it must not call the import engine at all."""
     engram = make_engram(tmp_path)
     engram.update_profile({"role": "dev"})
+    calls = []
 
-    def boom():
+    def boom(**kwargs):
+        calls.append(kwargs)
         raise RuntimeError("reconcile boom")
 
     engram.reconcile_memories = boom
     engram.reconcile_ai_configs = boom
-    # Should not raise
-    ctx = engram.generate_context()
-    assert "关于用户" in ctx
+    for level in ("quick", "standard", "full", None):
+        ctx = engram.generate_context(level=level) if level else engram.generate_context()
+        assert "关于用户" in ctx
+    assert calls == []
 
 
 # ── context.py coverage: extract_knowledge with mock LLM ──────────

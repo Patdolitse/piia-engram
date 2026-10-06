@@ -617,8 +617,9 @@ async def wrap_up_session(
         project_title: 项目名称（可选，仅在首次保存快照时需要）。 / Project title (optional; mainly needed when first saving a snapshot).
         tech_stack: 技术栈（可选，逗号分隔）。 / Tech stack (optional, comma-separated).
         known_issues: 已知问题（可选，逗号分隔）。 / Known issues (optional, comma-separated).
+        run_reconcile: 兼容保留，不再导入任何内容；其它 AI 工具的记忆只能由用户在终端运行 `engram import-memories` 导入。 / Kept for compatibility and imports nothing; memories in other AI tools are imported only by the user running `engram import-memories` in a terminal.
         idempotency_key: 可选幂等键；重试同一键只返回既有 operation 状态，不重复写入。 / Optional idempotency key; retrying the same key returns the existing operation status without duplicate writes.
-        reconcile_scope: "project"（有项目路径时默认精确项目隔离）或显式 "global"。 / "project" for exact project isolation when a project path is present, or explicit "global".
+        reconcile_scope: 兼容保留（只回显在 maintenance.reconcile_scope）。 / Kept for compatibility (echoed in maintenance.reconcile_scope only).
     """
     # a4: write-path governance gate — wrap_up_session fans out into many writes
     # (extract insights/playbook, save snapshot, daily log, evaluate_tiers), so
@@ -986,130 +987,31 @@ async def wrap_up_session(
             committed={"daily_log": daily_stage_status == "ok"},
         )
 
-    # Step 3: Auto-reconcile external AI memories and configs
-    _reconcile_imported = 0
+    # Step 3: external AI memories and configs are never imported here. Only
+    # the Owner's explicit `engram import-memories` command reads them;
+    # run_reconcile=True is accepted for compatibility and points there.
+    skip_reason = "explicit_import_only" if run_reconcile else "default_session_end_budget"
     if run_reconcile:
-        stage_start = _stage_start("reconcile_memories")
-        reconcile_stage_status = "ok"
-        reconcile_stage_error = ""
-        try:
-            reconcile_kwargs = (
-                {"project_folder": project_folder}
-                if effective_reconcile_scope == "project"
-                else {}
-            )
-            reconcile = S._locked_reconcile_call(
-                S._get_engram().reconcile_memories,
-                **reconcile_kwargs,
-            )
-            imported = int(reconcile.get("imported", 0) or 0)
-            maintenance["reconcile_memories"] = {
-                "status": "ok",
-                "imported": imported,
-                "scope": reconcile.get("scope", {}),
-            }
-            if imported > 0:
-                results["memory_sync"] = reconcile
-                _reconcile_imported += imported
-        except Exception as exc:
-            reconcile_stage_status = "error"
-            reconcile_stage_error = S._safe_err(exc)
-            S.logger.warning("reconcile_memories failed: %s", exc)
-            maintenance["reconcile_memories"] = {
-                "status": "error",
-                "error": reconcile_stage_error,
-            }
-        finally:
-            timing["reconcile_memories_ms"] = _elapsed_ms(stage_start)
-            _stage_finish(
-                "reconcile_memories",
-                reconcile_stage_status,
-                stage_start,
-                error=reconcile_stage_error,
-                counts={"imported": _reconcile_imported},
-            )
-
-        stage_start = _stage_start("reconcile_ai_configs")
-        cfg_stage_status = "ok"
-        cfg_stage_error = ""
-        try:
-            config_kwargs = (
-                {
-                    "search_roots": [project_folder],
-                    "project_folder": project_folder,
-                }
-                if effective_reconcile_scope == "project"
-                else {}
-            )
-            cfg_sync = S._locked_reconcile_call(
-                S._get_engram().reconcile_ai_configs,
-                **config_kwargs,
-            )
-            imported = int(cfg_sync.get("imported", 0) or 0)
-            config_budget_exhausted = bool(cfg_sync.get("budget_exhausted"))
-            if config_budget_exhausted:
-                cfg_stage_status = "partial"
-                cfg_stage_reason = "import_budget_exhausted"
-            else:
-                cfg_stage_reason = ""
-            maintenance["reconcile_ai_configs"] = {
-                "status": "partial" if config_budget_exhausted else "ok",
-                "imported": imported,
-                "scanned_files": int(cfg_sync.get("scanned_files", 0) or 0),
-                "budget_exhausted": config_budget_exhausted,
-                "scope": cfg_sync.get("scope", {}),
-            }
-            if imported > 0:
-                results["config_sync"] = cfg_sync
-                _reconcile_imported += imported
-        except Exception as exc:
-            cfg_stage_status = "error"
-            cfg_stage_reason = ""
-            cfg_stage_error = S._safe_err(exc)
-            S.logger.warning("reconcile_ai_configs failed: %s", exc)
-            maintenance["reconcile_ai_configs"] = {
-                "status": "error",
-                "error": cfg_stage_error,
-            }
-        finally:
-            timing["reconcile_ai_configs_ms"] = _elapsed_ms(stage_start)
-            _stage_finish(
-                "reconcile_ai_configs",
-                cfg_stage_status,
-                stage_start,
-                reason=cfg_stage_reason,
-                error=cfg_stage_error,
-            )
-    else:
-        maintenance["reconcile_memories"] = {
-            "status": "skipped",
-            "reason": "default_session_end_budget",
+        results["memory_import"] = {
+            "status": "explicit_only",
+            "command": "engram import-memories",
+            "note": (
+                "Memories in other AI tools are imported only when the user runs "
+                "`engram import-memories` in a terminal (preview first, then the "
+                "review queue)."
+            ),
         }
-        maintenance["reconcile_ai_configs"] = {
-            "status": "skipped",
-            "reason": "default_session_end_budget",
-        }
-        timing["reconcile_memories_ms"] = 0
-        timing["reconcile_ai_configs_ms"] = 0
+    for stage in ("reconcile_memories", "reconcile_ai_configs"):
+        maintenance[stage] = {"status": "skipped", "reason": skip_reason}
+        timing[f"{stage}_ms"] = 0
         _mark_wrap_up_stage(
             S._get_engram().root,
             operation_id,
-            "reconcile_memories",
+            stage,
             "skipped",
             timing_ms=0,
-            reason="default_session_end_budget",
+            reason=skip_reason,
         )
-        _mark_wrap_up_stage(
-            S._get_engram().root,
-            operation_id,
-            "reconcile_ai_configs",
-            "skipped",
-            timing_ms=0,
-            reason="default_session_end_budget",
-        )
-
-    if _reconcile_imported > 0:
-        S._beta("reconcile", imported=_reconcile_imported)
 
     # Step 4: Evaluate staging items and surface promotion suggestions.
     if closeout_mode == "fast" or _budget_exhausted(

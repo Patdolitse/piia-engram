@@ -2189,36 +2189,45 @@ class TestResumeBriefWrapper:
 
 
 class TestColdStartBootstrap:
-    """Cold-start regression: bootstrap must be REACHABLE via get_user_context,
-    not just unit-tested in isolation. The bug: bootstrap was gated behind
-    ``if not context``, but generate_context returns a non-empty "identity not
-    set" scaffold for an empty store, so a brand-new user with a discoverable
-    CLAUDE.md got the scaffold instead of their auto-imported rules ("it already
-    knows me"). Only get_resume_brief ran bootstrap unconditionally."""
+    """Cold start never imports other AI tools' rule files.
 
-    def test_get_user_context_imports_rule_files_on_cold_start(
-        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ):
-        # Re-enable bootstrap (the fixture disables it) + feed a synthetic rule
-        # file so the scan never touches the real home dir.
-        (isolated_engram.root / ".bootstrap_done").unlink()
+    Earlier versions ran a one-time bootstrap from get_user_context and
+    get_resume_brief on an empty store (auto-verified lessons plus a profile
+    language). Importing is now the Owner's explicit `engram import-memories`
+    command; cold start only points to it."""
+
+    @staticmethod
+    def _spy_scan(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
         fake = tmp_path / "fake_CLAUDE.md"
         fake.write_text(
             "# Rules\n所有沟通使用中文。\n我是一名独立开发者。\n这个 repo 用 pytest 测试。\n",
             encoding="utf-8",
         )
+        calls: list[str] = []
         import piia_engram.bootstrap as bs
-        monkeypatch.setattr(bs, "_scan_rule_files", lambda: [
-            {"path": fake, "scope": "global",
-             "lines": fake.read_text(encoding="utf-8").splitlines()},
-        ])
+
+        def scan():
+            calls.append("scan")
+            return [{"path": fake, "scope": "global",
+                     "lines": fake.read_text(encoding="utf-8").splitlines()}]
+
+        monkeypatch.setattr(bs, "_scan_rule_files", scan)
+        return calls
+
+    def test_get_user_context_never_imports_rule_files_on_cold_start(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        (isolated_engram.root / ".bootstrap_done").unlink()
+        calls = self._spy_scan(monkeypatch, tmp_path)
 
         result = _run(mcp_server.get_user_context())
 
-        # The new user must see imported content, NOT the generic scaffold.
-        assert "身份画像未设置" not in result
-        assert "首次连接自动导入" in result
-        assert "zh-CN" in result or "沟通语言" in result
+        assert calls == []
+        assert "首次连接自动导入" not in result
+        assert "engram import-memories" in result
+        assert isolated_engram.get_lessons(limit=10, _update_access=False) == []
+        assert "language" not in isolated_engram.get_profile()
+        assert not (isolated_engram.root / ".bootstrap_done").exists()
 
     def test_get_user_context_no_rule_files_still_gives_guidance(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
@@ -2238,32 +2247,20 @@ class TestColdStartBootstrap:
             or "身份画像未设置" in result
         )
 
-    def test_get_resume_brief_imports_rule_files_on_cold_start(
+    def test_get_resume_brief_never_imports_rule_files_on_cold_start(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
-        # get_resume_brief is the OTHER cold-start entry. The original bug was the
-        # two entries behaving inconsistently (get_user_context unreachable while
-        # get_resume_brief reached bootstrap); lock that this entry keeps surfacing
-        # the import so it can't silently regress to an empty brief.
+        # get_resume_brief is the other cold-start entry; it must behave the
+        # same way: a read, no import.
         (isolated_engram.root / ".bootstrap_done").unlink()
-        fake = tmp_path / "fake_CLAUDE.md"
-        fake.write_text(
-            "# Rules\n所有沟通使用中文。\n我是一名独立开发者。\n这个 repo 用 pytest 测试。\n",
-            encoding="utf-8",
-        )
-        import piia_engram.bootstrap as bs
-        monkeypatch.setattr(bs, "_scan_rule_files", lambda: [
-            {"path": fake, "scope": "global",
-             "lines": fake.read_text(encoding="utf-8").splitlines()},
-        ])
+        calls = self._spy_scan(monkeypatch, tmp_path)
 
         result = _run(mcp_server.get_resume_brief())
 
-        # Real entry must trigger bootstrap: detected language surfaces in the brief…
-        assert "zh-CN" in result
-        # …and the store actually received the imported rules (reachability proof).
-        lessons = isolated_engram.get_lessons(limit=10, _update_access=False)
-        assert any("首次连接自动导入" in l.get("summary", "") for l in lessons)
+        assert calls == []
+        assert "zh-CN" not in result
+        assert isolated_engram.get_lessons(limit=10, _update_access=False) == []
+        assert not (isolated_engram.root / ".bootstrap_done").exists()
 
 
 class TestRecallWrapper:

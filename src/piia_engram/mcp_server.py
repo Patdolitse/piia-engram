@@ -26,7 +26,6 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 _write_operation_lock = threading.RLock()
-_reconcile_operation_lock = threading.RLock()
 
 
 def _configure_utf8_stdio() -> None:
@@ -52,34 +51,6 @@ def _locked_engram_call(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
 
-def _locked_reconcile_call(fn, *args, **kwargs):
-    """Serialize long-running reconcile passes without blocking normal writes."""
-    with _reconcile_operation_lock:
-        return fn(*args, **kwargs)
-
-
-def _startup_sync_mode(is_ephemeral: bool) -> str:
-    """Return startup reconcile mode: background (default), eager, or off."""
-    if is_ephemeral:
-        return "off"
-
-    raw = os.environ.get("ENGRAM_MCP_STARTUP_SYNC", "").strip().lower()
-    if not raw:
-        return "background"
-    if raw in ("background", "bg", "async", "lazy", "on", "1", "true", "yes"):
-        return "background"
-    if raw in ("eager", "sync"):
-        return "eager"
-    if raw in ("off", "0", "false", "no", "none", "disabled"):
-        return "off"
-
-    logger.warning(
-        "invalid ENGRAM_MCP_STARTUP_SYNC=%r; using background startup sync",
-        raw,
-    )
-    return "background"
-
-
 def _run_startup_auto_migrate() -> None:
     """Run stdio startup migration without writing to stdout."""
     try:
@@ -91,48 +62,6 @@ def _run_startup_auto_migrate() -> None:
             auto_migrate = None  # type: ignore[assignment]
     if auto_migrate is not None:
         auto_migrate()
-
-
-def _run_startup_sync() -> None:
-    """Reconcile external AI memories/configs on MCP startup."""
-    if _engram is None:
-        return
-    try:
-        with _reconcile_operation_lock:
-            _mem = _engram.reconcile_memories()
-            _cfg = _engram.reconcile_ai_configs()
-        _archived = len(_mem.get("overflow_archived_ids") or []) + len(
-            _cfg.get("overflow_archived_ids") or []
-        )
-        if _mem["imported"] or _cfg["imported"] or _archived:
-            _msgs = []
-            if _mem["imported"]:
-                _msgs.append(f"memories={_mem['imported']}")
-            if _cfg["imported"]:
-                _msgs.append(f"configs={_cfg['imported']}")
-            if _archived:
-                _msgs.append(f"moved to overflow archive={_archived}")
-            print(
-                f"[engram] startup sync: {', '.join(_msgs)}",
-                file=sys.stderr,
-            )
-    except Exception as exc:
-        logger.warning("startup sync failed: %s", exc)
-
-
-def _schedule_startup_sync(mode: str) -> None:
-    if mode == "off":
-        return
-    if mode == "eager":
-        _run_startup_sync()
-        return
-
-    thread = threading.Thread(
-        target=_run_startup_sync,
-        name="engram-startup-sync",
-        daemon=True,
-    )
-    thread.start()
 
 
 from piia_engram.beta_tracker import track_event as _track_beta_event
@@ -1688,34 +1617,25 @@ def main() -> None:
         )
 
     # Detect ephemeral/Docker environments where no local AI tools exist.
-    # Skip auto_migrate and reconcile to speed up startup (critical for
-    # mcp-proxy which has short connection timeouts).
+    # Skip auto_migrate there to speed up startup (critical for mcp-proxy
+    # which has short connection timeouts).
     _is_ephemeral = os.path.isfile("/.dockerenv") or _env_flag_enabled("ENGRAM_EPHEMERAL")
 
-    # Auto-migrate legacy configs on first run after upgrade (stdio only;
+    # Content-free config migration on first run after upgrade (stdio only;
     # must happen before mcp.run() to avoid polluting the MCP stdio channel).
     if args.transport == "stdio" and not _is_ephemeral:
         _run_startup_auto_migrate()
 
-    # Auto-reconcile on MCP server startup — runs once regardless of which
-    # AI tool connects.  This ensures cross-tool memory sync happens even if
-    # the AI tool never calls get_user_context.
-    # Skip in ephemeral containers — no AI tool configs to scan.
-    # Startup sync policy: background by default, eager/off by env override.
-    try:
-        from piia_engram.reconcile import reconcile_env_conflict_note as _reconcile_note
-    except ImportError:
-        from reconcile import reconcile_env_conflict_note as _reconcile_note  # type: ignore[no-redef]
-    _note = _reconcile_note()
-    if _note:
-        print(f"[engram] warning: {_note}", file=sys.stderr)
+    # The server start never reads other AI tools' memory or config files and
+    # never writes memory content: importing them is the explicit
+    # `engram import-memories` command. ENGRAM_MCP_STARTUP_SYNC and
+    # ENGRAM_RECONCILE are still accepted but no longer change the start.
     for _warning in _startup_env_warnings():
         print(f"[engram] warning: {_warning}", file=sys.stderr)
     if _engram is not None:
         _latch = _gov_rt._strict_mode.bootstrap(_engram.root, source="mcp")
         if _latch:
             print(f"[engram] warning: {_latch}", file=sys.stderr)
-    _schedule_startup_sync(_startup_sync_mode(_is_ephemeral))
     _show_usage_notice()
 
     if args.transport == "sse":

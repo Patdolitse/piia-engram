@@ -13,6 +13,27 @@ except ImportError:  # plain-script mode (no package context)
         search_knowledge as _search_knowledge_service,
     )
 
+# Shown on cold start while the store holds no lessons or decisions. Importing
+# other AI tools' memories is an explicit Owner command, never automatic.
+IMPORT_HINT = (
+    "其它 AI 工具里已有的记忆不会自动导入。如需导入，请用户在终端运行 "
+    "`engram import-memories`（先列清单，确认后才写入待审区）。 / "
+    "Memories in other AI tools are never imported automatically. To bring them in, "
+    "the user runs `engram import-memories` in a terminal (it lists them first and "
+    "writes to the review queue only after confirmation)."
+)
+
+
+def _store_has_no_knowledge(engram) -> bool:
+    try:
+        return not (
+            engram.get_lessons(limit=1, _update_access=False, _migrate_fields=False)
+            or engram.get_decisions(limit=1, _update_access=False, _migrate_fields=False)
+        )
+    except Exception:
+        return False
+
+
 @S.mcp.tool()
 async def get_user_context(
     project_folder: Optional[str] = None,
@@ -64,24 +85,9 @@ async def get_user_context(
         return S._gov_rt.maybe_govern_owner_only(
             S._get_engram().root, "", tool="get_user_context"
         )
-    # Auto-bootstrap on first call to an empty store: import discoverable rule
-    # files (CLAUDE.md / AGENTS.md / .cursorrules) so cold-start delivers "it
-    # already knows me" without a manual `engram setup`. Mirrors get_resume_brief.
-    # Runs AFTER the owner gate above (bootstrap writes lessons, so a non-owner
-    # caller is refused first) but BEFORE generate_context so the imported data is
-    # reflected. It must NOT be gated on `if not context`: generate_context
-    # returns a non-empty "identity not set" scaffold for an empty store, which
-    # previously shadowed this trigger (bootstrap only fired via get_resume_brief
-    # — a brand-new user calling get_user_context got the scaffold instead of
-    # their auto-imported rules).
-    from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
-
-    imported_rules = 0
-    if needs_bootstrap(S._get_engram()):
-        boot = run_bootstrap(S._get_engram())
-        imported_rules = (
-            boot.get("user_rules_imported", 0) + boot.get("project_rules_imported", 0)
-        )
+    # Cold start only reads the store. It never scans other AI tools' rule or
+    # memory files and never imports them: that is the Owner's explicit
+    # `engram import-memories` command, which an empty store points to.
     try:
         context = S._get_engram().generate_context(
             project_folder, level=level, max_tokens=token_budget,
@@ -92,11 +98,12 @@ async def get_user_context(
         S._track("get_user_context", success=False)
         S.logger.warning("generate_context failed: %s", exc)
         return f"Engram 上下文加载失败: {S._safe_err(exc)}"
-    if imported_rules and context:
-        context = (
-            f"[首次连接自动导入 {imported_rules} 条规则 from "
-            f"CLAUDE.md/AGENTS.md]\n\n{context}"
-        )
+    if (
+        context
+        and (token_budget is None or (len(context) + len(IMPORT_HINT)) // 3 <= token_budget)
+        and _store_has_no_knowledge(S._get_engram())
+    ):
+        context = f"{context}\n\n{IMPORT_HINT}"
     if not context:
         return (
             "Engram 为空——这是新用户。请帮助他们建立身份：\n"
@@ -106,7 +113,8 @@ async def get_user_context(
             "4. 问有没有 AI 总是忘记的规则 → 调用 add_lesson(...)\n"
             "5. 完成后调用 refresh_quick_context() 持久化\n\n"
             "这只需要 30 秒，之后所有 AI 工具都能从第一条消息开始了解这位用户。\n"
-            "或者建议用户在终端运行 `piia-engram` 完成引导式设置。"
+            "或者建议用户在终端运行 `piia-engram` 完成引导式设置。\n"
+            + IMPORT_HINT
         )
     if user_prompt:
         suffix = f"\n\n## 当前用户提问\n{user_prompt}"

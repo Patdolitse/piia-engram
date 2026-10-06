@@ -155,13 +155,10 @@ async def get_resume_brief(
         agent_role: Role used to shape the optional agent context pack.
         task_summary: Current delegated task summary for agent-pack selection.
     """
-    # Auto-bootstrap on first ever call when store is empty.
-    from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
-
-    if needs_bootstrap(S._get_engram()):
-        run_bootstrap(S._get_engram())
-
-    brief = S._get_engram().get_resume_brief(
+    # Read-only with respect to memory content: other AI tools' rule and memory
+    # files are never scanned or imported here (`engram import-memories` does
+    # that on the Owner's explicit request).
+    brief =S._get_engram().get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
         include_resume_pack=include_resume_pack,

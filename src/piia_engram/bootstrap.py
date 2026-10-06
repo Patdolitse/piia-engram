@@ -1,10 +1,14 @@
-"""Auto-bootstrap: ingest existing CLAUDE.md / AGENTS.md on first MCP call.
+"""Rule-file bootstrap helpers (no longer run automatically).
 
-When ``get_user_context`` or ``get_resume_brief`` detects an empty store
-(no lessons, no decisions, minimal profile), this module scans the local
+Earlier versions called :func:`run_bootstrap` from ``get_user_context``,
+``get_resume_brief`` and the SessionStart hook when the store was empty. No
+read path or hook calls it any more: other AI tools' rule and memory files are
+imported only by the explicit ``engram import-memories`` command, into the
+review queue. The functions stay importable for existing integrations.
+
+What :func:`run_bootstrap` does when called directly: it scans the local
 machine for AI tool rule files, classifies their content, and imports
-preferences and project rules — so the user experiences "it already knows me"
-without running ``engram setup`` first.
+preferences and project rules.
 
 The scan reuses the same classification logic as ``setup_wizard`` (user vs.
 project keywords, language extraction) but is stripped of all CLI/printing

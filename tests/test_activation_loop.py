@@ -88,13 +88,15 @@ def test_hook_style_extraction_lands_staged_only(tmp_path, monkeypatch):
             )
 
 
-def test_inject_hook_path_bootstraps_fresh_store(tmp_path, monkeypatch):
-    """A fresh store must get bootstrapped on the SessionStart hook path, same
-    as the MCP get_resume_brief wrapper does (mirrors the hook's new guard)."""
+def test_bootstrap_is_still_callable_and_idempotent(tmp_path, monkeypatch):
+    """run_bootstrap stays importable for existing integrations (no read path
+    or hook calls it any more); calling it directly is still idempotent."""
     root = _fresh_root(tmp_path, monkeypatch)
+    import piia_engram.bootstrap as bs
     from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
     from piia_engram.core import Engram
 
+    monkeypatch.setattr(bs, "_scan_rule_files", lambda: [])
     engram = Engram(root=root)
     if needs_bootstrap(engram):
         run_bootstrap(engram)
@@ -102,13 +104,13 @@ def test_inject_hook_path_bootstraps_fresh_store(tmp_path, monkeypatch):
     assert (root / ".bootstrap_done").is_file()
 
 
-def test_inject_hook_source_contains_bootstrap_guard():
-    src = (HOOK_DIR / "auto_inject_resume_brief.py").read_text(encoding="utf-8")
-    assert "needs_bootstrap" in src and "run_bootstrap" in src, (
-        "SessionStart hook must trigger the same bootstrap as the MCP "
-        "get_resume_brief wrapper; a fresh store with a discoverable CLAUDE.md "
-        "should auto-import on the hook path too"
-    )
+def test_no_hook_runs_the_rule_file_bootstrap():
+    """Session start must not import other AI tools' rule files: that is the
+    explicit `engram import-memories` command, not a hook side effect."""
+    for py in HOOK_DIR.glob("*.py"):
+        src = py.read_text(encoding="utf-8")
+        assert "run_bootstrap" not in src and "needs_bootstrap" not in src, py.name
+        assert "reconcile_memories" not in src and "reconcile_ai_configs" not in src, py.name
 
 
 def test_second_session_new_instance_sees_first_session(tmp_path, monkeypatch):

@@ -87,41 +87,25 @@ def test_runtime_wrap_up_default_is_lightweight(isolated_runtime, monkeypatch):
     assert isinstance(payload["timing"]["total_ms"], int)
 
 
-def test_runtime_wrap_up_explicit_reconcile_runs_only_when_requested(
+def test_runtime_wrap_up_run_reconcile_no_longer_imports(
     isolated_runtime,
     monkeypatch,
 ):
+    """run_reconcile=True is still accepted but imports nothing: other AI tools'
+    memories come in only through `engram import-memories`."""
     _store, project, eng = isolated_runtime
-    calls: list[tuple[str, dict]] = []
+    calls: list[str] = []
 
     def reconcile_memories(**kwargs):
-        calls.append(("mem", kwargs))
-        return {
-            "imported": 0,
-            "sources": [],
-            "scope": {"mode": "project_exact"},
-        }
+        calls.append("mem")
+        raise AssertionError("closeout must not import memories")
 
     def reconcile_ai_configs(**kwargs):
-        calls.append(("cfg", kwargs))
-        return {
-            "imported": 0,
-            "sources": [],
-            "scanned_files": 0,
-            "budget_exhausted": False,
-            "scope": {"mode": "project_exact"},
-        }
+        calls.append("cfg")
+        raise AssertionError("closeout must not import configs")
 
-    monkeypatch.setattr(
-        eng,
-        "reconcile_memories",
-        reconcile_memories,
-    )
-    monkeypatch.setattr(
-        eng,
-        "reconcile_ai_configs",
-        reconcile_ai_configs,
-    )
+    monkeypatch.setattr(eng, "reconcile_memories", reconcile_memories)
+    monkeypatch.setattr(eng, "reconcile_ai_configs", reconcile_ai_configs)
 
     payload = json.loads(_run(mcp_server.wrap_up_session(
         summary="Owner-approved explicit reconcile smoke.",
@@ -131,20 +115,15 @@ def test_runtime_wrap_up_explicit_reconcile_runs_only_when_requested(
         run_reconcile=True,
     )))
 
-    assert calls == [
-        ("mem", {"project_folder": str(project)}),
-        (
-            "cfg",
-            {
-                "search_roots": [str(project)],
-                "project_folder": str(project),
-            },
-        ),
-    ]
+    assert calls == []
     assert payload["maintenance"]["reconcile_scope"] == {
         "requested": "project",
         "effective": "project",
         "project_scoped": True,
     }
-    assert payload["maintenance"]["reconcile_memories"]["status"] == "ok"
-    assert payload["maintenance"]["reconcile_ai_configs"]["status"] == "ok"
+    for stage in ("reconcile_memories", "reconcile_ai_configs"):
+        assert payload["maintenance"][stage] == {
+            "status": "skipped",
+            "reason": "explicit_import_only",
+        }
+    assert payload["memory_import"]["command"] == "engram import-memories"
