@@ -1691,20 +1691,22 @@ class Engram(
             counter += 1
         row["id"] = rid
 
+    def _same_claim_in_scope(self, entry_type: str, new_row: dict, new_key: str, row: dict) -> bool:
+        """Same claim hash (the one tombstones and the duplicate check use) and project scope."""
+        return (
+            _dedup_review.exact_key(entry_type, row) == new_key
+            and self._entries_share_project_scope(new_row, row)
+        )
+
     def _archived_identity_twin(self, entry_type: str, new_row: dict) -> dict | None:
-        """An archived row with the same identity text (and choice) in the same project scope."""
-        identity = self._entry_identity_text(new_row, entry_type)
-        if not identity:
+        """An archived row with the same claim hash in the same project scope."""
+        if not self._entry_identity_text(new_row, entry_type):
             return None
-        choice = (new_row.get("choice") or "").strip().lower()
+        new_key = _dedup_review.exact_key(entry_type, new_row)
         for row in reversed(self._archive_rows_cached(entry_type)):
             if self._is_snapshot_record(row):
                 continue
-            if self._entry_identity_text(row, entry_type) != identity:
-                continue
-            if entry_type == "decision" and (row.get("choice") or "").strip().lower() != choice:
-                continue
-            if self._entries_share_project_scope(new_row, row):
+            if self._same_claim_in_scope(entry_type, new_row, new_key, row):
                 return row
         return None
 
@@ -1742,23 +1744,18 @@ class Engram(
     def _batch_archived_twin(self, entry_type: str, new_row: dict) -> dict | None:
         """A row the open batch call already moved to the archive with the same content, or None.
 
-        Same identity text in the same project scope (and, for decisions, the
-        same choice). Duplicate checks read the active file only, so without
-        this a batch could write a row again right after archiving it.
+        Same claim hash in the same project scope. Duplicate checks read the
+        active file only, so without this a batch could write a row again right
+        after archiving it.
         """
         batch = _OVERFLOW_BATCH.get()
         if batch is None:
             return None
-        identity = self._entry_identity_text(new_row, entry_type)
-        if not identity:
+        if not self._entry_identity_text(new_row, entry_type):
             return None
-        choice = (new_row.get("choice") or "").strip().lower()
+        new_key = _dedup_review.exact_key(entry_type, new_row)
         for row in reversed(batch["archived_rows"][entry_type]):
-            if self._entry_identity_text(row, entry_type) != identity:
-                continue
-            if entry_type == "decision" and (row.get("choice") or "").strip().lower() != choice:
-                continue
-            if self._entries_share_project_scope(new_row, row):
+            if self._same_claim_in_scope(entry_type, new_row, new_key, row):
                 return row
         return None
 
@@ -2164,16 +2161,17 @@ class Engram(
         """Queue a very similar (not identical) new row for the Owner, in every mode.
 
         The row is stored as pending with ``duplicate_candidate`` naming the
-        earlier entry; a deliberately negative or archived state is left alone.
+        earlier entry. A deliberately inactive, negative or archived row is left
+        alone and gets no marker, so the write reply matches what was stored.
         """
-        record = _dedup_review.candidate_record(existing.get("id", ""), similarity)
-        entry["duplicate_candidate"] = record
         if (
             entry.get("status", "active") != "active"
             or entry.get("tier") == "archived"
             or entry.get("memory_state") in {"rejected", "deprecated"}
         ):
             return
+        record = _dedup_review.candidate_record(existing.get("id", ""), similarity)
+        entry["duplicate_candidate"] = record
         # Same reset as the strict-mode gate: nothing pre-approves a pending row.
         for key in [k for k in entry if k.startswith(("promotion_", "promoted_", "approval_"))]:
             entry.pop(key, None)

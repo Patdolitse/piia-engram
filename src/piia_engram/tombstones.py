@@ -36,7 +36,7 @@ FILENAME = "tombstones.jsonl"
 # from any other version never matches; doctor reports it.
 HASH_VERSION = 3
 MATCHED_HASH_VERSIONS = (2, 3)
-_FIELD_SEP = ""
+_FIELD_SEP = "\x1f"
 
 _MARKDOWN_CHARS = set("`*_#>|~^")
 _WS_RE = re.compile(r"\s+")
@@ -136,9 +136,18 @@ def claim_hashes(kind: str, row: dict) -> tuple[str, str]:
 
 
 def claim_hashes_for_version(kind: str, row: dict, version: Any) -> tuple[str, str] | None:
+    """(h1, h2) of the claim under ``version``; None when it cannot be compared.
+
+    v2 hashed a decision as question + choice, so every question-less decision
+    with the same choice shared one v2 hash. Such a decision is not compared with
+    v2 records at all; an identical re-proposal of the rejected row is still
+    refused by the retired-twin check (``duplicate_retired``).
+    """
     if version == HASH_VERSION:
         return claim_hashes(kind, row)
     if version == 2:
+        if kind == "decision" and not str(row.get("question") or "").strip():
+            return None
         return _hashes_v2(claim_text(kind, row))
     return None
 

@@ -216,9 +216,15 @@ def card_lines(kind: str, row: dict, lookup: dict[str, dict]) -> list[str]:
             return []
         existing_id = related[0]
         head = f"- near-duplicate: related to `{existing_id}` ({related[1]}) / 近重复"
-    if existing_id not in (row.get("related_ids") or []):
-        return []
+    linked = existing_id in (row.get("related_ids") or [])
+    if candidate is None and not linked:
+        return []  # a near-duplicate note without its link is not trusted
     lines = [head]
+    if not linked:
+        # e.g. the earlier entry was merged and the link moved: keep the
+        # heading, but never diff against an entry this row is not linked to.
+        lines.append("  (no longer linked to that entry; no diff)")
+        return lines
     earlier = lookup.get(existing_id)
     if earlier is None:
         lines.append("  (the earlier entry is no longer active)")

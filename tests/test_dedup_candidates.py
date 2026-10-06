@@ -365,7 +365,7 @@ def test_allow_similar_new_descriptions_say_it_cannot_bypass_identical():
 
 
 # ---------------------------------------------------------------------------
-# review fixes: caller-supplied dedup fields, display hardening, hashing
+# caller-supplied dedup fields are dropped; stored values are shown defensively; one claim hash
 # ---------------------------------------------------------------------------
 
 _FORGED_ID = "abc`](javascript:x) **owned**"
@@ -526,3 +526,150 @@ def test_claim_hashes_are_cached_by_content():
     before = tombstones._hashes_v3.cache_info().hits
     tombstones.claim_hashes("lesson", dict(row))
     assert tombstones._hashes_v3.cache_info().hits == before + 1
+
+
+# ---------------------------------------------------------------------------
+# claim hash versions, archived twins, and candidate markers through approval
+# ---------------------------------------------------------------------------
+
+# Fixed (h1, h2) per claim: any change to the separator or to normalize()
+# must show up here.
+_HASH_CASES = {
+    "lesson": ("lesson", {"summary": "Lesson: Run the migrations before deploying the API."}),
+    "decision": ("decision", {"question": "Which database for the cache?", "choice": "SQLite"}),
+    "playbook": ("playbook", {"title": "Release flow", "steps": [{"action": "Run tests"}, "Tag the build"]}),
+    "cjk": ("lesson", {"summary": "教训：先备份再删除原文件，确认备份可读。"}),
+}
+_EXPECTED_V3 = {
+    "lesson": ("888cebcb1104a8ab1f33acdec8bb3b92471bb5d92b8147c2eefb39c47aa170a8",
+               "5ec8084306c6af66d280522b15c48a10072a112d10b223a164f5064793c30025"),
+    "decision": ("5b9978cfed1462c66fac79209a2065b8b4a7d249711b69e34ea45f3c2024bef9",
+                 "76f9989c821180e3fc57bd255cec1693658d5b550b65cf907031aba55a7bb082"),
+    "playbook": ("8fbae061b77bdc670a355173c52abc282b0c0c88b595c2b2735b55f1309347ec",
+                 "6612a93dba90d759fe6d3ca6524ba7d2299cee7a9ac8e580f3da077eba80eec4"),
+    "cjk": ("034a630aa50303f76dc3df2158f8902add823b8398142985ad99833fae6de8ea",
+            "cab7f3bb344c0ab9e257856e11084e8eadf1726c8ca23d42c9a14514dbe3b4b7"),
+}
+_EXPECTED_V2 = {
+    "lesson": _EXPECTED_V3["lesson"],
+    "decision": ("25ff629bb1307ff2a40179ade799b179d7c3cc8aaf8bb8df8da90446a76a293c",
+                 "76f9989c821180e3fc57bd255cec1693658d5b550b65cf907031aba55a7bb082"),
+    "playbook": ("60c97b65ef12e6e1e1e24b3036a33e081fde1a36b4ea9f7ae1637f6dc878963a",
+                 "6612a93dba90d759fe6d3ca6524ba7d2299cee7a9ac8e580f3da077eba80eec4"),
+    "cjk": _EXPECTED_V3["cjk"],
+}
+
+
+@pytest.mark.parametrize("name", sorted(_HASH_CASES))
+def test_claim_hashes_are_pinned_per_version(name):
+    from piia_engram import tombstones
+
+    kind, row = _HASH_CASES[name]
+    assert tombstones._FIELD_SEP == chr(0x1F)
+    assert tombstones.claim_hashes_for_version(kind, row, 3) == _EXPECTED_V3[name]
+    assert tombstones.claim_hashes_for_version(kind, row, 2) == _EXPECTED_V2[name]
+
+
+def _write_tombstone(root, kind: str, row: dict, *, version: int, item_id: str) -> None:
+    from piia_engram import tombstones
+
+    if version == 2:
+        h1, h2 = tombstones._hashes_v2(tombstones.claim_text(kind, row))
+    else:
+        h1, h2 = tombstones.claim_hashes(kind, row)
+    path = Path(root) / "knowledge" / "tombstones.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"id": item_id, "kind": kind, "scope": "global",
+                             "h1": h1, "h2": h2, "hv": version}) + "\n")
+
+
+def test_v2_record_of_a_question_less_decision_refuses_nothing(eng):
+    from piia_engram import tombstones
+
+    rejected = eng.add_decision({"title": "Adopt nightly exports", "choice": "yes"})
+    eng.update_decision(rejected["id"], {"status": "outdated"})  # the retired original
+    _write_tombstone(eng.root, "decision", rejected, version=2, item_id=rejected["id"])
+    assert tombstones.claim_hashes_for_version("decision", {"title": "x", "choice": "yes"}, 2) is None
+
+    other = eng.add_decision({"title": "Use tabs not spaces", "choice": "yes"})
+    assert other.get("status") not in ("rejected_before", "duplicate", "duplicate_retired")
+
+    again = eng.add_decision({"title": "Adopt nightly exports", "choice": "yes"})
+    assert again["status"] == "duplicate_retired" and again["existing_id"] == rejected["id"]
+
+
+def test_v2_records_for_lessons_and_playbooks_still_refuse(eng):
+    _write_tombstone(eng.root, "lesson", {"summary": "Never force-push to main"}, version=2, item_id="oldlesson001")
+    pb = {"title": "Rotate the signing key", "steps": [{"action": "Revoke the old key"}, "Publish the new key"]}
+    _write_tombstone(eng.root, "playbook", pb, version=2, item_id="oldplaybook1")
+
+    lesson = eng.add_lesson({"summary": "NEVER force-push to main.", "domain": "t"})
+    playbook = eng.add_playbook(dict(pb, title="rotate the signing key"))
+
+    assert lesson["status"] == "rejected_before" and lesson["rejection_id"] == "oldlesson001"
+    assert playbook["status"] == "rejected_before" and playbook["rejection_id"] == "oldplaybook1"
+
+
+def _archive_rows(eng, kind: str, rows: list[dict]) -> None:
+    from piia_engram.storage import _append_jsonl_lines
+
+    _append_jsonl_lines(eng._overflow_archive_path(kind), [json.dumps(r) for r in rows])
+
+
+def test_archived_twin_uses_the_claim_hash(eng):
+    _archive_rows(eng, "lesson", [{"id": "L-arch", "summary": "Re-run CI", "domain": "t"}])
+    _archive_rows(eng, "decision", [{"id": "D-arch", "title": "Shared title", "question": "Cache builds?",
+                                     "choice": "yes"}])
+
+    lesson = eng.add_lesson({"summary": "rerun ci", "domain": "t", "tier": "staging"})
+    decision = eng.add_decision({"title": "Shared title", "question": "Cache tests?", "choice": "yes",
+                                 "tier": "staging"})
+
+    assert lesson["status"] == "duplicate" and lesson["existing_id"] == "L-arch"
+    assert lesson.get("in_overflow_archive") is True
+    assert decision.get("status") != "duplicate"
+
+
+def test_candidate_heading_stays_when_the_link_moved(eng):
+    real = eng.add_lesson({"summary": BASE, "domain": "t"})
+    row = {"id": "pending00002", "tier": "staging", "summary": NEAR, "related_ids": ["someoneelse1"],
+           "duplicate_candidate": {"existing_id": real["id"], "similarity": 0.97}}
+
+    lines = dedup_review.card_lines("lesson", row, {real["id"]: real})
+
+    assert lines and lines[0].startswith(f"- possible duplicate of `{real['id']}`")
+    assert not any("difference" in line for line in lines)
+
+
+def test_candidate_marker_is_not_written_on_an_inactive_row(eng):
+    eng.add_lesson({"summary": BASE, "domain": "t"})
+
+    archived = eng.add_lesson({"summary": NEAR, "domain": "t", "status": "outdated"})
+
+    assert "duplicate_candidate" not in archived
+
+
+def test_decision_tier_update_clears_the_candidate(eng):
+    eng.add_decision({"question": OPPOSITE_A, "choice": "yes"})
+    second = eng.add_decision({"question": OPPOSITE_B, "choice": "yes"})
+    assert second.get("duplicate_candidate")
+
+    eng.update_knowledge(second["id"], {"tier": "verified"})
+
+    row = next(r for r in _decisions(eng) if r["id"] == second["id"])
+    assert row["tier"] == "verified" and "duplicate_candidate" not in row
+
+
+def test_onboard_accept_clears_the_candidate(eng):
+    eng.add_lesson({"summary": BASE, "domain": "t"})
+    second = eng.add_lesson({"summary": NEAR, "domain": "t",
+                             "provenance": {"anchor_ref": "file:README.md"}},
+                            _allow_internal_provenance=True)
+    assert second.get("duplicate_candidate") and second["tier"] == "staging"
+
+    result = eng.accept_onboard_candidate(second["id"])
+
+    assert not result.get("error")
+    row = next(r for r in _lessons(eng) if r["id"] == second["id"])
+    assert row["tier"] == "verified" and "duplicate_candidate" not in row
