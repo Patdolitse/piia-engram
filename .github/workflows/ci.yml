@@ -29,6 +29,12 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Worker tests
+        run: node worker/test/smoke.mjs && node worker/test/usage.mjs && node worker/test/session.mjs
       - name: Run full suite with JUnit output
         env:
           ENGRAM_TEST: "1"

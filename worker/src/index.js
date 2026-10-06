@@ -2,10 +2,17 @@
  * Engram 匿名遥测 Worker
  *
  * POST /v1/events  — 接收匿名使用数据（公开，无需认证）
- * GET  /           — 可视化仪表盘（密码保护）
- * GET  /v1/stats   — JSON API（浏览器需登录）
+ * POST /v1/ping    — 每日匿名使用信号（公开，无需认证）
+ * GET  /           — 使用统计首页（活跃安装，?days=7|30|90，密码保护）
+ * GET  /usage      — 同首页（密码保护）
+ * GET  /v1/usage   — 使用统计 JSON（?days=7|30|90，需登录）
+ * GET  /details    — 详细统计仪表盘（密码保护）
+ * GET  /v1/stats   — 详细统计 JSON API（浏览器需登录）
  * GET  /v1/health  — 健康检查（公开）
  */
+
+import { handlePing, getUsageStats, renderUsage, purgeOldPings } from './usage.js';
+import { sessionValid, deleteSession, attemptLogin, sessionCookie, purgeAuth, SESSION_MAX_AGE } from './session.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -13,31 +20,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-const COOKIE_NAME = 'engram_session';
-const SESSION_MAX_AGE = 86400 * 7; // 7 天
-
-// --- 认证 ---
-
-async function hashPassword(password, salt) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', enc.encode(password), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(salt));
-  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function getSessionFromCookie(request) {
-  const cookie = request.headers.get('cookie') || '';
-  const match = cookie.match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
-  return match ? match[1] : null;
-}
-
-async function isAuthenticated(request, env) {
-  if (!env.DASH_PASSWORD) return true;
-  const session = getSessionFromCookie(request);
-  if (!session) return false;
-  const expected = await hashPassword(env.DASH_PASSWORD, 'engram-session');
-  return session === expected;
-}
+// --- 认证（见 session.js） ---
 
 function renderLogin(error = '') {
   return `<!DOCTYPE html>
@@ -396,22 +379,27 @@ async function handleEvent(request, env) {
 
 // --- PyPI 下载统计 ---
 
-async function fetchPypiStats() {
+const PYPI_OVERALL = 'https://pypistats.org/api/packages/piia-engram/overall?mirrors=false';
+const PYPI_RECENT = 'https://pypistats.org/api/packages/piia-engram/recent?period=week';
+export const PYPI_TIMEOUT_MS = 2500;
+const PYPI_CACHE_S = 3600; // pypistats 每天更新，缓存 1 小时足够
+
+async function pypiJson(url, timeoutMs = PYPI_TIMEOUT_MS) {
+  const resp = await fetch(url, {
+    headers: { 'User-Agent': 'engram-telemetry-worker/1.0' },
+    signal: AbortSignal.timeout(timeoutMs),
+    cf: { cacheTtl: PYPI_CACHE_S, cacheEverything: true },
+  });
+  return resp.ok ? resp.json() : null;
+}
+
+export async function fetchPypiStats({ recent = true, timeoutMs = PYPI_TIMEOUT_MS } = {}) {
   try {
-    const [overallResp, recentResp] = await Promise.all([
-      fetch('https://pypistats.org/api/packages/piia-engram/overall?mirrors=false', {
-        headers: { 'User-Agent': 'engram-telemetry-worker/1.0' },
-      }),
-      fetch('https://pypistats.org/api/packages/piia-engram/recent?period=week', {
-        headers: { 'User-Agent': 'engram-telemetry-worker/1.0' },
-      }),
+    const [overall, rec] = await Promise.all([
+      pypiJson(PYPI_OVERALL, timeoutMs),
+      recent ? pypiJson(PYPI_RECENT, timeoutMs) : Promise.resolve(null),
     ]);
-    const overall = overallResp.ok ? await overallResp.json() : null;
-    const recent = recentResp.ok ? await recentResp.json() : null;
-    return {
-      daily: overall?.data || [],
-      recent: recent?.data || {},
-    };
+    return { daily: overall?.data || [], recent: rec?.data || {} };
   } catch {
     return { daily: [], recent: {} };
   }
@@ -1169,6 +1157,7 @@ export function renderDashboard(stats) {
   <div class="header">
     <div class="header-actions">
       <button class="header-btn refresh" onclick="location.reload()" title="刷新数据">&#8635;</button>
+      <a href="/" class="header-btn">使用统计</a>
       <a href="/logout" class="header-btn">退出登录</a>
     </div>
     <h1>Engram 遥测仪表盘</h1>
@@ -1334,6 +1323,9 @@ export default {
     if (url.pathname === '/v1/feedback' && request.method === 'POST') {
       return handleFeedback(request, env);
     }
+    if (url.pathname === '/v1/ping' && request.method === 'POST') {
+      return handlePing(request, env);
+    }
     if (url.pathname === '/v1/health') {
       return new Response(JSON.stringify({ status: 'ok', service: 'engram-telemetry' }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -1347,16 +1339,21 @@ export default {
 
     // 登录处理
     if (url.pathname === '/login' && request.method === 'POST') {
+      if (!env.DASH_PASSWORD) {
+        return new Response(null, { status: 302, headers: { 'Location': '/' } });
+      }
       const formData = await request.formData();
-      const password = formData.get('password') || '';
-      if (!env.DASH_PASSWORD || password === env.DASH_PASSWORD) {
-        const sessionToken = await hashPassword(env.DASH_PASSWORD || '', 'engram-session');
+      const password = String(formData.get('password') || '');
+      const result = await attemptLogin(env, password);
+      if (result.status === 'locked') {
+        return new Response(renderLogin('尝试次数过多，请 10 分钟后再试'), {
+          status: 429, headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      if (result.status === 'ok') {
         return new Response(null, {
           status: 302,
-          headers: {
-            'Location': '/',
-            'Set-Cookie': `${COOKIE_NAME}=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_MAX_AGE}`,
-          },
+          headers: { 'Location': '/', 'Set-Cookie': sessionCookie(result.token, SESSION_MAX_AGE) },
         });
       }
       return new Response(renderLogin('密码错误，请重试'), {
@@ -1366,25 +1363,40 @@ export default {
 
     // 退出登录
     if (url.pathname === '/logout') {
+      await deleteSession(request, env);
       return new Response(null, {
         status: 302,
-        headers: {
-          'Location': '/login',
-          'Set-Cookie': `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`,
-        },
+        headers: { 'Location': '/login', 'Set-Cookie': sessionCookie('', 0) },
       });
     }
 
     // 需认证的接口
-    const authed = await isAuthenticated(request, env);
+    const authed = await sessionValid(request, env);
     if (!authed) {
       return Response.redirect(url.origin + '/login', 302);
     }
 
-    if (url.pathname === '/v1/stats' || url.pathname === '/') {
+    // 首页即使用统计页；/usage 渲染同一页
+    if (url.pathname === '/' || url.pathname === '/usage' || url.pathname === '/v1/usage') {
+      const usage = await getUsageStats(env, undefined, url.searchParams.get('days'),
+        () => fetchPypiStats({ recent: false }));
+      if (url.pathname === '/v1/usage') {
+        return new Response(JSON.stringify(usage, null, 2), {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(renderUsage(usage), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    }
+
+    if (url.pathname === '/details') {
+      const stats = await getStatsData(env);
+      return new Response(renderDashboard(stats), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    }
+
+    if (url.pathname === '/v1/stats') {
       const stats = await getStatsData(env);
       const accept = request.headers.get('accept') || '';
-      if (url.pathname === '/' || accept.includes('text/html')) {
+      if (accept.includes('text/html')) {
         return new Response(renderDashboard(stats), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
       return new Response(JSON.stringify(stats, null, 2), {
@@ -1400,5 +1412,9 @@ export default {
     }
 
     return Response.redirect(url.origin + '/', 302);
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(Promise.all([purgeOldPings(env), purgeAuth(env)]));
   },
 };
