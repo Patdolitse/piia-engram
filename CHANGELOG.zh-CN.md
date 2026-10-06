@@ -13,10 +13,10 @@
 - `engram setup` 改为询问是否现在导入一次（默认否），不再开启自动导入；规则文件步骤不再直接写入已验证记忆或 profile 语言，导入的规则进入待审区并生成回执。
 - `engram reconcile apply --commit --yes` 改为与 `engram import-memories --source memories` 相同的导入（待审区、回执、审计）。从 OpenClaw `MEMORY.md` 导入的经验也进入待审区并生成回执。
 - 旧版记忆迁移现在也受“读取其它 AI 工具文件”的关闭开关约束；关闭时返回值带 `status` 与 `disabled_by`。
-- **AI 拿到什么，统一一条规则。** 冷启动、接续简报、会话开始钩子、`get_recall`、`get_relevant_knowledge` 只返回已审核且当前有效的条目：待审、被新版本取代、已归档的条目不再出现。未审核的条目不能让已审核的条目被隐藏。
-- **`search_knowledge` 把待审条目单独列出。** `lessons` / `decisions` / `playbooks` 列表只含已审核条目；待审条目放在单独的 `pending` 分组里，每条标 `pending_untrusted`。因此 `{"tier": "staging"}` 过滤的结果在 `pending` 分组里。被取代的条目默认不返回，新参数 `include_superseded=true` 时以单独的 `superseded` 分组返回。
-- **冷启动内容超预算时会注明省略了什么。** token 预算裁掉内容时，`get_resume_brief`、`get_recall` 和 `engram preview` 返回 `omitted`（条数、id、段名，不含被裁内容）；文本形态的上下文（`get_user_context` 与会话开始钩子）末尾加一行，例如 `已省略 3 项（预算）：lessons, decisions`。不超预算时不加。`engram preview` 会列出被裁条目的摘要，并说明待审或被取代的条目为何没有注入。
-- 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明取代它的条目（`superseded_by`）。互相取代形成的环不再让其中任何一条被隐藏，并在审计日志里记一次。
+- **AI 拿到什么，统一一条规则。** 冷启动、接续简报、会话开始钩子、`get_recall`、`get_relevant_knowledge` 只返回已审核且当前有效的条目：待审、被新版本取代、已归档的条目不再出现；status 不是 `active`、或审核标记不在“已审核”之列（例如未知 tier、被拒或已弃用的标记）的条目也不出现。未审核的条目不能让已审核的条目（包括 playbook）被隐藏。
+- **`search_knowledge` 把待审条目单独列出。** `lessons` / `decisions` / `playbooks` 列表只含已审核条目；待审条目放在单独的 `pending` 分组里，每条标 `pending_untrusted`。因此 `{"tier": "staging"}` 过滤的结果在 `pending` 分组里，核心搜索的 `{"tier": "archived"}` 过滤不返回任何条目。`engram dock-search` 先列已审核条目，每类在 `--limit` 内剩下的名额才给待审条目（标 `pending_untrusted`）。被取代的条目默认不返回，新参数 `include_superseded=true` 时以单独的 `superseded` 分组返回。
+- **冷启动内容超预算时会注明省略了什么。** token 预算裁掉内容时，`get_resume_brief`、`get_recall` 和 `engram preview` 返回 `omitted`（条数、id、段名，不含被裁内容）；文本形态的上下文末尾加一行说明省略了什么：`get_user_context` 为 `已省略 3 项（预算）：lessons, decisions`，接续简报与会话开始钩子为 `Omitted 3 items (budget): lessons, decisions`。这一行计入预算，放不下时不加。不超预算时不加；`get_recall` 固定最多两条 playbook 的上限不算预算省略。`engram preview` 会列出被裁条目的摘要，并说明待审或被取代的条目为何没有注入。
+- 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明取代它的条目（`superseded_by`）。互相取代形成的环不再让其中任何一条被隐藏，并在审计日志里记一次。`get_resume_brief(include_resume_pack=true)` 的 `review_needed` 每条标 `pending_untrusted`。
 
 ### 新增
 - **`engram import-memories`。** 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区（`--dry-run`、`--yes`、`--source memories|configs`）。每次导入在 `import_receipts/` 写回执并记审计；重复运行不会重复导入。`engram doctor` 和 `engram status` 会显示可导入条数。

@@ -149,7 +149,8 @@ AI 拿到什么，各个入口规则一致：
 - 按 id 读取（`get_knowledge_history`、`explore_knowledge`）仍会返回被取代的条目，
   并注明取代它的条目（`superseded_by`）。
 - 内容超出 token 预算时，返回里会说明省略了什么（`omitted`：条数、id、段名），
-  文本形态的上下文末尾加一行，例如 `已省略 3 项（预算）：lessons, decisions`。
+  文本形态的上下文末尾加一行，例如 `已省略 3 项（预算）：lessons, decisions`（冷启动）或
+  `Omitted 3 items (budget): lessons, decisions`（接续简报与钩子）。
   `engram preview` 会显示被裁掉条目的摘要。
 
 每条记录都带生命周期元数据（`memory_state`、`approval_status`、

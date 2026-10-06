@@ -171,7 +171,8 @@ What your AI receives follows the same rule everywhere:
   returns a replaced item and names the item that replaced it (`superseded_by`).
 - When a token budget cuts content, the response says what was left out
   (`omitted`: count, ids and section names), and text context ends with one
-  line such as `已省略 3 项（预算）：lessons, decisions`. `engram preview` shows
+  line such as `已省略 3 项（预算）：lessons, decisions` (cold start) or
+  `Omitted 3 items (budget): lessons, decisions` (resume brief and hooks). `engram preview` shows
   the trimmed items' summaries.
 
 Each entry carries lifecycle metadata (`memory_state`, `approval_status`,
