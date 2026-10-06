@@ -112,6 +112,7 @@ def _review_items_filtered(
     limit: int,
     review_kind: str,
     quality_status: str,
+    scope_type: str = "all",
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     kind_filter = str(review_kind or "all").strip().lower()
@@ -128,6 +129,11 @@ def _review_items_filtered(
         rows = [item for item in rows if item.get("kind") == kind_filter]
     if quality_filter in {"low", "ok", "missing"}:
         rows = [item for item in rows if item.get("quality_status") == quality_filter]
+    scope_filter = str(scope_type or "all").strip().lower()
+    if scope_filter == "global":
+        rows = [item for item in rows if item.get("scope") == "global"]
+    elif scope_filter in {"project", "shared"}:
+        rows = [item for item in rows if str(item.get("scope") or "").startswith(f"{scope_filter}:")]
     rows.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
     return rows[: max(0, int(limit))]
 
@@ -231,6 +237,7 @@ def build_management_view(
         limit=review_limit,
         review_kind=review_kind,
         quality_status=quality_status,
+        scope_type=scope_type,
     )
     playbooks, scope_review_pending = _playbook_items(
         eng,

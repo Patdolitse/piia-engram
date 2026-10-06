@@ -431,7 +431,8 @@ SUPERSEDE_PROBLEMS = {
 
 
 def supersede_problem(eng, item_id: str, target_id: str, *, assume_trusted: Any = (),
-                      assume_untrusted: Any = (), extra_edges: Any = ()) -> str:
+                      assume_untrusted: Any = (), extra_edges: Any = (),
+                      final_types: dict[str, str] | None = None) -> str:
     """'' when the pending ``item_id`` may supersede ``target_id``, else a code.
 
     The target must exist, be trusted (approved, active, not superseded), be the
@@ -441,7 +442,9 @@ def supersede_problem(eng, item_id: str, target_id: str, *, assume_trusted: Any 
 
     A dry run (or an interactive review) simulates decisions not applied yet:
     ids in ``assume_trusted`` count as approved, ids in ``assume_untrusted`` as
-    rejected or replaced, and ``extra_edges`` as written.
+    rejected or replaced, and ``extra_edges`` as written. ``final_types`` maps
+    an id to the ``type:`` label an edit-type mark of the same run gives it; the
+    type check compares the labels both entries have once the run is done.
     """
     from . import recall_policy as _recall_policy
     from .governance_store import RelationStore
@@ -459,7 +462,8 @@ def supersede_problem(eng, item_id: str, target_id: str, *, assume_trusted: Any 
         return "target_not_found"
     if target_kind != kind:
         return "type_mismatch"
-    labels = (_type_label(row), _type_label(target))
+    final_types = final_types or {}
+    labels = (final_types.get(item_id) or _type_label(row), final_types.get(target_id) or _type_label(target))
     if all(labels) and labels[0] != labels[1]:
         return "type_mismatch"
     extra = [dict(e) for e in extra_edges or ()]
@@ -626,15 +630,17 @@ def _approve_without_link(eng, mark: dict, kind: str, target: str, problem: str,
     return item
 
 
-def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str, sim: dict | None = None) -> dict:
+def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str, sim: dict | None = None,
+                final_types: dict[str, str] | None = None) -> dict:
     """Run one approve / reject / supersede mark; returns its receipt item.
 
     ``sim`` (dry runs) carries the decisions planned earlier in the run, so a
     preview judges a supersede target the way the applying run will.
     """
     row = _batch_row(mark)
-    sim_args = {} if sim is None else {"assume_trusted": sim["trusted"], "assume_untrusted": sim["untrusted"],
-                                       "extra_edges": sim["edges"]}
+    sim_args: dict[str, Any] = {"final_types": final_types or {}}
+    if sim is not None:
+        sim_args.update(assume_trusted=sim["trusted"], assume_untrusted=sim["untrusted"], extra_edges=sim["edges"])
     if mark["mark"] == "supersede":
         target = mark["target"]
         kind, current = eng._find_item_by_id(mark["id"])
@@ -683,24 +689,37 @@ def _replaces(eng, mark: dict) -> str:
     return ""
 
 
-def _dependency_order(eng, marks: list[tuple[int, dict]]) -> list[tuple[int, dict]]:
+def _dependency_order(marks: list[tuple[int, dict]], targets: dict[int, str]) -> list[tuple[int, dict]]:
     """Phase 2 in file order, except that a mark replacing an entry another phase-2
-    mark approves waits for it (oldest first along a chain). A loop keeps file order."""
-    pending = list(marks)
-    ids = {m["id"] for _n, m in pending}
-    placed: set[str] = set()
+    mark approves comes after it (oldest first along a chain).
+
+    Kahn's topological sort over the precomputed ``targets``; among marks that
+    are ready the earliest in the file goes first; marks caught in a loop keep
+    file order. Linear in the number of marks (plus the heap).
+    """
+    import heapq
+
+    by_id = {m["id"]: n for n, m in marks}
+    mark_of = {n: m for n, m in marks}
+    waiting_on: dict[int, list[int]] = {}
+    indegree = {n: 0 for n, _m in marks}
+    for n, m in marks:
+        dep = by_id.get(targets.get(n, ""))
+        if dep is not None and dep != n:
+            waiting_on.setdefault(dep, []).append(n)
+            indegree[n] += 1
+    ready = [n for n, count in indegree.items() if count == 0]
+    heapq.heapify(ready)
     ordered: list[tuple[int, dict]] = []
-    while pending:
-        for i, (n, m) in enumerate(pending):
-            target = _replaces(eng, m)
-            if target not in ids or target in placed or target == m["id"]:
-                ordered.append((n, m))
-                placed.add(m["id"])
-                del pending[i]
-                break
-        else:
-            ordered.extend(pending)
-            break
+    while ready:
+        n = heapq.heappop(ready)
+        ordered.append((n, mark_of[n]))
+        for later in waiting_on.get(n, ()):
+            indegree[later] -= 1
+            if indegree[later] == 0:
+                heapq.heappush(ready, later)
+    done = {n for n, _m in ordered}
+    ordered.extend((n, m) for n, m in marks if n not in done)  # a loop keeps file order
     return ordered
 
 
@@ -711,16 +730,20 @@ def _plan(eng, marks: list[dict]) -> list[tuple[int, dict, Any]]:
     that replace an entry (``supersede:<id>`` and approving a row with an
     agent's ``pending_supersedes``), in file order but oldest first along a
     chain. Then edit-type, then retire / restore. ``skip`` marks do nothing.
+    Each mark's target is looked up once.
     """
-    first: list[tuple[int, dict]] = []
-    second: list[tuple[int, dict]] = []
-    for n, m in enumerate(marks):
-        if m["mark"] in REVIEW_MARKS:
-            (second if _replaces(eng, m) else first).append((n, m))
+    targets = {n: _replaces(eng, m) for n, m in enumerate(marks) if m["mark"] in REVIEW_MARKS}
+    first = [(n, marks[n]) for n in targets if not targets[n]]
+    second = [(n, marks[n]) for n in targets if targets[n]]
     return ([(n, m, 1) for n, m in first]
-            + [(n, m, 2) for n, m in _dependency_order(eng, second)]
+            + [(n, m, 2) for n, m in _dependency_order(second, targets)]
             + [(n, m, "edit") for n, m in enumerate(marks) if m["mark"] == "edit-type"]
             + [(n, m, "lifecycle") for n, m in enumerate(marks) if m["mark"] in ("retire", "restore")])
+
+
+def _final_types(marks: list[dict]) -> dict[str, str]:
+    """The ``type:`` label each id has after the run's edit-type marks."""
+    return {m["id"]: m["type"] for m in marks if m["mark"] == "edit-type"}
 
 
 def _simulate(eng, sim: dict, mark: dict, item: dict) -> None:
@@ -739,22 +762,52 @@ def _simulate(eng, sim: dict, mark: dict, item: dict) -> None:
             sim["retired"].add(target)  # approving a playbook's replacement archives it
 
 
-def _edit_one(eng, mark: dict, counts: dict, edit_failed: list[str], *, dry_run: bool) -> dict:
+def relabel_type(eng, kind: str, item_id: str, mem_type: str) -> Any:
+    """The Owner's relabel: set the ``type:`` label of one entry (local CLI only).
+
+    Lessons and playbooks go through their update path. A decision's ``domain``
+    is not a field an update may change (the MCP whitelist stays as it is), so
+    the Owner's path writes the label directly under the file lock and touches
+    nothing else.
+    """
+    if kind == "decision":
+        from .storage import SkipWrite, _now_iso
+
+        def _mutate(entry: dict) -> dict:
+            domain = _relabel(entry.get("domain", ""), mem_type)
+            if domain == entry.get("domain"):
+                raise SkipWrite
+            entry["domain"] = domain
+            entry["last_updated"] = _now_iso()
+            return entry
+
+        return eng._update_knowledge_item("decision", item_id, _mutate)
+    update = {"lesson": eng.update_lesson, "playbook": eng.update_playbook}[kind]
+    _kind, row = eng._find_item_by_id(item_id)
+    return update(item_id, {"domain": _relabel((row or {}).get("domain", ""), mem_type)})
+
+
+def _edit_one(eng, mark: dict, counts: dict, edit_failed: list[str], *, dry_run: bool,
+              sim: dict | None = None) -> dict:
     view = {"id": mark["id"], "action": "edit-type"}
+    kind, row = eng._find_item_by_id(mark["id"])
+    if kind == "playbook" and isinstance(row, dict) and (
+            str(row.get("status") or "active") != "active" or (sim is not None and mark["id"] in sim["retired"])):
+        # An archived playbook (or one its replacement archives in this run) keeps its label.
+        counts["edit_type_skipped"] = counts.get("edit_type_skipped", 0) + 1
+        return {**view, "status": "skipped", "reason": "archived"}
     state = _mark_state(eng, mark)
     if dry_run:
         return {**view, "status": state}
-    kind, row = eng._find_item_by_id(mark["id"])
     if row is None or kind not in ("lesson", "decision", "playbook"):
         edit_failed.append(mark["id"])
         return {**view, "status": "not_found"}
     if state == "already_applied":
         counts["already_applied"] += 1  # no second version snapshot for an unchanged label
         return {**view, "status": "already_applied"}
-    update = {"lesson": eng.update_lesson, "decision": eng.update_decision, "playbook": eng.update_playbook}[kind]
-    outcome = update(mark["id"], {"domain": _relabel(row.get("domain", ""), mark["type"])})
-    if isinstance(outcome, dict) and outcome.get("error"):
-        edit_failed.append(mark["id"])
+    outcome = relabel_type(eng, kind, mark["id"], mark["type"])
+    if (isinstance(outcome, dict) and outcome.get("error")) or _mark_state(eng, mark) != "already_applied":
+        edit_failed.append(mark["id"])  # read back: the label did not change
         return {**view, "status": "failed"}
     counts["edit_type"] += 1
     return {**view, "status": "applied"}
@@ -793,14 +846,15 @@ def preview_marks(eng, marks: list[dict]) -> dict:
     """
     counts = _new_counts()
     sim: dict = {"trusted": set(), "untrusted": set(), "edges": [], "retired": set()}
+    final_types = _final_types(marks)
     by_index: dict[int, dict] = {}
     order: list[str] = []
     for n, m, phase in _plan(eng, marks):
         if phase in (1, 2):
-            item = _review_one(eng, m, counts, dry_run=True, via="", sim=sim)
+            item = _review_one(eng, m, counts, dry_run=True, via="", sim=sim, final_types=final_types)
             _simulate(eng, sim, m, item)
         elif phase == "edit":
-            item = _edit_one(eng, m, counts, [], dry_run=True)
+            item = _edit_one(eng, m, counts, [], dry_run=True, sim=sim)
         else:
             item = _lifecycle_one(eng, m, counts, dry_run=True, sim=sim)
         by_index[n] = {**item, "phase": phase}
@@ -817,6 +871,7 @@ def preview_marks(eng, marks: list[dict]) -> dict:
             "edit_type_planned": edit_states.count("planned"),
             "edit_type_already_applied": edit_states.count("already_applied"),
             "edit_type_not_found": edit_states.count("not_found"),
+            "edit_type_skipped": edit_states.count("skipped"),
             "lifecycle": len(life_states),
             "lifecycle_planned": life_states.count("planned"),
             "lifecycle_already_applied": life_states.count("already_applied"),
@@ -857,7 +912,8 @@ def apply_marks(eng, marks: list[dict], attribution: dict, *, progress: dict | N
     via = f"cli:{attribution['operator']}"
     reviews = [m for m in marks if m["mark"] in REVIEW_MARKS]
     plan = _plan(eng, marks)
-    counts: dict[str, Any] = {**_new_counts(), "edit_type": 0, "edit_type_failed": 0,
+    final_types = _final_types(marks)
+    counts: dict[str, Any] = {**_new_counts(), "edit_type": 0, "edit_type_failed": 0, "edit_type_skipped": 0,
                               "lifecycle": 0, "lifecycle_failed": 0, "already_applied": 0}
     handled: list[dict] = progress.setdefault("items", []) if progress is not None else []
     by_index: dict[int, dict] = {}
@@ -868,7 +924,7 @@ def apply_marks(eng, marks: list[dict], attribution: dict, *, progress: dict | N
         for n, m, phase in plan:
             current["id"] = m["id"]
             if phase in (1, 2):
-                item = _review_one(eng, m, counts, dry_run=False, via=via)
+                item = _review_one(eng, m, counts, dry_run=False, via=via, final_types=final_types)
             elif phase == "edit":
                 item = _edit_one(eng, m, counts, edit_failed, dry_run=False)
             else:
@@ -889,7 +945,7 @@ def apply_marks(eng, marks: list[dict], attribution: dict, *, progress: dict | N
             "edit_type_failed": edit_failed}
 
 
-_DONE_STATUSES = frozenset({"applied", "applied_unlinked", "already_applied", "not_staging"})
+_DONE_STATUSES = frozenset({"applied", "applied_unlinked", "already_applied", "not_staging", "skipped"})
 
 
 def all_failed(payload: dict) -> bool:

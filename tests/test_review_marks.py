@@ -354,7 +354,7 @@ def _outcome(item: dict) -> tuple:
     if status == "planned":
         status = "applied_unlinked" if item.get("unlinked_reason") else "applied"
     return (item["id"], item["action"], status, item.get("target", ""), item.get("unlinked_reason", ""),
-            item.get("phase"))
+            item.get("phase"), item.get("reason", ""))
 
 
 def _dry_then_apply(eng, tmp_path, capsys, marks: list[dict], *, code: int = 0) -> tuple[dict, dict]:
@@ -577,22 +577,41 @@ def test_edit_type_and_supersede_of_one_proposal_with_template_versions(eng, tmp
     template = json.loads((tmp_path / "export" / "marks-template.json").read_text(encoding="utf-8"))
     version = next(e["expected_version"] for e in template if e["id"] == new["id"])
 
+    # Relabeling the proposal to another type than the entry it replaces: the
+    # type check uses the type the proposal has after this run (rule), so the
+    # supersede is refused; the relabel itself still applies.
     _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
         {"id": new["id"], "mark": "edit-type:rule"},
         {"id": new["id"], "mark": f"supersede:{old['id']}", "expected_version": version},
     ])
 
     assert [(i["action"], i["status"], i["phase"]) for i in applied["items"]] == [
-        ("edit-type", "applied", "edit"), ("supersede", "applied", 2)]
+        ("edit-type", "applied", "edit"), ("supersede", "type_mismatch", 2)]
     assert applied["order"] == [new["id"], new["id"]]
     assert "type:rule" in _row(eng, new["id"])["domain"].split(",")
-    assert (new["id"], old["id"]) in _supersede_edges(eng)  # besides the edit's own version snapshot
+    assert (new["id"], old["id"]) not in _supersede_edges(eng)
+
+
+def test_labeling_a_proposal_with_its_targets_type_and_superseding_in_one_run(eng, tmp_path, capsys):
+    old = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    _approve(eng, old["id"])
+    new = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "release"})
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": new["id"], "mark": "edit-type:lesson"},
+        {"id": new["id"], "mark": f"supersede:{old['id']}"},
+    ])
+
+    assert [(i["action"], i["status"]) for i in applied["items"]] == [("edit-type", "applied"),
+                                                                       ("supersede", "applied")]
+    assert (new["id"], old["id"]) in _supersede_edges(eng)
 
 
 def test_edit_type_of_a_target_and_its_supersede(eng, tmp_path, capsys):
+    # the target is relabeled to rule in the same run; a rule proposal may replace it
     old = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
     _approve(eng, old["id"])
-    new = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+    new = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:rule"})
 
     _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
         {"id": old["id"], "mark": "edit-type:rule"},
@@ -715,3 +734,139 @@ def test_a_stop_while_pointing_the_row_puts_it_back(eng, tmp_path, monkeypatch):
 
     row = _row(eng, new["id"])
     assert row["tier"] == "staging" and "pending_supersedes" not in row
+
+
+
+def test_relabeling_a_target_to_another_type_refuses_its_supersede(eng, tmp_path, capsys):
+    old = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    _approve(eng, old["id"])
+    new = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": old["id"], "mark": "edit-type:rule"},
+        {"id": new["id"], "mark": f"supersede:{old['id']}"},
+    ])
+
+    assert [i["status"] for i in applied["items"]] == ["applied", "type_mismatch"]
+
+
+# ---------------------------------------------------------------------------
+# edit-type on archived playbooks; decisions relabel through the Owner's path
+# ---------------------------------------------------------------------------
+
+
+def _playbooks(eng):
+    old = eng.add_playbook({"title": "Rotate the signing key by hand",
+                            "steps": [{"action": "Revoke the old key"}, {"action": "Mail the new key"}]})
+    _approve(eng, old["id"])
+    new = eng.add_playbook({"title": "Key rollover through the release tool",
+                            "steps": [{"action": "Run the rotate command"}, {"action": "Publish the new key"}]})
+    return old, new
+
+
+def test_edit_type_of_a_playbook_its_replacement_archives_is_skipped(eng, tmp_path, capsys):
+    old, new = _playbooks(eng)
+    marks = [{"id": old["id"], "mark": "edit-type:rule"}, {"id": new["id"], "mark": f"supersede:{old['id']}"}]
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, marks)
+
+    assert [(i["action"], i["status"], i.get("reason")) for i in applied["items"]] == [
+        ("edit-type", "skipped", "archived"), ("supersede", "applied", None)]
+    assert applied["counts"]["failed"] == 0 and applied["counts"]["edit_type_failed"] == 0
+    _dry, again = _dry_then_apply(eng, tmp_path, capsys, marks)  # exits 0 again
+    assert [i["status"] for i in again["items"]] == ["skipped", "already_applied"]
+
+
+def test_edit_type_of_an_archived_playbook_is_skipped(eng, tmp_path, capsys):
+    old, _new = _playbooks(eng)
+    eng.archive_playbook(old["id"])
+    marks = [{"id": old["id"], "mark": "edit-type:rule"}]
+
+    for _ in range(2):
+        _dry, applied = _dry_then_apply(eng, tmp_path, capsys, marks)
+        assert [(i["status"], i["reason"]) for i in applied["items"]] == [("skipped", "archived")]
+
+
+def test_edit_type_of_a_decision_is_written_and_checked(eng, tmp_path, capsys):
+    row = eng.add_decision({"question": "Which CI cache backend?", "choice": "local disk", "domain": "infra"})
+    _approve(eng, row["id"])
+    marks = [{"id": row["id"], "mark": "edit-type:rule"}]
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, marks)
+    assert applied["items"][0]["status"] == "applied"
+    assert set(_row(eng, row["id"])["domain"].split(",")) == {"infra", "type:rule"}
+
+    _dry, again = _dry_then_apply(eng, tmp_path, capsys, marks)
+    assert again["items"][0]["status"] == "already_applied"
+
+
+def test_an_edit_type_that_does_not_land_is_reported_failed(eng, tmp_path, capsys, monkeypatch):
+    row = eng.add_decision({"question": "Which CI cache backend?", "choice": "local disk", "domain": "infra"})
+    _approve(eng, row["id"])
+    monkeypatch.setattr(review_cli, "relabel_type", lambda *args, **kwargs: None)  # writes nothing
+
+    applied = _apply(tmp_path, capsys, [{"id": row["id"], "mark": "edit-type:rule"}], code=1)
+
+    assert applied["items"][0]["status"] == "failed"
+
+
+def test_agents_still_cannot_change_a_decisions_domain(eng, monkeypatch):
+    import asyncio
+
+    from piia_engram import mcp_server
+
+    row = eng.add_decision({"question": "Which CI cache backend?", "choice": "local disk", "domain": "infra"})
+    _approve(eng, row["id"])
+
+    eng.update_decision(row["id"], {"domain": "type:rule"})
+    assert _row(eng, row["id"])["domain"] == "infra"
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "claude_code")
+    monkeypatch.setattr(mcp_server, "_engram", Engram(root=eng.root))
+    asyncio.run(mcp_server.update_knowledge(row["id"], json.dumps({"domain": "type:rule"})))
+    assert _row(eng, row["id"])["domain"] == "infra"
+
+
+# ---------------------------------------------------------------------------
+# phase-2 order: linear in lookups; loops keep file order and write no loop
+# ---------------------------------------------------------------------------
+
+
+class _CountingStore:
+    """Just enough of a store for planning: rows that carry an agent's pending_supersedes."""
+
+    def __init__(self, rows: dict[str, dict]):
+        self.rows = rows
+        self.lookups = 0
+
+    def _find_item_by_id(self, item_id):
+        self.lookups += 1
+        row = self.rows.get(item_id)
+        return ("decision", row) if row is not None else (None, None)
+
+
+def test_a_long_reversed_chain_is_ordered_with_one_lookup_per_mark():
+    n = 200
+    ids = [f"rev{i:04d}" for i in range(n)]
+    rows = {ids[0]: {"id": ids[0], "tier": "staging"}}
+    for i in range(1, n):
+        rows[ids[i]] = {"id": ids[i], "tier": "staging", "pending_supersedes": ids[i - 1]}
+    store = _CountingStore(rows)
+    marks = [{"id": item_id, "mark": "approve"} for item_id in reversed(ids)]
+
+    plan = review_cli._plan(store, marks)
+
+    assert [m["id"] for _n, m, _phase in plan] == ids
+    assert store.lookups == n
+
+
+@pytest.mark.parametrize("size", [2, 3])
+def test_a_supersede_loop_keeps_file_order_and_writes_no_loop(eng, tmp_path, capsys, size):
+    rows = [eng.add_lesson({"summary": f"Loop member {i} of {size}", "domain": "type:lesson"})["id"]
+            for i in range(size)]
+    marks = [{"id": rows[i], "mark": f"supersede:{rows[(i + 1) % size]}"} for i in range(size)]
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, marks, code=1)
+
+    assert applied["order"] == rows
+    assert _supersede_edges(eng) == []

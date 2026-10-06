@@ -181,8 +181,12 @@ You stay in control of staged items at any time:
   target you reject fails only the mark that names it. List a chain of
   replacements from oldest to newest; a replacement whose target is approved in
   the same run is applied after it anyway (the interactive review relies on
-  this). The dry run follows the same order and shows what the applying run
-  will do; each receipt item names its phase and the receipt lists the ids in
+  this). The "same type" check of a supersede uses the `type:` labels both
+  entries have after the run's edit-type marks, so relabeling a proposal to its
+  target's type in the same file works and relabeling it to another type is
+  refused. edit-type on an archived playbook (or one its replacement archives in
+  the same run) is skipped, not failed. The dry run follows the same order and
+  shows what the applying run will do; each receipt item names its phase and the receipt lists the ids in
   the order they were applied. `engram review apply` exits non-zero when every
   mark in the file failed.
 - Playbooks always require explicit review before trusted use; Engram never

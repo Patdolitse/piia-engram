@@ -354,3 +354,25 @@ def test_management_review_queue_lists_project_proposals_by_name(tmp_path: Path,
     assert row["id"] in items and len(items) == 2
     assert items[row["id"]]["scope"] == "project:alpha-service"
     assert "private-dir" not in json.dumps(view)
+
+
+def test_management_scope_filter_applies_to_the_review_queue(tmp_path: Path, monkeypatch) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.management_view import build_management_view
+
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    folder = tmp_path / "alpha-service"
+    folder.mkdir()
+    eng = Engram(root=tmp_path / "store")
+    project_row = eng.add_lesson({"summary": "alpha service proposal", "tier": "staging",
+                                  "project_folder": str(folder), "project": "alpha-service"})
+    global_row = eng.add_lesson("global proposal", tier="staging")
+
+    def ids(scope_type):
+        view = build_management_view(eng, scope_type=scope_type)
+        return {item["id"] for item in view["review_queue"]["items"]}
+
+    assert ids("all") == {project_row["id"], global_row["id"]}
+    assert ids("project") == {project_row["id"]}
+    assert ids("global") == {global_row["id"]}
+    assert ids("shared") == set()
