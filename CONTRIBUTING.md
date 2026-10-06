@@ -15,7 +15,7 @@ src/piia_engram/
     core.py            # Core engine: knowledge CRUD, identity, link management
     retrieval.py       # RetrievalMixin — search, ranking, tier promotion
     context.py         # ContextMixin — cold-start context, ingestion helpers
-    reconcile.py       # ReconcileMixin — cross-tool memory/config sync
+    reconcile.py       # ReconcileMixin — import engine behind `engram import-memories` (never runs on its own)
     reports.py         # ReportsMixin — thin hub composing 4 sub-mixins
     mcp_server.py      # MCP tool/resource definitions (the AI-facing API)
     setup_wizard.py    # Interactive setup CLI + doctor diagnostics + instruction injection

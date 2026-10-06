@@ -134,13 +134,26 @@ def check(root: Path, public_facts_rel: str = DEFAULT_PUBLIC_FACTS) -> dict:
     _require(any(arg.get("value") == "stdio" for arg in transport_args), problems,
              ".mcp/server.json packageArguments must force --transport stdio")
 
-    env_defaults = {
-        item.get("name"): item.get("default")
+    env_items = {
+        item.get("name"): item
         for item in (package.get("environmentVariables") or [])
         if isinstance(item, dict)
     }
-    _require(env_defaults.get("ENGRAM_MCP_STARTUP_SYNC") == "off", problems,
-             ".mcp/server.json should default marketplace startup sync to off")
+    env_defaults = {name: item.get("default") for name, item in env_items.items()}
+    # ENGRAM_MCP_STARTUP_SYNC is accepted for compatibility and does nothing:
+    # the server never imports at start. If listed it must say so, stay "off",
+    # and never advertise a startup sync.
+    startup_sync = env_items.get("ENGRAM_MCP_STARTUP_SYNC")
+    if startup_sync is not None:
+        description = str(startup_sync.get("description") or "").lower()
+        _require(startup_sync.get("default") == "off", problems,
+                 ".mcp/server.json ENGRAM_MCP_STARTUP_SYNC must default to off")
+        _require("no effect" in description and "compatib" in description, problems,
+                 ".mcp/server.json ENGRAM_MCP_STARTUP_SYNC must be described as kept for "
+                 "compatibility with no effect")
+        _require(not any(term in description for term in ("background", "cross-tool sync", "reconcil")),
+                 problems,
+                 ".mcp/server.json ENGRAM_MCP_STARTUP_SYNC must not describe a startup sync")
     _require(env_defaults.get("ENGRAM_TOOLS") == "core", problems,
              ".mcp/server.json should default marketplace tools to core")
     _require(env_defaults.get("PYTHONIOENCODING") == "utf-8", problems,

@@ -225,3 +225,141 @@ def test_cli_entry_dispatches_the_command(store, monkeypatch, capsys):
     assert exc.value.code == 0
     assert "lint_rule.md" in capsys.readouterr().out
     assert _snapshot(store) == before
+
+
+# -- the confirmed list is what gets written ---------------------------------------
+
+
+def _memory_file(home, name):
+    return home / ".claude" / "projects" / "demo-project" / "memory" / name
+
+
+def test_write_uses_the_confirmed_list_even_if_files_change(store, other_ai_tools_home):
+    preview = memory_import.plan(Engram(root=store, read_only=True))
+    confirmed = sorted(item["summary"] for item in preview["items"])
+
+    # After confirming: one file is edited, one new memory appears.
+    _memory_file(other_ai_tools_home, "lint_rule.md").write_text(
+        "---\nname: lint\ndescription: Always run the linter before committing code\n"
+        "type: feedback\n---\n\nEDITED AFTER CONFIRMATION.\n",
+        encoding="utf-8",
+    )
+    _memory_file(other_ai_tools_home, "late_note.md").write_text(
+        "---\nname: late\ndescription: A memory written after the list was confirmed\n"
+        "type: feedback\n---\n\nA memory written after the list was confirmed.\n",
+        encoding="utf-8",
+    )
+
+    result = memory_import.write_plan(Engram(root=store), preview)
+
+    rows = _imported_rows(store)
+    assert sorted(row["summary"] for row in rows) == confirmed  # no rescan
+    lint = next(row for row in rows if row["summary"].startswith("Always run the linter"))
+    assert "CI rejects unlinted pushes" in lint["detail"]  # the confirmed text
+    assert "EDITED" not in lint["detail"]
+    assert result["source_changed"] == 1
+    receipt = json.loads((store / result["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["source_changed"] == 1
+    changed = [item for item in receipt["items"] if item.get("source_changed")]
+    assert len(changed) == 1 and changed[0]["file"].endswith("lint_rule.md")
+
+
+def test_interactive_flow_writes_what_was_shown(store, other_ai_tools_home):
+    shown = []
+
+    def ask(question):
+        # The Owner says yes; meanwhile a new memory file appears.
+        _memory_file(other_ai_tools_home, "late_note.md").write_text(
+            "---\nname: late\ndescription: A memory written while the question was open\n"
+            "type: feedback\n---\n\nA memory written while the question was open.\n",
+            encoding="utf-8",
+        )
+        return True
+
+    result = memory_import.interactive_import(ask, out=shown.append)
+
+    assert result["status"] == "imported"
+    assert "late_note.md" not in shown[0]
+    assert not any("question was open" in row["summary"] for row in _imported_rows(store))
+    assert result["imported"] == result["count"]
+
+
+# -- partial failure still leaves a receipt -----------------------------------------
+
+
+def test_an_error_part_way_keeps_a_partial_receipt_and_audit(store, monkeypatch):
+    preview = memory_import.plan(Engram(root=store, read_only=True))
+    writer = Engram(root=store)
+    real_add = Engram.add_lesson
+    calls = {"n": 0}
+
+    def flaky(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError("disk went away")
+        return real_add(self, *args, **kwargs)
+
+    monkeypatch.setattr(Engram, "add_lesson", flaky)
+
+    result = memory_import.write_plan(writer, preview)
+
+    assert result["partial"] is True and result["error"] == "OSError"
+    assert result["imported"] == 2
+    assert result["not_written"] == len(preview["items"]) - 2
+    receipt = json.loads((store / result["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["status"] == "partial" and receipt["error"] == "OSError"
+    assert receipt["imported"] == 2 and receipt["not_written"] == result["not_written"]
+    assert {item["id"] for item in receipt["items"]} == {row["id"] for row in _imported_rows(store)}
+    detail = next(
+        line["detail"] for line in _audit_lines(store)
+        if line.get("resource") == "knowledge/import_memories"
+    )
+    assert "partial error=OSError" in detail and receipt["receipt_id"] in detail
+
+
+def test_the_cli_reports_a_partial_import(store, monkeypatch, capsys):
+    real_add = Engram.add_lesson
+    calls = {"n": 0}
+
+    def flaky(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom")
+        return real_add(self, *args, **kwargs)
+
+    monkeypatch.setattr(Engram, "add_lesson", flaky)
+    assert memory_import.run_cli(["--yes", "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["partial"] is True and payload["error"] == "RuntimeError"
+    assert payload["receipt"].startswith("import_receipts/")
+    assert all("detail" not in item and "path" not in item for item in payload["items"])
+
+
+# -- a full review queue stops the import ----------------------------------------------
+
+
+def test_a_full_review_queue_stops_writing_and_the_receipt_counts_the_rest(store, monkeypatch):
+    monkeypatch.setenv("ENGRAM_REVIEW_QUEUE_MAX", "2")
+    preview = memory_import.plan(Engram(root=store, read_only=True))
+    assert preview["count"] >= 5
+
+    result = memory_import.write_plan(Engram(root=store), preview)
+
+    assert result["imported"] == 2
+    assert result["queue_full"] == result["not_written"] == preview["count"] - 2
+    assert len(_imported_rows(store)) == 2
+    receipt = json.loads((store / result["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["status"] == "partial" and receipt["error"] == ""
+    assert receipt["skipped"]["queue_full"] == receipt["not_written"] == preview["count"] - 2
+    # nothing already queued was pushed out to make room
+    assert not result.get("overflow_archived_ids")
+    assert not (store / "knowledge" / "overflow_archive").exists() or not any(
+        (store / "knowledge" / "overflow_archive").iterdir()
+    )
+
+
+def test_help_states_the_limits(capsys):
+    assert memory_import.run_cli(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert "at most 25 per run" in out
+    assert "ENGRAM_REVIEW_QUEUE_MAX" in out

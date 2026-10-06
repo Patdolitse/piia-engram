@@ -158,18 +158,50 @@ def _display_path(path: Path) -> str:
         return Path(path).as_posix()
 
 
-def _import_item(source: str, path: Path, summary: str, detail: str) -> dict:
-    """One planned import: where it comes from and a hash of the text written."""
+def _file_sha256(path: Path) -> str:
+    import hashlib
+
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _import_item(
+    source: str,
+    path: Path,
+    summary: str,
+    detail: str,
+    *,
+    domain: str = "",
+    source_tool: str = "",
+    project_folder: str = "",
+    label: str = "",
+) -> dict:
+    """One planned import: the exact row to write, where it comes from, and hashes.
+
+    ``content_sha256`` hashes the text that will be written; ``source_sha256``
+    the source file as it was when the plan was made, so the writer can tell
+    (and the receipt can record) that the file changed after the Owner
+    confirmed the list. The writer always writes the confirmed text.
+    """
     import hashlib
 
     digest = hashlib.sha256(f"{summary}\n\n{detail}".encode("utf-8")).hexdigest()
     return {
         "source": source,
         "file": _display_path(path),
+        "label": label or Path(path).name,
         "summary": summary,
         "content_sha256": digest,
         "status": "planned",
         "id": "",
+        "path": str(path),
+        "source_sha256": _file_sha256(path),
+        "detail": detail,
+        "domain": domain,
+        "source_tool": source_tool,
+        "project_folder": project_folder,
     }
 
 
@@ -277,10 +309,13 @@ class ReconcileMixin:
     ) -> dict:
         """Import other AI tools' memory files into the review queue.
 
-        Only the Owner's explicit ``engram import-memories`` command calls this;
-        no server start, cold start, read or session close-out does. Each item
-        lands as a staging (review queue) lesson. ``dry_run=True`` returns the
-        same plan and writes nothing at all (no rows, no audit line).
+        No server start, cold start, read or session close-out calls this; the
+        Owner's ``engram import-memories`` plans with ``plan_memory_import`` and
+        writes that confirmed plan. ``dry_run=True`` returns the plan and writes
+        nothing at all (no rows, no audit line). Without it the plan is written
+        right away through ``memory_import.write_items`` (review queue, receipt,
+        audit line); as a library call it keeps the capacity rules' overflow
+        archive behaviour instead of stopping at a full review queue.
         ``also_existing`` adds texts planned elsewhere in the same run to the
         dedup set.
 
@@ -300,14 +335,11 @@ class ReconcileMixin:
                 result["scope"] = self._reconcile_scope_metadata(project_folder)
                 result["skipped_scope"] = 0
             return result
-        imported = 0
         duplicates = 0
-        queue_full = 0
         rejected_old_summary = 0
         scanned_files = 0
         skipped_large = 0
         skipped_scope = 0
-        sources: list[str] = []
         items: list[dict] = []
         target_project_id = _project_id(project_folder) if project_folder else ""
         target_claude_project = (
@@ -384,7 +416,7 @@ class ReconcileMixin:
                 if _rejected_before(self.root, parsed["legacy_summary"], project_folder=project_folder):
                     rejected_old_summary += 1  # rejected under its 4.21.1 summary
                     continue
-                if dry_run and _rejected_before(self.root, summary_candidate, project_folder=project_folder):
+                if _rejected_before(self.root, summary_candidate, project_folder=project_folder):
                     rejected_old_summary += 1  # the insert would refuse it as well
                     continue
 
@@ -396,51 +428,54 @@ class ReconcileMixin:
                 elif fm_type == "reference":
                     domain = "reference"
 
-                item = _import_item("memories", mem_file, summary_candidate, parsed["detail"])
-                if dry_run:
-                    items.append(item)
-                    existing_summaries.add(summary_candidate)
-                    continue
+                items.append(_import_item(
+                    "memories", mem_file, summary_candidate, parsed["detail"],
+                    domain=domain, source_tool="auto_reconcile",
+                    project_folder=project_folder, label=mem_file.name,
+                ))
+                existing_summaries.add(summary_candidate)
 
-                result = self.add_lesson(
-                    summary_candidate,
-                    domain=domain,
-                    detail=parsed["detail"],
-                    source_tool="auto_reconcile",
-                    tier="staging",
-                    project_folder=project_folder or None,
-                )
-                status, new_id = _insert_outcome(result)
-                if status == "queue_full":
-                    queue_full += 1
-                elif status == "imported":
-                    imported += 1
-                    sources.append(mem_file.name)
-                    existing_summaries.add(summary_candidate)
-                    item.update(status="imported", id=new_id)
-                    items.append(item)
-                else:
-                    duplicates += 1
-
-        if not dry_run:
-            self._audit.log("read", "reconcile_memories",
-                            detail=f"scanned={scanned_files} imported={imported} "
-                                   f"dup={duplicates} skipped_large={skipped_large}")
         result = {
             "scanned_files": scanned_files,
-            "imported": imported,
+            "imported": 0,
             "duplicates": duplicates,
-            "queue_full": queue_full,
+            "queue_full": 0,
             "rejected_under_old_summary": rejected_old_summary,
             "skipped_large": skipped_large,
-            "sources": sources,
+            "sources": [],
             "items": items,
         }
-        if dry_run:
-            result["dry_run"] = True
         if project_folder:
             result["skipped_scope"] = skipped_scope
             result["scope"] = self._reconcile_scope_metadata(project_folder)
+        if dry_run:
+            result["dry_run"] = True
+            return result
+        return self._write_reconcile_plan(result, source="memories", name="reconcile_memories")
+
+    def _write_reconcile_plan(self, plan: dict, *, source: str, name: str) -> dict:
+        """Library write path of the import engine: the shared writer, receipt, audit."""
+        from .memory_import import write_items
+
+        written = write_items(
+            self, plan["items"], sources=[source], command=f"Engram.{name}",
+            resource=f"knowledge/{name}", source_tool="engram_library",
+            stop_when_queue_full=False,
+        )
+        result = dict(plan)
+        result.update(
+            imported=written["imported"],
+            duplicates=plan["duplicates"] + written["duplicates"],
+            queue_full=written["queue_full"],
+            not_written=written["not_written"],
+            partial=written["partial"],
+            receipt=written["receipt"],
+            items=written["items"],
+            sources=[item["label"] for item in written["items"]],
+        )
+        self._audit.log("read", name,
+                        detail=f"scanned={plan['scanned_files']} imported={result['imported']} "
+                               f"dup={result['duplicates']} skipped_large={plan.get('skipped_large', 0)}")
         return result
 
     def plan_memory_import(self, *, also_existing: "set[str] | frozenset[str]" = frozenset()) -> dict:
@@ -623,7 +658,10 @@ class ReconcileMixin:
     ) -> dict:
         """Import rules from other AI tools' config files into the review queue.
 
-        Only the Owner's explicit ``engram import-memories`` command calls this.
+        Planned by ``plan_config_import`` for ``engram import-memories``; without
+        ``dry_run`` the plan is written at once through the shared writer (see
+        :meth:`reconcile_memories`). Rule-file sections are capped at
+        ``max_imports`` (25) per run; run again after an import to continue.
         Discovers project roots from Claude Code project entries, then looks
         for CLAUDE.md, .cursorrules, AGENT.md, etc. in each, parses markdown
         sections and imports each meaningful one as a staging lesson, at most
@@ -648,12 +686,9 @@ class ReconcileMixin:
             if project_folder:
                 result["scope"] = self._reconcile_scope_metadata(project_folder)
             return result
-        imported = 0
         planned = 0
         duplicates = 0
-        queue_full = 0
         scanned_files = 0
-        sources: list[str] = []
         items: list[dict] = []
         budget_exhausted = False
         import_budget = max(0, int(max_imports))
@@ -762,56 +797,39 @@ class ReconcileMixin:
                 if is_dup:
                     continue
 
-                if (planned if dry_run else imported) >= import_budget:
+                # Rule-file sections: at most max_imports (25) per run.
+                if planned >= import_budget:
                     budget_exhausted = True
                     break
+                if _rejected_before(self.root, summary_candidate, project_folder=project_folder):
+                    continue  # the insert would refuse it
 
-                detail = _bounded_detail(section_body, source=content)
-                item = _import_item("configs", cfg, summary_candidate, detail)
-                if dry_run:
-                    if _rejected_before(self.root, summary_candidate, project_folder=project_folder):
-                        continue  # the insert would refuse it
-                    planned += 1
-                    items.append(item)
-                    existing_summaries.add(summary_candidate)
-                    continue
-
-                result = self.add_lesson(
-                    summary_candidate,
-                    domain="ai_config",
-                    detail=detail,
-                    source_tool="config_scan",
-                    tier="staging",
-                    project_folder=project_folder or None,
-                )
-                status, new_id = _insert_outcome(result)
-                if status == "queue_full":
-                    queue_full += 1
-                elif status == "imported":
-                    imported += 1
-                    sources.append(f"{cfg.parent.name}/{cfg.name}")
-                    existing_summaries.add(summary_candidate)
-                    item.update(status="imported", id=new_id)
-                    items.append(item)
-                else:
-                    duplicates += 1
+                planned += 1
+                items.append(_import_item(
+                    "configs", cfg, summary_candidate,
+                    _bounded_detail(section_body, source=content),
+                    domain="ai_config", source_tool="config_scan",
+                    project_folder=project_folder, label=f"{cfg.parent.name}/{cfg.name}",
+                ))
+                existing_summaries.add(summary_candidate)
             if budget_exhausted:
                 break
 
         result = {
             "scanned_files": scanned_files,
-            "imported": imported,
+            "imported": 0,
             "duplicates": duplicates,
-            "queue_full": queue_full,
-            "sources": sources,
+            "queue_full": 0,
+            "sources": [],
             "items": items,
             "budget_exhausted": budget_exhausted,
         }
-        if dry_run:
-            result["dry_run"] = True
         if project_folder:
             result["scope"] = self._reconcile_scope_metadata(project_folder)
-        return result
+        if dry_run:
+            result["dry_run"] = True
+            return result
+        return self._write_reconcile_plan(result, source="configs", name="reconcile_ai_configs")
 
     @staticmethod
     def _reconcile_scope_metadata(project_folder: str) -> dict[str, str]:

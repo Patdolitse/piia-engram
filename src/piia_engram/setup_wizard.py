@@ -148,10 +148,6 @@ _PROJECT_KEYWORDS = re.compile(
 # 可用环境变量 ENGRAM_MAX_RULE_LINES 覆盖（极少数超大规则仓库场景）。
 _MAX_RULE_LINES = 1500
 
-# 单条分组 lesson 的 detail 字符上限。1500 行规则在极端情况下可能很大，
-# 给个防御性上限，避免单条 lesson 撑爆 lessons.json（历史上有过损坏问题）。
-_MAX_DETAIL_CHARS = 20000
-
 
 def _max_rule_lines() -> int:
     """规则文件读取行数上限，支持 ENGRAM_MAX_RULE_LINES 覆盖，回退默认值。"""
@@ -261,43 +257,6 @@ def _classify_line(line: str, scope: str) -> str:
 
     # 无关键词命中：看来源文件默认倾向
     return "user" if scope == "global" else "project"
-
-
-def _src_label(path) -> str:
-    """规则文件的来源标签：父目录名/文件名，避免存绝对路径，也便于区分同名文件。
-
-    根目录文件（如 /CLAUDE.md）的 parent.name 为空，用 "." 兜底，
-    避免生成形如 "/CLAUDE.md" 的伪绝对路径标签。
-    """
-    try:
-        parent_name = path.parent.name or "."
-        return f"{parent_name}/{path.name}"
-    except AttributeError:
-        return str(path)
-
-
-def _build_grouped_detail(sections: dict[str, list[str]]) -> str:
-    """把 {来源标签: [规则行]} 渲染成按来源分节的 markdown detail。
-
-    对极端超长内容做防御性截断，避免单条 lesson 撑爆 lessons.json。
-    截断在「行边界」进行（而非任意字符位置），保证不会把某条规则切成半行、
-    也不会在 markdown 列表项中间断开。注意 Python 字符串切片按 Unicode 码点
-    计数，本身不会切坏多字节字符，这里在行边界截断是为了语义完整。
-    """
-    parts: list[str] = []
-    for label, rules in sections.items():
-        parts.append(f"## {label}")
-        parts.extend(f"- {r}" for r in rules)
-        parts.append("")
-    detail = "\n".join(parts).strip()
-    if len(detail) > _MAX_DETAIL_CHARS:
-        # 在不超过上限的前提下，回退到最后一个换行边界，避免切半行规则
-        clipped = detail[:_MAX_DETAIL_CHARS]
-        last_nl = clipped.rfind("\n")
-        if last_nl > 0:
-            clipped = clipped[:last_nl]
-        detail = clipped.rstrip() + "\n\n…(truncated)"
-    return detail
 
 
 # ---------------------------------------------------------------------------
@@ -2274,7 +2233,7 @@ def _run_seed_knowledge_onboarding(
 
 
 # ---------------------------------------------------------------------------
-# Privacy & data preferences (telemetry opt-in + reconcile authorization)
+# Privacy & data preferences (one-time import offer + telemetry opt-in)
 # ---------------------------------------------------------------------------
 
 def _turn_off_usage_ping() -> None:

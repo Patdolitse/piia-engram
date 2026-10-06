@@ -2243,6 +2243,27 @@ class TestTelemetryCLI:
 
 
 class TestPrivacyReport:
+    @pytest.fixture(autouse=True)
+    def _empty_home(self, tmp_path, monkeypatch):
+        # The report counts importable memories under HOME (read-only).
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+    def test_report_describes_import_truthfully(self, tmp_path, monkeypatch, capsys):
+        """No "cross-tool sync ON / Scans": nothing is scanned automatically."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert "[SYNC]" not in out and "Cross-tool sync" not in out
+        assert "Automatic scanning: never" in out
+        assert "engram import-memories" in out
+        assert "Importable now:" in out
+        assert "ENGRAM_RECONCILE=0" in out
+
     def test_report_runs_without_error(self, tmp_path, monkeypatch, capsys):
         """engram privacy should print report without error."""
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))

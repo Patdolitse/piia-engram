@@ -158,7 +158,7 @@ async def get_resume_brief(
     # Read-only with respect to memory content: other AI tools' rule and memory
     # files are never scanned or imported here (`engram import-memories` does
     # that on the Owner's explicit request).
-    brief =S._get_engram().get_resume_brief(
+    brief = S._get_engram().get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
         include_resume_pack=include_resume_pack,

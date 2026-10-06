@@ -84,21 +84,49 @@ def test_public_docs_do_not_claim_automatic_import() -> None:
         "docs/quickstart-first-value.zh-CN.md",
         "docs/user-guide.md",
         "docs/user-guide.zh-CN.md",
-    ]
-    forbidden = [
-        "auto-bootstrap",
-        "imports your preferences and project rules automatically",
-        "reconciles memories/config snippets from local AI tools when an MCP server starts",
-        "ENGRAM_MCP_STARTUP_SYNC=eager",
-        "自动引导",
-        "启动同步",
+        "CONTRIBUTING.md",
+        ".mcp/server.json",
     ]
     for name in docs:
         text = (ROOT / name).read_text(encoding="utf-8")
-        for phrase in forbidden:
-            assert phrase not in text, f"{name} still claims automatic import: {phrase}"
+        for phrase in AUTOMATIC_IMPORT_CLAIMS:
+            assert phrase.lower() not in text.lower(), f"{name} still claims automatic import: {phrase}"
         if name.startswith(("README", "docs/user-guide", "docs/quickstart")):
             assert "engram import-memories" in text, name
+
+
+# Phrases that describe the removed automatic import (startup sync, first-call
+# bootstrap, reconcile side effects of cold start).
+AUTOMATIC_IMPORT_CLAIMS = [
+    "auto-bootstrap",
+    "imports your preferences and project rules automatically",
+    "reconciles memories/config snippets from local AI tools when an MCP server starts",
+    "ENGRAM_MCP_STARTUP_SYNC=eager",
+    "startup reconciliation",
+    "set to background for local cross-tool sync",
+    "cross-tool memory/config sync",
+    "auto-sync side effects",
+    "skips expensive reconciliation",
+    "自动引导",
+    "启动同步",
+    "自动同步副作用",
+    "跳过昂贵的 reconcile",
+]
+
+
+def test_mcp_tool_descriptions_do_not_claim_automatic_import() -> None:
+    import asyncio
+
+    from piia_engram import mcp_server
+
+    tools = asyncio.run(mcp_server.mcp.list_tools())
+    assert tools
+    for tool in tools:
+        text = (tool.description or "").lower()
+        for phrase in AUTOMATIC_IMPORT_CLAIMS:
+            assert phrase.lower() not in text, f"{tool.name} description: {phrase}"
+    by_name = {tool.name: tool.description or "" for tool in tools}
+    assert "engram import-memories" in by_name["get_user_context"]
 
 
 def test_cross_tool_guide_documents_telemetry_as_separate_opt_in_boundary() -> None:

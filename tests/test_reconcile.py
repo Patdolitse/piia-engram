@@ -257,7 +257,7 @@ def test_reconcile_empty_dir(tmp_path: Path):
     result = engram.reconcile_memories()
     assert result == {"scanned_files": 0, "imported": 0, "duplicates": 0, "queue_full": 0,
                       "rejected_under_old_summary": 0, "skipped_large": 0, "sources": [],
-                      "items": []}
+                      "items": [], "not_written": 0, "partial": False, "receipt": ""}
 
 
 # ── Non-existent path doesn't crash ──────────────────────────────────

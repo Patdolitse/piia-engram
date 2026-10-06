@@ -73,7 +73,7 @@ def test_run_bootstrap_imports_user_rules(tmp_path: Path, monkeypatch):
 
     # Verify lesson was created
     lessons = eng.get_lessons(limit=10, _update_access=False)
-    assert any("首次连接自动导入" in l.get("summary", "") for l in lessons)
+    assert any("从规则文件导入" in l.get("summary", "") for l in lessons)
 
     # Imported text never changes identity: the language is only reported.
     profile = eng.get_profile()
@@ -81,7 +81,7 @@ def test_run_bootstrap_imports_user_rules(tmp_path: Path, monkeypatch):
 
     # Imported rules wait in the review queue, even low-risk ones (they used
     # to be auto-verified by the risk gate).
-    imported = [l for l in lessons if "首次连接自动导入" in l.get("summary", "")]
+    imported = [l for l in lessons if "从规则文件导入" in l.get("summary", "")]
     assert imported[0]["tier"] == "staging"
 
 
@@ -157,7 +157,7 @@ def test_run_bootstrap_high_risk_content_goes_to_staging(tmp_path: Path, monkeyp
     assert result["user_rules_imported"] > 0
 
     lessons = eng.get_lessons(limit=10, _update_access=False)
-    imported = [l for l in lessons if "首次连接自动导入" in l.get("summary", "")]
+    imported = [l for l in lessons if "从规则文件导入" in l.get("summary", "")]
     # The detail contains api_key and password -> credential strong -> high -> staging
     assert imported[0]["tier"] == "staging"
     assert imported[0]["risk_level"] == "high"

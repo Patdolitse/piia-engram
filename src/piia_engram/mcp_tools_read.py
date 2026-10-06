@@ -52,10 +52,13 @@ async def get_user_context(
     分层说明 / Tiered behaviour:
     - "quick": 仅身份画像 + 工作偏好（纯 JSON 读取，无文件扫描，最低延迟）。
       Profile + preferences only — pure JSON reads, no filesystem scans. Lowest latency.
-    - "standard"（默认）: 加上质量标准、经验领域、相关教训/决策、项目快照。跳过昂贵的 reconcile。
-      Default. Adds quality, domains, top lessons/decisions, project snapshot. Skips expensive reconciliation.
-    - "full": 完整上下文，含冲突检测、过期/暂存提醒、自动同步副作用。仅在用户明确要求"全量回顾"时使用。
-      Full context including conflict detection, stale/staging warnings, auto-sync side effects. Use only when the user explicitly asks for a comprehensive memory review.
+    - "standard"（默认）: 加上质量标准、经验领域、相关教训/决策、项目快照。
+      Default. Adds quality, domains, top lessons/decisions, project snapshot.
+    - "full": 完整上下文，含冲突检测、过期/暂存提醒。仅在用户明确要求"全量回顾"时使用。
+      Full context including conflict detection and stale/staging warnings. Use only when the user explicitly asks for a comprehensive memory review.
+
+    任何级别都只读：不扫描、不导入其它 AI 工具的文件（那是用户在终端运行的 `engram import-memories`）。
+    Every level only reads: other AI tools' files are never scanned or imported here (that is the user's `engram import-memories` command in a terminal).
 
     注意：默认 "standard" 已覆盖绝大多数冷启动需求；只有用户问"我们之前所有决定/经验"或要做记忆健康检查时才用 "full"。
     Note: "standard" covers most cold-start needs. Use "full" only when the user asks for a comprehensive memory review.

@@ -287,3 +287,88 @@ def test_reconcile_apply_preview_writes_nothing_and_commit_writes_receipt(store,
     assert all((row.get("tier") or row.get("memory_state")) == "staging" for row in rows)
     assert _verified_ids(store) == verified_before
     assert len(list((store / "import_receipts").glob("*.json"))) == 1
+
+
+# -- every library write path records through the same receipt helper -------------
+
+
+def _receipts(root):
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((root / "import_receipts").glob("*.json"))]
+
+
+def test_apply_reconcile_commit_writes_a_receipt(store):
+    from piia_engram.reconcile_apply import apply_reconcile
+
+    payload = apply_reconcile(
+        Engram(root=store),
+        [{"summary": "prefer small reviewable commits over large mixed ones", "detail": "x",
+          "source": "mem.md"}],
+        source="memory_files", confirm=True, dry_run=False,
+    )
+    assert payload["counts"]["imported"] == 1
+    receipt = json.loads((store / payload["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["command"] == "reconcile_apply.apply_reconcile"
+    assert receipt["items"][0]["id"] == payload["items"][0]["imported_id"]
+    assert "reviewable" not in json.dumps(receipt)
+
+
+def test_bootstrap_writes_to_the_review_queue_with_a_receipt(store, tmp_path, monkeypatch):
+    import piia_engram.bootstrap as bs
+
+    rules = tmp_path / "rules.md"
+    rules.write_text("# Rules\nI prefer concise answers.\nAlways add a test with a fix.\n", encoding="utf-8")
+    monkeypatch.setattr(bs, "_scan_rule_files", lambda: [
+        {"path": rules, "scope": "global", "lines": rules.read_text(encoding="utf-8").splitlines()},
+    ])
+    eng = Engram(root=store)
+    (store / ".bootstrap_done").unlink(missing_ok=True)
+    bs.run_bootstrap(eng)
+
+    rows = [r for r in eng.get_lessons(limit=None, _update_access=False) if r.get("source_tool") == "engram_bootstrap"]
+    assert rows and {r["tier"] for r in rows} == {"staging"}
+    receipt = _receipts(store)[-1]
+    assert receipt["command"] == "bootstrap.run_bootstrap"
+    assert {i["id"] for i in receipt["items"]} == {r["id"] for r in rows}
+
+
+def test_oca_migration_writes_to_the_review_queue_with_a_receipt(store, tmp_path):
+    from piia_engram.compat import migrate_from_oca_memory
+
+    oca = tmp_path / "oca"
+    oca.mkdir()
+    (oca / "near_misses.json").write_text(json.dumps([
+        {"what_happened": "deployed without running the migration check",
+         "what_could_have_happened": "the schema would have drifted"},
+    ]), encoding="utf-8")
+    eng = Engram(root=store)
+    migrate_from_oca_memory(str(oca), eng)
+
+    # project-tagged rows are not listed without a project, so read the file
+    stored = json.loads((store / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
+    rows = [r for r in stored if r.get("domain") == "safety"]
+    assert len(rows) == 1 and rows[0]["tier"] == "staging"
+    receipt = _receipts(store)[-1]
+    assert receipt["command"] == "compat.migrate_from_oca_memory"
+    assert receipt["items"][0]["id"] == rows[0]["id"]
+
+
+def test_recording_writes_a_partial_receipt_and_reraises(store):
+    from piia_engram import memory_import
+
+    eng = Engram(root=store)
+    with pytest.raises(ValueError):
+        with memory_import.recording(eng, sources=["x"], command="test", resource="knowledge/test",
+                                     source_tool="test") as record:
+            record.add_written("L-1", source="x", file="a.md", summary="s")
+            raise ValueError("stop")
+    receipt = _receipts(store)[-1]
+    assert receipt["status"] == "partial" and receipt["error"] == "ValueError"
+    assert [i["id"] for i in receipt["items"]] == ["L-1"]
+    audit = (store / "audit.log").read_text(encoding="utf-8")
+    assert "partial error=ValueError" in audit
+
+
+def test_doctor_states_the_import_limits(store):
+    out = _doctor_output()
+    assert "rule-file sections at most 25 per run" in out
+    assert "ENGRAM_REVIEW_QUEUE_MAX" in out

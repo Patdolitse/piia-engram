@@ -1286,16 +1286,19 @@ def _run_privacy_report() -> None:
         print("        (status not available)")
     print()
 
-    # 6. Reconcile
-    print("  [SYNC] Cross-tool sync:")
+    # 6. Other AI tools' memories: never read automatically
+    print("  [IMPORT] Other AI tools' memories:")
     try:
-        from piia_engram.reconcile import ReconcileMixin
-        authorized = ReconcileMixin._reconcile_authorized()
-        print(f"        Status: {'ON' if authorized else 'OFF'}")
-        print("        Scans: ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules, etc.")
-        print("        Control: ENGRAM_RECONCILE=0 to disable")
-    except ImportError:
-        print("        (reconcile module not available)")
+        from piia_engram import memory_import
+
+        print("        Automatic scanning: never (not at server start, cold start or session end)")
+        print("        Import on request: engram import-memories (lists first, then the review queue)")
+        print("        Reads when you run it: ~/.claude/projects/*/memory/*.md, CLAUDE.md, AGENTS.md, .cursorrules, etc.")
+        summary = memory_import.importable_summary()
+        print(f"        Importable now: {memory_import.importable_text(summary)}")
+        print("        Hard off switch: ENGRAM_RECONCILE=0 (or reconcile_authorized=false) - nothing is read at all")
+    except Exception as exc:
+        print(f"        (status not available: {type(exc).__name__})")
     print()
 
     # 7. Network
@@ -1571,7 +1574,8 @@ def run_feedback(*, dry_run: bool = False) -> None:
             print(f"  冷启动级别: {cs}")
         rec = beta.get("reconcile", {})
         if rec:
-            print(f"  跨工具同步: {rec.get('sync_count', 0)} 次, 导入 {rec.get('total_imported', 0)} 条")
+            # Historical events only: nothing imports automatically any more.
+            print(f"  跨工具导入（历史记录）: {rec.get('sync_count', 0)} 次, 导入 {rec.get('total_imported', 0)} 条")
         print()
 
     # --dry-run: show exactly what would be sent, then stop
@@ -5016,6 +5020,8 @@ def _reconcile_apply_payload(
     ]
     if not result.get("enabled", True):
         status = "disabled"
+    elif result.get("partial"):
+        status = "partial"
     elif requires_confirmation:
         status = "confirmation_required"
     elif dry_run:
@@ -5044,6 +5050,8 @@ def _reconcile_apply_payload(
         },
         "items": items,
         "receipt": result.get("receipt", ""),
+        "not_written": int(result.get("not_written", 0) or 0),
+        "error": result.get("error", "") or "",
     }
     if result.get("overflow_archived_ids"):
         payload["overflow_archived_ids"] = list(result["overflow_archived_ids"])
@@ -5091,7 +5099,8 @@ def _run_reconcile(args: list[str]) -> int:
 
     if apply:
         if commit and confirm:
-            result = memory_import.run(Engram(root=root), ("memories",))
+            confirmed = memory_import.plan(Engram(root=root, read_only=True), ("memories",))
+            result = memory_import.write_plan(Engram(root=root), confirmed, command="engram reconcile apply")
             payload = _reconcile_apply_payload(
                 result, dry_run=False, confirmed=True, requires_confirmation=False,
             )
@@ -5109,7 +5118,7 @@ def _run_reconcile(args: list[str]) -> int:
                 print(f"  receipt: {payload['receipt']} (review queue; approve with engram review)")
             if payload["status"] == "disabled":
                 print(f"  reading other AI tools' files is switched off ({payload['disabled_by']})")
-        return 1 if payload["requires_confirmation"] or payload["status"] == "disabled" else 0
+        return 1 if payload["requires_confirmation"] or payload["status"] in {"disabled", "partial"} else 0
 
     eng = Engram(root=root)
     candidates = eng.collect_memory_candidates()

@@ -6,12 +6,17 @@ command is the one way in, and it is run by the Owner:
 
 1. It always starts with a preview that writes nothing (a read-only store
    handle; no rows, no audit line, no receipt).
-2. After a confirmation (an interactive "y" or ``--yes``) every listed item is
-   added to the review queue (staging tier) -- nothing becomes trusted memory
-   without ``engram review``.
-3. A confirmed run that imported anything writes a receipt to
-   ``<store>/import_receipts/<id>.json`` (time, source files, count, entry ids,
-   content hashes; never the text) and an audit line naming the receipt.
+2. After a confirmation (an interactive "y" or ``--yes``) exactly the listed
+   items are added to the review queue (staging tier); nothing is scanned
+   again, and a source file that changed after the confirmation is marked in
+   the receipt. Nothing becomes trusted memory without ``engram review``.
+3. A run that wrote anything, or stopped early (an error part-way, or a full
+   review queue), writes a receipt to ``<store>/import_receipts/<id>.json``
+   (time, status, source files, count, entry ids, content hashes, what was not
+   written; never the text) and an audit line naming the receipt.
+
+Limits: rule-file sections at most 25 per run; memory files are limited by the
+review queue's room (ENGRAM_REVIEW_QUEUE_MAX) and the import stops there.
 
 Items already in the store (any tier, or moved to the overflow archive) and
 items the Owner rejected before are skipped, so running it again imports
@@ -24,6 +29,7 @@ from __future__ import annotations
 import json
 import secrets
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -40,6 +46,15 @@ _SOURCE_ALIASES = {
 }
 _SUMMARY_PREVIEW = 100
 
+# Rule-file sections: at most 25 per run (reconcile_ai_configs max_imports).
+# Memory files: no per-run cap, but the import stops when the review queue
+# reaches ENGRAM_REVIEW_QUEUE_MAX and counts the rest as not written.
+LIMITS_NOTE = (
+    "limits: rule-file sections at most 25 per run (run again to continue); "
+    "memory files are limited by the review queue's room (ENGRAM_REVIEW_QUEUE_MAX), "
+    "the import stops when it is full"
+)
+
 USAGE = (
     "Usage:\n"
     "  engram import-memories [--source memories|configs|all] [--dry-run] [--yes] [--json]\n\n"
@@ -50,6 +65,11 @@ USAGE = (
     "  --dry-run  list only; writes nothing\n"
     "  --yes      import without the interactive question\n"
     "  --json     machine-readable output\n"
+    "Limits: rule-file sections at most 25 per run (run again to continue);\n"
+    "memory files are limited by the review queue's room (ENGRAM_REVIEW_QUEUE_MAX):\n"
+    "the import stops when the queue is full and counts what was not written.\n"
+    "What you confirmed is exactly what is written; each import leaves a receipt\n"
+    "in import_receipts/ in the store.\n"
     "Imported items wait in the review queue: engram review\n"
 )
 
@@ -143,17 +163,219 @@ def plan(eng, sources: tuple[str, ...] = SOURCES, *, project_roots: tuple = ()) 
 
 
 def run(eng, sources: tuple[str, ...] = SOURCES, *, project_roots: tuple = ()) -> dict[str, Any]:
-    """Add the items to the review queue, then write the receipt and audit line."""
+    """Plan and write in one step (no question asked): ``write_plan(eng, plan(...))``."""
+    return write_plan(eng, plan(eng, sources, project_roots=project_roots))
+
+
+def write_plan(eng, preview: dict[str, Any], *, command: str = COMMAND) -> dict[str, Any]:
+    """Write exactly the confirmed plan; nothing is scanned again.
+
+    ``preview`` is what :func:`plan` returned and the Owner confirmed. If a
+    source file changed after that, the confirmed text is still what gets
+    written, and the receipt marks the item ``source_changed``.
+    """
+    sources = tuple(preview.get("sources") or SOURCES)
     payload = _empty_payload(sources, dry_run=False)
-    if not payload["enabled"]:
+    payload["scanned_files"] = int(preview.get("scanned_files", 0) or 0)
+    payload["budget_exhausted"] = bool(preview.get("budget_exhausted"))
+    if not preview.get("enabled", payload["enabled"]) or not payload["enabled"]:
+        payload["enabled"] = False
+        payload["disabled_by"] = payload["disabled_by"] or preview.get("disabled_by", "")
         return payload
-    if "memories" in sources:
-        _merge(payload, eng.reconcile_memories())
-    if "configs" in sources:
-        _merge(payload, eng.reconcile_ai_configs(extra_project_roots=tuple(project_roots)))
-    payload["count"] = len(payload["items"])
-    payload["receipt"] = record_import(eng, payload)
+    written = write_items(eng, preview.get("items") or [], sources=sources, command=command)
+    payload.update(
+        items=written["items"],
+        count=len(preview.get("items") or []),
+        imported=written["imported"],
+        duplicates=int(preview.get("duplicates", 0) or 0) + written["duplicates"],
+        queue_full=written["queue_full"],
+        not_written=written["not_written"],
+        source_changed=written["source_changed"],
+        partial=written["partial"],
+        error=written["error"],
+        receipt=written["receipt"],
+    )
+    if written.get("overflow_archived_ids"):
+        payload["overflow_archived_ids"] = written["overflow_archived_ids"]
     return payload
+
+
+# Fields of a planned item that may appear in results and receipts (never the
+# detail text or the absolute source path).
+_PUBLIC_ITEM_FIELDS = ("source", "file", "label", "summary", "content_sha256", "status", "id")
+
+
+def _source_changed(item: dict[str, Any]) -> bool:
+    from .reconcile import _file_sha256
+
+    path = item.get("path")
+    planned = item.get("source_sha256")
+    if not path or not planned:
+        return False
+    return _file_sha256(Path(path)) != planned
+
+
+def _queue_room(eng) -> int:
+    """Free places in the review queue before it reaches ENGRAM_REVIEW_QUEUE_MAX."""
+    from . import capacity as _capacity
+
+    limits = _capacity.limits_from_env()
+    rows = eng.get_lessons(limit=None, _update_access=False, _migrate_fields=False)
+    queued = sum(1 for row in rows if _capacity.pool_of(row) == _capacity.POOL_Q)
+    return max(0, limits.review_queue_max - queued)
+
+
+def write_items(
+    eng,
+    items: list[dict[str, Any]],
+    *,
+    sources,
+    command: str = COMMAND,
+    resource: str = "knowledge/import_memories",
+    source_tool: str = "engram_cli",
+    stop_when_queue_full: bool = True,
+) -> dict[str, Any]:
+    """Write these planned items to the review queue, then the receipt and audit.
+
+    The one writer behind ``engram import-memories``, setup and
+    ``engram reconcile apply``:
+
+    - every row is a staging (review queue) lesson with the planned text;
+    - with ``stop_when_queue_full`` it stops before the review queue passes
+      ENGRAM_REVIEW_QUEUE_MAX, so an import never pushes queued items out;
+      the rest is counted as ``queue_full`` / ``not_written``;
+    - an error part-way still writes the receipt and the audit line for what
+      was written (``partial`` with the error class), and is not raised.
+    """
+    from .reconcile import _insert_outcome
+    from .storage import overflow_batch_scope
+
+    result: dict[str, Any] = {
+        "items": [], "imported": 0, "duplicates": 0, "queue_full": 0,
+        "not_written": 0, "source_changed": 0, "partial": False, "error": "",
+        "receipt": "",
+    }
+    record = ImportRecord(eng, sources=sources, command=command, resource=resource,
+                          source_tool=source_tool)
+    handled = 0
+    try:
+        with overflow_batch_scope() as batch:
+            room = _queue_room(eng) if stop_when_queue_full else None
+            for item in items:
+                if room is not None and room <= 0:
+                    break
+                changed = _source_changed(item)
+                outcome = eng.add_lesson(
+                    item["summary"],
+                    domain=item.get("domain", ""),
+                    detail=item.get("detail", ""),
+                    source_tool=item.get("source_tool") or "auto_reconcile",
+                    tier="staging",
+                    project_folder=item.get("project_folder") or None,
+                )
+                status, new_id = _insert_outcome(outcome)
+                if status == "queue_full":
+                    break
+                handled += 1
+                if status != "imported":
+                    result["duplicates"] += 1
+                    continue
+                public = {key: item.get(key, "") for key in _PUBLIC_ITEM_FIELDS}
+                public.update(status="imported", id=new_id, source_changed=changed)
+                result["items"].append(public)
+                result["imported"] += 1
+                result["source_changed"] += int(changed)
+                record.add(public)
+                if room is not None:
+                    room -= 1
+            archived = list(batch.get("archived") or [])
+        if archived:
+            result["overflow_archived_ids"] = archived
+            record.overflow_archived_ids = archived
+    except Exception as exc:  # recorded below, never lost
+        result["partial"] = True
+        result["error"] = type(exc).__name__
+    finally:
+        result["not_written"] = len(items) - handled
+        if not result["partial"]:
+            result["queue_full"] = result["not_written"]
+        record.duplicates = result["duplicates"]
+        record.queue_full = result["queue_full"]
+        record.not_written = result["not_written"]
+        result["receipt"] = record.finish(error=result["error"])
+    return result
+
+
+class ImportRecord:
+    """Collects what an import wrote; ``finish`` writes the receipt and audit line.
+
+    Every path that imports outside content into the store records through
+    this: ``write_items``, ``reconcile_apply.apply_reconcile``, the OpenClaw
+    import, the legacy memory migration and the rule-file bootstrap helper.
+    """
+
+    def __init__(self, eng, *, sources, command: str, resource: str, source_tool: str):
+        self.eng = eng
+        self.sources = list(sources)
+        self.command = command
+        self.resource = resource
+        self.source_tool = source_tool
+        self.items: list[dict[str, Any]] = []
+        self.duplicates = 0
+        self.queue_full = 0
+        self.not_written = 0
+        self.overflow_archived_ids: list[str] = []
+        self.receipt = ""
+
+    def add(self, item: dict[str, Any]) -> None:
+        self.items.append(item)
+
+    def add_written(self, entry_id: str, *, source: str, file: str, summary: str, detail: str = "",
+                    kind: str = "lesson") -> None:
+        import hashlib
+
+        self.items.append({
+            "id": entry_id,
+            "source": source,
+            "file": file,
+            "kind": kind,
+            "content_sha256": hashlib.sha256(f"{summary}\n\n{detail}".encode("utf-8")).hexdigest(),
+            "status": "imported",
+        })
+
+    def finish(self, *, error: str = "") -> str:
+        payload = {
+            "items": self.items,
+            "imported": len(self.items),
+            "sources": self.sources,
+            "duplicates": self.duplicates,
+            "queue_full": self.queue_full,
+            "not_written": self.not_written,
+            "partial": bool(error),
+            "error": error,
+            "overflow_archived_ids": self.overflow_archived_ids,
+        }
+        self.receipt = record_import(
+            self.eng, payload, command=self.command, resource=self.resource,
+            source_tool=self.source_tool,
+        )
+        return self.receipt
+
+
+@contextmanager
+def recording(eng, *, sources, command: str, resource: str, source_tool: str):
+    """``with recording(...) as rec: ...`` -- the receipt and audit line are
+    written on the way out, also when the block raises (then marked partial
+    with the error class; the error is re-raised)."""
+    record = ImportRecord(eng, sources=sources, command=command, resource=resource,
+                          source_tool=source_tool)
+    try:
+        yield record
+    except Exception as exc:
+        record.finish(error=type(exc).__name__)
+        raise
+    else:
+        record.finish()
 
 
 def record_import(
@@ -164,35 +386,33 @@ def record_import(
     resource: str = "knowledge/import_memories",
     source_tool: str = "engram_cli",
 ) -> str:
-    """Receipt (when anything was imported) plus one audit line; returns the
-    receipt path relative to the store, or "".
+    """Receipt plus one audit line; returns the receipt path relative to the store.
 
-    ``payload`` needs ``items`` (``status == "imported"`` rows with ``id``,
-    ``source``, ``file``, ``content_sha256``), ``imported``, ``sources``,
-    ``duplicates`` and ``queue_full``.
+    A receipt is written when anything was imported, or when the import
+    stopped early (partial, review queue full); the audit line is always
+    written.
     """
     receipt_id = ""
     receipt = ""
-    if payload["imported"]:
+    stopped = bool(payload.get("partial")) or int(payload.get("not_written", 0) or 0) > 0
+    if payload["imported"] or stopped:
         receipt_id, path = write_receipt(eng.root, payload, command=command)
         receipt = f"{RECEIPT_DIR}/{path.name}"
     audit = getattr(eng, "_audit", None)
     if audit is not None:
-        audit.log(
-            "import",
-            resource,
-            detail=(
-                f"receipt={receipt_id or 'none'} imported={payload['imported']} "
-                f"duplicates={payload['duplicates']} queue_full={payload['queue_full']} "
-                f"sources={','.join(payload['sources'])}"
-            ),
-            source_tool=source_tool,
+        detail = (
+            f"receipt={receipt_id or 'none'} imported={payload['imported']} "
+            f"duplicates={payload.get('duplicates', 0)} queue_full={payload.get('queue_full', 0)} "
+            f"not_written={payload.get('not_written', 0)} sources={','.join(payload['sources'])}"
         )
+        if payload.get("partial"):
+            detail += f" partial error={payload.get('error') or 'unknown'}"
+        audit.log("import", resource, detail=detail, source_tool=source_tool)
     return receipt
 
 
 def write_receipt(root: Path, payload: dict[str, Any], *, command: str = COMMAND) -> tuple[str, Path]:
-    """Record a confirmed import: metadata only, never the imported text."""
+    """Record an import: metadata only, never the imported text."""
     from .storage import _write_json
 
     now = datetime.now(timezone.utc)
@@ -206,8 +426,11 @@ def write_receipt(root: Path, payload: dict[str, Any], *, command: str = COMMAND
         "receipt_id": receipt_id,
         "created_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "command": command,
+        "status": "partial" if payload.get("partial") or payload.get("not_written") else "complete",
+        "error": payload.get("error", "") or "",
         "sources": payload["sources"],
         "imported": len(imported),
+        "not_written": int(payload.get("not_written", 0) or 0),
         "tier": "staging",
         "files": [{"file": name, "count": count} for name, count in sorted(files.items())],
         "items": [
@@ -216,12 +439,15 @@ def write_receipt(root: Path, payload: dict[str, Any], *, command: str = COMMAND
                 "source": item["source"],
                 "file": item["file"],
                 "content_sha256": item["content_sha256"],
+                **({"kind": item["kind"]} if item.get("kind") and item["kind"] != "lesson" else {}),
+                **({"source_changed": True} if item.get("source_changed") else {}),
             }
             for item in imported
         ],
+        "source_changed": sum(1 for item in imported if item.get("source_changed")),
         "skipped": {
-            "duplicates": payload["duplicates"],
-            "queue_full": payload["queue_full"],
+            "duplicates": int(payload.get("duplicates", 0) or 0),
+            "queue_full": int(payload.get("queue_full", 0) or 0),
         },
     }
     if payload.get("overflow_archived_ids"):
@@ -352,6 +578,16 @@ def render_preview(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def public_view(payload: dict[str, Any]) -> dict[str, Any]:
+    """The payload without item bodies and absolute source paths (for printing)."""
+    shown = dict(payload)
+    shown["items"] = [
+        {key: item[key] for key in (*_PUBLIC_ITEM_FIELDS, "source_changed") if key in item}
+        for item in payload.get("items") or []
+    ]
+    return shown
+
+
 def render_result(payload: dict[str, Any]) -> str:
     lines = [_t(
         f"已导入 {payload['imported']} 条，已放进待审区（审核前不生效）。",
@@ -361,8 +597,21 @@ def render_result(payload: dict[str, Any]) -> str:
         lines.append(_t(f"跳过重复或已拒绝：{payload['duplicates']} 条",
                         f"Skipped as duplicate or rejected before: {payload['duplicates']}"))
     if payload["queue_full"]:
-        lines.append(_t(f"待审区已满未导入：{payload['queue_full']} 条（先审核再运行）",
-                        f"Not imported, review queue full: {payload['queue_full']} (review, then run again)"))
+        lines.append(_t(f"待审区已满，停止写入；未写入 {payload['queue_full']} 条（先审核再运行）",
+                        f"Review queue full, stopped; {payload['queue_full']} not written (review, then run again)"))
+    if payload.get("partial"):
+        lines.append(_t(
+            f"导入中途出错（{payload.get('error')}），未写入 {payload.get('not_written', 0)} 条；"
+            "已写入的条目记在回执里。",
+            f"The import stopped on an error ({payload.get('error')}); {payload.get('not_written', 0)} "
+            "not written. What was written is in the receipt.",
+        ))
+    if payload.get("source_changed"):
+        lines.append(_t(
+            f"有 {payload['source_changed']} 条的源文件在确认后改动过，已按确认时的内容写入（回执里有标记）。",
+            f"{payload['source_changed']} source files changed after you confirmed; the confirmed text "
+            "was written (marked in the receipt).",
+        ))
     archived = payload.get("overflow_archived_ids") or []
     if archived:
         lines.append(_t(
@@ -412,7 +661,7 @@ def interactive_import(
         preview["status"] = "declined"
         return preview
     writer = Engram(root=root) if root is not None else Engram()
-    result = run(writer, sources, project_roots=project_roots)
+    result = write_plan(writer, preview)  # exactly the confirmed list
     result["status"] = "imported"
     out(render_result(result))
     return result
@@ -467,14 +716,16 @@ def run_cli(args: list[str]) -> int:
 
         preview = plan(Engram(read_only=True), sources)
         if dry_run or not preview["enabled"] or not preview["count"]:
-            print(json.dumps(preview, ensure_ascii=False, indent=2))
+            print(json.dumps(public_view(preview), ensure_ascii=False, indent=2))
             return 0 if preview["enabled"] else 1
         if not yes:
-            preview["requires_confirmation"] = True
-            print(json.dumps(preview, ensure_ascii=False, indent=2))
+            shown = public_view(preview)
+            shown["requires_confirmation"] = True
+            print(json.dumps(shown, ensure_ascii=False, indent=2))
             return 1
-        print(json.dumps(run(Engram(), sources), ensure_ascii=False, indent=2))
-        return 0
+        result = write_plan(Engram(), preview)
+        print(json.dumps(public_view(result), ensure_ascii=False, indent=2))
+        return 1 if result.get("partial") else 0
 
     if dry_run:
         from .core import Engram
@@ -498,8 +749,6 @@ def run_cli(args: list[str]) -> int:
 
     result = interactive_import(ask, sources=sources)
     status = result.get("status")
-    if status == "disabled":
-        return 1
-    if status == "declined":
+    if status in {"disabled", "declined"} or result.get("partial"):
         return 1
     return 0

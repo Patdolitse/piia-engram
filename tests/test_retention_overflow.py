@@ -748,10 +748,13 @@ def test_reconcile_apply_digest_mentions_rows_moved_to_the_archive(_full_stores,
     assert "overflow archive" not in render_reconcile_apply_text(quiet)
 
 
-def test_import_memories_reports_rows_moved_to_the_archive(_full_stores, tmp_path, monkeypatch):
-    # Formerly asserted on the server's startup-sync stderr line. Importing is
-    # now the explicit `engram import-memories` command; its result, printed
-    # summary and receipt carry the same capacity-cap count.
+def test_import_memories_stops_at_a_full_queue_instead_of_archiving(_full_stores, tmp_path, monkeypatch):
+    # Formerly the startup sync imported into the full queue and each capture
+    # pushed one queued row into the overflow archive. `engram import-memories`
+    # stops at a full review queue instead: nothing queued is pushed out, and
+    # the receipt counts what was not written. (The engine's library call,
+    # Engram.reconcile_memories(), keeps the archive behaviour; see the
+    # recapture tests above.)
     from piia_engram import memory_import
 
     root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
@@ -771,18 +774,22 @@ def test_import_memories_reports_rows_moved_to_the_archive(_full_stores, tmp_pat
     engram._discover_project_roots = lambda: [project]
     engram._AI_GLOBAL_CONFIGS = []
 
-    payload = memory_import.run(engram)
+    archived_before = len(_archive_lines(root, "lesson"))
+    preview = memory_import.plan(engram)
+    planned = preview["count"]
+    assert planned >= 3
 
-    memories = sum(1 for item in payload["items"] if item["source"] == "memories")
-    configs = sum(1 for item in payload["items"] if item["source"] == "configs")
-    assert memories == 2 and configs >= 1
-    # the queue is full, so each unreviewed capture moves exactly one row
-    assert len(payload["overflow_archived_ids"]) == 2 + configs
-    assert len(_archive_lines(root, "lesson")) == 2 + configs
+    payload = memory_import.write_plan(engram, preview)
+
+    assert payload["imported"] == 0
+    assert payload["queue_full"] == payload["not_written"] == planned
+    assert not payload.get("overflow_archived_ids")
+    assert len(_archive_lines(root, "lesson")) == archived_before
     text = memory_import.render_result(payload)
-    assert f": {2 + configs}" in text or f"：{2 + configs}" in text
+    assert str(planned) in text
     receipt = json.loads((root / payload["receipt"]).read_text(encoding="utf-8"))
-    assert receipt["overflow_archived_ids"] == payload["overflow_archived_ids"]
+    assert receipt["status"] == "partial" and receipt["imported"] == 0
+    assert receipt["skipped"]["queue_full"] == receipt["not_written"] == planned
 
 
 # -- MCP replies -----------------------------------------------------------------------

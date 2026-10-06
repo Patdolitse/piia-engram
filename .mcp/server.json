@@ -73,7 +73,7 @@
       "environmentVariables": [
         {
           "name": "ENGRAM_MCP_STARTUP_SYNC",
-          "description": "Skip optional local startup reconciliation during marketplace/client validation; set to background for local cross-tool sync.",
+          "description": "Kept for compatibility; has no effect. The server never imports other AI tools' memories at start (the user runs engram import-memories for that).",
           "default": "off",
           "isRequired": false,
           "isSecret": false

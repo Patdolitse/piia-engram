@@ -247,26 +247,35 @@ def _import_rules(engram: "Engram", rule_files: list[dict]) -> dict[str, Any]:
     # The detected language is reported, never written to the profile:
     # imported text does not change identity.
 
-    # Write grouped lessons (same pattern as setup_wizard)
-    if user_sections:
-        detail = _build_grouped_detail(user_sections)
-        engram.add_lesson(
-            {"summary": "用户身份与偏好（首次连接自动导入）",
-             "domain": "user_preference",
-             "detail": detail,
-             "source_tool": "engram_bootstrap",
-             "tier": "staging"},
-        )
+    # Grouped lessons, into the review queue, with an import receipt.
+    from .memory_import import recording
 
-    if project_sections:
-        detail = _build_grouped_detail(project_sections)
-        engram.add_lesson(
-            {"summary": "项目规则（首次连接自动导入）",
-             "domain": "project_rules",
-             "detail": detail,
-             "source_tool": "engram_bootstrap",
-             "tier": "staging"},
-        )
+    groups = [
+        ("用户身份与偏好（从规则文件导入）", "user_preference", user_sections),
+        ("项目规则（从规则文件导入）", "project_rules", project_sections),
+    ]
+    with recording(
+        engram, sources=["rule_files"], command="bootstrap.run_bootstrap",
+        resource="knowledge/import_rule_files", source_tool="engram_bootstrap",
+    ) as record:
+        for summary, domain, sections in groups:
+            if not sections:
+                continue
+            detail = _build_grouped_detail(sections)
+            result = engram.add_lesson(
+                {"summary": summary,
+                 "domain": domain,
+                 "detail": detail,
+                 "source_tool": "engram_bootstrap",
+                 "tier": "staging"},
+            )
+            if isinstance(result, dict) and result.get("id") and result.get("status") not in (
+                "duplicate", "rejected_before", "duplicate_retired", "queue_full"
+            ):
+                record.add_written(result["id"], source="rule_files",
+                                   file=", ".join(sorted(sections)), summary=summary, detail=detail)
+            else:
+                record.duplicates += 1
 
     return {
         "user_count": user_count,

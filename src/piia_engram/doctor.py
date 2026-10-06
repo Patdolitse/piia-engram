@@ -847,6 +847,8 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         summary = memory_import.importable_summary(eng.root)
         mark = "--" if summary.get("count") or not summary.get("enabled") else "ok"
         W._safe_print(f"    [{mark}] Other AI tools' memories: {memory_import.importable_text(summary)}")
+        if summary.get("enabled"):
+            W._safe_print(f"    [--] Import {memory_import.LIMITS_NOTE}")
         for line in memory_import.legacy_switch_notes():
             W._safe_print(f"    [--] {line}")
         note = reconcile_env_conflict_note()
