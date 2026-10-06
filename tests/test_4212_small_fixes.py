@@ -285,10 +285,12 @@ def test_doctor_names_settings_a_client_env_block_misses(home, monkeypatch):
 
     findings = dict((t["name"], m) for t, m in doctor._client_env_findings(tools, strict=True, user_env=user_env))
 
+    # ENGRAM_RECONCILE is no longer reported: the MCP server does not read other
+    # AI tools' files any more, so a client env block does not need it.
     assert findings["Claude Desktop"] == {
-        "ENGRAM_APPROVAL": "strict", "ENGRAM_RECONCILE": "0", "ENGRAM_REVIEW_QUEUE_MAX": "30",
+        "ENGRAM_APPROVAL": "strict", "ENGRAM_REVIEW_QUEUE_MAX": "30",
     }
-    assert findings["Codex"] == {"ENGRAM_RECONCILE": "0"}
+    assert "Codex" not in findings
 
 
 # ---------------------------------------------------------------------------

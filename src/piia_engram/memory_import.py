@@ -231,6 +231,54 @@ def importable_summary(root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def legacy_switch_notes(env=None) -> list[str]:
+    """What the older import switches mean now (for ``engram doctor``)."""
+    import os
+
+    from .reconcile import _reconcile_config_value
+
+    env = os.environ if env is None else env
+    notes: list[str] = []
+    sync = str(env.get("ENGRAM_MCP_STARTUP_SYNC", "") or "").strip()
+    if sync:
+        notes.append(
+            f"ENGRAM_MCP_STARTUP_SYNC={sync} no longer has any effect: the MCP server "
+            f"never imports at start ({COMMAND} does, when you run it). It can be removed."
+        )
+    reconcile = str(env.get("ENGRAM_RECONCILE", "") or "").strip()
+    if reconcile:
+        value = reconcile.lower()
+        mode = ("off" if value in ("0", "false", "off", "no")
+                else "on" if value in ("1", "true", "on", "yes") else "")
+        if mode == "off":
+            notes.append(
+                f"ENGRAM_RECONCILE={reconcile}: other AI tools' files are never read; "
+                f"{COMMAND} refuses and doctor/status show no count."
+            )
+        elif mode == "on":
+            notes.append(
+                f"ENGRAM_RECONCILE={reconcile} no longer turns on any automatic import; "
+                f"only {COMMAND} reads other AI tools' files."
+            )
+        else:
+            notes.append(
+                f"ENGRAM_RECONCILE={reconcile} is not a recognised value and is ignored "
+                "(0 switches reading other AI tools' files off)."
+            )
+    configured = _reconcile_config_value()
+    if configured is True:
+        notes.append(
+            "reconcile_authorized=true (telemetry_config.json) no longer turns on any "
+            f"automatic import; it only allows {COMMAND}."
+        )
+    elif configured is False:
+        notes.append(
+            "reconcile_authorized=false (telemetry_config.json): other AI tools' files "
+            f"are never read; {COMMAND} refuses."
+        )
+    return notes
+
+
 def importable_text(summary: dict[str, Any]) -> str:
     """One line for doctor / status."""
     if not summary.get("enabled"):

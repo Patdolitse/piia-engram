@@ -62,9 +62,10 @@ def _detect_installed_tools() -> list[dict]:
 
 # Settings an MCP server reads from its environment. Claude Desktop and Codex pass
 # the server only the env block of its config entry, not the user's environment.
+# ENGRAM_RECONCILE is not listed: the server no longer reads other AI tools' files,
+# so the variable only matters to the `engram import-memories` command.
 _CLIENT_ENV_WATCHED = (
     "ENGRAM_APPROVAL",
-    "ENGRAM_RECONCILE",
     "ENGRAM_REVIEW_QUEUE_MAX",
     "ENGRAM_REVIEW_QUEUE_CEILING",
 )
@@ -836,15 +837,23 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] Strict latch check failed: {exc}")
         problems += 1
 
-    # 2.6 reconcile: an ENGRAM_RECONCILE=1 that the config overrides is reported
+    # 2.6 other AI tools' memories: never imported automatically. A read-only
+    # count of what `engram import-memories` would add, plus what the old
+    # switches mean now.
     try:
+        from piia_engram import memory_import
         from piia_engram.reconcile import reconcile_env_conflict_note
 
+        summary = memory_import.importable_summary(eng.root)
+        mark = "--" if summary.get("count") or not summary.get("enabled") else "ok"
+        W._safe_print(f"    [{mark}] Other AI tools' memories: {memory_import.importable_text(summary)}")
+        for line in memory_import.legacy_switch_notes():
+            W._safe_print(f"    [--] {line}")
         note = reconcile_env_conflict_note()
         if note:
             print(f"    [!] Reconcile: {note}")
     except Exception as exc:
-        print(f"    [!!] Reconcile check failed: {exc}")
+        print(f"    [!!] Other AI tools' memory check failed: {exc}")
         problems += 1
 
     # 3. 身份数据读取

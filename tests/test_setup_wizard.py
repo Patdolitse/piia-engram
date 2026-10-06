@@ -2025,8 +2025,20 @@ def test_scan_rule_files_skips_tiny_files(tmp_path: Path):
 
 
 class TestPrivacyPreferences:
+    @pytest.fixture(autouse=True)
+    def _empty_home(self, tmp_path, monkeypatch):
+        # The import question reads other AI tools' files under HOME on a yes.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
     def test_both_defaults(self, tmp_path, monkeypatch, capsys):
-        """Pressing Enter twice should keep defaults: reconcile=Yes, telemetry=No."""
+        """Pressing Enter twice keeps defaults: no import now, telemetry=No.
+
+        Setup used to store reconcile_authorized=true here (automatic import on
+        every start). It now only offers a one-time import and stores no switch.
+        """
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
         monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
@@ -2038,8 +2050,9 @@ class TestPrivacyPreferences:
         cfg_path = tmp_path / "telemetry_config.json"
         assert cfg_path.is_file()
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        assert cfg["reconcile_authorized"] is True
+        assert "reconcile_authorized" not in cfg
         assert cfg["enabled"] is False
+        assert "engram import-memories" in capsys.readouterr().out
 
     def test_opt_in_telemetry(self, tmp_path, monkeypatch, capsys):
         """Answering 'y' to telemetry should enable it."""
@@ -2056,18 +2069,23 @@ class TestPrivacyPreferences:
         assert cfg["enabled"] is True
         assert "opted_in_at" in cfg
 
-    def test_opt_out_reconcile(self, tmp_path, monkeypatch, capsys):
-        """Answering 'n' to reconcile should disable it."""
+    def test_declining_the_import_stores_no_switch(self, tmp_path, monkeypatch, capsys):
+        """'n' to "import once now?" imports nothing and stores no switch.
+
+        This used to store reconcile_authorized=false. A "not now" is not a
+        standing refusal; `engram import-memories` stays available.
+        """
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
         monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
-        answers = iter(["n", ""])  # reconcile no, telemetry default
+        answers = iter(["n", ""])  # import no, telemetry default
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
         _run_privacy_preferences(str(tmp_path))
 
         cfg = json.loads((tmp_path / "telemetry_config.json").read_text(encoding="utf-8"))
-        assert cfg["reconcile_authorized"] is False
+        assert "reconcile_authorized" not in cfg
+        assert not (tmp_path / "import_receipts").exists()
 
 
 class TestPrivacyCopyMentionsTheDailyPing:
@@ -2078,6 +2096,12 @@ class TestPrivacyCopyMentionsTheDailyPing:
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         for var in ("ENGRAM_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY", "ENGRAM_RECONCILE"):
             monkeypatch.delenv(var, raising=False)
+        # A "y" to every question includes "import once now?", which reads
+        # other AI tools' files under HOME: keep that in an empty temp home.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
 
     @pytest.mark.parametrize("lang,needles", [
         ("en", ("Your memories stay on this machine",

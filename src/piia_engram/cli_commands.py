@@ -5170,7 +5170,7 @@ def run_status(argv: list[str] | None = None) -> int:
         print("--output only applies with --html")
         _print_status_usage()
         return 2
-    status = build_status(probe=not no_probe)
+    status = build_status(probe=not no_probe, external_memories=True)
     if html_output:
         path = write_status_html(status, output)
         print(f"Engram status HTML written to: {path}")

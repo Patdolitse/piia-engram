@@ -2460,13 +2460,53 @@ def _turn_off_usage_ping() -> None:
         pass
 
 
-def _run_privacy_preferences(data_dir: str) -> None:
-    """Ask user about auto-reconcile and anonymous usage statistics."""
-    from piia_engram.telemetry import (
-        _load_config, _save_config, set_enabled, set_remote_enabled,
-    )
+def _offer_setup_import(data_dir: str) -> None:
+    """Setup's import step: ask once; a yes runs `engram import-memories`.
 
-    cfg = _load_config()
+    Engram never reads other AI tools' files on its own. Answering yes lists
+    what was found and imports into the review queue only after a second yes.
+    A no writes nothing (no switch is stored either).
+    """
+    print(_t("  [1] 导入其它 AI 工具的记忆（可选，一次性）",
+             "  [1] Import memories from other AI tools (optional, one time)"))
+    print(_t("      Engram 不会自动读取其它 AI 工具的文件（如 ~/.claude/projects/*/memory/*.md、",
+             "      Engram never reads other AI tools' files on its own (e.g."))
+    print(_t("      CLAUDE.md、.cursorrules）。现在可以导入一次：先列出清单，确认后才写入待审区。",
+             "      ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules). Import once now:"))
+    print(_t("      以后随时可运行 engram import-memories。\n",
+             "      it lists them first and writes to the review queue only after you confirm.\n"
+             "      Run engram import-memories any time later.\n"))
+    if not _yn(_t("  现在导入一次吗？", "  Import once now?"), default=False):
+        print(_t("  ℹ️  未导入。以后可运行 engram import-memories。\n",
+                 "  ℹ️  Nothing imported. Run engram import-memories any time.\n"))
+        return
+    try:
+        from piia_engram import memory_import
+
+        state = memory_import.switch_state()
+        if not state["enabled"] and state["disabled_by"] == "reconcile_authorized=false":
+            # This yes is the Owner's consent; lift the earlier stored "no".
+            from piia_engram.telemetry import _load_config, _save_config
+
+            cfg = _load_config()
+            cfg["reconcile_authorized"] = True
+            _save_config(cfg)
+            print(_t("  ℹ️  已重新允许读取其它 AI 工具的文件（reconcile_authorized=true）。",
+                     "  ℹ️  Reading other AI tools' files is allowed again (reconcile_authorized=true)."))
+        memory_import.interactive_import(
+            lambda question: _yn(f"  {question}", default=False),
+            out=lambda text: _safe_print("\n".join(f"  {line}" for line in text.splitlines())),
+            root=Path(data_dir),
+        )
+    except Exception as exc:
+        print(_t(f"  ⚠️  导入未完成（{exc}）。可稍后运行 engram import-memories。",
+                 f"  ⚠️  Import did not finish ({exc}). Run engram import-memories later."))
+    print()
+
+
+def _run_privacy_preferences(data_dir: str) -> None:
+    """Offer a one-time import from other AI tools; ask about usage statistics."""
+    from piia_engram.telemetry import set_enabled, set_remote_enabled
 
     print(_t("\nStep 5 — 隐私与数据偏好", "\nStep 5 — Privacy & data preferences"))
     print(_t("  你的记忆只留在本机。Engram 每天发送一次匿名使用信号；下面第 [2] 或 [2b] 项选择“否”也会关闭它。",
@@ -2475,29 +2515,7 @@ def _run_privacy_preferences(data_dir: str) -> None:
     print(_t("  以下可选功能需要你明确同意。\n",
              "  The following optional features require your explicit consent.\n"))
 
-    # --- Reconcile authorization ---
-    print(_t("  [1] 跨工具记忆同步",
-             "  [1] Cross-tool memory sync"))
-    print(_t("      Engram 可以在每次启动时自动扫描其他 AI 工具的配置文件",
-             "      Engram can scan other AI tools' config files on each startup"))
-    print(_t("      （如 ~/.claude/projects/*/memory/*.md、CLAUDE.md、.cursorrules 等）",
-             "      (e.g. ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules)"))
-    print(_t("      并导入其中的规则和记忆到 Engram。",
-             "      and import rules and memories into Engram."))
-    print(_t("      扫描结果会显示在 get_user_context 输出中。\n",
-             "      Results appear in get_user_context output.\n"))
-
-    reconcile_authorized = _yn(
-        _t("  允许 Engram 扫描其他 AI 工具的文件？",
-           "  Allow Engram to scan other AI tools' files?"),
-        default=True,
-    )
-    cfg["reconcile_authorized"] = reconcile_authorized
-    if reconcile_authorized:
-        print(_t("  ✅ 已授权跨工具同步\n", "  ✅ Cross-tool sync authorized\n"))
-    else:
-        print(_t("  ℹ️  已关闭跨工具同步。可设置 ENGRAM_RECONCILE=1 重新开启。\n",
-                 "  ℹ️  Cross-tool sync disabled. Set ENGRAM_RECONCILE=1 to re-enable.\n"))
+    _offer_setup_import(data_dir)
 
     # --- Anonymous usage statistics ---
     print(_t("  [2] 匿名使用统计",
@@ -2562,22 +2580,15 @@ def _run_privacy_preferences(data_dir: str) -> None:
         print(_t("  ℹ️  未开启，每日使用信号也已关闭。可随时运行 engram telemetry on 改变。\n",
                  "  ℹ️  Not enabled; the daily usage ping is off too. Run engram telemetry on to change anytime.\n"))
 
-    # Save reconcile pref to same config file
-    cfg_all = _load_config()
-    cfg_all["reconcile_authorized"] = reconcile_authorized
-    _save_config(cfg_all)
 
 
 def _run_privacy_defaults(data_dir: str) -> None:
-    """Set reconcile=on by default, then ask about telemetry."""
+    """Offer a one-time import from other AI tools, then ask about telemetry."""
     from piia_engram.telemetry import (
-        _load_config, _save_config, set_enabled, set_feedback_enabled,
-        set_remote_enabled,
+        set_enabled, set_feedback_enabled, set_remote_enabled,
     )
 
-    cfg = _load_config()
-    cfg["reconcile_authorized"] = True
-    _save_config(cfg)
+    _offer_setup_import(data_dir)
 
     # --- Ask about telemetry — one question, all-or-nothing ---
     print(_t("  [匿名使用统计]",
@@ -3103,11 +3114,16 @@ def _save_setup_report(
 
 
 def auto_migrate() -> None:
-    """升级后首次启动时静默迁移旧配置，每个版本只运行一次。
+    """升级后首次启动时检查旧配置，每个版本只运行一次。
 
     由 mcp_server.py 在 stdio 模式启动前调用。
     不向 stdout 输出任何内容（避免破坏 MCP 协议）。
     迁移日志写入 ~/.engram/migration.log。
+
+    Config only and idempotent: it writes the ``.migrated_version`` marker, a
+    ``migration.log`` notice when legacy client entries are found, and one
+    ``config/auto_migrate`` audit line per version. It never reads or writes
+    memory content and never changes files outside the store.
     """
     try:
         import os as _os
@@ -3149,7 +3165,22 @@ def auto_migrate() -> None:
 
         # 写哨兵（无论是否有迁移，都标记当前版本已处理过）
         data_dir.mkdir(parents=True, exist_ok=True)
+        previous = sentinel.read_text(encoding="utf-8").strip() if sentinel.is_file() else ""
         sentinel.write_text(_ver, encoding="utf-8")
+
+        # Audit the run: once per installed version, config only. This step
+        # never reads or writes memory content (lessons, decisions, identity).
+        from piia_engram.audit import AuditLogger, audit_enabled_by_env
+
+        AuditLogger(data_dir / "audit.log", enabled=audit_enabled_by_env()).log(
+            "write",
+            "config/auto_migrate",
+            detail=(
+                f"from={previous or 'none'} to={_ver} "
+                f"legacy_client_entries={len(log_lines)} memory_content=untouched"
+            ),
+            source_tool="mcp_startup",
+        )
 
         # 写迁移日志（仅在有实际变更时）
         if log_lines:
