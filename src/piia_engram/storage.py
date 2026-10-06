@@ -18,6 +18,7 @@ from typing import Any, Iterator
 
 import portalocker
 
+from .atomic_replace import replace_with_retry
 from .capacity import SYSTEM_FIELDS as _CAPACITY_SYSTEM_FIELDS
 from .capacity import UPDATABLE_STATUSES as _CALLER_STATUSES
 
@@ -567,7 +568,7 @@ def _atomic_write_json(path: Path, data: Any) -> None:
                 f.write(candidate_text)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, path)
+            replace_with_retry(tmp_path, path)
     except portalocker.LockException as exc:
         if fd != -1:
             os.close(fd)
@@ -648,7 +649,7 @@ def _update_json(path: Path, mutator, *, default: Any = None, blocking: bool = T
                     f.write(candidate_text)
                     f.flush()
                     os.fsync(f.fileno())
-                os.replace(tmp_path, path)
+                replace_with_retry(tmp_path, path)
             except Exception:
                 if fd != -1:
                     os.close(fd)

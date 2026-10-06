@@ -222,7 +222,7 @@ def _remove_locked(path: Path, item_id: str) -> bool:
     if removed:
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text("".join(k + "\n" for k in kept), encoding="utf-8")
-        import os
+        from .atomic_replace import replace_with_retry
 
-        os.replace(tmp, path)
+        replace_with_retry(tmp, path)
     return removed

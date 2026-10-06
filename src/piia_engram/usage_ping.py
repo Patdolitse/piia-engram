@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.request import Request, urlopen
 
+from .atomic_replace import replace_with_retry
+
 ENDPOINT = "https://telemetry.piia-engram.com/v1/ping"
 SCHEMA = "ping/1"
 TIMEOUT_SECONDS = 3
@@ -132,7 +134,7 @@ def set_enabled(enabled: bool) -> None:
     try:
         tmp.write_text(json.dumps({"enabled": bool(enabled), "changed_at": _today()}) + "\n",
                        encoding="utf-8")
-        os.replace(tmp, path)
+        replace_with_retry(tmp, path)
     except BaseException:
         try:
             tmp.unlink()

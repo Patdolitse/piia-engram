@@ -681,6 +681,8 @@ class IsolatedStore:
                                  "operator": operator})
 
     def owner_rebind(self, operator: str) -> dict:
+        from .atomic_replace import replace_with_retry
+
         problem = self._receipts_problem()
         if problem:  # refuse before acting: never rebind without a receipt
             return self._refuse_unreadable("rebind", problem)
@@ -691,7 +693,7 @@ class IsolatedStore:
             marker["rebound_at"] = utc_now_z()
             tmp = marker_path.with_suffix(".tmp")
             tmp.write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
-            os.replace(tmp, marker_path)
+            replace_with_retry(tmp, marker_path)
             return self._append({"op": "rebind", "result": "rebound", "operator": operator})
 
     # -- recall (design s8) ---------------------------------------------------------

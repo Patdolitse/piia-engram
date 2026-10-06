@@ -1781,6 +1781,8 @@ class ContextMixin:
         import tempfile as _tempfile
         from pathlib import Path as _Path
 
+        from .atomic_replace import replace_with_retry
+
         body = self.generate_context(level=level)
         timestamp = datetime.now().isoformat(timespec="seconds")
         content = (
@@ -1802,7 +1804,7 @@ class ContextMixin:
                 f.write(content)
                 f.flush()
                 _os.fsync(f.fileno())
-            _os.replace(tmp_name, path)
+            replace_with_retry(tmp_name, path)
         except Exception:
             try:
                 _Path(tmp_name).unlink()

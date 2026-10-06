@@ -666,13 +666,16 @@ class Engram(
     def _atomic_write_bytes(path: Path, data: bytes) -> None:
         """Write bytes atomically via temp file + fsync + rename."""
         import tempfile
+
+        from .atomic_replace import replace_with_retry
+
         fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
             os.write(fd, data)
             os.fsync(fd)
             os.close(fd)
             fd = -1
-            Path(tmp).replace(path)
+            replace_with_retry(tmp, path)
         except BaseException:
             if fd >= 0:
                 os.close(fd)

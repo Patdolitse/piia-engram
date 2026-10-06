@@ -26,6 +26,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **`engram import-memories`.** Lists memories and rule-file sections found in other AI tools, then adds them to the review queue after you confirm (`--dry-run`, `--yes`, `--source memories|configs`). Each import writes a receipt to `import_receipts/` and an audit line; running it again adds nothing twice. `engram doctor` and `engram status` show how many can be imported.
 - **Daily anonymous usage ping (on by default).** Engram now sends one anonymous ping a day — a random install ID, version, OS, Python version, AI client name and date — so we know how many installs are active. It never contains memories, paths, accounts or command arguments, and the server keeps no IP addresses. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers, and stays off if you had turned the detailed statistics off. `engram telemetry status / preview / reset-id` show and control it. Detailed statistics and feedback reports are unchanged (still opt-in).
 
+### Fixed
+- **Windows: writes no longer fail while another process reads the same file.** When several AI clients share one store, a write could fail with `PermissionError [WinError 5]` if another process, an antivirus or a search indexer had the file open at that moment. Engram now retries such a write for up to one second; a permission problem that lasts longer is still reported.
+
 ## [4.21.2] - 2026-09-26
 
 ### Fixed
