@@ -190,11 +190,15 @@ def _print_review_usage() -> None:
     print(
         "Usage:\n"
         "  engram review [--limit N] [--sort recent|quality|quality-desc] [--low-quality]\n"
+        "  engram review interactive [--operator <name>]   (alias: engram review -i)\n"
+        "      one item at a time: a approve, r reject, s supersede, k skip, v full text, q stop;\n"
+        "      nothing is written until you confirm the summary with y (needs a terminal)\n"
         "  engram review show <id>\n"
         "  engram review approve <id> --yes\n"
         "  engram review archive <id> --yes\n"
         "  engram review export --out <dir>\n"
         "  engram review apply <marks.json> [--operator <name> --yes]\n"
+        "      marks: approve | reject | edit-type:<type> | supersede:<old id> | retire | restore\n"
         "  engram review tombstone --ids-file <file> [--go-ref <ref>] [--operator <name> --yes]\n"
     )
 

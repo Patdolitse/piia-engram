@@ -1,4 +1,5 @@
-"""Owner review verbs for the local CLI: ``engram review export | apply | tombstone``.
+"""Owner review verbs for the local CLI: ``engram review export | apply | tombstone``
+(and ``interactive``, in ``review_interactive``, which applies through ``apply_marks``).
 
 These are the Owner's side of strict mode: agents propose over MCP, the Owner
 (or the lane, with the Owner's go) decides here. Nothing here is reachable over
@@ -741,8 +742,16 @@ def run_untombstone(args: list[str]) -> int:
     return 0
 
 
+def run_interactive(args: list[str]) -> int:
+    """``engram review interactive`` (or ``-i``): one item at a time in a terminal."""
+    from .review_interactive import run
+
+    return run(args)
+
+
 VERBS = {"export": run_export, "apply": run_apply, "tombstone": run_tombstone,
-         "strict-marker": run_strict_marker, "untombstone": run_untombstone}
+         "strict-marker": run_strict_marker, "untombstone": run_untombstone,
+         "interactive": run_interactive, "-i": run_interactive}
 
 
 def run_playbook_list(args: list[str]) -> int:

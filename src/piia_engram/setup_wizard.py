@@ -3418,6 +3418,7 @@ def main() -> None:
             "  engram sessions         List saved cross-tool agent sessions\n"
             "  engram sessions show <id>  Print one saved session\n"
             "  engram review           List staging knowledge awaiting review\n"
+            "  engram review interactive  Decide pending proposals one at a time (a/r/s/k/v/q)\n"
             "  engram review show <id> Inspect one review item\n"
             "  engram review approve <id> --yes  Promote staging item\n"
             "  engram review archive <id> --yes  Archive review item\n"
