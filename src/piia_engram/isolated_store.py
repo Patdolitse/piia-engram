@@ -1,0 +1,989 @@
+"""Isolated, admission-gated memory store for an automated decision process.
+
+A second, separate Engram store that one automated caller uses. It is not the
+Owner's own store and never touches it:
+
+- The process runs with a cleaned environment built by ``isolated_store_launch`` before
+  this package is imported (``ENGRAM_*`` allow-list, a fake home), and :meth:`open`
+  checks that again, plus a pinned deny list of the Owner's paths, the root marker
+  and the pinned capacity limits.
+- The caller's admission verdict is the only way in (:meth:`IsolatedStore.admit`);
+  the library's own gates (dedup, tombstones, capacity) still apply. The store is
+  not in strict approval mode: the admission verdict is the valve, by the Owner's
+  choice for this store. The Owner keeps a veto (:meth:`owner_retire`,
+  :meth:`owner_reject`).
+- Every operation appends a hash-chained receipt outside the root; recall replays
+  receipts to the decision's own time and never returns a card from the decision's
+  family for replay and test items.
+
+Recall only guarantees that the right cards come back; whether recall improves a
+decision is measured by the caller's comparison arms, not assumed.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable, Iterator
+
+CONFIG_ENV = "PIIA_ISOLATED_STORE_CONFIG"
+MARKER = "isolated_store_root.json"
+LIMITS_FILE = "isolated_store_limits.json"
+RECEIPTS_FILE = "receipts.jsonl"
+REFUSALS_FILE = "refusals.jsonl"  # guard refusals: kept out of the hash chain
+STRICT_MARKER = "approval_mode.json"
+ENGRAM_ALLOWED_FIXED = {
+    "ENGRAM_RECONCILE": "0",
+    "ENGRAM_AUDIT": "1",
+    "ENGRAM_NO_UPDATE_CHECK": "1",
+}
+ENGRAM_ALLOWED_FREE = {"ENGRAM_DIR", "ENGRAM_CACHE_DIR"}
+EVIDENCE_KEYS = ("evidence_as_of", "source_family", "source_decision_point", "subject_id")
+HASHED_KEYS = ("summary", "detail") + EVIDENCE_KEYS
+DEFAULT_LIMITS = {
+    "soft_cap": 1000,
+    "hard_cap": 1000,
+    "review_queue_max": 1,
+    "review_queue_ceiling": 1,
+    "review_min_stay_days": 7,
+    "retired_grace_days": 3650,
+    "r_max": 1000,
+}
+MODES_EXCLUDING_OWN_FAMILY = {"replay", "test"}
+# Must point inside the fake home when set (the launcher sets them there).
+HOME_LIKE_VARS = ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "TMPDIR",
+                  "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
+# Other tools' locations the library may read; the launcher drops them.
+FOREIGN_PATH_VARS = ("FASTEMBED_CACHE_PATH", "CODEX_HOME", "HF_HOME", "TRANSFORMERS_CACHE")
+MODES = {"live", "test", "replay"}
+_UTC_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$")
+_PROCESS_STARTED_UTC = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class GuardRefused(Exception):
+    """The root or the process environment failed a guard check; nothing was written."""
+
+    def __init__(self, code: str, detail: str = ""):
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+        self.detail = detail
+
+
+class RecallRefused(Exception):
+    """Recall cannot run safely (missing decision-point file or field, bad time)."""
+
+
+class ReceiptsUnreadable(Exception):
+    """The receipt file has a line that is not JSON (e.g. a torn last write)."""
+
+
+FAMILY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,48}$")
+
+
+def _family_key(value: Any) -> str:
+    """Canonical family code for comparison: upper case, "-" and "." as "_".
+
+    So Q2-IRV, q2_irv and Q2.IRV are one family; two spellings can never split it.
+    """
+    return str(value or "").strip().upper().replace("-", "_").replace(".", "_")
+
+
+class IoRetryExhausted(Exception):
+    """A library write kept failing with an OS error (e.g. a Windows file in use)."""
+
+
+IO_RETRIES = 3
+IO_RETRY_SLEEP = 0.2
+
+
+def _with_retry(fn):
+    """Run a library write; retry OS errors a few times (Windows replace while a reader
+    holds the file), then raise IoRetryExhausted so the caller writes a receipt."""
+    last: OSError | None = None
+    for attempt in range(IO_RETRIES):
+        try:
+            return fn()
+        except OSError as exc:
+            last = exc
+            time.sleep(IO_RETRY_SLEEP * (attempt + 1))
+    raise IoRetryExhausted(type(last).__name__ if last else "OSError")
+
+
+# ---------------------------------------------------------------------------
+# small helpers
+# ---------------------------------------------------------------------------
+
+
+def utc_now_z() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def parse_utc_z(value: Any, field: str) -> datetime:
+    text = str(value or "")
+    if not _UTC_Z.match(text):
+        raise ValueError(f"{field} must be UTC ISO time ending in Z, got {text!r}")
+    return datetime.fromisoformat(text[:-1] + "+00:00")
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _sha256_json(obj: Any) -> str:
+    return _sha256_bytes(json.dumps(obj, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+
+
+def content_hash(row: dict) -> str:
+    """Hash of the card's immutable content as stored (labels, links and status excluded)."""
+    return _sha256_json({k: row.get(k) for k in HASHED_KEYS})
+
+
+def _norm(path: str) -> str:
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def _within(a: str, b: str) -> bool:
+    """True when normalized path a equals b or lies inside it."""
+    a, b = _norm(a), _norm(b)
+    return a == b or a.startswith(b.rstrip("\\/") + os.sep)
+
+
+def _is_unc_or_device(path: str) -> bool:
+    text = str(path)
+    return text.startswith("\\\\") or text.startswith("//")
+
+
+def _drive_problem(path: str) -> str:
+    """'' for a path on a local fixed disk, else why not (Windows only)."""
+    if sys.platform != "win32":
+        return ""
+    import ctypes
+
+    drive = os.path.splitdrive(path)[0]
+    if not re.fullmatch(r"[A-Za-z]:", drive or ""):
+        return "no drive letter"
+    kind = ctypes.windll.kernel32.GetDriveTypeW(f"{drive}\\")
+    if kind != 3:
+        return f"drive {drive} is not a local fixed disk (type {kind})"
+    buf = ctypes.create_unicode_buffer(1024)
+    if ctypes.windll.kernel32.QueryDosDeviceW(drive, buf, 1024) and buf.value.startswith("\\??\\"):
+        return f"drive {drive} is a subst mapping"
+    return ""
+
+
+def _full_admission(admission: Any, verdict: str) -> bool:
+    """The same three fields admit needs: verdict, judge version, decision record."""
+    return (isinstance(admission, dict) and admission.get("verdict") == verdict
+            and bool(admission.get("judge_version")) and bool(admission.get("decision_record_id")))
+
+
+def _same_as_root(env_dir: str, configured_root: Path) -> bool:
+    """ENGRAM_DIR equals the configured root, compared as strings: the value comes from
+    the environment, so it is never resolved (it could name the Owner's store)."""
+    return bool(env_dir) and _norm(env_dir) == _norm(str(configured_root))
+
+
+def _identity(path: Path) -> dict:
+    st = os.stat(path)
+    return {"realpath": os.path.realpath(path), "volume": st.st_dev, "file_id": st.st_ino}
+
+
+# ---------------------------------------------------------------------------
+# configuration
+# ---------------------------------------------------------------------------
+
+
+class Config:
+    """The pinned launcher configuration (a JSON file the Owner approves)."""
+
+    def __init__(self, data: dict, path: Path | None = None):
+        missing = [k for k in ("root", "receipts_dir", "fake_home", "cache_dir", "decision_points_dir",
+                               "deny_list_file", "deny_list_sha256") if not data.get(k)]
+        if missing:
+            raise GuardRefused("config_incomplete", ",".join(missing))
+        self.path = path
+        self.root = Path(data["root"])
+        self.receipts_dir = Path(data["receipts_dir"])
+        self.fake_home = Path(data["fake_home"])
+        self.cache_dir = Path(data["cache_dir"])
+        self.decision_points_dir = Path(data["decision_points_dir"])
+        self.deny_list_file = Path(data["deny_list_file"])
+        self.deny_list_sha256 = str(data["deny_list_sha256"])
+        self.limits = {**DEFAULT_LIMITS, **(data.get("limits") or {})}
+
+    @classmethod
+    def load(cls, path: str | os.PathLike) -> "Config":
+        p = Path(path)
+        return cls(json.loads(p.read_text(encoding="utf-8")), p)
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        value = os.environ.get(CONFIG_ENV, "").strip()
+        if not value:
+            raise GuardRefused("config_missing", f"{CONFIG_ENV} is not set; start through the launcher")
+        return cls.load(value)
+
+    def deny_list(self) -> list[str]:
+        raw = self.deny_list_file.read_bytes()
+        if _sha256_bytes(raw) != self.deny_list_sha256:
+            raise GuardRefused("deny_list_hash_mismatch", "the pinned deny list was changed")
+        entries = json.loads(raw.decode("utf-8")).get("deny")
+        if not isinstance(entries, list) or not entries or not all(isinstance(e, str) and e for e in entries):
+            raise GuardRefused("deny_list_invalid")
+        return entries
+
+
+def limits_env(limits: dict) -> dict[str, str]:
+    from . import capacity as _capacity
+
+    return {var: str(int(limits[name])) for name, var in _capacity._ENV_LIMITS.items()}
+
+
+# ---------------------------------------------------------------------------
+# guard
+# ---------------------------------------------------------------------------
+
+
+def check_candidate(path: Path, deny: Iterable[str], *, label: str) -> str:
+    """Resolved real path of a candidate dir, or GuardRefused. Never stats the deny list."""
+    text = str(path)
+    if _is_unc_or_device(text):
+        raise GuardRefused("guard_unc_or_device", f"{label}: UNC, \\\\?\\ and \\\\.\\ paths are refused")
+    if not os.path.isabs(text):
+        raise GuardRefused("guard_relative", label)
+    real = os.path.realpath(text)
+    if _is_unc_or_device(real):
+        raise GuardRefused("guard_unc_or_device", f"{label} resolves to a network or device path")
+    problem = _drive_problem(real)
+    if problem:
+        raise GuardRefused("guard_drive", f"{label}: {problem}")
+    for entry in deny:
+        if _within(real, entry) or _within(entry, real):
+            raise GuardRefused("guard_owner_store", f"{label} overlaps a denied path")
+    return real
+
+
+def check_environment(cfg: Config) -> None:
+    allowed = set(ENGRAM_ALLOWED_FIXED) | ENGRAM_ALLOWED_FREE | set(limits_env(cfg.limits))
+    present = {k.upper(): v for k, v in os.environ.items() if k.upper().startswith("ENGRAM_")}
+    extra = sorted(set(present) - allowed)
+    if extra:
+        raise GuardRefused("guard_env_not_allowed", ",".join(extra))
+    for key, value in ENGRAM_ALLOWED_FIXED.items():
+        if present.get(key) != value:
+            raise GuardRefused("guard_env_value", f"{key} must be {value}")
+    for key, value in limits_env(cfg.limits).items():
+        if present.get(key) != value:
+            raise GuardRefused("guard_limits_mismatch", key)
+    from . import capacity as _capacity
+
+    problem = _capacity.limits_env_problem()
+    if problem:
+        raise GuardRefused("guard_limits_invalid", str(problem))
+    # String comparison only: a path taken from the environment is never resolved.
+    if not _within(str(Path.home()), str(cfg.fake_home)):
+        raise GuardRefused("guard_home_not_redirected", "Path.home() is not the fake home")
+    for var in HOME_LIKE_VARS:
+        value = os.environ.get(var, "")
+        if value and not _within(value, str(cfg.fake_home)):
+            raise GuardRefused("guard_home_not_redirected", f"{var} is outside the fake home")
+    if os.environ.get("HOMEDRIVE") or os.environ.get("HOMEPATH"):
+        combined = os.environ.get("HOMEDRIVE", "") + os.environ.get("HOMEPATH", "")
+        if not _within(combined, str(cfg.fake_home)):
+            raise GuardRefused("guard_home_not_redirected", "HOMEDRIVE+HOMEPATH is outside the fake home")
+    present = sorted(v for v in FOREIGN_PATH_VARS if os.environ.get(v))
+    if present:
+        raise GuardRefused("guard_env_foreign_path", ",".join(present))
+
+
+# ---------------------------------------------------------------------------
+# the root
+# ---------------------------------------------------------------------------
+
+
+class IsolatedStore:
+    """An opened isolated store. Build with :meth:`open` (or :func:`init_root`)."""
+
+    def __init__(self, cfg: Config, root_real: str, receipts_real: str, deny: list[str] | None = None):
+        self.cfg = cfg
+        self.deny = list(deny or [])
+        self.root = Path(root_real)
+        self.receipts_dir = Path(receipts_real)
+        self.receipts_path = self.receipts_dir / RECEIPTS_FILE
+        from . import __version__
+
+        self.lib_version = __version__
+
+    # -- opening -----------------------------------------------------------
+
+    @classmethod
+    def open(cls, cfg: Config | None = None, *, allow_strict_latch: bool = False,
+             allow_rebind: bool = False) -> "IsolatedStore":
+        cfg = cfg or Config.from_env()
+        deny = cfg.deny_list()
+        receipts_real = check_candidate(cfg.receipts_dir, deny, label="receipts_dir")
+        try:
+            root_real = check_candidate(cfg.root, deny, label="root")
+            if _within(receipts_real, root_real) or _within(root_real, receipts_real):
+                raise GuardRefused("guard_receipts_in_root")
+            check_environment(cfg)
+            if not _same_as_root(os.environ.get("ENGRAM_DIR", ""), cfg.root):
+                raise GuardRefused("guard_engram_dir_mismatch", "ENGRAM_DIR is not the root")
+            if (Path(root_real) / STRICT_MARKER).exists() and not allow_strict_latch:
+                raise GuardRefused("ISOLATED_STORE_STRICT_LATCHED", "clear it with the owner veto 'clear-latch'")
+            marker_path = Path(root_real) / MARKER
+            if not marker_path.is_file():
+                raise GuardRefused("guard_marker_missing")
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            current = _identity(Path(root_real))
+            bound = {k: marker.get(k) for k in ("realpath", "volume", "file_id")}
+            if (marker.get("purpose") != "isolated-store"
+                    or _norm(str(bound["realpath"])) != _norm(current["realpath"])
+                    or bound["volume"] != current["volume"] or bound["file_id"] != current["file_id"]):
+                if not allow_rebind:
+                    raise GuardRefused("guard_marker_binding", "use the owner 'rebind' after a legitimate move")
+            pinned = json.loads((Path(root_real) / LIMITS_FILE).read_text(encoding="utf-8"))
+            if pinned != cfg.limits:
+                raise GuardRefused("guard_limits_file_mismatch")
+        except GuardRefused as exc:
+            _append_refusal(Path(receipts_real), exc)
+            raise
+        pr = cls(cfg, root_real, receipts_real, deny)
+        pr._check_version()
+        return pr
+
+    # -- locks, receipts ----------------------------------------------------
+
+    @contextmanager
+    def serial(self) -> Iterator[None]:
+        """The one lock admit, retire, restore, recall and the owner veto share."""
+        from .storage import hold_directory_lock
+
+        self.receipts_dir.mkdir(parents=True, exist_ok=True)
+        with hold_directory_lock(self.receipts_dir, timeout=60):
+            yield
+
+    def receipts(self) -> list[dict]:
+        if not self.receipts_path.is_file():
+            return []
+        out = []
+        for number, line in enumerate(self.receipts_path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                out.append(json.loads(line))
+            except ValueError as exc:
+                raise ReceiptsUnreadable(f"line {number}") from exc
+        return out
+
+    def _receipts_problem(self) -> str:
+        try:
+            self.receipts()
+        except ReceiptsUnreadable as exc:
+            return str(exc)
+        return ""
+
+    def _refuse_unreadable(self, op: str, detail: str) -> dict:
+        """Refuse an operation without touching the broken chain; note it next to it."""
+        record = {"op": op, "result": "receipts_unreadable", "detail": detail, "ts": utc_now_z(),
+                  "pid": os.getpid()}
+        with (self.receipts_dir / REFUSALS_FILE).open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        return record
+
+    def _append(self, record: dict) -> dict:
+        existing = self.receipts()
+        prev = existing[-1] if existing else None
+        base = {
+            "seq": (prev["seq"] + 1) if prev else 1,
+            "prev_sha256": _sha256_json(prev) if prev else "",
+            "ts": utc_now_z(),
+            "pid": os.getpid(),
+            "proc_started_utc": _PROCESS_STARTED_UTC,
+            "lib_version": self.lib_version,
+            "limits": self.cfg.limits,
+            "root_state_sha256": self.state_hash(),
+        }
+        full = {**base, **record}
+        with self.receipts_path.open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(full, ensure_ascii=False, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())  # the chain is the audit trail
+        return full
+
+    def state_hash(self) -> str:
+        knowledge = self.root / "knowledge"
+        parts = []
+        for rel in ("lessons.json", "decisions.json", "tombstones.jsonl"):
+            p = knowledge / rel
+            parts.append((rel, _sha256_bytes(p.read_bytes()) if p.is_file() else ""))
+        archive = knowledge / "overflow_archive"
+        if archive.is_dir():
+            for p in sorted(archive.iterdir()):
+                if p.is_file():
+                    parts.append((f"overflow_archive/{p.name}", _sha256_bytes(p.read_bytes())))
+        return _sha256_json(parts)
+
+    # -- engram handles -------------------------------------------------------
+
+    def _engram(self, *, read_only: bool):
+        from .core import Engram
+
+        return Engram(root=self.root, read_only=read_only)
+
+    def _recheck_before_write(self) -> None:
+        if not _same_as_root(os.environ.get("ENGRAM_DIR", ""), self.cfg.root):
+            raise GuardRefused("guard_engram_dir_mismatch", "ENGRAM_DIR changed after open")
+        # The configured root (a config path, never an environment path) is resolved
+        # again: a root swapped for a junction after open is caught here.
+        if _norm(check_candidate(self.cfg.root, self.deny, label="root")) != _norm(str(self.root)):
+            raise GuardRefused("guard_root_changed", "the root resolves elsewhere than at open")
+        if (self.root / STRICT_MARKER).exists():
+            raise GuardRefused("ISOLATED_STORE_STRICT_LATCHED")
+
+    def _rows(self, eng) -> list[dict]:
+        return eng._read_entries(eng._knowledge_dir / "lessons.json", "lesson", migrate=False)
+
+    def _archived_raw(self, eng, item_id: str) -> dict | None:
+        for row in reversed(eng._read_overflow_archive("lesson")):
+            if row.get("id") == item_id:
+                return row
+        return None
+
+    # -- version receipt (design s9) --------------------------------------------
+
+    def _check_version(self) -> None:
+        if self._receipts_problem():
+            return  # every operation refuses with receipts_unreadable; reconcile reports it
+        last = next((r for r in reversed(self.receipts()) if r.get("lib_version")), None)
+        if last is None or last.get("lib_version") == self.lib_version:
+            return
+        problems = self.verify_content_hashes()
+        if problems:
+            raise GuardRefused("upgrade_blocked_hash_mismatch", ",".join(sorted(problems)))
+        with self.serial():
+            self._append({"op": "version", "result": "upgraded", "from_version": last.get("lib_version"),
+                          "to_version": self.lib_version})
+
+    def verify_content_hashes(self) -> list[str]:
+        """Ids whose stored content no longer matches their admit receipt."""
+        admitted = {r["item_id"]: r["content_sha256"] for r in self.receipts()
+                    if r.get("op") == "admit" and r.get("result") == "admitted"}
+        eng = self._engram(read_only=True)
+        rows = {r.get("id"): r for r in self._rows(eng)}
+        bad = []
+        for item_id, digest in admitted.items():
+            row = rows.get(item_id) or self._archived_raw(eng, item_id)
+            if row is None or content_hash(row) != digest:
+                bad.append(item_id)
+        return bad
+
+    # -- the valve: admit, retire, restore --------------------------------------
+
+    def admit(self, card: dict, round_id: str, admission: dict) -> dict:
+        """Write one admitted card as a verified lesson. Returns the receipt."""
+        from .storage import NOT_ADDED_STATUSES, hold_directory_lock
+
+        base = {"op": "admit", "round_id": str(round_id)}
+        problem = self._receipts_problem()
+        if problem:
+            return self._refuse_unreadable("admit", problem)
+        if not isinstance(admission, dict) or admission.get("verdict") != "admit" or not admission.get(
+                "judge_version") or not admission.get("decision_record_id"):
+            with self.serial():
+                return self._append({**base, "result": "admission_missing"})
+        base["admission_sha256"] = _sha256_json(admission)
+        try:
+            entry = self._entry_from_card(card, round_id)
+        except ValueError as exc:
+            with self.serial():
+                return self._append({**base, "result": "card_invalid", "detail": str(exc)[:200]})
+        base.update({k: entry[k] for k in ("subject_id", "evidence_as_of", "source_family")})
+        with self.serial():
+            self._recheck_before_write()
+            eng = self._engram(read_only=False)
+            if eng._assess_memory_risk(dict(entry)).get("risk_level") == "high":
+                return self._append({**base, "result": "risk_refused"})
+            # The keyword risk check misses raw secret values and private paths; the
+            # unsupervised-capture privacy guard catches their shapes.
+            from .hook_digest import output_guard_item
+
+            guard_ok, _reason = output_guard_item({k: entry[k] for k in ("summary", "detail") + EVIDENCE_KEYS})
+            if not guard_ok:
+                return self._append({**base, "result": "risk_refused", "detail": "secret_or_path_shape"})
+            with hold_directory_lock(eng._knowledge_dir, timeout=60):
+                if self._verified_budget_full(eng):
+                    return self._append({**base, "result": "capacity_full"})
+                try:
+                    result = _with_retry(lambda: eng.add_lesson(dict(entry)))
+                except IoRetryExhausted as exc:
+                    return self._append({**base, "result": "io_retry_exhausted", "detail": str(exc)})
+            status = str(result.get("status") or "")
+            if result.get("error") or status in NOT_ADDED_STATUSES:
+                code = status or ("queue_full" if "queue" in str(result.get("error", "")) else "write_error")
+                return self._append({**base, "result": code, "item_id": result.get("existing_id") or ""})
+            item_id = result.get("id")
+            for archived_id in result.get("overflow_archived_ids") or []:
+                self._append({**base, "op": "archived", "result": "archived", "item_id": archived_id})
+            _kind, row = eng._find_item_by_id(item_id)
+            if row is None or row.get("tier") != "verified":
+                return self._append({**base, "result": "not_verified_after_write", "item_id": item_id})
+            if any(row.get(k) != entry[k] for k in EVIDENCE_KEYS):
+                return self._append({**base, "result": "evidence_fields_missing", "item_id": item_id})
+            receipt = {**base, "result": "admitted", "item_id": item_id, "content_sha256": content_hash(row)}
+            if result.get("related_ids"):
+                receipt["related_ids"] = list(result["related_ids"])
+            return self._append(receipt)
+
+    def _verified_budget_full(self, eng) -> bool:
+        """At the hard cap the library would quietly park a new verified row in staging;
+        refuse before writing instead (call under the knowledge lock)."""
+        from . import capacity as _capacity
+
+        limits = _capacity.limits_from_env()
+        budget = sum(1 for r in self._rows(eng) if _capacity.pool_of(r) in (_capacity.POOL_V, _capacity.POOL_QD))
+        return budget >= limits.hard_cap
+
+    def _entry_from_card(self, card: dict, round_id: str) -> dict:
+        if not isinstance(card, dict):
+            raise ValueError("card must be a dict")
+        summary, detail = card.get("summary"), card.get("detail")
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError("summary is required")
+        if not isinstance(detail, str):
+            raise ValueError("detail must be text")
+        parse_utc_z(card.get("evidence_as_of"), "evidence_as_of")
+        for key in ("source_family", "source_decision_point", "subject_id"):
+            if not isinstance(card.get(key), str) or not card[key].strip():
+                raise ValueError(f"{key} is required")
+        if not FAMILY_RE.match(card["source_family"].strip()):
+            raise ValueError("source_family must match [A-Za-z0-9_.-]{1,48}")
+        subject = card["subject_id"].strip()
+        return {
+            "summary": summary,
+            "detail": detail,
+            "domain": f"type:lesson,subject:{subject};",
+            "tier": "verified",
+            "evidence_as_of": card["evidence_as_of"],
+            "source_family": card["source_family"].strip(),
+            "source_decision_point": card["source_decision_point"].strip(),
+            "subject_id": subject,
+            "admitted_round": str(round_id),
+            "source_tool": "admission_gate",
+        }
+
+    def retire(self, item_id: str, round_id: str, admission: dict, *, _op: str = "retire") -> dict:
+        base = {"op": _op, "round_id": str(round_id), "item_id": item_id}
+        problem = self._receipts_problem()
+        if problem:
+            return self._refuse_unreadable(_op, problem)
+        if _op == "veto_retire" and isinstance(admission, dict):
+            base["operator"] = str(admission.get("operator") or "")
+        if _op == "retire" and not _full_admission(admission, "retire"):
+            with self.serial():
+                return self._append({**base, "result": "admission_missing"})
+        base["admission_sha256"] = _sha256_json(admission)
+        with self.serial():
+            self._recheck_before_write()
+            eng = self._engram(read_only=False)
+            if not any(r.get("id") == item_id for r in self._rows(eng)):
+                if _op == "veto_retire" and self._archived_raw(eng, item_id) is not None:
+                    # already out of the active file: the veto is recorded all the same
+                    return self._append({**base, "result": "retired", "detail": "already_archived"})
+                return self._append({**base, "result": "not_found"})
+            try:
+                result = _with_retry(lambda: eng.archive_lesson(item_id))
+            except IoRetryExhausted as exc:
+                return self._append({**base, "result": "io_retry_exhausted", "detail": str(exc)})
+            if result.get("error"):
+                return self._append({**base, "result": "write_error", "detail": str(result["error"])[:200]})
+            for archived_id in result.get("overflow_archived_ids") or []:
+                self._append({"op": "archived", "round_id": str(round_id), "result": "archived",
+                              "item_id": archived_id})
+            return self._append({**base, "result": "retired"})
+
+    def restore(self, item_id: str, round_id: str, admission: dict) -> dict:
+        base = {"op": "restore", "round_id": str(round_id), "item_id": item_id}
+        problem = self._receipts_problem()
+        if problem:
+            return self._refuse_unreadable("restore", problem)
+        if not _full_admission(admission, "restore"):
+            with self.serial():
+                return self._append({**base, "result": "admission_missing"})
+        base["admission_sha256"] = _sha256_json(admission)
+        from . import tombstones as _tombstones
+
+        with self.serial():
+            self._recheck_before_write()
+            if _tombstones.by_id(self.root, item_id) is not None:
+                return self._append({**base, "result": "rejected_before"})
+            if any(r.get("item_id") == item_id and r.get("op") in ("veto_retire", "veto_reject")
+                   and r.get("result") in ("retired", "tombstoned") for r in self.receipts()):
+                return self._append({**base, "result": "owner_vetoed"})  # only the Owner lifts a veto
+            eng = self._engram(read_only=False)
+            if not any(r.get("id") == item_id for r in self._rows(eng)):
+                if self._archived_raw(eng, item_id) is None:
+                    return self._append({**base, "result": "not_found"})
+                try:
+                    back = _with_retry(lambda: eng.restore_lifecycle_archive(item_id))
+                except IoRetryExhausted as exc:
+                    return self._append({**base, "result": "io_retry_exhausted", "detail": str(exc)})
+                if back.get("error"):
+                    return self._append({**base, "result": "write_error", "detail": str(back["error"])[:200]})
+            try:
+                result = _with_retry(lambda: eng.update_lesson(item_id, {"status": "active"}))
+            except IoRetryExhausted as exc:
+                return self._append({**base, "result": "io_retry_exhausted", "detail": str(exc)})
+            if isinstance(result, dict) and result.get("error"):
+                return self._append({**base, "result": "write_error", "detail": str(result["error"])[:200]})
+            return self._append({**base, "result": "restored"})
+
+    # -- the Owner's veto (runs only through the launcher's 'veto' command) ------
+
+    def owner_retire(self, item_id: str, operator: str) -> dict:
+        receipt = self.retire(item_id, "owner", {"verdict": "owner_veto", "operator": operator}, _op="veto_retire")
+        return receipt
+
+    def owner_reject(self, item_id: str, operator: str) -> dict:
+        """Retire first (a tombstone refuses an active row), then tombstone."""
+        from . import tombstones as _tombstones
+
+        first = self.owner_retire(item_id, operator)
+        if first.get("result") not in ("retired",):
+            return first
+        with self.serial():
+            eng = self._engram(read_only=True)
+            row = next((r for r in self._rows(eng) if r.get("id") == item_id), None) or self._archived_raw(eng, item_id)
+            if row is None:
+                return self._append({"op": "veto_reject", "item_id": item_id, "result": "not_found"})
+            _tombstones.append(self.root, "lesson", row, via=f"owner-veto:{operator}")
+            return self._append({"op": "veto_reject", "item_id": item_id, "result": "tombstoned",
+                                 "operator": operator})
+
+    def owner_clear_latch(self, operator: str) -> dict:
+        from . import strict_mode as _strict_mode
+
+        problem = self._receipts_problem()
+        if problem:  # refuse before acting: never clear the latch without a receipt
+            return self._refuse_unreadable("veto_clear_latch", problem)
+        with self.serial():
+            cleared = _strict_mode.clear_marker(self.root)
+            return self._append({"op": "veto_clear_latch", "result": "cleared" if cleared else "no_latch",
+                                 "operator": operator})
+
+    def owner_rebind(self, operator: str) -> dict:
+        problem = self._receipts_problem()
+        if problem:  # refuse before acting: never rebind without a receipt
+            return self._refuse_unreadable("rebind", problem)
+        marker_path = self.root / MARKER
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        with self.serial():
+            marker.update(_identity(self.root))
+            marker["rebound_at"] = utc_now_z()
+            tmp = marker_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp, marker_path)
+            return self._append({"op": "rebind", "result": "rebound", "operator": operator})
+
+    # -- recall (design s8) ---------------------------------------------------------
+
+    def _decision_point(self, decision_point_id: str) -> dict:
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(decision_point_id or "")):
+            raise RecallRefused("decision_point_id is invalid")
+        path = self.cfg.decision_points_dir / f"{decision_point_id}.json"
+        try:
+            dp = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RecallRefused(f"decision-point file unreadable: {type(exc).__name__}") from exc
+        mode, family, as_of = dp.get("mode"), dp.get("family_code"), dp.get("as_of_utc")
+        if mode not in MODES or not isinstance(family, str) or not FAMILY_RE.match(family.strip()):
+            raise RecallRefused("decision-point file lacks mode or a valid family_code")
+        try:
+            parse_utc_z(as_of, "as_of_utc")
+        except ValueError as exc:
+            raise RecallRefused(str(exc)) from exc
+        return dp
+
+    @staticmethod
+    def _replay(receipts: list[dict], until: datetime | None) -> tuple[dict, set]:
+        """(state by id, vetoed ids) from receipts up to ``until`` (all when None)."""
+        state: dict[str, dict] = {}
+        vetoed: set[str] = set()
+        for r in sorted(receipts, key=lambda x: x.get("seq", 0)):
+            op, result, item_id = r.get("op"), r.get("result"), r.get("item_id")
+            if op in ("veto_retire", "veto_reject") and result in ("retired", "tombstoned"):
+                vetoed.add(item_id)  # the Owner's veto hides a card at every time
+            if until is not None and parse_utc_z(r["ts"], "ts") >= until:
+                continue
+            if op == "admit" and result == "admitted":
+                state[item_id] = {"active": True, "receipt": r}
+            elif op in ("retire", "veto_retire") and result == "retired" and item_id in state:
+                state[item_id]["active"] = False
+            elif op == "restore" and result == "restored" and item_id in state:
+                state[item_id]["active"] = True
+        return state, vetoed
+
+    def _library_disagrees(self, item_id: str, row: dict, rows: dict, latest: dict) -> bool:
+        """The latest receipts say active but the library says retired or rejected.
+
+        Catches a lost tail of the receipt file and a retire made outside the valve.
+        Compared with the latest receipt state, not the state at admitted_before, so a
+        card the caller retired later stays visible to replays of earlier decisions.
+        """
+        from . import tombstones as _tombstones
+
+        lib_active = (row.get("status") or "active") == "active" and item_id in rows
+        return bool(latest.get(item_id, {}).get("active")) and (
+            not lib_active or _tombstones.by_id(self.root, item_id) is not None)
+
+    @staticmethod
+    def _effective_cuts(mode: str, as_of: datetime, evidence_before: datetime,
+                        admitted_before: datetime) -> tuple[datetime, datetime]:
+        """Never recall past the decision point's own as_of_utc, whatever the caller passes.
+
+        Evidence is cut at the earlier of evidence_before and as_of_utc in every mode. A
+        live decision also cuts admission there; replay and test keep the run-time
+        admission clock (design s8), their history comes from evidence_before.
+        """
+        evidence_cut = min(evidence_before, as_of)
+        admission_cut = min(admitted_before, as_of) if mode == "live" else admitted_before
+        return evidence_cut, admission_cut
+
+    @staticmethod
+    def _hash_ok(row: dict, admit_receipt: dict) -> bool:
+        return content_hash(row) == admit_receipt.get("content_sha256")
+
+    def recall(self, decision_point_id: str, round_id: str, *, evidence_before: str, admitted_before: str,
+               extra_exclude_families: Iterable[str] = (), subject_ids: Iterable[str] | None = None,
+               query: str | None = None, limit: int = 8) -> dict:
+        from . import tombstones as _tombstones
+
+        problem = self._receipts_problem()
+        if problem:
+            self._refuse_unreadable("recall", problem)
+            raise RecallRefused(f"receipts_unreadable: {problem}")
+        dp = self._decision_point(decision_point_id)
+        ev_before, adm_before = self._effective_cuts(
+            dp["mode"], parse_utc_z(dp["as_of_utc"], "as_of_utc"),
+            parse_utc_z(evidence_before, "evidence_before"), parse_utc_z(admitted_before, "admitted_before"))
+        exclude = {_family_key(f) for f in extra_exclude_families}
+        if dp["mode"] in MODES_EXCLUDING_OWN_FAMILY:
+            exclude.add(_family_key(dp["family_code"]))
+        wanted_subjects = {str(m) for m in subject_ids} if subject_ids is not None else None
+        terms = [t for t in str(query or "").casefold().split() if t]
+        empty_query = query is not None and not terms  # design s8: an empty query returns nothing
+        excluded: dict[str, int] = {}
+
+        def _skip(reason: str) -> None:
+            excluded[reason] = excluded.get(reason, 0) + 1
+
+        with self.serial():
+            receipts = self.receipts()
+            at_time, vetoed = self._replay(receipts, adm_before)
+            latest, _ = self._replay(receipts, None)
+            eng = self._engram(read_only=True)
+            rows = {r.get("id"): r for r in self._rows(eng)}
+            picked = []
+            for item_id, st in at_time.items():
+                if not st["active"]:
+                    continue
+                if item_id in vetoed:
+                    _skip("owner_veto")
+                    continue
+                admit_r = st["receipt"]
+                if parse_utc_z(admit_r["evidence_as_of"], "evidence_as_of") >= ev_before:
+                    _skip("evidence_after")
+                    continue
+                if _family_key(admit_r.get("source_family")) in exclude:
+                    _skip("family_excluded")
+                    continue
+                if wanted_subjects is not None and admit_r.get("subject_id") not in wanted_subjects:
+                    continue
+                row = rows.get(item_id) or self._archived_raw(eng, item_id)
+                if row is None:
+                    _skip("missing_in_library")
+                    continue
+                if self._library_disagrees(item_id, row, rows, latest):
+                    _skip("receipt_library_mismatch")
+                    continue
+                if not self._hash_ok(row, admit_r):
+                    _skip("hash_mismatch")
+                    continue
+                if empty_query:
+                    continue
+                if terms:
+                    text = f"{row.get('summary', '')} {row.get('detail', '')}".casefold()
+                    if not all(t in text for t in terms):
+                        continue
+                picked.append((row.get("evidence_as_of", ""), item_id, row))
+            picked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            items = [
+                {"id": item_id, "subject_id": row.get("subject_id"), "summary": row.get("summary"),
+                 "detail": row.get("detail"), "evidence_as_of": row.get("evidence_as_of"),
+                 "source_family": row.get("source_family"),
+                 "admitted_round": row.get("admitted_round")}
+                for _ev, item_id, row in picked[:max(0, int(limit))]
+            ]
+            self._append({
+                "op": "recall", "round_id": str(round_id), "result": "recalled",
+                "decision_point_id": decision_point_id, "decision_point_kind": dp.get("kind"),
+                "decision_point_mode": dp["mode"], "query_sha256": _sha256_bytes(str(query or "").encode("utf-8")),
+                "evidence_before": evidence_before, "admitted_before": admitted_before,
+                "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                "returned_ids": [i["id"] for i in items], "excluded": excluded,
+            })
+        return {"items": items, "excluded": excluded, "mode": dp["mode"], "excluded_families": sorted(exclude),
+                "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
+
+    # -- per-round reconciliation (design s6) --------------------------------------------
+
+    def reconcile(self) -> dict:
+        """Problems between the library and the receipts (empty list = clean)."""
+        problem = self._receipts_problem()
+        if problem:
+            return {"problems": [f"receipts_unreadable:{problem}"], "receipts": None, "rows": None,
+                    "state_sha256": self.state_hash()}
+        receipts = self.receipts()
+        problems: list[str] = []
+        prev = None
+        for r in receipts:
+            if prev is not None and (r.get("seq") != prev["seq"] + 1 or r.get("prev_sha256") != _sha256_json(prev)):
+                problems.append(f"receipt_chain_break:{r.get('seq')}")
+            prev = r
+        admitted = {r["item_id"]: r["content_sha256"] for r in receipts
+                    if r.get("op") == "admit" and r.get("result") == "admitted"}
+        moved = {r["item_id"] for r in receipts if r.get("result") in ("retired", "archived")}
+        vetoed = {r["item_id"] for r in receipts if r.get("op") == "veto_reject" and r.get("result") == "tombstoned"}
+        eng = self._engram(read_only=True)
+        for row in self._rows(eng):
+            item_id = row.get("id")
+            if item_id not in admitted:
+                problems.append(f"row_without_receipt:{item_id}")
+            elif content_hash(row) != admitted[item_id]:
+                problems.append(f"content_changed:{item_id}")
+        decisions = eng._read_entries(eng._knowledge_dir / "decisions.json", "decision", migrate=False)
+        problems += [f"decision_present:{d.get('id')}" for d in decisions]
+        for row in eng._read_overflow_archive("lesson"):
+            if eng._is_snapshot_record(row):
+                continue
+            if row.get("id") not in moved:
+                problems.append(f"archived_without_receipt:{row.get('id')}")
+        from . import tombstones as _tombstones
+
+        for stone in _tombstones.load(self.root):
+            if stone.get("id") not in vetoed:
+                problems.append(f"tombstone_without_veto:{stone.get('id')}")
+        for sub in ("playbooks", "projects"):
+            d = self.root / sub
+            if d.is_dir() and any(p.is_file() and not p.name.startswith(".") for p in d.rglob("*")):
+                problems.append(f"{sub}_not_empty")
+        identity = self.root / "identity"
+        if identity.is_dir():
+            extra = [p.name for p in identity.rglob("*") if p.is_file()
+                     and p.name not in ("trust_boundaries.json",) and not p.name.startswith(".")]
+            problems += [f"identity_unexpected:{n}" for n in extra]
+        receipt_pids = {r.get("pid") for r in receipts}
+        audit = self.root / "audit.log"
+        if audit.is_file():
+            for line in audit.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if entry.get("action") in ("write", "archive", "delete", "import") and \
+                        entry.get("pid") not in receipt_pids and entry.get("action") != "owner_cli":
+                    problems.append(f"write_by_unknown_pid:{entry.get('pid')}")
+        return {"problems": sorted(set(problems)), "receipts": len(receipts),
+                "rows": len(self._rows(eng)), "state_sha256": self.state_hash()}
+
+
+# ---------------------------------------------------------------------------
+# init and refusal receipts
+# ---------------------------------------------------------------------------
+
+
+def _append_refusal(receipts_dir: Path, exc: GuardRefused) -> None:
+    """Record a guard refusal next to (not inside) the receipt chain."""
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    with (receipts_dir / REFUSALS_FILE).open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps({"op": "open", "result": "guard_refused", "code": exc.code,
+                             "ts": utc_now_z(), "pid": os.getpid()}, sort_keys=True) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def init_root(cfg: Config | None = None) -> IsolatedStore:
+    """Create a new root in an EMPTY directory: marker, pinned limits, reconcile off."""
+    cfg = cfg or Config.from_env()
+    deny = cfg.deny_list()
+    check_candidate(cfg.receipts_dir, deny, label="receipts_dir")
+    root = cfg.root
+    if root.name.lower() in (".engram", ".piia"):
+        raise GuardRefused("guard_init_legacy_name", "never initialise a .engram or .piia directory")
+    if root.exists() and (not root.is_dir() or any(root.iterdir())):
+        raise GuardRefused("guard_init_not_empty", "initialise only an empty directory")
+    root_real = check_candidate(root, deny, label="root")
+    check_environment(cfg)
+    if not _same_as_root(os.environ.get("ENGRAM_DIR", ""), cfg.root):
+        raise GuardRefused("guard_engram_dir_mismatch")
+    root.mkdir(parents=True, exist_ok=True)
+    marker = {"purpose": "isolated-store", "created_at": utc_now_z(), **_identity(root)}
+    (root / MARKER).write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
+    (root / LIMITS_FILE).write_text(json.dumps(cfg.limits, ensure_ascii=False, indent=2), encoding="utf-8")
+    (root / "telemetry_config.json").write_text(json.dumps({"reconcile_authorized": False}), encoding="utf-8")
+    pr = IsolatedStore.open(cfg)
+    with pr.serial():
+        pr._append({"op": "init", "result": "initialised"})
+    return pr
+
+
+# ---------------------------------------------------------------------------
+# child-side commands (run by isolated_store_launch inside the cleaned process)
+# ---------------------------------------------------------------------------
+
+
+def _cli(argv: list[str]) -> int:
+    if not argv:
+        print("usage: python -m piia_engram.isolated_store init|reconcile|veto-retire ID OP|"
+              "veto-reject ID OP|clear-latch OP|rebind OP", file=sys.stderr)
+        return 2
+    cmd, rest = argv[0], argv[1:]
+    try:
+        if cmd == "init":
+            out: Any = {"result": "initialised", "root_state_sha256": init_root().state_hash()}
+        elif cmd == "reconcile":
+            out = IsolatedStore.open().reconcile()
+        elif cmd == "veto-retire" and len(rest) == 2:
+            out = IsolatedStore.open().owner_retire(rest[0], rest[1])
+        elif cmd == "veto-reject" and len(rest) == 2:
+            out = IsolatedStore.open().owner_reject(rest[0], rest[1])
+        elif cmd == "clear-latch" and len(rest) == 1:
+            out = IsolatedStore.open(allow_strict_latch=True).owner_clear_latch(rest[0])
+        elif cmd == "rebind" and len(rest) == 1:
+            out = IsolatedStore.open(allow_rebind=True).owner_rebind(rest[0])
+        else:
+            print(f"unknown or incomplete command: {cmd}", file=sys.stderr)
+            return 2
+    except GuardRefused as exc:
+        print(json.dumps({"result": "guard_refused", "code": exc.code, "detail": exc.detail}))
+        return 3
+    except ReceiptsUnreadable as exc:
+        print(json.dumps({"result": "receipts_unreadable", "detail": str(exc)}))
+        return 4
+    print(json.dumps(out, ensure_ascii=False, sort_keys=True))
+    return 4 if isinstance(out, dict) and out.get("result") == "receipts_unreadable" else 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli(sys.argv[1:]))
