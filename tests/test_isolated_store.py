@@ -870,6 +870,7 @@ def test_the_child_environment_is_minimal(world):
     for gone in ("FASTEMBED_CACHE_PATH", "CODEX_HOME", "HF_HOME", "OPENAI_API_KEY", "PIIA_OTHER"):
         assert gone not in env
     assert env["PATH"] == "p" and env["SYSTEMROOT"] == "s"
+    assert env["DO_NOT_TRACK"] == "1"
     fake = world.data["fake_home"]
     assert iso_mod._within(env["HOMEDRIVE"] + env["HOMEPATH"], fake)
     assert iso_mod._within(env["XDG_CACHE_HOME"], fake) and env["ENGRAM_DIR"] == world.data["root"]

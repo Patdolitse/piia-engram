@@ -60,6 +60,8 @@ def build_child_env(parent_env: dict, cfg: Config) -> dict[str, str]:
         "ENGRAM_RECONCILE": "0",
         "ENGRAM_AUDIT": "1",
         "ENGRAM_NO_UPDATE_CHECK": "1",
+        # The launched process never sends the daily usage ping.
+        "DO_NOT_TRACK": "1",
         "ENGRAM_CACHE_DIR": str(cfg.cache_dir),
         "USERPROFILE": str(home),
         "HOME": str(home),
