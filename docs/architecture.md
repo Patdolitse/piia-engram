@@ -265,7 +265,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 | Tier-1 (default) | Why |
 |------------------|-----|
 | `get_user_context` | Cold-start identity + context |
-| `wrap_up_session` | Lightweight session-end save; reconciliation is explicit via `run_reconcile=True`, exact-project scoped when a project folder is present, and globally scoped only by explicit request |
+| `wrap_up_session` | Lightweight session-end save; it never imports other AI tools' memories (`run_reconcile=True` is accepted and imports nothing; use `engram import-memories`) |
 | `memory_store` | Unified write endpoint for lessons, decisions, and playbooks |
 | `add_lesson`, `add_decision`, `add_playbook` | Capture knowledge |
 | `search_knowledge`, `get_relevant_knowledge`, `get_recall` | Retrieve knowledge and one-call recall bundles |
@@ -281,7 +281,7 @@ Set `ENGRAM_TOOLS=all` to expose the full tool surface (review, health, link/unl
 - **stdio** (default) — one piia-engram process per AI tool, isolated FDs, fastest
 - **SSE** (`piia-engram serve --transport sse`) — shared HTTP/SSE instance; binds to `127.0.0.1` by default. Binding to `0.0.0.0` emits a stderr warning and requires `--token` (`secrets.compare_digest` check). `ENGRAM_CORS_ORIGINS` env var configures allowed origins.
 
-Startup reconciliation (`reconcile_memories()` + `reconcile_ai_configs()`) is backgrounded by default for MCP startup, so stdio client initialization is not blocked by local AI config scans. `ENGRAM_MCP_STARTUP_SYNC=eager` restores the old synchronous behavior, `ENGRAM_MCP_STARTUP_SYNC=off` skips the startup reconcile pass, and `ENGRAM_EPHEMERAL=1` forces the same skip for container/ephemeral clients. Stdio `auto_migrate()` remains synchronous because stale client config migration must complete before accepting requests. Reconcile passes use a dedicated process-local lock, while normal MCP writes use their own short-held lock plus atomic storage locks. A slow startup scan therefore cannot hold `wrap_up_session` or another normal write behind it.
+MCP startup does not read other AI tools' memory or config files and writes no memory content; neither do cold start, reads or session closeout. Importing them is the explicit `engram import-memories` command (preview first, then the review queue, with a receipt and an audit line). `ENGRAM_MCP_STARTUP_SYNC` is accepted for compatibility and has no effect. Stdio `auto_migrate()` remains synchronous and config-only: once per installed version it notes legacy client entries in `migration.log` and records an audit line; `ENGRAM_EPHEMERAL=1` skips it for container/ephemeral clients.
 
 ---
 

@@ -62,11 +62,10 @@ install, first value, daily recall, and session wrap-up. The advanced set
 (review queues, import/export, governance, migration, Playbook management) stays
 off until you opt in with `ENGRAM_TOOLS=all`.
 
-After connecting once, **auto-bootstrap** does the rest: the first time your AI
-tool calls Engram (`get_user_context` or `get_resume_brief`), it scans your
-existing rule files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, …) **read-only**
-and imports your preferences and project rules automatically — no separate
-import step.
+Engram does not read your other AI tools' files on its own. To bring in what
+they already know (memory files, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, …),
+run `engram import-memories`: it lists the items first, then adds them to the
+review queue after you confirm (`engram review` to approve them).
 
 - Host-specific setup: [Claude Code](integrations/claude-code.md) ·
   [Codex](integrations/codex.md) · [Cursor](integrations/cursor.md) ·
@@ -111,10 +110,9 @@ work:
 3. The agent reads the handoff before asking you to repeat context.
 
 `wrap_up_session` is a lightweight session-end save. It does not run full
-reconciliation by default. Use `run_reconcile=True` only for owner-approved
-maintenance reconciliation. When a project folder is supplied, that explicit
-reconcile is exact-project scoped by default; global maintenance requires
-`reconcile_scope="global"`.
+reconciliation by default. `run_reconcile=True` is still accepted but imports
+nothing; memories from other AI tools come in only through
+`engram import-memories`.
 
 Three levels of recovery, fastest first:
 

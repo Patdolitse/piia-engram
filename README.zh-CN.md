@@ -217,7 +217,7 @@ engram setup
 3. **注入 AI 指令**到每个工具的原生配置（`CLAUDE.md`、`.cursorrules`、`AGENTS.md`），确保 AI 主动调用 Engram
 4. 引导你录入种子知识（角色、技术栈、语言）
 5. 智能导入你已有的 `CLAUDE.md` / `.cursorrules` 规则文件
-6. 高级模式（`engram setup --advanced`）可设置隐私偏好（跨工具同步、匿名使用统计，均可选）
+6. 询问是否现在从其它 AI 工具导入一次记忆（默认否；先列清单，确认后进入待审区）；高级模式（`engram setup --advanced`）还可设置隐私偏好（匿名使用统计，可选）
 7. **预览你的 AI 身份卡**——安装即见效
 
 如果 MCP 客户端已经配置好，setup 完成后重启 AI 工具即可。若还没有配置，请手动添加 MCP 条目，或运行下面显式授权的自动写入命令。第一次成功连接后的对话会自动调用 `get_user_context`——AI 已经认识你了。
@@ -554,7 +554,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 也可以按需暴露可组合 capability modes（如知识库管理、治理、管理、集成）；详见 [capability modes 指南](docs/operator-mcp-cheatsheet.md#能力模式)。
 
-**启动同步：** Engram 会在 MCP server 启动时对账本地 AI 工具中的记忆/配置片段。默认改为后台执行，避免 stdio 客户端在 initialize 阶段被同步扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感测试臂中跳过启动同步。`ENGRAM_EPHEMERAL=1` 也会在容器/临时客户端中跳过启动同步和迁移工作。
+**从其它 AI 工具导入：** Engram 不会自己读取其它 AI 工具的记忆或规则文件：MCP server 启动、冷启动、会话收尾都不会。需要时运行 `engram import-memories`：先列出找到的条目（`--dry-run` 只列不写），确认后写入待审区，并在存储目录的 `import_receipts/` 留下导入回执。`ENGRAM_MCP_STARTUP_SYNC` 仍被接受，但已不起作用；`ENGRAM_RECONCILE=0` 会彻底关闭对其它 AI 工具文件的读取。`ENGRAM_EPHEMERAL=1` 会在容器/临时客户端中跳过启动时的配置检查。
 
 ### Tier-2 高级工具（40 个 — 知识管理、审查、导入导出）
 

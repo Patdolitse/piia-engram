@@ -230,7 +230,7 @@ The setup wizard will:
 3. Detect your AI tools, list the exact config files it will touch, and write the MCP connection after a one-keystroke confirm (backed up first; decline leaves them untouched)
 4. Walk you through seed knowledge (role, tech stack, language)
 5. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
-6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (cross-tool sync, anonymous statistics)
+6. Offer a one-time import of memories from your other AI tools (default no; lists them first, then the review queue), and in advanced mode (`engram setup --advanced`) your optional privacy preferences (anonymous statistics)
 7. **Preview your AI identity card** — immediate proof of value
 
 After setup writes the MCP connection (you confirm at the prompt first), restart your AI tool. Many clients can call `get_user_context` at startup; when a host does not do that proactively, an explicit `search_knowledge` or `get_resume_brief` call is still the expected L2 path.
@@ -563,7 +563,7 @@ You can also expose composable capability modes such as knowledge management, go
 }
 ```
 
-**Startup sync:** Engram reconciles memories/config snippets from local AI tools when an MCP server starts. By default this runs in the background so stdio clients can initialize quickly. Set `ENGRAM_MCP_STARTUP_SYNC=eager` to restore synchronous startup sync, or `ENGRAM_MCP_STARTUP_SYNC=off` to skip startup sync for latency-sensitive test arms. `ENGRAM_EPHEMERAL=1` also skips startup sync and migration work in container/ephemeral clients.
+**Importing from other AI tools:** Engram never reads other AI tools' memory or rule files on its own: not at server start, not on cold start, not at session end. Run `engram import-memories` to bring them in; it lists what it found first (`--dry-run` stops there), then adds them to the review queue after you confirm, and writes a receipt to `import_receipts/` in the store. `ENGRAM_MCP_STARTUP_SYNC` is still accepted but no longer does anything; `ENGRAM_RECONCILE=0` turns reading other AI tools' files off entirely. `ENGRAM_EPHEMERAL=1` skips the startup config check in container/ephemeral clients.
 
 ### Tier-1 Core (18 tools — daily workflow)
 

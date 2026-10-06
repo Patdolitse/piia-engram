@@ -8,7 +8,12 @@
 
 ## [Unreleased]
 
+### 变更
+- **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动（`get_user_context`、`get_resume_brief`、会话开始钩子）和 `wrap_up_session` 都不再读取或导入其它 AI 工具的记忆和规则文件。`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
+- `engram setup` 改为询问是否现在导入一次（默认否），不再开启自动导入。
+
 ### 新增
+- **`engram import-memories`。** 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区（`--dry-run`、`--yes`、`--source memories|configs`）。每次导入在 `import_receipts/` 写回执并记审计；重复运行不会重复导入。`engram doctor` 和 `engram status` 会显示可导入条数。
 - **每天一次匿名使用信号（默认开启）。** Engram 现在每天发送一次匿名信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），用来了解有多少安装在使用；不包含任何记忆内容、路径、账号或命令参数，服务器不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`；CI 和容器环境中自动不发；如果你以前关闭过详细统计，这个信号也保持关闭。`engram telemetry status / preview / reset-id` 可查看和控制。详细统计和反馈报告不变（仍需自行开启）。
 
 ## [4.21.2] - 2026-09-26

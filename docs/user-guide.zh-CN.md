@@ -55,10 +55,9 @@ MCP 连接前请你一键确认**。每次外部写入都先备份，选"否"则
 首个价值、日常召回、会话收尾。进阶工具集（审查队列、导入导出、治理、迁移、
 Playbook 管理）默认关闭，需要时用 `ENGRAM_TOOLS=all` 开启。
 
-连接一次之后，**自动引导（auto-bootstrap）** 会处理剩下的事：你的 AI 工具第一次
-调 Engram（`get_user_context` 或 `get_resume_brief`）时，会**只读**扫描你已有的
-规则文件（`CLAUDE.md`、`AGENTS.md`、`.cursorrules` 等），自动导入你的偏好和项目
-规则——不需要单独的导入步骤。
+Engram 不会自己读取其它 AI 工具的文件。想把它们已有的记忆（记忆文件、`CLAUDE.md`、
+`AGENTS.md`、`.cursorrules` 等）带进来，运行 `engram import-memories`：先列出条目，
+确认后写入待审区（用 `engram review` 审核）。
 
 - 按工具的安装说明：[Claude Code](integrations/claude-code.md) ·
   [Codex](integrations/codex.md) · [Cursor](integrations/cursor.md) ·
@@ -98,9 +97,8 @@ Engram 的价值出现在你*第二次*跟 AI 说话时——它已经知道你�
    上次活动、下一步动作，以及一条信任提示。
 3. AI 先读这段交接，再决定是否需要让你重复上下文。
 
-`wrap_up_session` 默认只做轻量收尾，不执行完整 reconcile。只有 Owner 明确同意时
-才使用 `run_reconcile=True`；传入项目目录后默认按 canonical project identity
-精确隔离，只有显式设置 `reconcile_scope="global"` 才执行全局维护扫描。
+`wrap_up_session` 默认只做轻量收尾，不执行完整 reconcile。`run_reconcile=True`
+仍被接受，但不再导入任何内容；其它 AI 工具的记忆只能通过 `engram import-memories` 导入。
 
 三档恢复，由快到慢：
 
@@ -254,4 +252,4 @@ AI 可能只把它存进了自己的私有记忆，没存进 Engram。用 `searc
 
 `wrap_up_session` 是轻量的会话结束保存。默认不会运行完整 reconcile，也不会默认执行外部 AI 记忆或配置的 full reconciliation。
 
-需要维护型同步时，必须由用户明确同意，并显式使用 `run_reconcile=True`。这一路径适合 owner-approved maintenance reconciliation；普通会话收尾继续保持 lightweight session-end save。
+`run_reconcile=True` 仍被接受，但不再导入任何内容。需要导入其它 AI 工具的记忆时，由用户在终端运行 `engram import-memories`（先预览，确认后进入待审区）；普通会话收尾继续保持 lightweight session-end save。

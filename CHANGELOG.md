@@ -8,7 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Changed
+- **Nothing is imported from other AI tools unless you ask.** Starting the MCP server, cold start (`get_user_context`, `get_resume_brief`, the session-start hook) and `wrap_up_session` no longer read or import other AI tools' memory and rule files. `ENGRAM_MCP_STARTUP_SYNC` and `wrap_up_session(run_reconcile=True)` are still accepted and import nothing.
+- `engram setup` asks whether to import once now (default no) instead of turning on automatic import.
+
 ### Added
+- **`engram import-memories`.** Lists memories and rule-file sections found in other AI tools, then adds them to the review queue after you confirm (`--dry-run`, `--yes`, `--source memories|configs`). Each import writes a receipt to `import_receipts/` and an audit line; running it again adds nothing twice. `engram doctor` and `engram status` show how many can be imported.
 - **Daily anonymous usage ping (on by default).** Engram now sends one anonymous ping a day — a random install ID, version, OS, Python version, AI client name and date — so we know how many installs are active. It never contains memories, paths, accounts or command arguments, and the server keeps no IP addresses. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers, and stays off if you had turned the detailed statistics off. `engram telemetry status / preview / reset-id` show and control it. Detailed statistics and feedback reports are unchanged (still opt-in).
 
 ## [4.21.2] - 2026-09-26

@@ -325,10 +325,11 @@ Returns structured JSON for easy automated processing.
 summary, extracts bounded candidate knowledge, updates the project snapshot
 when a project folder is supplied, and appends a daily-log entry.
 
-It does not run full reconciliation by default. Expensive maintenance such as
-AI config reconciliation should be requested explicitly with
-`run_reconcile=True` or run through dedicated owner maintenance flows. This
-keeps session closeout predictable for MCP hosts with fixed tool timeouts.
+It does not run full reconciliation by default, and it never imports other
+AI tools' memory or config files: `run_reconcile=True` is still accepted but
+imports nothing. Importing them is the owner's `engram import-memories`
+command. This keeps session closeout predictable for MCP hosts with fixed tool
+timeouts.
 
 Normal closeout:
 
@@ -353,26 +354,17 @@ Retrying the same caller-provided `idempotency_key` returns
 the existing operation state instead of duplicating daily-log, extraction,
 snapshot, or playbook writes.
 
-Explicit maintenance reconcile:
+Importing other AI tools' memories is a terminal command, not a closeout
+option:
 
-```python
-wrap_up_session(
-    summary="Owner-approved maintenance closeout.",
-    source_tool="codex",
-    project_folder="E:/Example/Project",
-    user_confirmed=True,
-    run_reconcile=True,
-    reconcile_scope="project",
-)
+```bash
+engram import-memories            # list, then import after you confirm
+engram import-memories --dry-run  # list only; writes nothing
 ```
 
-Use the explicit form only when the owner wants reconciliation work during
-closeout. With a project folder, `project` is the default scope: external
-Claude memory is accepted only from the same canonical project identity and
-config scanning is confined to that project root. There is no fuzzy path-prefix
-merge. An owner can request `reconcile_scope="global"` explicitly for a global
-maintenance pass. If the bounded config-import budget is reached, closeout
-returns `partial_complete` with a metadata-only budget reason.
+Imported items wait in the review queue. A closeout called with
+`run_reconcile=True` reports both reconcile stages as skipped
+(`explicit_import_only`) and points to the command.
 
 Telemetry and feedback are separate opt-in metadata paths. They are not reconciliation, do not contain knowledge bodies, and are controlled by the telemetry/feedback opt-in settings rather than `run_reconcile`. Default non-opt-in closeout sends no remote feedback.
 
