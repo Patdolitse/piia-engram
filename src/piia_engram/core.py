@@ -2120,16 +2120,13 @@ class Engram(
                 entry["reproposal_of_rejected"] = cited
         return None
 
-    def _archive_with_reject(
-        self, kind: str, item_id: str, owner_reject: str, archive, reject_reason: str = ""
-    ) -> dict:
+    def _archive_with_reject(self, kind: str, item_id: str, owner_reject: str, archive) -> dict:
         """Archive a row; tombstone it only for an explicit Owner reject mark.
 
         The tombstone is written FIRST, so the Owner's rejection holds even if the
         status write that follows never lands. That window is visible, not silent:
         doctor lists a tombstoned row that is still pending, and re-applying the
         same reject mark finishes it (the tombstone append is idempotent).
-        ``reject_reason`` is the Owner's optional note, kept on the tombstone.
         """
         if owner_reject:
             _t, before = self._find_item_by_id(item_id)
@@ -2137,7 +2134,6 @@ class Engram(
                 _tombstones.append(
                     self.root, kind, before, via=owner_reject,
                     prior_rejection_id=str(before.get("reproposal_of_rejected") or ""),
-                    reason=reject_reason,
                 )
         return archive()
 
@@ -2704,11 +2700,10 @@ class Engram(
             )
         return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
-    def archive_lesson(self, lesson_id: str, *, _owner_reject: str = "", _reject_reason: str = "") -> dict:
+    def archive_lesson(self, lesson_id: str, *, _owner_reject: str = "") -> dict:
         """Mark a lesson as outdated without deleting it."""
         return self._archive_with_reject("lesson", lesson_id, _owner_reject,
-                                         lambda: self.update_lesson(lesson_id, {"status": "outdated"}),
-                                         _reject_reason)
+                                         lambda: self.update_lesson(lesson_id, {"status": "outdated"}))
 
     def add_decision(
         self,
@@ -3169,11 +3164,10 @@ class Engram(
             )
         return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
-    def archive_decision(self, decision_id: str, *, _owner_reject: str = "", _reject_reason: str = "") -> dict:
+    def archive_decision(self, decision_id: str, *, _owner_reject: str = "") -> dict:
         """Mark a decision as outdated without deleting it."""
         return self._archive_with_reject("decision", decision_id, _owner_reject,
-                                         lambda: self.update_decision(decision_id, {"status": "outdated"}),
-                                         _reject_reason)
+                                         lambda: self.update_decision(decision_id, {"status": "outdated"}))
 
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""

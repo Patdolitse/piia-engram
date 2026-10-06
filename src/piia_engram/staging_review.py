@@ -68,8 +68,7 @@ def batch_review_staging(
     path), an action may carry ``expected_version``: when the row's version is
     no longer that number (it was edited after the reviewer saw it), the action
     is ``version_conflict`` and nothing is written for it; the check runs again
-    right before the write. A reject may carry ``reason``, the Owner's short
-    note kept on the tombstone.
+    right before the write.
     """
     op = str(operation or "review").strip().lower()
     if op in {"list", "list_pending", "pending"}:
@@ -86,7 +85,7 @@ def batch_review_staging(
         "failed": 0,
     }
     items: list[dict[str, Any]] = []
-    guards: dict[int, tuple[int | None, str]] = {}
+    guards: dict[int, int | None] = {}
 
     for idx, row in enumerate(rows):
         item_id = str(row.get("id") or row.get("item_id") or "").strip()
@@ -134,8 +133,7 @@ def batch_review_staging(
 
         items.append(_item(idx, item_id, action, "planned", item_type=item_type))
         counts["planned"] += 1
-        reason = _clean_reason(row.get("reason")) if owner_cli and action == "reject" else ""
-        guards[idx] = (expected_version, reason)
+        guards[idx] = expected_version
 
     if dry_run:
         return _payload(
@@ -165,7 +163,7 @@ def batch_review_staging(
     changed = False
     for it in planned:
         owner_reject = via or "core:batch_review_staging"
-        expected_version, reason = guards.get(it["candidate_ref"], (None, ""))
+        expected_version = guards.get(it["candidate_ref"])
         if expected_version is not None:
             _now_type, now_row = eng._find_item_by_id(it["id"])
             if now_row is None or _row_version(now_row) != expected_version:
@@ -182,9 +180,9 @@ def batch_review_staging(
             # An explicit reject mark: the only core path (with the CLI apply and
             # the backfill) that writes a permanent tombstone.
             if it.get("type") == "playbook":
-                result = eng.reject_playbook(it["id"], _owner_reject=owner_reject, _reject_reason=reason)
+                result = eng.reject_playbook(it["id"], _owner_reject=owner_reject)
             else:
-                result = eng.archive_knowledge(it["id"], _owner_reject=owner_reject, _reject_reason=reason)
+                result = eng.archive_knowledge(it["id"], _owner_reject=owner_reject)
             ok = not result.get("error")
         if ok:
             it["status"] = "applied"
@@ -220,12 +218,6 @@ def _row_version(row: dict[str, Any]) -> int:
         return int(row.get("version") or 1)
     except (TypeError, ValueError):
         return 1
-
-
-def _clean_reason(value: Any) -> str:
-    from .tombstones import clean_reason
-
-    return clean_reason(value)
 
 
 def _item(

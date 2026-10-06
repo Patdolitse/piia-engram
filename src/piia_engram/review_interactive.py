@@ -4,7 +4,7 @@ The Owner sees one pending proposal per screen (kind, id, time, scope, text,
 risk, where it came from, a possible duplicate with its diff, and the
 supersede chain) and types one letter plus Enter:
 
-    a  approve        r  reject (asks for an optional reason)
+    a  approve        r  reject (asks for an optional reason, kept in the receipt only)
     s  supersede      (asks for the id of the approved entry it replaces)
     k  skip           v  show the full text        q  stop and go to the summary
 
@@ -267,12 +267,13 @@ def _ask_target(term: _Terminal, eng, item_id: str, taken: set[str]) -> str:
 
 
 def _ask_reason(term: _Terminal) -> str:
-    answer = term.ask(t(f"拒绝理由（可选，最多 {_tombstones.REASON_MAX} 字，回车跳过）：",
-                        f"Reason (optional, up to {_tombstones.REASON_MAX} characters, Enter to skip):"))
-    reason = _tombstones.clean_reason(answer)
+    limit = _review_cli.REASON_MAX
+    answer = term.ask(t(f"拒绝理由（可选，最多 {limit} 字，只记在本次回执里，回车跳过）：",
+                        f"Reason (optional, up to {limit} characters, kept in this run's receipt only; "
+                        "Enter to skip):"))
+    reason = _review_cli.clean_reason(answer)
     if len(_write_provenance.clean_client_text(answer, limit=10**9)) > len(reason):
-        term.say(t(f"（理由已截断为 {_tombstones.REASON_MAX} 字）",
-                   f"(reason trimmed to {_tombstones.REASON_MAX} characters)"))
+        term.say(t(f"（理由已截断为 {limit} 字）", f"(reason trimmed to {limit} characters)"))
     return reason
 
 

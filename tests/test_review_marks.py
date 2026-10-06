@@ -5,7 +5,9 @@
   recall shows only the new one; playbook: the old one is archived);
 * the target must exist, be trusted, be the same kind and scope, not be the
   proposal and not close a cycle; otherwise the item fails and nothing is written;
-* a reject mark may carry the Owner's ``reason``, cleaned and capped onto the tombstone;
+* a reject mark may carry the Owner's ``reason``, cleaned and capped, kept in the run's
+  receipt only; the tombstone stays text-free;
+* a marks file without the new fields applies exactly as before;
 * ``expected_version`` skips an item that changed after it was reviewed;
 * a run that stops part-way still leaves a receipt.
 """
@@ -170,14 +172,46 @@ def test_dry_run_reports_a_bad_supersede_without_writing(eng, tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_reject_reason_is_cleaned_onto_the_tombstone(eng, tmp_path, capsys):
+def test_reject_reason_goes_to_the_receipt_not_the_tombstone(eng, tmp_path, capsys):
     row = eng.add_lesson({"summary": "Skip the changelog for small fixes", "domain": "type:lesson"})
 
-    _apply(tmp_path, capsys, [{"id": row["id"], "mark": "reject", "reason": "no\x1b[2J: every fix\nis logged"}])
+    applied = _apply(tmp_path, capsys,
+                     [{"id": row["id"], "mark": "reject", "reason": "no\x1b[2J: every fix\nis logged"}])
 
     (stone,) = _tombstones(eng.root)
-    assert stone["reason"] == "no [2J: every fix is logged"
-    assert stone["via"] == "cli:owner"
+    assert stone["via"] == "cli:owner" and "reason" not in stone
+    assert "every fix" not in (eng.root / "knowledge" / "tombstones.jsonl").read_text(encoding="utf-8")
+    (receipt,) = _receipts(eng.root)
+    assert receipt["reject_reasons"] == {row["id"]: "no [2J: every fix is logged"}
+    assert applied["items"][0]["reason"] == "no [2J: every fix is logged"
+
+
+def test_old_format_marks_apply_exactly_as_before(eng, tmp_path, capsys):
+    keep = eng.add_lesson({"summary": "Keep this proposal", "domain": "t"})
+    drop = eng.add_lesson({"summary": "Drop this proposal", "domain": "t"})
+    relabel = eng.add_lesson({"summary": "Relabel this approved entry", "domain": "feedback"})
+    _approve(eng, relabel["id"])
+
+    applied = _apply(tmp_path, capsys, [{"id": keep["id"], "mark": "approve"},
+                                        {"id": drop["id"], "mark": "reject"},
+                                        {"id": relabel["id"], "mark": "edit-type:rule"}])
+
+    assert applied["status"] == "applied"
+    assert applied["items"] == [{"id": keep["id"], "action": "approve", "status": "applied"},
+                                {"id": drop["id"], "action": "reject", "status": "applied"}]
+    assert applied["edit_type_failed"] == []
+    counts = applied["counts"]
+    assert (counts["requested"], counts["approve"], counts["reject"], counts["planned"], counts["applied"],
+            counts["noop"], counts["failed"], counts["edit_type"], counts["edit_type_failed"]) == (
+        2, 1, 1, 2, 2, 0, 0, 1, 0)
+    assert counts["supersede"] == 0 and counts["supersede_failed"] == 0
+    assert _row(eng, keep["id"])["tier"] == "verified"
+    assert _row(eng, drop["id"])["status"] == "outdated"
+    assert "type:rule" in _row(eng, relabel["id"])["domain"].split(",")
+    (stone,) = _tombstones(eng.root)
+    assert set(stone) == {"id", "kind", "scope", "h1", "h2", "hv", "rejected_at", "via"}
+    (receipt,) = _receipts(eng.root)
+    assert "reject_reasons" not in receipt
 
 
 def test_a_reject_without_reason_keeps_the_tombstone_text_free(eng, tmp_path, capsys):
@@ -189,7 +223,7 @@ def test_a_reject_without_reason_keeps_the_tombstone_text_free(eng, tmp_path, ca
     assert "reason" not in stone and "Skip code review" not in json.dumps(stone)
 
 
-def test_reason_from_an_agent_batch_is_ignored(eng, tmp_path):
+def test_reason_in_a_batch_row_never_reaches_the_tombstone(eng, tmp_path):
     row = eng.add_lesson({"summary": "Agents may not annotate rejections", "domain": "type:lesson"})
 
     batch_review_staging(eng, [{"id": row["id"], "action": "reject", "reason": "agent text"}],

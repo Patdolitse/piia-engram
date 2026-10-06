@@ -6,8 +6,7 @@ they never remove an existing row. Only the Owner withdraws one
 
 A tombstone is written only by an explicit reject mark -- review_staging batch
 reject, ``engram review apply`` reject, or the backfill -- never by capacity
-moves, merges or a plain archive. It stores hashes, not the claim's text (an
-optional ``reason`` the Owner typed is kept, cleaned and capped):
+moves, merges or a plain archive. It stores hashes, not text:
 
 * ``h1`` -- sha256 of the normalized claim; an identical h1 in the same scope is
   always refused (``rejected_before``), on every insert route and in every mode.
@@ -30,8 +29,6 @@ from pathlib import Path
 from typing import Any
 
 FILENAME = "tombstones.jsonl"
-# An Owner's optional reject reason is kept on the record, capped at this length.
-REASON_MAX = 200
 # Version of normalize()/claim_hashes(). Bump on any normalize change.
 # v3 hashes each claim field on its own and joins them with a unit separator, and a
 # decision without a question uses its title. v2 records (question + " " + choice)
@@ -227,30 +224,16 @@ def _locked(root):
     return hold_directory_lock(_path(root).parent, timeout=30)
 
 
-def append(root, kind: str, row: dict, *, via: str, prior_rejection_id: str = "", reason: str = "") -> dict | None:
-    """Append one tombstone for ``row``; idempotent per id; under the knowledge dir lock.
-
-    ``reason`` is the Owner's optional note (cleaned and capped here as well).
-    """
+def append(root, kind: str, row: dict, *, via: str, prior_rejection_id: str = "") -> dict | None:
+    """Append one tombstone for ``row``; idempotent per id; under the knowledge dir lock."""
     item_id = str(row.get("id") or "")
     if not item_id:
         return None
     with _locked(root):
-        return _append_locked(root, kind, row, item_id, via=via, prior_rejection_id=prior_rejection_id,
-                              reason=reason)
+        return _append_locked(root, kind, row, item_id, via=via, prior_rejection_id=prior_rejection_id)
 
 
-def clean_reason(value: Any) -> str:
-    """An Owner's reject reason, safe to store and print: no control, bidi or
-    zero-width characters, whitespace collapsed, at most ``REASON_MAX`` chars."""
-    text = "" if value is None else str(value)
-    kept = [" " if unicodedata.category(ch).startswith("C") else ch for ch in text]
-    text = " ".join("".join(kept).split())
-    return text[:REASON_MAX]
-
-
-def _append_locked(root, kind: str, row: dict, item_id: str, *, via: str, prior_rejection_id: str,
-                   reason: str = "") -> dict | None:
+def _append_locked(root, kind: str, row: dict, item_id: str, *, via: str, prior_rejection_id: str) -> dict | None:
     if by_id(root, item_id) is not None:
         return None
     h1, h2 = claim_hashes(kind, row)
@@ -266,9 +249,6 @@ def _append_locked(root, kind: str, row: dict, item_id: str, *, via: str, prior_
     }
     if prior_rejection_id:
         record["prior_rejection_id"] = prior_rejection_id
-    reason = clean_reason(reason)
-    if reason:
-        record["reason"] = reason
     path = _path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:

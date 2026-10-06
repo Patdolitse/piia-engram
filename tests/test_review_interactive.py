@@ -188,7 +188,12 @@ def test_approved_proposal_is_trusted_and_recalled_rejected_one_is_tombstoned(st
     (stone,) = _tombstones(eng.root)
     assert stone["id"] == _lesson(eng, drop)["id"]
     assert stone["via"] == "cli:owner"
-    assert stone["reason"] == "too manual"
+    # The reason is the Owner's note for this run: in the receipt, never on the tombstone.
+    assert "reason" not in stone
+    assert "too manual" not in (eng.root / "knowledge" / "tombstones.jsonl").read_text(encoding="utf-8")
+    (receipt,) = _receipts(eng.root)
+    assert receipt["reject_reasons"] == {stone["id"]: "too manual"}
+    assert '"reason": "too manual"' in out
     again = _run(mcp_server.add_lesson(summary=drop, detail="again", domain="type:lesson", user_confirmed=True))
     assert "rejected_before" in again or "rejected" in again.lower()
     assert [r for r in eng.get_lessons(limit=None, _update_access=False)
@@ -462,9 +467,12 @@ def test_hostile_content_is_shown_without_control_bytes(store):
     assert "Harmless start" in out
     assert "self-reported" in out or "客户端自报" in out
     (stone,) = _tombstones(eng.root)
-    _assert_terminal_safe(stone["reason"])
-    assert len(stone["reason"]) <= review_cli.REASON_MAX
-    assert stone["reason"].startswith("bad [31m reason")
+    assert "reason" not in stone
+    (receipt,) = _receipts(eng.root)
+    (reason,) = receipt["reject_reasons"].values()
+    _assert_terminal_safe(reason)
+    assert len(reason) <= review_cli.REASON_MAX
+    assert reason.startswith("bad [31m reason")
 
 
 def test_duplicate_candidate_and_diff_are_shown(store):

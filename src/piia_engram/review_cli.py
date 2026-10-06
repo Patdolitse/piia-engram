@@ -27,7 +27,9 @@ from .staging_review import batch_review_staging
 
 MEM_TYPES = ("rule", "preference", "project_fact", "lesson", "decision")
 SUPERSEDE_PREFIX = "supersede:"
-REASON_MAX = _tombstones.REASON_MAX
+# The Owner's optional reject reason: kept in this run's receipt only (audit
+# event and printed payload), never on the tombstone, which stays text-free.
+REASON_MAX = 200
 PLAYBOOK_TYPES = ("rule", "lesson", "project_fact")
 _TYPE_ORDER = {t: i for i, t in enumerate(("rule", "preference", "decision", "project_fact", "lesson"))}
 _DETAIL_CAP = 500
@@ -96,14 +98,21 @@ def attribution_record(operator: str, *, mode: str = "", isatty: bool | None = N
     return record
 
 
-def _receipt(eng, verb: str, attribution: dict, counts: dict) -> None:
+def _receipt(eng, verb: str, attribution: dict, counts: dict, reject_reasons: dict | None = None) -> None:
+    extra = {"verb": verb, **attribution, "counts": counts}
+    if reject_reasons:
+        extra["reject_reasons"] = reject_reasons  # the Owner's own notes, cleaned and capped
     eng._audit.log(
         "owner_cli",
         f"review/{verb}",
         detail=json.dumps(counts, sort_keys=True),
         source_tool="cli",
-        extra={"verb": verb, **attribution, "counts": counts},
+        extra=extra,
     )
+
+
+def _reject_reasons(marks: list[dict]) -> dict[str, str]:
+    return {m["id"]: m["reason"] for m in marks if m.get("mark") == "reject" and m.get("reason")}
 
 
 def _type_label(row: dict) -> str:
@@ -235,7 +244,8 @@ def validate_marks(raw: Any) -> tuple[list[dict], str]:
     Each entry is ``{id, mark}`` with mark ``approve | reject | retire | restore
     | edit-type:<type> | supersede:<old id>``; optional ``expected_version``
     (approve / reject / supersede: skip the item if it changed since) and
-    ``reason`` (reject: the Owner's note, kept on the tombstone).
+    ``reason`` (reject: the Owner's note, kept in the receipt of the run only;
+    the tombstone stays text-free).
     """
     if not isinstance(raw, list):
         return [], "marks file must be a JSON array of {id, mark}"
@@ -269,11 +279,17 @@ def validate_marks(raw: Any) -> tuple[list[dict], str]:
                     return [], f"expected_version must be a whole number: {item_id}"
                 parsed["expected_version"] = version
         if parsed["mark"] == "reject":
-            reason = _tombstones.clean_reason(entry.get("reason"))
+            reason = clean_reason(entry.get("reason"))
             if reason:
                 parsed["reason"] = reason
         marks.append(parsed)
     return marks, ""
+
+
+def clean_reason(value: Any) -> str:
+    """An Owner's reject reason, safe to store and print: no control, bidi or
+    zero-width characters, whitespace collapsed, at most ``REASON_MAX`` chars."""
+    return _write_provenance.clean_client_text(value, limit=REASON_MAX)
 
 
 def _parse_marks(path: Path) -> tuple[list[dict], str]:
@@ -407,8 +423,6 @@ def _batch_row(mark: dict) -> dict:
     row = {"id": mark["id"], "action": "reject" if mark["mark"] == "reject" else "approve"}
     if "expected_version" in mark:
         row["expected_version"] = mark["expected_version"]
-    if mark.get("reason"):
-        row["reason"] = mark["reason"]
     return row
 
 
@@ -427,6 +441,8 @@ def _item_view(item: dict, mark: dict) -> dict:
     view = {"id": item.get("id", mark["id"]), "action": mark["mark"], "status": item.get("status", "")}
     if mark["mark"] == "supersede":
         view["target"] = mark["target"]
+    if mark.get("reason"):
+        view["reason"] = mark["reason"]
     return view
 
 
@@ -556,10 +572,10 @@ def apply_marks(eng, marks: list[dict], attribution: dict) -> dict:
                 counts["lifecycle"] += 1
     except BaseException:
         counts["edit_type_failed"] = len(edit_failed)
-        _receipt(eng, "apply", attribution, {**counts, "aborted": 1})
+        _receipt(eng, "apply", attribution, {**counts, "aborted": 1}, _reject_reasons(reviews))
         raise
     counts["edit_type_failed"] = len(edit_failed)
-    _receipt(eng, "apply", attribution, counts)
+    _receipt(eng, "apply", attribution, counts, _reject_reasons(reviews))
     return {"status": "applied", "counts": counts, "items": items, "edit_type_failed": edit_failed}
 
 

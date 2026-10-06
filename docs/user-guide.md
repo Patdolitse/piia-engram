@@ -157,7 +157,7 @@ You stay in control of staged items at any time:
 - In a terminal, `engram review interactive` (or `engram review -i`) shows one
   pending proposal at a time (type, text, risk, where it came from, a possible
   duplicate with its diff, what it replaces) and takes one letter plus Enter:
-  `a` approve, `r` reject (optional reason), `s` supersede an approved entry
+  `a` approve, `r` reject (optional reason, kept in the receipt only), `s` supersede an approved entry
   (you type its id), `k` skip, `v` full text, `q` stop. Nothing is written until
   you confirm the summary with `y`; `n`, end of input or Ctrl+C write nothing.
   It applies through the same path as `engram review apply` and leaves the same
