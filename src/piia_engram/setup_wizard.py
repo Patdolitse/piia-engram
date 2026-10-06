@@ -2274,21 +2274,15 @@ def _offer_setup_import(data_dir: str, *, project_roots: tuple = ()) -> dict | N
     try:
         from piia_engram import memory_import
 
-        state = memory_import.switch_state()
-        if not state["enabled"] and state["disabled_by"] == "reconcile_authorized=false":
-            # This yes is the Owner's consent; lift the earlier stored "no".
-            from piia_engram.telemetry import _load_config, _save_config
-
-            cfg = _load_config()
-            cfg["reconcile_authorized"] = True
-            _save_config(cfg)
-            print(_t("  ℹ️  已重新允许读取其它 AI 工具的文件（reconcile_authorized=true）。",
-                     "  ℹ️  Reading other AI tools' files is allowed again (reconcile_authorized=true)."))
+        # A stored reconcile_authorized=false (in this data folder) is lifted
+        # only when the Owner confirms the listed items, right before writing;
+        # ENGRAM_RECONCILE=0 is never lifted.
         payload = memory_import.interactive_import(
             lambda question: _yn(f"  {question}", default=False),
             out=lambda text: _safe_print("\n".join(f"  {line}" for line in text.splitlines())),
             root=Path(data_dir),
             project_roots=tuple(project_roots),
+            lift_stored_no=True,
         )
     except Exception as exc:
         print(_t(f"  ⚠️  导入未完成（{exc}）。可稍后运行 engram import-memories。",

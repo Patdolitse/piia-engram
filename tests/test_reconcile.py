@@ -928,7 +928,7 @@ def test_staging_reminder_in_context(tmp_path: Path):
 
     ctx = e.generate_context()
     assert "staging_review_reminder" in ctx
-    assert "12 条自动导入的知识尚未审核" in ctx
+    assert "12 条待审知识" in ctx
 
 
 def test_no_staging_reminder_when_few(tmp_path: Path):

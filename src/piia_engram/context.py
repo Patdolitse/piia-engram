@@ -1662,7 +1662,7 @@ class ContextMixin:
             if staging["total_staging"] > 10:
                 sections["staging"] = (
                     "\n## staging_review_reminder\n"
-                    f"- 有 {staging['total_staging']} 条自动导入的知识尚未审核。"
+                    f"- 有 {staging['total_staging']} 条待审知识。"
                     " 建议运行 review_knowledge 查看并确认或归档。"
                 )
 

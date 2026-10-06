@@ -241,7 +241,7 @@ def apply_reconcile(
                 # add_* declined (e.g. its own dedup caught it) - a no-op, not a write.
                 it["outcome"] = OUTCOME_NOOP
                 it["reason"] = "import_declined"
-                record.duplicates += 1
+                record.duplicates += 1  # _import_one does not tell a full queue apart
 
     payload = _payload(
         dry_run=False, confirmed=True, requires_confirmation=False,

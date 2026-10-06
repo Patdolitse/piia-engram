@@ -1296,7 +1296,9 @@ def _run_privacy_report() -> None:
         print("        Reads when you run it: ~/.claude/projects/*/memory/*.md, CLAUDE.md, AGENTS.md, .cursorrules, etc.")
         summary = memory_import.importable_summary()
         print(f"        Importable now: {memory_import.importable_text(summary)}")
-        print("        Hard off switch: ENGRAM_RECONCILE=0 (or reconcile_authorized=false) - nothing is read at all")
+        print("        Hard off switch: ENGRAM_RECONCILE=0 (or reconcile_authorized=false) - nothing is read;")
+        print("          engram import-memories, setup's import, engram reconcile apply and")
+        print("          import_engram(format=\"openclaw\") all refuse")
     except Exception as exc:
         print(f"        (status not available: {type(exc).__name__})")
     print()
@@ -5042,8 +5044,8 @@ def _reconcile_apply_payload(
         "counts": {
             "import": len(items),
             "duplicate": int(result.get("duplicates", 0) or 0),
-            "conflict": 0,
-            "skip": 0,
+            "conflict": int((result.get("proposal_counts") or {}).get("conflict", 0) or 0),
+            "skip": int((result.get("proposal_counts") or {}).get("skip", 0) or 0),
             "imported": int(result.get("imported", 0) or 0),
             "failed": 0,
             "queue_full": int(result.get("queue_full", 0) or 0),
@@ -5098,14 +5100,19 @@ def _run_reconcile(args: list[str]) -> int:
     commit = apply and "--commit" in args
 
     if apply:
+        # The same classification as `engram reconcile` / `reconcile conflicts`:
+        # near-duplicates and conflicts are counted and never written.
+        reader = Engram(root=root, read_only=True)
+        planned = memory_import.filter_by_proposal(
+            reader, memory_import.plan(reader, ("memories",)), source="memory_files",
+        )
         if commit and confirm:
-            confirmed = memory_import.plan(Engram(root=root, read_only=True), ("memories",))
-            result = memory_import.write_plan(Engram(root=root), confirmed, command="engram reconcile apply")
+            result = memory_import.write_plan(Engram(root=root), planned, command="engram reconcile apply")
             payload = _reconcile_apply_payload(
                 result, dry_run=False, confirmed=True, requires_confirmation=False,
             )
         else:
-            result = memory_import.plan(Engram(root=root, read_only=True), ("memories",))
+            result = planned
             payload = _reconcile_apply_payload(
                 result, dry_run=not commit, confirmed=confirm,
                 requires_confirmation=commit and result.get("enabled", True),

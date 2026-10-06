@@ -87,6 +87,14 @@ def run_bootstrap(engram: "Engram") -> dict[str, Any]:
     Idempotent: marks the store as bootstrapped regardless of whether files
     were found, so this never fires twice.
     """
+    from .memory_import import refusal
+
+    refused = refusal(engram.root)  # ENGRAM_RECONCILE=0 / reconcile_authorized=false
+    if refused is not None:
+        return {"bootstrapped": False, "status": "disabled", "disabled_by": refused["disabled_by"],
+                "files_scanned": 0, "user_rules_imported": 0, "project_rules_imported": 0,
+                "language_detected": ""}
+
     result: dict[str, Any] = {
         "bootstrapped": True,
         "files_scanned": 0,
@@ -248,7 +256,7 @@ def _import_rules(engram: "Engram", rule_files: list[dict]) -> dict[str, Any]:
     # imported text does not change identity.
 
     # Grouped lessons, into the review queue, with an import receipt.
-    from .memory_import import recording
+    from .memory_import import note_outcome, recording
 
     groups = [
         ("用户身份与偏好（从规则文件导入）", "user_preference", user_sections),
@@ -268,14 +276,10 @@ def _import_rules(engram: "Engram", rule_files: list[dict]) -> dict[str, Any]:
                  "detail": detail,
                  "source_tool": "engram_bootstrap",
                  "tier": "staging"},
+                _audit_metadata_only=True,
             )
-            if isinstance(result, dict) and result.get("id") and result.get("status") not in (
-                "duplicate", "rejected_before", "duplicate_retired", "queue_full"
-            ):
-                record.add_written(result["id"], source="rule_files",
-                                   file=", ".join(sorted(sections)), summary=summary, detail=detail)
-            else:
-                record.duplicates += 1
+            note_outcome(record, result, source="rule_files",
+                         file=", ".join(sorted(sections)), summary=summary, detail=detail)
 
     return {
         "user_count": user_count,

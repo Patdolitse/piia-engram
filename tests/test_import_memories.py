@@ -339,23 +339,34 @@ def test_the_cli_reports_a_partial_import(store, monkeypatch, capsys):
 
 
 def test_a_full_review_queue_stops_writing_and_the_receipt_counts_the_rest(store, monkeypatch):
-    monkeypatch.setenv("ENGRAM_REVIEW_QUEUE_MAX", "2")
+    # Two older items already wait for review; the queue holds three.
+    monkeypatch.setenv("ENGRAM_REVIEW_QUEUE_MAX", "3")
+    monkeypatch.setenv("ENGRAM_REVIEW_MIN_STAY_DAYS", "0")
+    seed = Engram(root=store)
+    older = [
+        seed.add_lesson(text, domain="testing", source_tool="cli", tier="staging")["id"]
+        for text in ("Older queued note about flaky network retries in CI",
+                     "Older queued note about rotating the signing key yearly")
+    ]
     preview = memory_import.plan(Engram(root=store, read_only=True))
     assert preview["count"] >= 5
 
     result = memory_import.write_plan(Engram(root=store), preview)
 
-    assert result["imported"] == 2
-    assert result["queue_full"] == result["not_written"] == preview["count"] - 2
-    assert len(_imported_rows(store)) == 2
+    assert result["imported"] == 1
+    assert result["queue_full"] == result["not_written"] == preview["count"] - 1
+    assert len(_imported_rows(store)) == 1
     receipt = json.loads((store / result["receipt"]).read_text(encoding="utf-8"))
     assert receipt["status"] == "partial" and receipt["error"] == ""
-    assert receipt["skipped"]["queue_full"] == receipt["not_written"] == preview["count"] - 2
-    # nothing already queued was pushed out to make room
+    assert receipt["stopped_by"] == "review_queue_full"
+    assert receipt["skipped"]["queue_full"] == receipt["not_written"] == preview["count"] - 1
+    # the older queued items were not pushed out to make room
+    active = {row["id"] for row in Engram(root=store, read_only=True).get_lessons(
+        limit=None, _update_access=False)}
+    assert set(older) <= active
     assert not result.get("overflow_archived_ids")
-    assert not (store / "knowledge" / "overflow_archive").exists() or not any(
-        (store / "knowledge" / "overflow_archive").iterdir()
-    )
+    archive = store / "knowledge" / "overflow_archive"
+    assert not archive.exists() or not any(archive.iterdir())
 
 
 def test_help_states_the_limits(capsys):

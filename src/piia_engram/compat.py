@@ -39,6 +39,11 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
 
     One-time migration for existing OCA users.
     """
+    from .memory_import import refusal
+
+    refused = refusal(engram.root)  # ENGRAM_RECONCILE=0 / reconcile_authorized=false
+    if refused is not None:
+        return {"migrated": [], "status": "disabled", "disabled_by": refused["disabled_by"]}
     mem_dir = Path(oca_memory_dir)
     migrated: list[str] = []
 
@@ -87,11 +92,12 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
         try:
             near_misses = json.loads(nm_path.read_text(encoding="utf-8"))
             if isinstance(near_misses, list):
-                from .memory_import import recording
+                from .memory_import import note_outcome, recording
 
                 with recording(
-                    engram, sources=["oca_memory"], command="compat.migrate_from_oca_memory",
-                    resource="knowledge/import_oca_memory", source_tool="oca_migration",
+                    engram, sources=["legacy_memory_migration"],
+                    command="legacy_memory_migration",
+                    resource="knowledge/import_legacy_memory", source_tool="legacy_memory_migration",
                 ) as record:
                     for nm in near_misses[-20:]:
                         summary = nm.get("what_happened", "")[:80]
@@ -102,14 +108,9 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
                             "domain": "safety",
                             "source_project": "migrated_from_oca_memory",
                             "tier": "staging",  # imported lessons wait for review
-                        })
-                        if isinstance(result, dict) and result.get("id") and result.get("status") not in (
-                            "duplicate", "rejected_before", "duplicate_retired", "queue_full"
-                        ):
-                            record.add_written(result["id"], source="oca_memory",
-                                               file="near_misses.json", summary=summary, detail=detail)
-                        else:
-                            record.duplicates += 1
+                        }, _audit_metadata_only=True)
+                        note_outcome(record, result, source="legacy_memory_migration",
+                                     file="near_misses.json", summary=summary, detail=detail)
                 migrated.append(f"near_misses ({len(near_misses)} entries)")
         except Exception as exc:
             logger.warning("migrate near_misses failed: %s", exc)
@@ -373,8 +374,12 @@ def import_from_openclaw(
     Returns:
         Dict with import summary.
     """
-    from .memory_import import recording
+    from .memory_import import note_outcome, recording, refusal
     from .reconcile import _display_path
+
+    refused = refusal(engram.root)  # ENGRAM_RECONCILE=0 / reconcile_authorized=false
+    if refused is not None:
+        return {**refused, "bridge_level": OPENCLAW_BRIDGE_LEVEL, "receipt": ""}
 
     imported = []
     receipt = ""
@@ -481,15 +486,10 @@ def import_from_openclaw(
                             "domain": domain,
                             "source_tool": "openclaw_import",
                             "tier": "staging",  # imports wait for review
-                        })
-                        if isinstance(result, dict) and result.get("id") and result.get("status") not in (
-                            "duplicate", "rejected_before", "duplicate_retired", "queue_full"
-                        ):
+                        }, _audit_metadata_only=True)
+                        if note_outcome(record, result, source="openclaw",
+                                        file=_display_path(p), summary=text):
                             new_count += 1
-                            record.add_written(result["id"], source="openclaw",
-                                               file=_display_path(p), summary=text)
-                        else:
-                            record.duplicates += 1
                 receipt = record.receipt
             if new_count:
                 imported.append(f"MEMORY.md → lessons (+{new_count}, review queue)")

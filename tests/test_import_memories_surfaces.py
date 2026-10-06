@@ -331,25 +331,32 @@ def test_bootstrap_writes_to_the_review_queue_with_a_receipt(store, tmp_path, mo
     assert {i["id"] for i in receipt["items"]} == {r["id"] for r in rows}
 
 
-def test_oca_migration_writes_to_the_review_queue_with_a_receipt(store, tmp_path):
-    from piia_engram.compat import migrate_from_oca_memory
-
-    oca = tmp_path / "oca"
-    oca.mkdir()
-    (oca / "near_misses.json").write_text(json.dumps([
+def _write_legacy_dir(tmp_path):
+    legacy = tmp_path / "legacy-memory"
+    legacy.mkdir()
+    (legacy / "near_misses.json").write_text(json.dumps([
         {"what_happened": "deployed without running the migration check",
          "what_could_have_happened": "the schema would have drifted"},
+        {"what_happened": "merged with a failing lint job",
+         "what_could_have_happened": "style drift across the codebase"},
     ]), encoding="utf-8")
+    return legacy
+
+
+def test_legacy_memory_migration_writes_to_the_review_queue_with_a_receipt(store, tmp_path):
+    from piia_engram.compat import migrate_from_oca_memory
+
     eng = Engram(root=store)
-    migrate_from_oca_memory(str(oca), eng)
+    migrate_from_oca_memory(str(_write_legacy_dir(tmp_path)), eng)
 
     # project-tagged rows are not listed without a project, so read the file
     stored = json.loads((store / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
     rows = [r for r in stored if r.get("domain") == "safety"]
-    assert len(rows) == 1 and rows[0]["tier"] == "staging"
+    assert len(rows) == 2 and {r["tier"] for r in rows} == {"staging"}
     receipt = _receipts(store)[-1]
-    assert receipt["command"] == "compat.migrate_from_oca_memory"
-    assert receipt["items"][0]["id"] == rows[0]["id"]
+    assert receipt["command"] == "legacy_memory_migration"
+    assert receipt["sources"] == ["legacy_memory_migration"]
+    assert {i["id"] for i in receipt["items"]} == {r["id"] for r in rows}
 
 
 def test_recording_writes_a_partial_receipt_and_reraises(store):
@@ -372,3 +379,318 @@ def test_doctor_states_the_import_limits(store):
     out = _doctor_output()
     assert "rule-file sections at most 25 per run" in out
     assert "ENGRAM_REVIEW_QUEUE_MAX" in out
+
+
+# -- audit log stays metadata-only ---------------------------------------------------
+
+
+_SAMPLE_TEXTS = ("linter", "staging bucket", "second human review", "small pure functions",
+                 "concise answers", "commit messages")
+
+
+def _audit_text(root):
+    path = root / "audit.log"
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
+def test_import_memories_keeps_imported_text_out_of_the_audit_log(store):
+    from piia_engram import memory_import
+
+    assert memory_import.run_cli(["--yes"]) == 0
+    assert _imported_rows(store)
+    audit = _audit_text(store)
+    assert "knowledge/import_memories" in audit
+    for text in _SAMPLE_TEXTS:
+        assert text not in audit
+
+
+def test_reconcile_apply_keeps_imported_text_out_of_the_audit_log(store, capsys):
+    from piia_engram.setup_wizard import _run_reconcile
+
+    assert _run_reconcile(["apply", "--commit", "--yes"]) == 0
+    assert _imported_rows(store)
+    audit = _audit_text(store)
+    assert "knowledge/import_memories" in audit
+    for text in _SAMPLE_TEXTS:
+        assert text not in audit
+
+
+# -- interruptions are recorded, then re-raised -----------------------------------------
+
+
+def _interrupt_on_call(monkeypatch, cls, name, call_no):
+    real = getattr(cls, name)
+    calls = {"n": 0}
+
+    def wrapped(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == call_no:
+            raise KeyboardInterrupt
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, name, wrapped)
+
+
+def test_an_interrupted_import_records_a_partial_receipt_not_a_full_queue(store, monkeypatch):
+    from piia_engram import memory_import
+
+    preview = memory_import.plan(Engram(root=store, read_only=True))
+    _interrupt_on_call(monkeypatch, Engram, "add_lesson", 3)
+
+    with pytest.raises(KeyboardInterrupt):
+        memory_import.write_plan(Engram(root=store), preview)
+
+    receipt = _receipts(store)[-1]
+    assert receipt["status"] == "partial" and receipt["error"] == "KeyboardInterrupt"
+    assert receipt["stopped_by"] == "error"
+    assert receipt["skipped"]["queue_full"] == 0
+    assert receipt["imported"] == 2 and receipt["not_written"] == preview["count"] - 2
+    assert "partial error=KeyboardInterrupt" in _audit_text(store)
+
+
+def test_every_recording_path_writes_a_receipt_when_interrupted(store, tmp_path, monkeypatch):
+    import piia_engram.bootstrap as bs
+    from piia_engram import reconcile_apply
+    from piia_engram.compat import import_from_openclaw, migrate_from_oca_memory
+
+    # 1) reconcile_apply.apply_reconcile
+    real_one = reconcile_apply._import_one
+    calls = {"n": 0}
+
+    def flaky_one(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return real_one(*args, **kwargs)
+
+    monkeypatch.setattr(reconcile_apply, "_import_one", flaky_one)
+    with pytest.raises(KeyboardInterrupt):
+        reconcile_apply.apply_reconcile(
+            Engram(root=store),
+            [{"summary": "first candidate about release notes wording"},
+             {"summary": "second candidate about changelog grouping order"}],
+            source="memory_files", confirm=True, dry_run=False,
+        )
+    monkeypatch.setattr(reconcile_apply, "_import_one", real_one)
+
+    # 2) bootstrap, 3) OpenClaw, 4) legacy migration: interrupt the second add_lesson
+    rules = tmp_path / "rules.md"
+    rules.write_text("# Rules\nI prefer concise answers.\nThis repo uses pytest for tests.\n",
+                     encoding="utf-8")
+    monkeypatch.setattr(bs, "_scan_rule_files", lambda: [
+        {"path": rules, "scope": "global", "lines": rules.read_text(encoding="utf-8").splitlines()},
+    ])
+    memory_md = tmp_path / "MEMORY.md"
+    memory_md.write_text("## Lessons Learned\n- first openclaw lesson about retries\n"
+                         "- second openclaw lesson about timeouts\n", encoding="utf-8")
+    legacy = _write_legacy_dir(tmp_path)
+    runs = [
+        lambda eng: bs.run_bootstrap(eng),
+        lambda eng: import_from_openclaw(eng, memory_path=str(memory_md)),
+        lambda eng: migrate_from_oca_memory(str(legacy), eng),
+    ]
+    for run in runs:
+        _interrupt_on_call(monkeypatch, Engram, "add_lesson", 2)
+        with pytest.raises(KeyboardInterrupt):
+            run(Engram(root=store))
+        monkeypatch.undo()
+        monkeypatch.setenv("ENGRAM_DIR", str(store))
+        monkeypatch.setenv("ENGRAM_AUDIT", "1")
+
+    receipts = _receipts(store)
+    commands = [r["command"] for r in receipts]
+    for command in ("reconcile_apply.apply_reconcile", "bootstrap.run_bootstrap",
+                    'import_engram(format="openclaw")', "legacy_memory_migration"):
+        receipt = receipts[commands.index(command)]
+        assert receipt["status"] == "partial", command
+        assert receipt["error"] == "KeyboardInterrupt", command
+        assert receipt["imported"] == 1, command
+
+
+# -- setup lifts a stored "no" only at the second yes ----------------------------------------
+
+
+def test_setup_keeps_a_stored_no_when_the_list_is_declined(store, monkeypatch, capsys):
+    from piia_engram.setup_wizard import _run_privacy_preferences
+
+    (store / "telemetry_config.json").write_text(
+        json.dumps({"reconcile_authorized": False}), encoding="utf-8"
+    )
+    knowledge_before = {
+        rel: digest for rel, digest in _snapshot(store).items() if rel.startswith("knowledge/")
+    }
+    _answers(monkeypatch, "y", "n", "")  # import now: yes; at the list: no
+
+    _run_privacy_preferences(str(store))
+
+    assert "lint_rule.md" in capsys.readouterr().out  # the list was shown
+    assert _telemetry_config(store)["reconcile_authorized"] is False
+    assert {
+        rel: digest for rel, digest in _snapshot(store).items() if rel.startswith("knowledge/")
+    } == knowledge_before
+    assert not (store / "import_receipts").exists()
+
+
+def test_setup_never_lifts_the_environment_switch(store, monkeypatch, capsys):
+    from piia_engram.setup_wizard import _run_privacy_preferences
+
+    monkeypatch.setenv("ENGRAM_RECONCILE", "0")
+    _answers(monkeypatch, "y", "y", "")
+    _run_privacy_preferences(str(store))
+    assert "ENGRAM_RECONCILE=0" in capsys.readouterr().out
+    assert _imported_rows(store) == []
+    assert "reconcile_authorized" not in _telemetry_config(store)
+
+
+# -- the switch follows the store being imported into ------------------------------------------
+
+
+def test_the_switch_and_the_lift_follow_the_chosen_store(tmp_path, monkeypatch, other_ai_tools_home):
+    from piia_engram import memory_import
+    from piia_engram.setup_wizard import _offer_setup_import
+
+    ambient = tmp_path / "ambient-store"
+    chosen = tmp_path / "chosen-store"
+    monkeypatch.setenv("ENGRAM_DIR", str(ambient))
+    Engram(root=ambient)
+    Engram(root=chosen)
+    (chosen / "telemetry_config.json").write_text(
+        json.dumps({"reconcile_authorized": False, "enabled": False}), encoding="utf-8"
+    )
+
+    assert memory_import.switch_state(chosen) == {
+        "enabled": False, "disabled_by": "reconcile_authorized=false",
+    }
+    assert memory_import.switch_state(ambient)["enabled"] is True
+    assert memory_import.importable_summary(chosen)["enabled"] is False
+
+    _answers(monkeypatch, "y", "y")
+    payload = _offer_setup_import(str(chosen))
+
+    assert payload["imported"] >= 5
+    cfg = _telemetry_config(chosen)
+    assert cfg["reconcile_authorized"] is True and cfg["enabled"] is False  # other keys kept
+    assert not (ambient / "telemetry_config.json").exists()
+    assert _imported_rows(chosen) and not _imported_rows(ambient)
+
+
+# -- reconcile apply writes what the reconcile previews show ------------------------------------
+
+
+def test_reconcile_apply_skips_what_the_proposal_calls_a_conflict(store, monkeypatch, capsys):
+    from piia_engram import reconcile_proposal
+    from piia_engram.setup_wizard import _run_reconcile
+
+    real_classify = reconcile_proposal.classify_candidate
+
+    def classify(candidate, existing, **kwargs):
+        verdict = real_classify(candidate, existing, **kwargs)
+        if "staging bucket" in str(candidate.get("summary", "")):
+            return dict(verdict, action="conflict", reason="same_question_different_choice")
+        return verdict
+
+    monkeypatch.setattr(reconcile_proposal, "classify_candidate", classify)
+
+    assert _run_reconcile(["conflicts", "--json"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["counts"]["conflict"] == 1
+
+    assert _run_reconcile(["apply", "--commit", "--yes", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["counts"]["conflict"] == 1
+    assert payload["counts"]["imported"] == 1
+    summaries = [row["summary"] for row in _imported_rows(store)]
+    assert not any("staging bucket" in s for s in summaries)
+    assert any("linter" in s for s in summaries)
+
+
+# -- OpenClaw and bootstrap obey the hard off switch --------------------------------------------
+
+
+def test_openclaw_and_bootstrap_refuse_when_reading_is_off(store, tmp_path, monkeypatch, capsys):
+    import piia_engram.bootstrap as bs
+    from piia_engram.cli_commands import _run_privacy_report
+    from piia_engram.compat import import_from_openclaw
+
+    monkeypatch.setenv("ENGRAM_RECONCILE", "0")
+    memory_md = tmp_path / "MEMORY.md"
+    memory_md.write_text("## Lessons Learned\n- an openclaw lesson about retries\n", encoding="utf-8")
+    user_md = tmp_path / "USER.md"
+    user_md.write_text("- Role: tester\n- Language: English\n", encoding="utf-8")
+    monkeypatch.setattr(bs, "_scan_rule_files", lambda: (_ for _ in ()).throw(AssertionError("read")))
+    before = _snapshot(store)
+
+    result = import_from_openclaw(Engram(root=store), memory_path=str(memory_md), user_path=str(user_md))
+    assert result["status"] == "disabled" and result["disabled_by"] == "ENGRAM_RECONCILE=0"
+    boot = bs.run_bootstrap(Engram(root=store))
+    assert boot["status"] == "disabled"
+    reader = Engram(root=store, read_only=True)
+    assert "role" not in reader.get_profile() or reader.get_profile().get("role") != "tester"
+    assert {r: d for r, d in _snapshot(store).items() if r.startswith(("knowledge/", "identity/"))} == {
+        r: d for r, d in before.items() if r.startswith(("knowledge/", "identity/"))
+    }
+
+    _run_privacy_report()
+    out = capsys.readouterr().out
+    assert 'import_engram(format="openclaw")' in out and "refuse" in out
+
+
+# -- engine results carry no item text --------------------------------------------------------
+
+
+def test_engine_results_carry_no_item_text(store):
+    eng = Engram(root=store)
+    preview = eng.reconcile_memories(dry_run=True)
+    written = eng.reconcile_ai_configs()
+    for result in (preview, written):
+        assert result["items"]
+        for item in result["items"]:
+            assert set(item) == {"id", "source", "file", "content_sha256", "status"}
+    assert json.dumps(written).find("second human review") == -1
+
+
+# -- concurrency and receipt names ---------------------------------------------------------------
+
+
+def test_two_concurrent_imports_respect_the_queue_limit(store, monkeypatch):
+    import threading
+
+    from piia_engram import memory_import
+
+    monkeypatch.setenv("ENGRAM_REVIEW_QUEUE_MAX", "4")
+    preview = memory_import.plan(Engram(root=store, read_only=True))
+    assert preview["count"] >= 6
+    halves = [dict(preview, items=preview["items"][:3]), dict(preview, items=preview["items"][3:6])]
+    results = []
+    barrier = threading.Barrier(2)
+
+    def worker(part):
+        barrier.wait()
+        results.append(memory_import.write_plan(Engram(root=store), part))
+
+    threads = [threading.Thread(target=worker, args=(part,)) for part in halves]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert len(results) == 2
+    assert sum(r["imported"] for r in results) == 4
+    assert len(_imported_rows(store)) == 4
+    assert sum(r["queue_full"] for r in results) == 2
+
+
+def test_receipt_names_are_long_random_and_never_overwritten(store, monkeypatch):
+    import secrets as _secrets
+
+    from piia_engram import memory_import
+
+    tokens = iter(["a" * 16, "a" * 16, "b" * 16])
+    monkeypatch.setattr(_secrets, "token_hex", lambda n=None: next(tokens))
+    payload = {"items": [], "imported": 0, "sources": ["memories"], "partial": True, "error": "X"}
+    first_id, first = memory_import.write_receipt(store, payload)
+    second_id, second = memory_import.write_receipt(store, payload)
+
+    assert first_id.endswith("a" * 16) and second_id.endswith("b" * 16)
+    assert first != second and first.is_file() and second.is_file()
+    assert json.loads(first.read_text(encoding="utf-8"))["receipt_id"] == first_id

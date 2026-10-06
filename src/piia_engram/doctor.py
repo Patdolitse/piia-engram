@@ -849,9 +849,9 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         W._safe_print(f"    [{mark}] Other AI tools' memories: {memory_import.importable_text(summary)}")
         if summary.get("enabled"):
             W._safe_print(f"    [--] Import {memory_import.LIMITS_NOTE}")
-        for line in memory_import.legacy_switch_notes():
+        for line in memory_import.legacy_switch_notes(root=eng.root):
             W._safe_print(f"    [--] {line}")
-        note = reconcile_env_conflict_note()
+        note = reconcile_env_conflict_note(eng.root)
         if note:
             print(f"    [!] Reconcile: {note}")
     except Exception as exc:
