@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from piia_engram import recall_policy as rp
 
 
@@ -43,6 +45,16 @@ def test_two_node_cycle_supersedes_nobody():
     assert rp.classify(_row("b"), idx).state == rp.TRUSTED
 
 
+def test_pending_cycle_stays_pending():
+    idx = rp.build_supersede_index([
+        {"src": "p1", "rel": "supersedes", "dst": "p2"},
+        {"src": "p2", "rel": "supersedes", "dst": "p1"},
+    ])
+    assert idx.cycle_ids == frozenset({"p1", "p2"})
+    assert rp.classify(_row("p1", tier="staging"), idx).state == rp.PENDING
+    assert rp.classify(_row("p2", tier="staging"), idx).state == rp.PENDING
+
+
 def test_longer_cycle_and_edge_out_of_cycle():
     idx = rp.build_supersede_index([
         {"src": "a", "rel": "supersedes", "dst": "b"},
@@ -53,7 +65,6 @@ def test_longer_cycle_and_edge_out_of_cycle():
     ])
     assert idx.cycle_ids == frozenset({"a", "b", "c"})
     assert idx.successor("old") == "a"
-    # an edge from outside the cycle still supersedes its target
     assert idx.successor("a") == "x"
     assert idx.successor("b") == "" and idx.successor("c") == ""
 
@@ -67,16 +78,17 @@ def test_index_is_deterministic_for_two_successors():
     assert rp.build_supersede_index(list(reversed(edges))).successor("old") == "a-new"
 
 
-# --- classification ---------------------------------------------------------
+# --- classification (whitelist) --------------------------------------------
 
 
 def test_classify_states():
     idx = rp.build_supersede_index([{"src": "new", "rel": "supersedes", "dst": "old"}])
     assert rp.classify(_row("ok"), idx).state == rp.TRUSTED
-    assert rp.classify(_row("legacy", tier=None), idx).state == rp.TRUSTED
-    assert rp.classify({"id": "bare", "summary": "s"}, idx).state == rp.TRUSTED
+    assert rp.classify(_row("untiered", tier=None), idx).state == rp.TRUSTED
+    assert rp.classify(_row("VERIFIED", tier="Verified"), idx).state == rp.TRUSTED
     assert rp.classify(_row("p", tier="staging"), idx).state == rp.PENDING
-    assert rp.classify(_row("ms", tier=None, memory_state="staging"), idx).state == rp.PENDING
+    assert rp.classify(_row("P", tier="Staging"), idx).state == rp.PENDING
+    assert rp.classify(_row("ms", tier=None, memory_state="STAGING"), idx).state == rp.PENDING
     old = rp.classify(_row("old"), idx)
     assert old.state == rp.SUPERSEDED and old.superseded_by == "new"
     assert rp.classify(_row("a", status="archived"), idx).state == rp.ARCHIVED
@@ -91,6 +103,40 @@ def test_classify_states():
     assert held.state == rp.WITHHELD and held.reason == "sensitivity_above_ceiling"
 
 
+@pytest.mark.parametrize("overrides,reason", [
+    ({"tier": "unverified"}, "unknown_tier:unverified"),
+    ({"memory_state": "rejected"}, "unknown_tier:rejected"),
+    ({"memory_state": "deprecated"}, "unknown_tier:deprecated"),
+    ({"approval_status": "deprecated"}, "unknown_tier:deprecated"),
+    ({"approval_status": "Rejected"}, "unknown_tier:rejected"),
+    ({"tier": "gold"}, "unknown_tier:gold"),
+])
+def test_whitelist_rejects_unknown_labels(overrides, reason):
+    verdict = rp.classify(_row("x", **overrides))
+    assert verdict.state == rp.ARCHIVED and verdict.reason == reason
+    assert not rp.is_trusted(_row("x", **overrides))
+
+
+@pytest.mark.parametrize("status", [None, "", "  ", "Archived", "pending"])
+def test_missing_or_non_active_status_is_never_trusted(status):
+    row = _row("x")
+    if status is None:
+        row.pop("status")
+    else:
+        row["status"] = status
+    assert rp.classify(row).state == rp.ARCHIVED
+    assert not rp.is_trusted(row)
+
+
+def test_status_and_labels_are_case_insensitive():
+    assert rp.classify(_row("x", status="Active", tier="VERIFIED")).state == rp.TRUSTED
+
+
+def test_unknown_tier_beats_a_supersedes_edge():
+    idx = rp.build_supersede_index([{"src": "new", "rel": "supersedes", "dst": "odd"}])
+    assert rp.classify(_row("odd", tier="unverified"), idx).state == rp.ARCHIVED
+
+
 def test_withheld_wins_over_every_other_state():
     idx = rp.build_supersede_index([{"src": "new", "rel": "supersedes", "dst": "old"}])
     for row in (_row("old"), _row("p", tier="staging"), _row("a", status="archived")):
@@ -102,41 +148,29 @@ def test_superseded_pending_row_is_superseded():
     assert rp.classify(_row("p", tier="staging"), idx).state == rp.SUPERSEDED
 
 
-# --- use admission ----------------------------------------------------------
-
-
-def test_admits_per_use():
-    assert rp.admits(rp.AUTO_INJECT, rp.TRUSTED)
-    for state in (rp.PENDING, rp.SUPERSEDED, rp.ARCHIVED, rp.WITHHELD):
-        assert not rp.admits(rp.AUTO_INJECT, state)
-    assert rp.admits(rp.EXPLICIT_SEARCH, rp.TRUSTED)
-    assert rp.admits(rp.EXPLICIT_SEARCH, rp.PENDING)
-    assert not rp.admits(rp.EXPLICIT_SEARCH, rp.SUPERSEDED)
-    assert rp.admits(rp.EXPLICIT_SEARCH, rp.SUPERSEDED, include_superseded=True)
-    assert not rp.admits(rp.EXPLICIT_SEARCH, rp.ARCHIVED)
-    assert not rp.admits(rp.EXPLICIT_SEARCH, rp.WITHHELD)
-    for state in (rp.TRUSTED, rp.PENDING, rp.SUPERSEDED, rp.ARCHIVED):
-        assert rp.admits(rp.BY_ID, state)
-    assert not rp.admits(rp.BY_ID, rp.WITHHELD)
+def test_is_trusted_ignores_edges_and_rejects_snapshots():
+    assert rp.is_trusted(_row("ok"))
+    assert not rp.is_trusted(_row("p", tier="staging"))
+    assert not rp.is_trusted(_row("s", snapshot_of="h"))
+    assert not rp.is_trusted("junk")
 
 
 def test_partition_keeps_order_and_groups():
     idx = rp.build_supersede_index([{"src": "new", "rel": "supersedes", "dst": "old"}])
     rows = [_row("p1", tier="staging"), _row("t1"), _row("old"), _row("t2"),
-            _row("a", status="archived"), _row("s", sensitivity="secret")]
-    part = rp.partition(rows, idx, withheld=lambda r: "too_secret" if r.get("sensitivity") == "secret" else "")
+            _row("a", status="archived"), "junk"]
+    part = rp.partition(rows, idx)
     assert [r["id"] for r in part.trusted] == ["t1", "t2"]
     assert [r["id"] for r in part.pending] == ["p1"]
     assert [r["id"] for r in part.superseded] == ["old"]
     assert [r["id"] for r in part.archived] == ["a"]
-    assert [r["id"] for r in part.withheld] == ["s"]
     assert part.successor_of("old") == "new"
 
 
-def test_eligible_auto_inject_is_trusted_only():
+def test_trusted_only():
     idx = rp.build_supersede_index([{"src": "new", "rel": "supersedes", "dst": "old"}])
     rows = [_row("p", tier="staging"), _row("old"), _row("new"), _row("a", status="archived")]
-    assert [r["id"] for r in rp.eligible(rows, rp.AUTO_INJECT, idx)] == ["new"]
+    assert [r["id"] for r in rp.trusted_only(rows, idx)] == ["new"]
 
 
 def test_marks_are_additive_copies():
@@ -148,14 +182,14 @@ def test_marks_are_additive_copies():
     assert sup["superseded_by"] == "new" and sup["eligibility"] == rp.SUPERSEDED
 
 
-def test_annotate_by_id():
+def test_label_by_verdict():
     idx = rp.build_supersede_index([{"src": "new", "rel": "supersedes", "dst": "old"}])
-    out = rp.annotate_by_id(_row("old"), idx)
+    out = rp.label({"id": "old"}, rp.classify(_row("old"), idx))
     assert out["eligibility"] == rp.SUPERSEDED and out["superseded_by"] == "new"
-    out = rp.annotate_by_id(_row("p", tier="staging"), idx)
+    out = rp.label({"id": "p"}, rp.classify(_row("p", tier="staging"), idx))
     assert out["eligibility"] == rp.PENDING and out["pending_untrusted"] is True
-    out = rp.annotate_by_id(_row("ok"), idx)
-    assert out["eligibility"] == rp.TRUSTED and "superseded_by" not in out
+    out = rp.label({"id": "ok"}, rp.classify(_row("ok"), idx))
+    assert out == {"id": "ok", "eligibility": rp.TRUSTED}
 
 
 # --- budget omission ---------------------------------------------------------
@@ -168,10 +202,12 @@ def test_omitted_info_shape_and_empty():
                     "reason": "budget"}
 
 
-def test_omission_line_names_count_and_sections():
-    line = rp.omission_line({"omitted_count": 3, "ids": ["a"], "sections": ["lessons", "tools"],
-                             "reason": "budget"})
-    assert line == "已省略 3 项（预算）：lessons, tools"
+def test_omission_line_languages():
+    info = {"omitted_count": 3, "ids": ["a"], "sections": ["lessons", "tools"], "reason": "budget"}
+    assert rp.omission_line(info) == "已省略 3 项（预算）：lessons, tools"
+    assert rp.omission_line(info, lang="en") == "Omitted 3 items (budget): lessons, tools"
+    one = {"omitted_count": 1, "ids": [], "sections": [], "reason": "budget"}
+    assert rp.omission_line(one, lang="en") == "Omitted 1 item (budget)"
     assert rp.omission_line(None) == ""
     assert rp.omission_line({"omitted_count": 0, "ids": [], "sections": [], "reason": "budget"}) == ""
 

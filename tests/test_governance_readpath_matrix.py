@@ -54,11 +54,13 @@ SECRET = "ZZSECRETLEAK_must_never_reach_an_external_agent"
 
 
 def _pub() -> dict:
-    return {"id": "pub-1", "sensitivity": "public", "summary": PUBLIC, "content": PUBLIC}
+    return {"id": "pub-1", "status": "active", "sensitivity": "public",
+            "summary": PUBLIC, "content": PUBLIC}
 
 
 def _sec() -> dict:
-    return {"id": "sec-1", "sensitivity": "secret", "summary": SECRET, "content": SECRET}
+    return {"id": "sec-1", "status": "active", "sensitivity": "secret",
+            "summary": SECRET, "content": SECRET}
 
 
 # ── the leak matrix: (tool, engram_method, fake_return, kwargs, mode) ─────────

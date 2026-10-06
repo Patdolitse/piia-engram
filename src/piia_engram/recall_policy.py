@@ -7,12 +7,16 @@ re-implementing its own tier / status / version checks.
 
 Eligibility states
 ------------------
-``trusted``     reviewed (or legacy, untiered) and currently in force
-``pending``     waiting for the Owner's review (``tier=staging``)
+``trusted``     ``status=active`` and only reviewed labels: ``tier`` and
+                ``memory_state`` empty or ``verified``, ``approval_status``
+                not rejected / deprecated (a whitelist, case-insensitive)
+``pending``     waiting for the Owner's review (``tier`` or ``memory_state``
+                is ``staging``)
 ``superseded``  replaced by a newer version: a version snapshot, or the target
                 of an honored ``supersedes`` edge (a row that is not reviewed
                 never hides a reviewed one; the caller passes honored edges)
-``archived``    retired (status other than active, or ``tier=archived``)
+``archived``    everything else: a missing or non-active status, an archived
+                or unknown tier, a rejected or deprecated approval
 ``withheld``    kept back by governance or a sensitivity ceiling (decided by
                 the caller; this module only records the reason)
 
@@ -34,7 +38,7 @@ with no content of the dropped rows. Pure module: stdlib only, no store access.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 TRUSTED = "trusted"
 PENDING = "pending"
@@ -43,10 +47,6 @@ ARCHIVED = "archived"
 WITHHELD = "withheld"
 STATES = (TRUSTED, PENDING, SUPERSEDED, ARCHIVED, WITHHELD)
 
-AUTO_INJECT = "auto_inject"
-EXPLICIT_SEARCH = "explicit_search"
-BY_ID = "by_id"
-USES = (AUTO_INJECT, EXPLICIT_SEARCH, BY_ID)
 
 OMIT_REASON_BUDGET = "budget"
 
@@ -168,8 +168,44 @@ class Eligibility:
     reason: str = ""
 
 
+# Whitelist of the labels a reviewed row may carry. Anything else (an unknown
+# tier, a rejected or deprecated approval) is never trusted.
+_TRUSTED_TIERS = frozenset({"", "verified"})
+_TRUSTED_MEMORY_STATES = frozenset({"", "verified"})
+_UNTRUSTED_APPROVALS = frozenset({"rejected", "deprecated"})
+
+
+def _norm(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
 def _is_version_snapshot(row: Mapping[str, Any]) -> bool:
-    return bool(row.get("snapshot_of")) or row.get("status") == "superseded"
+    return bool(row.get("snapshot_of")) or _norm(row.get("status")) == "superseded"
+
+
+def _review_state(row: Mapping[str, Any]) -> Eligibility:
+    """Pending / trusted / archived from the row's own labels (no edges)."""
+    status = _norm(row.get("status"))
+    if status != "active":
+        return Eligibility(ARCHIVED, reason=f"status:{status}" if status else "status_missing")
+    tier = _norm(row.get("tier"))
+    memory_state = _norm(row.get("memory_state"))
+    if tier == "staging" or memory_state == "staging":
+        return Eligibility(PENDING, reason="awaiting_review")
+    approval = _norm(row.get("approval_status"))
+    if (
+        tier in _TRUSTED_TIERS
+        and memory_state in _TRUSTED_MEMORY_STATES
+        and approval not in _UNTRUSTED_APPROVALS
+    ):
+        return Eligibility(TRUSTED)
+    if tier not in _TRUSTED_TIERS:
+        value = tier
+    elif memory_state not in _TRUSTED_MEMORY_STATES:
+        value = memory_state
+    else:
+        value = approval
+    return Eligibility(ARCHIVED, reason=f"unknown_tier:{value}")
 
 
 def classify(
@@ -178,7 +214,14 @@ def classify(
     *,
     withheld_reason: str = "",
 ) -> Eligibility:
-    """Eligibility of one stored row. ``withheld_reason`` comes from the caller."""
+    """Eligibility of one stored row. ``withheld_reason`` comes from the caller.
+
+    Order: withheld; version snapshot (superseded); the row's own labels
+    (status must be ``active``; ``tier`` / ``memory_state`` ``staging`` is
+    pending; only the reviewed whitelist is trusted; everything else is
+    archived); then a ``supersedes`` edge turns a pending or trusted row into
+    superseded. Labels are compared case-insensitively.
+    """
     if withheld_reason:
         return Eligibility(WITHHELD, reason=str(withheld_reason))
     if not isinstance(row, Mapping):
@@ -186,29 +229,20 @@ def classify(
     if _is_version_snapshot(row):
         successor = str(row.get("superseded_by") or row.get("snapshot_of") or "")
         return Eligibility(SUPERSEDED, superseded_by=successor, reason="version_snapshot")
-    status = str(row.get("status") or "active")
-    tier = str(row.get("tier") or row.get("memory_state") or "verified")
-    if status != "active" or tier == "archived":
-        return Eligibility(ARCHIVED, reason=status if status != "active" else "tier_archived")
+    own = _review_state(row)
+    if own.state == ARCHIVED:
+        return own
     successor = index.successor(row.get("id"))
     if successor:
         return Eligibility(SUPERSEDED, superseded_by=successor, reason="supersedes_edge")
-    if tier == "staging":
-        return Eligibility(PENDING, reason="awaiting_review")
-    return Eligibility(TRUSTED)
+    return own
 
 
-def admits(use: str, state: str, *, include_superseded: bool = False) -> bool:
-    """Whether ``use`` may return a row in ``state`` at all (grouping aside)."""
-    if use == AUTO_INJECT:
-        return state == TRUSTED
-    if use == EXPLICIT_SEARCH:
-        if state == SUPERSEDED:
-            return include_superseded
-        return state in (TRUSTED, PENDING)
-    if use == BY_ID:
-        return state != WITHHELD
-    raise ValueError(f"unknown recall use: {use!r}")
+def is_trusted(row: Mapping[str, Any]) -> bool:
+    """Whether a row's own labels make it trusted (edges not considered)."""
+    if not isinstance(row, Mapping) or _is_version_snapshot(row):
+        return False
+    return _review_state(row).state == TRUSTED
 
 
 @dataclass
@@ -217,7 +251,6 @@ class Partition:
     pending: list = field(default_factory=list)
     superseded: list = field(default_factory=list)
     archived: list = field(default_factory=list)
-    withheld: list = field(default_factory=list)
     successors: dict = field(default_factory=dict)
 
     def successor_of(self, item_id: Any) -> str:
@@ -227,42 +260,22 @@ class Partition:
         return getattr(self, state)
 
 
-def partition(
-    rows: Iterable[Any],
-    index: SupersedeIndex = EMPTY_INDEX,
-    *,
-    withheld: Callable[[Mapping[str, Any]], str] | None = None,
-) -> Partition:
+def partition(rows: Iterable[Any], index: SupersedeIndex = EMPTY_INDEX) -> Partition:
     """Split ``rows`` by state, keeping input order inside each group."""
     out = Partition()
     for row in rows or ():
         if not isinstance(row, Mapping):
             continue
-        reason = withheld(row) if withheld is not None else ""
-        verdict = classify(row, index, withheld_reason=reason)
+        verdict = classify(row, index)
         out.group(verdict.state).append(row)
         if verdict.state == SUPERSEDED and isinstance(row.get("id"), str):
             out.successors[row["id"]] = verdict.superseded_by
     return out
 
 
-def eligible(
-    rows: Iterable[Any],
-    use: str,
-    index: SupersedeIndex = EMPTY_INDEX,
-    *,
-    withheld: Callable[[Mapping[str, Any]], str] | None = None,
-) -> list:
-    """Rows ``use`` may return without a separate group (auto_inject: trusted)."""
-    part = partition(rows, index, withheld=withheld)
-    if use == AUTO_INJECT:
-        return list(part.trusted)
-    if use == EXPLICIT_SEARCH:
-        return list(part.trusted)
-    if use == BY_ID:
-        keep = {id(r) for r in part.trusted + part.pending + part.superseded + part.archived}
-        return [r for r in rows if id(r) in keep]
-    raise ValueError(f"unknown recall use: {use!r}")
+def trusted_only(rows: Iterable[Any], index: SupersedeIndex = EMPTY_INDEX) -> list:
+    """What an auto-injected context may carry: the trusted rows, in order."""
+    return list(partition(rows, index).trusted)
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +298,7 @@ def mark_superseded(view: Mapping[str, Any], successor: str) -> dict:
 
 
 def label(view: Mapping[str, Any], verdict: Eligibility) -> dict:
-    """Copy of ``view`` carrying ``verdict`` (for projected views that lost tier/status)."""
+    """Copy of ``view`` carrying ``verdict`` (by-id reads return every state)."""
     if verdict.state == PENDING:
         return mark_pending(view)
     if verdict.state == SUPERSEDED:
@@ -293,11 +306,6 @@ def label(view: Mapping[str, Any], verdict: Eligibility) -> dict:
     out = dict(view)
     out["eligibility"] = verdict.state
     return out
-
-
-def annotate_by_id(view: Mapping[str, Any], index: SupersedeIndex = EMPTY_INDEX) -> dict:
-    """By-id reads return every state; label it (and name the successor)."""
-    return label(view, classify(view, index))
 
 
 # ---------------------------------------------------------------------------
@@ -319,12 +327,12 @@ def omitted_info(
     ids: Iterable[Any] = (),
     sections: Iterable[Any] = (),
     extra: int = 0,
-    reason: str = OMIT_REASON_BUDGET,
 ) -> dict | None:
     """``{omitted_count, ids, sections, reason}`` or None when nothing was dropped.
 
     ``omitted_count`` counts each dropped id once plus ``extra`` dropped pieces
-    that carry no id (for example a whole profile or tools section).
+    that carry no id (for example a whole profile or tools section). The only
+    reason is ``budget``: a fixed item cap is not reported as an omission.
     """
     id_list = _unique(ids)
     count = len(id_list) + max(0, int(extra))
@@ -334,7 +342,7 @@ def omitted_info(
         "omitted_count": count,
         "ids": id_list,
         "sections": _unique(sections),
-        "reason": reason,
+        "reason": OMIT_REASON_BUDGET,
     }
 
 
@@ -352,16 +360,23 @@ def merge_omitted(*infos: dict | None) -> dict | None:
         ids.extend(info_ids)
         sections.extend(info.get("sections") or ())
         extra += max(0, int(info.get("omitted_count") or 0) - len(info_ids))
-    return omitted_info(ids=ids, sections=sections, extra=extra,
-                        reason=str(present[0].get("reason") or OMIT_REASON_BUDGET))
+    return omitted_info(ids=ids, sections=sections, extra=extra)
 
 
-def omission_line(omitted: Mapping[str, Any] | None) -> str:
-    """The one text line a text-form context ends with when the budget cut it."""
+def omission_line(omitted: Mapping[str, Any] | None, lang: str = "zh") -> str:
+    """The one text line a text-form context ends with when the budget cut it.
+
+    ``lang`` follows the surrounding headings: ``zh`` for the cold-start
+    context, ``en`` for the resume brief and the session-start hooks.
+    """
     if not isinstance(omitted, Mapping):
         return ""
     count = int(omitted.get("omitted_count") or 0)
     if count <= 0:
         return ""
     names = ", ".join(str(s) for s in omitted.get("sections") or () if s)
+    if lang == "en":
+        noun = "item" if count == 1 else "items"
+        head = f"Omitted {count} {noun} (budget)"
+        return f"{head}: {names}" if names else head
     return f"已省略 {count} 项（预算）：{names}" if names else f"已省略 {count} 项（预算）"

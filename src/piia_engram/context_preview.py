@@ -162,38 +162,43 @@ def build_context_preview(
     exposed_pre: list[dict[str, Any]] = []
     exposed_ids: list[str] = []  # parallel to exposed_pre (budget report only)
     withheld_items: list[dict[str, Any]] = []
+
+    def _governance_reason(item: dict[str, Any], state: str) -> str:
+        """This caller's ceiling / staging exclusion (unchanged semantics)."""
+        if _sens_rank(item.get("sensitivity", DEFAULT_SENSITIVITY)) > ceiling_rank:
+            return "sensitivity_above_ceiling"
+        if profile.staging_excluded and state == _recall_policy.PENDING:
+            return "staging_excluded"
+        return ""
+
     for item in merged:
         if not isinstance(item, dict):
             continue
         digest = _knowledge_digest(item)
-        sens = item.get("sensitivity", DEFAULT_SENSITIVITY)
-        if _sens_rank(sens) > ceiling_rank:
-            digest["withheld_reason"] = "sensitivity_above_ceiling"
-            withheld_items.append(digest)
-        elif profile.staging_excluded and str(item.get("tier") or "") == "staging":
-            digest["withheld_reason"] = "staging_excluded"
+        own_state = _recall_policy.classify(item).state
+        verdict = _recall_policy.classify(
+            item, withheld_reason=_governance_reason(item, own_state)
+        )
+        if verdict.state == _recall_policy.WITHHELD:
+            digest["withheld_reason"] = verdict.reason
             withheld_items.append(digest)
         else:
             exposed_pre.append(digest)
             exposed_ids.append(str(item.get("id") or ""))
     # Rows the recall policy keeps out of every injection (awaiting review,
     # replaced by a newer version, archived). The owner sees them here with
-    # the reason; a governance reason wins, as it does for eligible rows.
-    seen_ineligible: set[str] = set()
+    # the reason; a governance reason wins (withheld), as for eligible rows.
     for entry in sources.get("ineligible") or []:
         item = entry.get("row") if isinstance(entry, dict) else None
         if not isinstance(item, dict):
             continue
-        key = str(item.get("id") or id(item))
-        if key in seen_ineligible:
-            continue
-        seen_ineligible.add(key)
         digest = _knowledge_digest(item)
         state = str(entry.get("state") or "")
-        if _sens_rank(item.get("sensitivity", DEFAULT_SENSITIVITY)) > ceiling_rank:
-            digest["withheld_reason"] = "sensitivity_above_ceiling"
-        elif profile.staging_excluded and state == _recall_policy.PENDING:
-            digest["withheld_reason"] = "staging_excluded"
+        verdict = _recall_policy.classify(
+            item, withheld_reason=_governance_reason(item, state)
+        )
+        if verdict.state == _recall_policy.WITHHELD:
+            digest["withheld_reason"] = verdict.reason
         else:
             digest["withheld_reason"] = _INELIGIBLE_REASONS.get(state, "not_eligible")
         if entry.get("superseded_by"):

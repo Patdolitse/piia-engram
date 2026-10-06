@@ -40,10 +40,21 @@ class FakeEngram:
         return self._recent[:limit]
 
     def get_relevant_lessons(self, project_folder=None, limit=8, _update_access=True):
-        return list(self._relevant)[:limit]
+        return [_stored(r) for r in list(self._relevant)[:limit]]
 
     def search_knowledge(self, query, scope="all", limit=8):
-        return self._search
+        return _stored_hits(self._search)
+
+
+def _stored(row):
+    """A stored row always carries a status; recall trusts only active rows."""
+    return {"status": "active", **row} if isinstance(row, dict) else row
+
+
+def _stored_hits(hits):
+    if not isinstance(hits, dict):
+        return hits
+    return {k: [_stored(r) for r in v] if isinstance(v, list) else v for k, v in hits.items()}
 
 
 def _lesson(summary, *, sensitivity=None, tier="verified", item_id=None):

@@ -1466,7 +1466,7 @@ class ContextMixin:
         supersede_index = self._recall_supersede_index()
 
         def _trusted(rows: list[dict]) -> list[dict]:
-            return _recall_policy.eligible(rows, _recall_policy.AUTO_INJECT, supersede_index)
+            return _recall_policy.trusted_only(rows, supersede_index)
 
         # Data fragmentation warning — surface before any content.
         if getattr(self, "data_orphans", None):
@@ -1565,15 +1565,11 @@ class ContextMixin:
         # Note: lessons/decisions variables are reused by the "conflicts" section,
         # so we initialise them as empty lists when skipped to keep that logic safe.
         if _wants("lessons"):
-            # verified-only: staged candidates are unreviewed and must not
-            # surface in cold-start context (they stay behind `engram review`)
-            lessons = [
-                l for l in self.get_relevant_lessons(
-                    project_folder=project_folder, limit=8, tier="verified",
-                    _update_access=False,
-                )
-                if (l.get("tier") or l.get("memory_state")) == "verified"
-            ]
+            # trusted-only (the recall policy inside get_relevant_lessons):
+            # staged candidates stay behind `engram review`
+            lessons = self.get_relevant_lessons(
+                project_folder=project_folder, limit=8, _update_access=False,
+            )
             if lessons:
                 ll: list[str] = ["\n## 相关经验教训（请在开发中主动避免）"]
                 for l in lessons:
@@ -1585,14 +1581,9 @@ class ContextMixin:
 
         # Decisions
         if _wants("decisions"):
-            # superseded decisions (e.g. an older choice for the same question)
-            # never take one of the six slots
-            decisions = [
-                d for d in _trusted(
-                    self.get_decisions(limit=None, _update_access=False, tier="verified")
-                )
-                if (d.get("tier") or d.get("memory_state")) == "verified"
-            ][-6:]
+            # trusted-only; superseded decisions (e.g. an older choice for the
+            # same question) never take one of the six slots
+            decisions = _trusted(self.get_decisions(limit=None, _update_access=False))[-6:]
             if decisions:
                 dc: list[str] = ["\n## 已做的关键决策（请遵循）"]
                 for d in decisions:

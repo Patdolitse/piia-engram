@@ -167,8 +167,8 @@ async def get_user_context(
             )
             # cold start is auto-injected: a pending playbook never surfaces here
             index_of = getattr(S._get_engram(), "_recall_supersede_index", None)
-            candidates = S._recall_policy.eligible(
-                candidates or [], S._recall_policy.AUTO_INJECT,
+            candidates = S._recall_policy.trusted_only(
+                candidates or [],
                 index_of() if callable(index_of) else S._recall_policy.EMPTY_INDEX,
             )
             matches = match_playbooks(user_prompt, candidates, limit=2)

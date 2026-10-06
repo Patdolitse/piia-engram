@@ -1173,9 +1173,8 @@ class ContextStoreMixin:
         except Exception:
             supersede_index = _recall_policy.EMPTY_INDEX
 
-        def _superseded(row: dict) -> bool:
-            verdict = _recall_policy.classify(row, supersede_index)
-            return verdict.state == _recall_policy.SUPERSEDED
+        def _state(row: dict) -> str:
+            return _recall_policy.classify(row, supersede_index).state
 
         try:
             try:
@@ -1199,8 +1198,13 @@ class ContextStoreMixin:
             if _context_entry_is_soft_archived(lesson):
                 _omit("lesson", "archived", "knowledge")
                 continue
-            if _superseded(lesson):
+            lesson_state = _state(lesson)
+            if lesson_state == _recall_policy.SUPERSEDED:
                 _omit("lesson", "superseded", "knowledge")
+                continue
+            if lesson_state == _recall_policy.ARCHIVED:
+                # an archived or unknown tier, a rejected / deprecated label
+                _omit("lesson", "archived", "knowledge")
                 continue
             if project_folder and not _context_entry_visible_for_project(
                 lesson,
@@ -1222,7 +1226,7 @@ class ContextStoreMixin:
             summary = str(lesson.get("summary") or "").strip()
             if not summary:
                 continue
-            if lesson.get("tier") == "staging":
+            if lesson_state == _recall_policy.PENDING:
                 _append_review_needed({
                     "kind": "lesson",
                     "summary": _sanitize_then_bound_agent_text(summary, limit=240),
@@ -1266,8 +1270,13 @@ class ContextStoreMixin:
             if _context_entry_is_soft_archived(decision):
                 _omit("decision", "archived", "knowledge")
                 continue
-            if _superseded(decision):
+            decision_state = _state(decision)
+            if decision_state == _recall_policy.SUPERSEDED:
                 _omit("decision", "superseded", "knowledge")
+                continue
+            if decision_state == _recall_policy.ARCHIVED:
+                # an archived or unknown tier, a rejected / deprecated label
+                _omit("decision", "archived", "knowledge")
                 continue
             if project_folder and not _context_entry_visible_for_project(
                 decision,
@@ -1291,7 +1300,7 @@ class ContextStoreMixin:
             summary = f"{question} -> {choice}" if question and choice else question
             if not summary:
                 continue
-            if decision.get("tier") == "staging":
+            if decision_state == _recall_policy.PENDING:
                 _append_review_needed({
                     "kind": "decision",
                     "summary": _sanitize_then_bound_agent_text(summary, limit=240),
@@ -2090,8 +2099,6 @@ class ContextStoreMixin:
                             project_folder,
                         ):
                             continue
-                        if L.get("tier") and L.get("tier") != "verified":
-                            continue
                         lesson_id = L.get("id")
                         if _recall_policy.classify(L, supersede_index).state != _recall_policy.TRUSTED:
                             continue
@@ -2139,8 +2146,6 @@ class ContextStoreMixin:
                             D,
                             project_folder,
                         ):
-                            continue
-                        if D.get("tier") and D.get("tier") != "verified":
                             continue
                         decision_id = D.get("id")
                         if _recall_policy.classify(D, supersede_index).state != _recall_policy.TRUSTED:
