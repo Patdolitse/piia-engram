@@ -21,9 +21,6 @@ from piia_engram.tool_annotations import TOOL_ANNOTATIONS, ToolHints, apply_tool
 _ROOT = Path(__file__).resolve().parents[1]
 _SNAPSHOT = _ROOT / "tests" / "snapshots" / "mcp_tool_annotations.json"
 
-# read-class tools that still update the store (access counter on returned rows)
-_READ_THAT_COUNT_ACCESS = {"get_lessons", "get_decisions", "get_playbooks", "get_relevant_knowledge"}
-
 
 def _source_tool_names() -> set[str]:
     names: set[str] = set()
@@ -67,10 +64,8 @@ def test_classes_and_hints_agree():
     for name, hints in TOOL_ANNOTATIONS.items():
         cls = classes[name]
         if cls == "read":
-            if name in _READ_THAT_COUNT_ACCESS:
-                assert not hints.read_only and not hints.idempotent and not hints.destructive, name
-            else:
-                assert hints.read_only and hints.idempotent and not hints.destructive, name
+            # access counters and usage logs are bookkeeping, not writes
+            assert hints.read_only and hints.idempotent and not hints.destructive, name
         else:
             assert not hints.read_only, f"{name} ({cls}) writes, so it is not read-only"
     # a read-only tool never claims to be destructive
@@ -81,8 +76,25 @@ def test_destructive_tools_are_exactly_the_ones_that_remove_or_replace():
     assert {n for n, h in TOOL_ANNOTATIONS.items() if h.destructive} == {
         "manage_caller_trust", "import_engram", "archive_knowledge", "review_staging",
         "merge_knowledge", "manage_relation", "update_identity", "user_portrait",
-        "manage_playbook",
+        "manage_playbook", "update_knowledge", "export_engram",
     }
+
+
+def test_export_engram_overwrites_an_existing_file_so_it_is_marked_destructive(tmp_path, monkeypatch):
+    """The reason for export_engram's destructiveHint: output_path is replaced silently."""
+    import asyncio
+
+    import piia_engram.mcp_server as m
+    from piia_engram.core import Engram
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+    monkeypatch.setattr(m, "_engram", Engram(tmp_path / "store"))
+    target = tmp_path / "existing.json"
+    target.write_text("PRECIOUS", encoding="utf-8")
+    result = asyncio.run(m.export_engram(output_path=str(target)))
+    assert "PRECIOUS" not in target.read_text(encoding="utf-8"), result
+    assert TOOL_ANNOTATIONS["export_engram"].destructive
 
 
 class _Tool:

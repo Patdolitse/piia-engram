@@ -49,7 +49,7 @@
   },
   "export_engram": {
     "readOnlyHint": false,
-    "destructiveHint": false,
+    "destructiveHint": true,
     "idempotentHint": false,
     "openWorldHint": false
   },
@@ -90,9 +90,9 @@
     "openWorldHint": false
   },
   "get_decisions": {
-    "readOnlyHint": false,
+    "readOnlyHint": true,
     "destructiveHint": false,
-    "idempotentHint": false,
+    "idempotentHint": true,
     "openWorldHint": false
   },
   "get_identity_card": {
@@ -126,9 +126,9 @@
     "openWorldHint": false
   },
   "get_lessons": {
-    "readOnlyHint": false,
+    "readOnlyHint": true,
     "destructiveHint": false,
-    "idempotentHint": false,
+    "idempotentHint": true,
     "openWorldHint": false
   },
   "get_permission_profile": {
@@ -138,9 +138,9 @@
     "openWorldHint": false
   },
   "get_playbooks": {
-    "readOnlyHint": false,
+    "readOnlyHint": true,
     "destructiveHint": false,
-    "idempotentHint": false,
+    "idempotentHint": true,
     "openWorldHint": false
   },
   "get_project_context": {
@@ -162,9 +162,9 @@
     "openWorldHint": false
   },
   "get_relevant_knowledge": {
-    "readOnlyHint": false,
+    "readOnlyHint": true,
     "destructiveHint": false,
-    "idempotentHint": false,
+    "idempotentHint": true,
     "openWorldHint": false
   },
   "get_resume_brief": {
@@ -337,7 +337,7 @@
   },
   "update_knowledge": {
     "readOnlyHint": false,
-    "destructiveHint": false,
+    "destructiveHint": true,
     "idempotentHint": false,
     "openWorldHint": false
   },

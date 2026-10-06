@@ -19,11 +19,19 @@ store's files.
 
 * Local usage telemetry and the session checkpoint that every tool call may
   record are not counted as a change to the store.
-* A read tool that still updates the store is marked ``readOnlyHint=False`` and
-  not idempotent, with the reason noted on its row: the four listed below bump
-  an access counter on the rows they return (for the owner).
-* ``destructiveHint`` is True only where the tool's job includes removing,
-  archiving or replacing existing records. Adding rows, stamping provenance,
+* Bookkeeping the user never sees is not a write. A read tool that only bumps
+  an access counter or logs a usage event stays ``readOnlyHint=True``:
+  ``get_lessons``, ``get_decisions``, ``get_playbooks`` and
+  ``get_relevant_knowledge`` count a use on the rows they return (for the
+  owner) and ``get_user_context`` logs a local usage event. None of them changes
+  what a memory says. Marking them as writes would make clients ask for
+  confirmation on the most used reads, which helps nobody.
+* ``destructiveHint`` errs towards warning once too often rather than missing a
+  case. It is True where the tool's job includes removing, archiving or
+  replacing existing records, or editing one in place: ``update_knowledge`` and
+  ``update_identity`` change fields where they stand (``update_knowledge`` can
+  also set a status that retires the item), and ``export_engram`` overwrites
+  the file at ``output_path`` without asking. Adding rows, stamping provenance,
   promoting a pending row and regenerating a derived export file are not.
 * ``openWorldHint`` is True only for ``read_web_content``.
 
@@ -53,8 +61,6 @@ class ToolHints(NamedTuple):
 
 
 _READ = ToolHints(read_only=True, destructive=False, idempotent=True)
-# read tools that bump an access counter on the rows they return (owner only)
-_READ_COUNTS_ACCESS = ToolHints(read_only=False, destructive=False, idempotent=False)
 _ADD = ToolHints(read_only=False, destructive=False, idempotent=False)
 _STAMP = ToolHints(read_only=False, destructive=False, idempotent=True)
 _REMOVES = ToolHints(read_only=False, destructive=True, idempotent=False)
@@ -69,18 +75,18 @@ TOOL_ANNOTATIONS: dict[str, ToolHints] = {
     "find_tool": _READ,
     "get_audit_log": _READ,
     "get_daily_log": _READ,
-    "get_decisions": _READ_COUNTS_ACCESS,  # access counter on returned rows (owner)
+    "get_decisions": _READ,  # only an access counter on the returned rows (owner): bookkeeping, not a write
     "get_identity_facets": _READ,
     "get_knowledge_history": _READ,
     "get_knowledge_inheritance": _READ,
     "get_knowledge_overview": _READ,
-    "get_lessons": _READ_COUNTS_ACCESS,  # access counter on returned rows (owner)
+    "get_lessons": _READ,  # only an access counter on the returned rows (owner): bookkeeping, not a write
     "get_permission_profile": _READ,
-    "get_playbooks": _READ_COUNTS_ACCESS,  # reading one playbook counts as a use (owner)
+    "get_playbooks": _READ,  # only an access counter when one playbook is read (owner): bookkeeping
     "get_project_context": _READ,
     "get_recall": _READ,
     "get_recent_context": _READ,
-    "get_relevant_knowledge": _READ_COUNTS_ACCESS,  # access counter on returned rows (owner)
+    "get_relevant_knowledge": _READ,  # only an access counter on the returned rows (owner): bookkeeping, not a write
     "get_resume_brief": _READ,
     "get_stale_knowledge": _READ,
     "get_user_context": _READ,  # surfacing is not counted as use; only a local usage event is logged
@@ -92,7 +98,7 @@ TOOL_ANNOTATIONS: dict[str, ToolHints] = {
     "read_web_content": ToolHints(True, False, True, open_world=True),  # fetches a URL
     "search_knowledge": _READ,
     # --- export_owner_only: write a file, never touch memory rows ---
-    "export_engram": _ADD,  # a backup file at the given path or a dated default
+    "export_engram": _REMOVES,  # an existing file at output_path is overwritten without a prompt
     "export_knowledge_report": _ADD,  # a new timestamped report file
     "get_identity_card": _STAMP,  # regenerates exports/identity_card.md
     "refresh_quick_context": _STAMP,  # regenerates quick_context.md
@@ -112,7 +118,7 @@ TOOL_ANNOTATIONS: dict[str, ToolHints] = {
     "ingest_notes": _ADD,
     "extract_session_insights": _ADD,
     "save_agent_context": _ADD,
-    "update_knowledge": _ADD,  # edits keep the old body as a version snapshot
+    "update_knowledge": _REMOVES,  # edits fields in place and can set a retiring status (the old body is kept as a snapshot)
     "archive_knowledge": _REMOVES_IDEMPOTENT,
     "review_staging": _REMOVES,  # batch reject / apply_text archive
     "merge_knowledge": _REMOVES,  # archives the secondary item
