@@ -3531,6 +3531,10 @@ def main() -> None:
         sys.exit(run_conflicts(args[1:]))
     elif args[0] == "reconcile":
         sys.exit(_run_reconcile(args[1:]))
+    elif args[0] == "import-memories":
+        from piia_engram.memory_import import run_cli as _run_import_memories
+
+        sys.exit(_run_import_memories(args[1:]))
     elif args[0] == "integrity":
         sys.exit(_run_integrity(args[1:]))
     elif args[0] == "dashboard":
@@ -3593,6 +3597,8 @@ def main() -> None:
             "  engram recover-json <dataset>  Dry-run metadata scan for corrupt JSON backups\n"
             "  engram backup-plan      Metadata-only local backup plan (--json for raw)\n"
             "  engram import <backup.json>  Metadata-only import preview (--apply --yes to write)\n"
+            "  engram import-memories  Import other AI tools' memories into the review queue\n"
+            "                          (lists them first; --dry-run / --yes / --source)\n"
             "  engram retention plan   What the capacity rules would move next (read-only; restore <id>)\n"
             "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"

@@ -131,3 +131,56 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
 def real_ping_state_dir():
     """Where the usage ping state lives in the real profile (None if unresolvable)."""
     return REAL_PING_STATE_DIR
+
+
+def write_other_ai_tools_samples(home: Path) -> None:
+    """A fake home holding other AI tools' memory and rule files."""
+    # Claude Code auto-memory. The project dir name does not decode to a real
+    # path, so project discovery never walks a real drive.
+    mem = home / ".claude" / "projects" / "demo-project" / "memory"
+    mem.mkdir(parents=True)
+    (mem / "MEMORY.md").write_text("- [lint](lint_rule.md)\n", encoding="utf-8")
+    (mem / "lint_rule.md").write_text(
+        "---\nname: lint\ndescription: Always run the linter before committing code\n"
+        "type: feedback\n---\n\nAlways run the linter before committing code; "
+        "CI rejects unlinted pushes.\n",
+        encoding="utf-8",
+    )
+    (mem / "deploy_note.md").write_text(
+        "---\nname: deploy\ndescription: Deploy previews go to the staging bucket first\n"
+        "type: project\n---\n\nDeploy previews go to the staging bucket first, "
+        "never straight to production.\n",
+        encoding="utf-8",
+    )
+    (home / ".claude" / "CLAUDE.md").write_text(
+        "# Global rules\n\n## Language\nAll communication with me happens in English, "
+        "including commit messages.\n\n## Reviews\nNever merge a pull request without "
+        "a second human review of the diff.\n",
+        encoding="utf-8",
+    )
+    codex = home / ".codex"
+    codex.mkdir()
+    (codex / "AGENTS.md").write_text(
+        "# Agent rules\nI am a backend developer and prefer concise answers.\n"
+        "Always write tests before changing behaviour.\n",
+        encoding="utf-8",
+    )
+    rules = home / ".cursor" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "style.mdc").write_text(
+        "Prefer small pure functions over classes when either would work.\n"
+        "Keep modules under five hundred lines where practical.\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.fixture
+def other_ai_tools_home(tmp_path, monkeypatch) -> Path:
+    """HOME / USERPROFILE moved to a temp dir with other AI tools' sample files."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    write_other_ai_tools_samples(home)
+    assert Path.home() == home
+    return home

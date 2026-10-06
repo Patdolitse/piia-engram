@@ -1,8 +1,13 @@
-"""Engram reconcile layer - sync external AI memory and config files into Engram.
+"""Import engine for other AI tools' memory and config files.
+
+Nothing here runs on its own: the Owner's ``engram import-memories`` command
+(see ``memory_import``) is the only caller, and every item lands in the review
+queue (staging tier).
 
 ReconcileMixin provides:
 - reconcile_memories: scan ~/.claude/projects/*/memory/*.md and import unique items
 - reconcile_ai_configs: scan CLAUDE.md / .cursorrules / AGENT.md etc. and import rules
+- both take dry_run=True for a zero-write plan of the same items
 - helpers: _decode_claude_project_name, _discover_project_roots, _parse_config_sections
 """
 
@@ -145,8 +150,44 @@ def reconcile_env_conflict_note() -> str:
     return ""
 
 
+def _display_path(path: Path) -> str:
+    """``~/...`` for files under the home directory, else the full path."""
+    try:
+        return "~/" + Path(path).resolve().relative_to(Path.home().resolve()).as_posix()
+    except (ValueError, OSError):
+        return Path(path).as_posix()
+
+
+def _import_item(source: str, path: Path, summary: str, detail: str) -> dict:
+    """One planned import: where it comes from and a hash of the text written."""
+    import hashlib
+
+    digest = hashlib.sha256(f"{summary}\n\n{detail}".encode("utf-8")).hexdigest()
+    return {
+        "source": source,
+        "file": _display_path(path),
+        "summary": summary,
+        "content_sha256": digest,
+        "status": "planned",
+        "id": "",
+    }
+
+
+def _insert_outcome(result) -> tuple[str, str]:
+    """("imported", id) when add_lesson stored a row, else (its status, "")."""
+    from .storage import NOT_ADDED_STATUSES
+
+    if not isinstance(result, dict):
+        return "declined", ""
+    status = str(result.get("status") or "")
+    new_id = result.get("id")
+    if status in NOT_ADDED_STATUSES or not (isinstance(new_id, str) and new_id):
+        return status or "declined", ""
+    return "imported", new_id
+
+
 class ReconcileMixin:
-    """Auto-reconcile external AI memory & configs into Engram."""
+    """Import other AI tools' memory and config files on explicit request."""
 
     # ------------------------------------------------------------------
     # Configuration
@@ -183,6 +224,7 @@ class ReconcileMixin:
     # Global config paths to scan (in addition to per-project files)
     _AI_GLOBAL_CONFIGS = [
         "~/.claude/CLAUDE.md",
+        "~/.codex/AGENTS.md",
         "~/.cursor/rules",
         "~/.trae/rules",
         "~/.codeium/windsurf/rules",
@@ -202,7 +244,11 @@ class ReconcileMixin:
 
     @staticmethod
     def _reconcile_authorized() -> bool:
-        """Check if the user has authorized auto-reconcile of external AI files.
+        """May Engram read other AI tools' memory and config files at all?
+
+        Nothing reads them automatically any more; this gates the explicit
+        ``engram import-memories`` command and the read-only count that
+        ``engram doctor`` / ``engram status`` show.
 
         - ENGRAM_RECONCILE=0 (or false/off/no) always disables it.
         - ``"reconcile_authorized": false`` in telemetry_config.json disables it
@@ -222,19 +268,33 @@ class ReconcileMixin:
         return True if configured is None else bool(configured)
 
     @overflow_batch
-    def reconcile_memories(self, *, project_folder: str = "") -> dict:
-        """Scan external AI tool memory dirs and auto-import missing items.
+    def reconcile_memories(
+        self,
+        *,
+        project_folder: str = "",
+        dry_run: bool = False,
+        also_existing: "set[str] | frozenset[str]" = frozenset(),
+    ) -> dict:
+        """Import other AI tools' memory files into the review queue.
 
-        Returns a dict with sync stats.  Designed to be called silently
-        during cold-start (generate_context) and session wrap-up.
+        Only the Owner's explicit ``engram import-memories`` command calls this;
+        no server start, cold start, read or session close-out does. Each item
+        lands as a staging (review queue) lesson. ``dry_run=True`` returns the
+        same plan and writes nothing at all (no rows, no audit line).
+        ``also_existing`` adds texts planned elsewhere in the same run to the
+        dedup set.
 
-        Requires reconcile authorization (granted during setup or via
-        ENGRAM_RECONCILE=1 env var).
+        Returns counts plus ``items``: one ``{source, file, summary,
+        content_sha256, status, id}`` dict per planned or imported memory.
+
+        Honours the off switches (ENGRAM_RECONCILE=0 or
+        ``reconcile_authorized: false`` in telemetry_config.json).
         """
         if not self._reconcile_authorized():
-            self._note_reconcile_env_conflict()
+            if not dry_run:
+                self._note_reconcile_env_conflict()
             result = {"imported": 0, "duplicates": 0, "scanned_files": 0,
-                      "skipped_large": 0, "sources": [],
+                      "skipped_large": 0, "sources": [], "items": [],
                       "skipped_reason": "reconcile not authorized"}
             if project_folder:
                 result["scope"] = self._reconcile_scope_metadata(project_folder)
@@ -242,11 +302,13 @@ class ReconcileMixin:
             return result
         imported = 0
         duplicates = 0
+        queue_full = 0
         rejected_old_summary = 0
         scanned_files = 0
         skipped_large = 0
         skipped_scope = 0
         sources: list[str] = []
+        items: list[dict] = []
         target_project_id = _project_id(project_folder) if project_folder else ""
         target_claude_project = (
             self._encode_claude_project_name(str(Path(project_folder).resolve()))
@@ -254,19 +316,8 @@ class ReconcileMixin:
             else ""
         )
 
-        existing_lessons = self.get_lessons(limit=None, _update_access=False)
-        existing_decisions = self.get_decisions(limit=None, _update_access=False)
-        existing_summaries = {
-            lesson.get("summary", "")
-            for lesson in existing_lessons
-        }
-        # Also include decision texts for dedup
-        for d in existing_decisions:
-            existing_summaries.add(d.get("question", ""))
-            existing_summaries.add(d.get("choice", ""))
-        # Rows the capacity cap archived were already captured once; re-importing
-        # them on every start would grow the archive without bound.
-        existing_summaries |= self._overflow_archive_texts()
+        existing_summaries = self._reconcile_existing_summaries(dry_run=dry_run)
+        existing_summaries |= set(also_existing)
         existing_summaries.discard("")
 
         for glob_pattern in self._CLAUDE_MEMORY_GLOBS:
@@ -281,7 +332,7 @@ class ReconcileMixin:
             if not rel_pattern:
                 continue
 
-            for mem_file in base.glob(rel_pattern):
+            for mem_file in sorted(base.glob(rel_pattern)):
                 if mem_file.name == "MEMORY.md":
                     continue  # Index file, not a memory
                 if target_project_id:
@@ -294,8 +345,9 @@ class ReconcileMixin:
                     fsize = mem_file.stat().st_size
                     if fsize > self._RECONCILE_MAX_FILE_SIZE:
                         skipped_large += 1
-                        self._audit.log("warn", "reconcile/skip_large",
-                                        detail=f"{mem_file.name} ({fsize}B)")
+                        if not dry_run:
+                            self._audit.log("warn", "reconcile/skip_large",
+                                            detail=f"{mem_file.name} ({fsize}B)")
                         continue
                     content = mem_file.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError):
@@ -332,8 +384,10 @@ class ReconcileMixin:
                 if _rejected_before(self.root, parsed["legacy_summary"], project_folder=project_folder):
                     rejected_old_summary += 1  # rejected under its 4.21.1 summary
                     continue
+                if dry_run and _rejected_before(self.root, summary_candidate, project_folder=project_folder):
+                    rejected_old_summary += 1  # the insert would refuse it as well
+                    continue
 
-                # Auto-import as lesson
                 domain = "auto_reconcile"
                 if fm_type == "project":
                     domain = "project"
@@ -341,6 +395,12 @@ class ReconcileMixin:
                     domain = "feedback"
                 elif fm_type == "reference":
                     domain = "reference"
+
+                item = _import_item("memories", mem_file, summary_candidate, parsed["detail"])
+                if dry_run:
+                    items.append(item)
+                    existing_summaries.add(summary_candidate)
+                    continue
 
                 result = self.add_lesson(
                     summary_candidate,
@@ -350,28 +410,65 @@ class ReconcileMixin:
                     tier="staging",
                     project_folder=project_folder or None,
                 )
-                if result.get("status") not in _NOT_IMPORTED:
+                status, new_id = _insert_outcome(result)
+                if status == "queue_full":
+                    queue_full += 1
+                elif status == "imported":
                     imported += 1
                     sources.append(mem_file.name)
                     existing_summaries.add(summary_candidate)
+                    item.update(status="imported", id=new_id)
+                    items.append(item)
                 else:
                     duplicates += 1
 
-        self._audit.log("read", "reconcile_memories",
-                        detail=f"scanned={scanned_files} imported={imported} "
-                               f"dup={duplicates} skipped_large={skipped_large}")
+        if not dry_run:
+            self._audit.log("read", "reconcile_memories",
+                            detail=f"scanned={scanned_files} imported={imported} "
+                                   f"dup={duplicates} skipped_large={skipped_large}")
         result = {
             "scanned_files": scanned_files,
             "imported": imported,
             "duplicates": duplicates,
+            "queue_full": queue_full,
             "rejected_under_old_summary": rejected_old_summary,
             "skipped_large": skipped_large,
             "sources": sources,
+            "items": items,
         }
+        if dry_run:
+            result["dry_run"] = True
         if project_folder:
             result["skipped_scope"] = skipped_scope
             result["scope"] = self._reconcile_scope_metadata(project_folder)
         return result
+
+    def plan_memory_import(self, *, also_existing: "set[str] | frozenset[str]" = frozenset()) -> dict:
+        """Zero-write preview of :meth:`reconcile_memories` (works on a read-only handle)."""
+        return ReconcileMixin.reconcile_memories(self, dry_run=True, also_existing=also_existing)
+
+    def plan_config_import(self, *, also_existing: "set[str] | frozenset[str]" = frozenset()) -> dict:
+        """Zero-write preview of :meth:`reconcile_ai_configs` (works on a read-only handle)."""
+        return ReconcileMixin.reconcile_ai_configs(self, dry_run=True, also_existing=also_existing)
+
+    def _reconcile_existing_summaries(self, *, dry_run: bool = False) -> set[str]:
+        """Texts an import is deduplicated against (access-neutral read).
+
+        Active lessons of every tier (so the review queue counts), decision
+        questions and choices, and rows the capacity cap moved to the overflow
+        archive (they were captured once already; re-importing them would grow
+        the archive without bound). A dry run never migrates legacy fields on
+        disk.
+        """
+        migrate = not dry_run
+        existing_lessons = self.get_lessons(limit=None, _update_access=False, _migrate_fields=migrate)
+        existing_decisions = self.get_decisions(limit=None, _update_access=False, _migrate_fields=migrate)
+        summaries = {lesson.get("summary", "") for lesson in existing_lessons}
+        for d in existing_decisions:
+            summaries.add(d.get("question", ""))
+            summaries.add(d.get("choice", ""))
+        summaries |= self._overflow_archive_texts()
+        return summaries
 
     def collect_memory_candidates(self) -> list[dict]:
         """Read-only scan of external AI memory files into reconcile candidates.
@@ -512,42 +609,45 @@ class ReconcileMixin:
         search_roots: list[str] | None = None,
         max_imports: int = 25,
         project_folder: str = "",
+        dry_run: bool = False,
+        also_existing: "set[str] | frozenset[str]" = frozenset(),
     ) -> dict:
-        """Scan AI tool config files and import unique rules into Engram.
+        """Import rules from other AI tools' config files into the review queue.
 
-        Discovers project roots from Claude Code project entries, then
-        looks for CLAUDE.md, .cursorrules, AGENT.md, etc. in each.
-        Parses markdown sections and imports meaningful directives as lessons.
+        Only the Owner's explicit ``engram import-memories`` command calls this.
+        Discovers project roots from Claude Code project entries, then looks
+        for CLAUDE.md, .cursorrules, AGENT.md, etc. in each, parses markdown
+        sections and imports each meaningful one as a staging lesson, at most
+        ``max_imports`` per run. ``dry_run=True`` returns the same plan and
+        writes nothing; ``also_existing`` adds texts planned elsewhere in the
+        same run to the dedup set. ``items`` lists one dict per planned or
+        imported section (see :meth:`reconcile_memories`).
 
-        Requires reconcile authorization (granted during setup or via
-        ENGRAM_RECONCILE=1 env var).
+        Honours the off switches (ENGRAM_RECONCILE=0 or
+        ``reconcile_authorized: false`` in telemetry_config.json).
         """
         if not self._reconcile_authorized():
-            self._note_reconcile_env_conflict()
+            if not dry_run:
+                self._note_reconcile_env_conflict()
             result = {"imported": 0, "duplicates": 0, "scanned_files": 0,
-                      "sources": [],
+                      "sources": [], "items": [],
                       "skipped_reason": "reconcile not authorized",
                       "budget_exhausted": False}
             if project_folder:
                 result["scope"] = self._reconcile_scope_metadata(project_folder)
             return result
         imported = 0
+        planned = 0
         duplicates = 0
+        queue_full = 0
         scanned_files = 0
         sources: list[str] = []
+        items: list[dict] = []
         budget_exhausted = False
         import_budget = max(0, int(max_imports))
 
-        existing_lessons = self.get_lessons(limit=None, _update_access=False)
-        existing_decisions = self.get_decisions(limit=None, _update_access=False)
-        existing_summaries = {
-            lesson.get("summary", "") for lesson in existing_lessons
-        }
-        for d in existing_decisions:
-            existing_summaries.add(d.get("question", ""))
-            existing_summaries.add(d.get("choice", ""))
-        # Already-captured rows now in the overflow archive are not re-imported.
-        existing_summaries |= self._overflow_archive_texts()
+        existing_summaries = self._reconcile_existing_summaries(dry_run=dry_run)
+        existing_summaries |= set(also_existing)
         existing_summaries.discard("")
 
         # Collect all config files to scan
@@ -605,8 +705,9 @@ class ReconcileMixin:
             try:
                 fsize = cfg.stat().st_size
                 if fsize > _MAX_CFG:
-                    self._audit.log("warn", "reconcile_config/skip_large",
-                                    detail=f"{cfg.name} ({fsize}B)")
+                    if not dry_run:
+                        self._audit.log("warn", "reconcile_config/skip_large",
+                                        detail=f"{cfg.name} ({fsize}B)")
                     continue
                 content = cfg.read_text(encoding="utf-8", errors="replace")
                 if "\ufffd" in content:
@@ -647,22 +748,37 @@ class ReconcileMixin:
                 if is_dup:
                     continue
 
-                if imported >= import_budget:
+                if (planned if dry_run else imported) >= import_budget:
                     budget_exhausted = True
                     break
+
+                detail = _bounded_detail(section_body, source=content)
+                item = _import_item("configs", cfg, summary_candidate, detail)
+                if dry_run:
+                    if _rejected_before(self.root, summary_candidate, project_folder=project_folder):
+                        continue  # the insert would refuse it
+                    planned += 1
+                    items.append(item)
+                    existing_summaries.add(summary_candidate)
+                    continue
 
                 result = self.add_lesson(
                     summary_candidate,
                     domain="ai_config",
-                    detail=_bounded_detail(section_body, source=content),
+                    detail=detail,
                     source_tool="config_scan",
                     tier="staging",
                     project_folder=project_folder or None,
                 )
-                if result.get("status") not in _NOT_IMPORTED:
+                status, new_id = _insert_outcome(result)
+                if status == "queue_full":
+                    queue_full += 1
+                elif status == "imported":
                     imported += 1
                     sources.append(f"{cfg.parent.name}/{cfg.name}")
                     existing_summaries.add(summary_candidate)
+                    item.update(status="imported", id=new_id)
+                    items.append(item)
                 else:
                     duplicates += 1
             if budget_exhausted:
@@ -672,9 +788,13 @@ class ReconcileMixin:
             "scanned_files": scanned_files,
             "imported": imported,
             "duplicates": duplicates,
+            "queue_full": queue_full,
             "sources": sources,
+            "items": items,
             "budget_exhausted": budget_exhausted,
         }
+        if dry_run:
+            result["dry_run"] = True
         if project_folder:
             result["scope"] = self._reconcile_scope_metadata(project_folder)
         return result
