@@ -855,3 +855,16 @@ def test_an_entry_rejected_in_the_session_cannot_be_a_target(store):
     assert "you rejected it in this review" in out
     assert _lesson(eng, "Tag releases from the release workflow")["tier"] == "verified"
     assert _edges_of(eng) == []
+
+
+def test_a_chain_of_agent_revisions_is_linked_whatever_the_display_order(store):
+    eng, _client = store
+    first = eng.add_decision({"question": "Where do build caches live?", "choice": "on each runner"})
+    middle = _agent_revision(eng, "Where do build caches live now?", "in the shared bucket", first["id"])
+    newest = _agent_revision(eng, "Where do build caches live from now on?", "in the regional bucket", middle["id"])
+
+    code, out = _review(["a", "a", "a", "y"])
+
+    assert code == 0, out
+    assert sorted(_edges_of(eng)) == sorted([(middle["id"], first["id"]), (newest["id"], middle["id"])])
+    assert "approved without link 0" in out and "failed 0" in out

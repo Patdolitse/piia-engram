@@ -332,7 +332,9 @@ def test_rerun_preview_shows_nothing_left_after_apply(home, tmp_path, monkeypatc
     assert counts["pending"] == 0
     assert counts["planned"] == 0 and counts["failed"] == 0
     assert counts["edit_type_already_applied"] == 1 and counts["lifecycle_already_applied"] == 1
-    assert [i["status"] for i in again["items"]] == ["already_applied"]
+    # every mark has an item now (with its phase); all three are already done
+    assert [(i["status"], i["phase"]) for i in again["items"]] == [
+        ("already_applied", 1), ("already_applied", "edit"), ("already_applied", "lifecycle")]
     assert _snapshot(store) == after_apply
 
     # Applying the same file again writes no new versions.

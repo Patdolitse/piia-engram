@@ -100,7 +100,8 @@ def test_supersede_mark_links_a_lesson_after_a_dry_run(eng, tmp_path, capsys):
     applied = _apply(tmp_path, capsys, marks)
 
     assert applied["counts"]["supersede"] == 1 and applied["counts"]["supersede_failed"] == 0
-    assert applied["items"] == [{"id": new["id"], "action": "supersede", "status": "applied", "target": old["id"]}]
+    assert applied["items"] == [{"id": new["id"], "action": "supersede", "status": "applied", "target": old["id"],
+                                 "phase": 2}]
     assert _row(eng, new["id"])["tier"] == "verified"
     assert "pending_supersedes" not in _row(eng, new["id"])
     index = eng._recall_supersede_index()
@@ -138,16 +139,17 @@ def test_supersede_mark_retires_the_old_playbook(eng, tmp_path, capsys):
 
 def test_supersede_mark_to_a_bad_target_fails_without_writing(eng, tmp_path, capsys):
     pending = eng.add_lesson({"summary": "Another proposal still waiting", "domain": "type:lesson"})
-    new = eng.add_lesson({"summary": "Cache the dependency layer between CI runs", "domain": "type:lesson"})
     rule = eng.add_lesson({"summary": "Never cache build output", "domain": "type:rule"})
     _approve(eng, rule["id"])
+    news = [eng.add_lesson({"summary": f"Cache the dependency layer between CI runs, variant {n}",
+                            "domain": "type:lesson"})["id"] for n in range(4)]
     before = _knowledge(eng.root)
 
     applied = _apply(tmp_path, capsys, [
-        {"id": new["id"], "mark": "supersede:nosuchid0001"},
-        {"id": new["id"], "mark": f"supersede:{pending['id']}"},
-        {"id": new["id"], "mark": f"supersede:{new['id']}"},
-        {"id": new["id"], "mark": f"supersede:{rule['id']}"},
+        {"id": news[0], "mark": "supersede:nosuchid0001"},
+        {"id": news[1], "mark": f"supersede:{pending['id']}"},
+        {"id": news[2], "mark": f"supersede:{news[2]}"},
+        {"id": news[3], "mark": f"supersede:{rule['id']}"},
     ], code=1)  # every mark failed
 
     assert [i["status"] for i in applied["items"]] == [
@@ -163,7 +165,8 @@ def test_dry_run_reports_a_bad_supersede_without_writing(eng, tmp_path, capsys):
     payload = _apply(tmp_path, capsys, [{"id": row["id"], "mark": f"supersede:{row['id']}"}], yes=False)
 
     assert payload["status"] == "dry_run"
-    assert payload["items"] == [{"id": row["id"], "action": "supersede", "status": "self", "target": row["id"]}]
+    assert payload["items"] == [{"id": row["id"], "action": "supersede", "status": "self", "target": row["id"],
+                                 "phase": 2}]
     assert _knowledge(eng.root) == before
 
 
@@ -197,8 +200,10 @@ def test_old_format_marks_apply_exactly_as_before(eng, tmp_path, capsys):
                                         {"id": relabel["id"], "mark": "edit-type:rule"}])
 
     assert applied["status"] == "applied"
-    assert applied["items"] == [{"id": keep["id"], "action": "approve", "status": "applied"},
-                                {"id": drop["id"], "action": "reject", "status": "applied"}]
+    assert applied["items"] == [{"id": keep["id"], "action": "approve", "status": "applied", "phase": 1},
+                                {"id": drop["id"], "action": "reject", "status": "applied", "phase": 1},
+                                {"id": relabel["id"], "action": "edit-type", "status": "applied", "phase": "edit"}]
+    assert applied["order"] == [keep["id"], drop["id"], relabel["id"]]
     assert applied["edit_type_failed"] == []
     counts = applied["counts"]
     assert (counts["requested"], counts["approve"], counts["reject"], counts["planned"], counts["applied"],
@@ -348,13 +353,15 @@ def _outcome(item: dict) -> tuple:
     status = item["status"]
     if status == "planned":
         status = "applied_unlinked" if item.get("unlinked_reason") else "applied"
-    return (item["id"], item["action"], status, item.get("target", ""), item.get("unlinked_reason", ""))
+    return (item["id"], item["action"], status, item.get("target", ""), item.get("unlinked_reason", ""),
+            item.get("phase"))
 
 
 def _dry_then_apply(eng, tmp_path, capsys, marks: list[dict], *, code: int = 0) -> tuple[dict, dict]:
     dry = _apply(tmp_path, capsys, marks, yes=False)
     applied = _apply(tmp_path, capsys, marks, code=code)
     assert [_outcome(i) for i in dry["items"]] == [_outcome(i) for i in applied["items"]]
+    assert dry["order"] == applied["order"]
     return dry, applied
 
 
@@ -555,3 +562,156 @@ def test_export_lists_every_mark_and_writes_a_template(eng, tmp_path, capsys):
     capsys.readouterr()
     assert review_cli.run_apply([str(out / "marks-template.json"), "--operator", "owner", "--yes"]) == 0
     assert _knowledge(eng.root) == before
+
+
+# ---------------------------------------------------------------------------
+# edit-type and retire / restore run after both review phases
+# ---------------------------------------------------------------------------
+
+
+def test_edit_type_and_supersede_of_one_proposal_with_template_versions(eng, tmp_path, capsys):
+    old = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    _approve(eng, old["id"])
+    new = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+    review_cli.run_export(["--out", str(tmp_path / "export")])
+    template = json.loads((tmp_path / "export" / "marks-template.json").read_text(encoding="utf-8"))
+    version = next(e["expected_version"] for e in template if e["id"] == new["id"])
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": new["id"], "mark": "edit-type:rule"},
+        {"id": new["id"], "mark": f"supersede:{old['id']}", "expected_version": version},
+    ])
+
+    assert [(i["action"], i["status"], i["phase"]) for i in applied["items"]] == [
+        ("edit-type", "applied", "edit"), ("supersede", "applied", 2)]
+    assert applied["order"] == [new["id"], new["id"]]
+    assert "type:rule" in _row(eng, new["id"])["domain"].split(",")
+    assert (new["id"], old["id"]) in _supersede_edges(eng)  # besides the edit's own version snapshot
+
+
+def test_edit_type_of_a_target_and_its_supersede(eng, tmp_path, capsys):
+    old = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    _approve(eng, old["id"])
+    new = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": old["id"], "mark": "edit-type:rule"},
+        {"id": new["id"], "mark": f"supersede:{old['id']}"},
+    ])
+
+    assert [i["status"] for i in applied["items"]] == ["applied", "applied"]
+    assert (new["id"], old["id"]) in _supersede_edges(eng)
+
+
+def test_retiring_a_playbook_that_is_also_superseded(eng, tmp_path, capsys):
+    old = eng.add_playbook({"title": "Rotate the signing key by hand",
+                            "steps": [{"action": "Revoke the old key"}, {"action": "Mail the new key"}]})
+    _approve(eng, old["id"])
+    new = eng.add_playbook({"title": "Key rollover through the release tool",
+                            "steps": [{"action": "Run the rotate command"}, {"action": "Publish the new key"}]})
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": old["id"], "mark": "retire"},
+        {"id": new["id"], "mark": f"supersede:{old['id']}"},
+    ])
+
+    assert [(i["action"], i["status"], i["phase"]) for i in applied["items"]] == [
+        ("retire", "already_applied", "lifecycle"), ("supersede", "applied", 2)]
+    assert applied["order"] == [new["id"], old["id"]]
+    assert eng._read_playbook_by_id(old["id"])["status"] != "active"
+
+
+def test_restoring_a_playbook_that_is_also_superseded(eng, tmp_path, capsys):
+    old = eng.add_playbook({"title": "Rotate the signing key by hand",
+                            "steps": [{"action": "Revoke the old key"}, {"action": "Mail the new key"}]})
+    _approve(eng, old["id"])
+    new = eng.add_playbook({"title": "Key rollover through the release tool",
+                            "steps": [{"action": "Run the rotate command"}, {"action": "Publish the new key"}]})
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": old["id"], "mark": "restore"},
+        {"id": new["id"], "mark": f"supersede:{old['id']}"},
+    ])
+
+    assert [(i["action"], i["status"]) for i in applied["items"]] == [("restore", "applied"), ("supersede", "applied")]
+
+
+# ---------------------------------------------------------------------------
+# re-running a supersede; one review mark per id; chains in dependency order
+# ---------------------------------------------------------------------------
+
+
+def test_running_the_same_supersede_again_is_already_applied(eng, tmp_path, capsys):
+    old = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    _approve(eng, old["id"])
+    new = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+    marks = [{"id": new["id"], "mark": f"supersede:{old['id']}"}]
+    _apply(tmp_path, capsys, marks)
+
+    dry, again = _dry_then_apply(eng, tmp_path, capsys, marks)
+
+    assert again["items"][0]["status"] == "already_applied"
+    assert again["counts"]["failed"] == 0 and again["counts"]["supersede_failed"] == 0
+    receipt = _receipts(eng.root)[-1]
+    assert receipt["counts"]["failed"] == 0
+    assert _supersede_edges(eng) == [(new["id"], old["id"])]
+
+
+def test_one_review_mark_per_id():
+    for second in ("reject", "approve", "skip", "supersede:old001"):
+        error = review_cli.validate_marks([{"id": "a1", "mark": "approve"}, {"id": "a1", "mark": second}])[1]
+        assert "a1" in error, second
+    marks, error = review_cli.validate_marks([{"id": "a1", "mark": "approve"}, {"id": "a1", "mark": "edit-type:rule"}])
+    assert not error and len(marks) == 2
+
+
+def test_a_chain_of_revisions_is_applied_oldest_first(eng, tmp_path, capsys):
+    first = eng.add_decision({"question": "Where do build caches live?", "choice": "on each runner"})
+    middle = _revision(eng, "Where do build caches live now?", "in the shared bucket", first["id"])
+    newest = _revision(eng, "Where do build caches live from now on?", "in the regional bucket", middle["id"])
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [{"id": newest["id"], "mark": "approve"},
+                                                            {"id": middle["id"], "mark": "approve"},
+                                                            {"id": first["id"], "mark": "approve"}])
+
+    assert [i["status"] for i in applied["items"]] == ["applied", "applied", "applied"]
+    assert applied["order"] == [first["id"], middle["id"], newest["id"]]
+    assert sorted(_supersede_edges(eng)) == sorted([(middle["id"], first["id"]), (newest["id"], middle["id"])])
+
+
+def test_an_owner_chain_is_applied_oldest_first(eng, tmp_path, capsys):
+    oldest = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    _approve(eng, oldest["id"])
+    middle = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+    newest = eng.add_lesson({"summary": "Tag and sign releases from the release workflow", "domain": "type:lesson"})
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": newest["id"], "mark": f"supersede:{middle['id']}"},
+        {"id": middle["id"], "mark": f"supersede:{oldest['id']}"},
+    ])
+
+    assert [i["status"] for i in applied["items"]] == ["applied", "applied"]
+    assert applied["order"] == [middle["id"], newest["id"]]
+
+
+def test_a_stop_while_pointing_the_row_puts_it_back(eng, tmp_path, monkeypatch):
+    old = eng.add_lesson({"summary": "Store secrets in the CI settings page", "domain": "type:lesson"})
+    _approve(eng, old["id"])
+    new = eng.add_lesson({"summary": "Store secrets in the CI secret store", "domain": "type:lesson"})
+    real = review_cli._set_pending_supersede
+    calls = {"n": 0}
+
+    def _stop_after_write(*args, **kwargs):
+        calls["n"] += 1
+        result = real(*args, **kwargs)
+        if calls["n"] == 1:
+            raise KeyboardInterrupt  # the write landed, the caller never saw it
+        return result
+
+    monkeypatch.setattr(review_cli, "_set_pending_supersede", _stop_after_write)
+    marks, _ = review_cli.validate_marks([{"id": new["id"], "mark": f"supersede:{old['id']}"}])
+    with pytest.raises(KeyboardInterrupt):
+        review_cli.apply_marks(Engram(root=eng.root), marks, review_cli.attribution_record("owner", mode="marks"))
+
+    row = _row(eng, new["id"])
+    assert row["tier"] == "staging" and "pending_supersedes" not in row

@@ -22,6 +22,7 @@ REVIEW_ITEM_KEYS = frozenset(
         "quality_signal_count",
         "quality_flag_count",
         "created_at",
+        "scope",
     }
 )
 PLAYBOOK_ITEM_KEYS = frozenset(
@@ -80,7 +81,7 @@ def _closed_entry(entry: dict[str, Any], expected_keys: frozenset[str]) -> dict[
     return entry
 
 
-def _review_entry(kind: str, item: dict[str, Any]) -> dict[str, Any]:
+def _review_entry(kind: str, item: dict[str, Any], scope: str = "global") -> dict[str, Any]:
     score = _quality_score(item)
     return _closed_entry({
         "id": str(item.get("id") or ""),
@@ -92,6 +93,7 @@ def _review_entry(kind: str, item: dict[str, Any]) -> dict[str, Any]:
         "quality_signal_count": _quality_list_count(item, "quality_signals"),
         "quality_flag_count": _quality_list_count(item, "quality_flags"),
         "created_at": _created_at(item),
+        "scope": scope,
     }, REVIEW_ITEM_KEYS)
 
 
@@ -114,12 +116,14 @@ def _review_items_filtered(
     rows: list[dict[str, Any]] = []
     kind_filter = str(review_kind or "all").strip().lower()
     quality_filter = str(quality_status or "all").strip().lower()
-    for lesson in eng.get_lessons(limit=None, _update_access=False):
-        if lesson.get("tier") == "staging":
-            rows.append(_review_entry("lesson", lesson))
-    for decision in eng.get_decisions(limit=None, _update_access=False):
-        if decision.get("tier") == "staging":
-            rows.append(_review_entry("decision", decision))
+    from .review_cli import active_rows, scope_label
+
+    # Every project's proposals, like the Owner's review list: the scope is a
+    # project name or id (``project:<name>``), never a path.
+    for kind in ("lesson", "decision"):
+        for item in active_rows(eng, kind):
+            if item.get("tier") == "staging":
+                rows.append(_review_entry(kind, item, scope_label(eng, kind, item)))
     if kind_filter in {"lesson", "decision"}:
         rows = [item for item in rows if item.get("kind") == kind_filter]
     if quality_filter in {"low", "ok", "missing"}:

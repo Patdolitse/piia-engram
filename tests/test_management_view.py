@@ -333,3 +333,24 @@ def test_management_view_entry_key_contracts_are_runtime_checked(
 
     assert set(view["review_queue"]["items"][0]) == REVIEW_ITEM_KEYS
     assert set(view["playbooks"]["items"][0]) == PLAYBOOK_ITEM_KEYS
+
+
+def test_management_review_queue_lists_project_proposals_by_name(tmp_path: Path, monkeypatch) -> None:
+    from piia_engram.core import Engram
+    from piia_engram.management_view import build_management_view
+
+    monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    store = tmp_path / "store"
+    folder = tmp_path / "private-dir" / "alpha-service"
+    folder.mkdir(parents=True)
+    eng = Engram(root=store)
+    row = eng.add_lesson({"summary": "alpha service proposal", "tier": "staging",
+                          "project_folder": str(folder), "project": "alpha-service"})
+    eng.add_lesson("global proposal", tier="staging")
+
+    view = build_management_view(eng)
+
+    items = {item["id"]: item for item in view["review_queue"]["items"]}
+    assert row["id"] in items and len(items) == 2
+    assert items[row["id"]]["scope"] == "project:alpha-service"
+    assert "private-dir" not in json.dumps(view)
