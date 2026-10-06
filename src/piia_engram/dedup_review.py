@@ -57,6 +57,26 @@ def candidate_message(record: dict[str, Any]) -> str:
     )
 
 
+def existing_guidance(existing_id: str, kind: str) -> dict[str, Any]:
+    """Guidance for a refused identical write: the content exists; how to revise it.
+
+    Nothing here offers a new-entry bypass: identical content has none.
+    """
+    existing_id = str(existing_id or "")
+    if kind == "playbook":
+        how_zh = '用 manage_playbook(action="update") 提交修订（严格模式下为修订提案）'
+        how_en = 'use manage_playbook(action="update") (a revision proposal under strict approval)'
+    else:
+        how_zh = f"请写入修订后的内容并用 supersedes={existing_id} 指向它（修订提案），或在允许编辑时用 update_knowledge"
+        how_en = (f"write the revised text with supersedes={existing_id} (a revision proposal), "
+                  "or use update_knowledge where edits are allowed")
+    return {
+        "existing_id": existing_id,
+        "note": f"内容已存在，指向 {existing_id}；若要修订，{how_zh}。 / "
+                f"Already stored as {existing_id}. To revise it, {how_en}.",
+    }
+
+
 def related_from_note(note: Any) -> tuple[str, str] | None:
     """(existing id, similarity text) from a ``_dedup_note``, if it names one."""
     match = _RELATED_NOTE_RE.search(str(note or ""))

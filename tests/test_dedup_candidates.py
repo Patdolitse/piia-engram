@@ -308,3 +308,57 @@ def test_memory_lens_html_escapes_the_self_reported_client(eng):
 
     assert "<script>alert(1)</script>" not in page
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+
+
+# ---------------------------------------------------------------------------
+# the refusal of identical content names what exists, never a bypass it lacks
+# ---------------------------------------------------------------------------
+
+
+def test_identical_lesson_refusal_points_at_the_existing_entry(eng):
+    first = eng.add_lesson({"summary": BASE, "detail": "d1", "domain": "release"})
+
+    for detail in ("d1", "d2"):  # same body, and a probable revision
+        res = eng.add_lesson({"summary": BASE, "detail": detail, "domain": "release"})
+        assert res["status"] == "duplicate"
+        assert "allow_similar_new" not in json.dumps(res, ensure_ascii=False)
+        existing = res["guidance"]["existing"]
+        assert existing["existing_id"] == first["id"]
+        assert "supersedes" in existing["note"]
+    assert res["guidance"]["revision"]["target_id"] == first["id"]
+
+
+def test_identical_decision_refusal_points_at_the_existing_entry(eng):
+    first = eng.add_decision({"question": OPPOSITE_A, "choice": "yes"})
+
+    res = eng.add_decision({"question": OPPOSITE_A, "choice": "yes"})
+
+    assert res["status"] == "duplicate"
+    assert "allow_similar_new" not in json.dumps(res, ensure_ascii=False)
+    assert res["guidance"]["existing"]["existing_id"] == first["id"]
+
+
+def test_identical_playbook_title_refusal_does_not_offer_the_bypass(eng):
+    first = eng.add_playbook({"title": "Identical playbook title", "steps": ["a"]})
+
+    res = eng.add_playbook({"title": "Identical playbook title", "steps": ["b"]}, allow_similar_new=True)
+
+    assert res["status"] == "duplicate"
+    assert "allow_similar_new" not in json.dumps(res, ensure_ascii=False)
+    assert res["guidance"]["existing"]["existing_id"] == first["id"]
+    assert res["guidance"]["revision"]["target_id"] == first["id"]
+
+
+def test_mcp_identical_lesson_reply_has_no_bypass_hint(mcp_eng):
+    first = mcp_eng.add_lesson({"summary": BASE, "detail": "d1", "domain": "release"})
+
+    out = _run(mcp_server.add_lesson(summary=BASE, detail="d2", domain="release", user_confirmed=True))
+
+    assert "allow_similar_new" not in out
+    assert first["id"] in out
+
+
+def test_allow_similar_new_descriptions_say_it_cannot_bypass_identical():
+    for tool in (mcp_server.add_lesson, mcp_server.add_playbook):
+        doc = " ".join((tool.__doc__ or "").split())
+        assert "cannot bypass" in doc, tool.__name__

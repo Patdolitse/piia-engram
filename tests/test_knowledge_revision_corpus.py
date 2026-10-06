@@ -75,7 +75,10 @@ def test_case2a_same_title_different_body_playbook_returns_revision_guidance(tmp
     assert revision.get("target_id") == created["id"]
     assert revision.get("tool_hint") == "update_knowledge"
     assert isinstance(revision.get("expected_version"), int)
-    assert guidance.get("new_entry", {}).get("param") == "allow_similar_new"
+    # allow_similar_new cannot bypass an identical title, so it is not offered;
+    # the reply names the existing playbook instead.
+    assert "new_entry" not in guidance
+    assert guidance.get("existing", {}).get("existing_id") == created["id"]
     # and the store must NOT have created a second active entry
     assert _active_playbook_titles(tmp_path) == [TITLE]
 

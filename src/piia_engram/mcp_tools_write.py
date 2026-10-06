@@ -124,6 +124,7 @@ async def memory_store(
             Content JSON string (required in single mode). Schema varies by kind (see above).
         source_tool: 调用来源工具（可选），如 'claude_code', 'cursor'。 / Source tool (optional).
         items_json: 条目 JSON 数组；给了就走批量写入（一次导入多条 lesson/decision）。 / JSON array of items; when provided, batch-writes multiple lessons/decisions in one call.
+        allow_similar_new: 单条 lesson/playbook：内容相似但不相同、确属新条目时设为 true（可选，默认 false）；不能绕过完全相同内容的拒绝。 / Single lesson/playbook: set true when similar but not identical content is genuinely new (optional, default false); it cannot bypass the refusal of identical content.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="memory_store")
@@ -313,7 +314,7 @@ async def add_lesson(
         source_agent: 产生/校验此条目的 agent 身份（可选，如 'claude_code'，比 source_tool 更细）。 / Agent identity that produced or validated this entry (optional; finer-grained than source_tool).
         run_id: 产生此条目的工作流/会话运行 ID（可选）。 / Workflow/session id that produced this entry (optional).
         last_validated_at: 人/agent 最近确认此条目仍然成立的 ISO-8601 时间（可选）。 / ISO-8601 time this entry was last confirmed to still hold (optional).
-        allow_similar_new: 相似摘要但确属新条目时，显式绕过去重门存为新条目并互链（可选，默认 false；同摘要不同正文时去重拒绝会带修订指引）。 / When the similar summary is genuinely a NEW fact, explicitly bypass the duplicate gate and store it linked as related (optional, default false; same-summary-different-body rejections carry revision guidance).
+        allow_similar_new: 摘要相似但不相同、确属新条目时设为 true：按相关条目写入并互链，而不是作为重复候选进入待审（可选，默认 false）。不能绕过完全相同（规范化后）内容的拒绝；该拒绝会指向已有条目并给出修订方式。 / Set true when a similar but not identical summary is genuinely a NEW fact: it is stored linked as related instead of queued for review as a duplicate candidate (optional, default false). It cannot bypass the refusal of identical content (after normalization); that refusal names the existing entry and how to revise it.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_lesson")
@@ -498,7 +499,7 @@ async def add_playbook(
         pitfalls: 常见陷阱，逗号分隔（可选）。 / Common pitfalls, comma-separated (optional).
         outcome: 预期结果（可选）。 / Expected outcome (optional).
         source_tool: 来源工具（可选）。 / Source tool (optional).
-        allow_similar_new: 标题相似但确属另一份手册时，显式绕过相似度门存为新条目（可选，默认 false；同标题不同正文的去重拒绝会带修订指引）。 / When the similar title is genuinely a DIFFERENT playbook, explicitly bypass the similarity gate (optional, default false; same-title-different-body rejections carry revision guidance).
+        allow_similar_new: 标题相似但不相同、确属另一份手册时设为 true，写入新条目（可选，默认 false）。不能绕过标题完全相同的拒绝；该拒绝会指向已有手册并给出修订方式。 / Set true when a similar but not identical title is genuinely a DIFFERENT playbook, to store it as a new entry (optional, default false). It cannot bypass the refusal of an identical title; that refusal names the existing playbook and how to revise it.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_playbook")

@@ -252,8 +252,8 @@ When different tools write similar lessons or decisions, Engram compares the new
 
 | Match | Handling | Description |
 |--------|------|------|
-| Same text after normalization | **Reject** | Exact duplicate, not added. Normalization ignores case, punctuation, extra whitespace and a leading label such as "Lesson:"; a decision compares its question and choice. |
-| ≥ 95% similar, not the same | **Review** | Added to the review queue (also outside strict mode) with `duplicate_candidate` naming the earlier entry and the similarity; you decide whether it is new. `allow_similar_new=true` stores it as a related entry instead. |
+| Same text after normalization | **Reject** | Exact duplicate, not added; the reply names the existing entry and how to revise it (`supersedes`, or `update_knowledge` where edits are allowed). Normalization ignores case, punctuation, extra whitespace and a leading label such as "Lesson:"; a decision compares its question and choice. |
+| ≥ 95% similar, not the same | **Review** | Added to the review queue (also outside strict mode) with `duplicate_candidate` naming the earlier entry and the similarity; you decide whether it is new. `allow_similar_new=true` declares a similar but not identical entry as new and stores it as a related entry instead; it cannot bypass the refusal of identical content. |
 | 55%-95% | **Link** | Added as usual and linked via `related_ids` (`_dedup_note`); the review card marks it as a near-duplicate |
 | < 55% | **Pass** | Added normally |
 

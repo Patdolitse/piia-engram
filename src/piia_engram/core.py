@@ -2327,20 +2327,19 @@ class Engram(
                         "message": f"与现有教训相似度 {best_sim:.0%}，未重复添加",
                         "likely_revision": likely_revision,
                     }
+                    # Identical content has no new-entry bypass; the reply
+                    # names the existing entry and how to revise it.
+                    result["guidance"] = {
+                        "existing": _dedup_review.existing_guidance(best_match.get("id", ""), "lesson"),
+                    }
                     if likely_revision:
                         # EXACT claim identity: safe to point at the revision
                         # target (v4.19.1: a similarity match never does; it
                         # is a duplicate candidate instead, see above).
-                        result["guidance"] = {
-                            "revision": {
-                                "tool_hint": "update_knowledge",
-                                "target_id": best_match.get("id"),
-                                "expected_version": int(best_match.get("version") or 1),
-                            },
-                            "new_entry": {
-                                "param": "allow_similar_new",
-                                "note": "set allow_similar_new=true to store as a distinct related entry",
-                            },
+                        result["guidance"]["revision"] = {
+                            "tool_hint": "update_knowledge",
+                            "target_id": best_match.get("id"),
+                            "expected_version": int(best_match.get("version") or 1),
                         }
                     result_box["result"] = result
                     return lessons
@@ -2827,6 +2826,9 @@ class Engram(
                     "existing_id": exact_match.get("id"),
                     "existing_title": self._entry_identity_text(exact_match, "decision"),
                     "message": "与现有决策相似度 100%，未重复添加",
+                    "guidance": {
+                        "existing": _dedup_review.existing_guidance(exact_match.get("id", ""), "decision"),
+                    },
                 }
                 return decisions
             if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:

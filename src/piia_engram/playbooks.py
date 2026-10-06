@@ -699,16 +699,17 @@ class PlaybookMixin:
                         # EXACT identity: the rejection can safely point at the
                         # revision target (v4.19.1: fuzzy hits never do —
                         # similarity must never auto-select a revise target).
+                        # allow_similar_new cannot bypass an identical title,
+                        # so the reply does not offer it.
+                        from .dedup_review import existing_guidance
+
                         result["guidance"] = {
                             "revision": {
                                 "tool_hint": "update_knowledge",
                                 "target_id": existing_id,
                                 "expected_version": int(existing_pb.get("version") or 1),
                             },
-                            "new_entry": {
-                                "param": "allow_similar_new",
-                                "note": "set allow_similar_new=true to store as a distinct entry",
-                            },
+                            "existing": existing_guidance(existing_id, "playbook"),
                         }
                     else:
                         # Fuzzy title match: name the new-entry escape hatch
