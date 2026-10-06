@@ -340,6 +340,13 @@ def _pending_item(item_type: str, item: dict[str, Any]) -> dict[str, Any]:
     labeling = _project_labeling(item)
     if labeling:
         row["labeling"] = labeling
+    candidate = item.get("duplicate_candidate")
+    if isinstance(candidate, dict) and candidate.get("existing_id"):
+        # Metadata only (ids and a score), like the rest of this listing.
+        row["duplicate_candidate"] = {
+            "existing_id": _sanitize_review_metadata(candidate.get("existing_id")),
+            "similarity": candidate.get("similarity") if isinstance(candidate.get("similarity"), (int, float)) else None,
+        }
     evidence = _review_evidence(item)
     if evidence:
         row["evidence"] = evidence

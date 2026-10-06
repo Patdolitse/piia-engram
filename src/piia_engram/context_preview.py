@@ -88,6 +88,37 @@ def _knowledge_digest(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _review_annotations(digest: dict[str, Any], item: dict[str, Any]) -> None:
+    """Owner-facing notes on a held-back item: duplicate candidate and the
+    client's self-reported name. Ids, a score and a name only -- no bodies."""
+    from .write_provenance import client_summary
+
+    candidate = item.get("duplicate_candidate")
+    if isinstance(candidate, dict) and candidate.get("existing_id"):
+        digest["duplicate_of"] = redact_export_text(str(candidate["existing_id"]))[:64]
+        similarity = candidate.get("similarity")
+        if isinstance(similarity, (int, float)):
+            digest["duplicate_similarity"] = round(float(similarity), 2)
+    client = client_summary(item)
+    if client.get("origin") == "mcp":
+        name = " ".join(p for p in (client.get("client_name"), client.get("client_version")) if p)
+        digest["client"] = redact_export_text(name or client.get("client", "unknown"))
+        digest["client_self_reported"] = True
+
+
+def _annotation_text(item: dict[str, Any]) -> str:
+    notes = []
+    if item.get("duplicate_of"):
+        score = item.get("duplicate_similarity")
+        pct = f" ({float(score):.0%})" if isinstance(score, (int, float)) else ""
+        notes.append(t(f"重复候选，对应 {item['duplicate_of']}{pct}",
+                       f"possible duplicate of {item['duplicate_of']}{pct}"))
+    if item.get("client"):
+        notes.append(t(f"客户端（自报）: {item['client']}",
+                       f"client (self-reported): {item['client']}"))
+    return " · ".join(notes)
+
+
 def _placeholder_count(value: Any) -> int:
     try:
         return json.dumps(value, ensure_ascii=False).count(_REDACTION_PLACEHOLDER)
@@ -182,6 +213,7 @@ def build_context_preview(
         )
         if verdict.state == _recall_policy.WITHHELD:
             digest["withheld_reason"] = verdict.reason
+            _review_annotations(digest, item)
             withheld_items.append(digest)
         else:
             exposed_pre.append(digest)
@@ -204,6 +236,7 @@ def build_context_preview(
             digest["withheld_reason"] = _INELIGIBLE_REASONS.get(state, "not_eligible")
         if entry.get("superseded_by"):
             digest["superseded_by"] = str(entry["superseded_by"])
+        _review_annotations(digest, item)
         withheld_items.append(digest)
     # Withheld summaries are owner-facing metadata, but the report may be
     # saved/shared — scrub credential/PII shapes there too (not counted as
@@ -442,6 +475,7 @@ def render_context_preview_text(preview: dict[str, Any]) -> str:
                 f"{_label(_SENS_LABELS, item.get('sensitivity'))}) "
                 f"[{_label(_REASON_LABELS, item.get('withheld_reason'))}] "
                 f"{item.get('summary')}"
+                + (f" · {_annotation_text(item)}" if _annotation_text(item) else "")
             )
     else:
         lines.append(t(
@@ -730,7 +764,9 @@ def render_context_preview_html(preview: dict[str, Any]) -> str:
                 f"<td>{esc(_label(_TYPE_LABELS, item.get('type')))}</td>"
                 f"<td>{_sens_tag(item.get('sensitivity'))}</td>"
                 f"<td>{esc(_label(_REASON_LABELS, item.get('withheld_reason')))}</td>"
-                f"<td>{_summary_html(item.get('summary', ''))}</td>"
+                f"<td>{_summary_html(item.get('summary', ''))}"
+                + (f'<div class="muted">{esc(_annotation_text(item))}</div>' if _annotation_text(item) else "")
+                + "</td>"
                 "</tr>"
             )
         if not rows:

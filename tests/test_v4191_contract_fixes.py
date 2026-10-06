@@ -139,7 +139,12 @@ def test_fuzzy_lesson_guidance_has_no_target_id(tmp_path: Path):
 
     res = eng.add_lesson({"summary": base + " twice", "detail": "d2", "domain": "release"})
 
-    assert res.get("status") == "duplicate"  # sim ~0.97 >= 0.95, not identical
+    # sim ~0.97 >= 0.95, not identical: no longer refused, queued for the Owner
+    # as a duplicate candidate. The fuzzy hit still never selects a revision
+    # target (no guidance.revision.target_id anywhere in the reply).
+    assert res.get("status") != "duplicate"
+    assert res["tier"] == "staging"
+    assert res["duplicate_candidate"]["similarity"] >= 0.95
     guidance = res.get("guidance") or {}
     assert "target_id" not in (guidance.get("revision") or {})
 

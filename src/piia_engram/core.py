@@ -22,6 +22,7 @@ from . import tombstones as _tombstones
 from . import provenance as _provenance
 from . import recall_policy as _recall_policy
 from . import write_provenance as _write_provenance
+from . import dedup_review as _dedup_review
 
 # (store root, cycle ids) pairs already reported, so a cycle warns once per process.
 _SUPERSEDE_CYCLES_WARNED: set[tuple[str, frozenset]] = set()
@@ -2157,6 +2158,31 @@ class Engram(
                 out.append({"id": entry.get("id"), "kind": "playbook", "tier": "staging"})
         return out
 
+    def _hold_duplicate_candidate(
+        self, entry: dict, existing: dict, similarity: float, result_box: dict
+    ) -> None:
+        """Queue a very similar (not identical) new row for the Owner, in every mode.
+
+        The row is stored as pending with ``duplicate_candidate`` naming the
+        earlier entry; a deliberately negative or archived state is left alone.
+        """
+        record = _dedup_review.candidate_record(existing.get("id", ""), similarity)
+        entry["duplicate_candidate"] = record
+        if (
+            entry.get("status", "active") != "active"
+            or entry.get("tier") == "archived"
+            or entry.get("memory_state") in {"rejected", "deprecated"}
+        ):
+            return
+        entry["tier"] = "staging"
+        entry["memory_state"] = "staging"
+        entry["approval_status"] = "pending"
+        entry["approval_required"] = True
+        self._refresh_labeling(entry)
+        result_box["gate_note"] = (
+            f"duplicate-candidate->staging (of {record['existing_id']}, sim={record['similarity']:.2f})"
+        )
+
     def add_lesson(
         self,
         lesson: dict | str,
@@ -2248,6 +2274,9 @@ class Engram(
             ]
             best_sim = 0.0
             best_match = None
+            # Only the same claim (normalized text hash, same scope) is refused.
+            new_key = _dedup_review.exact_key(new_lesson.get("summary", ""))
+            exact_match = None
             for existing in same_scope_lessons:
                 if existing.get("status") != "active":
                     continue
@@ -2258,6 +2287,10 @@ class Engram(
                 if sim > best_sim:
                     best_sim = sim
                     best_match = existing
+                if exact_match is None and _dedup_review.exact_key(existing.get("summary", "")) == new_key:
+                    exact_match = existing
+            if exact_match is not None:
+                best_match, best_sim = exact_match, 1.0
 
             if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
                 # Check for supplement markers — demote to related if new text
@@ -2268,15 +2301,14 @@ class Engram(
                     marker in new_summary_lower and marker not in existing_summary_lower
                     for marker in _SUPPLEMENT_MARKERS
                 )
-                summaries_identical = (
-                    best_match.get("summary") or ""
-                ) == new_lesson.get("summary", "")
-                if allow_similar_new and not summaries_identical:
-                    # Explicit new-entry mode: a caller who knows the similar
-                    # summary is a DISTINCT fact falls through to the related
-                    # tier instead of being swallowed by the duplicate gate.
-                    pass
-                elif not has_supplement_signal:
+                summaries_identical = exact_match is not None
+                if not summaries_identical:
+                    if not allow_similar_new and not has_supplement_signal:
+                        # Very similar but not the same claim: stored, held for
+                        # the Owner as a duplicate candidate (never refused).
+                        self._hold_duplicate_candidate(new_lesson, best_match, best_sim, result_box)
+                    # allow_similar_new / supplement: the related tier below.
+                else:
                     # Tier 1: exact duplicate — reject, but never silently: a
                     # differing body means this is probably a REVISION, and the
                     # rejection must carry the explicit path to revise it.
@@ -2296,32 +2328,22 @@ class Engram(
                         "likely_revision": likely_revision,
                     }
                     if likely_revision:
-                        if summaries_identical:
-                            # EXACT summary identity: safe to point at the
-                            # revision target (v4.19.1: fuzzy never does).
-                            result["guidance"] = {
-                                "revision": {
-                                    "tool_hint": "update_knowledge",
-                                    "target_id": best_match.get("id"),
-                                    "expected_version": int(best_match.get("version") or 1),
-                                },
-                                "new_entry": {
-                                    "param": "allow_similar_new",
-                                    "note": "set allow_similar_new=true to store as a distinct related entry",
-                                },
-                            }
-                        else:
-                            # Fuzzy summary match: new-entry escape hatch only;
-                            # the revision target is never auto-selected.
-                            result["guidance"] = {
-                                "new_entry": {
-                                    "param": "allow_similar_new",
-                                    "note": "summaries are similar but not identical; if this is genuinely a distinct fact, set allow_similar_new=true, otherwise locate the exact target id yourself",
-                                },
-                            }
+                        # EXACT claim identity: safe to point at the revision
+                        # target (v4.19.1: a similarity match never does; it
+                        # is a duplicate candidate instead, see above).
+                        result["guidance"] = {
+                            "revision": {
+                                "tool_hint": "update_knowledge",
+                                "target_id": best_match.get("id"),
+                                "expected_version": int(best_match.get("version") or 1),
+                            },
+                            "new_entry": {
+                                "param": "allow_similar_new",
+                                "note": "set allow_similar_new=true to store as a distinct related entry",
+                            },
+                        }
                     result_box["result"] = result
                     return lessons
-                # Supplement signal detected — fall through to related tier
 
             if best_sim >= SIMILARITY_THRESHOLD and best_match:
                 # Tier 2: semantically related — add but link
@@ -2359,6 +2381,7 @@ class Engram(
         result = result_box["result"]
         if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
             return result
+        _gate_note = result_box.get("gate_note", _gate_note)
 
         summary = new_lesson.get("summary", "")
         if _audit_metadata_only:
@@ -2778,21 +2801,34 @@ class Engram(
             ]
             best_sim = 0.0
             best_match = None
+            # Only the same claim (title/question + choice, normalized text
+            # hash, same scope) is refused.
+            new_key = _dedup_review.exact_key(new_title, new_decision.get("choice") or "")
+            exact_match = None
             for existing in same_scope_decisions:
                 if existing.get("status") != "active":
                     continue
-                sim = self._bigram_similarity(
-                    new_title,
-                    self._entry_identity_text(existing, "decision"),
-                )
+                existing_title = self._entry_identity_text(existing, "decision")
+                sim = self._bigram_similarity(new_title, existing_title)
                 if sim >= best_sim:
                     best_sim = sim
                     best_match = existing
+                if _dedup_review.exact_key(existing_title, existing.get("choice") or "") == new_key:
+                    exact_match = existing  # the latest identical row, like best_match
 
             # Track whether the new decision should auto-supersede the best match.
             # Set when same question + different choice (a decision revision).
             auto_supersedes_target: str | None = None
 
+            if exact_match is not None:
+                result_box["result"] = {
+                    "status": "duplicate",
+                    "similarity": 1.0,
+                    "existing_id": exact_match.get("id"),
+                    "existing_title": self._entry_identity_text(exact_match, "decision"),
+                    "message": "与现有决策相似度 100%，未重复添加",
+                }
+                return decisions
             if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
                 # For decisions: different choice on same question = conflict, not duplicate
                 new_choice = (new_decision.get("choice") or "").strip().lower()
@@ -2805,14 +2841,10 @@ class Engram(
                     for m in _SUPPLEMENT_MARKERS
                 )
                 if not choices_differ and not has_supplement:
-                    result_box["result"] = {
-                        "status": "duplicate",
-                        "similarity": round(best_sim, 2),
-                        "existing_id": best_match.get("id"),
-                        "existing_title": self._entry_identity_text(best_match, "decision"),
-                        "message": f"与现有决策相似度 {best_sim:.0%}，未重复添加",
-                    }
-                    return decisions
+                    # Very similar but not the same claim (an opposite
+                    # conclusion can be one word away): stored and held for the
+                    # Owner as a duplicate candidate, never refused.
+                    self._hold_duplicate_candidate(new_decision, best_match, best_sim, result_box)
                 # Different choice or supplement — fall through to related tier.
                 # Same question + different choice → the new decision supersedes the old.
                 if choices_differ:
@@ -2867,6 +2899,7 @@ class Engram(
         result = result_box["result"]
         if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
             return result
+        _gate_note = result_box.get("gate_note", _gate_note)
         title = new_decision.get("question", "") or new_decision.get("title", "")
         if _audit_metadata_only:
             self._audit.log(

@@ -16,6 +16,8 @@
 - **AI 拿到什么，统一一条规则。** 冷启动、接续简报、会话开始钩子、`get_recall`、`get_relevant_knowledge` 只返回已审核且当前有效的条目：待审、被新版本取代、已归档的条目不再出现；status 不是 `active`、或审核标记不在“已审核”之列（例如未知 tier、被拒或已弃用的标记）的条目也不出现。未审核的条目不能让已审核的条目（包括 playbook）被隐藏。
 - **`search_knowledge` 把待审条目单独列出。** `lessons` / `decisions` / `playbooks` 列表只含已审核条目；待审条目放在单独的 `pending` 分组里，每条标 `pending_untrusted`。因此 `{"tier": "staging"}` 过滤的结果在 `pending` 分组里，核心搜索的 `{"tier": "archived"}` 过滤不返回任何条目。`engram dock-search` 先列已审核条目，每类在 `--limit` 内剩下的名额才给待审条目（标 `pending_untrusted`）。被取代的条目默认不返回，新参数 `include_superseded=true` 时以单独的 `superseded` 分组返回。
 - **冷启动内容超预算时会注明省略了什么。** token 预算裁掉内容时，`get_resume_brief`、`get_recall` 和 `engram preview` 返回 `omitted`（条数、id、段名，不含被裁内容）；文本形态的上下文末尾加一行说明省略了什么：`get_user_context` 为 `已省略 3 项（预算）：lessons, decisions`，接续简报与会话开始钩子为 `Omitted 3 items (budget): lessons, decisions`。这一行计入预算，放不下时不加。不超预算时不加；`get_recall` 固定最多两条 playbook 的上限不算预算省略。`engram preview` 会列出被裁条目的摘要，并说明待审或被取代的条目为何没有注入。
+- **近重复条目进入待审，不再被直接丢弃。** 经验或决策只有在规范化后与某条有效条目文字完全相同时才按重复拒绝（忽略大小写、标点、空白和开头的“教训：”之类标签；决策比较问题加选择）。相似度不低于 95% 但不完全相同的条目会写入待审区（非严格模式也一样），带 `duplicate_candidate`（旧条目 id 与相似度）；写入回复会说明这一点，并提示若是修订请用 `supersedes`。只差一个词、可能结论相反的决策不再被丢弃。`allow_similar_new=true` 仍按相关条目写入；相似度 55–95% 的条目照旧写入并互链。Playbook 不变。
+- 审核卡（`engram review export`）对重复候选或近重复条目显示旧条目 id、相似度和逐句差异（最多 40 行）。`review_staging(action="list")` 只显示旧条目 id，不显示正文；`engram preview` 也显示旧条目 id，并显示被拦截条目的客户端自报名称。
 - 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明取代它的条目（`superseded_by`）。互相取代形成的环不再让其中任何一条被隐藏，并在审计日志里记一次。`get_resume_brief(include_resume_pack=true)` 的 `review_needed` 每条标 `pending_untrusted`。
 
 ### 新增

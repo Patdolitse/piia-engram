@@ -188,7 +188,9 @@ AI:   calls MCP `add_lesson(summary="...", domain="python,testing")`
        └─▶ Engram.add_lesson()    [core.py]
              ├─▶ _read_entries(lessons.json)
              ├─▶ _bigram_similarity vs each existing lesson   [RetrievalMixin]
-             │     └─ if >= 0.55 → return status="duplicate", abort
+             │     ├─ same normalized text → return status="duplicate", abort
+             │     ├─ >= 0.95 → stored pending, duplicate_candidate for review
+             │     └─ >= 0.55 → stored, linked via related_ids
              ├─▶ _ensure_fields() — backfill id, timestamp, tier="verified"
              ├─▶ MAX_KNOWLEDGE_ENTRIES eviction (staging items first)
              ├─▶ _write_json — atomic via tempfile + rename + portalocker

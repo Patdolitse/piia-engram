@@ -32,7 +32,7 @@ SCHEMA_VERSION = "2.0"
 _ENGRAM_DIR_NAME = ".engram"
 _LEGACY_DIR_NAME = ".piia"
 SIMILARITY_THRESHOLD = 0.55          # below this: pass; above: related or duplicate
-SIMILARITY_DUPLICATE_THRESHOLD = 0.95  # at or above: exact duplicate, reject
+SIMILARITY_DUPLICATE_THRESHOLD = 0.95  # at or above (not the same claim): duplicate candidate, review
 # Non-destructive semantic near-duplicate surfacing on write (Round-3): when the
 # lexical tier PASSES (bigram < SIMILARITY_THRESHOLD) but an embedding neighbor's
 # cosine similarity is >= this, the new item is still ADDED and merely cross-linked

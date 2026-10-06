@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from . import tombstones as _tombstones
+from . import dedup_review as _dedup_review
 from . import write_provenance as _write_provenance
 from .staging_review import batch_review_staging
 
@@ -104,19 +105,21 @@ def _type_label(row: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _pending(eng) -> list[tuple[str, dict]]:
+def _pending(eng, lookup: dict[str, dict[str, dict]] | None = None) -> list[tuple[str, dict]]:
     rows: list[tuple[str, dict]] = []
     for kind, items in (
         ("lesson", eng.get_lessons(limit=None, _update_access=False)),
         ("decision", eng.get_decisions(limit=None, _update_access=False)),
     ):
+        if lookup is not None:
+            lookup[kind] = {str(row.get("id")): row for row in items if row.get("id")}
         rows.extend((kind, row) for row in items if row.get("tier") == "staging")
     listing = eng.list_playbooks_for_management(status="active", include_content=True, include_pending=True)
     rows.extend(("playbook", pb) for pb in listing.get("items", []) if pb.get("tier") == "staging")
     return rows
 
 
-def _card(n: int, kind: str, row: dict, root) -> list[str]:
+def _card(n: int, kind: str, row: dict, root, lookup: dict[str, dict] | None = None) -> list[str]:
     flags = []
     if row.get("reproposal_of_rejected"):
         flags.append(f"re-proposal of rejected {row['reproposal_of_rejected']}")
@@ -154,6 +157,7 @@ def _card(n: int, kind: str, row: dict, root) -> list[str]:
         for i, step in enumerate(row.get("steps") or [], 1):
             text = step.get("action", "") if isinstance(step, dict) else str(step)
             lines.append(f"  {i}. {text}")
+    lines.extend(_dedup_review.card_lines(kind, row, lookup or {}))
     lines.append(f"- source: {row.get('source_tool') or 'unknown'}, queued {row.get('queued_at') or row.get('timestamp') or '?'}")
     lines.append(_write_provenance.client_card_line(row))
     lines.append("")
@@ -177,7 +181,8 @@ def run_export(args: list[str]) -> int:
         print("Usage: engram review export --out <dir>")
         return 2
     eng = _engram(read_only=True)
-    pending = sorted(_pending(eng), key=_sort_key)
+    lookup: dict[str, dict[str, dict]] = {}
+    pending = sorted(_pending(eng, lookup), key=_sort_key)
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
     from .playbooks import _playbook_queue_max
@@ -194,7 +199,7 @@ def run_export(args: list[str]) -> int:
         "",
     ]
     for n, (kind, row) in enumerate(pending, 1):
-        lines.extend(_card(n, kind, row, eng.root))
+        lines.extend(_card(n, kind, row, eng.root, lookup.get(kind)))
     (out_dir / "review.md").write_text("\n".join(lines), encoding="utf-8")
     (out_dir / "ids.json").write_text(
         json.dumps([row.get("id") for _kind, row in pending], indent=1), encoding="utf-8"

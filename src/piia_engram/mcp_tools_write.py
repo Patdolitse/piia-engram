@@ -85,6 +85,15 @@ def _overflow_note(result: object) -> str:
     return "".join(notes)
 
 
+def _candidate_note(result: object) -> str:
+    """Suffix for a write reply when the row was queued as a duplicate candidate."""
+    if not isinstance(result, dict) or not isinstance(result.get("duplicate_candidate"), dict):
+        return ""
+    from piia_engram.dedup_review import candidate_message
+
+    return " · " + candidate_message(result["duplicate_candidate"])
+
+
 @S.mcp.tool()
 async def memory_store(
     kind: str,
@@ -239,7 +248,7 @@ async def memory_store(
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
             tier = result.get("tier", "staging")
-            return f"[Engram] 教训已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}"
+            return f"[Engram] 教训已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}{_candidate_note(result)}"
         elif kind == "decision":
             result = S._locked_engram_call(S._get_engram().add_decision, content)
             label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
@@ -250,7 +259,7 @@ async def memory_store(
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
             tier = result.get("tier", "staging")
-            return f"[Engram] 决策已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}"
+            return f"[Engram] 决策已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}{_candidate_note(result)}"
         else:  # playbook
             result = S._locked_engram_call(
                 S._get_engram().add_playbook, content, allow_similar_new=allow_similar_new
@@ -353,7 +362,7 @@ async def add_lesson(
         # title/body-free confirmation.
         return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_lesson"))
     tier = result.get("tier", "staging")
-    return f"[Engram] 教训已记录 · tier={tier} · 可召回: {summary}{_overflow_note(result)}"
+    return f"[Engram] 教训已记录 · tier={tier} · 可召回: {summary}{_overflow_note(result)}{_candidate_note(result)}"
 
 
 @S.mcp.tool()
@@ -443,7 +452,7 @@ async def add_decision(
         # gate it like any write-echo (see add_lesson).
         return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_decision"))
     tier = result.get("tier", "staging")
-    return f"[Engram] 决策已记录 · tier={tier} · 可召回: {question} → {choice}{_overflow_note(result)}"
+    return f"[Engram] 决策已记录 · tier={tier} · 可召回: {question} → {choice}{_overflow_note(result)}{_candidate_note(result)}"
 
 
 @S.mcp.tool()

@@ -1320,6 +1320,8 @@ class RetrievalMixin:
                     }
                     if result.get("overflow_archived_ids"):
                         entry["overflow_archived_ids"] = result["overflow_archived_ids"]
+                    if isinstance(result.get("duplicate_candidate"), dict):
+                        entry["duplicate_candidate"] = dict(result["duplicate_candidate"])
                     results.append(entry)
             except Exception as exc:
                 errors += 1
@@ -1398,6 +1400,8 @@ class RetrievalMixin:
                     }
                     if result.get("overflow_archived_ids"):
                         entry["overflow_archived_ids"] = result["overflow_archived_ids"]
+                    if isinstance(result.get("duplicate_candidate"), dict):
+                        entry["duplicate_candidate"] = dict(result["duplicate_candidate"])
                     results.append(entry)
             except Exception as exc:
                 errors += 1

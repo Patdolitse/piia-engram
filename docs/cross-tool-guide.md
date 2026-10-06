@@ -248,18 +248,22 @@ update_identity(field="profile", updates_json='{"role":"developer"}', source_too
 
 ### 4.3 Knowledge Deduplication (v3.29.4+)
 
-When different tools write similar knowledge, Engram uses three-tier deduplication:
+When different tools write similar lessons or decisions, Engram compares the new entry with the active entries in the same project scope:
 
-| Similarity | Handling | Description |
+| Match | Handling | Description |
 |--------|------|------|
-| ≥ 85% | **Reject** | Exact duplicate, not added |
-| 55%-84% | **Link** | Added but automatically linked via `related_ids` |
+| Same text after normalization | **Reject** | Exact duplicate, not added. Normalization ignores case, punctuation, extra whitespace and a leading label such as "Lesson:"; a decision compares its question and choice. |
+| ≥ 95% similar, not the same | **Review** | Added to the review queue (also outside strict mode) with `duplicate_candidate` naming the earlier entry and the similarity; you decide whether it is new. `allow_similar_new=true` stores it as a related entry instead. |
+| 55%-95% | **Link** | Added as usual and linked via `related_ids` (`_dedup_note`); the review card marks it as a near-duplicate |
 | < 55% | **Pass** | Added normally |
 
 This means:
 - Claude Code and Codex write the exact same lesson → only one is kept
+- Writing an almost identical lesson, or a decision whose wording differs by one word (which can be the opposite conclusion) → it waits for your review instead of being dropped
 - Writing similar but differing lessons → both are kept and automatically marked as related
 - Writing unrelated lessons → each is stored independently
+
+A decision with the same question and a different choice is still stored as a revision that replaces the earlier one. Playbooks keep their own rule: a similar title is refused with guidance. The review card (`engram review export`) shows a duplicate candidate's earlier entry id, the similarity and a sentence-by-sentence diff.
 
 ### 4.4 source_tool Filtering
 
