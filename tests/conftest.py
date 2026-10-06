@@ -92,6 +92,11 @@ def _isolate_engram_store_session(tmp_path_factory) -> None:
     os.environ["ENGRAM_TEST"] = "1"
     os.environ["ENGRAM_DIR"] = str(base / "engram-home")
     os.environ["ENGRAM_CACHE_DIR"] = str(base / "engram-cache")
+    # No session-scoped fixture sees the real home either (see _isolate_home).
+    session_home = base / "isolated-home"
+    session_home.mkdir(exist_ok=True)
+    os.environ["HOME"] = str(session_home)
+    os.environ["USERPROFILE"] = str(session_home)
 
 
 @pytest.fixture(autouse=True)
@@ -125,6 +130,14 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("APPDATA", str(ping_profile / "AppData" / "Roaming"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(ping_profile / ".config"))
     monkeypatch.setattr(_usage_ping, "state_dir", lambda: ping_profile / "piia-engram")
+    # HOME / USERPROFILE point at an empty per-test directory, so no test reads
+    # another AI tool's real files (or anything else) under the real home.
+    # Tests that need such files use the `other_ai_tools_home` fixture.
+    # A sibling of tmp_path, so tests that expect an empty tmp_path still get one.
+    isolated_home = tmp_path.parent / f"{tmp_path.name}-isolated-home"
+    isolated_home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("USERPROFILE", str(isolated_home))
 
 
 @pytest.fixture
