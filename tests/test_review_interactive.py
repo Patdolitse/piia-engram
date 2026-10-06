@@ -553,7 +553,7 @@ def test_chinese_screen_and_summary(store, monkeypatch):
     code, out = _review(["a", "y"])
 
     assert code == 0, out
-    assert "汇总：批准 1，拒绝 0，取代 0，跳过 0，失败 0" in out
+    assert "汇总：批准 1，拒绝 0，取代 0，已批准但未写取代边 0，跳过 0，失败 0" in out
     assert "客户端自报" in out
 
 
@@ -603,3 +603,189 @@ def test_project_proposal_is_listed_and_exported(store, tmp_path, capsys):
     card = (out_dir / "review.md").read_text(encoding="utf-8")
     assert row["id"] in card and "- scope: project:" in card
     assert row["id"] in json.loads((out_dir / "ids.json").read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# one supersede target per review, including targets an agent proposed
+# ---------------------------------------------------------------------------
+
+
+def _trusted_decision(eng: Engram, question: str, choice: str) -> dict:
+    row = eng.add_decision({"question": question, "choice": choice})
+    batch_review_staging(eng, [{"id": row["id"], "action": "approve"}], dry_run=False, confirm=True)
+    return eng._find_item_by_id(row["id"])[1]
+
+
+def _agent_revision(eng: Engram, question: str, choice: str, old_id: str) -> dict:
+    row = eng.add_decision({"question": question, "choice": choice, "supersedes": old_id})
+    stored = eng._find_item_by_id(row["id"])[1]
+    assert stored["tier"] == "staging" and stored.get("pending_supersedes") == old_id
+    return stored
+
+
+def _keys_in_order(eng: Engram, keys: dict[str, list]) -> list:
+    order = review_interactive.pending_order(Engram(root=eng.root, read_only=True))
+    return [key for item_id in order for key in keys[item_id]]
+
+
+def test_the_same_target_cannot_be_chosen_twice(store):
+    eng, _client = store
+    old = _trusted_lesson(eng, "Tag releases by hand")
+    first = _propose_lesson("Tag releases from the release workflow")
+    second = _propose_lesson("Tag releases from the nightly job")
+    before = _snapshot(eng.root)
+
+    # the first item takes the target; the second asks for it again and is refused
+    code, out = _review(["s", old["id"], "s", old["id"], "", "k", "n"])
+
+    assert "another item in this review already supersedes it" in out
+    assert _snapshot(eng.root) == before
+    assert code == 0
+
+
+def test_an_agent_revision_and_an_owner_supersede_share_one_target(store):
+    eng, _client = store
+    old = _trusted_decision(eng, "Where do build caches live?", "on each runner")
+    revision = _agent_revision(eng, "Where do build caches live now?", "in the shared bucket", old["id"])
+    other = eng.add_decision({"question": "Which store holds shared build caches?", "choice": "object store"})
+    order = review_interactive.pending_order(Engram(root=eng.root, read_only=True))
+
+    if order[0] == revision["id"]:
+        # approving the revision reserves its target; the Owner cannot pick it again
+        code, out = _review(["a", "s", old["id"], "", "k", "y"])
+        assert "another item in this review already supersedes it" in out
+        winner, waiting = revision["id"], other["id"]
+    else:
+        # the Owner picked the target first; the revision cannot be approved with it
+        code, out = _review(["s", old["id"], "a", "k", "y"])
+        assert "already superseded by another item in this review" in out
+        winner, waiting = other["id"], revision["id"]
+
+    assert code == 0, out
+    edges = [(e["src"], e["dst"]) for e in RelationStore(eng.root).all_edges() if e["rel"] == "supersedes"]
+    assert edges == [(winner, old["id"])]
+    assert eng._find_item_by_id(waiting)[1]["tier"] == "staging"
+
+
+def test_an_agent_revision_whose_target_is_gone_is_approved_without_the_link(store):
+    eng, _client = store
+    old = _trusted_decision(eng, "Where do build caches live?", "on each runner")
+    revision = _agent_revision(eng, "Where do build caches live now?", "in the shared bucket", old["id"])
+    winner = eng.add_decision({"question": "Which store holds shared build caches?", "choice": "object store"})
+    marks, _ = review_cli.validate_marks([{"id": winner["id"], "mark": f"supersede:{old['id']}"}])
+    review_cli.apply_marks(Engram(root=eng.root), marks, review_cli.attribution_record("owner", mode="marks"))
+
+    code, out = _review(["a", "y"])
+
+    assert code == 0, out
+    assert "approved without link 1" in out and "failed 0" in out
+    assert eng._find_item_by_id(revision["id"])[1]["tier"] == "verified"
+
+
+# ---------------------------------------------------------------------------
+# stopping while applying; output encodings; line separators
+# ---------------------------------------------------------------------------
+
+
+def test_ctrl_c_while_applying_lists_what_was_applied(store, monkeypatch):
+    eng, _client = store
+    first = _propose_lesson("First proposal to approve")
+    second = _propose_lesson("Second proposal to approve")
+    real = Engram.promote_knowledge
+    calls = {"n": 0}
+
+    def _promote(self, item_id, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return real(self, item_id, **kwargs)
+
+    monkeypatch.setattr(Engram, "promote_knowledge", _promote)
+    code, out = _review(["a", "a", "y"])
+
+    assert code == 130
+    order = review_interactive.pending_order(Engram(root=eng.root, read_only=True))
+    assert order == [r for r in (first["id"], second["id"]) if r in order]  # the second one is still pending
+    applied_id = ({first["id"], second["id"]} - set(order)).pop()
+    assert f"approve {applied_id}: applied" in out
+    (receipt,) = _receipts(eng.root)
+    assert receipt["counts"]["aborted"] == 1 and receipt["total_marks"] == 2
+
+
+def test_line_and_paragraph_separators_are_not_printed(store):
+    eng, _client = store
+    _propose_lesson("Line\u2028separator and paragraph\u2029separator in a proposal")
+
+    code, out = _review(["v", "k"])
+
+    assert code == 0, out
+    assert "\u2028" not in out and "\u2029" not in out
+    assert "Line separator and paragraph separator" in out
+
+
+class _GbkScreen(io.TextIOWrapper):
+    def isatty(self) -> bool:
+        return True
+
+
+class _StrictGbkScreen:
+    """A terminal stream without reconfigure() that refuses what GBK cannot encode."""
+
+    encoding = "gbk"
+
+    def __init__(self):
+        self.parts: list[str] = []
+
+    def isatty(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        text.encode("gbk")  # raises UnicodeEncodeError on anything GBK cannot hold
+        self.parts.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize("make", [lambda: _GbkScreen(io.BytesIO(), encoding="gbk"), _StrictGbkScreen],
+                         ids=["textio-gbk", "strict-gbk"])
+def test_a_gbk_terminal_does_not_crash_the_review(store, make):
+    eng, client = store
+    client.update(name="claude-code \U0001F680", version="1")
+    _propose_lesson("Ship it \U0001F680 when the canary is green")
+    screen = make()
+
+    code = review_interactive.run([], stdin=_Keys(["v", "a", "y"]), stdout=screen)
+
+    assert code == 0
+    assert _lesson(eng, "Ship it \U0001F680 when the canary is green")["tier"] == "verified"
+
+
+# ---------------------------------------------------------------------------
+# reasons stay with the Owner; default operator
+# ---------------------------------------------------------------------------
+
+
+def test_reject_reasons_are_not_returned_over_mcp(store):
+    eng, _client = store
+    _propose_lesson("Restart workers by hand")
+
+    code, out = _review(["r", "PRIVATE OWNER NOTE", "y"])
+
+    assert code == 0, out
+    assert "PRIVATE OWNER NOTE" in (eng.root / "audit.log").read_text(encoding="utf-8")
+    log = _run(mcp_server.get_audit_log(limit=50))
+    assert "PRIVATE OWNER NOTE" not in log and "reject_reasons" not in log
+    assert "review/apply" in log
+
+
+def test_default_operator_is_owner(store):
+    eng, _client = store
+    _propose_lesson("Keep one owner per service")
+
+    code, out = _review(["a", "y"], args=[])
+
+    assert code == 0, out
+    (receipt,) = _receipts(eng.root)
+    assert receipt["operator"] == "owner"

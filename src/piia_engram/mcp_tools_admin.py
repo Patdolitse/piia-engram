@@ -562,9 +562,13 @@ async def get_audit_log(limit: int = 50) -> str:
         if not line:
             continue
         try:
-            entries.append(json.loads(line))
+            entry = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(entry, dict):
+            # The Owner's reject notes from `engram review` stay in the local log only.
+            entry.pop("reject_reasons", None)
+        entries.append(entry)
         if len(entries) >= limit:
             break
 

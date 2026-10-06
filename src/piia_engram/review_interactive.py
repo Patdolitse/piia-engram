@@ -18,19 +18,22 @@ function behind ``engram review apply --yes``: same checks, same tombstones,
 same receipt and audit event. An item that changed after it was shown is
 skipped (``version_conflict``) and listed in the summary.
 
-Only a person at a terminal gets the prompt: when stdin or stdout is not a
-terminal the command refuses and points at ``engram review export`` /
-``engram review apply``. Nothing here is reachable over MCP.
+When stdin or stdout is not a terminal the command stops and points at
+``engram review export`` / ``engram review apply``. That check only guards
+against running it by mistake (piped into a script, say); it is not an
+authorization boundary: whoever can run local commands as the Owner can apply
+marks anyway. What keeps agents out is that nothing here is reachable over MCP.
 
 Stored text came from an AI. Every line printed here passes through
 ``_screen_line``, which turns control and format characters (escape sequences,
-carriage returns, bidi overrides, zero-width characters) into spaces, so stored
-text cannot clear the screen, move the cursor or forge a line of this interface.
+carriage returns, bidi overrides, zero-width characters) and line or paragraph
+separators into spaces, so stored text cannot clear the screen, move the
+cursor or forge a line of this interface. Characters the terminal's encoding
+cannot show are replaced, never fatal.
 """
 
 from __future__ import annotations
 
-import getpass
 import json
 import sys
 import unicodedata
@@ -47,12 +50,14 @@ FOLD = 300  # characters of a long field shown before "v" is needed
 USAGE = (
     "Usage: engram review interactive [--operator <name>]   (alias: engram review -i)\n"
     "  Review pending proposals one at a time in a terminal:\n"
-    "  a approve, r reject (optional reason), s supersede an approved entry,\n"
+    "  a approve, r reject (optional reason, kept in the receipt only), s supersede an approved entry,\n"
     "  k skip, v full text, q stop. Nothing is written until you confirm the\n"
     "  summary with y; n, end of input or Ctrl+C write nothing.\n"
     "  Applies through the same path as `engram review apply` (same receipt).\n"
     "  Needs a terminal; otherwise use `engram review export` and `engram review apply`."
 )
+
+OPERATOR = "owner"  # receipts name the Owner; the system login name is not read
 
 _PROBLEMS_ZH = {
     "self": "条目不能取代自己",
@@ -64,11 +69,13 @@ _PROBLEMS_ZH = {
     "cycle": "该条目已取代本条，会形成循环",
     "invalid_id": "不是有效的 id",
     "already_chosen": "本次审核中已有另一条选择取代它",
+    "target_taken": "它提议取代的条目已被本次审核中的另一条取代",
 }
 _PROBLEMS_EN = {
     **_review_cli.SUPERSEDE_PROBLEMS,
     "invalid_id": "not a valid id",
     "already_chosen": "another item in this review already supersedes it",
+    "target_taken": "the entry it proposes to replace is already superseded by another item in this review",
 }
 
 
@@ -77,10 +84,16 @@ _PROBLEMS_EN = {
 # ---------------------------------------------------------------------------
 
 
+def _unsafe(ch: str) -> bool:
+    category = unicodedata.category(ch)
+    return category.startswith("C") or category in ("Zl", "Zp")
+
+
 def _screen_line(text: Any) -> str:
     """One display line: every control or format character (ESC, CR, BEL, bidi
-    overrides, zero-width characters, ...) becomes a space."""
-    return "".join(" " if unicodedata.category(ch).startswith("C") else ch for ch in str(text)).rstrip()
+    overrides, zero-width characters, ...) and every line or paragraph
+    separator (U+2028, U+2029) becomes a space."""
+    return "".join(" " if _unsafe(ch) else ch for ch in str(text)).rstrip()
 
 
 def _one_line(value: Any, limit: int = FOLD) -> tuple[str, bool]:
@@ -95,14 +108,30 @@ class _Terminal:
     def __init__(self, stdin: TextIO, stdout: TextIO):
         self.inp = stdin
         self.out = stdout
+        reconfigure = getattr(stdout, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(errors="replace")
+            except Exception:  # a stream that cannot change keeps the fallback below
+                pass
+        self.encoding = str(getattr(stdout, "encoding", "") or "")
+
+    def _fit(self, text: str) -> str:
+        """What the terminal's encoding cannot show becomes '?', never an error."""
+        if not self.encoding:
+            return text
+        try:
+            return text.encode(self.encoding, errors="replace").decode(self.encoding, errors="replace")
+        except LookupError:
+            return text
 
     def say(self, text: Any = "") -> None:
         for line in str(text).split("\n"):
-            self.out.write(_screen_line(line) + "\n")
+            self.out.write(self._fit(_screen_line(line)) + "\n")
         self.out.flush()
 
     def ask(self, prompt: str) -> str:
-        self.out.write(_screen_line(prompt) + " ")
+        self.out.write(self._fit(_screen_line(prompt)) + " ")
         self.out.flush()
         line = self.inp.readline()
         if line == "":
@@ -279,9 +308,16 @@ def _decide(term: _Terminal, eng, n: int, total: int, kind: str, row: dict, *, l
     term.say("\n".join(lines))
     item_id = str(row.get("id"))
     version = int(row.get("version") or 1)
+    proposed = _review_cli._proposed_target(row)  # an agent's own "replaces" link, if any
     while True:
         key = term.ask(t(_PROMPT_ZH, _PROMPT_EN)).strip().lower()
         if key == "a":
+            if proposed and proposed in taken:
+                term.say(t("不能批准：", "Cannot approve: ") + _problem_text("target_taken")
+                         + t("。可以跳过（k）或拒绝（r）。", ". Skip it (k) or reject it (r)."))
+                continue
+            if proposed:
+                taken.add(proposed)  # one proposal per replaced entry in a review
             return {"id": item_id, "mark": "approve", "expected_version": version, "kind": kind}
         if key == "r":
             decision = {"id": item_id, "mark": "reject", "expected_version": version, "kind": kind}
@@ -321,22 +357,38 @@ def _plan_lines(decisions: list[dict]) -> list[str]:
     return lines
 
 
+def _item_line(item: dict) -> str:
+    line = f"  {item.get('action')} {item.get('id')}: {item.get('status')}"
+    if item.get("target"):
+        line += f" (-> {item['target']})"
+    if item.get("unlinked_reason"):
+        line += f" [{item['unlinked_reason']}]"
+    return line
+
+
 def _outcome_lines(payload: dict, skipped: int, eng) -> list[str]:
     done = {"approve": 0, "reject": 0, "supersede": 0}
+    unlinked = []
     failed = []
     for item in payload.get("items", []):
         if item.get("status") == "applied":
             done[item.get("action", "approve")] = done.get(item.get("action", "approve"), 0) + 1
+        elif item.get("status") == "applied_unlinked":
+            unlinked.append(item)  # approved; only the "replaces" link was not written
         else:
             failed.append(item)
     lines = [t(
         f"汇总：批准 {done['approve']}，拒绝 {done['reject']}，取代 {done['supersede']}，"
-        f"跳过 {skipped}，失败 {len(failed)}",
+        f"已批准但未写取代边 {len(unlinked)}，跳过 {skipped}，失败 {len(failed)}",
         f"Summary: approved {done['approve']}, rejected {done['reject']}, superseded {done['supersede']}, "
-        f"skipped {skipped}, failed {len(failed)}",
+        f"approved without link {len(unlinked)}, skipped {skipped}, failed {len(failed)}",
     )]
-    for item in failed:
-        lines.append(f"  {item.get('action')} {item.get('id')}: {item.get('status')}")
+    if unlinked:
+        lines.append(t("已批准但未写取代边：", "Approved without the supersede link:"))
+        lines.extend(_item_line(item) for item in unlinked)
+    if failed:
+        lines.append(t("失败：", "Failed:"))
+        lines.extend(_item_line(item) for item in failed)
     audit = getattr(eng, "_audit", None)
     if audit is not None and getattr(audit, "enabled", False) and getattr(audit, "log_path", None):
         lines.append(t("回执（审计记录 review/apply）：", "Receipt (audit event review/apply): ") + str(audit.log_path))
@@ -344,14 +396,6 @@ def _outcome_lines(payload: dict, skipped: int, eng) -> list[str]:
         lines.append(t("审计日志已关闭（ENGRAM_AUDIT=0），未写回执。",
                        "Audit logging is off (ENGRAM_AUDIT=0); no receipt was written."))
     return lines
-
-
-def _default_operator() -> str:
-    try:
-        name = getpass.getuser()
-    except Exception:
-        name = ""
-    return _write_provenance.clean_client_text(name, 64) or "owner"
 
 
 _NOTHING_WRITTEN = ("未写入任何内容。", "Nothing was written.")
@@ -379,7 +423,7 @@ def run(args: list[str], *, stdin: TextIO | None = None, stdout: TextIO | None =
         )
         stdout.flush()
         return 2
-    operator = _write_provenance.clean_client_text(operator, 64) or _default_operator()
+    operator = _write_provenance.clean_client_text(operator, 64) or OPERATOR
 
     term = _Terminal(stdin, stdout)
     reader = _engram(read_only=True)
@@ -424,14 +468,22 @@ def run(args: list[str], *, stdin: TextIO | None = None, stdout: TextIO | None =
         return 2
     writer = _engram(read_only=False)
     attribution = _review_cli.attribution_record(operator, mode="interactive", isatty=True)
+    progress: dict = {}
     try:
-        payload = _review_cli.apply_marks(writer, marks, attribution)
+        payload = _review_cli.apply_marks(writer, marks, attribution, progress=progress)
     except KeyboardInterrupt:
         # apply_marks already wrote a receipt counting what was applied before the stop.
         term.say("")
         term.say(t("应用途中被中断；回执记录了已应用的部分（审计记录 review/apply）。",
                    "Interrupted while applying; the receipt (audit event review/apply) counts what was applied."))
+        done = progress.get("items") or []
+        term.say(t(f"中断前已处理 {len(done)} / {len(marks)} 条：", f"Handled before the stop: {len(done)} of {len(marks)}:"))
+        for item in done:
+            term.say(_item_line(item))
         return 130
+    if payload.get("status") == "refused":  # the store changed while reviewing
+        term.say(payload.get("error", "") + " " + t(*_NOTHING_WRITTEN))
+        return 2
     term.say(json.dumps(payload, ensure_ascii=False, indent=2))
     term.say("\n".join(_outcome_lines(payload, skipped, writer)))
-    return 0
+    return 1 if _review_cli.all_failed(payload) else 0

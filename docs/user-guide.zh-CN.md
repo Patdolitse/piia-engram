@@ -137,7 +137,7 @@ staged 条目始终在你掌控之中：
 - 在审查界面里批准、编辑、归档或拒绝。
 - 在终端里运行 `engram review interactive`（或 `engram review -i`），逐条显示待审
   提案（类型、内容、风险、来源、可能的重复及差异、取代关系），输入一个字母加回车：
-  `a` 批准、`r` 拒绝（可写理由，只记在回执里）、`s` 取代一条已批准条目（输入其 id）、`k` 跳过、
+  `a` 批准、`r` 拒绝（可写理由，只记在回执里，经 MCP 的 `get_audit_log` 读不到）、`s` 取代一条已批准条目（输入其 id）、`k` 跳过、
   `v` 查看全文、`q` 结束。确认汇总时输入 `y` 才写入；`n`、输入结束或 Ctrl+C 都不写入。
   它与 `engram review apply` 走同一条应用路径，回执相同。没有终端时改用
   `engram review export --out <目录>` 和 `engram review apply <marks.json>`。
