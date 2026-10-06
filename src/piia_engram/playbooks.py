@@ -589,6 +589,7 @@ class PlaybookMixin:
 
         def _approve(row):
             row["tier"] = "verified"
+            row.pop("duplicate_candidate", None)
             row["approval_status"] = "approved"
             row["promoted_at"] = now
             row["promotion_reason"] = "owner_review"
@@ -642,6 +643,9 @@ class PlaybookMixin:
         from . import write_provenance as _write_provenance
 
         _write_provenance.stamp(new_pb)
+        from .dedup_review import strip_caller_fields
+
+        strip_caller_fields(new_pb)
 
         new_pb = self._repair_incoming_text(new_pb)
         if not new_pb.get("title"):

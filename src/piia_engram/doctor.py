@@ -819,7 +819,7 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         stale = _tombstones.stale_version_ids(eng.root)
         if stale:
             print(f"    [!!] Rejection records from an older hash version: {len(stale)}"
-                  f" (hv != {_tombstones.HASH_VERSION}); they refuse nothing until re-written"
+                  f" (hv not in {_tombstones.MATCHED_HASH_VERSIONS}); they refuse nothing until re-written"
                   " with engram review tombstone --ids-file")
             problems += 1
     except Exception as exc:

@@ -2,9 +2,10 @@
 
 Write-time rule (lessons and decisions):
 
-* Exactly the same claim -- the same normalized text hash (the normalization
-  that rejection tombstones use: NFKC, case folded, punctuation and a leading
-  label dropped, whitespace collapsed) in the same project scope -- is refused.
+* Exactly the same claim -- the same normalized text hash in the same project
+  scope, the hash rejection tombstones and the retired-twin check use (NFKC,
+  case folded, punctuation and a leading label dropped, whitespace collapsed;
+  a decision is its question, else its title, plus its choice) -- is refused.
 * Very similar but not the same (bigram similarity >= 0.95) is no longer
   refused. The new row goes to the review queue, also outside strict mode, and
   carries ``duplicate_candidate = {"existing_id", "similarity"}``; the Owner
@@ -12,14 +13,15 @@ Write-time rule (lessons and decisions):
 * Related (0.55 up to 0.95) is stored as before, cross-linked, with a
   ``_dedup_note``.
 
-For the review card this module renders the candidate (or near-duplicate) line
-and a short sentence-level diff between the earlier entry and the proposal.
+Only the duplicate check writes ``duplicate_candidate`` and ``_dedup_note``; a
+caller's values are dropped on insert. Display code still treats stored values
+as untrusted: ids must look like ids, a similarity must be a number in [0, 1].
 """
 
 from __future__ import annotations
 
 import difflib
-import hashlib
+import math
 import re
 import unicodedata
 from typing import Any, Iterable
@@ -28,30 +30,81 @@ from . import tombstones as _tombstones
 
 DIFF_MAX_LINES = 40
 _LINE_MAX = 300
-_RELATED_NOTE_RE = re.compile(r"\brelated to ([A-Za-z0-9_-]+) \((?:sim|cos)=([0-9.]+%?)\)")
+_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_RELATED_NOTE_RE = re.compile(r"\brelated to ([A-Za-z0-9_-]{1,64}) \((?:sim|cos)=([0-9.]{1,6}%?)\)")
 _SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+|(?<=[。！？；])")
 
+# Written by the duplicate check only; a caller's values are dropped on insert.
+CALLER_STRIPPED_FIELDS: tuple[str, ...] = ("duplicate_candidate", "_dedup_note")
+# Cleared when an entry leaves the review queue (approved or promoted).
+REVIEW_ONLY_FIELDS: tuple[str, ...] = ("duplicate_candidate",)
 
-def exact_key(identity: str, choice: str = "") -> str:
-    """Hash of the normalized claim: a lesson summary, or a decision's title or
-    question plus its choice."""
-    text = f"{identity} {choice}" if choice else str(identity or "")
-    return hashlib.sha256(_tombstones.normalize(text).encode("utf-8")).hexdigest()
+
+def strip_caller_fields(entry: dict) -> None:
+    for key in CALLER_STRIPPED_FIELDS:
+        entry.pop(key, None)
+
+
+def clear_review_fields(entry: dict) -> dict:
+    for key in REVIEW_ONLY_FIELDS:
+        entry.pop(key, None)
+    return entry
+
+
+def exact_key(kind: str, row: dict) -> str:
+    """Hash of the normalized claim (tombstone h1, cached by content)."""
+    return _tombstones.claim_hashes(kind, row)[0]
+
+
+def safe_id(value: Any) -> str:
+    """An entry id fit to print: letters, digits, ``_`` and ``-`` only; else ''."""
+    return value if isinstance(value, str) and _ID_RE.fullmatch(value) else ""
+
+
+def safe_similarity(value: Any) -> float | None:
+    """A similarity clamped to [0, 1]; None when it is not a finite number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if not math.isfinite(value):
+        return None
+    return min(1.0, max(0.0, value))
+
+
+def pending_candidate(row: Any) -> tuple[str, float | None] | None:
+    """(earlier id, similarity) of a pending row's duplicate candidate, if well formed."""
+    if not isinstance(row, dict) or row.get("tier") != "staging":
+        return None
+    record = row.get("duplicate_candidate")
+    if not isinstance(record, dict):
+        return None
+    existing_id = safe_id(record.get("existing_id"))
+    if not existing_id:
+        return None
+    return existing_id, safe_similarity(record.get("similarity"))
+
+
+def _pct(similarity: float | None) -> str:
+    return f"{similarity:.0%}" if similarity is not None else "unknown"
 
 
 def candidate_record(existing_id: str, similarity: float) -> dict[str, Any]:
     return {"existing_id": str(existing_id or ""), "similarity": round(float(similarity), 2)}
 
 
-def candidate_message(record: dict[str, Any]) -> str:
-    """What the writing agent is told about a duplicate candidate."""
-    existing_id = record.get("existing_id", "")
-    similarity = float(record.get("similarity") or 0.0)
+def candidate_message(record: Any) -> str:
+    """What the writing agent is told about a duplicate candidate ('' if malformed)."""
+    if not isinstance(record, dict):
+        return ""
+    existing_id = safe_id(record.get("existing_id"))
+    if not existing_id:
+        return ""
+    pct = _pct(safe_similarity(record.get("similarity")))
     return (
-        f"已作为重复候选进入待审：与 {existing_id} 相似度 {similarity:.0%}，需主人审核确认。"
+        f"已作为重复候选进入待审：与 {existing_id} 相似度 {pct}，需主人审核确认。"
         "若这是对旧条目的修订，请用 supersedes 指明被取代的条目（目标由你确认，不要只凭相似度）。"
         f" / Queued for review as a possible duplicate of {existing_id} "
-        f"(similarity {similarity:.2f}); the Owner confirms it is new. If it revises an "
+        f"(similarity {pct}); the Owner confirms it is new. If it revises an "
         "earlier entry, write it with supersedes naming that entry (choose the target "
         "yourself; similarity alone does not pick it)."
     )
@@ -62,7 +115,7 @@ def existing_guidance(existing_id: str, kind: str) -> dict[str, Any]:
 
     Nothing here offers a new-entry bypass: identical content has none.
     """
-    existing_id = str(existing_id or "")
+    existing_id = safe_id(existing_id)
     if kind == "playbook":
         how_zh = '用 manage_playbook(action="update") 提交修订（严格模式下为修订提案）'
         how_en = 'use manage_playbook(action="update") (a revision proposal under strict approval)'
@@ -79,7 +132,9 @@ def existing_guidance(existing_id: str, kind: str) -> dict[str, Any]:
 
 def related_from_note(note: Any) -> tuple[str, str] | None:
     """(existing id, similarity text) from a ``_dedup_note``, if it names one."""
-    match = _RELATED_NOTE_RE.search(str(note or ""))
+    if not isinstance(note, str):
+        return None
+    match = _RELATED_NOTE_RE.search(note)
     if match is None:
         return None
     return match.group(1), match.group(2)
@@ -122,7 +177,7 @@ def text_diff(kind: str, old: dict, new: dict, max_lines: int = DIFF_MAX_LINES) 
     """Sentence-level unified diff (earlier entry -> proposal), at most ``max_lines``."""
     lines = list(difflib.unified_diff(
         diff_units(kind, old), diff_units(kind, new),
-        fromfile=f"earlier {_clean(old.get('id'))}", tofile=f"proposed {_clean(new.get('id'))}",
+        fromfile=f"earlier {safe_id(old.get('id'))}", tofile=f"proposed {safe_id(new.get('id'))}",
         n=1, lineterm="",
     ))
     if not lines:
@@ -142,19 +197,27 @@ def fenced(lines: Iterable[str]) -> list[str]:
 
 
 def card_lines(kind: str, row: dict, lookup: dict[str, dict]) -> list[str]:
-    """Review-card lines for a duplicate candidate or a near-duplicate (else [])."""
-    candidate = row.get("duplicate_candidate")
-    if isinstance(candidate, dict) and candidate.get("existing_id"):
-        existing_id = _clean(candidate.get("existing_id"))
-        similarity = float(candidate.get("similarity") or 0.0)
-        head = (f"- possible duplicate of `{existing_id}` (similarity {similarity:.0%}): "
+    """Review-card lines for a pending duplicate candidate or near-duplicate (else []).
+
+    Only pending rows, only well-formed ids, and only an earlier entry this row
+    is linked to (``related_ids``, which the duplicate check always sets): a
+    stray value never pulls an unrelated entry into the diff.
+    """
+    if not isinstance(row, dict) or row.get("tier") != "staging":
+        return []
+    candidate = pending_candidate(row)
+    if candidate is not None:
+        existing_id, similarity = candidate
+        head = (f"- possible duplicate of `{existing_id}` (similarity {_pct(similarity)}): "
                 "confirm it is new before approving / 重复候选，批准前请确认确属新条目")
     else:
         related = related_from_note(row.get("_dedup_note"))
         if related is None:
             return []
-        existing_id = _clean(related[0])
-        head = f"- near-duplicate: related to `{existing_id}` ({_clean(related[1])}) / 近重复"
+        existing_id = related[0]
+        head = f"- near-duplicate: related to `{existing_id}` ({related[1]}) / 近重复"
+    if existing_id not in (row.get("related_ids") or []):
+        return []
     lines = [head]
     earlier = lookup.get(existing_id)
     if earlier is None:

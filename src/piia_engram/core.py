@@ -2174,6 +2174,10 @@ class Engram(
             or entry.get("memory_state") in {"rejected", "deprecated"}
         ):
             return
+        # Same reset as the strict-mode gate: nothing pre-approves a pending row.
+        for key in [k for k in entry if k.startswith(("promotion_", "promoted_", "approval_"))]:
+            entry.pop(key, None)
+        entry.pop("user_confirmed", None)
         entry["tier"] = "staging"
         entry["memory_state"] = "staging"
         entry["approval_status"] = "pending"
@@ -2233,6 +2237,7 @@ class Engram(
 
         for _field in _capacity.SYSTEM_FIELDS:
             new_lesson.pop(_field, None)
+        _dedup_review.strip_caller_fields(new_lesson)
 
         new_lesson = self._repair_incoming_text(new_lesson)
         new_lesson["timestamp"] = new_lesson.get("timestamp") or _now_iso()
@@ -2275,7 +2280,7 @@ class Engram(
             best_sim = 0.0
             best_match = None
             # Only the same claim (normalized text hash, same scope) is refused.
-            new_key = _dedup_review.exact_key(new_lesson.get("summary", ""))
+            new_key = _dedup_review.exact_key("lesson", new_lesson)
             exact_match = None
             for existing in same_scope_lessons:
                 if existing.get("status") != "active":
@@ -2287,7 +2292,7 @@ class Engram(
                 if sim > best_sim:
                     best_sim = sim
                     best_match = existing
-                if exact_match is None and _dedup_review.exact_key(existing.get("summary", "")) == new_key:
+                if exact_match is None and _dedup_review.exact_key("lesson", existing) == new_key:
                     exact_match = existing
             if exact_match is not None:
                 best_match, best_sim = exact_match, 1.0
@@ -2637,6 +2642,8 @@ class Engram(
                     result_box["noop"] = True
                     return lessons
                 lesson["last_updated"] = now
+                if tier_changed and new_tier != "staging":
+                    _dedup_review.clear_review_fields(lesson)
                 if content_changed:
                     snapshot_id = self._next_snapshot_id(
                         "lesson", lesson_id, current_version, existing_ids
@@ -2747,6 +2754,7 @@ class Engram(
 
         for _field in _capacity.SYSTEM_FIELDS:
             new_decision.pop(_field, None)
+        _dedup_review.strip_caller_fields(new_decision)
 
         new_decision = self._repair_incoming_text(new_decision)
         # Sanitize project field regardless of input path (dict or kwargs)
@@ -2800,9 +2808,9 @@ class Engram(
             ]
             best_sim = 0.0
             best_match = None
-            # Only the same claim (title/question + choice, normalized text
-            # hash, same scope) is refused.
-            new_key = _dedup_review.exact_key(new_title, new_decision.get("choice") or "")
+            # Only the same claim (question, else title, + choice; normalized
+            # text hash, same scope) is refused.
+            new_key = _dedup_review.exact_key("decision", new_decision)
             exact_match = None
             for existing in same_scope_decisions:
                 if existing.get("status") != "active":
@@ -2812,7 +2820,7 @@ class Engram(
                 if sim >= best_sim:
                     best_sim = sim
                     best_match = existing
-                if _dedup_review.exact_key(existing_title, existing.get("choice") or "") == new_key:
+                if _dedup_review.exact_key("decision", existing) == new_key:
                     exact_match = existing  # the latest identical row, like best_match
 
             # Track whether the new decision should auto-supersede the best match.
@@ -3098,6 +3106,8 @@ class Engram(
                     result_box["noop"] = True
                     return decisions
                 decision["last_updated"] = now
+                if tier_changed and new_tier != "staging":
+                    _dedup_review.clear_review_fields(decision)
                 if content_changed:
                     snapshot_id = self._next_snapshot_id(
                         "decision", decision_id, current_version, existing_ids

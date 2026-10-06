@@ -91,14 +91,14 @@ def _knowledge_digest(item: dict[str, Any]) -> dict[str, Any]:
 def _review_annotations(digest: dict[str, Any], item: dict[str, Any]) -> None:
     """Owner-facing notes on a held-back item: duplicate candidate and the
     client's self-reported name. Ids, a score and a name only -- no bodies."""
+    from .dedup_review import pending_candidate
     from .write_provenance import client_summary
 
-    candidate = item.get("duplicate_candidate")
-    if isinstance(candidate, dict) and candidate.get("existing_id"):
-        digest["duplicate_of"] = redact_export_text(str(candidate["existing_id"]))[:64]
-        similarity = candidate.get("similarity")
-        if isinstance(similarity, (int, float)):
-            digest["duplicate_similarity"] = round(float(similarity), 2)
+    candidate = pending_candidate(item)
+    if candidate is not None:
+        digest["duplicate_of"] = candidate[0]
+        if candidate[1] is not None:
+            digest["duplicate_similarity"] = round(candidate[1], 2)
     client = client_summary(item)
     if client.get("origin") == "mcp":
         name = " ".join(p for p in (client.get("client_name"), client.get("client_version")) if p)

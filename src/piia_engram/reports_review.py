@@ -560,6 +560,7 @@ function copyResult() {{
             entry["tier"] = "verified"
             entry["promoted_at"] = ts
             entry["promotion_reason"] = "user_confirmed"
+            entry.pop("duplicate_candidate", None)  # the Owner decided: no longer a candidate
             return self._stamp_validated_entry(
                 entry,
                 item_type,

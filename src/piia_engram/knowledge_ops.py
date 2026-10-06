@@ -575,6 +575,7 @@ class KnowledgeOpsMixin:
 
         def _mark(entry: dict) -> dict:
             entry["tier"] = "verified"
+            entry.pop("duplicate_candidate", None)
             updated = self._stamp_validated_entry(
                 entry,
                 item_type,

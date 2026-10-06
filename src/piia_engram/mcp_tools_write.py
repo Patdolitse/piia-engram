@@ -91,7 +91,8 @@ def _candidate_note(result: object) -> str:
         return ""
     from piia_engram.dedup_review import candidate_message
 
-    return " · " + candidate_message(result["duplicate_candidate"])
+    message = candidate_message(result["duplicate_candidate"])
+    return " · " + message if message else ""
 
 
 @S.mcp.tool()
