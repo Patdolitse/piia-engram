@@ -789,3 +789,69 @@ def test_default_operator_is_owner(store):
     assert code == 0, out
     (receipt,) = _receipts(eng.root)
     assert receipt["operator"] == "owner"
+
+
+# ---------------------------------------------------------------------------
+# decisions made earlier in the session count when choosing a supersede target
+# ---------------------------------------------------------------------------
+
+
+def _edges_of(eng: Engram) -> list[tuple[str, str]]:
+    return [(e["src"], e["dst"]) for e in RelationStore(eng.root).all_edges() if e["rel"] == "supersedes"]
+
+
+def test_approve_an_entry_then_its_agent_revision_in_one_session(store):
+    eng, _client = store
+    # a type label sorts the entry first, the unlabeled revision second
+    first = eng.add_decision({"question": "Where do build caches live?", "choice": "on each runner",
+                              "domain": "type:rule"})
+    revision = _agent_revision(eng, "Where do build caches live now?", "in the shared bucket", first["id"])
+    assert review_interactive.pending_order(Engram(root=eng.root, read_only=True)) == [first["id"], revision["id"]]
+
+    code, out = _review(["a", "a", "y"])
+
+    assert code == 0, out
+    assert _edges_of(eng) == [(revision["id"], first["id"])]
+    assert "superseded 0" in out and "approved 2" in out and "failed 0" in out
+
+
+def test_agent_revision_shown_before_its_entry_is_still_linked(store):
+    eng, _client = store
+    first = eng.add_decision({"question": "Where do build caches live?", "choice": "on each runner"})
+    revision = eng.add_decision({"question": "Where do build caches live now?", "choice": "in the shared bucket",
+                                 "supersedes": first["id"], "domain": "type:rule"})  # sorts the revision first
+    assert eng._find_item_by_id(revision["id"])[1].get("pending_supersedes") == first["id"]
+    order = review_interactive.pending_order(Engram(root=eng.root, read_only=True))
+    assert order == [revision["id"], first["id"]]
+
+    code, out = _review(["a", "a", "y"])
+
+    assert code == 0, out
+    assert "approve it in this review to keep the link" in out
+    assert _edges_of(eng) == [(revision["id"], first["id"])]
+
+
+def test_approve_an_entry_then_supersede_it_in_one_session(store):
+    eng, _client = store
+    first = _propose_lesson("Tag releases by hand")  # type:lesson sorts before an unlabeled lesson
+    second = _propose_lesson("Tag releases from the release workflow", domain="release")
+    assert review_interactive.pending_order(Engram(root=eng.root, read_only=True)) == [first["id"], second["id"]]
+
+    code, out = _review(["a", "s", first["id"], "y"])
+
+    assert code == 0, out
+    assert _edges_of(eng) == [(second["id"], first["id"])]
+    assert "superseded 1" in out
+
+
+def test_an_entry_rejected_in_the_session_cannot_be_a_target(store):
+    eng, _client = store
+    first = _propose_lesson("Tag releases by hand")
+    second = _propose_lesson("Tag releases from the release workflow", domain="release")
+
+    code, out = _review(["r", "", "s", first["id"], "", "a", "y"])
+
+    assert code == 0, out
+    assert "you rejected it in this review" in out
+    assert _lesson(eng, "Tag releases from the release workflow")["tier"] == "verified"
+    assert _edges_of(eng) == []

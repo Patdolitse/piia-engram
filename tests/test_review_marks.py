@@ -331,10 +331,86 @@ def test_two_marks_superseding_one_entry_are_refused(eng, tmp_path, capsys):
                                       {"id": "b2", "mark": "supersede:old001"}])[1]
 
 
-def test_a_target_decided_in_the_same_run_is_refused():
-    error = review_cli.validate_marks([{"id": "a1", "mark": "approve"}, {"id": "b2", "mark": "supersede:a1"}])[1]
-    assert "a1" in error
-    assert review_cli.validate_marks([{"id": "b2", "mark": "supersede:a1"}, {"id": "a1", "mark": "reject"}])[1]
+def test_a_target_decided_in_the_same_run_is_allowed():
+    for raw in ([{"id": "a1", "mark": "approve"}, {"id": "b2", "mark": "supersede:a1"}],
+                [{"id": "b2", "mark": "supersede:a1"}, {"id": "a1", "mark": "reject"}]):
+        marks, error = review_cli.validate_marks(raw)
+        assert not error and len(marks) == 2
+
+
+# ---------------------------------------------------------------------------
+# two phases: plain decisions first, then the ones that replace an entry
+# ---------------------------------------------------------------------------
+
+
+def _outcome(item: dict) -> tuple:
+    """What a dry-run item and an applied item have in common."""
+    status = item["status"]
+    if status == "planned":
+        status = "applied_unlinked" if item.get("unlinked_reason") else "applied"
+    return (item["id"], item["action"], status, item.get("target", ""), item.get("unlinked_reason", ""))
+
+
+def _dry_then_apply(eng, tmp_path, capsys, marks: list[dict], *, code: int = 0) -> tuple[dict, dict]:
+    dry = _apply(tmp_path, capsys, marks, yes=False)
+    applied = _apply(tmp_path, capsys, marks, code=code)
+    assert [_outcome(i) for i in dry["items"]] == [_outcome(i) for i in applied["items"]]
+    return dry, applied
+
+
+def test_approving_an_entry_and_its_agent_revision_in_one_run(eng, tmp_path, capsys):
+    first = eng.add_decision({"question": "Where do build caches live?", "choice": "on each runner"})
+    revision = _revision(eng, "Where do build caches live now?", "in the shared bucket", first["id"])
+
+    # the revision is listed first; it is still applied after the entry it replaces
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [{"id": revision["id"], "mark": "approve"},
+                                                            {"id": first["id"], "mark": "approve"}])
+
+    assert [i["status"] for i in applied["items"]] == ["applied", "applied"]
+    assert applied["items"][0]["target"] == first["id"]
+    assert _supersede_edges(eng) == [(revision["id"], first["id"])]
+    assert _row(eng, first["id"])["tier"] == _row(eng, revision["id"])["tier"] == "verified"
+
+
+def test_approving_an_entry_and_superseding_it_in_one_run(eng, tmp_path, capsys):
+    first = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    second = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [{"id": second["id"], "mark": f"supersede:{first['id']}"},
+                                                            {"id": first["id"], "mark": "approve"}])
+
+    assert [i["status"] for i in applied["items"]] == ["applied", "applied"]
+    assert applied["counts"]["supersede"] == 1
+    assert _supersede_edges(eng) == [(second["id"], first["id"])]
+
+
+def test_rejecting_an_entry_fails_only_the_mark_that_supersedes_it(eng, tmp_path, capsys):
+    first = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    second = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+    third = eng.add_lesson({"summary": "Sign every release tag", "domain": "type:lesson"})
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": second["id"], "mark": f"supersede:{first['id']}"},
+        {"id": first["id"], "mark": "reject"},
+        {"id": third["id"], "mark": "approve"},
+    ])
+
+    assert [i["status"] for i in applied["items"]] == ["target_not_trusted", "applied", "applied"]
+    assert _row(eng, second["id"])["tier"] == "staging"
+    assert _row(eng, third["id"])["tier"] == "verified"
+    assert _supersede_edges(eng) == []
+
+
+def test_rejecting_an_entry_approves_its_agent_revision_without_the_link(eng, tmp_path, capsys):
+    first = eng.add_decision({"question": "Where do build caches live?", "choice": "on each runner"})
+    revision = _revision(eng, "Where do build caches live now?", "in the shared bucket", first["id"])
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [{"id": revision["id"], "mark": "approve"},
+                                                            {"id": first["id"], "mark": "reject"}])
+
+    assert [i["status"] for i in applied["items"]] == ["applied_unlinked", "applied"]
+    assert applied["items"][0]["unlinked_reason"] == "target_not_trusted"
+    assert _supersede_edges(eng) == []
 
 
 def test_approving_a_revision_whose_target_is_gone_approves_it_without_the_link(eng, tmp_path, capsys):

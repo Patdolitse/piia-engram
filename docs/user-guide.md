@@ -173,9 +173,12 @@ You stay in control of staged items at any time:
   `restore` or `skip` (leave it pending). Optional fields: `reason` on a reject
   (your note, kept in that run's receipt only, never on the rejection record)
   and `expected_version` (the item is skipped if it changed since). A run may
-  replace each entry once and may not supersede an entry it also decides; such
-  a file is refused before anything is written. `engram review apply` exits
-  non-zero when every mark in the file failed.
+  replace each entry once (otherwise the file is refused before anything is
+  written). Plain approvals and rejections apply first, then the marks that
+  replace an entry, so you can approve an entry and its replacement in one run;
+  a target you reject fails only the mark that names it. The dry run follows the
+  same order. `engram review apply` exits non-zero when every mark in the file
+  failed.
 - Playbooks always require explicit review before trusted use; Engram never
   silently executes a workflow — it hands the steps to your AI tool as a passive
   reference and tracks the reported outcome.

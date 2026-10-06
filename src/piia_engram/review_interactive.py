@@ -15,8 +15,11 @@ input and Ctrl+C discard every decision and write nothing.
 Each decision becomes a mark (``approve``, ``reject``, ``supersede:<id>``, with
 the version the Owner saw) and runs through ``review_cli.apply_marks``, the
 function behind ``engram review apply --yes``: same checks, same tombstones,
-same receipt and audit event. An item that changed after it was shown is
-skipped (``version_conflict``) and listed in the summary.
+same receipt and audit event, same two phases (decisions that replace an
+entry come last). So while choosing a supersede target, an entry approved
+earlier in the review counts as approved and one rejected in it cannot be
+chosen. An item that changed after it was shown is skipped
+(``version_conflict``) and listed in the summary.
 
 When stdin or stdout is not a terminal the command stops and points at
 ``engram review export`` / ``engram review apply``. That check only guards
@@ -70,12 +73,14 @@ _PROBLEMS_ZH = {
     "invalid_id": "不是有效的 id",
     "already_chosen": "本次审核中已有另一条选择取代它",
     "target_taken": "它提议取代的条目已被本次审核中的另一条取代",
+    "target_rejected": "你在本次审核中已拒绝该条目，不能作为取代目标",
 }
 _PROBLEMS_EN = {
     **_review_cli.SUPERSEDE_PROBLEMS,
     "invalid_id": "not a valid id",
     "already_chosen": "another item in this review already supersedes it",
     "target_taken": "the entry it proposes to replace is already superseded by another item in this review",
+    "target_rejected": "you rejected it in this review, so it cannot be replaced",
 }
 
 
@@ -268,8 +273,35 @@ def _problem_text(code: str) -> str:
     return t(_PROBLEMS_ZH.get(code, code), _PROBLEMS_EN.get(code, code))
 
 
-def _ask_target(term: _Terminal, eng, item_id: str, taken: set[str]) -> str:
-    """The id of the approved entry this item supersedes, or '' when cancelled."""
+def _new_session() -> dict:
+    """Decisions made so far in this review, as the applying run will see them:
+    approvals count as trusted, rejected or replaced entries do not."""
+    return {"trusted": set(), "untrusted": set(), "edges": [], "rejected": set()}
+
+
+def _session_problem(eng, session: dict, item_id: str, target: str) -> str:
+    return _review_cli.supersede_problem(
+        eng, item_id, target, assume_trusted=session["trusted"], assume_untrusted=session["untrusted"],
+        extra_edges=session["edges"])
+
+
+def _record(session: dict, decision: dict, linked_target: str = "") -> None:
+    if decision["mark"] == "reject":
+        session["rejected"].add(decision["id"])
+        session["untrusted"].add(decision["id"])
+        return
+    session["trusted"].add(decision["id"])
+    if linked_target:
+        session["untrusted"].add(linked_target)
+        session["edges"].append({"src": decision["id"], "rel": "supersedes", "dst": linked_target})
+
+
+def _ask_target(term: _Terminal, eng, item_id: str, taken: set[str], session: dict) -> str:
+    """The id of the approved entry this item supersedes, or '' when cancelled.
+
+    An entry approved earlier in this review counts as approved (it is applied
+    first); an entry rejected in this review cannot be chosen.
+    """
     while True:
         answer = term.ask(t("要取代的已批准条目 id（回车取消）：", "Id of the approved entry it replaces (Enter cancels):"))
         target = answer.strip()
@@ -279,8 +311,10 @@ def _ask_target(term: _Terminal, eng, item_id: str, taken: set[str]) -> str:
             code = "invalid_id"
         elif target in taken:
             code = "already_chosen"
+        elif target in session["rejected"]:
+            code = "target_rejected"
         else:
-            code = _review_cli.supersede_problem(eng, item_id, target)
+            code = _session_problem(eng, session, item_id, target)
         if not code:
             return target
         term.say(t("已拒绝：", "Refused: ") + _problem_text(code) + t("。请重新输入。", ". Try again."))
@@ -302,7 +336,7 @@ _PROMPT_EN = "[a]pprove [r]eject [s]upersede [k] skip [v]iew full [q]uit >"
 
 
 def _decide(term: _Terminal, eng, n: int, total: int, kind: str, row: dict, *, lookup, edges,
-            taken: set[str]) -> dict | None | str:
+            taken: set[str], session: dict) -> dict | None | str:
     """One item: a decision dict, None for skip, or "quit"."""
     lines, _folded = card(n, total, kind, row, eng=eng, lookup=lookup, edges=edges)
     term.say("\n".join(lines))
@@ -316,21 +350,39 @@ def _decide(term: _Terminal, eng, n: int, total: int, kind: str, row: dict, *, l
                 term.say(t("不能批准：", "Cannot approve: ") + _problem_text("target_taken")
                          + t("。可以跳过（k）或拒绝（r）。", ". Skip it (k) or reject it (r)."))
                 continue
+            decision = {"id": item_id, "mark": "approve", "expected_version": version, "kind": kind}
+            linked = ""
             if proposed:
                 taken.add(proposed)  # one proposal per replaced entry in a review
-            return {"id": item_id, "mark": "approve", "expected_version": version, "kind": kind}
+                problem = _session_problem(eng, session, item_id, proposed)
+                if not problem:
+                    linked = proposed
+                elif (problem == "target_not_trusted" and proposed not in session["rejected"]
+                      and _is_pending(eng, proposed)):
+                    term.say(t(f"提示：它提议取代的 {proposed} 仍在待审；在本次审核中批准它即可保留取代关系，"
+                               "否则本条批准时不写取代边。",
+                               f"Note: the entry it replaces, {proposed}, is still pending; approve it in this"
+                               " review to keep the link, otherwise this one is approved without it."))
+                else:
+                    term.say(t("提示：本条将被批准，但不写取代边：", "Note: this one is approved without the supersede"
+                               " link: ") + _problem_text(problem))
+            _record(session, decision, linked)
+            return decision
         if key == "r":
             decision = {"id": item_id, "mark": "reject", "expected_version": version, "kind": kind}
             reason = _ask_reason(term)
             if reason:
                 decision["reason"] = reason
+            _record(session, decision)
             return decision
         if key == "s":
-            target = _ask_target(term, eng, item_id, taken)
+            target = _ask_target(term, eng, item_id, taken, session)
             if target:
                 taken.add(target)
-                return {"id": item_id, "mark": f"{_review_cli.SUPERSEDE_PREFIX}{target}",
-                        "expected_version": version, "kind": kind, "target": target}
+                decision = {"id": item_id, "mark": f"{_review_cli.SUPERSEDE_PREFIX}{target}",
+                            "expected_version": version, "kind": kind, "target": target}
+                _record(session, decision, target)
+                return decision
             continue
         if key == "k":
             return None
@@ -341,6 +393,11 @@ def _decide(term: _Terminal, eng, n: int, total: int, kind: str, row: dict, *, l
             term.say("\n".join(full))
             continue
         term.say(t("请输入 a / r / s / k / v / q 之一。", "Type one of a / r / s / k / v / q."))
+
+
+def _is_pending(eng, item_id: str) -> bool:
+    _kind, row = eng._find_item_by_id(item_id)
+    return isinstance(row, dict) and row.get("tier") == "staging"
 
 
 def _plan_lines(decisions: list[dict]) -> list[str]:
@@ -436,9 +493,11 @@ def run(args: list[str], *, stdin: TextIO | None = None, stdout: TextIO | None =
                f"{len(rows)} proposal(s) waiting. Nothing is written until you confirm at the end."))
     decisions: list[dict] = []
     taken: set[str] = set()
+    session = _new_session()
     try:
         for n, (kind, row) in enumerate(rows, 1):
-            outcome = _decide(term, reader, n, len(rows), kind, row, lookup=lookup, edges=edges, taken=taken)
+            outcome = _decide(term, reader, n, len(rows), kind, row, lookup=lookup, edges=edges, taken=taken,
+                              session=session)
             if outcome == "quit":
                 break
             if isinstance(outcome, dict):
