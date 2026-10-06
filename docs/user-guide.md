@@ -158,6 +158,22 @@ You stay in control of staged items at any time:
   silently executes a workflow — it hands the steps to your AI tool as a passive
   reference and tracks the reported outcome.
 
+What your AI receives follows the same rule everywhere:
+
+- Context it gets without asking (cold start, the resume brief, the
+  session-start hooks, `get_recall`, `get_relevant_knowledge`) holds reviewed,
+  current items only. Items waiting for review, items replaced by a newer
+  version and archived items are left out.
+- `search_knowledge` lists items waiting for review in a separate `pending`
+  group (each marked `pending_untrusted`), never mixed into the results.
+  Replaced items are left out unless you pass `include_superseded=true`.
+- Reading one item by id (`get_knowledge_history`, `explore_knowledge`) still
+  returns a replaced item and names the item that replaced it (`superseded_by`).
+- When a token budget cuts content, the response says what was left out
+  (`omitted`: count, ids and section names), and text context ends with one
+  line such as `已省略 3 项（预算）：lessons, decisions`. `engram preview` shows
+  the trimmed items' summaries.
+
 Each entry carries lifecycle metadata (`memory_state`, `approval_status`,
 `risk_level`/`risk_flags`, `provenance`, `approval_required`) so the state is
 always visible. Full detail and the optional per-caller governance layer

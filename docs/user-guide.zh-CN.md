@@ -138,6 +138,20 @@ staged 条目始终在你掌控之中：
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。
 
+AI 拿到什么，各个入口规则一致：
+
+- AI 不用开口就拿到的上下文（冷启动、接续简报、会话开始钩子、`get_recall`、
+  `get_relevant_knowledge`）只含已审核且当前有效的条目；待审、被新版本取代、
+  已归档的条目都不出现。
+- `search_knowledge` 把待审条目单独列在 `pending` 分组里（每条标
+  `pending_untrusted`），不和结果混排；被取代的条目默认不返回，传
+  `include_superseded=true` 时单独分组返回。
+- 按 id 读取（`get_knowledge_history`、`explore_knowledge`）仍会返回被取代的条目，
+  并注明取代它的条目（`superseded_by`）。
+- 内容超出 token 预算时，返回里会说明省略了什么（`omitted`：条数、id、段名），
+  文本形态的上下文末尾加一行，例如 `已省略 3 项（预算）：lessons, decisions`。
+  `engram preview` 会显示被裁掉条目的摘要。
+
 每条记录都带生命周期元数据（`memory_state`、`approval_status`、
 `risk_level`/`risk_flags`、`provenance`、`approval_required`），状态始终可见。
 完整细节以及可选的按调用方治理层（`ENGRAM_GOVERNANCE=1`，默认关）见
