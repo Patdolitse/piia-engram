@@ -547,7 +547,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 59 MCP tools. By default, only the 19 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 59 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 59 MCP tools. By default, only the 19 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. Each tool also carries standard MCP hints (read-only, destructive, idempotent, open-world) for the client; they are advice, not access control, which stays with strict mode and governance. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 59 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 You can also expose composable capability modes such as knowledge management, governance, admin, or integrations; see the [capability modes guide](docs/operator-mcp-cheatsheet.md#capability-modes).
 

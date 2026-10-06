@@ -368,6 +368,15 @@ async def get_daily_log(
     return S._json(log)
 
 
+# Advisory hints for clients (read-only / destructive / idempotent / open-world).
+# Not access control: strict mode and governance decide who may do what.
+try:
+    from .tool_annotations import apply_tool_annotations as _apply_tool_annotations
+except ImportError:  # plain-script mode (no package context)
+    from tool_annotations import apply_tool_annotations as _apply_tool_annotations  # type: ignore[no-redef]
+
+_apply_tool_annotations(S.mcp)
+
 # Apply tool tier filter AFTER all @mcp.tool() decorators have run
 S._apply_tool_tier()
 
