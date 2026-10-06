@@ -111,7 +111,7 @@ The client name and version are what the MCP client says about itself. Engram re
 
 - The `origin` and client fields do not change after the entry is written, and `update_knowledge` refuses to change `provenance` or `source_tool`.
 - When an MCP write gives no `source_tool`, Engram fills it with the client label. That value only affects how the entry is labeled and shown; it does not affect the review tier, risk level or whether the entry can be recalled.
-- Restoring from your own backup keeps the provenance fields stored in the backup file (cleaned and length-capped); rows without an origin are marked `import`.
+- Restoring from your own backup keeps the provenance stored in the backup file as it is. Only the client fields are tidied: control characters are removed, the length is capped and the client label is derived again from the client name. Rows without an origin are marked `import`.
 
 ## Recovery and retention dry-runs
 

@@ -92,8 +92,9 @@ a write outside any request records `unknown`.
 `origin` and the client fields do not change after the write, and
 `update_knowledge` refuses an update that names `provenance` or `source_tool`
 (`provenance_immutable`). Restoring from your own backup keeps the provenance
-fields stored in the file (client fields cleaned and capped); a row without an
-origin is marked `import`.
+stored in the file as it is, except that client fields are cleaned and capped,
+the `client` label is derived again from `client_name`, and only `mcp` rows keep
+client fields; a row without an origin is marked `import`.
 
 Reserved: `observed_at` and `effective_from` are kept for a later "when was this
 observed / since when does it hold" contract. Engram does not read them yet, and

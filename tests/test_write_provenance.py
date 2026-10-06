@@ -418,7 +418,7 @@ def test_review_show_names_the_self_reported_client(tmp_path, monkeypatch, capsy
 
 
 # ---------------------------------------------------------------------------
-# review fixes: reserved fields, proposals, request-only client, import cleaning
+# reserved fields are dropped; proposals, the live client and imported rows are stamped honestly
 # ---------------------------------------------------------------------------
 
 
@@ -515,3 +515,23 @@ def test_import_cleans_client_fields(tmp_path):
     assert "\n" not in prov["client_name"] and len(prov["client_name"]) <= wp.MAX_CLIENT_TEXT
     assert prov["client_name"].startswith("evil ## card")
     assert prov.get("client_version") == "[0m"
+
+
+def test_import_rederives_the_client_label(tmp_path):
+    src = Engram(root=tmp_path / "src")
+    src.add_lesson("imported label lesson", domain="t")
+    src.add_lesson("imported cli row", domain="t")
+    path = src.export_all(str(tmp_path / "backup.json"))
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = {r["summary"]: r for r in data["knowledge"]["lessons"]}
+    rows["imported label lesson"]["provenance"] = {
+        "origin": "mcp", "client_name": "claude-code", "client": "trusted_owner_console"}
+    rows["imported cli row"]["provenance"] = {"origin": "cli", "client_name": "x", "client": "cursor"}
+    Path(path).write_text(json.dumps(data), encoding="utf-8")
+
+    dst = Engram(root=tmp_path / "dst")
+    dst.import_all(path, merge=True)
+
+    assert _lesson(dst, "imported label lesson")["provenance"]["client"] == "claude_code"
+    cli_prov = _lesson(dst, "imported cli row")["provenance"]
+    assert cli_prov["origin"] == "cli" and "client" not in cli_prov and "client_name" not in cli_prov

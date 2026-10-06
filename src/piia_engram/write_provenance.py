@@ -146,13 +146,20 @@ def stamp_imported(entry: dict) -> dict:
         for key in CLIENT_FIELDS:
             provenance.pop(key, None)
         provenance["origin"] = ORIGIN_IMPORT
-    for key in ("client_name", "client_version", "client"):
-        if key in provenance:
-            value = clean_client_text(provenance[key])
-            if value:
-                provenance[key] = value
-            else:
-                provenance.pop(key)
+    if provenance["origin"] != ORIGIN_MCP:
+        # Only MCP writes name a client.
+        for key in ("client_name", "client_version", "client"):
+            provenance.pop(key, None)
+    else:
+        for key in ("client_name", "client_version"):
+            if key in provenance:
+                value = clean_client_text(provenance[key])
+                if value:
+                    provenance[key] = value
+                else:
+                    provenance.pop(key)
+        # The label is derived again, so it stays within the fixed label set.
+        provenance["client"] = client_label(provenance.get("client_name", ""))
     entry["provenance"] = provenance
     return entry
 
