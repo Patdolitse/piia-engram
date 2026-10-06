@@ -12,6 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **Nothing is imported from other AI tools unless you ask.** Starting the MCP server, cold start (`get_user_context`, `get_resume_brief`, the session-start hook) and `wrap_up_session` no longer read or import other AI tools' memory and rule files. `ENGRAM_MCP_STARTUP_SYNC` and `wrap_up_session(run_reconcile=True)` are still accepted and import nothing.
 - `engram setup` asks whether to import once now (default no) instead of turning on automatic import, and its rule-file step no longer writes trusted memory or the profile language directly: imported rules go to the review queue with a receipt.
 - `engram reconcile apply --commit --yes` runs the same import as `engram import-memories --source memories` (review queue, receipt, audit line). Lessons imported from OpenClaw `MEMORY.md` also wait in the review queue and leave a receipt.
+- The legacy memory migration now follows the same off switch as every other read of other AI tools' files; when it is off, the returned value carries `status` and `disabled_by`.
 
 ### Added
 - **`engram import-memories`.** Lists memories and rule-file sections found in other AI tools, then adds them to the review queue after you confirm (`--dry-run`, `--yes`, `--source memories|configs`). Each import writes a receipt to `import_receipts/` and an audit line; running it again adds nothing twice. `engram doctor` and `engram status` show how many can be imported.

@@ -27,12 +27,15 @@ nothing twice. ``ENGRAM_RECONCILE=0`` or ``"reconcile_authorized": false`` in
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 COMMAND = "engram import-memories"
 SOURCES = ("memories", "configs")
@@ -270,6 +273,23 @@ _PUBLIC_ITEM_FIELDS = ("source", "file", "label", "summary", "content_sha256", "
 _IMPORT_LOCK_TIMEOUT = 120
 
 
+class ImportBusy(RuntimeError):
+    """Another import into the same store held the lock for the whole wait."""
+
+
+def _finish_quietly(record: "ImportRecord", *, error: str) -> str:
+    """``record.finish`` for a path that already has an exception to report.
+
+    If writing the receipt fails too (disk full, ...), log a warning and keep
+    the original exception instead of replacing it.
+    """
+    try:
+        return record.finish(error=error)
+    except Exception as exc:
+        logger.warning("could not write the import receipt (%s): %s", type(exc).__name__, exc)
+        return ""
+
+
 def _source_changed(item: dict[str, Any]) -> bool:
     from .reconcile import _file_sha256
 
@@ -330,12 +350,16 @@ def write_items(
     handled = 0
     stopped_by_queue = False
     interrupted: BaseException | None = None
-    from contextlib import nullcontext
+    from contextlib import ExitStack, nullcontext
 
     # Nothing to write: no lock (and no import_receipts/ directory) needed.
     lock = (hold_directory_lock(Path(eng.root) / RECEIPT_DIR, timeout=_IMPORT_LOCK_TIMEOUT)
             if items else nullcontext())
-    with lock:
+    with ExitStack() as held:
+        try:
+            held.enter_context(lock)
+        except RuntimeError as exc:  # lock wait timed out: nothing was written
+            raise ImportBusy(str(exc)) from exc
         try:
             with overflow_batch_scope() as batch:
                 room = _queue_room(eng) if stop_when_queue_full else None
@@ -387,7 +411,12 @@ def write_items(
             record.queue_full = result["queue_full"]
             record.not_written = result["not_written"]
             record.stopped_by_queue = stopped_by_queue
-            result["receipt"] = record.finish(error=result["error"])
+            if result["error"]:
+                # An exception is already being reported: a failing receipt
+                # write must not replace it.
+                result["receipt"] = _finish_quietly(record, error=result["error"])
+            else:
+                result["receipt"] = record.finish()
     if interrupted is not None:
         raise interrupted
     return result
@@ -492,7 +521,7 @@ def recording(eng, *, sources, command: str, resource: str, source_tool: str):
     try:
         yield record
     except BaseException as exc:
-        record.finish(error=type(exc).__name__)
+        _finish_quietly(record, error=type(exc).__name__)
         raise
     else:
         record.finish()
@@ -865,6 +894,17 @@ def run_cli(args: list[str]) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
+    try:
+        return _run_import(dry_run=dry_run, yes=yes, as_json=as_json, sources=sources)
+    except ImportBusy:
+        print(_BUSY_MESSAGE, file=sys.stderr)
+        return 1
+
+
+_BUSY_MESSAGE = "另一个导入正在进行，请稍后重试 / Another import is in progress; try again shortly."
+
+
+def _run_import(*, dry_run: bool, yes: bool, as_json: bool, sources) -> int:
     if as_json:
         from .core import Engram
 

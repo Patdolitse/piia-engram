@@ -374,3 +374,93 @@ def test_help_states_the_limits(capsys):
     out = capsys.readouterr().out
     assert "at most 25 per run" in out
     assert "ENGRAM_REVIEW_QUEUE_MAX" in out
+
+
+# -- a failing receipt write never hides the original exception -----------------------
+
+
+def _finish_fails(monkeypatch):
+    def broken(self, *, error=""):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(memory_import.ImportRecord, "finish", broken)
+
+
+def test_write_items_keeps_the_interrupt_when_the_receipt_write_fails(store, monkeypatch, caplog):
+    preview = memory_import.plan(Engram(root=store, read_only=True))
+    writer = Engram(root=store)
+    real_add = Engram.add_lesson
+    calls = {"n": 0}
+
+    def interrupted(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return real_add(self, *args, **kwargs)
+
+    monkeypatch.setattr(Engram, "add_lesson", interrupted)
+    _finish_fails(monkeypatch)
+
+    with caplog.at_level("WARNING", logger=memory_import.__name__):
+        with pytest.raises(KeyboardInterrupt):
+            memory_import.write_plan(writer, preview)
+    assert any("disk full" in record.getMessage() for record in caplog.records)
+
+
+def test_write_items_returns_the_original_error_when_the_receipt_write_fails(store, monkeypatch):
+    preview = memory_import.plan(Engram(root=store, read_only=True))
+    writer = Engram(root=store)
+
+    def broken_add(self, *args, **kwargs):
+        raise ValueError("bad row")
+
+    monkeypatch.setattr(Engram, "add_lesson", broken_add)
+    _finish_fails(monkeypatch)
+
+    result = memory_import.write_plan(writer, preview)
+    assert result["partial"] is True and result["error"] == "ValueError"
+    assert result["receipt"] == ""
+
+
+def test_recording_keeps_the_interrupt_when_the_receipt_write_fails(store, monkeypatch, caplog):
+    eng = Engram(root=store)
+    _finish_fails(monkeypatch)
+
+    with caplog.at_level("WARNING", logger=memory_import.__name__):
+        with pytest.raises(KeyboardInterrupt):
+            with memory_import.recording(eng, sources=["x"], command="test",
+                                         resource="knowledge/test", source_tool="test"):
+                raise KeyboardInterrupt
+    assert any("disk full" in record.getMessage() for record in caplog.records)
+
+
+# -- another import holds the lock ---------------------------------------------------------
+
+
+def _lock_times_out(monkeypatch):
+    import contextlib
+
+    from piia_engram import storage
+
+    @contextlib.contextmanager
+    def busy(directory, *, timeout=5):
+        raise RuntimeError(f"lock timeout {timeout:g}s: {directory.name}")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(storage, "hold_directory_lock", busy)
+
+
+@pytest.mark.parametrize("extra", [[], ["--json"]])
+def test_a_busy_import_lock_is_a_clean_message_not_a_traceback(store, monkeypatch, capsys, extra):
+    _lock_times_out(monkeypatch)
+
+    assert memory_import.run_cli(["--yes", *extra]) != 0
+
+    captured = capsys.readouterr()
+    assert "另一个导入正在进行，请稍后重试 / Another import is in progress; try again shortly." in captured.err
+    assert "Traceback" not in captured.err + captured.out
+    # Zero writes: no rows, no receipt, no audit line for an import.
+    assert _imported_rows(store) == []
+    assert not list((store / memory_import.RECEIPT_DIR).glob("*.json"))
+    assert not [line for line in _audit_lines(store)
+                if line.get("resource") == "knowledge/import_memories"]
