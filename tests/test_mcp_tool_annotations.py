@@ -72,12 +72,19 @@ def test_classes_and_hints_agree():
     assert not [n for n, h in TOOL_ANNOTATIONS.items() if h.read_only and h.destructive]
 
 
-def test_destructive_tools_are_exactly_the_ones_that_remove_or_replace():
+def test_destructive_tools_are_exactly_the_ones_that_overwrite_downgrade_or_retire():
     assert {n for n, h in TOOL_ANNOTATIONS.items() if h.destructive} == {
         "manage_caller_trust", "import_engram", "archive_knowledge", "review_staging",
         "merge_knowledge", "manage_relation", "update_identity", "user_portrait",
         "manage_playbook", "update_knowledge", "export_engram",
+        "register_tool", "save_project_snapshot", "start_project", "wrap_up_session",
+        "check_anchors",
     }
+    # tools that only add stay unmarked: an automatic supersede adds a relation
+    # and the old row stays readable by id
+    for name in ("add_lesson", "add_decision", "add_playbook", "memory_store",
+                 "ingest_notes", "extract_session_insights", "save_agent_context"):
+        assert not TOOL_ANNOTATIONS[name].destructive, name
 
 
 def test_export_engram_overwrites_an_existing_file_so_it_is_marked_destructive(tmp_path, monkeypatch):
@@ -127,6 +134,16 @@ def test_apply_is_silent_when_the_mcp_package_has_no_annotations(monkeypatch):
     assert apply_tool_annotations(_Server(["search_knowledge"])) == 0
 
 
+def test_apply_warns_in_the_log_when_there_is_no_tool_table(caplog, capsys):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="piia_engram.tool_annotations"):
+        assert apply_tool_annotations(object()) == 0
+    assert any("not applied" in r.getMessage() for r in caplog.records)
+    out = capsys.readouterr()
+    assert out.out == ""  # never on stdout: it carries the stdio protocol
+
+
 def test_apply_is_silent_when_the_tool_model_has_no_annotations_field():
     class Model:
         model_fields = {"name": None}
@@ -156,8 +173,12 @@ def test_every_tool_announces_its_hints_with_all_tools_enabled(tmp_path):
         "print('ANNOTATIONS=' + json.dumps({t.name: t.model_dump(by_alias=True, exclude_none=True)"
         ".get('annotations') for t in tools}))\n"
     )
+    home = tmp_path / "home"
+    home.mkdir()
     env = dict(os.environ)
     env.update({
+        "HOME": str(home), "USERPROFILE": str(home), "APPDATA": str(home / "AppData"),
+        "LOCALAPPDATA": str(home / "AppData" / "Local"), "DO_NOT_TRACK": "1",
         "ENGRAM_TOOLS": "all", "ENGRAM_DIR": str(tmp_path / "store"),
         "PYTHONPATH": str(_ROOT / "src"), "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONIOENCODING": "utf-8", "ENGRAM_TEST": "1",
@@ -172,3 +193,17 @@ def test_every_tool_announces_its_hints_with_all_tools_enabled(tmp_path):
         assert wire == TOOL_ANNOTATIONS[name].as_dict(), name
     # the one open-world tool, and only that one, says so on the wire
     assert [n for n, w in announced.items() if w["openWorldHint"]] == ["read_web_content"]
+
+
+def test_annotations_are_applied_from_one_place_in_the_server_module():
+    src = _ROOT / "src" / "piia_engram"
+    callers = sorted(
+        p.name for p in src.glob("*.py")
+        if p.name != "tool_annotations.py" and "_apply_tool_annotations(" in p.read_text(encoding="utf-8")
+    )
+    assert callers == ["mcp_server.py"]
+    text = (src / "mcp_server.py").read_text(encoding="utf-8")
+    assert text.count("_apply_tool_annotations(mcp)") == 1
+    # after every tool module is imported, directly before the tier filter
+    assert text.index("from .mcp_tools_session import") < text.index("_apply_tool_annotations(mcp)")
+    assert text.index("_apply_tool_annotations(mcp)\n_apply_tool_tier()") > 0

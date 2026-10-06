@@ -1596,6 +1596,15 @@ except ImportError:  # plain-script mode (no package context)
         get_daily_log,
     )
 
+# Advisory hints for clients (read-only / destructive / idempotent / open-world),
+# set once every tool module is imported. Not access control: strict mode and
+# governance decide who may do what.
+try:
+    from .tool_annotations import apply_tool_annotations as _apply_tool_annotations  # noqa: E402
+except ImportError:  # plain-script mode (no package context)
+    from tool_annotations import apply_tool_annotations as _apply_tool_annotations  # type: ignore[no-redef]  # noqa: E402
+
+_apply_tool_annotations(mcp)
 _apply_tool_tier()
 
 

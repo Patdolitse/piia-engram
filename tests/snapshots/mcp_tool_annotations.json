@@ -25,7 +25,7 @@
   },
   "check_anchors": {
     "readOnlyHint": false,
-    "destructiveHint": false,
+    "destructiveHint": true,
     "idempotentHint": true,
     "openWorldHint": false
   },
@@ -289,7 +289,7 @@
   },
   "register_tool": {
     "readOnlyHint": false,
-    "destructiveHint": false,
+    "destructiveHint": true,
     "idempotentHint": true,
     "openWorldHint": false
   },
@@ -313,7 +313,7 @@
   },
   "save_project_snapshot": {
     "readOnlyHint": false,
-    "destructiveHint": false,
+    "destructiveHint": true,
     "idempotentHint": false,
     "openWorldHint": false
   },
@@ -325,8 +325,8 @@
   },
   "start_project": {
     "readOnlyHint": false,
-    "destructiveHint": false,
-    "idempotentHint": false,
+    "destructiveHint": true,
+    "idempotentHint": true,
     "openWorldHint": false
   },
   "update_identity": {
@@ -349,7 +349,7 @@
   },
   "wrap_up_session": {
     "readOnlyHint": false,
-    "destructiveHint": false,
+    "destructiveHint": true,
     "idempotentHint": false,
     "openWorldHint": false
   }
