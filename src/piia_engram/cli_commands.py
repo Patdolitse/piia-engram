@@ -342,13 +342,14 @@ def _review_items(
     The explicit ``_update_access=False`` is part of the contract: listing the
     queue must not mutate access counters or timestamps.
     """
+    from piia_engram.review_cli import active_rows, scope_label
+
+    # Every project's proposals: the Owner's queue is not filtered by project.
     rows: list[dict] = []
-    for item in eng.get_lessons(limit=None, _update_access=False):
-        if item.get("tier") == "staging":
-            rows.append({"type": "lesson", "item": item})
-    for item in eng.get_decisions(limit=None, _update_access=False):
-        if item.get("tier") == "staging":
-            rows.append({"type": "decision", "item": item})
+    for kind in ("lesson", "decision"):
+        for item in active_rows(eng, kind):
+            if item.get("tier") == "staging":
+                rows.append({"type": kind, "item": item, "scope": scope_label(eng, kind, item)})
 
     if low_quality_only:
         rows = [
@@ -386,6 +387,8 @@ def _print_review_list(rows: list[dict]) -> None:
         title = _review_title(item_type, item)
         if len(title) > 70:
             title = title[:67] + "..."
+        if row.get("scope", "global") != "global":
+            title = f"{title}  [{row['scope']}]"
         quality = _review_quality_summary(item)
         evidence = _review_evidence_summary(item)
         if evidence:

@@ -555,3 +555,51 @@ def test_chinese_screen_and_summary(store, monkeypatch):
     assert code == 0, out
     assert "汇总：批准 1，拒绝 0，取代 0，跳过 0，失败 0" in out
     assert "客户端自报" in out
+
+
+# ---------------------------------------------------------------------------
+# project-scoped proposals are part of the Owner's review
+# ---------------------------------------------------------------------------
+
+
+def _propose_project_lesson(summary: str, folder: Path) -> dict:
+    _run(mcp_server.add_lesson(summary=summary, detail="worth keeping", domain="type:lesson",
+                               project_folder=str(folder), user_confirmed=True))
+    row = _lesson(mcp_server._engram, summary)
+    assert row is not None and row["tier"] == "staging", row
+    assert row.get("project_id") or row.get("project"), row
+    return row
+
+
+def test_project_proposal_is_reviewed_approved_and_recalled_in_its_project(store, tmp_path):
+    eng, _client = store
+    folder = tmp_path / "alpha-service"
+    folder.mkdir()
+    summary = "Run the alpha service migrations before its workers restart"
+    _propose_project_lesson(summary, folder)
+
+    code, out = _review(["a", "y"])
+
+    assert code == 0, out
+    assert "project:" in out
+    assert _lesson(eng, summary)["tier"] == "verified"
+    assert summary in _run(mcp_server.get_user_context(project_folder=str(folder), level="standard"))
+
+
+def test_project_proposal_is_listed_and_exported(store, tmp_path, capsys):
+    from piia_engram.setup_wizard import run_review
+
+    eng, _client = store
+    folder = tmp_path / "beta-service"
+    folder.mkdir()
+    row = _propose_project_lesson("Pin the beta service toolchain", folder)
+
+    assert run_review([]) == 0
+    listed = capsys.readouterr().out
+    assert row["id"] in listed and "project:" in listed
+
+    out_dir = tmp_path / "export"
+    assert run_review(["export", "--out", str(out_dir)]) == 0
+    card = (out_dir / "review.md").read_text(encoding="utf-8")
+    assert row["id"] in card and "- scope: project:" in card
+    assert row["id"] in json.loads((out_dir / "ids.json").read_text(encoding="utf-8"))

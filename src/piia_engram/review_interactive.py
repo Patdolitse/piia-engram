@@ -134,15 +134,6 @@ def _claim_fields(kind: str, row: dict) -> list[tuple[str, Any]]:
     return [("summary", row.get("summary")), ("detail", row.get("detail"))]
 
 
-def _scope(row: dict) -> str:
-    if row.get("project_id") or row.get("project"):
-        return f"project:{row.get('project') or row.get('project_id')}"
-    scope = row.get("scope")
-    if isinstance(scope, dict) and scope.get("type") and scope.get("type") != "global":
-        return f"{scope.get('type')}:{','.join(str(p) for p in scope.get('project_ids') or [scope.get('project_id')])}"
-    return "global"
-
-
 def _chain_lines(row: dict, edges: list[dict]) -> list[str]:
     item_id = str(row.get("id") or "")
     lines = []
@@ -162,7 +153,7 @@ def _chain_lines(row: dict, edges: list[dict]) -> list[str]:
     return lines
 
 
-def card(n: int, total: int, kind: str, row: dict, *, root, lookup: dict[str, dict],
+def card(n: int, total: int, kind: str, row: dict, *, eng, lookup: dict[str, dict],
          edges: list[dict], full: bool = False) -> tuple[list[str], bool]:
     """The screen for one pending item; returns (lines, something was folded)."""
     item_id = _dedup_review.safe_id(row.get("id")) or "?"
@@ -171,7 +162,7 @@ def card(n: int, total: int, kind: str, row: dict, *, root, lookup: dict[str, di
         "",
         f"=== [{n}/{total}] {kind} {item_id} ===",
         t("类型：", "type:    ") + (_one_line(mem_type, 40)[0] or t("缺失", "MISSING")),
-        t("作用域：", "scope:   ") + _one_line(_scope(row), 120)[0],
+        t("作用域：", "scope:   ") + _one_line(_review_cli.scope_label(eng, kind, row), 120)[0],
         t("创建：", "created: ") + _one_line(row.get("created_at") or row.get("timestamp") or "?", 40)[0],
     ]
     risk = _one_line(row.get("risk_level") or "unknown", 20)[0]
@@ -199,7 +190,7 @@ def card(n: int, total: int, kind: str, row: dict, *, root, lookup: dict[str, di
     if row.get("reproposal_of_rejected"):
         notes.append(t("曾被拒绝条目的重提：", "re-proposal of rejected ")
                      + (_dedup_review.safe_id(row.get("reproposal_of_rejected")) or "?"))
-    near = _tombstones.near(root, kind, row)
+    near = _tombstones.near(eng.root, kind, row)
     if near is not None:
         notes.append(t("与已拒绝条目相近：", "near a rejected entry: ") + (_dedup_review.safe_id(near.get("id")) or "?"))
     if not mem_type:
@@ -284,7 +275,7 @@ _PROMPT_EN = "[a]pprove [r]eject [s]upersede [k] skip [v]iew full [q]uit >"
 def _decide(term: _Terminal, eng, n: int, total: int, kind: str, row: dict, *, lookup, edges,
             taken: set[str]) -> dict | None | str:
     """One item: a decision dict, None for skip, or "quit"."""
-    lines, _folded = card(n, total, kind, row, root=eng.root, lookup=lookup, edges=edges)
+    lines, _folded = card(n, total, kind, row, eng=eng, lookup=lookup, edges=edges)
     term.say("\n".join(lines))
     item_id = str(row.get("id"))
     version = int(row.get("version") or 1)
@@ -310,7 +301,7 @@ def _decide(term: _Terminal, eng, n: int, total: int, kind: str, row: dict, *, l
         if key == "q":
             return "quit"
         if key == "v":
-            full, _ = card(n, total, kind, row, root=eng.root, lookup=lookup, edges=edges, full=True)
+            full, _ = card(n, total, kind, row, eng=eng, lookup=lookup, edges=edges, full=True)
             term.say("\n".join(full))
             continue
         term.say(t("请输入 a / r / s / k / v / q 之一。", "Type one of a / r / s / k / v / q."))

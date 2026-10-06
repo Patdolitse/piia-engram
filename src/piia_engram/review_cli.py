@@ -128,11 +128,39 @@ def _type_label(row: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def active_rows(eng, kind: str) -> list[dict]:
+    """Every active lesson or decision, whatever its project scope.
+
+    The Owner's review sees the whole store: ``get_lessons`` / ``get_decisions``
+    without a project return only global rows, which would hide every
+    project-scoped proposal from review. Read-only: nothing is migrated on disk.
+    """
+    name = "lessons.json" if kind == "lesson" else "decisions.json"
+    return [row for row in eng._read_entries(eng._knowledge_dir / name, kind, migrate=False)
+            if isinstance(row, dict) and (row.get("status") or "active") == "active"]
+
+
+def scope_label(eng, kind: str, row: dict) -> str:
+    """``global`` or ``project:<name>`` (a sanitized project name or id, never a path)."""
+    if kind == "playbook":
+        scope = row.get("scope") if isinstance(row.get("scope"), dict) else {}
+        kind_of = str(scope.get("type") or row.get("scope_type") or "global")
+        if kind_of == "global":
+            return "global"
+        ids = scope.get("project_ids") or [scope.get("project_id") or row.get("project_id")]
+        return f"{kind_of}:{','.join(str(i) for i in ids if i)}"
+    label = eng._entry_project_label(row)
+    if label:
+        return f"project:{label}"
+    pid = eng._entry_project_id(row)
+    return f"project:{pid}" if pid else "global"
+
+
 def _pending(eng, lookup: dict[str, dict[str, dict]] | None = None) -> list[tuple[str, dict]]:
     rows: list[tuple[str, dict]] = []
     for kind, items in (
-        ("lesson", eng.get_lessons(limit=None, _update_access=False)),
-        ("decision", eng.get_decisions(limit=None, _update_access=False)),
+        ("lesson", active_rows(eng, "lesson")),
+        ("decision", active_rows(eng, "decision")),
     ):
         if lookup is not None:
             lookup[kind] = {str(row.get("id")): row for row in items if row.get("id")}
@@ -142,7 +170,8 @@ def _pending(eng, lookup: dict[str, dict[str, dict]] | None = None) -> list[tupl
     return rows
 
 
-def _card(n: int, kind: str, row: dict, root, lookup: dict[str, dict] | None = None) -> list[str]:
+def _card(n: int, kind: str, row: dict, eng, lookup: dict[str, dict] | None = None) -> list[str]:
+    root = eng.root
     flags = []
     if row.get("reproposal_of_rejected"):
         flags.append(f"re-proposal of rejected {row['reproposal_of_rejected']}")
@@ -161,7 +190,7 @@ def _card(n: int, kind: str, row: dict, root, lookup: dict[str, dict] | None = N
         claim = row.get("title")
     else:
         claim = f"{row.get('question', '')} -> {row.get('choice', '')}"
-    scope = f"project:{row.get('project') or row.get('project_id')}" if row.get("project_id") else "global"
+    scope = scope_label(eng, kind, row)
     lines = [
         f"### {n}. {kind} `{row.get('id')}`" + (f"  [{'; '.join(flags)}]" if flags else ""),
         "",
@@ -222,7 +251,7 @@ def run_export(args: list[str]) -> int:
         "",
     ]
     for n, (kind, row) in enumerate(pending, 1):
-        lines.extend(_card(n, kind, row, eng.root, lookup.get(kind)))
+        lines.extend(_card(n, kind, row, eng, lookup.get(kind)))
     (out_dir / "review.md").write_text("\n".join(lines), encoding="utf-8")
     (out_dir / "ids.json").write_text(
         json.dumps([row.get("id") for _kind, row in pending], indent=1), encoding="utf-8"
