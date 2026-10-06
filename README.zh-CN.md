@@ -849,6 +849,7 @@ piia-engram doctor --fix     # 自动修复所有问题
 piia-engram sessions         # 列出跨工具保存的 AI 会话
 piia-engram sessions show <id>  # 打印单个保存会话
 piia-engram review           # 列出待审查的暂存知识
+piia-engram review interactive  # 逐条审核待审提案（a/r/s/k/v/q，最后输入 y 确认）
 piia-engram review show <id> # 查看单条待审知识
 piia-engram review approve <id> --yes  # 将暂存条目提升为已确认
 piia-engram review archive <id> --yes  # 归档待审条目

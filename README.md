@@ -910,6 +910,7 @@ piia-engram doctor --fix     # Auto-repair any issues found
 piia-engram sessions         # List saved cross-tool agent sessions
 piia-engram sessions show <id>  # Print one saved session
 piia-engram review           # List staging knowledge awaiting review
+piia-engram review interactive  # Decide pending proposals one at a time (a/r/s/k/v/q, confirm with y)
 piia-engram review show <id> # Inspect one review item
 piia-engram review approve <id> --yes  # Promote a staging item
 piia-engram review archive <id> --yes  # Archive a review item

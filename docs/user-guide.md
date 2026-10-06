@@ -154,6 +154,15 @@ You stay in control of staged items at any time:
 - `review_staging(action="list")` — see what is waiting for review (cold-start
   `get_resume_brief` also surfaces the pending count, including high-risk items).
 - Approve, edit, archive, or reject from the review surface.
+- In a terminal, `engram review interactive` (or `engram review -i`) shows one
+  pending proposal at a time (type, text, risk, where it came from, a possible
+  duplicate with its diff, what it replaces) and takes one letter plus Enter:
+  `a` approve, `r` reject (optional reason), `s` supersede an approved entry
+  (you type its id), `k` skip, `v` full text, `q` stop. Nothing is written until
+  you confirm the summary with `y`; `n`, end of input or Ctrl+C write nothing.
+  It applies through the same path as `engram review apply` and leaves the same
+  receipt. Without a terminal, use `engram review export --out <dir>` and
+  `engram review apply <marks.json>`.
 - Playbooks always require explicit review before trusted use; Engram never
   silently executes a workflow — it hands the steps to your AI tool as a passive
   reference and tracks the reported outcome.
@@ -249,7 +258,8 @@ Full data-flow detail is in [Trust model](trust.md) and
 - **Make the AI recall:** *"What did I say before about…"* or *"follow my usual
   style."*
 - **Review the staging queue** periodically (e.g. weekly) with
-  `review_staging(action="list")` — especially if you run `ENGRAM_APPROVAL=strict`.
+  `review_staging(action="list")` — especially if you run `ENGRAM_APPROVAL=strict`;
+  decide it in a terminal with `engram review interactive`.
 - **Check health** with `engram doctor` (identity completeness, knowledge
   volume, stale items, near-duplicates, decision conflicts, encoding health,
   and a health score). It is local diagnostics — review before sharing.

@@ -135,6 +135,12 @@ staged 条目始终在你掌控之中：
 - `review_staging(action="list")`——查看待审内容（冷启动 `get_resume_brief` 也会带出
   待审数量，含高风险项）。
 - 在审查界面里批准、编辑、归档或拒绝。
+- 在终端里运行 `engram review interactive`（或 `engram review -i`），逐条显示待审
+  提案（类型、内容、风险、来源、可能的重复及差异、取代关系），输入一个字母加回车：
+  `a` 批准、`r` 拒绝（可写理由）、`s` 取代一条已批准条目（输入其 id）、`k` 跳过、
+  `v` 查看全文、`q` 结束。确认汇总时输入 `y` 才写入；`n`、输入结束或 Ctrl+C 都不写入。
+  它与 `engram review apply` 走同一条应用路径，回执相同。没有终端时改用
+  `engram review export --out <目录>` 和 `engram review apply <marks.json>`。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。
 
@@ -208,7 +214,7 @@ API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经
 - **让 AI 记住：** *"记住这个……"* 或 *"把这条存成经验。"*
 - **让 AI 回忆：** *"我之前关于……怎么说的？"* 或 *"按我一贯的风格来。"*
 - **定期审查 staging 队列**（比如每周一次）用 `review_staging(action="list")`——尤其
-  当你开了 `ENGRAM_APPROVAL=strict`。
+  当你开了 `ENGRAM_APPROVAL=strict`；在终端里用 `engram review interactive` 逐条审核。
 - **检查健康**用 `engram doctor`（身份完整度、知识量、过期项、近重复、决策冲突、
   编码健康、健康分）。它是本地诊断——分享前先审。
 - **保持整洁：** 知识按类型衰减（偏好约 90 天、调试技巧约 15 天），每类都有
