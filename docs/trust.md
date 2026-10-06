@@ -101,11 +101,13 @@ Each knowledge entry can carry trust-mode metadata:
 |---|---|
 | `memory_state` | Canonical lifecycle state: `staging`, `verified`, `rejected`, or `deprecated` |
 | `approval_status` | User-facing approval state derived from the memory state |
-| `provenance` | Metadata such as `source_tool`, `entry_type`, `created_at`, `domain`, and `project` |
+| `provenance` | Metadata such as `source_tool`, `entry_type`, `created_at`, `domain`, and `project`, plus how the entry was written (`origin`: `mcp`, `cli`, `import` or `local`) and, for MCP writes, the client name and version the client reported. Set when the entry is written; updates cannot change it or `source_tool` |
 | `risk_level` / `risk_flags` | A conservative local signal for risky memory text, such as credentials, executable commands, MCP config, permissions, or external URLs |
 | `approval_required` | True when the entry is staged or high-risk |
 
 These fields are additive. Existing `tier` and `status` values remain supported for backward compatibility.
+
+The client name and version are what the MCP client says about itself. Engram records them so you can see which tool proposed an entry, but they are self-reported, not verified: they never change an entry's risk, tier or review requirement.
 
 ## Recovery and retention dry-runs
 

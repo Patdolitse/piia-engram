@@ -413,6 +413,9 @@ def _print_review_item(item_type: str, item: dict) -> None:
         W._safe_print(f"summary: {item.get('summary') or item.get('title') or ''}")
         if item.get("detail"):
             W._safe_print(f"detail: {item.get('detail')}")
+    from piia_engram.write_provenance import client_card_line
+
+    W._safe_print(client_card_line(item)[2:])
     _print_review_quality_detail(item)
     _print_review_evidence_detail(item)
 

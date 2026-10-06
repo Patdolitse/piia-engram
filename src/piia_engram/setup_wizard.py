@@ -3219,6 +3219,21 @@ def _show_usage_notice(stream) -> None:
         pass
 
 
+def _in_cli_origin(func):
+    """Rows written while ``func`` runs are stamped ``provenance.origin = "cli"``."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        from piia_engram.write_provenance import ORIGIN_CLI, origin_scope
+
+        with origin_scope(ORIGIN_CLI):
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+@_in_cli_origin
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()

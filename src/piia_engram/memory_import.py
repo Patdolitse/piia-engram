@@ -339,6 +339,7 @@ def write_items(
     """
     from .reconcile import _insert_outcome
     from .storage import hold_directory_lock, overflow_batch_scope
+    from .write_provenance import ORIGIN_IMPORT, origin_scope
 
     result: dict[str, Any] = {
         "items": [], "imported": 0, "duplicates": 0, "queue_full": 0,
@@ -356,6 +357,7 @@ def write_items(
     lock = (hold_directory_lock(Path(eng.root) / RECEIPT_DIR, timeout=_IMPORT_LOCK_TIMEOUT)
             if items else nullcontext())
     with ExitStack() as held:
+        held.enter_context(origin_scope(ORIGIN_IMPORT))
         try:
             held.enter_context(lock)
         except RuntimeError as exc:  # lock wait timed out: nothing was written
@@ -516,10 +518,13 @@ def recording(eng, *, sources, command: str, resource: str, source_tool: str):
     written on the way out, also when the block raises or is interrupted
     (KeyboardInterrupt, SystemExit): then it is marked partial with the error
     class and the exception is re-raised."""
+    from .write_provenance import ORIGIN_IMPORT, origin_scope
+
     record = ImportRecord(eng, sources=sources, command=command, resource=resource,
                           source_tool=source_tool)
     try:
-        yield record
+        with origin_scope(ORIGIN_IMPORT):
+            yield record
     except BaseException as exc:
         _finish_quietly(record, error=type(exc).__name__)
         raise

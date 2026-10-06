@@ -26,7 +26,7 @@ _BUILTIN_PLAYBOOKS: dict[str, dict] = {}
 
 # Content-bearing update fields: a change to any of these is a REVISION under
 # the v4.19 contract (snapshot + version bump). Everything else in
-# _ALLOWED_PLAYBOOK_UPDATE_FIELDS (status, scope, source_tool) is metadata:
+# _ALLOWED_PLAYBOOK_UPDATE_FIELDS (status, scope) is metadata:
 # applied + audited, but never snapshotted and never version-bumping.
 _PLAYBOOK_CONTENT_FIELDS: frozenset = frozenset({
     "title", "description", "triggers", "domain", "steps",
@@ -639,6 +639,9 @@ class PlaybookMixin:
             from .core import _strip_untrusted_freshness_provenance
 
             _strip_untrusted_freshness_provenance(new_pb)
+        from . import write_provenance as _write_provenance
+
+        _write_provenance.stamp(new_pb)
 
         new_pb = self._repair_incoming_text(new_pb)
         if not new_pb.get("title"):

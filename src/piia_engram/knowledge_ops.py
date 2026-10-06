@@ -11,6 +11,7 @@ from . import capacity as _capacity
 from . import freshness_anchors as _freshness_anchors
 from . import provenance as _provenance
 from . import recall_policy as _recall_policy
+from . import write_provenance as _write_provenance
 from .storage import _now_iso, overflow_batch
 
 
@@ -53,7 +54,7 @@ class KnowledgeOpsMixin:
                 "fields": smuggled,
                 "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
             }
-        return None
+        return _write_provenance.update_refusal(str(item.get("id", "")), updates)
 
     def _archived_update_error(self, item_id: str) -> dict | None:
         """The error for an update whose target is only in the overflow archive, else None."""

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from . import capacity as _capacity
+from . import write_provenance as _write_provenance
 from .decision_thread import validate_edges
 from .governance_store import RelationStore, ResolutionStore
 from .storage import (
@@ -496,6 +497,7 @@ class ImportExportMixin:
                 extra = item.get("choice") if kind == "decision" else item.get("domain")
                 seed = f"import:{kind}:{self._entry_identity_text(item, kind)}\n{extra or ''}"
                 item["id"] = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+            _write_provenance.stamp_imported(item)
             prepared.append(self._ensure_fields(item, kind))
         return prepared
 
@@ -623,6 +625,7 @@ class ImportExportMixin:
             provenance["import_source"] = source_name
             provenance["supersedes"] = existing_id
             candidate["provenance"] = provenance
+            _write_provenance.stamp_imported(candidate)
             candidate = self._ensure_fields(candidate, kind)
             rows.append(candidate)
         new_id = str(candidate.get("id") or "")

@@ -21,6 +21,7 @@ from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
 from . import provenance as _provenance
 from . import recall_policy as _recall_policy
+from . import write_provenance as _write_provenance
 
 # (store root, cycle ids) pairs already reported, so a cycle warns once per process.
 _SUPERSEDE_CYCLES_WARNED: set[tuple[str, frozenset]] = set()
@@ -2202,6 +2203,7 @@ class Engram(
 
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_lesson)
+        _write_provenance.stamp(new_lesson)
 
         for _field in _capacity.SYSTEM_FIELDS:
             new_lesson.pop(_field, None)
@@ -2549,6 +2551,9 @@ class Engram(
                 "fields": smuggled,
                 "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
             }
+        immutable = _write_provenance.update_refusal(lesson_id, updates)
+        if immutable:
+            return immutable
         invalid_status = self._invalid_status_error(lesson_id, updates)
         if invalid_status:
             return invalid_status
@@ -2716,6 +2721,7 @@ class Engram(
 
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_decision)
+        _write_provenance.stamp(new_decision)
 
         for _field in _capacity.SYSTEM_FIELDS:
             new_decision.pop(_field, None)
@@ -2984,6 +2990,9 @@ class Engram(
                 "fields": smuggled,
                 "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
             }
+        immutable = _write_provenance.update_refusal(decision_id, updates)
+        if immutable:
+            return immutable
         invalid_status = self._invalid_status_error(decision_id, updates)
         if invalid_status:
             return invalid_status
@@ -2995,7 +3004,6 @@ class Engram(
             "alternatives",
             "status",
             "project",
-            "source_tool",
             "tier",
         }
         content_fields = {"title", "question", "choice", "reasoning", "alternatives"}

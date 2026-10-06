@@ -19,6 +19,7 @@
 - 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明取代它的条目（`superseded_by`）。互相取代形成的环不再让其中任何一条被隐藏，并在审计日志里记一次。`get_resume_brief(include_resume_pack=true)` 的 `review_needed` 每条标 `pending_untrusted`。
 
 ### 新增
+- **条目记录自己从哪里来。** 新写入的经验、决策、playbook 会保存 `provenance.origin`（`mcp`、`cli`、`import` 或 `local`）；经 MCP 写入的还会保存客户端连接时发来的名称和版本，以及归一化的 `client` 标签，没给 `source_tool` 时用这个标签补上。客户端字段是客户端自报，未经验证：不会改变风险、层级或是否需要审核。`engram review export` 和 `engram review show` 会显示它们并注明“客户端自报”。`provenance` 与 `source_tool` 写入后不能再通过更新修改（`update_knowledge` 返回 `provenance_immutable`；此前决策和 playbook 可以改 `source_tool`）。
 - **MCP 工具带上标准标注。** 每个工具现在都会声明只读、破坏性、幂等、开放世界四项标注（只有 `read_web_content` 被标为开放世界，抓取网址正是它的功能）。标注只是给客户端的提示，不是权限控制：权限仍由严格模式与治理负责。
 - **`engram import-memories`。** 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区（`--dry-run`、`--yes`、`--source memories|configs`）。每次导入在 `import_receipts/` 写回执并记审计；重复运行不会重复导入。`engram doctor` 和 `engram status` 会显示可导入条数。
 - **每天一次匿名使用信号（默认开启）。** Engram 现在每天发送一次匿名信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），用来了解有多少安装在使用；不包含任何记忆内容、路径、账号或命令参数，服务器不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`；CI 和容器环境中自动不发；如果你以前关闭过详细统计，这个信号也保持关闭。`engram telemetry status / preview / reset-id` 可查看和控制。详细统计和反馈报告不变（仍需自行开启）。

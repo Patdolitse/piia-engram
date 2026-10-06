@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from . import tombstones as _tombstones
+from . import write_provenance as _write_provenance
 from .staging_review import batch_review_staging
 
 MEM_TYPES = ("rule", "preference", "project_fact", "lesson", "decision")
@@ -154,6 +155,7 @@ def _card(n: int, kind: str, row: dict, root) -> list[str]:
             text = step.get("action", "") if isinstance(step, dict) else str(step)
             lines.append(f"  {i}. {text}")
     lines.append(f"- source: {row.get('source_tool') or 'unknown'}, queued {row.get('queued_at') or row.get('timestamp') or '?'}")
+    lines.append(_write_provenance.client_card_line(row))
     lines.append("")
     return lines
 

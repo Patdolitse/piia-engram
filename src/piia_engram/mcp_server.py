@@ -45,9 +45,35 @@ def _env_flag_enabled(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
+def _current_client_info() -> tuple[str, str]:
+    """clientInfo (name, version) the connected MCP client sent at initialize.
+
+    Read from the live request when there is one (so each session reports its
+    own client), else the first one this process saw; ("", "") when unknown.
+    The values are the client's own claim -- provenance only, never trust.
+    """
+    try:
+        params = mcp.get_context().session.client_params
+        info = getattr(params, "clientInfo", None) if params is not None else None
+        if info is not None:
+            return str(getattr(info, "name", "") or ""), str(getattr(info, "version", "") or "")
+    except Exception:
+        pass  # not inside a request
+    info = _session.client_info if "_session" in globals() else {}
+    return str(info.get("name", "") or ""), str(info.get("version", "") or "")
+
+
 def _locked_engram_call(fn, *args, **kwargs):
-    """Serialize MCP write operations that may read-modify-write JSON stores."""
-    with _write_operation_lock:
+    """Serialize MCP write operations that may read-modify-write JSON stores.
+
+    Every MCP call into the store runs here, so this is also the one place
+    that marks rows written during the call with ``provenance.origin = "mcp"``
+    and the client's self-reported clientInfo (see ``write_provenance``).
+    """
+    client_name, client_version = _current_client_info()
+    with _write_operation_lock, _write_provenance.origin_scope(
+        _write_provenance.ORIGIN_MCP, client_name=client_name, client_version=client_version,
+    ):
         return fn(*args, **kwargs)
 
 
@@ -73,6 +99,7 @@ def _beta(event: str, **data) -> None:
         return
     _track_beta_event(event, **data)
 from piia_engram import provenance as _provenance
+from piia_engram import write_provenance as _write_provenance
 from piia_engram.continuity_digest import build_session_digest as _build_session_digest
 
 # Starlette imports are deferred to SSE mode — not needed for stdio.
