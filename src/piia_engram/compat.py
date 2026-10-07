@@ -481,102 +481,99 @@ def import_from_openclaw(
 
     # --- Import USER.md → profile ---
     if "user" in texts:
-        if True:
-            content = texts["user"]
-            bullets = _parse_md_bullets(content)
-            updates = {}
-            for b in bullets:
-                if b.lower().startswith("role:"):
-                    updates["role"] = b.split(":", 1)[1].strip()
-                elif b.lower().startswith("language:"):
-                    updates["language"] = b.split(":", 1)[1].strip()
-                elif b.lower().startswith("technical level:"):
-                    updates["technical_level"] = b.split(":", 1)[1].strip()
-            if updates:
-                engram.update_profile(updates)
-                imported.append(f"USER.md → profile ({', '.join(updates.keys())})")
+        content = texts["user"]
+        bullets = _parse_md_bullets(content)
+        updates = {}
+        for b in bullets:
+            if b.lower().startswith("role:"):
+                updates["role"] = b.split(":", 1)[1].strip()
+            elif b.lower().startswith("language:"):
+                updates["language"] = b.split(":", 1)[1].strip()
+            elif b.lower().startswith("technical level:"):
+                updates["technical_level"] = b.split(":", 1)[1].strip()
+        if updates:
+            engram.update_profile(updates)
+            imported.append(f"USER.md → profile ({', '.join(updates.keys())})")
 
     # --- Import SOUL.md → preferences + quality_standards ---
     if "soul" in texts:
-        if True:
-            content = texts["soul"]
-            # Simple section-based parsing
-            current_section = ""
-            prefs = {}
-            rules = []
-            for line in content.split("\n"):
-                stripped = line.strip()
-                if stripped.startswith("## "):
-                    current_section = stripped[3:].strip().lower()
-                elif stripped.startswith("- ") and current_section:
-                    value = stripped[2:].strip()
-                    if current_section in ("work preferences", "工作偏好"):
-                        if ":" in value:
-                            k, v = value.split(":", 1)
-                            prefs[k.strip()] = v.strip()
-                    elif current_section in ("quality standards", "质量标准"):
-                        rules.append(value)
-            if prefs:
-                engram.update_preferences({"work_patterns": prefs})
-                imported.append(f"SOUL.md → preferences ({len(prefs)} items)")
-            if rules:
-                existing = engram.get_quality_standards()
-                existing_rules = set(existing.get("rules", []))
-                new_rules = [r for r in rules if r not in existing_rules]
-                if new_rules:
-                    all_rules = list(existing_rules) + new_rules
-                    engram.update_quality_standards({"rules": all_rules[-15:]})
-                    imported.append(f"SOUL.md → quality_standards (+{len(new_rules)} rules)")
+        content = texts["soul"]
+        # Simple section-based parsing
+        current_section = ""
+        prefs = {}
+        rules = []
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                current_section = stripped[3:].strip().lower()
+            elif stripped.startswith("- ") and current_section:
+                value = stripped[2:].strip()
+                if current_section in ("work preferences", "工作偏好"):
+                    if ":" in value:
+                        k, v = value.split(":", 1)
+                        prefs[k.strip()] = v.strip()
+                elif current_section in ("quality standards", "质量标准"):
+                    rules.append(value)
+        if prefs:
+            engram.update_preferences({"work_patterns": prefs})
+            imported.append(f"SOUL.md → preferences ({len(prefs)} items)")
+        if rules:
+            existing = engram.get_quality_standards()
+            existing_rules = set(existing.get("rules", []))
+            new_rules = [r for r in rules if r not in existing_rules]
+            if new_rules:
+                all_rules = list(existing_rules) + new_rules
+                engram.update_quality_standards({"rules": all_rules[-15:]})
+                imported.append(f"SOUL.md → quality_standards (+{len(new_rules)} rules)")
 
     # --- Import MEMORY.md → lessons ---
     if "memory" in texts:
         p = Path(memory_path).expanduser()
-        if True:
-            content = texts["memory"]
-            existing_summaries = {
-                l.get("summary", "") for l in engram.get_lessons(limit=None, _update_access=False)
-            }
-            # Lessons already moved to the overflow archive are not imported again.
-            archived_texts = getattr(engram, "_overflow_archive_texts", None)
-            if callable(archived_texts):
-                existing_summaries |= archived_texts()
-            new_count = 0
-            lesson_lines: list[tuple[str, str]] = []
-            current_section = ""
-            for line in content.split("\n"):
-                stripped = line.strip()
-                if stripped.startswith("## "):
-                    current_section = stripped[3:].strip().lower()
-                elif stripped.startswith("- ") and current_section in (
-                    "lessons learned", "经验教训"
-                ):
-                    text = stripped[2:].strip()
-                    # Remove domain prefix like [python]
-                    domain = ""
-                    if text.startswith("[") and "]" in text:
-                        domain = text[1:text.index("]")]
-                        text = text[text.index("]") + 1:].strip()
-                    if text and text not in existing_summaries:
-                        lesson_lines.append((text, domain))
-                        existing_summaries.add(text)
-            if lesson_lines:
-                with recording(
-                    engram, sources=["openclaw"], command="engram import --format openclaw",
-                    resource="knowledge/import_openclaw", source_tool="openclaw_import",
-                ) as record:
-                    for text, domain in lesson_lines:
-                        result = engram.add_lesson({
-                            "summary": text,
-                            "domain": domain,
-                            "source_tool": "openclaw_import",
-                            "tier": "staging",  # imports wait for review
-                        }, _audit_metadata_only=True)
-                        if note_outcome(record, result, source="openclaw",
-                                        file=_display_path(p), summary=text):
-                            new_count += 1
-                receipt = record.receipt
-            if new_count:
-                imported.append(f"MEMORY.md → lessons (+{new_count}, review queue)")
+        content = texts["memory"]
+        existing_summaries = {
+            l.get("summary", "") for l in engram.get_lessons(limit=None, _update_access=False)
+        }
+        # Lessons already moved to the overflow archive are not imported again.
+        archived_texts = getattr(engram, "_overflow_archive_texts", None)
+        if callable(archived_texts):
+            existing_summaries |= archived_texts()
+        new_count = 0
+        lesson_lines: list[tuple[str, str]] = []
+        current_section = ""
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                current_section = stripped[3:].strip().lower()
+            elif stripped.startswith("- ") and current_section in (
+                "lessons learned", "经验教训"
+            ):
+                text = stripped[2:].strip()
+                # Remove domain prefix like [python]
+                domain = ""
+                if text.startswith("[") and "]" in text:
+                    domain = text[1:text.index("]")]
+                    text = text[text.index("]") + 1:].strip()
+                if text and text not in existing_summaries:
+                    lesson_lines.append((text, domain))
+                    existing_summaries.add(text)
+        if lesson_lines:
+            with recording(
+                engram, sources=["openclaw"], command="engram import --format openclaw",
+                resource="knowledge/import_openclaw", source_tool="openclaw_import",
+            ) as record:
+                for text, domain in lesson_lines:
+                    result = engram.add_lesson({
+                        "summary": text,
+                        "domain": domain,
+                        "source_tool": "openclaw_import",
+                        "tier": "staging",  # imports wait for review
+                    }, _audit_metadata_only=True)
+                    if note_outcome(record, result, source="openclaw",
+                                    file=_display_path(p), summary=text):
+                        new_count += 1
+            receipt = record.receipt
+        if new_count:
+            imported.append(f"MEMORY.md → lessons (+{new_count}, review queue)")
 
     return {
         "status": "success" if imported else "no_new_data",

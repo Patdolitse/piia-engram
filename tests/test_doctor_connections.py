@@ -479,3 +479,14 @@ def test_cli_days_out_of_range(world, monkeypatch, argv):
     with pytest.raises(SystemExit) as exc:
         W.main()
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("argv", [["doctor", "--days", "\u00b2"], ["doctor", "--days=\u00b2"],
+                                  ["doctor", "--json", "--days", "\u0663"]])
+def test_cli_rejects_non_ascii_digits(world, monkeypatch, capsys, argv):
+    monkeypatch.setattr(sys, "argv", ["engram", *argv])
+    with pytest.raises(SystemExit) as exc:
+        W.main()
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err and "--days needs a whole number" in err

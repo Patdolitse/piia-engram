@@ -3331,7 +3331,7 @@ def _run_doctor_cli(args: list[str]) -> int:
         from piia_engram.connection_report import MAX_DAYS
 
         raw = raw.strip()
-        days = int(raw) if raw.isdigit() and len(raw) <= 6 else 0
+        days = int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 6 else 0
         if not 1 <= days <= MAX_DAYS:
             print(f"engram doctor: --days needs a whole number from 1 to {MAX_DAYS}", file=sys.stderr)
             return 2
