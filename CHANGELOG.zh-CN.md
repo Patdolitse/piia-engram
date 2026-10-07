@@ -27,6 +27,8 @@
 - **近重复条目进入待审，不再被直接丢弃。** 经验或决策只有在规范化后与某条有效条目文字完全相同时才按重复拒绝（忽略大小写、标点、空白和开头的“教训：”之类标签，因此只差标点的内容（如版本号）视为相同；决策比较问题（没有问题时用标题）加选择；主人拒绝记录用同一口径，已有的拒绝记录继续生效）。相似度不低于 95% 但不完全相同的条目会写入待审区（非严格模式也一样），带 `duplicate_candidate`（旧条目 id 与相似度）；写入回复会说明这一点，并提示若是修订请用 `supersedes`。只差一个词、可能结论相反的决策不再被丢弃。`allow_similar_new=true` 仍按相关条目写入；相似度 55–95% 的条目照旧写入并互链。Playbook 不变。
 - 审核卡（`engram review export`）对重复候选或近重复条目显示旧条目 id、相似度和逐句差异（最多 40 行）。`review_staging(action="list")` 只显示旧条目 id，不显示正文；`engram preview` 也显示旧条目 id，并显示被拦截条目的客户端自报名称。
 - 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明取代它的条目（`superseded_by`）。互相取代形成的环不再让其中任何一条被隐藏，并在审计日志里记一次。`get_resume_brief(include_resume_pack=true)` 的 `review_needed` 每条标 `pending_untrusted`。
+- **AI 记什么，有了规则。** MCP server 下发的说明（默认与严格两版）和 `engram setup` 写进各 AI 客户端指令文件的 Engram 段落现在写明：只记长期有用的，不记当天进度、待办和临时状态；“昨天”“下周”这类相对日期，只有能确定当时日期时才写成具体日期，否则保留原文并注明“日期未定”；与已有条目矛盾时，先检索旧条目，再提交带 `supersedes=<旧 id>` 的修订，不要另起一条无关联的新条目（严格模式下修订进入待审）。`supersedes` 指向不存在的条目仍会被拒绝（`supersedes_target_not_found`）。
+- `engram setup` 与 `engram doctor --fix` 会把内容是 Engram 以前发布过的默认文案（包括 4.21.2 的严格模式文案）的 Engram 段落刷新为新默认文案。你自己改过的段落逐字节保持不变；setup 和 doctor 会提示可能有更新的默认文案，需要的话手动合并。
 
 ### 新增
 - **`engram import --format openclaw`。** 在本地导入 OpenClaw 的 `SOUL.md` / `MEMORY.md` / `USER.md`（`--soul`、`--memory`、`--user`）。默认只预览（哪些文件存在、各有多少条要点）；`--apply --yes` 才写入：MEMORY.md 的经验与 `engram import-memories` 一样进入待审区并留下回执和审计记录，USER.md / SOUL.md 照旧合并进身份资料、偏好和质量标准。`ENGRAM_RECONCILE=0` 时在读取任何文件前就停止。

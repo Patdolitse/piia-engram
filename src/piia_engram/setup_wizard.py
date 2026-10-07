@@ -391,6 +391,22 @@ _INSTRUCTION_MARKER_END = "<!-- /piia-engram -->"
 # to detect stale (v=1) snippets that lack the auto-resume directive.
 _SNIPPET_FRESHNESS_TOKEN = "get_resume_brief"
 
+# What to keep when distilling a memory (default snippets; the strict body says
+# the same in its own words). No braces: the snippets go through str.format.
+_DISTILL_RULES_ZH = (
+    "- 只记长期有用的内容；当天进度、待办和临时状态不记\n"
+    "- “昨天”“下周”这类相对日期：能确定当时日期就写成具体日期，否则保留原文并注明“日期未定”\n"
+    "- 与已有条目矛盾：先用 `search_knowledge` 找到旧条目，再提交带 `supersedes=<旧 id>` 的修订，"
+    "不要另起一条无关联的新条目\n"
+)
+_DISTILL_RULES_EN = (
+    "- Keep only what stays useful later; skip today's progress, to-dos and temporary state\n"
+    "- Relative dates (\"yesterday\", \"next week\"): write the actual date when you can tell when "
+    "it was said; otherwise keep the words and add \"(date unknown)\"\n"
+    "- Contradicts an existing entry: find the old one with `search_knowledge`, then submit a "
+    "revision with `supersedes=<old id>` instead of an unrelated new entry\n"
+)
+
 # Map: tool_id → (instruction_file_path_fn, snippet)
 # instruction_file_path_fn takes Path.home() and returns the file path
 
@@ -407,7 +423,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- **做出决策**：调用 `add_decision` 记录选择和理由\n"
             "- **对话结束**：调用 `wrap_up_session` 保存上下文\n"
             "- **用户问起历史对话**（“我刚才/之前问过什么”、“上次聊到哪”）：调用 `get_recent_context` 查找\n"
-            "- **搜索历史知识**：调用 `search_knowledge`\n"
+            "- **搜索历史知识**：调用 `search_knowledge`\n" +
+            _DISTILL_RULES_ZH +
             "{marker_end}\n"
         ),
         "snippet_en": (
@@ -420,7 +437,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- **Decisions made**: call `add_decision` to record choice and reasoning\n"
             "- **End of conversation**: call `wrap_up_session` to save context\n"
             "- **User asks about past conversations** (\"what did I just ask\", \"where did we leave off\"): call `get_recent_context`\n"
-            "- **Search past knowledge**: call `search_knowledge`\n"
+            "- **Search past knowledge**: call `search_knowledge`\n" +
+            _DISTILL_RULES_EN +
             "{marker_end}\n"
         ),
     },
@@ -439,7 +457,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 做决策时调用 `add_decision`\n"
             "- 对话结束调用 `wrap_up_session`\n"
             "- 用户问起历史对话（“我刚才/之前问过什么”）调用 `get_recent_context`\n"
-            "- 搜索知识用 `search_knowledge`\n"
+            "- 搜索知识用 `search_knowledge`\n" +
+            _DISTILL_RULES_ZH
         ),
         "snippet_en": (
             "---\n"
@@ -454,7 +473,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Decisions made: call `add_decision`\n"
             "- End of conversation: call `wrap_up_session`\n"
             "- User asks about past conversations (\"what did I just ask\"): call `get_recent_context`\n"
-            "- Search knowledge: call `search_knowledge`\n"
+            "- Search knowledge: call `search_knowledge`\n" +
+            _DISTILL_RULES_EN
         ),
     },
     "codex": {
@@ -468,7 +488,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
             "- 做出决策：调用 `add_decision` 记录\n"
             "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
-            "- 用户问起历史对话（“我刚才/之前问过什么”、“上次聊到哪”）：调用 `get_recent_context` 查找\n"
+            "- 用户问起历史对话（“我刚才/之前问过什么”、“上次聊到哪”）：调用 `get_recent_context` 查找\n" +
+            _DISTILL_RULES_ZH +
             "{marker_end}\n"
         ),
         "snippet_en": (
@@ -480,7 +501,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Lessons learned: call `add_lesson`\n"
             "- Decisions made: call `add_decision`\n"
             "- Task end: call `wrap_up_session` to save context\n"
-            "- User asks about past conversations (\"what did I just ask\", \"where did we leave off\"): call `get_recent_context`\n"
+            "- User asks about past conversations (\"what did I just ask\", \"where did we leave off\"): call `get_recent_context`\n" +
+            _DISTILL_RULES_EN +
             "{marker_end}\n"
         ),
     },
@@ -500,7 +522,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 做出决策：调用 `add_decision` 记录\n"
             "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
             "- 用户问起历史对话（“我刚才/之前问过什么”）：调用 `get_recent_context` 查找\n"
-            "- 搜索历史知识：调用 `search_knowledge`\n"
+            "- 搜索历史知识：调用 `search_knowledge`\n" +
+            _DISTILL_RULES_ZH +
             "{marker_end}\n"
         ),
         "snippet_en": (
@@ -513,7 +536,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Decisions made: call `add_decision`\n"
             "- Task end: call `wrap_up_session` to save context\n"
             "- User asks about past conversations (\"what did I just ask\"): call `get_recent_context`\n"
-            "- Search past knowledge: call `search_knowledge`\n"
+            "- Search past knowledge: call `search_knowledge`\n" +
+            _DISTILL_RULES_EN +
             "{marker_end}\n"
         ),
     },
@@ -534,7 +558,11 @@ _STRICT_SNIPPET_BODY = {
         "- 只提案值得长期保留的内容，一条一个主张：先用 `search_knowledge` 查重；在 domain 里写类型"
         "（type:rule、type:preference、type:project_fact、type:lesson 或 type:decision），"
         "在 detail 里写为什么值得保留。\n"
-        "- 会话日志、进度、检查点，以及文件或 git 里已有的内容，不要提案；写进项目自己的笔记。\n"
+        "- 只提案长期有用的：会话日志、当天进度、待办、临时状态、检查点，以及文件或 git 里已有的内容，"
+        "不要提案；写进项目自己的笔记。\n"
+        "- “昨天”“下周”这类相对日期：能确定当时日期就写成具体日期，否则保留原文并注明“日期未定”。\n"
+        "- 与已有条目矛盾：先用 `search_knowledge` 找到旧条目，再提交带 `supersedes=<旧 id>` 的修订提案"
+        "（同样进入待审），不要另起一条无关联的新条目。\n"
         "- 不要用 `wrap_up_session`、`extract_session_insights`、`save_agent_context` 做自动保存。\n"
         "- 批准、驳回、编辑、合并、导入和身份修改由 Owner 在本地完成，MCP 会拒绝这些操作。\n"
     ),
@@ -549,8 +577,14 @@ _STRICT_SNIPPET_BODY = {
         "- Propose only what is worth keeping, one claim per row: run `search_knowledge` first so "
         "you do not propose a duplicate; label the type in domain (type:rule, type:preference, "
         "type:project_fact, type:lesson or type:decision) and say in detail why it is worth keeping.\n"
-        "- Do not propose session logs, progress notes, checkpoints, or anything already in files "
-        "or git; keep those in the project's own notes.\n"
+        "- Propose only what stays useful later: no session logs, today's progress, to-dos, "
+        "temporary state, checkpoints, or anything already in files or git; keep those in the "
+        "project's own notes.\n"
+        "- Relative dates (\"yesterday\", \"next week\"): write the actual date when you can tell "
+        "when it was said; otherwise keep the words and add \"(date unknown)\".\n"
+        "- Contradicts an existing entry: find the old one with `search_knowledge`, then submit a "
+        "revision with `supersedes=<old id>` (it waits for review too) instead of an unrelated "
+        "new entry.\n"
         "- Do not use `wrap_up_session`, `extract_session_insights` or `save_agent_context` as an "
         "auto-save.\n"
         "- Approving, rejecting, editing, merging, importing and identity changes are the Owner's, "
@@ -566,7 +600,7 @@ _STRICT_CURSOR_HEADER = {
 }
 
 # Fingerprints (see _snippet_fingerprint) of every default snippet Engram has
-# shipped, v=1 and v=2 markers, v3.29.0 through 4.21.1, taken from the git history
+# shipped, v=1 and v=2 markers, v3.29.0 through 4.21.2, taken from the git history
 # of _INSTRUCTION_SNIPPETS. Text inside the markers (or a whole Cursor .mdc) that
 # matches none of these, nor a current default, is the Owner's own text: setup and
 # doctor --fix never overwrite it.
@@ -601,6 +635,11 @@ _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS = frozenset({
     "ca30baf0a71d1080411a41321b6a7fd95b047bcadadca23ad547321e7621bc9c",  # windsurf zh
     "613fad067069ddbc3b26ce9b71e966cab24016f67386e1db45cdc95496032f50",  # windsurf zh
     "66333fa4d8336c1467172889489fccc10c01f2ff37e87e61d579bda107c99a82",  # windsurf zh
+    # 4.21.2 strict (read + propose) text, before the distill rules were added.
+    "d185faf1cc61b62230caaf247d0bba4403dd4f813a5d91a57dc4bdba8d7db005",  # strict zh (marked block)
+    "8661550f037b83c20ec053954ecec6c05676a9583ea381bfa93888070234078d",  # strict en (marked block)
+    "a92d0ad53a563a6ba04d7d51c773005eed8d1a3416327d209c80dd1038a25717",  # cursor strict zh
+    "477fd57e28d527a896652d2c63e73edf42a8385ef410b829b32c59d96678ae59",  # cursor strict en
 })
 
 
@@ -2629,6 +2668,9 @@ def _apply_external_configs(
                  "  📝 Kept your own Engram instruction block (not overwritten):"))
         for path in kept_custom:
             print(f"    {path}")
+        print(_t("    Engram 的默认指令段可能有更新（例如关于记什么的规则）；需要的话请手动合并。",
+                 "    Engram's default block may be newer (for example the rules on what to keep); "
+                 "merge it by hand if you want it."))
     if injected:
         print()
         print(_t("  📝 已注入 AI 指令（确保 AI 主动调用 Engram）：",

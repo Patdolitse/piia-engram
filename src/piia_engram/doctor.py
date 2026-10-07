@@ -1034,6 +1034,10 @@ def _run_functional_checks(*, fix: bool = False) -> int:
             stale_snippets.append(tool_id)
         elif state == "custom":
             W._safe_print(f"    [ok] {tool_id}: your own Engram block in {target_path} (left as is)")
+            W._safe_print(
+                "         If you want Engram's newer default text (for example the rules on what "
+                "to keep), merge it by hand; your block is never overwritten."
+            )
             if W._SNIPPET_FRESHNESS_TOKEN not in content:
                 W._safe_print(
                     f"         It does not mention '{W._SNIPPET_FRESHNESS_TOKEN}'; "
