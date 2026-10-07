@@ -109,6 +109,11 @@ def test_update_knowledge_requires_the_version(eng, kind):
 
     ok = _json(_run(mcp_server.update_knowledge(item["id"], json.dumps(updates), expected_version=1)))
     assert "error" not in ok
+    if kind == "playbook":
+        # an AI's content change of an approved playbook is a pending proposal
+        assert ok["status"] == "pending" and ok["pending_supersedes"] == item["id"]
+        assert int(_row(eng, item["id"]).get("version") or 1) == 1
+        return
     assert int(_row(eng, item["id"]).get("version") or 1) == 2
 
     again = _json(_run(mcp_server.update_knowledge(item["id"], json.dumps({**updates, "x": 1}),

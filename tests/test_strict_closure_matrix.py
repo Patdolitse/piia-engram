@@ -636,15 +636,15 @@ def test_unset_archive_knowledge_over_mcp_and_core_never_tombstones(mcp):
     assert _tombstones(root) == []
 
 
-def test_unset_mcp_batch_reject_tombstone_names_the_caller(mcp):
+def test_unset_mcp_batch_reject_is_local_review_only(mcp):
     m, root = mcp
     row = m._engram.add_lesson("x", domain="t", tier="staging")
     actions = json.dumps([{"id": row["id"], "action": "reject"}])
 
-    _run(m.review_staging(action="batch", actions_json=actions, dry_run=False, confirm=True))
+    out = json.loads(_run(m.review_staging(action="batch", actions_json=actions, dry_run=False, confirm=True)))
 
-    (stone,) = _tombstones(root)
-    assert stone["via"].startswith("mcp:")
+    assert out["error"] == "local_review_only"
+    assert _tombstones(root) == []
 
 
 def test_plain_archive_of_a_staging_row_writes_no_tombstone(eng, tmp_path):

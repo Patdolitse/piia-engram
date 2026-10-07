@@ -344,7 +344,7 @@ def test_mcp_batch_review_cannot_approve_a_revision_of_a_pinned_entry(eng):
     result = _json(_run(mcp_server.review_staging(
         action="batch", actions_json=json.dumps([{"id": proposal["id"], "action": "approve"}]),
         dry_run=False, confirm=True)))
-    assert result["items"][0]["status"] == "pinned_target"
+    assert result["error"] == "local_review_only"  # deciding proposals is local only over MCP
     assert _store(eng.root) == before
 
 
@@ -679,7 +679,7 @@ def test_mcp_cannot_promote_a_revision_of_a_pinned_entry(eng, tmp_path, capsys):
     for item in (new_lesson, new_decision):  # update_knowledge: tier -> verified
         result = _json(_run(mcp_server.update_knowledge(
             item["id"], json.dumps({"tier": "verified"}), expected_version=_version(eng, item["id"]))))
-        assert result["error"] == "pinned_target", result
+        assert result["error"] == "local_review_only", result
     # the outline review's promote list
     _run(mcp_server.review_staging(action="apply_text", review_text=json.dumps(
         {"promote": [{"id": i["id"]} for i in news], "archive": []})))
@@ -687,13 +687,13 @@ def test_mcp_cannot_promote_a_revision_of_a_pinned_entry(eng, tmp_path, capsys):
     batch = _json(_run(mcp_server.review_staging(
         action="batch", actions_json=json.dumps([{"id": i["id"], "action": "approve"} for i in news]),
         dry_run=False, confirm=True)))
-    assert {item["status"] for item in batch["items"]} == {"pinned_target"}
+    assert batch["error"] == "local_review_only"
     assert _store(eng.root) == before
     # the playbook approval primitive refuses on behalf of an MCP caller as well
     from piia_engram import write_provenance
 
     with write_provenance.origin_scope(write_provenance.ORIGIN_MCP):
-        assert eng.approve_playbook(new_playbook["id"])["status"] == "pinned_target"
+        assert eng.approve_playbook(new_playbook["id"])["status"] == "local_review_only"
     assert _store(eng.root) == before
 
     # the Owner's local review approves the same proposals
@@ -1002,7 +1002,8 @@ def test_onboard_accept_refuses_a_playbook_revision_proposal(eng):
     assert eng._read_playbook_by_id(proposal["id"])["tier"] == "staging"
     before = _store(eng.root)
     result = _json(_run(mcp_server.onboard_accept(proposal["id"])))
-    assert result["error"] == "revision_proposal", result
+    assert result["error"] == "local_review_only", result
+    assert eng.accept_onboard_candidate(proposal["id"])["error"] == "revision_proposal"  # local too
     assert _store(eng.root) == before
 
     plain = eng.add_playbook({"title": "Plain onboard candidate playbook", "steps": [{"action": "y"}],
@@ -1022,6 +1023,9 @@ def test_apply_review_reports_why_a_promotion_did_not_happen(eng):
     from piia_engram import write_provenance
 
     with write_provenance.origin_scope(write_provenance.ORIGIN_MCP):
-        result = eng.apply_review({"promote": [{"id": proposal["id"]}], "archive": []})
+        refused = eng.apply_review({"promote": [{"id": proposal["id"]}], "archive": []})
+    assert refused["error"] == "local_review_only" and refused["promoted"] == 0
+    # locally, the review result says why a promotion did not happen
+    result = eng.apply_review({"promote": [{"id": "no-such-id"}], "archive": []})
     assert result["promoted"] == 0
-    assert f"promote {proposal['id']}: pinned_target" in result["errors"]
+    assert "promote no-such-id: not_found" in result["errors"]

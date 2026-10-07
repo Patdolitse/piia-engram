@@ -501,7 +501,7 @@ def test_version_is_checked_again_right_before_the_write(eng, monkeypatch):
     assert _row(eng, second["id"])["tier"] == "staging"
 
 
-def test_agent_batches_ignore_expected_version_and_reason(tmp_path, monkeypatch):
+def test_agent_batches_are_local_review_only(tmp_path, monkeypatch):
     import asyncio
 
     from piia_engram import mcp_server
@@ -523,9 +523,12 @@ def test_agent_batches_ignore_expected_version_and_reason(tmp_path, monkeypatch)
     out = json.loads(asyncio.run(mcp_server.review_staging(
         action="batch", actions_json=json.dumps(actions), dry_run=False, confirm=True)))
 
-    assert [i["status"] for i in out["items"]] == ["applied", "applied"]
-    assert "AGENT NOTE" not in (root / "knowledge" / "tombstones.jsonl").read_text(encoding="utf-8")
-    assert "AGENT NOTE" not in (root / "audit.log").read_text(encoding="utf-8")
+    # deciding pending proposals is the Owner's local review in every mode
+    assert out["error"] == "local_review_only"
+    assert not (root / "knowledge" / "tombstones.jsonl").exists()
+    assert _row(store, keep["id"])["tier"] == "staging" and _row(store, drop["id"])["tier"] == "staging"
+    audit = root / "audit.log"
+    assert not audit.exists() or "AGENT NOTE" not in audit.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

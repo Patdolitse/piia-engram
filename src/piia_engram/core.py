@@ -24,6 +24,7 @@ from . import recall_policy as _recall_policy
 from . import write_provenance as _write_provenance
 from . import dedup_review as _dedup_review
 from . import pinning as _pinning
+from . import review_boundary as _review_boundary
 
 # (store root, cycle ids) pairs already reported, so a cycle warns once per process.
 _SUPERSEDE_CYCLES_WARNED: set[tuple[str, frozenset]] = set()
@@ -2163,6 +2164,8 @@ class Engram(
         doctor lists a tombstoned row that is still pending, and re-applying the
         same reject mark finishes it (the tombstone append is idempotent).
         """
+        if owner_reject and _review_boundary.mcp_origin():
+            return _review_boundary.refusal(item_id, action="reject")
         if owner_reject:
             _t, before = self._find_item_by_id(item_id)
             if isinstance(before, dict) and before.get("tier") == "staging":
@@ -2653,6 +2656,10 @@ class Engram(
                 if _pinning.mcp_refuses(lesson):
                     result_box["result"] = _pinning.refusal(lesson_id, "lesson", lesson)
                     return lessons
+                decided = _review_boundary.update_refusal(lesson, updates, lesson_id)
+                if decided is not None:
+                    result_box["result"] = decided
+                    return lessons
                 current_version = int(lesson.get("version") or 1)
                 if expected_version is not None and expected_version != current_version:
                     result_box["result"] = {
@@ -3129,6 +3136,10 @@ class Engram(
                     return decisions
                 if _pinning.mcp_refuses(decision):
                     result_box["result"] = _pinning.refusal(decision_id, "decision", decision)
+                    return decisions
+                decided = _review_boundary.update_refusal(decision, updates, decision_id)
+                if decided is not None:
+                    result_box["result"] = decided
                     return decisions
                 current_version = int(decision.get("version") or 1)
                 if expected_version is not None and expected_version != current_version:

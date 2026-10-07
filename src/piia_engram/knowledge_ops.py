@@ -12,6 +12,7 @@ from . import freshness_anchors as _freshness_anchors
 from . import pinning as _pinning
 from . import provenance as _provenance
 from . import recall_policy as _recall_policy
+from . import review_boundary as _review_boundary
 from . import version_guard as _version_guard
 from . import write_provenance as _write_provenance
 from .storage import _now_iso, overflow_batch
@@ -498,6 +499,9 @@ class KnowledgeOpsMixin:
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
+        if _review_boundary.refuses_decision(item):
+            # an Owner confirmation stamp on a pending proposal is a review decision
+            return _review_boundary.refusal(item_id, action="confirm")
 
         ts = _now_iso()
 
@@ -547,6 +551,9 @@ class KnowledgeOpsMixin:
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
+        if item.get("pending_supersedes") and _review_boundary.mcp_origin():
+            # A pending revision replaces another entry: the Owner's local review.
+            return _review_boundary.refusal(item_id, action="onboard_accept")
         if item_type == "playbook" and item.get("pending_supersedes"):
             # A playbook update proposal replaces another playbook when it is
             # approved; that is a review decision (engram review), never an
@@ -1051,9 +1058,12 @@ class KnowledgeOpsMixin:
         ``expected_version`` (optional here, required over MCP) is checked under
         the write lock: a stale value writes nothing (``version_conflict``).
         """
-        item_type, _ = self._find_item_by_id(item_id)
+        item_type, item = self._find_item_by_id(item_id)
         if item_type is None:
             return {"error": f"Item not found: {item_id}"}
+        if _review_boundary.refuses_decision(item) or (_owner_reject and _review_boundary.mcp_origin()):
+            # retiring a pending proposal is the Owner's review decision
+            return _review_boundary.refusal(item_id, action="archive")
         if item_type == "lesson":
             return self.archive_lesson(item_id, _owner_reject=_owner_reject, expected_version=expected_version)
         if item_type == "playbook":

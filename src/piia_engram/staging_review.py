@@ -151,6 +151,26 @@ def batch_review_staging(
             items=items,
         )
 
+    from . import review_boundary as _review_boundary
+
+    if _review_boundary.mcp_origin():
+        # Approving or rejecting a pending proposal is the Owner's local review
+        # in every approval mode; an MCP caller may only preview.
+        for it in items:
+            if it["status"] == "planned":
+                it["status"] = _review_boundary.LOCAL_REVIEW_ONLY
+        payload = _payload(
+            status=_review_boundary.LOCAL_REVIEW_ONLY,
+            dry_run=False,
+            confirmed=bool(confirm),
+            requires_confirmation=False,
+            changed=False,
+            counts=counts,
+            items=items,
+        )
+        payload.update(error=_review_boundary.LOCAL_REVIEW_ONLY, hint=_review_boundary.HINT)
+        return payload
+
     planned = [it for it in items if it["status"] == "planned"]
     if planned and not confirm:
         for it in planned:

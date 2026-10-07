@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import quality_eval as _quality_eval
+from . import review_boundary as _review_boundary
 from .storage import SkipWrite, _now_iso
 
 
@@ -539,6 +540,8 @@ function copyResult() {{
         (e.g. the Dock quality-action surface) — a concurrent change that moved
         the item out of staging can no longer be silently promoted.
         """
+        if _review_boundary.mcp_origin():
+            return dict(_review_boundary.refusal(item_id, action="promote"), id=item_id)
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision"}:
             return {"status": "not_found", "id": item_id}
@@ -593,6 +596,9 @@ function copyResult() {{
         Returns:
             Summary dict with promoted/archived counts and details.
         """
+        if _review_boundary.mcp_origin():
+            # applying review results is the Owner's local review, in every mode
+            return dict(_review_boundary.refusal(action="apply_review"), promoted=0, archived=0)
         items_to_archive: list[dict] = []
         items_to_promote: list[dict] = []
 

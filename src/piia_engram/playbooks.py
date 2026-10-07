@@ -11,6 +11,7 @@ from typing import Any
 
 from . import pinning as _pinning
 from . import recall_policy as _recall_policy
+from . import review_boundary as _review_boundary
 from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
 from .storage import ReadOnlyStoreError
@@ -34,6 +35,16 @@ _PLAYBOOK_CONTENT_FIELDS: frozenset = frozenset({
     "title", "description", "triggers", "domain", "steps",
     "preconditions", "pitfalls", "outcome", "parameters",
     "required_tools", "tool_refs", "source_url",
+})
+
+
+# Fields an update proposal never copies from the row it revises.
+_PROPOSAL_DROP_FIELDS: frozenset = frozenset({
+    "id", "timestamp", "created_at", "last_updated", "last_reviewed", "access_count", "version",
+    "tier", "memory_state", "approval_status", "approval_required", "promoted_at", "promotion_reason",
+    "pending_supersedes", "status", "snapshot_of", "superseded_by", "superseded_at", "labeling",
+    # The proposer is a new writer: the provenance stamp fills source_tool.
+    "source_tool",
 })
 
 
@@ -641,7 +652,9 @@ class PlaybookMixin:
 
     def approve_playbook(self, playbook_id: str) -> dict:
         """Owner approval: a pending playbook becomes verified; an approved update
-        proposal retires the row it replaces."""
+        proposal retires the row it replaces. Never over MCP (local review only)."""
+        if _review_boundary.mcp_origin():
+            return _review_boundary.refusal(playbook_id, action="approve")
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"status": "not_found", "id": playbook_id}
@@ -673,6 +686,8 @@ class PlaybookMixin:
 
     def reject_playbook(self, playbook_id: str, *, _owner_reject: str) -> dict:
         """Owner reject mark: tombstone first, then archive the pending row."""
+        if _review_boundary.mcp_origin():
+            return _review_boundary.refusal(playbook_id, action="reject")
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
@@ -1794,6 +1809,9 @@ class PlaybookMixin:
             return refusal
         if _pinning.mcp_refuses(current):
             return _pinning.refusal(playbook_id, "playbook", current)
+        decided = _review_boundary.update_refusal(current, updates, playbook_id)
+        if decided is not None:
+            return decided
         current_version = int(current.get("version") or 1)
         if expected_version is not None and expected_version != current_version:
             return {
@@ -1803,6 +1821,24 @@ class PlaybookMixin:
                 "actual_version": current_version,
                 "current_version": current_version,
             }
+        if _pinning.mcp_origin() and not self.is_pending_playbook(current):
+            # An AI's content change of an approved playbook is a pending
+            # revision proposal through every entry point; the approved
+            # version stays in use until the Owner approves the new one.
+            content_keys = {
+                key for key, value in updates.items()
+                if key in _PLAYBOOK_CONTENT_FIELDS and value != current.get(key)
+            }
+            if content_keys:
+                if "status" in updates and updates["status"] != current.get("status", "active"):
+                    return {
+                        "error": "mixed_update",
+                        "item_id": playbook_id,
+                        "changed": False,
+                        "message": "A content change of an approved playbook is a proposal and a status "
+                                   "change is a direct edit; send them as two calls.",
+                    }
+                return self.propose_playbook_update(playbook_id, updates)
 
         allowed_updates = {
             key: value
@@ -1837,6 +1873,10 @@ class PlaybookMixin:
                 return pb
             if _pinning.mcp_refuses(pb):
                 outcome["error"] = _pinning.refusal(playbook_id, "playbook", pb)
+                return pb
+            decided_live = _review_boundary.update_refusal(pb, allowed_updates, playbook_id)
+            if decided_live is not None:
+                outcome["error"] = decided_live
                 return pb
             live_version = int(pb.get("version") or 1)
             if expected_version is not None and expected_version != live_version:
@@ -1895,6 +1935,28 @@ class PlaybookMixin:
             )
         self._audit.log("write", "playbooks", detail=f"updated {playbook_id}")
         return result
+
+    def propose_playbook_update(self, playbook_id: str, updates: dict) -> dict:
+        """A revision of ``playbook_id`` as a new pending row (the full merged
+        content, ``pending_supersedes`` = the row it replaces); the current row
+        is not touched. Owner approval retires the old one."""
+        current = self._read_playbook_by_id(playbook_id)
+        if current is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+        merged = {k: v for k, v in current.items() if k not in _PROPOSAL_DROP_FIELDS}
+        merged.update(updates)
+        merged.pop("status", None)
+        result = self.add_playbook(merged, allow_similar_new=True, _update_proposal_of=playbook_id)
+        if result.get("error") or result.get("status") in (
+            "duplicate", "rejected_before", "duplicate_retired", "queue_full", "id_exists",
+        ):
+            return result
+        return {
+            "status": "pending", "id": result.get("id"), "pending_supersedes": playbook_id,
+            "changed": False,
+            "message": "Update proposal saved; the current playbook stays in use until the Owner approves "
+                       "it with engram review.",
+        }
 
     def archive_playbook(self, playbook_id: str, expected_version: int | None = None) -> dict:
         """Mark a playbook as outdated without deleting it."""
@@ -2016,6 +2078,8 @@ class PlaybookMixin:
             return {"error": f"Playbook not found: {playbook_id}"}
         if _pinning.mcp_refuses(pb):
             return _pinning.refusal(playbook_id, "playbook", pb)
+        if _review_boundary.refuses_decision(pb):
+            return _review_boundary.refusal(playbook_id, action="delete")
         stale = self._playbook_version_conflict(playbook_id, pb, expected_version)
         if stale is not None:
             return stale
@@ -2075,6 +2139,9 @@ class PlaybookMixin:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        if _review_boundary.refuses_decision(pb):
+            # a retired proposal comes back only through the Owner's review
+            return _review_boundary.refusal(playbook_id, action="restore")
         stale = self._playbook_version_conflict(playbook_id, pb, expected_version)
         if stale is not None:
             return stale

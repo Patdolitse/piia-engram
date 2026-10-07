@@ -411,13 +411,17 @@ async def review_staging(
     """知识评审统一入口：列队列 / 批量审批 / 单条复习 / 执行审查结果。 / Unified knowledge review: list the staging queue, batch-approve, refresh one item, or apply review-page results.
 
     用途：action=list 查看待审核 staging 候选（metadata-only，只返回 id/类型/领域/
-    计数，不回显正文）；batch 批量 approve/reject staging 候选（默认 dry_run 预览，
-    confirm=True 才落盘）；review_item 标记单条知识"已复习"（只刷新 last_reviewed，
-    不改内容）；apply_text 执行审查页面粘贴回来的归档结果。
+    计数，不回显正文）；batch 只做 approve/reject 预览（dry_run=True）；review_item
+    标记单条知识"已复习"（只刷新 last_reviewed，不改内容）。
     Purpose: action=list inspects pending staging candidates (metadata-only);
-    batch approves/rejects candidates (dry-run preview by default); review_item
-    marks one knowledge item as reviewed; apply_text executes archive results
-    pasted back from the review page.
+    batch previews approve/reject (dry_run=True); review_item marks one
+    knowledge item as reviewed.
+
+    批准、拒绝、归档待审提案只能由主人在本地 engram review 中完成（任何模式）：
+    经 MCP 的 batch 落盘（dry_run=False）与 apply_text 返回 local_review_only，零写入。
+    Approving, rejecting or archiving pending proposals is the Owner's local
+    engram review in every mode: an applying batch (dry_run=False) and
+    apply_text return local_review_only over MCP and write nothing.
 
     Cross-queue visibility: list 响应附带 ``other_queues`` —— 其他待审积压的计数
     （如 playbook scope review），空 staging 队列不会掩盖其他待办。
@@ -425,15 +429,15 @@ async def review_staging(
     hides pending work elsewhere.
 
     Args:
-        action: list（默认）| batch | review_item | apply_text。
+        action: list（默认）| batch（仅预览）| review_item。apply_text 仅限本地。 / list (default) | batch (preview only) | review_item; apply_text is local only.
         actions_json: JSON array of {"id": "...", "action": "approve|reject"}（batch）。
-        confirm: 与 dry_run=False 同时为 True 才真正变更（batch）。 / Must be true together with dry_run=false to mutate (batch).
-        dry_run: 默认 True 只预览不变更（batch）。 / Defaults to true; no knowledge is changed when true (batch).
+        confirm: 经 MCP 不会落盘；保留用于兼容。 / Never applies over MCP; kept for compatibility.
+        dry_run: 必须为 True（预览）；False 返回 local_review_only。 / Must be true (preview); false returns local_review_only.
         filters_json: 过滤 JSON 对象，如 {"type":"decision","domain":"release"}（list/batch）。 / Filters JSON object (list/batch).
         limit: 列表条数上限（list）。 / Max pending items to list.
         offset: 列表偏移（list）。 / Pending-list offset.
         knowledge_id: 要复习的知识条目 ID（review_item）。 / ID of the knowledge item to refresh (review_item).
-        review_text: 审查结果文本或 JSON 字符串（apply_text）。 / Review results text or JSON string (apply_text).
+        review_text: 仅限本地（apply_text 经 MCP 返回 local_review_only）。 / Local only (apply_text returns local_review_only over MCP).
     """
     # a4: write-path governance gate — must run unconditionally BEFORE action
     # validation so a low-trust caller gets a governance refusal, never an
@@ -453,6 +457,11 @@ async def review_staging(
         return S._gov_rt._strict_mode.refuse(
             S._get_engram().root, tool="review_staging", detail=f"action={action or '?'}"
         )
+    if (action == "batch" and dry_run is not True) or action == "apply_text":
+        # Deciding pending proposals is the Owner's local review in every mode.
+        from piia_engram import review_boundary as _review_boundary
+
+        return S._json(_review_boundary.refusal(action=action))
     if action == "list":
         try:
             filters = json.loads(filters_json or "{}")
@@ -513,26 +522,9 @@ async def review_staging(
         # full stored item. Gate the returned item (Codex round-16 P1-3).
         result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="review_staging")
         return S._json(result)
-    if action == "apply_text":
-        if not review_text:
-            return (
-                "action=apply_text 需要提供 review_text。 "
-                "/ action=apply_text requires review_text."
-            )
-        # Try to parse as JSON first
-        try:
-            data = json.loads(review_text)
-            if isinstance(data, dict) and "archive" in data:
-                result = S._locked_engram_call(S._get_engram().apply_review, data)
-                return S._json(result)
-        except (ValueError, TypeError):
-            pass
-        # Treat as text format
-        result = S._locked_engram_call(S._get_engram().apply_review, review_text)
-        return S._json(result)
     return (
-        f"未知 action: {action}。可用: list / batch / review_item / apply_text。 "
-        f"/ Unknown action: {action}. Available: list / batch / review_item / apply_text."
+        f"未知 action: {action}。可用: list / batch / review_item。 "
+        f"/ Unknown action: {action}. Available: list / batch / review_item."
     )
 
 

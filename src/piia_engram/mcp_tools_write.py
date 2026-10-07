@@ -718,41 +718,13 @@ _EXECUTION_USAGE_POLICY = (
 )
 
 
-_PROPOSAL_DROP_FIELDS = frozenset({
-    "id", "timestamp", "created_at", "last_updated", "last_reviewed", "access_count", "version",
-    "tier", "memory_state", "approval_status", "approval_required", "promoted_at", "promotion_reason",
-    "pending_supersedes", "status", "snapshot_of", "superseded_by", "superseded_at", "labeling",
-    # The proposer is a new writer: the provenance stamp fills source_tool.
-    "source_tool",
-})
-
-
 def _playbook_update_proposal(playbook_id: str, updates: dict) -> str:
-    """Strict: an update is a new pending row holding the full merged content."""
+    """An update of an approved playbook is a new pending row holding the full
+    merged content (a fresh server-side id); the approved row is untouched."""
     eng = S._get_engram()
-    current = eng._read_playbook_by_id(playbook_id)
-    if current is None:
-        return S._json({"error": f"Playbook not found: {playbook_id}"})
-    merged = {k: v for k, v in current.items() if k not in _PROPOSAL_DROP_FIELDS}
-    merged.update(updates)
-    # A fresh id: the default id is derived from title + timestamp and could
-    # collide with the row this proposal replaces.
-    import hashlib as _hashlib
-    import time as _time
-
-    merged["id"] = _hashlib.sha256(
-        f"proposal:{playbook_id}:{_time.time_ns()}".encode("utf-8")
-    ).hexdigest()[:12]
-    result = S._locked_engram_call(
-        eng.add_playbook, merged, allow_similar_new=True, _update_proposal_of=playbook_id,
-    )
+    result = S._locked_engram_call(eng.propose_playbook_update, playbook_id, updates)
     S._track("manage_playbook", success=not result.get("error"))
-    if _insert_refused(result) or result.get("status") == "duplicate":
-        return S._json(result)
-    return S._json({
-        "status": "pending", "id": result.get("id"), "pending_supersedes": playbook_id,
-        "message": "Update proposal saved; the current playbook stays in use until the Owner approves.",
-    })
+    return S._json(result)
 
 
 def _mark_pending_playbook(item):
