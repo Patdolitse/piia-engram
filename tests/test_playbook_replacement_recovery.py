@@ -267,3 +267,64 @@ def test_caller_cannot_supply_a_recovery_handoff(eng):
                               "_replacement_in_progress": {"target": "old", "proposal_version": 1, "target_version": 1}},
                              _replacement_in_progress={"target": "other", "proposal_version": 1, "target_version": 1})
     assert "_replacement_in_progress" not in eng._read_playbook_by_id(result["id"])
+
+
+@pytest.mark.parametrize("mark_kind", ["approve", "supersede"])
+@pytest.mark.parametrize("pinned", [False, True])
+@pytest.mark.parametrize("failures", [1, 2])
+def test_retirement_index_interruption_is_repaired_before_approval(eng, tmp_path, monkeypatch,
+                                                                 mark_kind, pinned, failures):
+    from piia_engram.storage import ReadOnlyStoreError, _read_json
+
+    old, new = _revision(eng, "Recover both retirement records")
+    if pinned:
+        assert pinning.pin(eng, old["id"])["status"] == "pinned"
+    mark = "supersede:" + old["id"] if mark_kind == "supersede" else "approve"
+    real_index = Engram._update_playbook_index
+    interrupted = []
+
+    def fail_index(self, mutator):
+        body = _read_json(self._playbook_path(old["id"]))
+        if body.get("status") == "outdated" and len(interrupted) < failures:
+            index = _read_json(self._playbooks_dir / "_index.json")
+            assert next(r for r in index if r["id"] == old["id"])["status"] == "active"
+            pending = _read_json(self._playbook_path(new["id"]))
+            assert pending["tier"] == "staging" and pending["_replacement_in_progress"]["target"] == old["id"]
+            interrupted.append(True)
+            raise OSError("interrupted retirement index commit")
+        return real_index(self, mutator)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(Engram, "_update_playbook_index", fail_index)
+        for _attempt in range(failures):
+            with pytest.raises(OSError, match="retirement index"):
+                _apply(tmp_path, new["id"], mark, expected_version=1)
+            assert eng._read_playbook_by_id(old["id"])["status"] == "outdated"
+            assert eng.is_pending_playbook(eng._read_playbook_by_id(new["id"]))
+    assert len(interrupted) == failures
+    retired_body = eng._playbook_path(old["id"]).read_bytes()
+    before_read_only = [eng._playbook_path(i).read_bytes() for i in (old["id"], new["id"])]
+    stale_index = (eng._playbooks_dir / "_index.json").read_bytes()
+    reader = Engram(root=eng.root, read_only=True)
+    assert reader.approve_playbook(new["id"], expected_version=1)["error"] == "read_only"
+    with pytest.raises(ReadOnlyStoreError):
+        reader._retire_replaced_playbook(old["id"], new["id"])
+    assert [eng._playbook_path(i).read_bytes() for i in (old["id"], new["id"])] == before_read_only
+    assert (eng._playbooks_dir / "_index.json").read_bytes() == stale_index
+    # Recovery uses fresh on-disk state, not an exception handler or old handle.
+    fresh = Engram(root=eng.root)
+    assert _apply(tmp_path, new["id"], mark, expected_version=1) == 0
+    old_body = _read_json(fresh._playbook_path(old["id"]))
+    old_index = next(r for r in _read_json(fresh._playbooks_dir / "_index.json") if r["id"] == old["id"])
+    assert old_body["status"] == old_index["status"] == "outdated"
+    assert not pinning.has_pin(old_body)
+    assert fresh._playbook_path(old["id"]).read_bytes() == retired_body
+    approved = fresh._read_playbook_by_id(new["id"])
+    assert approved["tier"] == "verified" and approved["approval_status"] == "approved"
+    assert "_replacement_in_progress" not in approved
+    assert {r["id"] for r in fresh.get_playbooks()} == {new["id"]}
+    before = [fresh._playbook_path(i).read_bytes() for i in (old["id"], new["id"])]
+    before_index = (fresh._playbooks_dir / "_index.json").read_bytes()
+    assert _apply(tmp_path, new["id"], mark, expected_version=1) == 0
+    assert [fresh._playbook_path(i).read_bytes() for i in (old["id"], new["id"])] == before
+    assert (fresh._playbooks_dir / "_index.json").read_bytes() == before_index

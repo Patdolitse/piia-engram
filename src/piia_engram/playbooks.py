@@ -725,8 +725,35 @@ class PlaybookMixin:
         return target
 
     def _retire_replaced_playbook(self, old_id: str, new_id: str) -> None:
+        """Finish retirement of both body and index under the caller's review locks.
+
+        The replacement handoff remains durable until this operation succeeds,
+        so a retry repairs an index commit interrupted after the body retired.
+        """
+        from .storage import SkipWrite
+
+        if getattr(self, "_read_only", False):
+            raise ReadOnlyStoreError("read-only handle: refused replacement retirement")
         _pinning.auto_unpin(self, old_id, reason="superseded", by=new_id)
-        self.archive_playbook(old_id)
+        old = self._read_playbook_by_id(old_id)
+        if old is not None and old.get("status", "active") == "active":
+            self.archive_playbook(old_id)
+            old = self._read_playbook_by_id(old_id)
+        if old is None or old.get("status") != "outdated":
+            raise ValueError("replacement target is not retired")
+        idx_entry = self._playbook_index_entry(old)
+
+        def _reconcile(index: list[dict]) -> list[dict]:
+            for i, entry in enumerate(index):
+                if playbook_id_key(entry.get("id")) == playbook_id_key(old_id):
+                    if entry == idx_entry:
+                        raise SkipWrite
+                    index[i] = idx_entry
+                    return index
+            index.append(idx_entry)
+            return index
+
+        self._update_playbook_index(_reconcile)
 
     def approve_playbook(self, playbook_id: str, expected_version: int | None = None) -> dict:
         """Owner approval: a pending playbook becomes verified; an approved update
@@ -789,8 +816,9 @@ class PlaybookMixin:
                 # Persist BEFORE retirement, under the same review locks. Failure
                 # after retirement must not erase the chosen target or versions.
                 self._update_playbook_file_by_id(playbook_id, lambda r: {**r, "_replacement_in_progress": state})
-            if old.get("status", "active") == "active":
-                self._retire_replaced_playbook(old_id, playbook_id)
+            # Even an already-retired body can have an unfinished index commit.
+            # Complete both records before approval clears the durable handoff.
+            self._retire_replaced_playbook(old_id, playbook_id)
         self._update_playbook_file_by_id(playbook_id, _approve)
         self._audit.log("write", "playbooks", detail=f"approved {playbook_id}")
         return {"status": "promoted", "id": playbook_id, "retired": old_id or None}
