@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from piia_engram import setup_wizard as W  # noqa: F401  (import order: avoids a cycle)
+from piia_engram import claude_code_mcp as M
 from piia_engram import connection_report as C
 from piia_engram import doctor
 from piia_engram.core import Engram
@@ -331,28 +332,34 @@ def test_claude_user_config_without_engram_is_not_configured(home, tmp_path):
     assert _SECRET not in json.dumps(report)
 
 
-def test_claude_dot_mcp_json_is_still_detected(home, tmp_path):
+def test_claude_dot_mcp_json_alone_is_an_old_location(home, tmp_path):
+    # Claude Code does not read ~/.claude/.mcp.json: an entry there is not "configured".
     _write(home / ".claude" / ".mcp.json", json.dumps({"mcpServers": {"engram": _entry(tmp_path / "store")}}))
     _claude_json(home, {"mcpServers": {}})
-    row = _by_tool(C.build_report(tmp_path / "store", days=14))["claude_code"]
-    assert row["config_status"] == "configured"
+    report = C.build_report(tmp_path / "store", days=14)
+    row = _by_tool(report)["claude_code"]
+    assert row["config_status"] == "legacy_only"
+    assert row["verdict"] == "legacy_location"
     assert row["config_path"] == "~/.claude/.mcp.json"
+    text = "\n".join(C.render_text(report))
+    assert "does not read" in text and "engram setup" in text
+    assert _SECRET not in text
 
 
-def test_user_config_detection_does_not_change_where_setup_writes(home, tmp_path):
+def test_setup_never_writes_the_claude_user_config(home, tmp_path):
     claude_json = _claude_json(home, {"mcpServers": {"engram": _entry(tmp_path / "store")}})
     (home / ".claude").mkdir()
     before = claude_json.read_bytes()
 
-    assert W._tool_configs()["claude_code"]["config_paths"] == [home / ".claude" / ".mcp.json"]
-    assert all(Path(t["config_path"]).name != ".claude.json" for t in doctor._detect_installed_tools())
+    assert W._tool_configs()["claude_code"]["config_paths"] == [home / ".claude.json"]
     tool = next(t for t in W._detect_tools() if t["id"] == "claude_code")
-    assert tool["config_path"] == home / ".claude" / ".mcp.json"
-    W._write_tool_mcp_config(tool, sys.executable, "piia_engram.mcp_server",
-                             str(tmp_path / "store"), file_safety_root=tmp_path / "store",
-                             authorized_external_write=True)
+    assert tool["register_via"] == "claude_cli"
+    with pytest.raises(ValueError):
+        W._write_tool_mcp_config(tool, sys.executable, "piia_engram.mcp_server",
+                                 str(tmp_path / "store"), file_safety_root=tmp_path / "store",
+                                 authorized_external_write=True)
 
-    assert (home / ".claude" / ".mcp.json").is_file()
+    assert not (home / ".claude" / ".mcp.json").exists()
     assert claude_json.read_bytes() == before
 
 
@@ -455,7 +462,7 @@ def test_an_oversized_claude_user_config_is_undetermined(home, tmp_path, monkeyp
     store = tmp_path / "store"
     Engram(root=store)
     _claude_json(home, {"mcpServers": {"engram": _entry(store)}})
-    monkeypatch.setattr(C, "MAX_CLAUDE_JSON_BYTES", 10)
+    monkeypatch.setattr(M, "MAX_USER_CONFIG_BYTES", 10)
     report = C.build_report(store, days=14)
     row = _by_tool(report)["claude_code"]
     assert row["config_status"] == "undetermined"
@@ -534,8 +541,8 @@ def test_doctor_counts_claude_user_config_as_configured(home, tmp_path, where):
     tool = _claude_tool()
     assert tool is not None and tool["status"] == "configured"
     assert tool["detect_only"] is True
-    # The write target stays where setup writes; nothing from the file is kept.
-    assert tool["config_path"] == home / ".claude" / ".mcp.json"
+    # Nothing from the file is kept.
+    assert tool["config_path"] == home / ".claude.json"
     assert tool["servers"] == {} and tool["config"] == {}
     assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "configured"
 
@@ -547,17 +554,18 @@ def test_doctor_counts_claude_user_config_as_configured(home, tmp_path, where):
     assert _SECRET not in out and str(home / "proj") not in out
 
 
-def test_doctor_with_only_dot_mcp_json_is_unchanged(home, tmp_path):
+def test_doctor_with_only_dot_mcp_json_reports_the_old_location(home, tmp_path):
     store = tmp_path / "store"
     _claude_layout(home, store, user_config=None, dot_mcp=True)
 
     tool = _claude_tool()
-    assert tool["status"] == "configured" and not tool.get("detect_only")
-    assert "engram" in tool["servers"]
-    assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "configured"
+    assert tool["status"] == "legacy" and tool["detect_only"] is True
+    assert tool["servers"] == {}
+    assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "legacy_only"
     out = _doctor_text()
-    assert "[ok] Claude Code — Engram configured" in out
-    assert "Claude Code — Engram NOT configured" not in out
+    assert "[ok] Claude Code" not in out
+    assert "Claude Code — Engram entry only in ~/.claude/.mcp.json" in out
+    assert _SECRET not in out
 
 
 @pytest.mark.parametrize("user_config", [None, "other"])
@@ -568,7 +576,7 @@ def test_doctor_without_any_engram_entry_says_not_configured(home, tmp_path, use
 
     tool = _claude_tool()
     assert tool["status"] == "installed"
-    assert tool["config_path"] == home / ".claude" / ".mcp.json"
+    assert tool["config_path"] == home / ".claude.json"
     assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "not_configured"
     out = _doctor_text()
     assert "Claude Code — Engram NOT configured" in out
@@ -584,26 +592,27 @@ def test_doctor_user_config_alone_without_claude_dir_is_detected(home, tmp_path)
     assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "not_configured"
 
 
-def test_doctor_with_both_configs_validates_the_dot_mcp_json_entry(home, tmp_path):
+def test_doctor_with_both_configs_counts_the_user_config_and_notes_the_old_file(home, tmp_path):
     store = tmp_path / "store"
     _claude_layout(home, store, user_config="top", dot_mcp=True)
 
     tool = _claude_tool()
-    assert tool["status"] == "configured" and not tool.get("detect_only")
-    assert tool["config_path"] == home / ".claude" / ".mcp.json"
-    assert "engram" in tool["servers"]
+    assert tool["status"] == "configured" and tool["detect_only"] is True
+    assert tool["config_path"] == home / ".claude.json"
+    assert tool["servers"] == {}
     row = _by_tool(C.build_report(store, days=14))["claude_code"]
-    assert row["config_status"] == "configured" and row["config_path"] == "~/.claude/.mcp.json"
+    assert row["config_status"] == "configured" and row["config_path"] == "~/.claude.json"
     out = _doctor_text()
-    assert "[ok] Claude Code — Engram configured" in out
-    assert "NOT configured" not in out.split("Claude Code", 1)[1].splitlines()[0]
+    assert "[ok] Claude Code — Engram configured (in ~/.claude.json)" in out
+    assert "~/.claude/.mcp.json still holds an Engram entry" in out
+    assert _SECRET not in out
 
 
 def test_doctor_too_large_user_config_is_undetermined_not_unconfigured(home, tmp_path, monkeypatch):
     store = tmp_path / "store"
     (home / ".claude").mkdir()
     _claude_layout(home, store, user_config="top", dot_mcp=False)
-    monkeypatch.setattr(C, "MAX_CLAUDE_JSON_BYTES", 8)
+    monkeypatch.setattr(M, "MAX_USER_CONFIG_BYTES", 8)
 
     tool = _claude_tool()
     assert tool["status"] == "undetermined" and tool["detect_only"] is True

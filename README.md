@@ -320,9 +320,17 @@ Don't take the table above on faith — run the checks on your own machine:
 engram setup
 # Skip the confirmation prompt for non-interactive/CI runs
 engram setup --apply-external-config
-# Or manual:
-claude mcp add piia-engram -- piia-engram-mcp
+# Or manual (user scope, available in all your projects):
+claude mcp add --scope user engram -- piia-engram-mcp
 ```
+
+Setup registers Engram through the `claude` command into Claude Code's user
+config (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`); it never edits
+that file itself. If `claude` is not on your `PATH`, setup prints the exact
+command to run. Engram also recognises an entry named `piia-engram` from
+earlier instructions. Setup versions before this fix wrote to
+`~/.claude/.mcp.json`, which Claude Code does not read: run `engram setup`
+again to register in the right place (it offers to remove the old entry).
 
 </details>
 

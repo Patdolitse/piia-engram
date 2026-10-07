@@ -51,7 +51,13 @@ Every knowledge record has a `source_tool` field marking which tool wrote it. It
 
 Each AI tool needs to be configured with Engram as an MCP Server:
 
-**Claude Code** - in `~/.claude/` or the project's `.mcp.json`:
+**Claude Code** - register it at user scope with the `claude` command
+(Claude Code keeps it in `~/.claude.json`; it does not read
+`~/.claude/.mcp.json`):
+```bash
+claude mcp add --scope user engram -- piia-engram-mcp
+```
+A project can instead share it in a `.mcp.json` at the project root:
 ```json
 {
   "mcpServers": {

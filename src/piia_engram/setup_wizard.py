@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
+from piia_engram import claude_code_mcp as _claude_code_mcp
 
 import importlib.util
 import hashlib
@@ -284,9 +285,13 @@ def _tool_configs() -> dict:
 
     configs: dict = {
         # ── 已验证（团队实测） ─────────────────────────────
+        # Claude Code keeps user-scope MCP servers in ~/.claude.json (or
+        # $CLAUDE_CONFIG_DIR/.claude.json). setup never writes that file: it
+        # registers through `claude mcp add --scope user` (claude_code_mcp).
         "claude_code": {
             "name": "Claude Code",
-            "config_paths": [home / ".claude" / ".mcp.json"],
+            "config_paths": [_claude_code_mcp.user_config_path()],
+            "register_via": "claude_cli",
             "verified": True,
         },
         "cursor": {
@@ -1371,6 +1376,18 @@ def _detect_tools() -> list[dict]:
     """检测已安装的 AI 工具，返回可配置的工具列表。"""
     detected = []
     for tool_id, cfg in _tool_configs().items():
+        if cfg.get("register_via") == "claude_cli":
+            # Registered through the claude command; the file is only read.
+            if _claude_code_mcp.is_installed():
+                detected.append({
+                    "id": tool_id,
+                    "name": cfg["name"],
+                    "config_path": _claude_code_mcp.user_config_path(),
+                    "format": "json",
+                    "server_key": "mcpServers",
+                    "register_via": "claude_cli",
+                })
+            continue
         for config_path in cfg["config_paths"]:
             # 配置文件已存在，或父目录存在（工具已装但未配置 MCP）
             if config_path.exists() or config_path.parent.exists():
@@ -1639,6 +1656,41 @@ def _write_mcp_config(
     if removed:
         print(f"  [migrated] removed legacy server(s): {', '.join(removed)}")
 
+    servers["engram"] = _engram_server_entry(
+        python_path,
+        mcp_server_path,
+        data_dir,
+        existing_env=existing_env,
+        extra_env=extra_env,
+        engram_tools=engram_tools,
+        store_root=file_safety_root,
+    )
+
+    _write_config_text_with_backup(
+        config_path,
+        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+        backup_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
+    )
+
+
+def _engram_server_entry(
+    python_path: str,
+    mcp_server_path: str,
+    data_dir: str | None = None,
+    *,
+    existing_env: dict | None = None,
+    extra_env: dict[str, str] | None = None,
+    engram_tools: str | None = "all",
+    store_root: str | Path | None = None,
+) -> dict:
+    """The ``engram`` MCP server entry setup writes for a JSON client.
+
+    ``existing_env`` is the env block of the entry being replaced: its
+    ENGRAM_TOOLS (when ``engram_tools`` is None), ENGRAM_DIR, ENGRAM_SEARCH
+    and the owner's own keys carry over.
+    """
+    existing_env = existing_env if isinstance(existing_env, dict) else {}
     # Always use `-m piia_engram.mcp_server` (module invocation).
     # Direct .py paths fail with "ImportError: attempted relative import
     # with no known parent package" in all clients that spawn a subprocess.
@@ -1668,22 +1720,13 @@ def _write_mcp_config(
     preserved_search = (extra_env or {}).get("ENGRAM_SEARCH") or existing_env.get("ENGRAM_SEARCH")
     if preserved_search:
         env["ENGRAM_SEARCH"] = str(preserved_search)
-    env.update(_carried_env(existing_env, store_root=preserved_data_dir or file_safety_root))
+    env.update(_carried_env(existing_env, store_root=preserved_data_dir or store_root))
 
-    entry: dict = {
+    return {
         "command": python_path,
         "args": ["-m", "piia_engram.mcp_server"],
         "env": env,
     }
-
-    servers["engram"] = entry
-
-    _write_config_text_with_backup(
-        config_path,
-        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-        backup_root=file_safety_root,
-        authorized_external_write=authorized_external_write,
-    )
 
 
 def _write_mcp_config_toml(
@@ -1806,6 +1849,12 @@ def _write_tool_mcp_config(
     engram_tools: str | None = "all",
 ) -> None:
     """Write an MCP config using the target client's declared format."""
+    if tool.get("register_via") == "claude_cli":
+        # Claude Code's user config is written only by the claude command.
+        raise ValueError(
+            f"{tool.get('name', 'Claude Code')} is registered with 'claude mcp add', "
+            "not by writing its config file"
+        )
     if tool.get("format", "json") == "toml":
         _write_mcp_config_toml(
             tool["config_path"],
@@ -2640,6 +2689,160 @@ def _choose_setup_capability_mode(
     return _prompt_setup_capability_mode()
 
 
+def _claude_code_target_line() -> str:
+    """Where `claude mcp add --scope user` puts the entry, for setup's messages."""
+    path = _claude_code_mcp.user_config_path()
+    if _claude_code_mcp.config_dir_override():
+        return _t(f"用户级配置 {path}（来自 CLAUDE_CONFIG_DIR）",
+                  f"user config {path} (from CLAUDE_CONFIG_DIR)")
+    return _t(f"用户级配置 {path}", f"user config {path}")
+
+
+def _print_claude_code_manual(reg) -> None:
+    """The commands a user runs to finish the Claude Code registration by hand."""
+    if reg.detail == "no_cli":
+        print(_t("  ⚠️  Claude Code 需手动完成：未找到 claude 命令。请在终端运行：",
+                 "  ⚠️  Claude Code needs a manual step: the claude command was not found. Run:"))
+    elif reg.detail == "differs":
+        print(_t("  ⚠️  Claude Code 需手动完成：已有一个不同的 engram 条目，未覆盖。要换成本次配置，请运行：",
+                 "  ⚠️  Claude Code needs a manual step: a different engram entry exists and was "
+                 "left as is. To replace it, run:"))
+        print("      claude mcp remove --scope user engram")
+    else:
+        print(_t("  ⚠️  Claude Code 需手动完成，请在终端运行：",
+                 "  ⚠️  Claude Code needs a manual step. Run:"))
+    print(f"      {reg.command}")
+    if reg.hidden_env:
+        keys = ", ".join(reg.hidden_env)
+        print(_t(f"      旧条目还设置了 {keys}：需要的话用 -e KEY=VALUE 一并加上。",
+                 f"      Your old entry also sets {keys}; add them with -e KEY=VALUE if you need them."))
+    if _claude_code_mcp.config_dir_override():
+        print(_t("      （请在设置了相同 CLAUDE_CONFIG_DIR 的终端里运行。）",
+                 "      (Run it in a shell with the same CLAUDE_CONFIG_DIR.)"))
+
+
+def _report_claude_code_registration(reg) -> None:
+    status = reg.status
+    if status in ("added", "replaced"):
+        print(_t(f"  ✅ Claude Code 已通过 claude 命令注册 Engram（{_claude_code_target_line()}）",
+                 f"  ✅ Claude Code: Engram registered with the claude command ({_claude_code_target_line()})"))
+    elif status == "unchanged":
+        print(_t("  ✅ Claude Code 已注册 Engram（配置一致，未改动）",
+                 "  ✅ Claude Code: Engram already registered (same entry, left unchanged)"))
+    elif status == "present":
+        print(_t(f"  ✅ Claude Code 已注册 Engram（名称 {reg.name}），不再重复添加",
+                 f"  ✅ Claude Code: Engram already registered (as {reg.name}); not adding another entry"))
+    elif status == "kept":
+        print(_t("  ℹ️  Claude Code：保留了你现有的 engram 条目（与本次配置不同）",
+                 "  ℹ️  Claude Code: kept your existing engram entry (it differs from this setup)"))
+    elif status == "failed":
+        detail = f": {reg.detail}" if reg.detail else ""
+        print(_t(f"  ❌ Claude Code：claude mcp add 失败{detail}",
+                 f"  ❌ Claude Code: claude mcp add failed{detail}"))
+        _print_claude_code_manual(reg)
+    else:
+        _print_claude_code_manual(reg)
+
+
+def _register_claude_code(
+    python_path: str,
+    mcp_server_path: str,
+    data_dir: str | None,
+    *,
+    extra_env: dict[str, str] | None = None,
+    engram_tools: str | None = "all",
+    interactive: bool = False,
+):
+    """Register Engram with Claude Code through `claude mcp add --scope user`.
+
+    The entry is the one setup writes for every JSON client. Claude Code's
+    user config is only read (to skip an identical entry); a different
+    ``engram`` entry is replaced only after an interactive yes.
+    """
+
+    def build(existing_env: dict) -> dict:
+        return _engram_server_entry(
+            python_path,
+            mcp_server_path,
+            data_dir,
+            existing_env=existing_env,
+            extra_env=extra_env,
+            engram_tools=engram_tools,
+            store_root=data_dir,
+        )
+
+    def confirm() -> bool:
+        answer = _prompt(_t(
+            "  Claude Code 已有一个不同的 engram 条目。换成本次配置？ 1=替换（推荐）  2=保留现有",
+            "  Claude Code has a different engram entry. Replace it with this setup's? "
+            "1=Replace (recommended)  2=Keep",
+        ), "1")
+        return answer.strip() != "2"
+
+    reg = _claude_code_mcp.register(
+        build,
+        on_differ="ask" if interactive else "keep",
+        confirm_replace=confirm if interactive else None,
+    )
+    _report_claude_code_registration(reg)
+    return reg
+
+
+def _claude_legacy_notice() -> None:
+    print(_t(
+        f"  ⚠️  {_claude_code_mcp.LEGACY_LABEL} 里有 Engram 条目：Claude Code 不会读取该文件"
+        "（旧版 engram setup 写在这里）。",
+        f"  ⚠️  {_claude_code_mcp.LEGACY_LABEL} holds an Engram entry: Claude Code does not read "
+        "that file (older engram setup versions wrote there).",
+    ))
+
+
+def _offer_claude_legacy_cleanup(data_dir: str | None, *, registered: bool, interactive: bool) -> None:
+    """Point at Engram entries in ~/.claude/.mcp.json; remove them only after a yes.
+
+    Offered only once Claude Code has Engram in its user config, and only
+    interactively. Other servers in that file are never touched.
+    """
+    legacy = _claude_code_mcp.read_legacy()
+    if not legacy.has_engram:
+        return
+    _claude_legacy_notice()
+    if not registered:
+        print(_t("      完成上面的注册后，可重新运行 engram setup 清理旧条目。",
+                 "      After finishing the registration above, re-run engram setup to remove it."))
+        return
+    if not interactive:
+        print(_t("      旧条目保留未动；交互运行 engram setup 可选择移除它（其它服务器条目不受影响）。",
+                 "      The old entry was left in place; run engram setup interactively to remove it "
+                 "(other servers in that file are kept)."))
+        return
+    names = ", ".join(legacy.names)
+    answer = _prompt(_t(
+        f"  从 {_claude_code_mcp.LEGACY_LABEL} 移除旧的 Engram 条目（{names}）？其它条目保留。 "
+        "1=移除（推荐）  2=保留",
+        f"  Remove the old Engram entry ({names}) from {_claude_code_mcp.LEGACY_LABEL}? "
+        "Other entries stay. 1=Remove (recommended)  2=Keep",
+    ), "1")
+    if answer.strip() == "2":
+        print(_t("      已保留旧条目。", "      Kept the old entry."))
+        return
+
+    def write(path: Path, text: str) -> None:
+        _write_config_text_with_backup(
+            path, text, backup_root=data_dir, authorized_external_write=True,
+        )
+
+    try:
+        removed = _claude_code_mcp.remove_legacy_entries(write_text=write)
+    except Exception as exc:
+        print(_t(f"  ❌ 移除旧条目失败（{type(exc).__name__}）",
+                 f"  ❌ Could not remove the old entry ({type(exc).__name__})"))
+        return
+    if removed:
+        print(_t(f"  ✅ 已移除旧条目：{', '.join(removed)}（写前已备份）",
+                 f"  ✅ Removed the old entry: {', '.join(removed)} (backed up first)"))
+
+
 def _apply_external_configs(
     tools: list[dict],
     python_path: str,
@@ -2647,9 +2850,17 @@ def _apply_external_configs(
     selected_data_dir: str,
     extra_env: dict[str, str] | None = None,
     engram_tools: str | None = "all",
-) -> tuple[list[str], list[str]]:
+    *,
+    interactive: bool = False,
+) -> tuple[list[str], list[str], list[str]]:
     """Write MCP config + inject instruction snippets/hooks for each detected
-    tool. Returns ``(success_names, failed_names)``.
+    tool. Returns ``(success_names, failed_names, manual_names)``.
+
+    Claude Code is registered through the claude command instead of a file
+    write; when that command is missing (or a different entry is kept in a
+    non-interactive run) it lands in ``manual_names`` with the command printed.
+    ``interactive`` allows the questions about replacing a different Claude
+    Code entry and removing the old ~/.claude/.mcp.json entry.
 
     The caller owns the user-consent decision (interactive confirm or the
     ``--apply-external-config`` flag); this function assumes the write is
@@ -2658,8 +2869,12 @@ def _apply_external_configs(
     """
     success: list[str] = []
     failed: list[str] = []
+    manual: list[str] = []
     configured_tool_ids: list[str] = []
+    claude_reg = None
     for tool in tools:
+        if tool.get("register_via") == "claude_cli":
+            continue  # registered after the file writes below
         try:
             _write_tool_mcp_config(
                 tool,
@@ -2679,6 +2894,36 @@ def _apply_external_configs(
         print(_t(f"  ✅ {name} 已配置", f"  ✅ {name} configured"))
     for name in failed:
         print(_t(f"  ❌ {name} 配置失败", f"  ❌ {name} failed"))
+
+    for tool in tools:
+        if tool.get("register_via") != "claude_cli":
+            continue
+        try:
+            claude_reg = _register_claude_code(
+                python_path,
+                mcp_server_path,
+                selected_data_dir,
+                extra_env=extra_env,
+                engram_tools=engram_tools,
+                interactive=interactive,
+            )
+        except Exception as exc:
+            print(_t(f"  ❌ {tool['name']} 配置失败", f"  ❌ {tool['name']} failed"))
+            failed.append(f"{tool['name']} ({type(exc).__name__})")
+            continue
+        if claude_reg.registered:
+            success.append(tool["name"])
+        elif claude_reg.status == "manual":
+            manual.append(tool["name"])
+        else:
+            failed.append(f"{tool['name']} (claude mcp add: {claude_reg.detail or 'error'})")
+        if claude_reg.status != "failed":
+            # The snippet and hooks belong to Claude Code either way; with a
+            # manual step pending they take effect once it is done.
+            configured_tool_ids.append(tool["id"])
+        _offer_claude_legacy_cleanup(
+            selected_data_dir, registered=claude_reg.registered, interactive=interactive,
+        )
 
     # Inject instruction snippets into each tool's native instruction file
     # so AI proactively calls Engram (not relying solely on MCP instructions)
@@ -2757,7 +3002,7 @@ def _apply_external_configs(
             print(_t(f"  🔗 已注册 PostCompact 摘要吸收 Hook（v3.30）",
                      f"  🔗 Registered PostCompact summary-absorb hook (v3.30)"))
 
-    return success, failed
+    return success, failed, manual
 
 
 def run_setup(advanced: bool = False, apply_external_config: bool = False) -> None:
@@ -2826,6 +3071,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
     tools = _detect_tools()
     success: list[str] = []
     failed: list[str] = []
+    manual: list[str] = []
     external_config_written = False
     if not tools:
         print(_t("  ⚠️  未检测到 AI 工具（Claude Code / Cursor / Claude Desktop）",
@@ -2846,6 +3092,13 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
                 "  Engram will be added to these clients' MCP config (auto-backed-up first):",
             ))
             for tool in tools:
+                if tool.get("register_via") == "claude_cli":
+                    print(_t(
+                        f"      - Claude Code：通过 claude mcp add --scope user engram 注册（{_claude_code_target_line()}）",
+                        f"      - Claude Code: registered with claude mcp add --scope user engram "
+                        f"({_claude_code_target_line()})",
+                    ))
+                    continue
                 print(f"      - {tool['config_path']}")
             ans = _prompt(_t(
                 "  自动写入以上配置？ 1=是，自动配置（推荐）  2=否，仅只读检查",
@@ -2866,12 +3119,18 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
                     f"  🔒 Strict mode (from {source}): client configs get ENGRAM_APPROVAL=strict "
                     "and the read + propose instructions",
                 ))
-            success, failed = _apply_external_configs(
+            success, failed, manual = _apply_external_configs(
                 tools, python_path, mcp_server_path, selected_data_dir,
                 extra_env=extra_env,
                 engram_tools=engram_tools,
+                interactive=not apply_external_config,
             )
             external_config_written = True
+            if manual:
+                print(_t(
+                    f"  ℹ️  需手动完成：{', '.join(manual)}（命令见上）",
+                    f"  ℹ️  Manual step needed: {', '.join(manual)} (command above)",
+                ))
             if failed:
                 print(_t(
                     "  ℹ️  部分客户端写入失败，可稍后重试或手动添加 MCP 配置。",
@@ -2939,6 +3198,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
         success,
         failed,
         external_config_mode="apply" if external_config_written else "read_only",
+        manual=manual,
     )
 
 
@@ -2948,6 +3208,7 @@ def _save_setup_report(
     success: list[str],
     failed: list[str],
     external_config_mode: str = "apply",
+    manual: list[str] | None = None,
 ) -> None:
     """Save a local setup report for activation funnel tracking.
 
@@ -2971,9 +3232,10 @@ def _save_setup_report(
             "tools_detected": [t.get("name", t.get("id", "?")) for t in detected_tools],
             "tools_configured": success,
             "tools_failed": failed,
+            "tools_manual": list(manual or []),
             "external_config_mode": external_config_mode,
             "language": _lang,
-            "status": "success" if not failed else "partial",
+            "status": "success" if not failed and not manual else "partial",
         }
 
         report_path = Path(data_dir) / "setup_report.jsonl"

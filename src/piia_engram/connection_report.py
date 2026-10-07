@@ -5,7 +5,10 @@ Read-only report for ``engram doctor``:
 * **configured** -- does the client's MCP config (the files ``engram setup``
   knows) hold an ``engram`` server entry? Only the client name, the status
   and the config file path (``~``-shortened) are reported; nothing from the
-  entry itself (commands, env values, keys) is shown.
+  entry itself (commands, env values, keys) is shown. Claude Code counts as
+  configured only through its user config (``~/.claude.json``); an entry
+  only in ``~/.claude/.mcp.json``, which it does not read, is reported as
+  the old location.
 * **calls** -- local traces of MCP use, per client, over the last N days:
 
   - session checkpoints the MCP server writes itself (``contexts/<client>/auto-*.md``):
@@ -39,8 +42,6 @@ MAX_DAYS = 3650
 # One session's counter is taken at most at this value: a checkpoint file can
 # also be written through save_agent_context, so its number is only a hint.
 MAX_SESSION_CALLS = 100_000
-# ~/.claude.json grows with Claude Code's history; past this size it is not parsed.
-MAX_CLAUDE_JSON_BYTES = 32 * 1024 * 1024
 
 _AUTO_SESSION = re.compile(r"^(auto-.+?)(?:-cp\d+)?\.md$")
 _CALL_COUNTER = re.compile(r"^工具调用次数:\s*(\d+)\s*$")
@@ -121,52 +122,50 @@ def _servers(config: dict, server_key: str) -> dict:
     return fallback if isinstance(fallback, dict) else {}
 
 
-def _claude_user_config_has_engram(path: Path) -> bool | None:
-    """Does Claude Code's user config (``~/.claude.json``) register an engram server?
+def _claude_code_row(tool_id: str, cfg: dict, home: Path) -> dict[str, Any]:
+    """Claude Code: configured only through its user config (``~/.claude.json``).
 
-    Detection only: looks at the top-level ``mcpServers`` and each
-    ``projects.<dir>.mcpServers`` for an ``engram`` key; nothing else is read
-    out of the file and nothing from it is returned or printed. None when the
-    file is too large to check (``MAX_CLAUDE_JSON_BYTES``).
+    Detection only, shared with doctor (``claude_code_mcp.detection_status``):
+    an Engram entry at the top level or under a project counts; an entry only
+    in ``~/.claude/.mcp.json`` (a file Claude Code does not read) is
+    ``legacy_only``. Nothing from either file is returned or printed.
     """
-    try:
-        if path.stat().st_size > MAX_CLAUDE_JSON_BYTES:
-            return None
-    except OSError:
-        return False
-    data = _read_json_quietly(path)
-    if not isinstance(data, dict):
-        return False
-    servers = data.get("mcpServers")
-    if isinstance(servers, dict) and "engram" in servers:
-        return True
-    projects = data.get("projects")
-    if isinstance(projects, dict):
-        for project in projects.values():
-            servers = project.get("mcpServers") if isinstance(project, dict) else None
-            if isinstance(servers, dict) and "engram" in servers:
-                return True
-    return False
+    from . import claude_code_mcp as _claude
 
-
-def _detect_only_paths(tool_id: str, home: Path) -> list[Path]:
-    """Extra config files checked for the report only; setup never writes them."""
-    if tool_id == "claude_code":
-        return [home / ".claude.json"]
-    return []
+    status = _claude.detection_status()
+    if status == "legacy_only":
+        shown = _claude.LEGACY_LABEL
+    elif status == "not_installed":
+        shown = ""
+    else:
+        shown = _claude.user_config_label()
+    return {
+        "tool_id": tool_id,
+        "name": cfg.get("name", tool_id),
+        "client": client_label(tool_id),
+        "config_status": status,
+        "config_path": shown,
+    }
 
 
 def client_configs(home: Path | None = None) -> list[dict[str, Any]]:
-    """Every client ``engram setup`` knows: not_installed | not_configured | configured."""
+    """Every client ``engram setup`` knows.
+
+    config_status: not_installed | not_configured | configured | undetermined
+    (Claude Code's user config too large to check) | legacy_only (Claude Code:
+    an Engram entry only in a file it does not read).
+    """
     from . import setup_wizard as W
 
     home = Path.home() if home is None else home
     rows: list[dict[str, Any]] = []
     for tool_id, cfg in W._tool_configs().items():
+        if cfg.get("register_via") == "claude_cli":
+            rows.append(_claude_code_row(tool_id, cfg, home))
+            continue
         fmt = cfg.get("format", "json")
         server_key = cfg.get("server_key", "mcpServers")
         installed = False
-        undetermined = False
         configured_path: Path | None = None
         first_path: Path | None = None
         for raw_path in cfg.get("config_paths", []):
@@ -178,22 +177,8 @@ def client_configs(home: Path | None = None) -> list[dict[str, Any]]:
             if _is_file(path) and "engram" in _servers(W._read_mcp_config(path, fmt=fmt), server_key):
                 configured_path = path
                 break
-        if configured_path is None:
-            for path in _detect_only_paths(tool_id, home):
-                if not _is_file(path):
-                    continue
-                installed = True
-                found = _claude_user_config_has_engram(path)
-                if found is None:
-                    undetermined = True
-                    first_path = path
-                elif found:
-                    configured_path = path
-                    break
         if configured_path:
             status = "configured"
-        elif undetermined:
-            status = "undetermined"
         else:
             status = "not_configured" if installed else "not_installed"
         shown = configured_path or first_path
@@ -381,6 +366,8 @@ def _verdict(config_status: str, active: dict | None, shared_label: bool) -> str
         return "connected" if has_calls else "configured_no_calls"
     if config_status == "undetermined":
         return "config_undetermined"
+    if config_status == "legacy_only":
+        return "legacy_location"
     if has_calls:
         return "calls_without_config"
     return config_status  # not_configured | not_installed
@@ -424,6 +411,12 @@ def build_report(root: Path, *, days: int = DEFAULT_DAYS, home: Path | None = No
         "note": SELF_REPORTED_NOTE,
         "read_only": True,
     }
+
+
+def _claude_limit_mb() -> int:
+    from .claude_code_mcp import MAX_USER_CONFIG_BYTES
+
+    return MAX_USER_CONFIG_BYTES // (1024 * 1024)
 
 
 def _iso(moment: float | None) -> str:
@@ -471,7 +464,15 @@ def render_text(report: dict[str, Any]) -> list[str]:
                 calls = f"; called in the last {days} days (last {_when(row['last_seen'])})"
             lines.append(
                 f"[--] {label}: config could not be checked ({row['config_path']} is larger than "
-                f"{MAX_CLAUDE_JSON_BYTES // (1024 * 1024)} MB){calls}")
+                f"{_claude_limit_mb()} MB or not valid JSON){calls}")
+        elif verdict == "legacy_location":
+            calls = ""
+            if row.get("last_seen"):
+                calls = (f"; called in the last {days} days (last {_when(row['last_seen'])}), "
+                         "so it may be configured elsewhere")
+            lines.append(
+                f"[--] {label}: the Engram entry is in {row['config_path']}, which {row['name']} "
+                f"does not read -- run 'engram setup'{calls}")
         elif verdict == "calls_without_config":
             lines.append(
                 f"[ok] {label}: called in the last {days} days (last {_when(row['last_seen'])}), but "

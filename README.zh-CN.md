@@ -332,9 +332,16 @@ $ engram doctor
 engram setup
 # 如果希望 Engram 自动写入客户端 MCP 配置并创建备份，显式运行：
 engram setup --apply-external-config
-# 或手动添加：
-claude mcp add piia-engram -- piia-engram-mcp
+# 或手动添加（用户级，所有项目可用）：
+claude mcp add --scope user engram -- piia-engram-mcp
 ```
+
+setup 通过 `claude` 命令把 Engram 注册到 Claude Code 的用户级配置
+（`~/.claude.json`，设置了 `CLAUDE_CONFIG_DIR` 时为 `$CLAUDE_CONFIG_DIR/.claude.json`），
+自己从不改写这个文件。`claude` 不在 `PATH` 上时，setup 会打印要运行的完整命令。
+Engram 也识别早先说明里使用的 `piia-engram` 名称。修复前的 setup 写的是
+`~/.claude/.mcp.json`，Claude Code 并不读取它：重新运行 `engram setup` 即可注册到
+正确位置（它会询问是否移除旧条目）。
 
 </details>
 

@@ -23,56 +23,55 @@ def _detect_installed_tools() -> list[dict]:
     不仅检查配置文件是否存在，还检查工具本身是否安装（配置目录存在）。
     返回 [{tool_id, name, config_path, format, verified, status, config, servers}]。
     - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram),
-      "undetermined" (detect-only config too large to check)
+      "undetermined" (Claude Code's user config too large or not valid JSON),
+      "legacy" (Claude Code: an Engram entry only in ~/.claude/.mcp.json)
     - verified: True = evidence-tracked setup path, False = expected/community setup path
 
-    Claude Code may also hold its engram server in its user config
-    (``~/.claude.json``). That file is only checked for an ``engram`` key, the
-    same way the connection report checks it: such a tool is reported with
-    ``detect_only=True``, empty ``config``/``servers`` and ``config_path`` left
-    at the setup target, so nothing validates, prints or rewrites that file.
+    Claude Code is registered with ``claude mcp add`` into its user config
+    (``~/.claude.json`` or ``$CLAUDE_CONFIG_DIR/.claude.json``). That file is
+    only checked for an Engram entry (top level or under a project; an
+    ``engram`` / ``piia-engram`` key or a server launching Engram): the tool is
+    reported with ``detect_only=True`` and empty ``config``/``servers``, so
+    nothing validates, prints or rewrites it. ``~/.claude/.mcp.json`` is not
+    read by Claude Code; an entry there alone is ``legacy``.
     """
     results = []
     for tool_id, cfg in W._tool_configs().items():
-        found = _detect_tool_config(tool_id, cfg)
-        if found is None or found["status"] != "configured":
-            found = _with_detect_only_config(tool_id, cfg, found)
+        if cfg.get("register_via") == "claude_cli":
+            found = _detect_claude_code(tool_id, cfg)
+        else:
+            found = _detect_tool_config(tool_id, cfg)
         if found is not None:
             results.append(found)
     return results
 
 
-def _with_detect_only_config(tool_id: str, cfg: dict, found: dict | None) -> dict | None:
-    """Fold in config files doctor only checks for an engram key (never writes)."""
-    from . import connection_report as _conn
+def _detect_claude_code(tool_id: str, cfg: dict) -> dict | None:
+    """Claude Code's state from its user config (read for detection only)."""
+    from . import claude_code_mcp as _claude
 
-    state = None  # None: no such file; else "configured" | "undetermined" | "installed"
-    detected_in = ""
-    for path in _conn._detect_only_paths(tool_id, Path.home()):
-        if not _conn._is_file(path):
-            continue
-        has = _conn._claude_user_config_has_engram(path)
-        if has:
-            state, detected_in = "configured", "~/" + path.name
-            break
-        if has is None:
-            state, detected_in = "undetermined", "~/" + path.name
-        elif state is None:
-            state = "installed"
-    if state is None or (state == "installed" and found is not None):
-        return found
-    tool = dict(found) if found is not None else {
+    status = _claude.detection_status()
+    if status == "not_installed":
+        return None
+    state = {
+        "configured": "configured",
+        "undetermined": "undetermined",
+        "legacy_only": "legacy",
+    }.get(status, "installed")
+    return {
         "tool_id": tool_id,
         "name": cfg["name"],
-        "config_path": Path(cfg["config_paths"][0]),
-        "format": cfg.get("format", "json"),
-        "server_key": cfg.get("server_key", "mcpServers"),
+        "config_path": _claude.user_config_path(),
+        "format": "json",
+        "server_key": "mcpServers",
         "verified": cfg.get("verified", False),
+        "register_via": "claude_cli",
+        "status": state,
+        "config": {},
+        "servers": {},
+        "detect_only": True,
+        "detected_in": _claude.user_config_label(),
     }
-    tool.update(status=state, config={}, servers={})
-    if state != "installed":
-        tool.update(detect_only=True, detected_in=detected_in)
-    return tool
 
 
 def _detect_tool_config(tool_id: str, cfg: dict) -> dict | None:
@@ -629,7 +628,57 @@ def _found_in(tool: dict) -> str:
 
 def _undetermined_line(tool: dict) -> str:
     return (f"    [??] {tool['name']} — {tool.get('detected_in') or 'config'} too large "
-            "to check for an Engram entry")
+            "(or not valid JSON) to check for an Engram entry")
+
+
+def _legacy_line(tool: dict) -> str:
+    from . import claude_code_mcp as _claude
+
+    return (f"    [--] {tool['name']} — Engram entry only in {_claude.LEGACY_LABEL}, which "
+            f"{tool['name']} does not read; run 'engram setup'")
+
+
+def _claude_code_section(tools: list[dict], *, fix: bool) -> int:
+    """Claude Code: an Engram entry left in ~/.claude/.mcp.json (a file it does not read).
+
+    Without --fix this only reports. With --fix an Engram entry found only
+    there is registered through ``claude mcp add --scope user`` (or the
+    command is printed when claude is not available). Neither Claude Code's
+    user config nor the old file is written here; the old entry stays for
+    ``engram setup`` to offer removing. Returns the problems left (0 or 1).
+    """
+    from . import claude_code_mcp as _claude
+
+    tool = next((t for t in tools if t.get("register_via") == "claude_cli"), None)
+    if tool is None:
+        return 0
+    legacy = _claude.read_legacy()
+    if tool["status"] == "configured":
+        if legacy.has_engram:
+            W._safe_print(
+                f"  [info] {_claude.LEGACY_LABEL} still holds an Engram entry; {tool['name']} does "
+                "not read that file. 'engram setup' can remove it (other entries are kept).\n")
+        return 0
+    if tool["status"] != "legacy":
+        return 0
+    W._safe_print(
+        f"  [!] {tool['name']}: the Engram entry is in {_claude.LEGACY_LABEL}, which {tool['name']} "
+        "does not read, so Engram is not loaded there.")
+    if not fix:
+        print("    Run 'engram doctor --fix' or 'engram setup' to register it with the claude command.\n")
+        return 1
+    python_path = W._find_python()
+    mcp_server_path = W._find_mcp_server()
+    if not python_path or not mcp_server_path:
+        print("    [error] Cannot register: Python 3.10+ or mcp_server.py not found.\n")
+        return 1
+    reg = W._register_claude_code(
+        python_path, mcp_server_path, None, engram_tools=None, interactive=False,
+    )
+    W._safe_print(
+        f"    The old entry in {_claude.LEGACY_LABEL} was left in place (doctor --fix does not "
+        "remove it); 'engram setup' offers to remove it.\n")
+    return 0 if reg.registered else 1
 
 
 def run_doctor(fix: bool = False, days: int | None = None) -> int:
@@ -677,6 +726,8 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
                 configured_count += 1
             elif t["status"] == "undetermined":
                 W._safe_print(_undetermined_line(t))
+            elif t["status"] == "legacy":
+                W._safe_print(_legacy_line(t))
             else:
                 W._safe_print(f"    [--] {t['name']} — Engram NOT configured")
                 unconfigured.append(t)
@@ -691,6 +742,8 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
                 configured_count += 1
             elif t["status"] == "undetermined":
                 W._safe_print(_undetermined_line(t))
+            elif t["status"] == "legacy":
+                W._safe_print(_legacy_line(t))
             else:
                 W._safe_print(f"    [--] {t['name']} — installed, Engram not configured")
                 unconfigured.append(t)
@@ -721,11 +774,13 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
             print(f"    - {t['name']} ({t['config_path']})")
         print("    Run 'engram setup' to configure them.\n")
 
+    claude_issues = _claude_code_section(tools, fix=fix)
+
     if not issues:
-        if configured_count > 0:
+        if configured_count > 0 and not claude_issues:
             print("  [ok] All configured tools look healthy.\n")
         func_issues = _run_functional_checks(fix=fix, days=days)
-        return func_issues
+        return claude_issues + func_issues
 
     print(f"  [!] Found {len(issues)} issue(s):\n")
     for t, desc in issues:
@@ -735,7 +790,7 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
 
     if not fix:
         print("  Run 'engram doctor --fix' to auto-repair.\n")
-        return len(issues)
+        return len(issues) + claude_issues
 
     # ── 第四步：自动修复 ──
     python_path = W._find_python()
@@ -743,7 +798,7 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
     if not python_path or not mcp_server_path:
         print("  [error] Cannot auto-fix: Python 3.10+ or mcp_server.py not found.")
         print("          Run 'engram setup' to complete installation first.\n")
-        return len(issues)
+        return len(issues) + claude_issues
 
     fixed = 0
     file_safety_root = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
@@ -772,7 +827,7 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
     W._print_restart_hints()
     print()
     func_issues = _run_functional_checks(fix=fix, days=days)
-    return remaining + func_issues
+    return remaining + claude_issues + func_issues
 
 
 def _print_connection_report(root, days: int | None = None) -> None:

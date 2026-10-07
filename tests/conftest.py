@@ -138,6 +138,17 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     isolated_home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(isolated_home))
     monkeypatch.setenv("USERPROFILE", str(isolated_home))
+    # Claude Code: never the real config dir, and never the real `claude`
+    # command (it would edit the real ~/.claude.json). Tests that exercise the
+    # command replace these seams with a recorder or a fake executable.
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    from piia_engram import claude_code_mcp as _claude_code_mcp
+
+    def _no_real_claude(*_args, **_kwargs):
+        raise AssertionError("tests must not run the real claude command")
+
+    monkeypatch.setattr(_claude_code_mcp, "cli_path", lambda: None)
+    monkeypatch.setattr(_claude_code_mcp, "run_cli", _no_real_claude)
 
 
 @pytest.fixture

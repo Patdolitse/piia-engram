@@ -12,18 +12,35 @@ pip install piia-engram
 engram setup
 ```
 
-If you want the wizard to write the MCP entry for you, use the explicit opt-in
-path:
+If you want the wizard to register Engram without the confirmation prompt,
+use the explicit opt-in path:
 
 ```bash
 engram setup --apply-external-config
 ```
 
-Manual MCP entries should launch:
+Setup registers Engram with the `claude` command at user scope, so it is
+available in all your projects:
 
 ```bash
-python -m piia_engram.mcp_server
+claude mcp add --scope user engram -- piia-engram-mcp
 ```
+
+Claude Code stores this in its user config, `~/.claude.json` (or
+`$CLAUDE_CONFIG_DIR/.claude.json` when `CLAUDE_CONFIG_DIR` is set). Engram
+never edits that file itself; if `claude` is not on your `PATH`, setup prints
+the command for you to run. If the console script is not on `PATH`, launch the
+module instead:
+
+```bash
+claude mcp add --scope user engram -- python -m piia_engram.mcp_server
+```
+
+Engram also recognises an existing entry named `piia-engram`. Claude Code does
+not read `~/.claude/.mcp.json`; older setup versions wrote there. Run
+`engram setup` again to register in the right place: it offers to remove the
+old entry and keeps every other server in that file. `engram doctor` reports
+an entry found only in the old file.
 
 Leave `ENGRAM_TOOLS` unset for the default 18 core tools. Add
 `ENGRAM_TOOLS=all` only when you intentionally need review, import/export,
