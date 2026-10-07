@@ -19,6 +19,15 @@ from pathlib import Path, PureWindowsPath
 
 logger = logging.getLogger(__name__)
 
+if __name__ == "__main__":
+    # `python -m piia_engram.setup_wizard`: this file runs as __main__, while
+    # doctor imports piia_engram.setup_wizard, a second copy whose re-exports
+    # would import the half-initialised doctor. Run the package module instead.
+    from piia_engram.setup_wizard import main as _package_main
+
+    _package_main()
+    sys.exit(0)
+
 # 旧版 MCP server 名称，迁移时需要清理
 LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
 
