@@ -26,7 +26,7 @@ from . import recall_policy as _recall_policy
 from .continuity_digest import build_session_digest, sanitize_digest_value
 from .encoding_repair import repair_text
 from .storage import _atomic_write_json, _project_id, _project_id_aliases
-from .store_paths import confined_path, valid_file_id
+from .store_paths import confined_path
 
 logger = logging.getLogger(__name__)
 
@@ -48,18 +48,27 @@ def _utc_now_iso_seconds() -> str:
     )
 
 
+_RESERVED_FILE_STEMS = frozenset({"CON", "PRN", "AUX", "NUL"} | {
+    f"{prefix}{i}" for prefix in ("COM", "LPT") for i in range(10)
+})
+
+
 def _sanitize_tool_name(name: str) -> str:
     """Normalize a caller's label to one portable directory name."""
     cleaned = re.sub(r"[^a-z0-9_.-]", "_", str(name).strip().lower()).strip(".")
-    reserved = {"CON", "PRN", "AUX", "NUL"} | {
-        f"{prefix}{i}" for prefix in ("COM", "LPT") for i in range(10)
-    }
-    if not cleaned or ".." in cleaned or cleaned.split(".")[0].upper() in reserved:
+    if not cleaned or ".." in cleaned or cleaned.split(".")[0].upper() in _RESERVED_FILE_STEMS:
         return "unknown"
     return cleaned[:128]
 
 
 _SESSION_ID_PATH_RE = __import__("re").compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _valid_session_id_for_path(value: object) -> bool:
+    """A session filename stem, not a knowledge id or a relative path."""
+    return (isinstance(value, str) and _SESSION_ID_PATH_RE.fullmatch(value) is not None
+            and bool(value.strip("."))
+            and value.split(".")[0].upper() not in _RESERVED_FILE_STEMS)
 
 
 def _sanitize_session_id_for_path(session_id: str, fallback: datetime) -> str:
@@ -68,7 +77,7 @@ def _sanitize_session_id_for_path(session_id: str, fallback: datetime) -> str:
     (accepted by isalnum) fall back to a timestamp so a crafted id can never
     escape contexts/<tool>/."""
     cleaned = str(session_id).strip().strip(".")
-    if _SESSION_ID_PATH_RE.fullmatch(cleaned):
+    if _valid_session_id_for_path(cleaned):
         return cleaned
     return fallback.strftime("%Y-%m-%dT%H-%M-%S")
 
@@ -408,7 +417,7 @@ class ContextStoreMixin:
         return self.root / "contexts"
 
     def _session_digest_path(self, tool: str, session_id: str) -> Path:
-        if not valid_file_id(session_id) or len(session_id) > 128:
+        if not _valid_session_id_for_path(session_id):
             raise ValueError("invalid session id")
         return confined_path(self._context_tool_dir(tool), f"{session_id}.digest.json")
 
@@ -416,7 +425,7 @@ class ContextStoreMixin:
         return confined_path(self._contexts_dir, _sanitize_tool_name(tool))
 
     def _context_session_path(self, tool: str, session_id: str) -> Path:
-        if not valid_file_id(session_id) or len(session_id) > 128:
+        if not _valid_session_id_for_path(session_id):
             raise ValueError("invalid session id")
         return confined_path(self._context_tool_dir(tool), f"{session_id}.md")
 
@@ -728,7 +737,7 @@ class ContextStoreMixin:
         This read path is intentionally zero-write and never backfills old files.
         """
         session_ref = str(session_id or "").strip()
-        if not session_ref or not _SESSION_ID_PATH_RE.fullmatch(session_ref) or ".." in session_ref:
+        if not _valid_session_id_for_path(session_ref):
             return None  # the id names a file under contexts/<tool>/, never a path
         try:
             path = self._session_digest_path(tool, session_ref)

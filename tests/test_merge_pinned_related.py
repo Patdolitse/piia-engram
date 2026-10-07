@@ -1,10 +1,4 @@
-"""A merge over MCP keeps relation links of a pinned third entry pointing at
-the merged entry, and changes nothing else on it.
-
-Relation links are link maintenance (as for manage_relation on a pinned
-entry): the pinned entry's content, version and pin stay byte-for-byte the
-same; only its related_ids swap the merged-away id for the surviving one.
-"""
+"""Merging other entries leaves every field of a pinned third entry alone."""
 
 from __future__ import annotations
 
@@ -50,7 +44,8 @@ def _pinned_third(eng: Engram, kind: str) -> dict:
 
 
 @pytest.mark.parametrize("kind", ["lesson", "decision", "playbook"])
-def test_merge_only_remaps_related_ids_of_a_pinned_third_entry(eng, kind):
+@pytest.mark.parametrize("route", ["local", "mcp"])
+def test_merge_preserves_a_pinned_third_entry(eng, kind, route):
     a = eng.add_lesson({"summary": "Run the smoke tests before tagging", "domain": "release"})
     b = eng.add_lesson({"summary": "Database backups are verified every night", "domain": "ops"})
     c = _pinned_third(eng, kind)
@@ -58,13 +53,20 @@ def test_merge_only_remaps_related_ids_of_a_pinned_third_entry(eng, kind):
     assert pinning.pin(eng, c["id"]).get("status") in ("pinned", "already_pinned")
     before = _row(eng, c["id"])
     assert b["id"] in before["related_ids"]
+    d = eng.add_lesson({"summary": "Check deployment metrics after release", "domain": "metrics"})
+    eng.link_knowledge(b["id"], d["id"])
 
-    reply = json.loads(_run(mcp_server.merge_knowledge(
-        a["id"], b["id"], primary_expected_version=1, secondary_expected_version=1)))
+    if route == "mcp":
+        reply = json.loads(_run(mcp_server.merge_knowledge(
+            a["id"], b["id"], primary_expected_version=1, secondary_expected_version=1)))
+    else:
+        reply = eng.merge_knowledge(a["id"], b["id"], primary_expected_version=1,
+                                    secondary_expected_version=1)
     assert reply.get("success") is True, reply
 
     after = _row(eng, c["id"])
     assert pinning.is_pinned(after)
-    assert b["id"] not in after["related_ids"] and a["id"] in after["related_ids"]
-    strip = lambda row: {k: v for k, v in row.items() if k != "related_ids"}  # noqa: E731
-    assert strip(after) == strip(before)
+    assert after == before
+    assert _row(eng, b["id"])["status"] == "outdated"  # still readable by id
+    assert a["id"] in _row(eng, d["id"])["related_ids"]
+    assert b["id"] not in _row(eng, d["id"])["related_ids"]

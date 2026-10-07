@@ -584,6 +584,8 @@ def _approve_with_link(eng, mark: dict, kind: str, target: str, counts: dict, *,
     A run stopped anywhere before the approval landed (even inside the write
     that points the row) puts a still-pending row back as it was.
     """
+    from contextlib import nullcontext
+
     row = _batch_row(mark)
     before = (eng._find_item_by_id(mark["id"])[1] or {}).get("pending_supersedes")
     try:
@@ -594,7 +596,16 @@ def _approve_with_link(eng, mark: dict, kind: str, target: str, counts: dict, *,
                 _add_counts(counts, {"requested": 1, "approve": 1, "planned": 1, "failed": 1,
                                      "supersede_failed": 1})
                 return _item_view({"id": mark["id"], "status": "version_conflict"}, mark)
-        result = batch_review_staging(eng, [row], dry_run=False, confirm=True, via=via, limit=1, owner_cli=True)
+        recovering = kind == "playbook" and mark["mark"] == "supersede" and not set_target
+        with eng._review_locks() if recovering else nullcontext():
+            if recovering:
+                current = eng._find_item_by_id(mark["id"])[1]
+                if eng.unfinished_playbook_replacement(current) != target:
+                    linked = (isinstance(current, dict) and current.get("pending_supersedes") == target
+                              and _supersede_linked(eng, kind, mark["id"], target))
+                    _add_counts(counts, {"requested": 1, "approve": 1, "noop": 1})
+                    return _item_view({"id": mark["id"], "status": "already_applied" if linked else "not_staging"}, mark)
+            result = batch_review_staging(eng, [row], dry_run=False, confirm=True, via=via, limit=1, owner_cli=True)
     except BaseException:
         if set_target:  # only a row that is still pending is changed back
             _set_pending_supersede(eng, kind, mark["id"], before or None, None)
@@ -652,13 +663,15 @@ def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str, sim: 
     """
     row = _batch_row(mark)
     sim_args: dict[str, Any] = {"final_types": final_types or {}}
+    recovering = False
     if sim is not None:
         sim_args.update(assume_trusted=sim["trusted"], assume_untrusted=sim["untrusted"], extra_edges=sim["edges"])
     if mark["mark"] == "supersede":
         target = mark["target"]
         kind, current = eng._find_item_by_id(mark["id"])
+        recovering = (kind == "playbook" and eng.unfinished_playbook_replacement(current) == target)
         if isinstance(current, dict) and kind in ("lesson", "decision", "playbook") \
-                and current.get("tier") != "staging":
+                and current.get("tier") != "staging" and not recovering:
             # Decided already (e.g. the same file applied again): done when the
             # link exists, like an approve that finds the row no longer pending.
             status = "already_applied" if _supersede_linked(eng, kind, mark["id"], target) else "not_staging"
@@ -690,7 +703,8 @@ def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str, sim: 
     kind = preview["items"][0].get("type") or eng._find_item_by_id(mark["id"])[0]
     if problem:
         return _approve_without_link(eng, mark, kind, target, problem, counts, via=via)
-    return _approve_with_link(eng, mark, kind, target, counts, via=via, set_target=mark["mark"] == "supersede")
+    return _approve_with_link(eng, mark, kind, target, counts, via=via,
+                              set_target=mark["mark"] == "supersede" and not recovering)
 
 
 def _replaces(eng, mark: dict) -> str:

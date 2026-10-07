@@ -39,3 +39,40 @@ def test_session_digest_path_rejects_traversal(tmp_path):
     eng = Engram(root=tmp_path / "store")
     with pytest.raises(ValueError):
         eng._session_digest_path("codex", "../../outside")
+
+
+@pytest.mark.parametrize("session_id", ["-session", "_session", "a..b", "session-name"])
+def test_safe_legacy_session_ids_remain_writable_and_listable(tmp_path, session_id):
+    from datetime import datetime
+    from piia_engram.contexts import _sanitize_session_id_for_path
+
+    assert _sanitize_session_id_for_path(session_id, datetime(2026, 1, 1)) == session_id
+    eng = Engram(root=tmp_path / "store")
+    tool_dir = eng.root / "contexts" / "codex"
+    tool_dir.mkdir(parents=True)
+    legacy = tool_dir / (session_id + ".md")
+    legacy.write_text("# Legacy checkpoint\n\nGoal: verify context safety\n", encoding="utf-8")
+    before = legacy.read_bytes()
+    assert session_id in {r["session_id"] for r in eng.list_agent_sessions(tool="codex")}
+    assert eng.get_recent_context(tool="codex")
+    assert legacy.read_bytes() == before
+    digest = {"schema": "session_digest.v1", "goal": "test"}
+    (tool_dir / (session_id + ".digest.json")).write_text(json.dumps(digest), encoding="utf-8")
+    assert eng.get_session_digest("codex", session_id) == digest
+    result = eng.save_agent_context("codex", "Goal: verify context safety", session_id=session_id)
+    assert result["session_id"] == session_id and result["appended"]
+    assert legacy.read_bytes().startswith(before)
+
+
+@pytest.mark.parametrize("session_id", ["-session", "a..b", "CON", "NUL.txt", "../escape", "a/b", "a\\b", "", ".", "x" * 129])
+def test_every_sanitized_session_id_has_a_valid_contained_path(tmp_path, session_id):
+    from datetime import datetime
+    from piia_engram.contexts import _sanitize_session_id_for_path
+
+    eng = Engram(root=tmp_path / "store")
+    safe = _sanitize_session_id_for_path(session_id, datetime(2026, 1, 1))
+    # Resolve before any write, including when the original label is a path.
+    path = eng._context_session_path("codex", safe)
+    assert path.resolve().parent == (eng.root / "contexts" / "codex").resolve()
+    result = eng.save_agent_context("codex", "Goal: verify context safety", session_id=safe)
+    assert result["session_id"] == safe

@@ -65,13 +65,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - JSON backups (`export_engram`, `engram dock-export`) include your rejection records (hashes and metadata only) and `engram import` restores them; malformed records are skipped and counted.
 - A rejection record with a field of the wrong type (for example a list) is skipped and counted instead of stopping an export, an import or a write, also when it is in the local file.
 - Playbook operations, execution plans and imports accept only plain file ids, new inserts never replace existing playbooks, and `get_daily_log` accepts only `YYYY-MM-DD` dates (`invalid_date`).
+- Playbook imports use locked, exclusive insertion, compare ids case-insensitively on Windows and reserve underscore-prefixed internal names; a failed import removes only its own new bodies.
 - Session, daily-log and execution-plan paths stay within their designated folders, including when a nested directory is a link.
+- Session saving, listing and digest reads use the same filename rules, preserving safe existing names such as `-session`.
 - Native imports reject invalid project ids before either previewing or applying changes (`invalid_project_id`).
 - MCP merges involving a pending proposal return `local_review_only` without changing the proposal or the reviewed entry.
+- Merging other entries leaves every field of a pinned entry unchanged, including `related_ids`; its link to the merged-away entry stays readable by id.
 - Merge, playbook delete and playbook restore compare expected versions inside their commit locks.
-- A failed playbook index update restores an existing body instead of removing it.
+- A failed playbook index update restores an existing body instead of removing it; atomic byte writes finish short writes and refuse zero progress before replacing a file.
 - `engram review` compares the version you reviewed (`expected_version`) inside the same lock that writes the decision, so an entry changed meanwhile is `version_conflict` and gets no approval, rejection or rejection record.
-- Approving a playbook revision retires the old playbook first; if the run is interrupted, applying the same marks again completes it, also for a store where both versions were left approved.
+- Approving a playbook revision retires the old playbook first; replaying `approve` or the matching `supersede:<id>` mark completes an interrupted replacement, including an older store with both versions approved and active. Preview and expected-version checks still apply.
 - Reading the trust boundaries no longer writes `identity/trust_boundaries.json`; missing defaults are filled in memory.
 - Reading knowledge (`get_lessons`, `get_decisions`, `get_playbooks` and the like) only counts an access and no longer refreshes `last_reviewed`, so `get_stale_knowledge` keeps listing what you have not reviewed; only your confirm and review actions set it.
 - The doctor connection report describes the server start as importing nothing and changing no knowledge or identity content, instead of "zero write" (reads still update access counts).

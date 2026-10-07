@@ -1530,6 +1530,9 @@ class KnowledgeOpsMixin:
             )
             if related_item is None or related_type is None:
                 continue
+            if _pinning.is_pinned(related_item):
+                # Its link to the merged-away entry stays valid for direct id reads.
+                continue
             related_types[related_id] = related_type
 
         def _merge_primary(entry: dict) -> dict:
@@ -1544,7 +1547,7 @@ class KnowledgeOpsMixin:
         if updated_primary is None:
             return {"error": f"Primary item not found: {primary_id}"}
 
-        # Preserve bidirectional link semantics for migrated related items.
+        # Retarget unpinned related entries only; pinned entries are immutable here.
         for related_id, related_type in related_types.items():
             def _retarget_related(entry: dict, *, _related_id: str = related_id) -> dict:
                 related_ids = set(entry.get("related_ids", []))

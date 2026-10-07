@@ -673,7 +673,12 @@ class Engram(
 
         fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
-            os.write(fd, data)
+            offset = 0
+            while offset < len(data):
+                written = os.write(fd, data[offset:])
+                if written <= 0:
+                    raise OSError("byte write made no progress")
+                offset += written
             os.fsync(fd)
             os.close(fd)
             fd = -1

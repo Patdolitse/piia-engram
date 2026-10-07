@@ -19,7 +19,7 @@ from . import pinning as _pinning
 from . import tombstones as _tombstones
 from . import write_provenance as _write_provenance
 from .decision_thread import validate_edges
-from .playbooks import new_playbook_id, valid_playbook_id
+from .playbooks import PlaybookIdExists, new_playbook_id, playbook_id_key, valid_playbook_id
 from .store_paths import confined_path, valid_file_id
 from .governance_store import RelationStore, ResolutionStore
 from .storage import (
@@ -619,10 +619,10 @@ class ImportExportMixin:
                 ids.sort()
         incoming_pbs = knowledge.get("playbooks")
         if isinstance(incoming_pbs, list) and incoming_pbs:
-            ids = {str(p.get("id") or "") for p in incoming_pbs if isinstance(p, dict)}
+            ids = {playbook_id_key(p.get("id")) for p in incoming_pbs if isinstance(p, dict)}
             titles = {str(p.get("title") or "") for p in incoming_pbs if isinstance(p, dict)}
             local_pbs = [p for p in self._export_playbooks() if _pinning.is_pinned(p)
-                         and (str(p.get("id") or "") in ids or str(p.get("title") or "") in titles)]
+                         and (playbook_id_key(p.get("id")) in ids or str(p.get("title") or "") in titles)]
             if local_pbs:
                 matched["playbooks"] = sorted(str(p.get("id") or "") for p in local_pbs)
                 protected["playbooks"] = sorted(set(protected.get("playbooks", [])) | set(matched["playbooks"]))
@@ -1534,35 +1534,46 @@ class ImportExportMixin:
         pinned_report = self._pinned_import_report(knowledge if isinstance(knowledge, dict) else {}, merge=merge)
         if knowledge.get("playbooks"):
             new_count = 0
-            new_body_paths: list[Path] = []
-            existing_index = self._read_playbook_index()
-            existing_titles = {e.get("title", "") for e in existing_index}
-            pinned_pb_ids = {str(p.get("id") or "") for p in self._export_playbooks() if _pinning.is_pinned(p)}
-            for pb in knowledge["playbooks"]:
-                if not isinstance(pb, dict) or str(pb.get("id") or "") in pinned_pb_ids:
-                    continue  # never written over an Owner-pinned playbook
-                if pb.get("title") not in existing_titles:
-                    pb = _pinning.strip(dict(pb))
-                    # the id names the body file: never a path, never an existing row
-                    taken = {str(e.get("id") or "") for e in existing_index}
-                    if not valid_playbook_id(pb.get("id")) or str(pb.get("id")) in taken:
-                        pb["id"] = new_playbook_id(str(pb.get("title") or ""))
-                    pb = self._ensure_playbook_fields(pb)
-                    body_path = self._playbook_path(pb["id"])
-                    self._write_playbook_file(body_path, pb)
-                    new_body_paths.append(body_path)
-                    existing_index.append(self._playbook_index_entry(pb))
-                    existing_titles.add(pb.get("title", ""))
-                    new_count += 1
-            if new_count:
+            with hold_directory_lock(self._playbooks_dir, timeout=30):
+                existing_index = self._read_playbook_index()
+                existing_titles = {e.get("title", "") for e in existing_index}
+                pinned_pb_ids = {playbook_id_key(p.get("id")) for p in self._export_playbooks()
+                                 if _pinning.is_pinned(p)}
+                index_path = self._playbooks_dir / "_index.json"
+                previous_index = index_path.read_bytes() if index_path.exists() else None
+                new_body_paths: list[Path] = []
                 try:
-                    self._write_playbook_index(existing_index)
+                    for incoming in knowledge["playbooks"]:
+                        if not isinstance(incoming, dict) or playbook_id_key(incoming.get("id")) in pinned_pb_ids:
+                            continue
+                        if incoming.get("title") in existing_titles:
+                            continue
+                        pb = _pinning.strip(dict(incoming))
+                        if not valid_playbook_id(pb.get("id")):
+                            pb["id"] = new_playbook_id(str(pb.get("title") or ""))
+                        pb = self._ensure_playbook_fields(pb)
+                        for attempt in range(16):
+                            try:
+                                # The shared writer owns exclusive creation and failure cleanup.
+                                self._write_playbook_and_index(pb, create=True)
+                                break
+                            except PlaybookIdExists:
+                                if attempt == 15:
+                                    raise
+                                pb["id"] = new_playbook_id(str(pb.get("title") or ""))
+                        new_body_paths.append(self._playbook_path(pb["id"]))
+                        existing_titles.add(pb.get("title", ""))
+                        new_count += 1
                 except Exception:
-                    for p in new_body_paths:
-                        try:
+                    if new_body_paths:
+                        # Restore the index before removing our completed inserts. If
+                        # restoration itself fails, leave the indexed bodies readable.
+                        if previous_index is not None:
+                            self._atomic_write_bytes(index_path, previous_index)
+                        else:
+                            index_path.unlink(missing_ok=True)
+                        for p in new_body_paths:
                             p.unlink(missing_ok=True)
-                        except OSError:
-                            pass
                     raise
             imported.append(f"playbooks(+{new_count})" if merge else f"playbooks({len(knowledge['playbooks'])})")
 

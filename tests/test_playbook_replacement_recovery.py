@@ -36,9 +36,9 @@ def _revision(eng: Engram, title: str) -> tuple[dict, dict]:
     return old, new
 
 
-def _apply(tmp_path: Path, new_id: str) -> int:
+def _apply(tmp_path: Path, new_id: str, mark: str = "approve", **guards) -> int:
     marks = tmp_path / "marks.json"
-    marks.write_text(json.dumps([{"id": new_id, "mark": "approve"}]), encoding="utf-8")
+    marks.write_text(json.dumps([{"id": new_id, "mark": mark, **guards}]), encoding="utf-8")
     return review_cli.run_apply([str(marks), "--operator", "owner", "--yes"])
 
 
@@ -73,7 +73,8 @@ def test_interrupted_approval_is_completed_by_the_same_marks(eng, tmp_path, monk
     assert _usable(eng, new["id"]) and eng._read_playbook_by_id(old["id"])["status"] != "active"
 
 
-def test_a_store_left_with_both_approved_is_completed(eng, tmp_path):
+@pytest.mark.parametrize("explicit", [False, True])
+def test_a_store_left_with_both_approved_is_completed(eng, tmp_path, explicit):
     old, new = _revision(eng, "Rotate the database password")
     assert pinning.pin(eng, old["id"]).get("status") in ("pinned", "already_pinned")
     # the state an interrupted earlier approval left behind: both approved and active
@@ -82,10 +83,55 @@ def test_a_store_left_with_both_approved_is_completed(eng, tmp_path):
                                                           "promotion_reason": "owner_review"})
     assert _usable(eng, old["id"]) and _usable(eng, new["id"])
 
-    assert _apply(tmp_path, new["id"]) == 0
+    mark = "supersede:" + old["id"] if explicit else "approve"
+    assert _apply(tmp_path, new["id"], mark) == 0
     assert _usable(eng, new["id"])
     retired = eng._read_playbook_by_id(old["id"])
     assert retired["status"] != "active" and not pinning.is_pinned(retired)
     # applying the marks once more changes nothing
-    assert _apply(tmp_path, new["id"]) in (0, 1)
+    before = eng._read_playbook_by_id(old["id"])
+    assert _apply(tmp_path, new["id"], mark) in (0, 1)
+    assert eng._read_playbook_by_id(old["id"]) == before
     assert _usable(eng, new["id"]) and eng._read_playbook_by_id(old["id"])["status"] != "active"
+
+
+@pytest.mark.parametrize("mode", ["preview", "stale", "wrong_target"])
+def test_supersede_recovery_keeps_guards_and_preview_read_only(eng, tmp_path, mode):
+    old, new = _revision(eng, "Review replacement guards")
+    other = eng.add_playbook({"title": "Unrelated checklist", "steps": [{"action": "other"}]})
+    eng._update_playbook_file_by_id(new["id"], lambda r: {
+        **r, "tier": "verified", "approval_status": "approved", "promotion_reason": "owner_review"})
+    ids = [old["id"], new["id"], other["id"]]
+    before = [eng._playbook_path(i).read_bytes() for i in ids]
+    target = other["id"] if mode == "wrong_target" else old["id"]
+    mark = {"id": new["id"], "mark": "supersede", "target": target}
+    if mode == "stale":
+        mark["expected_version"] = 99
+    result = review_cli._review_one(eng, mark, review_cli._new_counts(), dry_run=mode == "preview", via="test")
+    assert result["status"] == {"preview": "planned", "stale": "version_conflict", "wrong_target": "not_staging"}[mode]
+    assert [eng._playbook_path(i).read_bytes() for i in ids] == before
+
+
+def test_supersede_recovery_rechecks_the_target_under_commit_locks(eng, monkeypatch):
+    from contextlib import contextmanager
+
+    old, new = _revision(eng, "Recover the reviewed target")
+    other = eng.add_playbook({"title": "Another approved checklist", "steps": [{"action": "other"}]})
+    eng._update_playbook_file_by_id(new["id"], lambda r: {
+        **r, "tier": "verified", "approval_status": "approved", "promotion_reason": "owner_review"})
+    real_locks = eng._review_locks
+    snapshots = []
+
+    @contextmanager
+    def concurrent_target_change():
+        with real_locks():
+            if not snapshots:
+                eng._update_playbook_file_by_id(new["id"], lambda r: {**r, "pending_supersedes": other["id"]})
+                snapshots.extend(eng._playbook_path(i).read_bytes() for i in (old["id"], new["id"], other["id"]))
+            yield
+
+    monkeypatch.setattr(eng, "_review_locks", concurrent_target_change)
+    result = review_cli._review_one(eng, {"id": new["id"], "mark": "supersede", "target": old["id"]},
+                                   review_cli._new_counts(), dry_run=False, via="test")
+    assert result["status"] == "not_staging"
+    assert [eng._playbook_path(i).read_bytes() for i in (old["id"], new["id"], other["id"])] == snapshots

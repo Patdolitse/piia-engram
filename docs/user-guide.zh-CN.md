@@ -215,9 +215,9 @@ AI 拿到什么，各个入口规则一致：
   取代全局条目（或反过来）、已归档的条目都会被拒绝，返回 `supersedes_target_not_applicable`
   与 `reason`（`different_project`、`scope_mismatch`、`archived`）。你批准后旧条目被取代并自动解钉（记入审计）。
   你自己归档它也会解钉。
-- 钉住条目上的关联链接可能被改为指向合并后的条目：合并另外两条条目（`merge_knowledge`）时，
-  与被合并掉那条相关联的钉住条目会改为关联保留下来的那条。只有它的 `related_ids` 变化，
-  内容、版本和钉住状态都不变。
+- 合并另外两条条目（`merge_knowledge`）时，钉住条目完全不变，包括 `related_ids`。
+  它与被合并掉那条的链接保留，被合并掉的条目仍能按 id 读取；只有未钉住条目的链接
+  会改为指向保留下来的条目。
 - AI 拿到的上下文里，钉住的条目在各自分组（lessons、decisions、playbooks）内排在最前，
   条数上限或预算裁剪时先舍弃未钉住的条目。`search_knowledge` 里钉住只在相关度相同时
   决定先后，不会出现在无关的搜索结果里。`engram preview` 会标出钉住的条目。

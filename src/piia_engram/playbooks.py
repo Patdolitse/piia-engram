@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -63,7 +64,14 @@ class PlaybookIdExists(Exception):
 
 def valid_playbook_id(value: Any) -> bool:
     """True when ``value`` can safely name a file directly inside playbooks/."""
-    return valid_file_id(value)
+    # Leading underscores belong to the internal-file namespace (_index, etc.).
+    return valid_file_id(value) and not value.startswith("_")
+
+
+def playbook_id_key(value: Any) -> str:
+    """Compare ids as filenames, including Windows case-insensitive names."""
+    value = str(value or "")
+    return value.casefold() if os.name == "nt" else value
 
 
 def new_playbook_id(title: str) -> str:
@@ -1287,7 +1295,8 @@ class PlaybookMixin:
         playbook_id = pb["id"]
         previous_body = body_path.read_bytes() if not create and body_path.exists() else None
         if create:
-            if any(e.get("id") == playbook_id for e in self._read_playbook_index()):
+            if any(playbook_id_key(e.get("id")) == playbook_id_key(playbook_id)
+                   for e in self._read_playbook_index()):
                 raise PlaybookIdExists(playbook_id)
             self._playbooks_dir.mkdir(parents=True, exist_ok=True)
             try:
@@ -1306,7 +1315,7 @@ class PlaybookMixin:
 
         def _upsert(index: list[dict]) -> list[dict]:
             for i, entry in enumerate(index):
-                if entry.get("id") == playbook_id:
+                if playbook_id_key(entry.get("id")) == playbook_id_key(playbook_id):
                     index[i] = idx_entry
                     break
             else:
