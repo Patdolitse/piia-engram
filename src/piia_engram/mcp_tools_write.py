@@ -478,10 +478,13 @@ async def add_decision(
     注意：如果用户给了一段会话摘要让你自动提取，请用 extract_session_insights 而不是本工具。
     Note: If the user gives a session summary for automatic extraction, use extract_session_insights instead.
 
-    决策链（Decision Thread）：同一问题改选方案时，会自动在决策链中标记旧决策为 superseded。
+    决策链（Decision Thread）：同一问题改选方案时，新决策是取代旧决策的提案
+    （pending_supersedes），在任何审批模式下都等主人用 engram review 批准，批准前旧决策照常使用。
     也可显式传 supersedes 参数指定被取代的旧决策 ID。
-    Decision thread: when the same question gets a different choice, the old decision is
-    automatically marked superseded. You may also explicitly pass supersedes with the old ID.
+    Decision thread: when the same question gets a different choice than a reviewed
+    decision, the new one is a proposal to replace it (pending_supersedes) that waits for
+    the Owner's engram review in every approval mode; the old one stays in use until then.
+    You may also explicitly pass supersedes with the old ID.
 
     Args:
         question: 决策的问题，如"数据库选型"。 / Decision question, such as 'database choice'.
@@ -908,6 +911,9 @@ async def manage_playbook(
 
     被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
     An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
+
+    待审（pending）playbook 的 archive / delete / restore 由主人在本地 engram review 决定：返回 local_review_only，零写入。
+    Archiving, deleting or restoring a pending playbook is the Owner's local engram review: the reply is local_review_only (nothing written).
 
     Args:
         action: update | archive | delete | restore。

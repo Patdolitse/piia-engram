@@ -629,14 +629,14 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `archive_knowledge` | Archive a lesson, decision or playbook by ID (needs `expected_version`) |
 | `confirm_knowledge` | Owner-only confirmation stamp via human, test, or anchor provenance |
 | `onboard_repo` | Owner-only repo scan: create staging repo-fact candidates from anchors |
-| `onboard_accept` | Owner-only accept: validate a candidate anchor and promote it to verified |
+| `onboard_accept` | Owner-only accept: validate a candidate anchor and promote it to verified (a pending revision is decided in `engram review`) |
 | `check_anchors` | Owner-only revalidation for existing anchor-backed facts |
 | `merge_knowledge` | Merge a duplicate into the primary item (needs both items' versions) |
 | `manage_relation` | `action`: link / unlink — manage typed relations between knowledge items (decision threads) |
 | `explore_knowledge` | Knowledge graph exploration via `mode`: related, similar, merge_candidates |
 | `get_knowledge_overview` | Knowledge digest, health report, stale checks |
 | `get_stale_knowledge` | List items that need review |
-| `review_staging` | Staging review hub via `action`: list pending, batch decisions, review_item, apply_text review results |
+| `review_staging` | Staging review via `action`: list pending, batch preview (`dry_run=true`), review_item. Approving, rejecting or archiving pending items is local only (`engram review`); over MCP it answers `local_review_only` |
 | `export_knowledge_report` | Owner-gated export: write a readable Markdown knowledge report |
 | `request_outline_review` | Owner-gated export: generate an interactive local HTML review page |
 | `export_engram` | Owner-gated export: write a full backup (`format="openclaw"` for OpenClaw-compatible files) |

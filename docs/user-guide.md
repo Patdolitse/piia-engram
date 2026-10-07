@@ -153,7 +153,13 @@ You stay in control of staged items at any time:
 
 - `review_staging(action="list")` — see what is waiting for review (cold-start
   `get_resume_brief` also surfaces the pending count, including high-risk items).
-- Approve, edit, archive, or reject from the review surface.
+- Deciding a pending item (approve, reject, archive, restore) is yours, in the
+  local `engram review`, in every approval mode. Over MCP an AI can list and
+  preview (`review_staging` with `dry_run=true`) but not decide: an applying
+  batch, `apply_text`, changing a pending item's tier or status, archiving or
+  confirming it, approving, rejecting, deleting or restoring a pending playbook,
+  and `onboard_accept` of a pending revision all answer `local_review_only`
+  and write nothing.
 - In a terminal, `engram review interactive` (or `engram review -i`) shows one
   pending proposal at a time (type, text, risk, where it came from, a possible
   duplicate with its diff, what it replaces) and takes one letter plus Enter:
@@ -197,12 +203,19 @@ You stay in control of staged items at any time:
   `kind="playbook"`, a playbook drafted from a session) is a proposal in every
   approval mode: it waits in the review queue until you approve it with
   `engram review`, and automatic recall leaves it out until then. An AI's
-  rewrite of an approved playbook (`manage_playbook` update of its steps,
-  title, triggers and so on) is a proposal too: the approved version stays in
+  rewrite of an approved playbook (its steps, title, triggers and so on,
+  through `manage_playbook` update or `update_knowledge`) is a proposal too:
+  the approved version stays in
   use, unchanged, until you approve the new one. A pending playbook does not
   run before that either: `playbook_execution` answers `not_approved`, and
   `get_playbooks` lists it marked `pending_untrusted`. Playbooks you add locally
   (for example `engram playbook install`) are unchanged.
+- A decision an AI adds that answers the same question as a reviewed decision
+  with a different choice is a proposal to replace it (`pending_supersedes`),
+  in every approval mode: the reviewed decision stays in use until you approve
+  the new one. Decisions you add locally keep linking the replacement at once.
+- Playbook ids are chosen by Engram: an id an AI sends with a new playbook is
+  ignored, and an insert never takes over an existing id.
 - Playbooks always require explicit review before trusted use; Engram never
   silently executes a workflow — it hands the steps to your AI tool as a passive
   reference and tracks the reported outcome.
@@ -250,15 +263,19 @@ the type when an id is ambiguous; `engram pin --list` lists pins;
   `supersedes=<id>` (plus `supersedes_expected_version`); in every approval
   mode that proposal waits for your local review (`engram review apply` /
   `engram review interactive`). An AI cannot approve it over MCP by any route:
-  batch approval, the outline review's promote list, changing its tier and an
-  import all answer `pinned_target` and write nothing, and `onboard_accept`
-  refuses a playbook revision proposal (`revision_proposal`). The review card
+  batch approval, the outline review's promote list and changing its tier
+  answer `local_review_only`, an import answers `pinned_target`, and
+  `onboard_accept` refuses a revision proposal; none of them writes anything. The review card
   says the target is pinned. A proposal may only supersede an active entry of
   the same scope: one in another project, a global entry from a project
   proposal (or the other way round) and an archived entry are refused with
   `supersedes_target_not_applicable` and a `reason` (`different_project`,
   `scope_mismatch`, `archived`). When you approve it, the old entry is replaced and its pin
   is removed (audited). Archiving it yourself also removes the pin.
+- Relation links on a pinned entry may be updated to point to the merged entry:
+  when two other entries are merged (`merge_knowledge`), a pinned entry linked
+  to the merged-away one is relinked to the one that stays. Only its
+  `related_ids` change; its content, version and pin stay as they are.
 - In what your AI receives, pinned entries come first within their section
   (lessons, decisions, playbooks), so a cap or a budget cut drops unpinned
   entries first. In `search_knowledge` a pin only decides between equally

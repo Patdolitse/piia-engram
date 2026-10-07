@@ -82,7 +82,7 @@ def test_classes_and_hints_agree():
 
 def test_destructive_tools_are_exactly_the_ones_that_overwrite_downgrade_or_retire():
     assert {n for n, h in TOOL_ANNOTATIONS.items() if h.destructive} == {
-        "manage_caller_trust", "archive_knowledge", "review_staging",
+        "manage_caller_trust", "archive_knowledge",
         "merge_knowledge", "manage_relation", "update_identity", "user_portrait",
         "manage_playbook", "update_knowledge", "export_engram",
         "register_tool", "save_project_snapshot", "start_project", "wrap_up_session",
@@ -93,6 +93,9 @@ def test_destructive_tools_are_exactly_the_ones_that_overwrite_downgrade_or_reti
     for name in ("add_lesson", "add_decision", "add_playbook", "memory_store",
                  "ingest_notes", "extract_session_insights", "save_agent_context"):
         assert not TOOL_ANNOTATIONS[name].destructive, name
+    # review_staging only lists, previews and refreshes last_reviewed over MCP:
+    # approving, rejecting and archiving pending proposals is the local review
+    assert not TOOL_ANNOTATIONS["review_staging"].destructive
 
 
 def test_export_engram_overwrites_an_existing_file_so_it_is_marked_destructive(tmp_path, monkeypatch):

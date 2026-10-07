@@ -81,6 +81,9 @@ migration）移出 MCP，改为 owner 专用的本地 CLI。
 | `review_knowledge(knowledge_id)` | `review_staging(action="review_item", knowledge_id=...)` |
 | `apply_review(review_text)` | `review_staging(action="apply_text", review_text=...)` |
 
+自 4.22.0 起，落盘的批量审核（`dry_run=false`）和 `apply_text` 只能在本地进行：经 MCP 返回
+`local_review_only`；批准、拒绝或归档待审条目请用 `engram review`。
+
 ### 知识关系（4 → 1）
 
 | 旧调用 | 新调用 |

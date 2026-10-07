@@ -13,8 +13,14 @@
   - **迁移：** 先读取条目，把它的 `version` 作为 `expected_version` 传入（合并用 `primary_expected_version` / `secondary_expected_version`，带 `supersedes` 时用 `supersedes_expected_version`）。`version_required` 回复带 `current_version` 和调用示例；收到 `version_conflict` 时重新读取条目后再重试。
 - **MCP `import_engram` 只能预览。** 写入请求返回 `{"error": "local_only", "hint": ...}` 且不写入；`dry_run=true` 仍返回导入计划，该工具标为只读。
   - **迁移：** 在存放数据的机器上用 `engram import <backup.json> --apply --yes`（或 `engram import --format openclaw ... --apply --yes`）执行导入；`local_only` 回复会给出这条命令。
-- **AI 写入或改写的 playbook 在任何模式下都等你审核，待审 playbook 永远不会执行。** `add_playbook`、`memory_store(kind="playbook")`、从会话起草的手册，以及经 `manage_playbook` 修改内容，都存为提案，已批准的版本照常使用；对待审手册调用 `playbook_execution` 返回 `not_approved`；`add_playbook` 的回复改为 JSON（`{"status": "pending", "id": ..., "message": ...}`）。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的被拒绝（`queue_full`），不会被丢弃。
+- **AI 写入或改写的 playbook 在任何模式下都等你审核，待审 playbook 永远不会执行。** `add_playbook`、`memory_store(kind="playbook")`、从会话起草的手册，以及经 `manage_playbook` 或 `update_knowledge` 修改内容，都存为提案，已批准的版本照常使用；对待审手册调用 `playbook_execution` 返回 `not_approved`；`add_playbook` 的回复改为 JSON（`{"status": "pending", "id": ..., "message": ...}`）。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的被拒绝（`queue_full`），不会被丢弃。
   - **迁移：** 用 `engram review` 或 `engram review interactive` 批准还要使用的草稿；按 JSON 读取 `add_playbook` 的回复。
+- **决定待审提案只能在本地进行，任何模式都一样。** 经 MCP 批准、提升、拒绝或归档待审条目，在默认模式和严格模式下都返回 `local_review_only`（并提示在本地运行 `engram review`）且不写入：`review_staging` 的 `action="batch"` 且 `dry_run=false`、`review_staging(action="apply_text")`、改待审条目 tier 或 status（或把任何条目提升为 `verified`）的 `update_knowledge`、对待审条目的 `archive_knowledge` 和 `confirm_knowledge`、对待审 playbook 的 `manage_playbook` archive / delete / restore，以及对待审修订的 `onboard_accept`。列出、批量预览（`dry_run=true`）和 `review_item` 仍可用，`review_staging` 不再标为破坏性。风险分级直接判为 verified 的写入不受影响。
+  - **迁移：** 用 `engram review` 或 `engram review interactive` 决定待审条目；原先经 MCP 落盘批量审核的 AI 仍可用 `dry_run=true` 预览。
+- **AI 新增的决策若会取代已审核决策，等你审核。** 经 MCP 新增的决策如果与已审核决策问题相同、选择不同，在任何模式下都是带 `pending_supersedes` 的待审提案；已审核的决策照常使用，你批准后才写入取代关系。你在本地添加的决策不受影响。
+  - **迁移：** 用 `engram review` 批准你要的替换。
+- **Playbook id 由 Engram 生成。** AI 随新 playbook 发来的 `id` 会被忽略，改用新的 id；本地新增时 id 已被占用则拒绝（`id_exists`）。
+  - **迁移：** 从回复里读取 id，不要自行指定。
 - **AI 只拿到已审核、当前有效的记忆。** 冷启动、接续简报、会话开始钩子、`get_recall` 和 `get_relevant_knowledge` 不再返回待审、被取代、已归档以及无法确认已审核的条目。`search_knowledge` 把待审条目放在单独的 `pending` 分组（每条标 `pending_untrusted`），被取代的条目只在 `include_superseded=true` 时以单独的 `superseded` 分组返回。详见[用户指南](docs/user-guide.zh-CN.md#4-治理与审批ai-提议重要的由你审)。
   - **迁移：** 读取 `search_knowledge` 的客户端应单独读取 `pending` 分组，不要把它当作已审核内容；`{"tier": "staging"}` 过滤的结果现在在 `pending` 分组里。
 - **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动和 `wrap_up_session` 不再读取或导入其它 AI 工具的记忆和规则文件；`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
@@ -42,6 +48,7 @@
 
 ### 移除
 - 移除未使用的内部函数 `ingest_extraction`。
+- MCP `review_staging` 不再批准、拒绝或应用审查结果（见破坏性变更）。
 
 ### 修复
 - **Claude Code：Engram 现在注册到 Claude Code 实际读取的位置。** 此前版本把 Claude Code 的条目写到 `~/.claude/.mcp.json`，而 Claude Code 不读取这个文件；现在 setup 通过 `claude mcp add --scope user` 注册到用户级配置（`~/.claude.json`，或 `$CLAUDE_CONFIG_DIR/.claude.json`），`engram doctor` 会报告仍留在旧文件里的条目。**用旧版本配置过 Claude Code 的用户请重新运行 `engram setup`**，它会询问是否移除旧条目。详见 [Claude Code 配置](docs/integrations/claude-code.md)。
@@ -49,6 +56,12 @@
 - setup 改写的客户端配置文件以原子方式写入；符号链接形式的配置保持为符号链接，在 macOS 和 Linux 上保留文件原有权限。
 - Windows：其它进程短暂占用同一文件时写入不再失败，Engram 会在最多一秒内重试。
 - JSON 备份（`export_engram`、`engram dock-export`）包含你的拒绝记录（只有哈希和元数据），`engram import` 会恢复它们；格式不对的记录会被跳过并计数。
+- 字段类型不对（例如是列表）的拒绝记录会被跳过并计数，不再中断导出、导入或写入；本地文件里的这类记录也一样。
+- Playbook id 始终指向 playbooks 目录内的文件：带路径的 id 会被所有 playbook 操作、执行计划和导入拒绝，新增也不会覆盖已有 playbook。`get_daily_log` 只接受 `YYYY-MM-DD` 格式的日期（`invalid_date`）。
+- `engram review` 在写入决定的同一把锁内比对你审核时的版本（`expected_version`），期间被改动的条目返回 `version_conflict`，不会被批准、拒绝或写入拒绝记录。
+- 批准 playbook 修订时先停用旧 playbook；运行中断后再次应用同一份 marks 即可完成，两个版本都已被批准的库也能这样补完。
+- 读取信任边界不再写 `identity/trust_boundaries.json`；缺少的默认值只在内存中补齐。
+- doctor 的连接报告把服务启动描述为“不导入任何内容、不改动知识和身份内容”，不再称为“零写入”（读取仍会更新访问计数）。
 - 所有项目的待审提案都会出现在 `engram review`、`engram review export`、`engram management` 和交互审核中，并显示 `project:<名称>` 作用域。
 - 严格模式下 `manage_playbook(action="update")` 的回复是待审提案，不再回显整份提议的手册。
 - `python -m piia_engram.setup_wizard` 不再因循环导入而失败。

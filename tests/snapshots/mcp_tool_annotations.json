@@ -301,8 +301,8 @@
   },
   "review_staging": {
     "readOnlyHint": false,
-    "destructiveHint": true,
-    "idempotentHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
     "openWorldHint": false
   },
   "save_agent_context": {

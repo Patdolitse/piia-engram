@@ -83,7 +83,7 @@ AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`
 - **High risk** (credential values, executable commands, permission or MCP-config changes) is routed to staging for your review before it becomes active.
 - Unsupervised background writeback paths force staging regardless of risk, and LLM-extracted suggestions cannot self-label themselves as verified.
 
-You can review, edit, archive, or reject staged knowledge anytime via `review_staging`; playbook review remains explicit before trusted use. Cold-start `get_resume_brief` surfaces the pending-review count (including high-risk items) so nothing sensitive slips in silently.
+Your AI can list and preview staged knowledge with `review_staging`; approving, rejecting or archiving it is yours, in the local `engram review`, in every approval mode (over MCP those requests answer `local_review_only` and write nothing). Playbook review remains explicit before trusted use. Cold-start `get_resume_brief` surfaces the pending-review count (including high-risk items) so nothing sensitive slips in silently.
 
 ### What "verified" means
 

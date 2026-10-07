@@ -134,7 +134,10 @@ staged 条目始终在你掌控之中：
 
 - `review_staging(action="list")`——查看待审内容（冷启动 `get_resume_brief` 也会带出
   待审数量，含高风险项）。
-- 在审查界面里批准、编辑、归档或拒绝。
+- 决定待审条目（批准、拒绝、归档、恢复）由你在本地 `engram review` 中完成，任何审批模式都一样。
+  AI 经 MCP 只能列出和预览（`review_staging` 且 `dry_run=true`），不能决定：落盘的批量审核、
+  `apply_text`、改待审条目的 tier 或 status、归档或确认它、批准/拒绝/删除/恢复待审 playbook，
+  以及对待审修订的 `onboard_accept`，都返回 `local_review_only`，不写入任何内容。
 - 在终端里运行 `engram review interactive`（或 `engram review -i`），逐条显示待审
   提案（类型、内容、风险、来源、可能的重复及差异、取代关系），输入一个字母加回车：
   `a` 批准、`r` 拒绝（可写理由，只记在回执里，经 MCP 的 `get_audit_log` 读不到）、`s` 取代一条已批准条目（输入其 id）、`k` 跳过、
@@ -161,9 +164,13 @@ staged 条目始终在你掌控之中：
   `engram review apply` 以非零码退出。
 - AI 经 MCP 写入的 playbook（`add_playbook`、`kind="playbook"` 的 `memory_store`、从会话
   起草的手册）在任何审批模式下都是提案：进入待审区，等你用 `engram review` 批准，批准前
-  不进入自动召回。AI 对已批准手册的改写（用 `manage_playbook` update 改步骤、标题、触发词等）
-  也是提案：在你批准新版本之前，已批准的版本照常可用、不被改动。待审手册也不能被执行：`playbook_execution` 返回 `not_approved`，`get_playbooks`
+  不进入自动召回。AI 对已批准手册的改写（经 `manage_playbook` update 或 `update_knowledge`
+  改步骤、标题、触发词等）也是提案：在你批准新版本之前，已批准的版本照常可用、不被改动。待审手册也不能被执行：`playbook_execution` 返回 `not_approved`，`get_playbooks`
   列出时标上 `pending_untrusted`。你在本地添加的手册（例如 `engram playbook install`）不受影响。
+- AI 新增的决策如果与一条已审核决策问题相同、选择不同，在任何审批模式下都是取代它的提案
+  （`pending_supersedes`）：你批准新决策之前，已审核的那条照常使用。你在本地添加的决策仍会立即
+  建立取代关系。
+- Playbook 的 id 由 Engram 生成：AI 随新 playbook 发来的 id 会被忽略，新增也不会占用已有的 id。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。
 
@@ -199,12 +206,15 @@ AI 拿到什么，各个入口规则一致：
   AI 仍可用 `add_lesson` / `add_decision` / `add_playbook` 加 `supersedes=<id>`
   （以及 `supersedes_expected_version`）提交修订提案；无论哪种审批模式，这类提案都
   等待你的本地审核（`engram review apply` / `engram review interactive`）。AI 经 MCP
-  无论走哪条路径都不能批准它：批量批准、审查页的 promote 列表、改 tier、导入都返回
-  `pinned_target` 且不写入，`onboard_accept` 拒绝 playbook 修订提案（`revision_proposal`）。
+  无论走哪条路径都不能批准它：批量批准、审查页的 promote 列表、改 tier 返回
+  `local_review_only`，导入返回 `pinned_target`，`onboard_accept` 拒绝修订提案；都不写入。
   审核卡会提示目标是钉住条目。提案只能取代同一作用域内的有效条目：其它项目的条目、项目提案
   取代全局条目（或反过来）、已归档的条目都会被拒绝，返回 `supersedes_target_not_applicable`
   与 `reason`（`different_project`、`scope_mismatch`、`archived`）。你批准后旧条目被取代并自动解钉（记入审计）。
   你自己归档它也会解钉。
+- 钉住条目上的关联链接可能被改为指向合并后的条目：合并另外两条条目（`merge_knowledge`）时，
+  与被合并掉那条相关联的钉住条目会改为关联保留下来的那条。只有它的 `related_ids` 变化，
+  内容、版本和钉住状态都不变。
 - AI 拿到的上下文里，钉住的条目在各自分组（lessons、decisions、playbooks）内排在最前，
   条数上限或预算裁剪时先舍弃未钉住的条目。`search_knowledge` 里钉住只在相关度相同时
   决定先后，不会出现在无关的搜索结果里。`engram preview` 会标出钉住的条目。

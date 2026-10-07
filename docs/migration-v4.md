@@ -85,6 +85,10 @@ clashing with Playbook lifecycle `status`.
 | `review_knowledge(knowledge_id)` | `review_staging(action="review_item", knowledge_id=...)` |
 | `apply_review(review_text)` | `review_staging(action="apply_text", review_text=...)` |
 
+Since 4.22.0, applying a batch (`dry_run=false`) and `apply_text` are local only:
+over MCP they answer `local_review_only`; approve, reject or archive pending items
+with `engram review`.
+
 ### Knowledge relations (4 → 1)
 
 | Old call | New call |

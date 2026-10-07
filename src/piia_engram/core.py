@@ -3486,7 +3486,8 @@ STORE_WRITE_METHODS = frozenset({
     "extract_playbook_from_session", "extract_session_insights", "import_all",
     "increment_domain_usage", "ingest_notes", "install_builtin_playbook", "link_knowledge",
     "mark_validated_knowledge", "merge_knowledge", "merge_playbooks", "onboard_repo",
-    "prepare_playbook_execution", "promote_knowledge", "purge_search_index", "rebuild_index",
+    "prepare_playbook_execution", "promote_knowledge", "propose_playbook_update", "purge_search_index",
+    "rebuild_index",
     "reconcile_ai_configs", "reconcile_memories", "refresh_quick_context", "register_tool",
     "reject_playbook", "remove_relation", "remove_tool", "resolve_playbook_scope_review",
     "restore_lifecycle_archive", "restore_playbook", "revalidate_anchors", "revoke_caller",
@@ -3519,7 +3520,7 @@ READ_ONLY_SAFE_METHODS = frozenset({
     "mcp_entry_version", "mcp_existing_write_guard", "mcp_supersede_guard",
     "pending_playbook_count", "preview_session_digest_backfill", "render_portrait_growth",
     "render_user_portrait", "render_user_portrait_html", "review_knowledge", "search_knowledge",
-    "suggest_merges", "tombstoned_but_pending",
+    "suggest_merges", "tombstoned_but_pending", "unfinished_playbook_replacement",
 })
 
 

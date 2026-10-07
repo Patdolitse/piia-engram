@@ -597,11 +597,11 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `explore_knowledge` | 按 `mode` 探索知识图谱：related（关联）、similar（相似）、merge_candidates（近似重复扫描） |
 | `get_knowledge_overview` | 知识概览（摘要 + 健康度 + 过期检查） |
 | `get_stale_knowledge` | 列出需要复习的过期知识 |
-| `review_staging` | 按 `action` 审查暂存区：list 列出待审、batch 批量决定、review_item 标记已复习、apply_text 应用审查结果 |
+| `review_staging` | 按 `action` 审查暂存区：list 列出待审、batch 预览（`dry_run=true`）、review_item 标记已复习。批准、拒绝、归档待审条目只能在本地 `engram review` 完成；经 MCP 返回 `local_review_only` |
 | `export_knowledge_report` | owner-gated 导出：写出 Markdown 知识报告 |
 | `request_outline_review` | owner-gated 导出：生成本地交互式 HTML 知识审查页面 |
 | `onboard_repo` | owner-only 仓库扫描：从 anchor 生成 staging repo-fact 候选 |
-| `onboard_accept` | owner-only 接受：校验 anchor 并升级为 verified |
+| `onboard_accept` | owner-only 接受：校验 anchor 并升级为 verified（待审修订在 `engram review` 中决定） |
 | `export_engram` | owner-gated 导出：写出完整备份（`format="openclaw"` 可导出 OpenClaw 格式文件） |
 | `import_engram` | owner/admin 导入预览（只能 `dry_run=True`）：元数据级合并/冲突计划（支持 `format="openclaw"`）；真正导入只能在本地运行 `engram import <backup.json> --apply --yes`（OpenClaw 用 `engram import --format openclaw ... --apply --yes`），CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
 | `read_web_content` | 读取用户提供的 URL：本地边车运行时优先用边车，否则用包内自足的内置 reader（`pip install "piia-engram[reader]"`） |

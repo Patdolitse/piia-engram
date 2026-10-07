@@ -128,7 +128,7 @@ TOOL_ANNOTATIONS: dict[str, ToolHints] = {
     "import_engram": _READ,  # preview only over MCP; applying is the local `engram import`
     "confirm_knowledge": _STAMP,  # provenance stamp on an existing row
     "onboard_repo": _ADD,  # new pending candidates
-    "onboard_accept": _STAMP,  # promotes one pending candidate
+    "onboard_accept": _STAMP,  # promotes one onboard candidate (never a pending revision)
     "check_anchors": _REMOVES_IDEMPOTENT,  # an item whose anchor no longer holds goes back to pending and loses its confirmation source
     # --- governed_write ---
     "memory_store": _ADD,
@@ -140,7 +140,7 @@ TOOL_ANNOTATIONS: dict[str, ToolHints] = {
     "save_agent_context": _ADD,
     "update_knowledge": _REMOVES,  # edits fields in place and can set a retiring status (the old body is kept as a snapshot)
     "archive_knowledge": _REMOVES_IDEMPOTENT,
-    "review_staging": _REMOVES,  # batch reject / apply_text archive
+    "review_staging": _STAMP,  # list / dry-run preview; review_item refreshes last_reviewed; deciding is local only
     "merge_knowledge": _REMOVES,  # archives the secondary item
     "manage_relation": _REMOVES_IDEMPOTENT,  # unlink removes an edge
     "update_identity": _REMOVES_IDEMPOTENT,  # replaces field values in place

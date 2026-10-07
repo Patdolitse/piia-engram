@@ -150,6 +150,11 @@ async def update_knowledge(
     被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
     An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
 
+    已批准 playbook 的内容修改是待审修订提案（返回 status=pending 与 pending_supersedes），批准前原版本照常使用。
+    改待审条目的 tier / status，或把条目提升为 verified，由主人在本地 engram review 决定：返回 local_review_only，零写入。
+    A content change of an approved playbook is a pending revision proposal (status=pending, pending_supersedes); the approved version stays in use until the Owner approves.
+    Changing a pending item's tier or status, or raising an item to verified, is the Owner's local engram review: the reply is local_review_only (nothing written).
+
     注意：如果只是确认某条知识仍有效，用 review_staging(action="review_item")；如果要归档，用 archive_knowledge。
     Note: If you only need to confirm an item is still valid, use review_staging(action="review_item"); to archive, use archive_knowledge.
 
@@ -228,6 +233,9 @@ async def archive_knowledge(item_id: str, expected_version: int | None = None) -
     注意：如果只是内容重复需要合并，用 merge_knowledge。被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
     Note: If the item is a duplicate that should be merged, use merge_knowledge. An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
 
+    待审（pending）条目的归档由主人在本地 engram review 决定：返回 local_review_only，零写入。
+    Archiving a pending item is the Owner's local engram review: the reply is local_review_only (nothing written).
+
     Args:
         item_id: 要归档的条目 ID。 / ID of the item to archive.
         expected_version: 必填：读取结果中的当前版本号。缺失 → version_required，不匹配 → version_conflict，均零改动。 / Required: the current version from a read result. Missing -> version_required; mismatch -> version_conflict; both change nothing.
@@ -269,6 +277,7 @@ async def confirm_knowledge(
     """Owner-only: explicitly stamp a knowledge item with human/test/anchor freshness provenance.
 
     Owner/admin surface: writes owner-confirmed provenance stamps and is refused for non-owner callers when governance is enabled.
+    A pending (staging) item is decided in the local engram review: the reply is local_review_only (nothing written).
 
     用途：用户/owner 已经确认某条知识仍成立，或明确背书它由测试信号/锚点支撑时调用。
     Purpose: Call only after explicit owner confirmation that a knowledge item is
@@ -337,7 +346,9 @@ async def onboard_accept(item_id: str, project_root: str = "") -> str:
     """Owner-only: accept an onboard candidate and stamp anchor provenance.
 
     Owner/admin surface: promotes a staging candidate to a verified owner fact
-    and is refused for non-owner callers when governance is enabled.
+    and is refused for non-owner callers when governance is enabled. A pending
+    revision (it replaces another entry) is decided in the local engram review:
+    the reply is local_review_only (nothing written).
 
     用途：owner 确认一条 onboard 候选，先按仓库校验其锚点，再提升为 verified 并盖
     anchor 确认戳；锚点无效或绑定到不同仓库时拒绝。

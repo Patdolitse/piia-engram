@@ -1230,6 +1230,8 @@ _DEFAULT_SERVER_INSTRUCTIONS = (
     "Notes:\n"
     "- Playbooks you add (add_playbook, memory_store kind='playbook') are proposals: they wait\n"
     "  for the Owner's review (engram review) and are used only after approval.\n"
+    "- Approving, rejecting or archiving pending proposals is the Owner's local engram review;\n"
+    "  over MCP review_staging lists and previews only (other requests: local_review_only).\n"
     "- Changing an existing entry (update_knowledge, archive_knowledge, merge_knowledge,\n"
     "  manage_playbook, or a write with supersedes) needs expected_version /\n"
     "  supersedes_expected_version: the version from the read result.\n"
