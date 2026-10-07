@@ -6,55 +6,54 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
-## [Unreleased]
+## [4.22.0] - 2026-10-07
 
 ### 破坏性变更
-- **经 MCP 修改已有条目必须带版本号。** `update_knowledge`、`archive_knowledge`、`merge_knowledge`（`primary_expected_version` 与 `secondary_expected_version` 都要）、`manage_playbook`（`update`、`archive`，以及确认执行的 `delete` / `restore`；严格模式下的更新提案也一样），以及取代已有条目的写入（带 `supersedes` 的 `add_decision` 或 `memory_store`，现在要同时带 `supersedes_expected_version`），不带该条目的当前版本就不再写入：返回 `{"error": "version_required", "current_version": N, "example": {...}}`；版本已不是当前版本时返回 `{"error": "version_conflict", "current_version": N}`。两种情况都不写入任何内容。`supersedes` 指向不存在的条目时返回 `supersedes_target_not_found`；指向已归档、其它项目或另一种作用域（项目提案取代全局条目，或反过来）的条目时返回 `supersedes_target_not_applicable` 并说明 `reason`（`archived`、`different_project`、`scope_mismatch`）。版本号不是整数时返回 `version_invalid`。新建条目、其它纯新增写入、读取和本地 `engram` 命令不受影响。读取结果（`get_lessons`、`get_decisions`、`search_knowledge`、`get_relevant_knowledge`、`get_playbooks`）始终带 `version`（从未修订的条目为 1），`get_knowledge_history` 返回 `current_version`。
-  - **迁移：** 先读取条目，把它的 `version` 作为 `expected_version`（或 `supersedes_expected_version`）传入。收到 `version_required` 时先核对条目，再用回复里的 `current_version` 重试（`example` 给出调用示例）；收到 `version_conflict` 时重新读取条目后再重试。
-- **MCP `import_engram` 只能预览。** 两种格式（`native` 与 `openclaw`）收到写入请求时都返回 `{"error": "local_only", "hint": ...}` 且不写入；`dry_run=true` 仍返回元数据级计划（OpenClaw 文件给出哪些文件存在、各有多少条要点）。该工具现在标为只读。本地 `engram import` 不变。
-  - **迁移：** 继续用 `import_engram(..., dry_run=true)` 预览，然后在存放数据的机器上运行 `engram import <backup.json> --apply --yes`（替换模式加 `--overwrite`），OpenClaw 文件用 `engram import --format openclaw --memory MEMORY.md ... --apply --yes`。`local_only` 回复会给出这条命令。
-- **AI 写入或改写的 playbook 在任何模式下都等你审核。** 经 MCP 的 `add_playbook`、`memory_store(kind="playbook")`、从会话起草的手册，以及对已批准手册内容的 `manage_playbook(action="update")`，在非严格模式下也存为待审提案；已批准的手册在你批准替代版本之前照常可用、不被改动（只改状态的更新仍是直接修改；两者混在一次调用里返回 `mixed_update`）。`add_playbook` 的回复改为 JSON（`{"status": "pending", "id": ..., "message": ...}`），不再是文本确认。待审手册永远不会被执行：`playbook_execution`（`prepare`、`update_step`）在任何模式下返回 `not_approved`（严格模式仍为 `pending_not_executable`）且不写入；`get_playbooks` 列出时标上 `pending_untrusted` 和 `eligibility: "pending"`；自动召回不包含它。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的会被拒绝（`queue_full`）、不会被丢弃。已批准的手册不受影响；默认模式下已有的待审草稿从此批准后才能执行。
-  - **迁移：** 用 `engram review`（或 `engram review interactive`）批准你还要使用的草稿；按 JSON 读取 `add_playbook` 的回复。
-
-### 变更
-- **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动（`get_user_context`、`get_resume_brief`、会话开始钩子）和 `wrap_up_session` 都不再读取或导入其它 AI 工具的记忆和规则文件。`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
-- `engram setup` 改为询问是否现在导入一次（默认否），不再开启自动导入；规则文件步骤不再直接写入已验证记忆或 profile 语言，导入的规则进入待审区并生成回执。
-- `engram reconcile apply --commit --yes` 改为与 `engram import-memories --source memories` 相同的导入（待审区、回执、审计）。从 OpenClaw `MEMORY.md` 导入的经验也进入待审区并生成回执。
-- 旧版记忆迁移现在也受“读取其它 AI 工具文件”的关闭开关约束；关闭时返回值带 `status` 与 `disabled_by`。
-- **AI 拿到什么，统一一条规则。** 冷启动、接续简报、会话开始钩子、`get_recall`、`get_relevant_knowledge` 只返回已审核且当前有效的条目：待审、被新版本取代、已归档的条目不再出现；status 不是 `active`、或审核标记不在“已审核”之列（例如未知 tier、被拒或已弃用的标记）的条目也不出现。未审核的条目不能让已审核的条目（包括 playbook）被隐藏。
-- **`search_knowledge` 把待审条目单独列出。** `lessons` / `decisions` / `playbooks` 列表只含已审核条目；待审条目放在单独的 `pending` 分组里，每条标 `pending_untrusted`。因此 `{"tier": "staging"}` 过滤的结果在 `pending` 分组里，核心搜索的 `{"tier": "archived"}` 过滤不返回任何条目。`engram dock-search` 先列已审核条目，每类在 `--limit` 内剩下的名额才给待审条目（标 `pending_untrusted`）。被取代的条目默认不返回，新参数 `include_superseded=true` 时以单独的 `superseded` 分组返回。
-- **冷启动内容超预算时会注明省略了什么。** token 预算裁掉内容时，`get_resume_brief`、`get_recall` 和 `engram preview` 返回 `omitted`（条数、id、段名，不含被裁内容）；文本形态的上下文末尾加一行说明省略了什么：`get_user_context` 为 `已省略 3 项（预算）：lessons, decisions`，接续简报与会话开始钩子为 `Omitted 3 items (budget): lessons, decisions`。这一行计入预算，放不下时不加。不超预算时不加；`get_recall` 固定最多两条 playbook 的上限不算预算省略。`engram preview` 会列出被裁条目的摘要，并说明待审或被取代的条目为何没有注入。
-- **近重复条目进入待审，不再被直接丢弃。** 经验或决策只有在规范化后与某条有效条目文字完全相同时才按重复拒绝（忽略大小写、标点、空白和开头的“教训：”之类标签，因此只差标点的内容（如版本号）视为相同；决策比较问题（没有问题时用标题）加选择；主人拒绝记录用同一口径，已有的拒绝记录继续生效）。相似度不低于 95% 但不完全相同的条目会写入待审区（非严格模式也一样），带 `duplicate_candidate`（旧条目 id 与相似度）；写入回复会说明这一点，并提示若是修订请用 `supersedes`。只差一个词、可能结论相反的决策不再被丢弃。`allow_similar_new=true` 仍按相关条目写入；相似度 55–95% 的条目照旧写入并互链。Playbook 不变。
-- 审核卡（`engram review export`）对重复候选或近重复条目显示旧条目 id、相似度和逐句差异（最多 40 行）。`review_staging(action="list")` 只显示旧条目 id，不显示正文；`engram preview` 也显示旧条目 id，并显示被拦截条目的客户端自报名称。
-- 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明取代它的条目（`superseded_by`）。互相取代形成的环不再让其中任何一条被隐藏，并在审计日志里记一次。`get_resume_brief(include_resume_pack=true)` 的 `review_needed` 每条标 `pending_untrusted`。
-- **AI 记什么，有了规则。** MCP server 下发的说明（默认与严格两版）和 `engram setup` 写进各 AI 客户端指令文件的 Engram 段落现在写明：只记长期有用的，不记当天进度、待办和临时状态；“昨天”“下周”这类相对日期，只有能确定当时日期时才写成具体日期，否则保留原文并注明“日期未定”；与已有条目矛盾时，先检索旧条目，再提交带 `supersedes=<旧 id>` 的修订，不要另起一条无关联的新条目（严格模式下修订进入待审）。`supersedes` 指向不存在的条目仍会被拒绝（`supersedes_target_not_found`）。
-- `engram setup` 与 `engram doctor --fix` 会把内容是 Engram 以前发布过的默认文案（包括 4.21.2 的严格模式文案）的 Engram 段落刷新为新默认文案。你自己改过的段落逐字节保持不变；setup 和 doctor 会提示可能有更新的默认文案，需要的话手动合并。
+- **经 MCP 修改已有条目必须带当前版本号。** `update_knowledge`、`archive_knowledge`、`merge_knowledge`、`manage_playbook`（`update`、`archive`、确认执行的 `delete` / `restore`）以及带 `supersedes` 的写入，不带版本号（`version_required`）或版本号已过期（`version_conflict`）时不写入任何内容；`supersedes` 指向不存在、已归档、其它项目或另一种作用域的条目时被拒绝（`supersedes_target_not_found` / `supersedes_target_not_applicable`）。读取结果始终带 `version`，`get_knowledge_history` 返回 `current_version`。
+  - **迁移：** 先读取条目，把它的 `version` 作为 `expected_version` 传入（合并用 `primary_expected_version` / `secondary_expected_version`，带 `supersedes` 时用 `supersedes_expected_version`）。`version_required` 回复带 `current_version` 和调用示例；收到 `version_conflict` 时重新读取条目后再重试。
+- **MCP `import_engram` 只能预览。** 写入请求返回 `{"error": "local_only", "hint": ...}` 且不写入；`dry_run=true` 仍返回导入计划，该工具标为只读。
+  - **迁移：** 在存放数据的机器上用 `engram import <backup.json> --apply --yes`（或 `engram import --format openclaw ... --apply --yes`）执行导入；`local_only` 回复会给出这条命令。
+- **AI 写入或改写的 playbook 在任何模式下都等你审核，待审 playbook 永远不会执行。** `add_playbook`、`memory_store(kind="playbook")`、从会话起草的手册，以及经 `manage_playbook` 修改内容，都存为提案，已批准的版本照常使用；对待审手册调用 `playbook_execution` 返回 `not_approved`；`add_playbook` 的回复改为 JSON（`{"status": "pending", "id": ..., "message": ...}`）。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的被拒绝（`queue_full`），不会被丢弃。
+  - **迁移：** 用 `engram review` 或 `engram review interactive` 批准还要使用的草稿；按 JSON 读取 `add_playbook` 的回复。
+- **AI 只拿到已审核、当前有效的记忆。** 冷启动、接续简报、会话开始钩子、`get_recall` 和 `get_relevant_knowledge` 不再返回待审、被取代、已归档以及无法确认已审核的条目。`search_knowledge` 把待审条目放在单独的 `pending` 分组（每条标 `pending_untrusted`），被取代的条目只在 `include_superseded=true` 时以单独的 `superseded` 分组返回。详见[用户指南](docs/user-guide.zh-CN.md#4-治理与审批ai-提议重要的由你审)。
+  - **迁移：** 读取 `search_knowledge` 的客户端应单独读取 `pending` 分组，不要把它当作已审核内容；`{"tier": "staging"}` 过滤的结果现在在 `pending` 分组里。
+- **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动和 `wrap_up_session` 不再读取或导入其它 AI 工具的记忆和规则文件；`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
+  - **迁移：** 需要时运行 `engram import-memories`；导入内容进入待审区并生成回执。
 
 ### 新增
-- **`engram doctor` 显示各 AI 客户端是否真的连上了。** 新增“Client Connections”一节，逐个客户端列出：MCP 配置里是否有 Engram 条目、最近 14 天（`--days N` 可改）是否调用过 Engram——已连接且有调用、已配置但没有调用（重启客户端、检查 MCP 配置）、未配置（运行 `engram setup`）。只读取本地痕迹（MCP server 自己写的会话检查点，以及经 MCP 写入的条目上客户端自报的名称），不显示配置内容；另各用一行说明严格模式是否生效和启动时是否导入（`ENGRAM_MCP_STARTUP_SYNC`、`ENGRAM_RECONCILE`、`reconcile_authorized`）。Claude Code 读取其用户级配置（`~/.claude.json`，或 `$CLAUDE_CONFIG_DIR/.claude.json`），只检查有没有 Engram 条目（顶层或某个项目下的 `engram` / `piia-engram` 键，或启动 Engram 的服务器）；`engram doctor` 开头的工具列表与之一致，都不校验也不写这个文件。`--days` 取 1 到 3650（`--days N` 或 `--days=N`）。`engram doctor --json` 只以 JSON 输出这一节。全程不写入。
-- **`engram import --format openclaw`。** 在本地导入 OpenClaw 的 `SOUL.md` / `MEMORY.md` / `USER.md`（`--soul`、`--memory`、`--user`）。默认只预览（哪些文件存在、各有多少条要点）；`--apply --yes` 才写入：MEMORY.md 的经验与 `engram import-memories` 一样进入待审区并留下回执和审计记录，USER.md / SOUL.md 照旧合并进身份资料、偏好和质量标准。`ENGRAM_RECONCILE=0` 时在读取任何文件前就停止。
-- **钉住必须保留的条目：`engram pin <id>` / `engram unpin <id>` / `engram pin --list`。** 只能钉住已审核、当前有效的 lesson、decision 或 playbook，且只能用本地命令（经 MCP 传入的 `pinned` / `pinned_at` 会被丢弃）。钉住的条目不受生命周期归档和容量规则影响，导入（本地或经 MCP）也不会覆盖或取代它：合并导入跳过、替换导入留在原位、备份里指向它的 supersedes 关系被丢弃，预览、结果和 `engram import` 文本输出都会列出。经 MCP 不能修改、归档、合并或删除它（返回 `pinned_entry`，不写入）；带 `supersedes` 的修订提案（`add_lesson` 与 `add_playbook` 现在也支持）在任何审批模式下都等待你的本地审核（`engram review apply` / `engram review interactive`）：MCP 调用方无论经哪条路径都不能批准它（批量批准、审查页的 promote 列表、改 tier 或导入都返回 `pinned_target` 且不写入；`onboard_accept` 拒绝 playbook 修订提案），审核卡会提示目标是钉住条目。批准该修订后旧条目被取代并自动解钉（记入审计）。AI 拿到的上下文里，钉住的条目在各自分组内排在最前，条数上限或预算裁剪时先舍弃未钉住的；`search_knowledge` 里钉住只在相关度相同时决定先后。`engram preview`、`engram review` 与 `engram management` 会显示钉住状态。
-- **`engram review interactive`（简写 `engram review -i`）。** 在终端里逐条审核待审提案：每屏显示类型、内容、风险、来源（客户端自报，并如此注明）、可能的重复及差异、取代关系；输入 `a` 批准、`r` 拒绝（可写理由，只记在本次回执里，拒绝记录本身不存文字）、`s` 取代一条已批准条目、`k` 跳过、`v` 查看全文、`q` 结束。确认汇总时输入 `y` 才写入；`n`、输入结束或 Ctrl+C 都不写入。决定与 `engram review apply` 走同一条应用路径、回执相同；审核期间被改动的条目会被跳过并在汇总中列出。没有终端时提示改用 `engram review export` / `engram review apply`（这只是防误用，不是权限控制）。仅限本地命令行，不是 MCP 工具；回执中的操作人默认记为 `owner`（可用 `--operator` 指定），经 MCP 读取审计日志（`get_audit_log`）时不返回你的拒绝理由。
-- `engram review apply` 的 marks 文件支持 `supersede:<id>`（批准一条提案，作为同种类、同作用域已批准条目的替代）、`skip`、`reject` 上可选的 `reason`（只记在本次回执里），以及可选的 `expected_version`（条目在你审核后被改动则跳过）。mark 按固定顺序执行：普通的批准与拒绝 → 带取代关系的决定（沿取代链从旧到新）→ edit-type → retire / restore。因此一次运行里可以同时批准某条目和取代它的提案；被拒绝的取代目标只让指向它的那一条失败；同一文件再次执行时，已完成的取代报告为已应用。同一个 id 带 approve / reject / supersede / skip 中两个以上、或同一条目被取代两次的文件，会在写入任何内容前被拒绝；演练按同样的顺序模拟，显示的就是实际执行的结果。回执的每一项注明所在阶段，并按执行顺序列出 id。取代的"同类型"检查按文件中 edit-type 执行后的标签判断；edit-type 现在也能改决策的类型标签（此前报告成功但实际未写入），对已归档的 playbook 记为跳过而不是失败。同一次运行里被取代而归档的 playbook，在“同类型”检查中按它现有的标签判断；每条 edit-type 的回执项记录原标签（`from`）和新标签（`to`）。批准一条自带"取代"关系但该关系已不成立的提案时，提案照常批准但不写取代关系（`applied_unlinked`）。`engram review export` 还会生成带每条 id 与版本号的 `marks-template.json`；文件里所有 mark 都失败时 `engram review apply` 以非零码退出（部分成功仍为 0）。
-- **条目记录自己从哪里来。** 新写入的经验、决策、playbook 会保存 `provenance.origin`（`mcp`、`cli`、`import` 或 `local`）；经 MCP 写入的还会保存客户端连接时发来的名称和版本，以及归一化的 `client` 标签，没给 `source_tool` 时用这个标签补上。客户端字段是客户端自报，未经验证：不会改变风险、层级或是否需要审核。`engram review export` 和 `engram review show` 会显示它们并注明“客户端自报”。`provenance` 与 `source_tool` 写入后不能再通过更新修改（`update_knowledge` 返回 `provenance_immutable`；此前决策和 playbook 可以改 `source_tool`）。
-- **MCP 工具带上标准标注。** 每个工具现在都会声明只读、破坏性、幂等、开放世界四项标注（只有 `read_web_content` 被标为开放世界，抓取网址正是它的功能）。标注只是给客户端的提示，不是权限控制：权限仍由严格模式与治理负责。
-- **`engram import-memories`。** 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区（`--dry-run`、`--yes`、`--source memories|configs`）。每次导入在 `import_receipts/` 写回执并记审计；重复运行不会重复导入。`engram doctor` 和 `engram status` 会显示可导入条数。
-- **每天一次匿名使用信号（默认开启）。** Engram 现在每天发送一次匿名信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），用来了解有多少安装在使用；不包含任何记忆内容、路径、账号或命令参数，服务器不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`；CI 和容器环境中自动不发；如果你以前关闭过详细统计，这个信号也保持关闭。`engram telemetry status / preview / reset-id` 可查看和控制。详细统计和反馈报告不变（仍需自行开启）。
+- **每天一次匿名使用信号，默认开启。** 每天发送一次，包含随机安装 ID、版本、系统、Python 版本、AI 客户端名称和日期；不含任何记忆内容、路径、账号或命令参数。可用 `engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭（CI 和容器中自动不发）；详见 [PRIVACY.md](PRIVACY.md)。
+- `engram doctor` 新增“Client Connections”一节：逐个 AI 客户端显示是否配置了 Engram、最近 14 天是否调用过（`--days N`、`--json`）。只读。
+- `engram import-memories` 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区并生成回执；`engram setup` 会询问是否现在导入一次（默认否）。
+- `engram import --format openclaw` 在本地导入 OpenClaw 的 `SOUL.md` / `MEMORY.md` / `USER.md`；默认只预览，MEMORY.md 的经验进入待审区。
+- `engram pin <id>` / `engram unpin <id>` / `engram pin --list`：钉住的已审核条目不受归档和容量规则影响，不会被导入或经 MCP 修改，并在召回上下文中排在最前；对钉住条目的修订等你在本地审核。详见[钉住必须保留的条目](docs/user-guide.zh-CN.md#钉住必须保留的条目)。
+- `engram review interactive`（`engram review -i`）在终端里逐条审核待审提案；确认汇总之前不写入任何内容。
+- `engram review apply` 的 marks 支持 `supersede:<id>`、`skip`、拒绝时可选的 `reason` 和 `expected_version`，按固定顺序执行（同一次运行里可同时批准条目和取代它的提案），edit-type 也能修改决策的类型标签；`engram review export` 会生成 `marks-template.json`。
+- 新条目记录自己从哪里来（`provenance.origin`；经 MCP 写入的还记录客户端自报的名称和版本），审核时显示；`provenance` 与 `source_tool` 写入后不能再通过更新修改（`provenance_immutable`）。
+- MCP 工具声明标准的只读、破坏性、幂等、开放世界标注。标注只是给客户端的提示，不是权限控制。
+
+### 变更
+- 近重复条目（相似度不低于 95% 但文字不同）进入待审区并带 `duplicate_candidate`，不再被拒绝；只有规范化后文字完全相同的才按重复拒绝。
+- 审核卡和 `engram preview` 显示重复候选对应的旧条目、相似度和逐句差异。
+- token 预算裁掉内容时，`get_resume_brief`、`get_recall` 和 `engram preview` 返回 `omitted`（条数、id、段名），文本形态的上下文末尾加一行说明。
+- 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明 `superseded_by`。
+- MCP server 下发的说明和 `engram setup` 写入的 Engram 段落写明：AI 只记长期有用的内容（不记当天进度）、相对日期怎么写、修订时用 `supersedes`。`engram setup` 和 `engram doctor --fix` 会刷新内容为旧版默认文案的段落，你改过的段落保持不变。
+- `extract_session_insights` 和 `wrap_up_session` 在保存计数旁列出被跳过的候选及原因（`skipped_by_reason`）。
+- `engram reconcile apply --commit --yes` 和 OpenClaw `MEMORY.md` 的经验都经过待审区并生成回执；旧版记忆迁移也受“读取其它 AI 工具文件”的关闭开关约束。
 
 ### 移除
-- 移除未使用的内部函数 `ingest_extraction`（它会把抽取出的文本直接写进身份资料），没有任何调用方。
+- 移除未使用的内部函数 `ingest_extraction`。
 
 ### 修复
-- **Claude Code：setup 现在把 Engram 注册到 Claude Code 实际读取的位置。** 此前 `engram setup` 把 Claude Code 的条目写到 `~/.claude/.mcp.json`，而 Claude Code 不读取这个文件，所以 Engram 并没有被加载。现在 setup 通过 `claude mcp add --scope user engram ...` 注册到用户级配置（`~/.claude.json`，或 `$CLAUDE_CONFIG_DIR/.claude.json`），自己从不改写该文件；已有相同条目时不动，已有不同条目时需你确认才替换；找不到 `claude` 命令时打印该命令，并把 Claude Code 标为“需手动完成”。`engram doctor` 只认用户级配置：只在 `~/.claude/.mcp.json` 里的条目报告为旧位置，`engram doctor --fix` 会通过 `claude` 注册（不改动旧文件）。用旧版本配置过 Claude Code 的用户重新运行 `engram setup` 即可；它会询问是否移除旧条目（只移除名称和命令都属于 Engram 的条目；原子写入，保留 BOM 与缩进），该文件中的其它服务器保留。`claude` 命令通过遍历 `PATH` 查找（不会用当前目录或相对路径项）；`claude` 是 `.cmd` / `.bat` 启动脚本且参数含 `cmd.exe` 会改写的字符时不自动运行；名为 `engram` 但不是 Engram 的条目不会被替换；打印的命令在 Windows 上按 PowerShell 的引号写法。用 `-e` 传入的值在 `claude` 运行期间会出现在其进程命令行里。`CLAUDE.md` 里的 Engram 段和 `settings.json` 里的钩子也跟随 `CLAUDE_CONFIG_DIR`；doctor 的 MCP Client Env 一节按条目的键名检查 Claude Code。
-- **其它名称下的 Engram 条目各处都能识别。** `engram doctor`、`engram status`、`engram dock-governance` 和完整性报告都按 `engram` / `piia-engram` 键名或启动 Engram 的命令识别客户端里的 Engram 条目。客户端配置里有指向 Engram 的 `piia-engram` 条目时，setup 先备份文件，再把它迁移为 `engram`（保留你的环境变量），不再另加一个服务器。README 片段统一用 `engram`；Codex 片段改为 setup 实际写入的 `~/.codex/config.toml`。
+- **Claude Code：Engram 现在注册到 Claude Code 实际读取的位置。** 此前版本把 Claude Code 的条目写到 `~/.claude/.mcp.json`，而 Claude Code 不读取这个文件；现在 setup 通过 `claude mcp add --scope user` 注册到用户级配置（`~/.claude.json`，或 `$CLAUDE_CONFIG_DIR/.claude.json`），`engram doctor` 会报告仍留在旧文件里的条目。**用旧版本配置过 Claude Code 的用户请重新运行 `engram setup`**，它会询问是否移除旧条目。详见 [Claude Code 配置](docs/integrations/claude-code.md)。
+- 其它名称下的 Engram 条目（`piia-engram`，或任何启动 Engram 的命令）能被 doctor、status 和 dock 识别；setup 会把 `piia-engram` 条目迁移为 `engram`，不再另加一个服务器。
+- setup 改写的客户端配置文件以原子方式写入；符号链接形式的配置保持为符号链接，在 macOS 和 Linux 上保留文件原有权限。
+- Windows：其它进程短暂占用同一文件时写入不再失败，Engram 会在最多一秒内重试。
+- JSON 备份（`export_engram`、`engram dock-export`）包含你的拒绝记录（只有哈希和元数据），`engram import` 会恢复它们；格式不对的记录会被跳过并计数。
+- 所有项目的待审提案都会出现在 `engram review`、`engram review export`、`engram management` 和交互审核中，并显示 `project:<名称>` 作用域。
+- 严格模式下 `manage_playbook(action="update")` 的回复是待审提案，不再回显整份提议的手册。
 - `python -m piia_engram.setup_wizard` 不再因循环导入而失败。
-- JSON 导出（`export_engram`、`engram dock-export`）会报告因格式不对而跳过的拒绝记录数（`skipped`），不显示其内容。
-- MCP server 记录连接客户端的日志行会先去掉客户端自报名称和版本里的控制字符（换行、终端转义）并限制长度。
-- setup 中关于预置最佳实践的中文提示不再说“使用 3 次后自动晋升为 verified”：与英文一致，审核确认后才会变为 verified。
-- **项目作用域的提案会出现在审核里。** `engram review`、`engram review export`、`engram management` 和交互审核会列出所有项目的待审提案，并显示 `project:<名称>` 作用域（`engram management --scope` 也按它筛选）；此前只列出全局提案。
-- 严格模式下 `manage_playbook(action="update")` 的回复是待审提案（`status: pending`、提案 id 与它要取代的条目），不再回显整份提议的手册。
-- **Windows：其它进程正在读取同一文件时，写入不再失败。** 多个 AI 客户端共用一个存储时，如果另一个进程、杀毒软件或搜索索引恰好打开着该文件，写入可能报 `PermissionError [WinError 5]`。现在 Engram 会在最多一秒内重试这次写入；持续更久的权限问题仍会照常报错。
-- **JSON 备份保留你的拒绝记录。** 完整 JSON 备份（`export_engram`、`engram dock-export`）现在包含拒绝记录（只有哈希和元数据，不含文字，也不含操作者或客户端名称），`engram import` 会恢复它们，因此从备份恢复的存储仍会拒绝你以前拒绝过的内容（拦截的是之后的新提案，不会删除已有条目）。备份里格式不对的记录会被跳过并计数。合并和覆盖模式都保留存储里已有的拒绝记录（拒绝是你的决定，与钉住一样），只添加尚不存在的记录；不含拒绝记录的旧备份照常导入，且不动现有的拒绝记录。导入预览（包括带 `dry_run=true` 的 `import_engram`）会显示保留和新增的数量。
+- MCP server 记录连接客户端的日志行会去掉客户端名称里的控制字符并限制长度。
+- setup 中关于预置最佳实践的中文提示改为与英文一致：审核确认后才会变为 verified。
 
 ## [4.21.2] - 2026-09-26
 
