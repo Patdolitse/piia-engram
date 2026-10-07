@@ -15,6 +15,7 @@
   - **迁移：** 继续用 `import_engram(..., dry_run=true)` 预览，然后在存放数据的机器上运行 `engram import <backup.json> --apply --yes`（替换模式加 `--overwrite`）。
 
 ### 变更
+- **AI 写入的 playbook 在任何模式下都等你审核。** 经 MCP 的 `add_playbook`、`memory_store(kind="playbook")` 和从会话起草的手册，在非严格模式下也存为待审提案；回复会说明由主人用 `engram review` 批准，批准前不进入自动召回。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的会被拒绝、不会被丢弃。本地添加的手册（`engram playbook install`、setup）和已有手册不受影响。
 - **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动（`get_user_context`、`get_resume_brief`、会话开始钩子）和 `wrap_up_session` 都不再读取或导入其它 AI 工具的记忆和规则文件。`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
 - `engram setup` 改为询问是否现在导入一次（默认否），不再开启自动导入；规则文件步骤不再直接写入已验证记忆或 profile 语言，导入的规则进入待审区并生成回执。
 - `engram reconcile apply --commit --yes` 改为与 `engram import-memories --source memories` 相同的导入（待审区、回执、审计）。从 OpenClaw `MEMORY.md` 导入的经验也进入待审区并生成回执。

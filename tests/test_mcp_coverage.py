@@ -537,7 +537,8 @@ class TestMemoryStore:
             }),
             user_confirmed=True,
         ))
-        assert "Playbook 已记录" in result
+        # an AI-written playbook is a proposal in every mode (Owner decision 2026-10-07)
+        assert "engram review" in result
 
     def test_memory_store_invalid_json(self, eng: Engram):
         result = _run(mcp_server.memory_store(

@@ -539,12 +539,14 @@ def test_cli_playbook_list_staging_is_read_only(env, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_unset_add_playbook_writes_verified(env):
+def test_unset_add_playbook_over_mcp_is_a_pending_proposal(env):
+    """Owner decision 2026-10-07: an AI-written playbook waits for review in every mode."""
     m, root = env
 
     result = _add_mcp(m)
 
-    assert _pb_rows(root)[_pid(result)]["tier"] == "verified"
+    row = _pb_rows(root)[_pid(result)]
+    assert row["tier"] == "staging" and row["approval_status"] == "pending"
 
 
 def test_unset_staging_draft_stays_visible_and_executable(env):

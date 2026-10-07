@@ -159,6 +159,9 @@ staged 条目始终在你掌控之中：
   取代不会回滚。每条 edit-type 的回执项记录原标签（`from`，原本没有则为 null）和新标签（`to`）。演练按同样的顺序模拟，显示的就是实际
   执行的结果；回执的每一项注明所在阶段，并按执行顺序列出 id。文件里所有 mark 都失败时，
   `engram review apply` 以非零码退出。
+- AI 经 MCP 写入的 playbook（`add_playbook`、`kind="playbook"` 的 `memory_store`、从会话
+  起草的手册）在任何审批模式下都是提案：进入待审区，等你用 `engram review` 批准，批准前
+  不进入自动召回。你在本地添加的手册（例如 `engram playbook install`）不受影响。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。
 

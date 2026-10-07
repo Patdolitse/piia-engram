@@ -623,7 +623,7 @@ class TestSearchTools:
             user_confirmed=True,
         ))
 
-        assert "Playbook 已记录" in result
+        assert json.loads(result)["status"] == "pending"  # AI-written playbooks wait for review
         stored = isolated_engram.get_playbooks()[0]
         assert stored["required_tools"] == [
             {

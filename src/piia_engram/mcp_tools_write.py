@@ -345,6 +345,9 @@ async def memory_store(
                 # (gated like every write-echo) instead of swallowing it.
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
             tier = result.get("tier", "staging")
+            if tier == "staging":
+                return (f"[Engram] Playbook 已进待审 · 主人用 engram review 批准后才会使用 / "
+                        f"Playbook proposal waits for the Owner's review (engram review): {label}")
             return f"[Engram] Playbook 已记录 · tier={tier} · 可召回: {label}"
     except Exception as exc:
         S._track("memory_store", success=False)
@@ -578,6 +581,10 @@ async def add_playbook(
     每条 Playbook 独立存储为单个文件，通过 triggers（记忆点关键词）快速调取。
     Each Playbook is stored as an individual file, quickly retrievable via trigger keywords.
 
+    经 MCP 写入的 Playbook 一律进入待审（任何审批模式），主人用 engram review 批准后才会被使用。
+    A playbook written over MCP always waits in the review queue (every approval mode); it is used
+    only after the Owner approves it with engram review.
+
     Args:
         title: 流程名称，如 'MCP Registry 发布流程'。 / Playbook name, e.g., 'MCP Registry publish workflow'.
         triggers: 记忆点关键词，逗号分隔，如 '发布,registry,上架'。 / Trigger keywords (comma-separated) for quick retrieval.
@@ -670,10 +677,11 @@ async def add_playbook(
         return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_playbook"))
     if result.get("error") or result.get("status") in ("rejected_before", "duplicate_retired", "queue_full"):
         return S._json(result)
-    if S._gov_rt._strict_mode.approval_strict(S._get_engram().root) or result.get("pending_supersedes"):
+    if result.get("tier") == "staging":
         payload = {
-            "status": "pending", "id": result.get("id"), "tier": result.get("tier", "staging"),
-            "message": "Playbook proposal saved; it is used only after the Owner approves it.",
+            "status": "pending", "id": result.get("id"), "tier": "staging",
+            "message": "Playbook proposal saved in the review queue; it is used only after the Owner "
+                       "approves it with engram review.",
         }
         if result.get("pending_supersedes"):
             payload["pending_supersedes"] = result.get("pending_supersedes")

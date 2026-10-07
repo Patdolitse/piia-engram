@@ -1215,6 +1215,8 @@ _DEFAULT_SERVER_INSTRUCTIONS = (
     "- Learned something reusable → memory_store(kind='lesson', content_json=...)\n"
     "- Decision made → memory_store(kind='decision', content_json=...)\n"
     "- Conversation end → wrap_up_session\n"
+    "- Playbooks you add (add_playbook, memory_store kind='playbook') are proposals: they wait\n"
+    "  for the Owner's review (engram review) and are used only after approval.\n"
     "- Changing an existing entry (update_knowledge, archive_knowledge, merge_knowledge,\n"
     "  manage_playbook, or a write with supersedes) needs expected_version /\n"
     "  supersedes_expected_version: the version from the read result.\n"

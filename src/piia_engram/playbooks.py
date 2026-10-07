@@ -673,7 +673,10 @@ class PlaybookMixin:
         new_pb["timestamp"] = new_pb.get("timestamp") or _now_iso()
         new_pb = self._ensure_playbook_fields(new_pb)
         strict = _strict_mode.approval_strict(self.root)
-        if strict:
+        # A playbook an AI writes over MCP is a proposal in every approval mode
+        # (Owner decision 2026-10-07); local Owner actions are unchanged.
+        proposal = strict or _pinning.mcp_origin()
+        if proposal:
             for key in [k for k in new_pb if k.startswith(("promotion_", "promoted_", "approval_"))]:
                 new_pb.pop(key, None)
             new_pb.pop("user_confirmed", None)
@@ -752,7 +755,7 @@ class PlaybookMixin:
                         }
                 return result
 
-        if strict:
+        if proposal:
             cap = _playbook_queue_max()
             if self.pending_playbook_count() >= cap:
                 self._audit.log("refused", "playbooks", detail=f"queue_full pending playbooks cap={cap}",
@@ -762,7 +765,7 @@ class PlaybookMixin:
 
         self._write_playbook_and_index(new_pb)
 
-        if self.is_pending_playbook(new_pb) and strict:
+        if self.is_pending_playbook(new_pb) and proposal:
             # A pending proposal's text stays out of agent-readable surfaces,
             # including get_audit_log: record the id only.
             self._audit.log("write", "playbooks", detail=f"pending proposal {new_pb.get('id')}")
