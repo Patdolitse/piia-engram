@@ -17,7 +17,6 @@ from piia_engram.core import (
     export_to_openclaw,
     extract_knowledge,
     import_from_openclaw,
-    ingest_extraction,
     migrate_from_oca_memory,
 )
 from piia_engram.storage import _project_id
@@ -2511,7 +2510,7 @@ def test_get_relevant_lessons_project_domain_priority(tmp_path: Path):
     assert python_count >= 2
 
 
-# ── extract_knowledge / ingest_extraction ──────────────────────────
+# ── extract_knowledge ──────────────────────────
 
 
 def test_extract_knowledge_returns_none_without_provider(tmp_path: Path):
@@ -2534,145 +2533,6 @@ def test_extract_knowledge_returns_none_for_empty_conversation():
         provider="dummy",
     )
     assert result is None
-
-
-def test_ingest_extraction_applies_profile(tmp_path: Path):
-    """ingest_extraction 应将 profile_updates 写入 Engram。"""
-    engram = make_engram(tmp_path)
-    extracted = {
-        "profile_updates": {"role": "全栈开发者", "language": "中文"},
-    }
-    result = ingest_extraction(engram, extracted, str(tmp_path))
-    assert result["items_learned"] >= 1
-    profile = engram.get_profile()
-    assert profile["role"] == "全栈开发者"
-
-
-def test_ingest_extraction_applies_lessons_and_decisions(tmp_path: Path):
-    """ingest_extraction 应添加 lessons 和 decisions。"""
-    engram = make_engram(tmp_path)
-    extracted = {
-        "lessons": [
-            {"summary": "pytest 的 parametrize 能减少重复测试代码", "domain": "python"},
-        ],
-        "decisions": [
-            {"question": "测试框架选型", "choice": "pytest", "reasoning": "生态好"},
-        ],
-    }
-    result = ingest_extraction(engram, extracted, str(tmp_path), session_id="test-session")
-    assert result["items_learned"] >= 2
-
-    lessons = engram.get_lessons(
-        project_folder=str(tmp_path), limit=None, _update_access=False
-    )
-    assert any("parametrize" in l.get("summary", "") for l in lessons)
-
-    decisions = engram.get_decisions(
-        project_folder=str(tmp_path), limit=None, _update_access=False
-    )
-    assert any("测试框架" in d.get("question", d.get("title", "")) for d in decisions)
-
-
-def test_ingest_extraction_cannot_self_certify_high_risk_as_verified(tmp_path: Path):
-    """LLM extraction cannot self-certify knowledge as verified.
-
-    The LLM-supplied ``tier`` is stripped before the risk-based write gate
-    runs, so a high-risk item the LLM marked ``verified`` is still routed to
-    staging for explicit approval. (Low-risk items legitimately auto-absorb to
-    verified — that is covered separately; this test guards the bypass vector.)
-    """
-    engram = make_engram(tmp_path)
-    extracted = {
-        "lessons": [
-            {
-                "summary": "rotate the production api_key by running the deploy command",
-                "domain": "release",
-                "tier": "verified",
-            },
-        ],
-        "decisions": [
-            {
-                "question": "Where should the deploy bot read its server_key?",
-                "choice": "paste the api_key and run command: curl the prod endpoint",
-                "tier": "verified",
-            },
-        ],
-    }
-
-    ingest_extraction(engram, extracted, str(tmp_path), session_id="session-123")
-
-    lesson = next(
-        l for l in engram.get_lessons(
-            project_folder=str(tmp_path), limit=None, _update_access=False
-        )
-        if "api_key" in l.get("summary", "")
-    )
-    decision = next(
-        d for d in engram.get_decisions(
-            project_folder=str(tmp_path), limit=None, _update_access=False
-        )
-        if "server_key" in d.get("question", "")
-    )
-
-    # LLM said "verified" but the gate overrides high-risk content -> staging.
-    assert lesson["risk_level"] == "high"
-    assert decision["risk_level"] == "high"
-    assert lesson["tier"] == "staging"
-    assert decision["tier"] == "staging"
-    assert lesson["approval_status"] == "pending"
-    assert decision["approval_status"] == "pending"
-    assert lesson["project_id"]
-    assert lesson["project"] == tmp_path.name
-    assert lesson.get("source_project") != str(tmp_path)
-    assert lesson["source_session"] == "session-123"
-    assert lesson["extraction"]["method"] == "llm"
-    assert decision["extraction"]["method"] == "llm"
-
-
-def test_ingest_extraction_rejects_low_confidence_planning_candidates(tmp_path: Path):
-    """LLM extraction should not persist vague future plans as long-term knowledge."""
-    engram = make_engram(tmp_path)
-    extracted = {
-        "lessons": [
-            {
-                "summary": "Maybe consider adding graph memory later",
-                "domain": "research",
-                "confidence": 0.2,
-            },
-            {
-                "summary": "Always run twine check before publishing",
-                "domain": "release",
-                "confidence": 0.9,
-            },
-        ],
-        "decisions": [
-            {
-                "question": "Should we evaluate graph memory later?",
-                "choice": "maybe",
-                "confidence": 0.2,
-            },
-        ],
-    }
-
-    result = ingest_extraction(engram, extracted, str(tmp_path), session_id="session-123")
-
-    assert result["skipped_low_quality"] == 2
-    lessons = engram.get_lessons(
-        project_folder=str(tmp_path), limit=None, _update_access=False
-    )
-    assert any("twine check" in item.get("summary", "") for item in lessons)
-    assert not any("graph memory later" in item.get("summary", "") for item in lessons)
-    decisions = engram.get_decisions(
-        project_folder=str(tmp_path), limit=None, _update_access=False
-    )
-    assert not any("graph memory" in item.get("question", "") for item in decisions)
-
-
-def test_ingest_extraction_empty_dict(tmp_path: Path):
-    """空提取结果不应崩溃。"""
-    engram = make_engram(tmp_path)
-    result = ingest_extraction(engram, {}, str(tmp_path))
-    assert result["items_learned"] == 0
 
 
 # =====================================================================
@@ -3994,89 +3854,6 @@ def test_extract_knowledge_handles_exception():
         [{"role": "user", "content": "hello"}], "E:/test", "main.py", provider=CrashProvider()
     )
     assert result is None
-
-
-# ── context.py coverage: ingest_extraction branches ────────────────
-
-
-def test_ingest_extraction_work_style(tmp_path: Path):
-    """ingest_extraction should apply work_style_updates."""
-    from piia_engram.context import ingest_extraction
-
-    engram = make_engram(tmp_path)
-    extracted = {
-        "work_style_updates": {
-            "preferences": {"review_depth": "deep"},
-            "communication": "简洁",
-        }
-    }
-    result = ingest_extraction(engram, extracted, "E:/test")
-    assert result["items_learned"] >= 1
-    style = engram.get_work_style()
-    assert style.get("communication") == "简洁"
-
-
-def test_ingest_extraction_quality_standards(tmp_path: Path):
-    """ingest_extraction should apply quality_updates with rule dedup."""
-    from piia_engram.context import ingest_extraction
-
-    engram = make_engram(tmp_path)
-    # Add existing rule
-    engram.update_quality_standards({"rules": ["existing rule"]})
-    extracted = {
-        "quality_updates": {
-            "acceptance_threshold": 4,
-            "rules": ["existing rule", "new rule"],
-        }
-    }
-    result = ingest_extraction(engram, extracted, "E:/test")
-    assert result["items_learned"] >= 1
-    standards = engram.get_quality_standards()
-    assert standards["acceptance_threshold"] == 4
-    assert "new rule" in standards["rules"]
-    # existing rule not duplicated
-    assert standards["rules"].count("existing rule") == 1
-
-
-def test_ingest_extraction_domains_and_project(tmp_path: Path):
-    """ingest_extraction should increment domains and save project snapshot."""
-    from piia_engram.context import ingest_extraction
-    from piia_engram.core import _read_json
-
-    engram = Engram(root=tmp_path)
-    extracted = {
-        "domains_used": ["python", "testing"],
-        "project_info": {
-            "title": "My Project",
-            "tech_stack": ["Python", "React"],
-        },
-    }
-    result = ingest_extraction(engram, extracted, "E:/test-project")
-    # domains.json should have incremented counts
-    domains_raw = _read_json(tmp_path / "knowledge" / "domains.json")
-    assert "python" in domains_raw
-    assert domains_raw["python"]["project_count"] == 1
-    # Project snapshot should be saved
-    proj = engram.get_project_snapshot("E:/test-project")
-    assert proj["title"] == "My Project"
-    assert proj["session_count"] == 1  # first session
-
-
-def test_ingest_extraction_quality_bad_threshold(tmp_path: Path):
-    """ingest_extraction should handle non-numeric acceptance_threshold."""
-    from piia_engram.context import ingest_extraction
-
-    engram = make_engram(tmp_path)
-    extracted = {
-        "quality_updates": {
-            "acceptance_threshold": "not a number",
-            "rules": ["rule one"],
-        }
-    }
-    result = ingest_extraction(engram, extracted, "E:/test")
-    # Should still save rules even if threshold is bad
-    standards = engram.get_quality_standards()
-    assert "rule one" in standards.get("rules", [])
 
 
 # ── context.py coverage: ingest_notes duplicate decision ──────────

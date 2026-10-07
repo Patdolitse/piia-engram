@@ -35,6 +35,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **`engram import-memories`.** Lists memories and rule-file sections found in other AI tools, then adds them to the review queue after you confirm (`--dry-run`, `--yes`, `--source memories|configs`). Each import writes a receipt to `import_receipts/` and an audit line; running it again adds nothing twice. `engram doctor` and `engram status` show how many can be imported.
 - **Daily anonymous usage ping (on by default).** Engram now sends one anonymous ping a day — a random install ID, version, OS, Python version, AI client name and date — so we know how many installs are active. It never contains memories, paths, accounts or command arguments, and the server keeps no IP addresses. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers, and stays off if you had turned the detailed statistics off. `engram telemetry status / preview / reset-id` show and control it. Detailed statistics and feedback reports are unchanged (still opt-in).
 
+### Removed
+- The unused internal function `ingest_extraction` (it wrote extracted text straight into the profile); nothing called it.
+
 ### Fixed
 - **Project proposals show up in review.** `engram review`, `engram review export`, `engram management` and the interactive review list pending proposals of every project, with their `project:<name>` scope (`engram management --scope` filters them too); before, only global ones were listed.
 - In strict mode `manage_playbook(action="update")` replies with the pending proposal (`status: pending`, its id and the entry it would replace) instead of echoing the whole proposed playbook.

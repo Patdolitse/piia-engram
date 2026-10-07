@@ -9,7 +9,6 @@ ContextMixin provides:
 
 Top-level functions:
 - extract_knowledge: LLM-driven structured extraction
-- ingest_extraction: apply extracted knowledge to an Engram
 """
 
 from __future__ import annotations
@@ -33,7 +32,6 @@ from .storage import (
     PLAYBOOK_TRIGGERS,
     STALE_KNOWLEDGE_DAYS,
     _now_iso,
-    strip_untrusted_trust_fields,
 )
 from .session_filters import (
     has_explicit_decision_signal,
@@ -1913,145 +1911,3 @@ def extract_knowledge(
         logger.warning("extract_knowledge LLM call failed: %s", exc)
     return None
 
-
-def ingest_extraction(engram: "Engram", extracted: dict,
-                      project_folder: str, session_id: str = "") -> dict:
-    """Apply extracted knowledge to the Engram. Returns a summary of what was learned."""
-    learned: list[str] = []
-    skipped_low_quality = 0
-    rejected_quality = _empty_rejected_quality_summary()
-    source = {"project": project_folder, "session": session_id, "time": _now_iso()}
-
-    # Profile updates
-    profile_updates = extracted.get("profile_updates", {})
-    if profile_updates:
-        # Only update non-empty values
-        clean = {k: v for k, v in profile_updates.items() if v}
-        if clean:
-            engram.update_profile(clean)
-            learned.append(f"了解到你的基本信息（{', '.join(clean.keys())}）")
-
-    # Work style updates
-    style_updates = extracted.get("work_style_updates", {})
-    if style_updates:
-        clean = {}
-        if style_updates.get("preferences"):
-            clean["preferences"] = style_updates["preferences"]
-        if style_updates.get("communication"):
-            clean["communication"] = style_updates["communication"]
-        if clean:
-            engram.update_work_style(clean)
-            learned.append("了解到你的工作风格偏好")
-
-    # Quality standards
-    quality = extracted.get("quality_updates", {})
-    if quality:
-        clean = {}
-        if quality.get("acceptance_threshold"):
-            try:
-                clean["acceptance_threshold"] = int(quality["acceptance_threshold"])
-            except (ValueError, TypeError):
-                pass
-        if quality.get("rules"):
-            existing = engram.get_quality_standards()
-            existing_rules = set(existing.get("rules", []))
-            new_rules = [r for r in quality["rules"] if r not in existing_rules]
-            if new_rules:
-                all_rules = list(existing_rules) + new_rules
-                clean["rules"] = all_rules[-15:]  # keep last 15 rules
-        if clean:
-            engram.update_quality_standards(clean)
-            learned.append("更新了你的质量标准")
-
-    # Lessons
-    lessons = extracted.get("lessons", [])
-    for l in lessons[:5]:
-        if isinstance(l, dict) and l.get("summary"):
-            quality = _assess_extraction_candidate(
-                str(l.get("summary", "")),
-                "lesson",
-                "llm_extraction",
-                l.get("confidence", 0.7),
-            )
-            if not quality["accepted"]:
-                skipped_low_quality += 1
-                _record_rejected_quality(rejected_quality, quality)
-                continue
-            lesson = dict(l)
-            # LLM extraction cannot self-certify trust: strip any tier / state
-            # fields it tried to set so the risk-based write gate is the sole
-            # authority (low/medium auto-absorb to verified, high -> staging).
-            strip_untrusted_trust_fields(lesson)
-            lesson["source_project"] = project_folder
-            lesson["source_session"] = session_id
-            # tier decided by risk gate: low/medium auto-absorb, high->staging
-            lesson["extraction"] = _make_extraction_metadata(
-                "llm",
-                str(lesson.get("summary", "")),
-                "llm_extraction",
-                str(lesson.get("source_tool") or "extract_knowledge"),
-                lesson.get("confidence", 0.7),
-                quality,
-            )
-            engram.add_lesson(lesson)
-            learned.append(f"记住了教训: {l['summary'][:40]}")
-
-    # Decisions
-    decisions = extracted.get("decisions", [])
-    for d in decisions[:5]:
-        if isinstance(d, dict) and d.get("question"):
-            decision_text = " ".join(
-                str(d.get(key, ""))
-                for key in ("question", "choice", "reasoning")
-                if d.get(key)
-            )
-            trigger_reason = "llm_extraction_choice" if d.get("choice") else "llm_extraction"
-            quality = _assess_extraction_candidate(
-                decision_text,
-                "decision",
-                trigger_reason,
-                d.get("confidence", 0.7),
-            )
-            if not quality["accepted"]:
-                skipped_low_quality += 1
-                _record_rejected_quality(rejected_quality, quality)
-                continue
-            decision = dict(d)
-            # LLM extraction cannot self-certify trust: strip any tier / state
-            # fields it tried to set so the risk-based write gate is the sole
-            # authority (low/medium auto-absorb to verified, high -> staging).
-            strip_untrusted_trust_fields(decision)
-            decision["source_project"] = project_folder
-            decision["source_session"] = session_id
-            # tier decided by risk gate: low/medium auto-absorb, high->staging
-            decision["extraction"] = _make_extraction_metadata(
-                "llm",
-                str(decision.get("question", "")),
-                trigger_reason,
-                str(decision.get("source_tool") or "extract_knowledge"),
-                decision.get("confidence", 0.7),
-                quality,
-            )
-            engram.add_decision(decision)
-            learned.append(f"记录了决策: {d['question'][:40]}")
-
-    # Domain usage
-    domains = extracted.get("domains_used", [])
-    for domain in domains[:5]:
-        if isinstance(domain, str) and domain:
-            engram.increment_domain_usage(domain)
-
-    # Project snapshot
-    proj_info = extracted.get("project_info", {})
-    if proj_info:
-        existing = engram.get_project_snapshot(project_folder)
-        session_count = existing.get("session_count", 0) + 1
-        proj_info["session_count"] = session_count
-        engram.save_project_snapshot(project_folder, proj_info)
-
-    return {
-        "items_learned": len(learned),
-        "summary": learned,
-        "skipped_low_quality": skipped_low_quality,
-        "rejected_quality": rejected_quality,
-    }

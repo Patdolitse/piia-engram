@@ -35,6 +35,9 @@
 - **`engram import-memories`。** 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区（`--dry-run`、`--yes`、`--source memories|configs`）。每次导入在 `import_receipts/` 写回执并记审计；重复运行不会重复导入。`engram doctor` 和 `engram status` 会显示可导入条数。
 - **每天一次匿名使用信号（默认开启）。** Engram 现在每天发送一次匿名信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），用来了解有多少安装在使用；不包含任何记忆内容、路径、账号或命令参数，服务器不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`；CI 和容器环境中自动不发；如果你以前关闭过详细统计，这个信号也保持关闭。`engram telemetry status / preview / reset-id` 可查看和控制。详细统计和反馈报告不变（仍需自行开启）。
 
+### 移除
+- 移除未使用的内部函数 `ingest_extraction`（它会把抽取出的文本直接写进身份资料），没有任何调用方。
+
 ### 修复
 - **项目作用域的提案会出现在审核里。** `engram review`、`engram review export`、`engram management` 和交互审核会列出所有项目的待审提案，并显示 `project:<名称>` 作用域（`engram management --scope` 也按它筛选）；此前只列出全局提案。
 - 严格模式下 `manage_playbook(action="update")` 的回复是待审提案（`status: pending`、提案 id 与它要取代的条目），不再回显整份提议的手册。

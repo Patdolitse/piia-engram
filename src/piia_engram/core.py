@@ -84,7 +84,7 @@ from .storage import (  # noqa: F401 — re-exports
 )
 from .retrieval import RetrievalMixin
 from .context import ContextMixin
-from .context import EXTRACTION_PROMPT, extract_knowledge, ingest_extraction  # noqa: F401
+from .context import EXTRACTION_PROMPT, extract_knowledge  # noqa: F401
 from .reconcile import ReconcileMixin
 from .reports import ReportsMixin
 from .contexts import ContextStoreMixin

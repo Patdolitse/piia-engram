@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 from piia_engram import Engram
-from piia_engram.context import ingest_extraction
 
 
 def _engram(root: Path) -> Engram:
@@ -191,39 +190,6 @@ def test_ingest_notes_quality_corpus(tmp_path: Path):
     assert failures == []
 
 
-def test_ingest_extraction_quality_corpus(tmp_path: Path):
-    """LLM structured extraction should reject weak plans but keep explicit choices."""
-    eng = _engram(tmp_path)
-    extracted = {
-        "lessons": [
-            {"summary": "Always run twine check before publishing", "confidence": 0.9},
-            {"summary": "Maybe consider graph memory later", "confidence": 0.2},
-        ],
-        "decisions": [
-            {
-                "question": "Which release gate should we use?",
-                "choice": "rollback rehearsal",
-                "confidence": 0.8,
-                "tier": "verified",
-            },
-            {
-                "question": "Should we evaluate graph memory later?",
-                "choice": "maybe",
-                "confidence": 0.2,
-            },
-        ],
-    }
-
-    result = ingest_extraction(eng, extracted, str(tmp_path), session_id="quality-corpus")
-
-    assert result["items_learned"] == 2
-    assert result["skipped_low_quality"] == 2
-    lessons, decisions = _knowledge_counts(eng, project_folder=str(tmp_path))
-    assert lessons == 1
-    assert decisions == 1
-    _assert_auto_metadata(eng, project_folder=str(tmp_path))
-
-
 def test_ingest_notes_rejected_quality_summary_is_metadata_only(tmp_path: Path):
     """Rejected note candidates should expose tuning metadata without raw text."""
     eng = _engram(tmp_path)
@@ -260,34 +226,6 @@ def test_session_insights_rejected_quality_summary_is_metadata_only(tmp_path: Pa
     assert "memory graph" not in str(rejected)
 
 
-def test_ingest_extraction_rejected_quality_summary_is_metadata_only(tmp_path: Path):
-    """LLM extraction rejects should return aggregate flags, not rejected bodies."""
-    eng = _engram(tmp_path)
-    extracted = {
-        "lessons": [
-            {"summary": "Maybe consider graph memory later", "confidence": 0.2},
-        ],
-        "decisions": [
-            {
-                "question": "Should we evaluate graph memory later?",
-                "choice": "maybe",
-                "confidence": 0.2,
-            },
-        ],
-    }
-
-    result = ingest_extraction(eng, extracted, str(tmp_path), session_id="quality-corpus")
-
-    rejected = result["rejected_quality"]
-    _assert_rejected_quality_schema(rejected)
-    assert rejected["count"] == 2
-    assert rejected["flags"]["planning_or_uncertain"] == 2
-    assert rejected["candidate_types"]["lesson"] == 1
-    assert rejected["candidate_types"]["decision"] == 1
-    assert "Maybe consider" not in str(rejected)
-    assert "Should we evaluate" not in str(rejected)
-
-
 def test_auto_extraction_rejects_ephemeral_personal_reminders(tmp_path: Path):
     """Short-lived reminders should not become durable lessons."""
     reminder = "Remember to send Alice the status update tomorrow"
@@ -303,11 +241,6 @@ def test_auto_extraction_rejects_ephemeral_personal_reminders(tmp_path: Path):
     assert _knowledge_counts(session_eng) == (0, 0)
     assert session_result["rejected_quality"]["flags"]["ephemeral_todo"] == 1
 
-    llm_eng = _engram(tmp_path / "llm")
-    extracted = {"lessons": [{"summary": reminder, "confidence": 0.95}]}
-    llm_result = ingest_extraction(llm_eng, extracted, str(tmp_path), session_id="ephemeral")
-    assert _knowledge_counts(llm_eng) == (0, 0)
-    assert llm_result["rejected_quality"]["flags"]["ephemeral_todo"] == 1
 
 
 def test_metric_backed_operational_findings_are_kept(tmp_path: Path):
@@ -391,3 +324,13 @@ Lesson: session-derived candidates need verification evidence because copied pro
     assert "session-derived candidates need verification evidence" in review
     assert "复制委派" not in review
     assert "noisy prompt" not in review
+
+
+def test_ingest_extraction_is_removed():
+    """The unused helper that wrote LLM output straight into identity is gone."""
+    import piia_engram
+    from piia_engram import context, core
+
+    assert not hasattr(context, "ingest_extraction")
+    assert not hasattr(core, "ingest_extraction")
+    assert "ingest_extraction" not in getattr(piia_engram, "__all__", [])
