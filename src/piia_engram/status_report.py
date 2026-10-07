@@ -261,7 +261,9 @@ def _client_summary() -> dict[str, Any]:
             servers = config.get(server_key, {}) if isinstance(config, dict) else {}
             if not isinstance(servers, dict):
                 continue
-            entry = servers.get("engram") or servers.get("piia-engram")
+            from .claude_code_mcp import engram_entry_name
+
+            entry = servers.get(engram_entry_name(servers) or "engram")
             if not isinstance(entry, dict):
                 row.update({"status": "missing entry", "style": "missing"})
                 continue

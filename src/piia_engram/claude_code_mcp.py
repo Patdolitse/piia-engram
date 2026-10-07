@@ -136,6 +136,14 @@ def engram_names(servers: object) -> list[str]:
     return [str(name) for name, entry in servers.items() if is_engram_entry(str(name), entry)]
 
 
+def engram_entry_name(servers: object) -> str | None:
+    """The Engram entry a reader looks at in any client's servers: ``engram`` first."""
+    names = engram_names(servers)
+    if not names:
+        return None
+    return SERVER_NAME if SERVER_NAME in names else names[0]
+
+
 _TOO_LARGE = object()
 
 

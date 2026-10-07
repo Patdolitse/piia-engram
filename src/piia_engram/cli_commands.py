@@ -2653,7 +2653,9 @@ def _dock_config_governance_summary() -> dict:
             servers = config.get(server_key, {}) if isinstance(config, dict) else {}
             if not isinstance(servers, dict):
                 continue
-            entry = servers.get("engram") or servers.get("piia-engram")
+            from piia_engram.claude_code_mcp import engram_entry_name
+
+            entry = servers.get(engram_entry_name(servers) or "engram")
             if not isinstance(entry, dict):
                 row["status"] = "missing entry"
                 continue

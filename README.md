@@ -312,6 +312,11 @@ Don't take the table above on faith — run the checks on your own machine:
 
 ### Configure for Your AI Tool
 
+The snippets use the server name `engram`, the name `engram setup` writes. An
+entry named `piia-engram` (from earlier instructions) is still recognised, and
+setup moves it to `engram` after backing up the file instead of adding a second
+server.
+
 <details open>
 <summary><strong>Claude Code</strong></summary>
 
@@ -341,7 +346,7 @@ Add to `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "piia-engram-mcp",
       "args": ["--transport", "stdio"]
     }
@@ -380,7 +385,7 @@ Add to `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\`; macOS: `~/Lib
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -397,7 +402,7 @@ Any tool that supports MCP over stdio works. Use this config:
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -418,7 +423,7 @@ For tools without MCP support (ChatGPT, Gemini, Kimi): run `get_identity_card` i
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -517,7 +522,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "url": "http://your-server:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -532,7 +537,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "url": "http://your-server:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -558,7 +563,7 @@ You can also expose composable capability modes such as knowledge management, go
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"],
       "env": { "ENGRAM_TOOLS": "all" }

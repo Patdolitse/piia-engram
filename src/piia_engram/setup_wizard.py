@@ -1644,6 +1644,20 @@ def _write_mcp_config(
             "refusing to overwrite it."
         )
     existing_engram = servers.get("engram")
+    if existing_engram is None:
+        # An Engram entry under the README's old name: move it to the engram
+        # key (the file is backed up before the write) instead of adding a
+        # second server.
+        old = servers.get("piia-engram")
+        if _claude_code_mcp.launches_engram(old):
+            existing_engram = servers.pop("piia-engram")
+            print("  [migrated] piia-engram -> engram")
+    others = [
+        name for name in _claude_code_mcp.engram_names(servers)
+        if name not in ("engram", "piia-engram") and name not in LEGACY_SERVER_NAMES
+    ]
+    if others:
+        print(f"  [note] {config_path.name}: {', '.join(others)} also starts Engram; left unchanged")
     existing_env = (
         existing_engram.get("env", {})
         if isinstance(existing_engram, dict)
@@ -1746,16 +1760,23 @@ def _write_mcp_config_toml(
     策略：原地替换 [mcp_servers.engram] 段，保留文件其余内容不动。
     """
     existing_env: dict = {}
+    migrate_from: str | None = None
     if config_path.is_file():
         existing_config = _read_mcp_config_for_write(config_path, fmt="toml")
         existing_servers = existing_config.get("mcp_servers", {})
-        existing_engram = (
-            existing_servers.get("engram", {})
-            if isinstance(existing_servers, dict)
-            else {}
-        )
+        existing_servers = existing_servers if isinstance(existing_servers, dict) else {}
+        existing_engram = existing_servers.get("engram")
+        if existing_engram is None and _claude_code_mcp.launches_engram(existing_servers.get("piia-engram")):
+            # Move an Engram entry under the old name to the engram table.
+            migrate_from = "piia-engram"
+            existing_engram = existing_servers.get("piia-engram")
         if isinstance(existing_engram, dict) and isinstance(existing_engram.get("env"), dict):
             existing_env = existing_engram["env"]
+    replaced_headers = {"[mcp_servers.engram]", "[mcp_servers.engram.env]"}
+    if migrate_from:
+        for form in (migrate_from, f'"{migrate_from}"'):
+            replaced_headers |= {f"[mcp_servers.{form}]", f"[mcp_servers.{form}.env]"}
+        print(f"  [migrated] {migrate_from} -> engram")
 
     lines = config_path.read_text(encoding="utf-8").splitlines() if config_path.is_file() else []
     new_lines: list[str] = []
@@ -1803,8 +1824,8 @@ def _write_mcp_config_toml(
         line = lines[i]
         stripped = line.strip()
 
-        # 检测 [mcp_servers.engram] 段开始
-        if stripped == '[mcp_servers.engram]':
+        # 检测 [mcp_servers.engram] 段（以及要迁移的旧名称段）
+        if stripped in replaced_headers and not stripped.endswith(".env]"):
             skip_until_next_section = True
             if not inserted:
                 new_lines.extend(engram_block)
@@ -1812,8 +1833,8 @@ def _write_mcp_config_toml(
             i += 1
             continue
 
-        # 检测 [mcp_servers.engram.env] 子段（也要跳过）
-        if stripped == '[mcp_servers.engram.env]':
+        # 检测 .env 子段（也要跳过）
+        if stripped in replaced_headers:
             skip_until_next_section = True
             i += 1
             continue
@@ -2636,7 +2657,7 @@ def _existing_engram_tools_values(tools: list[dict]) -> list[str]:
             servers = config.get("mcp_servers", {})
         if not isinstance(servers, dict):
             continue
-        engram = servers.get("engram", {})
+        engram = servers.get(_claude_code_mcp.engram_entry_name(servers) or "engram", {})
         env = engram.get("env", {}) if isinstance(engram, dict) else {}
         if not isinstance(env, dict):
             continue

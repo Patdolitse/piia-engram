@@ -324,6 +324,9 @@ $ engram doctor
 
 ### 各工具配置方法
 
+下面的片段统一使用服务器名 `engram`，与 `engram setup` 写入的名称一致。按早先说明配置的
+`piia-engram` 条目仍会被识别；setup 会先备份文件，再把它迁移为 `engram`，不会另加一个服务器。
+
 <details open>
 <summary><strong>Claude Code</strong></summary>
 
@@ -352,7 +355,7 @@ Engram 也识别早先说明里使用的 `piia-engram` 名称。修复前的 set
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "piia-engram-mcp",
       "args": ["--transport", "stdio"]
     }
@@ -389,7 +392,7 @@ args = ["-m", "piia_engram.mcp_server"]
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -406,7 +409,7 @@ args = ["-m", "piia_engram.mcp_server"]
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -427,7 +430,7 @@ args = ["-m", "piia_engram.mcp_server"]
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -477,7 +480,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "url": "http://你的服务器:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -492,7 +495,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "url": "http://你的服务器:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."

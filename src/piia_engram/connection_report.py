@@ -156,6 +156,7 @@ def client_configs(home: Path | None = None) -> list[dict[str, Any]]:
     an Engram entry only in a file it does not read).
     """
     from . import setup_wizard as W
+    from .claude_code_mcp import engram_entry_name
 
     home = Path.home() if home is None else home
     rows: list[dict[str, Any]] = []
@@ -174,7 +175,7 @@ def client_configs(home: Path | None = None) -> list[dict[str, Any]]:
                 continue
             installed = True
             first_path = first_path or path
-            if _is_file(path) and "engram" in _servers(W._read_mcp_config(path, fmt=fmt), server_key):
+            if _is_file(path) and engram_entry_name(_servers(W._read_mcp_config(path, fmt=fmt), server_key)):
                 configured_path = path
                 break
         if configured_path:

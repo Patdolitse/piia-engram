@@ -98,6 +98,9 @@ def _detect_tool_config(tool_id: str, cfg: dict) -> dict | None:
             servers = config.get("mcp_servers", {})
 
         # 每个工具只取第一个匹配的路径
+        from .claude_code_mcp import engram_entry_name
+
+        name = engram_entry_name(servers)
         return {
             "tool_id": tool_id,
             "name": cfg["name"],
@@ -105,7 +108,8 @@ def _detect_tool_config(tool_id: str, cfg: dict) -> dict | None:
             "format": fmt,
             "server_key": server_key,
             "verified": cfg.get("verified", False),
-            "status": "configured" if "engram" in servers else "installed",
+            "status": "configured" if name else "installed",
+            "engram_name": name,
             "config": config,
             "servers": servers,
         }
@@ -156,7 +160,7 @@ def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> l
             continue
         if tool.get("detect_only"):
             continue
-        entry = (tool.get("servers") or {}).get("engram")
+        entry = (tool.get("servers") or {}).get(tool.get("engram_name") or "engram")
         env = entry.get("env") if isinstance(entry, dict) else None
         env = env if isinstance(env, dict) else {}
         missing: dict[str, str] = {}
@@ -365,7 +369,7 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
                 "verified": bool(cfg.get("verified", False)),
                 "parent_exists": path.parent.exists(),
                 "exists": exists,
-                "configured": "engram" in servers,
+                "configured": bool(_engram_entry_name(servers)),
                 "legacy_servers": [
                     name for name in W.LEGACY_SERVER_NAMES if name in servers
                 ],
@@ -627,14 +631,23 @@ def _probe_mcp_entry(entry: dict, *, timeout: int = 5) -> str | None:
     return None
 
 
-def _validate_engram_entry(servers: dict, config_path: Path) -> list[str]:
+def _engram_entry_name(servers: dict) -> str | None:
+    from .claude_code_mcp import engram_entry_name
+
+    return engram_entry_name(servers)
+
+
+def _validate_engram_entry(servers: dict, config_path: Path, name: str = "engram") -> list[str]:
     """验证 engram MCP 条目的所有路径是否有效。
+
+    ``name``: the key of the Engram entry (``engram``, ``piia-engram`` or
+    another name whose server launches Engram).
 
     Returns:
         问题描述列表（空 = 健康）。
     """
     issues = []
-    engram = servers.get("engram", {})
+    engram = servers.get(name, {})
     if not engram:
         return issues
 
@@ -838,7 +851,8 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
             issues.append((t, f"包含旧版 server: {', '.join(stale)}"))
 
         # 路径验证（核心：stale path 检测）
-        path_issues = _validate_engram_entry(servers, t["config_path"])
+        path_issues = _validate_engram_entry(
+            servers, t["config_path"], name=t.get("engram_name") or "engram")
         for desc in path_issues:
             issues.append((t, desc))
 
