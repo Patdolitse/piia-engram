@@ -1562,6 +1562,12 @@ class Engram(
                     limits=_capacity.limits_from_env(),
                     ctx=ctx,
                 )
+                # Approving a proposal that supersedes an Owner-pinned entry is
+                # the Owner's local decision: an MCP caller's write stops here,
+                # before anything is archived or written.
+                blocked = _pinning.blocked_targets(plan.promoted_supersedes, updated)
+                if blocked:
+                    raise _pinning.PinnedTargetRefused(entry_type, blocked)
                 by_reason: dict[str, list[dict]] = {}
                 for row, reason in plan.archive:
                     by_reason.setdefault(reason, []).append(row)
@@ -2495,6 +2501,8 @@ class Engram(
                 "ceiling": exc.ceiling,
                 "message": "the review queue is full; review or archive queued entries first",
             }
+        except _pinning.PinnedTargetRefused as exc:
+            return _pinning.pinned_target_refusal(item_id, exc.targets)
         return None
 
     def _redirect_when_verified_full(self, new_row: dict, rows: list[dict]) -> None:

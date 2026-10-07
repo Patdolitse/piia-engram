@@ -192,7 +192,9 @@ AI 拿到什么，各个入口规则一致：
 - 经 MCP 不能修改、归档、合并或删除钉住的条目：工具返回 `pinned_entry`，不写入任何内容。
   AI 仍可用 `add_lesson` / `add_decision` / `add_playbook` 加 `supersedes=<id>`
   （以及 `supersedes_expected_version`）提交修订提案；无论哪种审批模式，这类提案都
-  进入待审，审核卡会提示目标是钉住条目。你批准后旧条目被取代并自动解钉（记入审计）。
+  等待你的本地审核（`engram review apply` / `engram review interactive`）。AI 经 MCP
+  无论走哪条路径都不能批准它：批量批准、审查页的 promote 列表、改 tier 都返回
+  `pinned_target` 且不写入。审核卡会提示目标是钉住条目。你批准后旧条目被取代并自动解钉（记入审计）。
   你自己归档它也会解钉。
 - AI 拿到的上下文里，钉住的条目在各自分组（lessons、decisions、playbooks）内排在最前，
   条数上限或预算裁剪时先舍弃未钉住的条目。`search_knowledge` 里钉住只在相关度相同时

@@ -592,6 +592,10 @@ class PlaybookMixin:
             return {"status": "not_staging", "id": playbook_id}
         if _tombstones.by_id(self.root, playbook_id) or _tombstones.lookup(self.root, "playbook", pb):
             return {"status": "rejected_before", "id": playbook_id}
+        target = str(pb.get("pending_supersedes") or "")
+        if target and _pinning.blocked_targets([(playbook_id, target)],
+                                               [self._read_playbook_by_id(target) or {}]):
+            return {"status": _pinning.ERROR_PINNED_TARGET, "id": playbook_id, "targets": [target]}
         now = _now_iso()
 
         def _approve(row):

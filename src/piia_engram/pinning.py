@@ -16,8 +16,10 @@ A pin means "keep this and show it first", not "this is always right":
 * Over MCP a pinned entry cannot be edited, archived, merged or deleted
   (``pinned_entry``, nothing written). An agent can still propose a revision:
   ``add_lesson`` / ``add_decision`` / ``add_playbook`` with ``supersedes`` set to
-  the pinned id. That proposal always waits for the Owner's review, in every
-  approval mode.
+  the pinned id. That proposal waits for the Owner's local review in every
+  approval mode: an MCP write that would approve it (batch approval, the
+  outline review's promote list, an update that sets its tier) is refused
+  with ``pinned_target`` inside the write lock, before anything is written.
 * Recall shows trusted pinned entries first within their group (stable);
   search only lets a pin decide between equally relevant results.
 """
@@ -80,6 +82,41 @@ def mcp_origin() -> bool:
 def mcp_refuses(row: Any) -> bool:
     """A write that runs on behalf of an MCP caller may not change this row."""
     return is_pinned(row) and mcp_origin()
+
+
+ERROR_PINNED_TARGET = "pinned_target"
+
+
+class PinnedTargetRefused(Exception):
+    """An MCP caller tried to approve a proposal that supersedes a pinned entry."""
+
+    def __init__(self, kind: str, targets: Iterable[str]):
+        self.kind = kind
+        self.targets = sorted({str(t) for t in targets if t})
+        super().__init__(f"{kind}: approving this would supersede pinned {', '.join(self.targets)}")
+
+
+def pinned_target_refusal(item_id: str, targets: Iterable[str]) -> dict:
+    """The ``pinned_target`` error: only the Owner's local review approves this."""
+    return {
+        "error": ERROR_PINNED_TARGET,
+        "item_id": item_id,
+        "targets": sorted({str(t) for t in targets if t}),
+        "changed": False,
+        "message": (
+            "Approving this proposal would supersede an entry the Owner pinned. Only the Owner's local "
+            "review (engram review apply / engram review interactive) can approve it. Nothing was written."
+        ),
+    }
+
+
+def blocked_targets(promoted: Iterable[tuple[str, str]], rows: Iterable[Any]) -> list[str]:
+    """The pinned targets among ``(new id, superseded id)`` promotions, when an MCP caller writes."""
+    pairs = list(promoted or ())
+    if not pairs or not mcp_origin():
+        return []
+    pinned = {str(r.get("id") or "") for r in rows or () if is_pinned(r)}
+    return [dst for _src, dst in pairs if dst in pinned]
 
 
 def refusal(item_id: str, kind: str, row: Mapping[str, Any] | None = None) -> dict:

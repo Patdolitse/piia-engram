@@ -234,9 +234,12 @@ the type when an id is ambiguous; `engram pin --list` lists pins;
 - Over MCP a pinned entry cannot be edited, archived, merged or deleted: the
   tool answers `pinned_entry` and writes nothing. An AI can still propose a
   revision with `add_lesson` / `add_decision` / `add_playbook` and
-  `supersedes=<id>` (plus `supersedes_expected_version`); that proposal always
-  waits for your review, in every approval mode, and the review card says the
-  target is pinned. When you approve it, the old entry is replaced and its pin
+  `supersedes=<id>` (plus `supersedes_expected_version`); in every approval
+  mode that proposal waits for your local review (`engram review apply` /
+  `engram review interactive`). An AI cannot approve it over MCP by any route:
+  batch approval, the outline review's promote list and changing its tier all
+  answer `pinned_target` and write nothing. The review card says the target is
+  pinned. When you approve it, the old entry is replaced and its pin
   is removed (audited). Archiving it yourself also removes the pin.
 - In what your AI receives, pinned entries come first within their section
   (lessons, decisions, playbooks), so a cap or a budget cut drops unpinned

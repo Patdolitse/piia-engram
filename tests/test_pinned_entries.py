@@ -642,3 +642,82 @@ def test_a_restored_playbook_does_not_bring_its_pin_back(eng):
     assert restored["dry_run"] is False
     row = eng._read_playbook_by_id(playbook["id"])
     assert row["status"] == "active" and "pinned" not in row
+
+
+# ---------------------------------------------------------------------------
+# an MCP caller cannot approve a revision of a pinned entry by any route
+# ---------------------------------------------------------------------------
+
+
+def _proposals_for_pinned_trio(eng):
+    lesson, decision, playbook = _pinned_trio(eng)
+    new_lesson = eng.add_lesson({"summary": "Tag releases from signed tags only", "domain": "workflow",
+                                 "supersedes": lesson["id"]})
+    new_decision = eng.add_decision({"question": "Which branch do releases come from today?",
+                                     "choice": "signed tags", "supersedes": decision["id"]})
+    new_playbook = eng.add_playbook({"title": "Cut a signed release", "steps": [{"action": "sign"}]},
+                                    _update_proposal_of=playbook["id"])
+    for item in (new_lesson, new_decision):
+        assert _row(eng, item["id"])["tier"] == "staging"
+    assert eng._read_playbook_by_id(new_playbook["id"])["tier"] == "staging"
+    return (lesson, decision, playbook), (new_lesson, new_decision, new_playbook)
+
+
+def test_mcp_cannot_promote_a_revision_of_a_pinned_entry(eng, tmp_path, capsys):
+    olds, news = _proposals_for_pinned_trio(eng)
+    new_lesson, new_decision, new_playbook = news
+    capsys.readouterr()
+    before = _store(eng.root)
+
+    for item in (new_lesson, new_decision):  # update_knowledge: tier -> verified
+        result = _json(_run(mcp_server.update_knowledge(
+            item["id"], json.dumps({"tier": "verified"}), expected_version=_version(eng, item["id"]))))
+        assert result["error"] == "pinned_target", result
+    # the outline review's promote list
+    _run(mcp_server.review_staging(action="apply_text", review_text=json.dumps(
+        {"promote": [{"id": i["id"]} for i in news], "archive": []})))
+    # batch approve (playbook route too)
+    batch = _json(_run(mcp_server.review_staging(
+        action="batch", actions_json=json.dumps([{"id": i["id"], "action": "approve"} for i in news]),
+        dry_run=False, confirm=True)))
+    assert {item["status"] for item in batch["items"]} == {"pinned_target"}
+    assert _store(eng.root) == before
+    # the playbook approval primitive refuses on behalf of an MCP caller as well
+    from piia_engram import write_provenance
+
+    with write_provenance.origin_scope(write_provenance.ORIGIN_MCP):
+        assert eng.approve_playbook(new_playbook["id"])["status"] == "pinned_target"
+    assert _store(eng.root) == before
+
+    # the Owner's local review approves the same proposals
+    marks = [{"id": i["id"], "mark": "approve"} for i in news]
+    assert review_cli.run_apply([str(_marks(tmp_path, marks)), "--operator", "owner", "--yes"]) == 0
+    index = eng._recall_supersede_index()
+    for old in olds[:2]:
+        row = _row(eng, old["id"])
+        assert recall_policy.classify(row, index).state == recall_policy.SUPERSEDED and "pinned" not in row
+    old_pb = eng._read_playbook_by_id(olds[2]["id"])
+    assert old_pb["status"] != "active" and "pinned" not in old_pb
+
+
+def test_owner_interactive_review_approves_a_revision_of_a_pinned_entry(eng, monkeypatch):
+    import io
+
+    from piia_engram import i18n, review_interactive
+
+    class _Tty(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(i18n, "_runtime_lang", "en")
+    decision = _decision(eng, "Which region hosts the archive?", "the home region")
+    assert run_pin([decision["id"]]) == 0
+    proposal = eng.add_decision({"question": "Which region hosts the archive now?", "choice": "two regions",
+                                 "supersedes": decision["id"]})
+    assert _row(eng, proposal["id"])["tier"] == "staging"
+    keys = _Tty("a\ny\n")
+    screen = _Tty()
+    assert review_interactive.run(["--operator", "owner"], stdin=keys, stdout=screen) == 0
+    index = eng._recall_supersede_index()
+    assert index.successor(decision["id"]) == proposal["id"]
+    assert "pinned" not in _row(eng, decision["id"])
