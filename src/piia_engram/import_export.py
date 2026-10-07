@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import capacity as _capacity
+from . import tombstones as _tombstones
 from . import write_provenance as _write_provenance
 from .decision_thread import validate_edges
 from .governance_store import RelationStore, ResolutionStore
@@ -25,12 +27,47 @@ from .storage import (
     _ALLOWED_PROFILE_FIELDS,
     _ALLOWED_QUALITY_FIELDS,
     _ALLOWED_TRUST_FIELDS,
+    _append_jsonl_lines,
     _now_iso,
     _read_json,
     _update_json,
     _write_json,
     hold_directory_lock,
 )
+
+
+# The fields a rejection tombstone carries in a backup: hashes and metadata, never claim text.
+_TOMBSTONE_FIELDS = ("id", "kind", "scope", "h1", "h2", "hv", "rejected_at", "via", "prior_rejection_id")
+
+
+def _clean_tombstones(records: Any) -> list[dict]:
+    """Backup-safe tombstone records (known scalar fields only); drops malformed ones."""
+    out: list[dict] = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        if not all(isinstance(record.get(key), str) and record.get(key) for key in ("id", "h1")):
+            continue
+        out.append({
+            key: record[key] for key in _TOMBSTONE_FIELDS
+            if key in record and isinstance(record[key], (str, int)) and not isinstance(record[key], bool)
+        })
+    return out
+
+
+def _new_tombstones(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    """Incoming records not already present by id, nor by (hash version, scope, h1)."""
+    ids = {r.get("id") for r in existing}
+    keys = {(r.get("hv"), r.get("scope", "global"), r.get("h1")) for r in existing}
+    out: list[dict] = []
+    for record in incoming:
+        key = (record.get("hv"), record.get("scope", "global"), record.get("h1"))
+        if record["id"] in ids or key in keys:
+            continue
+        ids.add(record["id"])
+        keys.add(key)
+        out.append(record)
+    return out
 
 
 def _metadata_source(input_path: str) -> dict[str, str]:
@@ -383,6 +420,16 @@ class ImportExportMixin:
                 "incoming": len(incoming_playbooks),
                 "would_add": new_count if merge else len(incoming_playbooks),
                 "would_skip": len(incoming_playbooks) - new_count if merge else 0,
+                "conflicts": 0,
+            }
+        if isinstance(knowledge.get("tombstones"), list):
+            incoming_stones = _clean_tombstones(knowledge["tombstones"])
+            existing_stones = _tombstones.load(self.root) if merge else []
+            new_count = len(_new_tombstones(existing_stones, incoming_stones))
+            summary["tombstones"] = {
+                "incoming": len(incoming_stones),
+                "would_add": new_count,
+                "would_skip": len(incoming_stones) - new_count,
                 "conflicts": 0,
             }
 
@@ -953,6 +1000,20 @@ class ImportExportMixin:
                 payload["items"].append(item)
         return report
 
+    def _import_tombstones(self, records: list, *, merge: bool) -> str:
+        """Restore rejection tombstones: merge appends unseen ones, replace swaps the set."""
+        path = self._knowledge_dir / _tombstones.FILENAME
+        with hold_directory_lock(self._knowledge_dir, timeout=30):
+            if merge:
+                new = _new_tombstones(_tombstones.load(self.root), _clean_tombstones(records))
+                _append_jsonl_lines(path, [json.dumps(r, ensure_ascii=True) for r in new])
+                return f"tombstones(+{len(new)})"
+            incoming = _new_tombstones([], _clean_tombstones(records))
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text("".join(json.dumps(r, ensure_ascii=True) + "\n" for r in incoming), encoding="utf-8")
+            os.replace(tmp, path)
+            return f"tombstones({len(incoming)})"
+
     def export_all(self, output_path: str | None = None, *, exclude_pending: bool = False) -> str:
         """导出整个 Engram 为单一 JSON 文件。
 
@@ -1003,6 +1064,8 @@ class ImportExportMixin:
                 ],
                 "relations": RelationStore(self.root).all_edges(),
                 "conflict_resolutions": ResolutionStore(self.root).all_records(),
+                # Owner reject marks (hashes only), so a restored store still refuses them.
+                "tombstones": _clean_tombstones(_tombstones.load(self.root)),
             },
             "environment": {
                 "tools": self._export_tools(),
@@ -1250,6 +1313,10 @@ class ImportExportMixin:
             else:
                 store.replace_all(incoming_resolutions)
                 imported.append(f"conflict_resolutions({len(store.all_records())})")
+
+        # Older backups have no tombstones section; the store's own are left alone.
+        if isinstance(knowledge.get("tombstones"), list):
+            imported.append(self._import_tombstones(knowledge["tombstones"], merge=merge))
 
         # Environment (tools registry)
         environment = data.get("environment", {})

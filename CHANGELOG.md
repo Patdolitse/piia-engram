@@ -30,6 +30,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 - **Project proposals show up in review.** `engram review`, `engram review export`, `engram management` and the interactive review list pending proposals of every project, with their `project:<name>` scope (`engram management --scope` filters them too); before, only global ones were listed.
+- **JSON backups keep your rejections.** Full JSON backups (`export_engram`, `engram dock-export`) now include the rejection records (hashes and metadata only, no text) and `engram import` / `import_engram` restore them, so a store restored from a backup still refuses what you rejected before. Merge adds the ones not already present; overwrite replaces them; older backups without them still import and leave existing rejections alone. The import preview shows their count.
 
 ## [4.21.2] - 2026-09-26
 

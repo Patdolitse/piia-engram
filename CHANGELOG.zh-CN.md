@@ -30,6 +30,7 @@
 
 ### 修复
 - **项目作用域的提案会出现在审核里。** `engram review`、`engram review export`、`engram management` 和交互审核会列出所有项目的待审提案，并显示 `project:<名称>` 作用域（`engram management --scope` 也按它筛选）；此前只列出全局提案。
+- **JSON 备份保留你的拒绝记录。** 完整 JSON 备份（`export_engram`、`engram dock-export`）现在包含拒绝记录（只有哈希和元数据，不含文字），`engram import` / `import_engram` 会恢复它们，因此从备份恢复的存储仍会拒绝你以前拒绝过的内容。合并模式只添加尚不存在的记录，覆盖模式整体替换；不含拒绝记录的旧备份照常导入，且不动现有的拒绝记录。导入预览会显示其数量。
 
 ## [4.21.2] - 2026-09-26
 
