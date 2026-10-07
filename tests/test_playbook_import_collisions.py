@@ -24,12 +24,12 @@ def _files(eng):
     return {p.name: p.read_bytes() for p in eng._playbooks_dir.glob("*.json")}
 
 
-@pytest.mark.parametrize("reserved", ["_index", "_INDEX", "_internal"])
+@pytest.mark.parametrize("reserved", ["_index", "_INDEX"])
 def test_internal_playbook_ids_are_reserved(reserved):
     assert not valid_playbook_id(reserved)
 
 
-@pytest.mark.parametrize("reserved", ["_index", "_internal"])
+@pytest.mark.parametrize("reserved", ["_index", "_INDEX"])
 def test_reserved_import_is_given_a_fresh_id(tmp_path, reserved):
     eng = Engram(root=tmp_path / "store")
     eng._write_playbook_and_index(_row(eng, "existing", "Existing checklist"), create=True)

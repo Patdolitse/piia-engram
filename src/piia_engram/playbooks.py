@@ -45,7 +45,7 @@ _PLAYBOOK_CONTENT_FIELDS: frozenset = frozenset({
 _PROPOSAL_DROP_FIELDS: frozenset = frozenset({
     "id", "timestamp", "created_at", "last_updated", "last_reviewed", "access_count", "version",
     "tier", "memory_state", "approval_status", "approval_required", "promoted_at", "promotion_reason",
-    "pending_supersedes", "status", "snapshot_of", "superseded_by", "superseded_at", "labeling",
+    "pending_supersedes", "_replacement_in_progress", "status", "snapshot_of", "superseded_by", "superseded_at", "labeling",
     # The proposer is a new writer: the provenance stamp fills source_tool.
     "source_tool",
 })
@@ -64,8 +64,8 @@ class PlaybookIdExists(Exception):
 
 def valid_playbook_id(value: Any) -> bool:
     """True when ``value`` can safely name a file directly inside playbooks/."""
-    # Leading underscores belong to the internal-file namespace (_index, etc.).
-    return valid_file_id(value) and not value.startswith("_")
+    # Reserve actual internal JSON filenames, not the legacy underscore namespace.
+    return valid_file_id(value) and value.casefold() not in {"_index"}
 
 
 def playbook_id_key(value: Any) -> str:
@@ -673,13 +673,46 @@ class PlaybookMixin:
                 "item_id": playbook_id, "expected_version": expected_version,
                 "current_version": current, "changed": False}
 
-    def unfinished_playbook_replacement(self, row: dict | None) -> str:
-        """The playbook an approved revision still has to retire (empty when none).
+    def _playbook_replacement_problem(self, row: dict, target: str = "") -> str:
+        """Validate the durable retirement/approval handoff without writing."""
+        if "_replacement_in_progress" not in row:
+            return ""
+        state = row["_replacement_in_progress"]
+        if not isinstance(state, dict):
+            return "replacement_state_invalid"
+        old_id = state.get("target")
+        if (not valid_playbook_id(old_id) or old_id == row.get("id")
+                or old_id != row.get("pending_supersedes") or (target and target != old_id)):
+            return "replacement_target_conflict"
+        for key in ("proposal_version", "target_version"):
+            if type(state.get(key)) is not int or state[key] < 1:
+                return "replacement_state_invalid"
+        old = self._read_playbook_by_id(old_id)
+        if old is None:
+            return "target_not_found"
+        if (int(row.get("version") or 1) != state["proposal_version"]
+                or int(old.get("version") or 1) != state["target_version"]):
+            return "version_conflict"
+        if old.get("status", "active") not in ("active", "outdated"):
+            return "target_not_trusted"
+        if not self._same_playbook_scope(row, old):
+            return "scope_mismatch"
+        return ""
 
-        Left behind when an approval was interrupted between approving the new
-        row and retiring the old one; approving the same row again finishes it.
+    def unfinished_playbook_replacement(self, row: dict | None) -> str:
+        """The matching replacement still to finish (empty when none).
+
+        A durable handoff covers retirement before approval. An older store
+        with both rows approved and active also completes the retirement.
         """
-        if not isinstance(row, dict) or self.is_pending_playbook(row):
+        if not isinstance(row, dict):
+            return ""
+        if "_replacement_in_progress" in row:
+            if (row.get("status", "active") == "active"
+                    and not self._playbook_replacement_problem(row)):
+                return row["_replacement_in_progress"]["target"]
+            return ""
+        if self.is_pending_playbook(row):
             return ""
         if row.get("approval_status") != "approved" or row.get("status", "active") != "active":
             return ""
@@ -716,6 +749,9 @@ class PlaybookMixin:
         stale = self._review_version_conflict(playbook_id, pb, expected_version)
         if stale is not None:
             return stale
+        problem = self._playbook_replacement_problem(pb)
+        if problem:
+            return {"status": problem, "error": problem, "id": playbook_id, "changed": False}
         if not self.is_pending_playbook(pb):
             unfinished = self.unfinished_playbook_replacement(pb)
             if unfinished:
@@ -726,6 +762,11 @@ class PlaybookMixin:
         if _tombstones.by_id(self.root, playbook_id) or _tombstones.lookup(self.root, "playbook", pb):
             return {"status": "rejected_before", "id": playbook_id}
         target = str(pb.get("pending_supersedes") or "")
+        old = self._read_playbook_by_id(target) if target else None
+        if target and old is None:
+            return {"status": "target_not_found", "id": playbook_id, "changed": False}
+        if old is not None and old.get("status", "active") != "active" and "_replacement_in_progress" not in pb:
+            return {"status": "target_not_trusted", "id": playbook_id, "changed": False}
         if target and _pinning.blocked_targets([(playbook_id, target)],
                                                [self._read_playbook_by_id(target) or {}]):
             return {"status": _pinning.ERROR_PINNED_TARGET, "id": playbook_id, "targets": [target]}
@@ -737,11 +778,19 @@ class PlaybookMixin:
             row["approval_status"] = "approved"
             row["promoted_at"] = now
             row["promotion_reason"] = "owner_review"
+            row.pop("_replacement_in_progress", None)
             return row
 
         old_id = target
-        if old_id and self._read_playbook_by_id(old_id) is not None:
-            self._retire_replaced_playbook(old_id, playbook_id)
+        if old is not None:
+            if "_replacement_in_progress" not in pb:
+                state = {"target": old_id, "proposal_version": int(pb.get("version") or 1),
+                         "target_version": int(old.get("version") or 1)}
+                # Persist BEFORE retirement, under the same review locks. Failure
+                # after retirement must not erase the chosen target or versions.
+                self._update_playbook_file_by_id(playbook_id, lambda r: {**r, "_replacement_in_progress": state})
+            if old.get("status", "active") == "active":
+                self._retire_replaced_playbook(old_id, playbook_id)
         self._update_playbook_file_by_id(playbook_id, _approve)
         self._audit.log("write", "playbooks", detail=f"approved {playbook_id}")
         return {"status": "promoted", "id": playbook_id, "retired": old_id or None}
@@ -798,6 +847,8 @@ class PlaybookMixin:
         for key, value in extra.items():
             if value is not None:
                 new_pb[key] = value
+        # Only the local approval operation creates a recovery handoff.
+        new_pb.pop("_replacement_in_progress", None)
         if not allow_internal_provenance:
             from .core import _strip_untrusted_freshness_provenance
 

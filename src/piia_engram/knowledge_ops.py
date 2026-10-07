@@ -1470,7 +1470,7 @@ class KnowledgeOpsMixin:
         if primary_id == secondary_id:
             return {"error": "Cannot merge an item with itself"}
 
-        lessons, decisions, playbooks = self._read_link_collections()
+        lessons, decisions, playbooks = self._read_link_collections(migrate=not _review_boundary.mcp_origin())
         primary_type, primary = self._find_item_in_collections(primary_id, lessons, decisions, playbooks)
         secondary_type, secondary = self._find_item_in_collections(secondary_id, lessons, decisions, playbooks)
 
@@ -1530,8 +1530,9 @@ class KnowledgeOpsMixin:
             )
             if related_item is None or related_type is None:
                 continue
-            if _pinning.is_pinned(related_item):
-                # Its link to the merged-away entry stays valid for direct id reads.
+            if _review_boundary.mcp_origin() or _pinning.is_pinned(related_item):
+                # MCP guards only the two operands; neighbors retain their links
+                # to the merged-away entry, which remains readable by id.
                 continue
             related_types[related_id] = related_type
 
@@ -1543,11 +1544,11 @@ class KnowledgeOpsMixin:
             entry["related_ids"] = sorted(current_related)
             return entry
 
-        updated_primary = self._update_knowledge_item(primary_type, primary_id, _merge_primary)
+        updated_primary = self._update_merge_operand(primary_type, primary_id, _merge_primary)
         if updated_primary is None:
             return {"error": f"Primary item not found: {primary_id}"}
 
-        # Retarget unpinned related entries only; pinned entries are immutable here.
+        # Only Owner-local merges retarget unpinned neighbors.
         for related_id, related_type in related_types.items():
             def _retarget_related(entry: dict, *, _related_id: str = related_id) -> dict:
                 related_ids = set(entry.get("related_ids", []))
@@ -1567,7 +1568,7 @@ class KnowledgeOpsMixin:
             entry["last_updated"] = ts
             return entry
 
-        updated_secondary = self._update_knowledge_item(
+        updated_secondary = self._update_merge_operand(
             secondary_type, secondary_id, _archive_secondary, keep_ids=frozenset({primary_id})
         )
         if updated_secondary is None:
@@ -1588,9 +1589,9 @@ class KnowledgeOpsMixin:
             "secondary_title": self._knowledge_title(secondary_type, updated_secondary),
         }
 
-    def _read_link_collections(self) -> tuple[list[dict], list[dict], list[dict]]:
-        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
-        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+    def _read_link_collections(self, *, migrate: bool = True) -> tuple[list[dict], list[dict], list[dict]]:
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson", migrate=migrate)
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision", migrate=migrate)
         playbooks = self._export_playbooks()
         return lessons, decisions, playbooks
 
@@ -1624,6 +1625,51 @@ class KnowledgeOpsMixin:
             if tool.get("id") == item_id:
                 return "tool", tool
         return None, None
+
+    def _update_merge_operand(self, item_type: str, item_id: str, mutator, *, keep_ids: frozenset = frozenset()) -> dict | None:
+        """An MCP merge writes only an operand, never migrates or archives peers.
+
+        Owner-local merges retain the ordinary capacity/link maintenance path.
+        The caller holds the review locks and has checked both operand versions.
+        """
+        if not _review_boundary.mcp_origin() or item_type == "playbook":
+            return self._update_knowledge_item(item_type, item_id, mutator, keep_ids=keep_ids)
+        from copy import deepcopy
+
+        from .storage import ReadOnlyStoreError, SkipWrite, _update_json, knowledge_write_allowed
+
+        if self._read_only:
+            raise ReadOnlyStoreError("read-only handle: refused merge write")
+        if item_type not in {"lesson", "decision"}:
+            return None
+        path = self._knowledge_dir / ("lessons.json" if item_type == "lesson" else "decisions.json")
+        result: dict[str, dict] = {}
+        unpinned: list[str] = []
+
+        def _locked(rows):
+            if not isinstance(rows, list):
+                raise SkipWrite
+            for idx, raw in enumerate(rows):
+                if not isinstance(raw, dict) or raw.get("id") != item_id:
+                    continue
+                entry = self._entries_for_locked_mutation([deepcopy(raw)], item_type)[0]
+                before = deepcopy(entry)
+                updated = mutator(entry)
+                if updated is None:
+                    updated = entry
+                unpinned[:] = _pinning.clear_stale([updated])
+                result["row"] = updated
+                if updated == before:
+                    raise SkipWrite
+                rows[idx] = self._entries_for_storage([updated], item_type)[0]
+                return rows
+            raise SkipWrite
+
+        with knowledge_write_allowed():
+            _update_json(path, _locked, default=[])
+        if unpinned:
+            _pinning.audit_auto_unpin(self, item_type, unpinned, reason="no_longer_trusted")
+        return result.get("row")
 
     def _update_knowledge_item(
         self, item_type: str, item_id: str, mutator, *, keep_ids: frozenset = frozenset()

@@ -487,7 +487,9 @@ def supersede_problem(eng, item_id: str, target_id: str, *, assume_trusted: Any 
     if target_id in set(assume_trusted or ()):
         target = {**target, "status": "active", "tier": "verified", "memory_state": "verified",
                   "approval_status": "approved"}
-    if _recall_policy.classify(target, index).state != _recall_policy.TRUSTED:
+    recorded_retirement = (kind == "playbook" and isinstance(row.get("_replacement_in_progress"), dict)
+                           and eng.unfinished_playbook_replacement(row) == target_id)
+    if _recall_policy.classify(target, index).state != _recall_policy.TRUSTED and not recorded_retirement:
         return "target_not_trusted"
     same_scope = (eng._same_playbook_scope(row, target) if kind == "playbook"
                   else eng._entries_share_project_scope(row, target))
@@ -511,6 +513,10 @@ def _set_pending_supersede(eng, kind: str, item_id: str, target: str | None,
     box: dict[str, Any] = {"changed": False, "previous": None}
 
     def _mutate(entry: dict) -> dict:
+        if kind == "playbook" and "_replacement_in_progress" in entry:
+            # Once retirement starts, rollback cannot undo it. Keep the durable
+            # target unchanged; recovery completes it instead of retargeting.
+            raise SkipWrite
         version = int(entry.get("version") or 1)
         if entry.get("tier") != "staging" or (expected_version is not None and version != expected_version):
             raise SkipWrite
@@ -581,8 +587,8 @@ def _approve_with_link(eng, mark: dict, kind: str, target: str, counts: dict, *,
 
     ``set_target``: the Owner chose the target (supersede mark), so the row
     points at it first; otherwise the row already carries the agent's target.
-    A run stopped anywhere before the approval landed (even inside the write
-    that points the row) puts a still-pending row back as it was.
+    A run stopped before a durable replacement handoff puts a pending row back
+    as it was. Once retirement starts, its recorded target must be preserved.
     """
     from contextlib import nullcontext
 
@@ -600,6 +606,10 @@ def _approve_with_link(eng, mark: dict, kind: str, target: str, counts: dict, *,
         with eng._review_locks() if recovering else nullcontext():
             if recovering:
                 current = eng._find_item_by_id(mark["id"])[1]
+                problem = eng._playbook_replacement_problem(current, target) if isinstance(current, dict) else "not_found"
+                if problem:
+                    _add_counts(counts, {"requested": 1, "approve": 1, "failed": 1, "supersede_failed": 1})
+                    return _item_view({"id": mark["id"], "status": problem}, mark)
                 if eng.unfinished_playbook_replacement(current) != target:
                     linked = (isinstance(current, dict) and current.get("pending_supersedes") == target
                               and _supersede_linked(eng, kind, mark["id"], target))
@@ -664,6 +674,13 @@ def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str, sim: 
     row = _batch_row(mark)
     sim_args: dict[str, Any] = {"final_types": final_types or {}}
     recovering = False
+    kind, current = eng._find_item_by_id(mark["id"])
+    if kind == "playbook" and isinstance(current, dict) and mark["mark"] in ("approve", "supersede"):
+        problem = eng._playbook_replacement_problem(current, mark.get("target", ""))
+        if problem:
+            _add_counts(counts, {"requested": 1, "approve": 1, "failed": 1,
+                                 "supersede_failed": int(mark["mark"] == "supersede")})
+            return _item_view({"id": mark["id"], "status": problem}, mark)
     if sim is not None:
         sim_args.update(assume_trusted=sim["trusted"], assume_untrusted=sim["untrusted"], extra_edges=sim["edges"])
     if mark["mark"] == "supersede":
