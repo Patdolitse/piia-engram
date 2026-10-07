@@ -373,16 +373,11 @@ Engram 也识别早先说明里使用的 `piia-engram` 名称。修复前的 set
 <details>
 <summary><strong>Codex (OpenAI)</strong></summary>
 
-添加到 `~/.codex/mcp.json`：
-```json
-{
-  "mcpServers": {
-    "piia-engram": {
-      "command": "python",
-      "args": ["-m", "piia_engram.mcp_server"]
-    }
-  }
-}
+添加到 `~/.codex/config.toml`（`engram setup` 为 Codex 写入的就是这个文件）：
+```toml
+[mcp_servers.engram]
+command = "python"
+args = ["-m", "piia_engram.mcp_server"]
 ```
 
 </details>
@@ -390,7 +385,7 @@ Engram 也识别早先说明里使用的 `piia-engram` 名称。修复前的 set
 <details>
 <summary><strong>Claude Desktop</strong></summary>
 
-添加到 `claude_desktop_config.json`：
+添加到 `claude_desktop_config.json`（Windows：`%APPDATA%\Claude\`；macOS：`~/Library/Application Support/Claude/`）：
 ```json
 {
   "mcpServers": {

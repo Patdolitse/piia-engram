@@ -362,26 +362,21 @@ Compatible fallback if console scripts are not on `PATH`:
 <details>
 <summary><strong>Codex (OpenAI)</strong></summary>
 
-Add to `~/.codex/mcp.json`:
-```json
-{
-  "mcpServers": {
-    "piia-engram": {
-      "command": "python",
-      "args": ["-m", "piia_engram.mcp_server"]
-    }
-  }
-}
+Add to `~/.codex/config.toml` (the file `engram setup` writes for Codex):
+```toml
+[mcp_servers.engram]
+command = "python"
+args = ["-m", "piia_engram.mcp_server"]
 ```
 
-> **Plugin manifest note (Codex CLI 0.130.0+)**: piia-engram ships a `.claude-plugin/plugin.json` whose schema is also recognized by Codex CLI. Native one-command plugin install via Codex's marketplace flow isn't supported yet (Codex expects a multi-plugin marketplace manifest at the repo root, which would conflict with the single-plugin manifest used by other tools). For now, configure Codex via the `~/.codex/mcp.json` snippet above — it's the supported path and works on every Codex version.
+> **Plugin manifest note (Codex CLI 0.130.0+)**: piia-engram ships a `.claude-plugin/plugin.json` whose schema is also recognized by Codex CLI. Native one-command plugin install via Codex's marketplace flow isn't supported yet (Codex expects a multi-plugin marketplace manifest at the repo root, which would conflict with the single-plugin manifest used by other tools). For now, configure Codex via the `~/.codex/config.toml` snippet above — it's the supported path and works on every Codex version.
 
 </details>
 
 <details>
 <summary><strong>Claude Desktop</strong></summary>
 
-Add to `claude_desktop_config.json`:
+Add to `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\`; macOS: `~/Library/Application Support/Claude/`):
 ```json
 {
   "mcpServers": {
