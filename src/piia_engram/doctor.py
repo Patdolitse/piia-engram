@@ -248,7 +248,9 @@ def _shared_instruction_candidates(home: Path) -> list[Path]:
 
 
 def _claude_hook_rows(home: Path) -> list[dict]:
-    settings_path = home / ".claude" / "settings.json"
+    from .claude_code_mcp import settings_path as _settings_path
+
+    settings_path = _settings_path(home)
     settings_exists = settings_path.is_file()
     settings: dict = {}
     if settings_exists:
@@ -1353,7 +1355,9 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
     # (mechanism 4) and SessionStart (mechanism 6) silently.
     print()
     W._safe_print("  -- Claude Code Hooks --\n")
-    settings_path = Path.home() / ".claude" / "settings.json"
+    from .claude_code_mcp import settings_path as _settings_path
+
+    settings_path = _settings_path()
     settings: dict = {}
     if settings_path.is_file():
         try:

@@ -53,6 +53,21 @@ def config_dir() -> Path:
     return config_dir_override() or Path.home() / ".claude"
 
 
+def config_dir_for(home: Path) -> Path:
+    """Claude Code's config directory for a given home directory."""
+    return config_dir_override() or Path(home) / ".claude"
+
+
+def instructions_path(home: Path | None = None) -> Path:
+    """Claude Code's user instruction file (``CLAUDE.md``) in its config directory."""
+    return config_dir_for(Path.home() if home is None else home) / "CLAUDE.md"
+
+
+def settings_path(home: Path | None = None) -> Path:
+    """Claude Code's user settings (hooks) in its config directory."""
+    return config_dir_for(Path.home() if home is None else home) / "settings.json"
+
+
 def user_config_path() -> Path:
     """The file holding user- and local-scope MCP servers."""
     override = config_dir_override()

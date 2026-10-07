@@ -417,7 +417,8 @@ _DISTILL_RULES_EN = (
 
 _INSTRUCTION_SNIPPETS: dict[str, dict] = {
     "claude_code": {
-        "path_fn": lambda home: home / ".claude" / "CLAUDE.md",
+        # In Claude Code's config directory: ~/.claude, or $CLAUDE_CONFIG_DIR.
+        "path_fn": lambda home: _claude_code_mcp.instructions_path(home),
         "snippet_zh": (
             "\n{marker}\n"
             "## Engram 记忆层\n\n"
@@ -1002,7 +1003,10 @@ def _inject_claude_code_hook_for_event(
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
 ) -> str | None:
-    """Register a per-event hook in ``~/.claude/settings.json``.
+    """Register a per-event hook in Claude Code's ``settings.json``.
+
+    The file is in Claude Code's config directory: ``~/.claude``, or
+    ``$CLAUDE_CONFIG_DIR`` when that is set.
 
     Generic core used by Stop / PreCompact / SessionStart / PostCompact
     wiring.
@@ -1035,7 +1039,7 @@ def _inject_claude_code_hook_for_event(
         ``force_rewrite`` is False, or on failure.
     """
     try:
-        settings_path = Path.home() / ".claude" / "settings.json"
+        settings_path = _claude_code_mcp.settings_path()
 
         engram_command = _build_engram_hook_command(
             python_path, module=module, extra_env=extra_env,

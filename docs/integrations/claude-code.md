@@ -42,6 +42,10 @@ not read `~/.claude/.mcp.json`; older setup versions wrote there. Run
 old entry and keeps every other server in that file. `engram doctor` reports
 an entry found only in the old file.
 
+setup also writes the Engram block in Claude Code's `CLAUDE.md` and its hooks in
+`settings.json`. Both live in Claude Code's config directory: `~/.claude`, or
+`$CLAUDE_CONFIG_DIR` when that variable is set.
+
 Leave `ENGRAM_TOOLS` unset for the default 18 core tools. Add
 `ENGRAM_TOOLS=all` only when you intentionally need review, import/export,
 tool-registry, or governance maintenance surfaces.

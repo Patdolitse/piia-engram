@@ -941,3 +941,33 @@ def test_env_not_checked_for_a_project_only_entry(home, capsys):
     out = capsys.readouterr().out
     assert "Claude Code: env not checked" in out
     assert "reach every configured client" not in out
+
+
+# ---------------------------------------------------------------------------
+# CLAUDE.md block and hooks follow CLAUDE_CONFIG_DIR
+# ---------------------------------------------------------------------------
+
+
+def test_instructions_and_hooks_go_to_claude_config_dir(home, config_dir, tmp_path):
+    store = tmp_path / "store"
+    store.mkdir()
+    snippet = W._inject_instruction_snippet("claude_code", "en", file_safety_root=store,
+                                            authorized_external_write=True)
+    hook = W._inject_claude_code_hook(PY, file_safety_root=store, authorized_external_write=True)
+    assert snippet and Path(snippet) == config_dir / "CLAUDE.md"
+    assert hook and Path(hook) == config_dir / "settings.json"
+    assert (config_dir / "CLAUDE.md").is_file() and (config_dir / "settings.json").is_file()
+    assert not (home / ".claude").exists()
+    rows = doctor._claude_hook_rows(Path.home())
+    assert all(Path(r["settings_path"]) == config_dir / "settings.json" for r in rows)
+    assert any(r["registered"] for r in rows)
+
+
+def test_instructions_and_hooks_stay_in_home_without_claude_config_dir(home, tmp_path):
+    store = tmp_path / "store"
+    store.mkdir()
+    snippet = W._inject_instruction_snippet("claude_code", "en", file_safety_root=store,
+                                            authorized_external_write=True)
+    hook = W._inject_claude_code_hook(PY, file_safety_root=store, authorized_external_write=True)
+    assert Path(snippet) == home / ".claude" / "CLAUDE.md"
+    assert Path(hook) == home / ".claude" / "settings.json"
