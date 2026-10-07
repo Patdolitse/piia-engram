@@ -258,19 +258,34 @@ def atomic_write_text(path: Path, text: str) -> None:
     A temporary file in the same directory is written, flushed and renamed
     over ``path``; when anything fails the original file is left as it was
     and the temporary file is removed.
+
+    When ``path`` is a symbolic link, the file it points to is rewritten and
+    the link itself stays in place. On POSIX the existing file's permission
+    bits are carried over to the new file (a new file keeps the private 0600
+    mode of the temporary file); on Windows permissions are left alone.
     """
+    import stat
     import tempfile
 
     from . import atomic_replace
 
     path = Path(path)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    target = Path(os.path.realpath(path)) if path.is_symlink() else path
+    mode: int | None = None
+    if os.name != "nt":
+        try:
+            mode = stat.S_IMODE(os.stat(target).st_mode)
+        except FileNotFoundError:
+            mode = None
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
+            if mode is not None:
+                os.fchmod(handle.fileno(), mode)
             os.fsync(handle.fileno())
-        atomic_replace.replace_with_retry(tmp, path)
+        atomic_replace.replace_with_retry(tmp, target)
     except BaseException:
         try:
             os.unlink(tmp)

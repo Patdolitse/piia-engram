@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import json
+import os
+import stat
 
 import pytest
 
@@ -296,3 +298,117 @@ def test_external_write_replaces_the_content(tmp_path: Path):
     external.write_text("{}\n", encoding="utf-8")
     write_external_config_text(root, external, '{"a": 1}\n', tool="setup", authorized=True)
     assert json.loads(external.read_text(encoding="utf-8")) == {"a": 1}
+
+
+def _can_symlink(tmp_path: Path) -> bool:
+    probe_target = tmp_path / "symlink-probe-target"
+    probe_target.write_text("x", encoding="utf-8")
+    probe_link = tmp_path / "symlink-probe-link"
+    try:
+        probe_link.symlink_to(probe_target)
+    except (OSError, NotImplementedError):
+        return False
+    finally:
+        probe_target.unlink()
+    probe_link.unlink()
+    return True
+
+
+def test_atomic_write_through_a_symlink_keeps_the_link(tmp_path: Path):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symbolic links cannot be created here")
+    real_dir = tmp_path / "dotfiles"
+    real_dir.mkdir()
+    real = real_dir / "client.json"
+    real.write_text("{}\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    link = home / "client.json"
+    link.symlink_to(real)
+
+    file_safety.atomic_write_text(link, '{"a": 1}\n')
+
+    assert link.is_symlink()
+    assert Path(os.readlink(link)) == real
+    assert json.loads(real.read_text(encoding="utf-8")) == {"a": 1}
+    assert sorted(p.name for p in home.iterdir()) == ["client.json"]
+    assert sorted(p.name for p in real_dir.iterdir()) == ["client.json"]
+
+
+def test_external_write_through_a_symlink_keeps_the_link(tmp_path: Path):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symbolic links cannot be created here")
+    real = tmp_path / "dotfiles" / "client.json"
+    real.parent.mkdir()
+    real.write_text("{}\n", encoding="utf-8")
+    link = tmp_path / "home" / "client.json"
+    link.parent.mkdir()
+    link.symlink_to(real)
+
+    write_external_config_text(tmp_path / "root", link, '{"b": 2}\n', tool="setup", authorized=True)
+
+    assert link.is_symlink()
+    assert json.loads(real.read_text(encoding="utf-8")) == {"b": 2}
+
+
+def test_atomic_write_resolves_a_symlink_to_its_target(tmp_path: Path, monkeypatch):
+    # Runs everywhere, including where links cannot be created: the write goes
+    # to the resolved target and the link path is never replaced.
+    real = tmp_path / "dotfiles" / "client.json"
+    real.parent.mkdir()
+    real.write_text("{}\n", encoding="utf-8")
+    link = tmp_path / "home" / "client.json"
+    link.parent.mkdir()
+    link.write_text("stand-in for a link\n", encoding="utf-8")
+
+    original_is_symlink = Path.is_symlink
+    original_realpath = os.path.realpath
+    monkeypatch.setattr(
+        Path, "is_symlink", lambda self: self == link or original_is_symlink(self)
+    )
+    monkeypatch.setattr(
+        os.path,
+        "realpath",
+        lambda p, *a, **k: str(real) if Path(p) == link else original_realpath(p, *a, **k),
+    )
+
+    file_safety.atomic_write_text(link, '{"a": 1}\n')
+
+    assert json.loads(real.read_text(encoding="utf-8")) == {"a": 1}
+    assert link.read_text(encoding="utf-8") == "stand-in for a link\n"
+    assert sorted(p.name for p in real.parent.iterdir()) == ["client.json"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_atomic_write_keeps_the_permission_bits(tmp_path: Path):
+    target = tmp_path / "client.json"
+    target.write_text("{}\n", encoding="utf-8")
+    os.chmod(target, 0o644)
+
+    file_safety.atomic_write_text(target, '{"a": 1}\n')
+
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o644
+    assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_atomic_write_through_a_symlink_keeps_the_target_permission_bits(tmp_path: Path):
+    real = tmp_path / "real.json"
+    real.write_text("{}\n", encoding="utf-8")
+    os.chmod(real, 0o640)
+    link = tmp_path / "link.json"
+    link.symlink_to(real)
+
+    file_safety.atomic_write_text(link, '{"a": 1}\n')
+
+    assert link.is_symlink()
+    assert stat.S_IMODE(os.stat(real).st_mode) == 0o640
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_atomic_write_new_file_is_private(tmp_path: Path):
+    target = tmp_path / "new.json"
+
+    file_safety.atomic_write_text(target, "{}\n")
+
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
