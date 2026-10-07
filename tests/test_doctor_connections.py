@@ -622,10 +622,12 @@ def test_doctor_too_large_user_config_is_undetermined_not_unconfigured(home, tmp
     assert "- Claude Code (" not in out
 
 
-def test_doctor_env_check_skips_a_user_config_entry_it_does_not_read(home, tmp_path):
+def test_doctor_env_check_reads_only_key_names_of_a_user_config_entry(home, tmp_path):
     store = tmp_path / "store"
     _claude_layout(home, store, user_config="top", dot_mcp=False)
-    assert doctor._client_env_findings([_claude_tool()], strict=True, user_env={}) == []
+    # Only the key names of the entry are looked at: ENGRAM_APPROVAL is missing there.
+    findings = doctor._client_env_findings([_claude_tool()], strict=True, user_env={})
+    assert [m for _, m in findings] == [{"ENGRAM_APPROVAL": "strict"}]
 
 
 def test_doctor_fix_never_writes_claude_user_config(home, tmp_path):

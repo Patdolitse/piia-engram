@@ -247,7 +247,7 @@ def _client_summary() -> dict[str, Any]:
         }
         if cfg.get("register_via") == "claude_cli":
             # Claude Code: the shared detection (user config, projects, old
-            # location); the entry itself is not read or classified.
+            # location); the entry is parsed only to find Engram and is not classified.
             from . import claude_code_mcp
 
             row["status"], row["style"] = claude_code_mcp.summary_status()

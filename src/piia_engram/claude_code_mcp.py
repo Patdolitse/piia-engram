@@ -7,8 +7,8 @@ when that variable is set) and local-scope servers from
 ``~/.claude/.mcp.json``; older Engram versions wrote their entry there.
 
 Engram never writes the user config itself: it registers through the
-``claude`` command (``claude mcp add --scope user ...``) and only reads the
-file to tell whether an entry is already there. When the command is not
+``claude`` command (``claude mcp add --scope user ...``) and only parses the
+file to tell whether an entry is already there; nothing from it is output. When the command is not
 available, the caller prints the same command for the user to run.
 
 ``cli_path`` and ``run_cli`` are the only places that touch the ``claude``
@@ -168,12 +168,15 @@ class UserConfigState:
     ``user_names``: Engram keys in the top-level (user scope) ``mcpServers``;
     ``local``: an Engram entry under some ``projects.<dir>``.
     ``user_entry``: the top-level ``engram`` entry, kept only for comparison.
+    ``env_keys``: the env key names (no values) of the user-scope Engram
+    entry; None when there is no such entry.
     """
 
     status: str
     user_names: list[str] = field(default_factory=list)
     local: bool = False
     user_entry: dict | None = None
+    env_keys: list[str] | None = None
 
 
 def read_user_config(path: Path | None = None) -> UserConfigState:
@@ -198,11 +201,19 @@ def read_user_config(path: Path | None = None) -> UserConfigState:
                 local = True
                 break
     entry = top.get(SERVER_NAME) if isinstance(top, dict) else None
+    env_keys = None
+    for name in ([SERVER_NAME] if SERVER_NAME in user_names else []) + user_names:
+        candidate = top.get(name)
+        if isinstance(candidate, dict):
+            env = candidate.get("env")
+            env_keys = sorted(str(k) for k in env) if isinstance(env, dict) else []
+            break
     return UserConfigState(
         "configured" if user_names or local else "absent",
         user_names=user_names,
         local=local,
         user_entry=entry if isinstance(entry, dict) else None,
+        env_keys=env_keys,
     )
 
 
@@ -266,7 +277,7 @@ def detection_status() -> str:
 _SUMMARY_ROWS = {
     "configured": ("configured", "claude_cli"),
     "undetermined": ("needs attention", "unknown"),
-    "legacy_only": ("needs attention", "legacy_location"),
+    "legacy_only": ("needs attention", "legacy_only"),
     "not_configured": ("missing entry", "missing"),
     "not_installed": ("not configured", "missing"),
 }
@@ -461,7 +472,7 @@ def register(
 
     A different ``engram`` entry is never replaced silently: ``on_differ`` is
     ``"ask"`` (``confirm_replace()`` decides) or ``"keep"`` (report the
-    commands instead). The user config is only read here, never written.
+    commands instead). The user config is parsed here, never written.
     """
     state = read_user_config()
     legacy = read_legacy()

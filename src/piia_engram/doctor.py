@@ -47,10 +47,15 @@ def _detect_installed_tools() -> list[dict]:
 
 
 def _detect_claude_code(tool_id: str, cfg: dict) -> dict | None:
-    """Claude Code's state from its user config (read for detection only)."""
+    """Claude Code's state from its user config.
+
+    The file is parsed to find an Engram entry; only the status and, for the
+    env check, the env key names of the user-scope entry are kept.
+    """
     from . import claude_code_mcp as _claude
 
     status = _claude.detection_status()
+    env_keys = _claude.read_user_config().env_keys if status == "configured" else None
     if status == "not_installed":
         return None
     state = {
@@ -71,6 +76,7 @@ def _detect_claude_code(tool_id: str, cfg: dict) -> dict | None:
         "servers": {},
         "detect_only": True,
         "detected_in": _claude.user_config_label(),
+        "env_keys": env_keys,
     }
 
 
@@ -117,18 +123,39 @@ _CLIENT_ENV_WATCHED = (
 )
 
 
-def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> list[tuple[dict, dict]]:
+def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> list[tuple[dict, dict | None]]:
     """(tool, {var: wanted}) for configured clients whose engram env block misses a setting.
 
     Under strict approval ENGRAM_APPROVAL=strict belongs in every block; a watched
     variable set in this shell but absent (or different) in a block would not reach
     that client's MCP server either.
+
+    Claude Code: only the key names of its user-scope entry are known, so a
+    key that is present counts as set; ``(tool, None)`` when there is no
+    user-scope entry to look at (env not checked).
     """
     user_env = os.environ if user_env is None else user_env
     findings = []
     for tool in tools:
-        if tool.get("status") != "configured" or tool.get("detect_only"):
-            continue  # a detect-only config (~/.claude.json) is not read for its env
+        if tool.get("status") != "configured":
+            continue
+        if tool.get("register_via") == "claude_cli":
+            keys = tool.get("env_keys")
+            if keys is None:
+                findings.append((tool, None))
+                continue
+            missing = {}
+            if strict and "ENGRAM_APPROVAL" not in keys:
+                missing["ENGRAM_APPROVAL"] = "strict"
+            for var in _CLIENT_ENV_WATCHED:
+                wanted = str(user_env.get(var, "") or "").strip()
+                if wanted and var not in missing and var not in keys:
+                    missing[var] = wanted
+            if missing:
+                findings.append((tool, missing))
+            continue
+        if tool.get("detect_only"):
+            continue
         entry = (tool.get("servers") or {}).get("engram")
         env = entry.get("env") if isinstance(entry, dict) else None
         env = env if isinstance(env, dict) else {}
@@ -144,14 +171,28 @@ def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> l
     return findings
 
 
-def _print_client_env_findings(findings: list[tuple[dict, dict]]) -> None:
+def _print_client_env_findings(findings: list[tuple[dict, dict | None]]) -> None:
     print()
     W._safe_print("  -- MCP Client Env --\n")
+    unchecked = [tool for tool, missing in findings if missing is None]
+    findings = [(tool, missing) for tool, missing in findings if missing is not None]
+    for tool in unchecked:
+        W._safe_print(f"    [--] {tool['name']}: env not checked (no user-scope Engram entry to look at)")
     if not findings:
-        print("    [ok] Engram settings reach every configured client's MCP server")
+        if unchecked:
+            print("    [ok] Engram settings reach every checked client's MCP server")
+        else:
+            print("    [ok] Engram settings reach every configured client's MCP server")
         return
     for tool, missing in findings:
         names = ", ".join(missing)
+        if tool.get("register_via") == "claude_cli":
+            W._safe_print(
+                f"    [--] {tool['name']}: engram env block lacks {names}; "
+                "its MCP server may not see them")
+            W._safe_print("         Set them in this shell and run 'engram setup' again; it offers to "
+                          "re-register the entry with them.")
+            continue
         W._safe_print(
             f"    [--] {tool['name']}: engram env block lacks {names}; "
             "its MCP server may not see them"
@@ -270,9 +311,11 @@ def _claude_code_integrity_row(tool_id: str, cfg: dict) -> dict:
     """Claude Code's integrity row from the shared detection.
 
     Its user config holds Claude Code's history and changes all the time, so
-    it is neither hashed nor read for content here; ``detection`` is the
-    shared status and ``legacy_location`` flags an Engram entry left in
-    ``~/.claude/.mcp.json`` (a file Claude Code does not read).
+    it is not hashed; it is parsed only to find an Engram entry and nothing
+    from it is output. ``detection`` is the shared status,
+    ``legacy_entry_present`` says ``~/.claude/.mcp.json`` (a file Claude
+    Code does not read) still holds an Engram entry, and
+    ``config_dir_exists`` says Claude Code's config directory exists.
     """
     from . import claude_code_mcp as _claude
 
@@ -285,11 +328,11 @@ def _claude_code_integrity_row(tool_id: str, cfg: dict) -> dict:
         "format": "json",
         "server_key": "mcpServers",
         "verified": bool(cfg.get("verified", False)),
-        "parent_exists": path.parent.exists(),
+        "config_dir_exists": _claude.config_dir().is_dir(),
         "exists": path.is_file(),
         "configured": status == "configured",
         "detection": status,
-        "legacy_location": _claude.read_legacy().has_engram,
+        "legacy_entry_present": _claude.read_legacy().has_engram,
         "legacy_servers": [],
         "sha256_12": "",
     }

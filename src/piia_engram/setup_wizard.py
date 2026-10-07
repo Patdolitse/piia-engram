@@ -1377,7 +1377,7 @@ def _detect_tools() -> list[dict]:
     detected = []
     for tool_id, cfg in _tool_configs().items():
         if cfg.get("register_via") == "claude_cli":
-            # Registered through the claude command; the file is only read.
+            # Registered through the claude command; the file is only parsed, never written.
             if _claude_code_mcp.is_installed():
                 detected.append({
                     "id": tool_id,
@@ -3306,8 +3306,8 @@ def auto_migrate() -> None:
         log_lines: list[str] = []
         for _tool_id, cfg in _tool_configs().items():
             if cfg.get("register_via") == "claude_cli":
-                # Claude Code: the shared detection; its user config is not
-                # read for content here.
+                # Claude Code: the shared detection; its user config is
+                # parsed only to find Engram; nothing from it is logged.
                 if _claude_code_mcp.detection_status() == "legacy_only":
                     log_lines.append(
                         f"  {_claude_code_mcp.LEGACY_LABEL}: holds an Engram entry, but "

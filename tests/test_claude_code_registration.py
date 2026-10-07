@@ -596,7 +596,7 @@ READER_LAYOUTS = {
 STATUS_ROWS = {
     "configured": ("configured", "claude_cli"),
     "undetermined": ("needs attention", "unknown"),
-    "legacy_only": ("needs attention", "legacy_location"),
+    "legacy_only": ("needs attention", "legacy_only"),
     "not_configured": ("missing entry", "missing"),
 }
 
@@ -647,7 +647,7 @@ def test_dock_governance_uses_the_shared_detection(home, tmp_path, monkeypatch, 
     assert row["status"] == STATUS_ROWS[expected][0]
     # The entry is not read for its env, so governance coverage is not known.
     assert row["governance_env"] == ("unknown" if expected in ("configured", "undetermined") else "missing")
-    assert "legacy_location" not in row or row["legacy_location"] is True
+    assert row.get("legacy_only", False) is (expected == "legacy_only")
     dumped = json.dumps(summary)
     assert _SECRET not in dumped and str(home) not in dumped
 
@@ -662,7 +662,9 @@ def test_integrity_report_uses_the_shared_detection(home, tmp_path, monkeypatch,
     assert row["path"] == str(home / ".claude.json")
     assert row["configured"] is (expected == "configured")
     assert row["detection"] == expected
-    assert row["legacy_location"] is (layout == "legacy_only")
+    assert row["legacy_entry_present"] is (layout == "legacy_only")
+    assert "parent_exists" not in row
+    assert row["config_dir_exists"] is (layout == "legacy_only")  # only that layout has ~/.claude/
     assert row["sha256_12"] == ""  # the user config is not hashed or read for content
     assert row["legacy_servers"] == []
     assert _SECRET not in json.dumps(report)
@@ -899,3 +901,43 @@ def test_user_config_is_checked_by_bytes_read_not_only_stat(home, monkeypatch):
 
     monkeypatch.setattr(Path, "stat", small_stat)
     assert M.read_user_config().status == "undetermined"
+
+
+# ---------------------------------------------------------------------------
+# doctor: MCP Client Env for Claude Code (key names only)
+# ---------------------------------------------------------------------------
+
+
+def _env_tool():
+    return _claude_tool()
+
+
+def test_env_check_flags_a_missing_key_by_name(home):
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "x", "env": {"OTHER": _SECRET}}}})
+    findings = doctor._client_env_findings([_env_tool()], strict=True, user_env={})
+    assert [(t["name"], m) for t, m in findings] == [("Claude Code", {"ENGRAM_APPROVAL": "strict"})]
+
+
+def test_env_check_accepts_a_present_key_without_reading_its_value(home):
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "x", "env": {"ENGRAM_APPROVAL": _SECRET}}}})
+    assert doctor._client_env_findings([_env_tool()], strict=True, user_env={}) == []
+    tool = _env_tool()
+    assert tool["env_keys"] == ["ENGRAM_APPROVAL"]
+    assert _SECRET not in json.dumps(tool, default=str)
+
+
+def test_env_check_watched_variable_by_key(home):
+    _write(home / ".claude.json", {"mcpServers": {"piia-engram": {"command": "x", "env": {}}}})
+    findings = doctor._client_env_findings([_env_tool()], strict=False,
+                                           user_env={"ENGRAM_REVIEW_QUEUE_MAX": "7"})
+    assert [m for _, m in findings] == [{"ENGRAM_REVIEW_QUEUE_MAX": "7"}]
+
+
+def test_env_not_checked_for_a_project_only_entry(home, capsys):
+    _write(home / ".claude.json", {"projects": {"/p": {"mcpServers": {"engram": {"command": "x"}}}}})
+    findings = doctor._client_env_findings([_env_tool()], strict=True, user_env={})
+    assert [(t["name"], m) for t, m in findings] == [("Claude Code", None)]
+    doctor._print_client_env_findings(findings)
+    out = capsys.readouterr().out
+    assert "Claude Code: env not checked" in out
+    assert "reach every configured client" not in out

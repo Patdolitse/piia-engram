@@ -2624,8 +2624,8 @@ def _dock_config_governance_summary() -> dict:
             "verified": bool(cfg.get("verified")), "governance_env": "missing",
         }
         if cfg.get("register_via") == "claude_cli":
-            # Claude Code: the shared detection only; its entry is not read,
-            # so whether ENGRAM_GOVERNANCE is set there is not known.
+            # Claude Code: the shared detection only; its entry's env is not
+            # looked at, so whether ENGRAM_GOVERNANCE is set there is not known.
             from piia_engram import claude_code_mcp
 
             try:
@@ -2636,7 +2636,7 @@ def _dock_config_governance_summary() -> dict:
             if status in ("configured", "undetermined"):
                 row["governance_env"] = "unknown"
             if status == "legacy_only":
-                row["legacy_location"] = True
+                row["legacy_only"] = True
             clients.append(row)
             continue
         for raw_path in cfg.get("config_paths", []):
