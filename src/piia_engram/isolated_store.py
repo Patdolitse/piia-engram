@@ -888,8 +888,9 @@ class IsolatedStore:
         from . import tombstones as _tombstones
 
         for stone in _tombstones.load(self.root):
-            if stone.get("id") not in vetoed:
-                problems.append(f"tombstone_without_veto:{stone.get('id')}")
+            stone_id = stone.get("id")
+            if not isinstance(stone_id, str) or stone_id not in vetoed:
+                problems.append(f"tombstone_without_veto:{stone_id}")
         for sub in ("playbooks", "projects"):
             d = self.root / sub
             if d.is_dir() and any(p.is_file() and not p.name.startswith(".") for p in d.rglob("*")):

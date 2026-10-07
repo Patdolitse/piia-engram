@@ -175,13 +175,23 @@ def load(root) -> list[dict]:
     return out
 
 
+def _matched_version(record: dict) -> Any:
+    """The record's hash version when it is one this release matches, else None.
+
+    Type-checked first: a malformed field (a list, a dict) is never hashed."""
+    version = record.get("hv")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None
+    return version if version in MATCHED_HASH_VERSIONS else None
+
+
 def lookup(root, kind: str, row: dict) -> dict | None:
     """The tombstone refusing this row, if any: same h1 (of the record's version) and scope."""
     scope = scope_of(row)
     hashes: dict[Any, tuple[str, str] | None] = {}
     for record in load(root):
-        version = record.get("hv")
-        if version not in MATCHED_HASH_VERSIONS or record.get("scope", "global") != scope:
+        version = _matched_version(record)
+        if version is None or record.get("scope", "global") != scope:
             continue
         if version not in hashes:
             hashes[version] = claim_hashes_for_version(kind, row, version)
@@ -193,15 +203,15 @@ def lookup(root, kind: str, row: dict) -> dict | None:
 
 def stale_version_ids(root) -> list[str]:
     """Tombstones written by another hash version: they match nothing until migrated."""
-    return [str(r.get("id")) for r in load(root) if r.get("hv") not in MATCHED_HASH_VERSIONS]
+    return [str(r.get("id")) for r in load(root) if _matched_version(r) is None]
 
 
 def near(root, kind: str, row: dict) -> dict | None:
     """A tombstone whose token set matches (h2) -- a flag for the review export only."""
     hashes: dict[Any, tuple[str, str] | None] = {}
     for record in load(root):
-        version = record.get("hv")
-        if version not in MATCHED_HASH_VERSIONS:
+        version = _matched_version(record)
+        if version is None:
             continue
         if version not in hashes:
             hashes[version] = claim_hashes_for_version(kind, row, version)

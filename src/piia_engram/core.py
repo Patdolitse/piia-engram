@@ -2202,7 +2202,7 @@ class Engram(
 
     def tombstoned_but_pending(self) -> list[dict]:
         """Rows an Owner reject mark tombstoned whose status write did not land."""
-        stones = {r.get("id"): r for r in _tombstones.load(self.root)}
+        stones = {r.get("id"): r for r in _tombstones.load(self.root) if isinstance(r.get("id"), str)}
         if not stones:
             return []
         out = []

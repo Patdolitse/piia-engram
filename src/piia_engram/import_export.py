@@ -68,7 +68,8 @@ def _clean_tombstone(record: Any) -> dict | None:
     item_id, hv = record.get("id"), record.get("hv")
     if not (isinstance(item_id, str) and _TOMBSTONE_ID_RE.fullmatch(item_id)):
         return None
-    if record.get("kind") not in _TOMBSTONE_KINDS:
+    kind = record.get("kind")
+    if not isinstance(kind, str) or kind not in _TOMBSTONE_KINDS:  # type first: a list is unhashable
         return None
     if isinstance(hv, bool) or not isinstance(hv, int) or hv not in _tombstones.MATCHED_HASH_VERSIONS:
         return None
@@ -113,10 +114,24 @@ def _clean_tombstones(records: Any) -> list[dict]:
     return _check_tombstones(records)[0]
 
 
+def _union_key(record: Any) -> tuple | None:
+    """(hash version, scope, h1) of a record whose fields have the right types, else None."""
+    if not isinstance(record, dict):
+        return None
+    hv, scope, h1 = record.get("hv"), record.get("scope", "global"), record.get("h1")
+    if isinstance(hv, bool) or not isinstance(hv, int) or not isinstance(scope, str) or not isinstance(h1, str):
+        return None
+    return (hv, scope, h1)
+
+
 def _new_tombstones(existing: list[dict], incoming: list[dict]) -> list[dict]:
-    """Incoming records not already present by id, nor by (hash version, scope, h1)."""
-    ids = {r.get("id") for r in existing}
-    keys = {(r.get("hv"), r.get("scope", "global"), r.get("h1")) for r in existing}
+    """Incoming records not already present by id, nor by (hash version, scope, h1).
+
+    Local records are read as they are: a field of the wrong type never
+    raises; such a record still holds its id (when that is a string).
+    """
+    ids = {r.get("id") for r in existing if isinstance(r, dict) and isinstance(r.get("id"), str)}
+    keys = {key for key in (_union_key(r) for r in existing) if key is not None}
     out: list[dict] = []
     for record in incoming:
         key = (record.get("hv"), record.get("scope", "global"), record.get("h1"))
