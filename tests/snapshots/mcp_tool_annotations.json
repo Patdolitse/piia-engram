@@ -252,7 +252,7 @@
     "openWorldHint": false
   },
   "onboard_accept": {
-    "readOnlyHint": false,
+    "readOnlyHint": true,
     "destructiveHint": false,
     "idempotentHint": true,
     "openWorldHint": false

@@ -128,7 +128,7 @@ TOOL_ANNOTATIONS: dict[str, ToolHints] = {
     "import_engram": _READ,  # preview only over MCP; applying is the local `engram import`
     "confirm_knowledge": _STAMP,  # provenance stamp on an existing row
     "onboard_repo": _ADD,  # new pending candidates
-    "onboard_accept": _STAMP,  # promotes one onboard candidate (never a pending revision)
+    "onboard_accept": _READ,  # local only: over MCP it answers local_review_only and writes nothing
     "check_anchors": _REMOVES_IDEMPOTENT,  # an item whose anchor no longer holds goes back to pending and loses its confirmation source
     # --- governed_write ---
     "memory_store": _ADD,

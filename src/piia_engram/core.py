@@ -2607,20 +2607,20 @@ class Engram(
     def _record_lesson_reads(self, lessons: list[dict]) -> None:
         """Count a read of ``lessons`` (best-effort; skipped while a writer holds the lock).
 
-        A read-only handle never counts reads: it must not write the store.
+        A read-only handle never counts reads: it must not write the store. A
+        read only counts an access; ``last_reviewed`` is set by the Owner's
+        confirm / review actions, never by a read.
         """
         if self._read_only:
             return
         now = _now_iso()
         selected_ids = {lesson.get("id") for lesson in lessons if lesson.get("id")}
         for lesson in lessons:
-            lesson["last_reviewed"] = now
             lesson["access_count"] = lesson.get("access_count", 0) + 1
 
         def _bump_access(entries: list[dict]) -> list[dict]:
             for entry in entries:
                 if entry.get("id") in selected_ids:
-                    entry["last_reviewed"] = now
                     entry["access_count"] = entry.get("access_count", 0) + 1
             return entries
 
@@ -3099,14 +3099,13 @@ class Engram(
         if _update_access and result and not self._read_only:
             now = _now_iso()
             selected_ids = {decision.get("id") for decision in result if decision.get("id")}
+            # a read counts an access only; last_reviewed is the Owner's review
             for decision in result:
-                decision["last_reviewed"] = now
                 decision["access_count"] = decision.get("access_count", 0) + 1
 
             def _bump_access(entries: list[dict]) -> list[dict]:
                 for entry in entries:
                     if entry.get("id") in selected_ids:
-                        entry["last_reviewed"] = now
                         entry["access_count"] = entry.get("access_count", 0) + 1
                 return entries
 

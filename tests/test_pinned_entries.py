@@ -1010,7 +1010,9 @@ def test_onboard_accept_refuses_a_playbook_revision_proposal(eng):
                               "tier": "staging",
                               "provenance": {"anchor_ref": "file:README.md", "confirmation_source": "anchor"}},
                              _allow_internal_provenance=True)
-    accepted = _json(_run(mcp_server.onboard_accept(plain["id"])))
+    # every onboard accept over MCP is local only; the local accept still promotes it
+    assert _json(_run(mcp_server.onboard_accept(plain["id"])))["error"] == "local_review_only"
+    accepted = eng.accept_onboard_candidate(plain["id"])
     assert "error" not in accepted, accepted
     assert eng._read_playbook_by_id(plain["id"])["tier"] == "verified"
 

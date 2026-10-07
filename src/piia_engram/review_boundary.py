@@ -26,13 +26,13 @@ def is_pending(row: Any) -> bool:
     return isinstance(row, dict) and str(row.get("tier") or "") == "staging"
 
 
-def refusal(item_id: str = "", *, action: str = "") -> dict:
+def refusal(item_id: str = "", *, action: str = "", hint: str = HINT) -> dict:
     """The ``local_review_only`` reply: nothing was written."""
     out = {
         "error": LOCAL_REVIEW_ONLY,
         "status": LOCAL_REVIEW_ONLY,
         "changed": False,
-        "hint": HINT,
+        "hint": hint,
         "message": "Approving, promoting, rejecting or archiving a pending proposal is the Owner's "
                    "decision in the local engram review; nothing was written.",
     }

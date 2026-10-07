@@ -158,8 +158,11 @@ You stay in control of staged items at any time:
   preview (`review_staging` with `dry_run=true`) but not decide: an applying
   batch, `apply_text`, changing a pending item's tier or status, archiving or
   confirming it, approving, rejecting, deleting or restoring a pending playbook,
-  and `onboard_accept` of a pending revision all answer `local_review_only`
-  and write nothing.
+  and `onboard_accept` all answer `local_review_only` and write nothing
+  (accept onboard candidates locally with `engram onboard-accept`).
+- Reading knowledge only counts an access: it never refreshes `last_reviewed`,
+  which only your confirm and review actions set, so `get_stale_knowledge`
+  keeps showing what you have not reviewed.
 - In a terminal, `engram review interactive` (or `engram review -i`) shows one
   pending proposal at a time (type, text, risk, where it came from, a possible
   duplicate with its diff, what it replaces) and takes one letter plus Enter:
@@ -265,7 +268,7 @@ the type when an id is ambiguous; `engram pin --list` lists pins;
   `engram review interactive`). An AI cannot approve it over MCP by any route:
   batch approval, the outline review's promote list and changing its tier
   answer `local_review_only`, an import answers `pinned_target`, and
-  `onboard_accept` refuses a revision proposal; none of them writes anything. The review card
+  `onboard_accept` answers `local_review_only` too; none of them writes anything. The review card
   says the target is pinned. A proposal may only supersede an active entry of
   the same scope: one in another project, a global entry from a project
   proposal (or the other way round) and an archived entry are refused with

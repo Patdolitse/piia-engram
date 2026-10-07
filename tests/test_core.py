@@ -850,8 +850,8 @@ def test_update_decision(tmp_path: Path):
     assert engram.get_decisions() == []
 
 
-def test_last_reviewed_updated_on_read(tmp_path: Path):
-    """读取经验教训时应刷新 last_reviewed 和 access_count。"""
+def test_read_counts_access_but_keeps_last_reviewed(tmp_path: Path):
+    """读取经验教训只累加 access_count，不刷新 last_reviewed（只有主人确认/复习才更新）。"""
     engram = make_engram(tmp_path)
     engram.add_lesson("需要定期复查的经验", "knowledge")
     lessons_path = tmp_path / "knowledge" / "lessons.json"
@@ -863,13 +863,10 @@ def test_last_reviewed_updated_on_read(tmp_path: Path):
 
     lessons = engram.get_lessons()
 
-    assert lessons[0]["last_reviewed"] != old_review
-    reviewed_at = datetime.fromisoformat(lessons[0]["last_reviewed"].replace("Z", "+00:00"))
-    if reviewed_at.tzinfo is not None:
-        reviewed_at = reviewed_at.replace(tzinfo=None)
-    from datetime import timezone as _tz
-    assert reviewed_at > datetime.now(_tz.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    assert lessons[0]["last_reviewed"] == old_review
     assert lessons[0]["access_count"] == 1
+    stored = json.loads(lessons_path.read_text(encoding="utf-8"))
+    assert stored[0]["last_reviewed"] == old_review and stored[0]["access_count"] == 1
 
 
 def test_get_stale_knowledge(tmp_path: Path):

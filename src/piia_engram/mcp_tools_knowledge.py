@@ -319,10 +319,11 @@ async def onboard_repo(project_root: str = "") -> str:
     Owner/admin surface: writes staging candidate repo-facts and is refused for
     non-owner callers when governance is enabled.
 
-    用途：owner 扫描仓库中的 npm/Python/file 锚点，生成 staging 候选事实供后续确认；
-    不会自动验证或提升信任。
+    用途：owner 扫描仓库中的 npm/Python/file 锚点，生成 staging 候选事实供主人在本地用
+    `engram onboard-accept` 确认；不会自动验证或提升信任。
     Purpose: Scan the repo's npm/Python/file anchors and create staging
-    repo-fact candidates for the owner to accept later. Nothing is auto-verified.
+    repo-fact candidates for the owner to accept locally with `engram onboard-accept`.
+    Nothing is auto-verified.
 
     Args:
         project_root: 仓库根目录；留空时使用当前工作目录。 / Repository root; defaults to cwd.
@@ -343,35 +344,27 @@ async def onboard_repo(project_root: str = "") -> str:
 
 @S.mcp.tool()
 async def onboard_accept(item_id: str, project_root: str = "") -> str:
-    """Owner-only: accept an onboard candidate and stamp anchor provenance.
+    """Owner-only, local only: accepting an onboard candidate is the local `engram onboard-accept`.
 
-    Owner/admin surface: promotes a staging candidate to a verified owner fact
-    and is refused for non-owner callers when governance is enabled. A pending
-    revision (it replaces another entry) is decided in the local engram review:
-    the reply is local_review_only (nothing written).
-
-    用途：owner 确认一条 onboard 候选，先按仓库校验其锚点，再提升为 verified 并盖
-    anchor 确认戳；锚点无效或绑定到不同仓库时拒绝。
-    Purpose: Owner-accept an onboard candidate by checking its anchor against
-    the repo, then promoting it to a verified fact with anchor provenance.
+    接受 onboard 候选（校验锚点并提升为 verified）是主人的本地命令
+    `engram onboard-accept <id>`；经 MCP 在任何模式下都返回 local_review_only，零写入。
+    Accepting an onboard candidate (check its anchor, promote it to verified) is
+    the Owner's local command `engram onboard-accept <id>`; over MCP, in every
+    approval mode, the reply is local_review_only and nothing is written.
 
     Args:
         item_id: onboard 候选的 ID。 / The onboard candidate id.
-        project_root: 仓库根目录；留空时使用当前工作目录。 / Repository root; defaults to cwd.
+        project_root: 保留以兼容旧调用；不使用。 / Kept for compatibility; unused.
     """
     refusal = S._gov_rt.maybe_refuse_owner_write(S._get_engram().root, tool="onboard_accept")
     if refusal is not None:
         return refusal
+    from piia_engram import review_boundary as _review_boundary
 
-    import os as _os
-
-    root = project_root.strip() or _os.getcwd()
-    result = S._locked_engram_call(
-        S._get_engram().accept_onboard_candidate, item_id, project_root=root
+    result = _review_boundary.refusal(
+        item_id, action="onboard_accept", hint="run `engram onboard-accept <id>` locally",
     )
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._get_engram().root, result, tool="onboard_accept"
-    )
+    result = S._gov_rt.maybe_govern_owner_only(S._get_engram().root, result, tool="onboard_accept")
     return S._json(result)
 
 

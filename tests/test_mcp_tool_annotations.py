@@ -59,8 +59,8 @@ def test_read_web_content_is_the_only_open_world_tool():
 
 
 # Owner-gated tools that only read over MCP: import_engram previews; applying an
-# import is the local `engram import`.
-OWNER_GATED_READS = frozenset({"import_engram"})
+# import is the local `engram import`; onboard_accept is the local `engram onboard-accept`.
+OWNER_GATED_READS = frozenset({"import_engram", "onboard_accept"})
 
 
 def test_classes_and_hints_agree():

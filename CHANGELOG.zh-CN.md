@@ -15,8 +15,8 @@
   - **迁移：** 在存放数据的机器上用 `engram import <backup.json> --apply --yes`（或 `engram import --format openclaw ... --apply --yes`）执行导入；`local_only` 回复会给出这条命令。
 - **AI 写入或改写的 playbook 在任何模式下都等你审核，待审 playbook 永远不会执行。** `add_playbook`、`memory_store(kind="playbook")`、从会话起草的手册，以及经 `manage_playbook` 或 `update_knowledge` 修改内容，都存为提案，已批准的版本照常使用；对待审手册调用 `playbook_execution` 返回 `not_approved`；`add_playbook` 的回复改为 JSON（`{"status": "pending", "id": ..., "message": ...}`）。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的被拒绝（`queue_full`），不会被丢弃。
   - **迁移：** 用 `engram review` 或 `engram review interactive` 批准还要使用的草稿；按 JSON 读取 `add_playbook` 的回复。
-- **决定待审提案只能在本地进行，任何模式都一样。** 经 MCP 批准、提升、拒绝或归档待审条目，在默认模式和严格模式下都返回 `local_review_only`（并提示在本地运行 `engram review`）且不写入：`review_staging` 的 `action="batch"` 且 `dry_run=false`、`review_staging(action="apply_text")`、改待审条目 tier 或 status（或把任何条目提升为 `verified`）的 `update_knowledge`、对待审条目的 `archive_knowledge` 和 `confirm_knowledge`、对待审 playbook 的 `manage_playbook` archive / delete / restore，以及对待审修订的 `onboard_accept`。列出、批量预览（`dry_run=true`）和 `review_item` 仍可用，`review_staging` 不再标为破坏性。风险分级直接判为 verified 的写入不受影响。
-  - **迁移：** 用 `engram review` 或 `engram review interactive` 决定待审条目；原先经 MCP 落盘批量审核的 AI 仍可用 `dry_run=true` 预览。
+- **决定待审提案只能在本地进行，任何模式都一样。** 经 MCP 批准、提升、拒绝或归档待审条目，在默认模式和严格模式下都返回 `local_review_only`（并提示在本地运行 `engram review`）且不写入：`review_staging` 的 `action="batch"` 且 `dry_run=false`、`review_staging(action="apply_text")`、改待审条目 tier 或 status（或把任何条目提升为 `verified`）的 `update_knowledge`、对待审条目的 `archive_knowledge` 和 `confirm_knowledge`、对待审 playbook 的 `manage_playbook` archive / delete / restore，以及 `onboard_accept`（接受 onboard 候选改用本地 `engram onboard-accept`，该工具现标为只读）。列出、批量预览（`dry_run=true`）和 `review_item` 仍可用，`review_staging` 不再标为破坏性。风险分级直接判为 verified 的写入不受影响。
+  - **迁移：** 用 `engram review` 或 `engram review interactive` 决定待审条目，用 `engram onboard-accept <id>`（或 `--all`）接受 onboard 候选；原先经 MCP 落盘批量审核的 AI 仍可用 `dry_run=true` 预览。
 - **AI 新增的决策若会取代已审核决策，等你审核。** 经 MCP 新增的决策如果与已审核决策问题相同、选择不同，在任何模式下都是带 `pending_supersedes` 的待审提案；已审核的决策照常使用，你批准后才写入取代关系。你在本地添加的决策不受影响。
   - **迁移：** 用 `engram review` 批准你要的替换。
 - **Playbook id 由 Engram 生成。** AI 随新 playbook 发来的 `id` 会被忽略，改用新的 id；本地新增时 id 已被占用则拒绝（`id_exists`）。
@@ -61,6 +61,7 @@
 - `engram review` 在写入决定的同一把锁内比对你审核时的版本（`expected_version`），期间被改动的条目返回 `version_conflict`，不会被批准、拒绝或写入拒绝记录。
 - 批准 playbook 修订时先停用旧 playbook；运行中断后再次应用同一份 marks 即可完成，两个版本都已被批准的库也能这样补完。
 - 读取信任边界不再写 `identity/trust_boundaries.json`；缺少的默认值只在内存中补齐。
+- 读取知识（`get_lessons`、`get_decisions`、`get_playbooks` 等）只累加访问次数，不再刷新 `last_reviewed`，`get_stale_knowledge` 仍会列出你还没复习的条目；`last_reviewed` 只由你的确认和复习操作更新。
 - doctor 的连接报告把服务启动描述为“不导入任何内容、不改动知识和身份内容”，不再称为“零写入”（读取仍会更新访问计数）。
 - 所有项目的待审提案都会出现在 `engram review`、`engram review export`、`engram management` 和交互审核中，并显示 `project:<名称>` 作用域。
 - 严格模式下 `manage_playbook(action="update")` 的回复是待审提案，不再回显整份提议的手册。

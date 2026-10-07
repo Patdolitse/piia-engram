@@ -17,6 +17,8 @@ from . import version_guard as _version_guard
 from . import write_provenance as _write_provenance
 from .storage import _now_iso, overflow_batch
 
+_ONBOARD_ACCEPT_HINT = "run `engram onboard-accept <id>` locally"
+
 
 class KnowledgeOpsMixin:
     """Operations that span lessons, decisions, and playbooks."""
@@ -548,12 +550,13 @@ class KnowledgeOpsMixin:
         given, else "unknown" — never fabricated. (A later read-time check_anchors
         pass demotes the fact if the anchor is INVALID.)
         """
+        if _review_boundary.mcp_origin():
+            # Accepting a candidate is the Owner's local command, in every mode.
+            return _review_boundary.refusal(item_id, action="onboard_accept",
+                                            hint=_ONBOARD_ACCEPT_HINT)
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
-        if item.get("pending_supersedes") and _review_boundary.mcp_origin():
-            # A pending revision replaces another entry: the Owner's local review.
-            return _review_boundary.refusal(item_id, action="onboard_accept")
         if item_type == "playbook" and item.get("pending_supersedes"):
             # A playbook update proposal replaces another playbook when it is
             # approved; that is a review decision (engram review), never an
@@ -649,8 +652,10 @@ class KnowledgeOpsMixin:
         an unresolved root never silently accepts an identified repo's candidate.
         dry_run is a zero-write preview that still verifies anchors read-only, so
         would_accept / would_reject are honest. The CLI runs dry by default;
-        --yes commits.
+        --yes commits. Over MCP only the dry run is allowed (local command only).
         """
+        if not dry_run and _review_boundary.mcp_origin():
+            return _review_boundary.refusal(action="onboard_accept", hint=_ONBOARD_ACCEPT_HINT)
         resolved_repo_id = repo_id
         if resolved_repo_id is None and project_root:
             resolved_repo_id = _freshness_anchors.read_project_id(project_root)

@@ -629,7 +629,7 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `archive_knowledge` | Archive a lesson, decision or playbook by ID (needs `expected_version`) |
 | `confirm_knowledge` | Owner-only confirmation stamp via human, test, or anchor provenance |
 | `onboard_repo` | Owner-only repo scan: create staging repo-fact candidates from anchors |
-| `onboard_accept` | Owner-only accept: validate a candidate anchor and promote it to verified (a pending revision is decided in `engram review`) |
+| `onboard_accept` | Local only: accepting an onboard candidate is `engram onboard-accept <id>`; over MCP it answers `local_review_only` and writes nothing |
 | `check_anchors` | Owner-only revalidation for existing anchor-backed facts |
 | `merge_knowledge` | Merge a duplicate into the primary item (needs both items' versions) |
 | `manage_relation` | `action`: link / unlink — manage typed relations between knowledge items (decision threads) |

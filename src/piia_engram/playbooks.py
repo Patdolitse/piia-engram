@@ -1053,8 +1053,7 @@ class PlaybookMixin:
                 def _bump_access(p, _now=now):
                     if p.get("status", "active") != "active":
                         return p
-                    p["last_reviewed"] = _now
-                    p["access_count"] = p.get("access_count", 0) + 1
+                    p["access_count"] = p.get("access_count", 0) + 1  # a read never sets last_reviewed
                     return p
                 updated = self._update_playbook_file_by_id(pb["id"], _bump_access)
                 if updated:
@@ -1108,8 +1107,7 @@ class PlaybookMixin:
             def _bump_single(p, _now=now):
                 if p.get("status", "active") != "active":
                     return p
-                p["last_reviewed"] = _now
-                p["access_count"] = p.get("access_count", 0) + 1
+                p["access_count"] = p.get("access_count", 0) + 1  # a read never sets last_reviewed
                 return p
             updated = self._update_playbook_file_by_id(playbook_id, _bump_single)
             if updated:

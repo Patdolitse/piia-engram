@@ -137,7 +137,10 @@ staged 条目始终在你掌控之中：
 - 决定待审条目（批准、拒绝、归档、恢复）由你在本地 `engram review` 中完成，任何审批模式都一样。
   AI 经 MCP 只能列出和预览（`review_staging` 且 `dry_run=true`），不能决定：落盘的批量审核、
   `apply_text`、改待审条目的 tier 或 status、归档或确认它、批准/拒绝/删除/恢复待审 playbook，
-  以及对待审修订的 `onboard_accept`，都返回 `local_review_only`，不写入任何内容。
+  以及 `onboard_accept`，都返回 `local_review_only`，不写入任何内容（onboard 候选请在本地用
+  `engram onboard-accept` 接受）。
+- 读取知识只累加访问次数，不刷新 `last_reviewed`；它只由你的确认和复习操作更新，
+  因此 `get_stale_knowledge` 仍会列出你还没复习的条目。
 - 在终端里运行 `engram review interactive`（或 `engram review -i`），逐条显示待审
   提案（类型、内容、风险、来源、可能的重复及差异、取代关系），输入一个字母加回车：
   `a` 批准、`r` 拒绝（可写理由，只记在回执里，经 MCP 的 `get_audit_log` 读不到）、`s` 取代一条已批准条目（输入其 id）、`k` 跳过、
@@ -207,7 +210,7 @@ AI 拿到什么，各个入口规则一致：
   （以及 `supersedes_expected_version`）提交修订提案；无论哪种审批模式，这类提案都
   等待你的本地审核（`engram review apply` / `engram review interactive`）。AI 经 MCP
   无论走哪条路径都不能批准它：批量批准、审查页的 promote 列表、改 tier 返回
-  `local_review_only`，导入返回 `pinned_target`，`onboard_accept` 拒绝修订提案；都不写入。
+  `local_review_only`，导入返回 `pinned_target`，`onboard_accept` 也返回 `local_review_only`；都不写入。
   审核卡会提示目标是钉住条目。提案只能取代同一作用域内的有效条目：其它项目的条目、项目提案
   取代全局条目（或反过来）、已归档的条目都会被拒绝，返回 `supersedes_target_not_applicable`
   与 `reason`（`different_project`、`scope_mismatch`、`archived`）。你批准后旧条目被取代并自动解钉（记入审计）。

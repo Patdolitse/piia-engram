@@ -120,8 +120,7 @@ _MATRIX = [
     ("onboard_repo", "onboard_repo",
      {"created": 1, "candidates": [_sec()]},
      {"project_root": "/x"}, "withhold"),
-    ("onboard_accept", "accept_onboard_candidate", _sec(),
-     {"item_id": "sec-1", "project_root": "/x"}, "withhold"),
+    # onboard_accept is local only over MCP (local_review_only): it returns no stored item
     ("check_anchors", "revalidate_anchors",
      {"project_id": SECRET, "checked": 1},
      {"project_root": "/x"}, "withhold"),
@@ -302,6 +301,9 @@ _SAFE_ALLOWLIST = {
     # imports / external fetch. v4.0.0: import_engram_from_openclaw is now
     # import_engram(format="openclaw").
     "import_engram", "read_web_content",
+    # local only over MCP (4.22.0): onboard_accept answers a metadata-only
+    # local_review_only refusal and never reaches the store.
+    "onboard_accept",
 }
 
 _CLASSIFIED = _GOVERNED | _EXPORT_OWNER_ONLY | _SAFE_ALLOWLIST
@@ -692,8 +694,6 @@ _SIDE_EFFECT_HARNESS = [
     ("confirm_knowledge", lambda ids: {"item_id": ids["lesson_id"],
                                         "by": "test"}),
     ("onboard_repo", lambda ids: {"project_root": str(ids["_root"])}),
-    ("onboard_accept", lambda ids: {"item_id": ids["lesson_id"],
-                                     "project_root": str(ids["_root"])}),
     ("check_anchors", lambda ids: {"project_root": str(ids["_root"])}),
     ("review_staging", lambda ids: {"action": "review_item",
                                      "knowledge_id": ids["lesson_id"]}),
