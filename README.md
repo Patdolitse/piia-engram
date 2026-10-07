@@ -607,7 +607,7 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `user_portrait` | `action`: get / save / compare the AI-maintained user portrait |
 | `preview_context_governance` | Advanced owner-gated preview: build safe-context, freshness/conflict, replay, or evidence proposals without applying changes |
 | `get_playbooks` | Playbook reads via `mode`: list, get (full content), recent, management (incl. archived/deleted metadata) |
-| `manage_playbook` | Playbook lifecycle via `action`: update, archive, delete, restore (mutations stay confirm-gated) |
+| `manage_playbook` | Playbook lifecycle via `action`: update, archive, delete, restore (mutations stay confirm-gated and need `expected_version`) |
 | `playbook_execution` | Guided execution via `action`: prepare a step plan, update_step, status rollup (passive reference; no auto-execution) |
 | `get_lessons` | List reusable lessons learned |
 | `get_decisions` | List key decisions; `thread_seed_id` / `history_question` reconstruct decision threads and revision history |
@@ -615,13 +615,13 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `list_projects` | List saved project snapshots |
 | `extract_session_insights` | Extract lessons and decisions from session text |
 | `ingest_notes` | Parse free-form notes into structured knowledge |
-| `update_knowledge` | Update a lesson or decision by ID |
-| `archive_knowledge` | Archive a lesson or decision by ID |
+| `update_knowledge` | Update a lesson, decision or playbook by ID (needs `expected_version`) |
+| `archive_knowledge` | Archive a lesson, decision or playbook by ID (needs `expected_version`) |
 | `confirm_knowledge` | Owner-only confirmation stamp via human, test, or anchor provenance |
 | `onboard_repo` | Owner-only repo scan: create staging repo-fact candidates from anchors |
 | `onboard_accept` | Owner-only accept: validate a candidate anchor and promote it to verified |
 | `check_anchors` | Owner-only revalidation for existing anchor-backed facts |
-| `merge_knowledge` | Merge a duplicate into the primary item |
+| `merge_knowledge` | Merge a duplicate into the primary item (needs both items' versions) |
 | `manage_relation` | `action`: link / unlink — manage typed relations between knowledge items (decision threads) |
 | `explore_knowledge` | Knowledge graph exploration via `mode`: related, similar, merge_candidates |
 | `get_knowledge_overview` | Knowledge digest, health report, stale checks |

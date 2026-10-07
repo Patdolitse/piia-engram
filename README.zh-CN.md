@@ -575,7 +575,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `user_portrait` | 按 `action` 操作 AI 维护的用户画像：get / save / compare |
 | `preview_context_governance` | advanced owner-gated 预览：生成 safe-context、freshness/conflict、replay 或 evidence 提案，不自动应用 |
 | `get_playbooks` | 按 `mode` 读取操作手册：list、get（完整内容）、recent、management（含归档/删除元数据） |
-| `manage_playbook` | 按 `action` 管理操作手册生命周期：update、archive、delete、restore（变更仍需确认） |
+| `manage_playbook` | 按 `action` 管理操作手册生命周期：update、archive、delete、restore（变更仍需确认，并需带 `expected_version`） |
 | `playbook_execution` | 按 `action` 引导执行：prepare 生成步骤计划、update_step 标记进度、status 查看结果汇总（被动参考，不自动执行） |
 | `get_lessons` | 列出经验教训 |
 | `get_decisions` | 列出关键决策；`thread_seed_id` / `history_question` 可重建决策链与修订历史 |
@@ -583,9 +583,9 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `list_projects` | 列出所有项目快照 |
 | `extract_session_insights` | 从文本中提取经验和决策 |
 | `ingest_notes` | 从自由文本笔记提取结构化知识 |
-| `update_knowledge` | 更新一条知识（自动检测类型） |
-| `archive_knowledge` | 归档一条知识 |
-| `merge_knowledge` | 合并重复知识条目 |
+| `update_knowledge` | 更新一条知识（自动检测类型；需带 `expected_version`） |
+| `archive_knowledge` | 归档一条知识（需带 `expected_version`） |
+| `merge_knowledge` | 合并重复知识条目（需带两个条目的版本号） |
 | `manage_relation` | 按 `action` 管理知识间类型化关系：link / unlink（决策链） |
 | `explore_knowledge` | 按 `mode` 探索知识图谱：related（关联）、similar（相似）、merge_candidates（近似重复扫描） |
 | `get_knowledge_overview` | 知识概览（摘要 + 健康度 + 过期检查） |

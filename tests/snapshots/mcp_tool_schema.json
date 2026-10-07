@@ -88,6 +88,13 @@
           "required": false,
           "default": false,
           "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes_expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
+          "kind": "positional_or_keyword"
         }
       ],
       "returns": "str"
@@ -311,6 +318,13 @@
           "name": "item_id",
           "annotation": "str",
           "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "expected_version",
+          "annotation": "int | None",
+          "required": false,
           "default": null,
           "kind": "positional_or_keyword"
         }
@@ -1274,6 +1288,13 @@
           "required": false,
           "default": false,
           "kind": "positional_or_keyword"
+        },
+        {
+          "name": "expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
+          "kind": "positional_or_keyword"
         }
       ],
       "returns": "str"
@@ -1378,6 +1399,20 @@
           "name": "secondary_id",
           "annotation": "str",
           "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "primary_expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "secondary_expected_version",
+          "annotation": "int | None",
+          "required": false,
           "default": null,
           "kind": "positional_or_keyword"
         }

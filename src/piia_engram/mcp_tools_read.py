@@ -7,11 +7,13 @@ import json
 try:
     from . import mcp_server as S
     from .knowledge_search_service import search_knowledge as _search_knowledge_service
+    from . import version_guard as _version_guard
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
     from knowledge_search_service import (  # type: ignore[no-redef]
         search_knowledge as _search_knowledge_service,
     )
+    import version_guard as _version_guard  # type: ignore[no-redef]
 
 # Shown on cold start while the store holds no lessons or decisions. Importing
 # other AI tools' memories is an explicit Owner command, never automatic.
@@ -379,7 +381,7 @@ async def get_lessons(
     lessons = S._gov_rt.maybe_govern_list(S._get_engram().root, lessons, tool="get_lessons")
     if not lessons:
         return "尚无经验教训记录。"
-    return S._json(lessons)
+    return S._json(_version_guard.with_versions(lessons))
 
 
 @S.mcp.tool()
@@ -445,7 +447,7 @@ async def get_decisions(
     decisions = S._gov_rt.maybe_govern_list(S._get_engram().root, decisions, tool="get_decisions")
     if not decisions:
         return "尚无决策记录。"
-    return S._json(decisions)
+    return S._json(_version_guard.with_versions(decisions))
 
 
 @S.mcp.tool()
@@ -534,7 +536,7 @@ async def get_relevant_knowledge(
     if not lessons:
         return S._json({"items": [], "_caller_permissions": perms,
                        "note": "尚无相关经验教训。"})
-    return S._json({"items": lessons, "_caller_permissions": perms})
+    return S._json({"items": _version_guard.with_versions(lessons), "_caller_permissions": perms})
 
 
 @S.mcp.tool()
@@ -722,6 +724,10 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
                             for item in items
                         ]
         for view in views:
+            for _bucket in _SEARCH_BUCKETS:
+                items = view.get(_bucket)
+                if isinstance(items, list):
+                    view[_bucket] = _version_guard.with_versions(items)
             playbooks = view.get("playbooks")
             if isinstance(playbooks, list):
                 for item in playbooks:

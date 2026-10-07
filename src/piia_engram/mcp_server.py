@@ -1215,6 +1215,9 @@ _DEFAULT_SERVER_INSTRUCTIONS = (
     "- Learned something reusable → memory_store(kind='lesson', content_json=...)\n"
     "- Decision made → memory_store(kind='decision', content_json=...)\n"
     "- Conversation end → wrap_up_session\n"
+    "- Changing an existing entry (update_knowledge, archive_knowledge, merge_knowledge,\n"
+    "  manage_playbook, or a write with supersedes) needs expected_version /\n"
+    "  supersedes_expected_version: the version from the read result.\n"
 )
 
 _STRICT_SERVER_INSTRUCTIONS = (
@@ -1230,6 +1233,8 @@ _STRICT_SERVER_INSTRUCTIONS = (
     "- Do not propose session logs, progress notes or anything already in files or git;\n"
     "  keep session checkpoints in project-local notes.\n"
     "- Editing, approving, archiving, merging and identity changes are refused over MCP.\n"
+    "- A proposal that replaces an existing entry (supersedes, or a playbook update) needs that\n"
+    "  entry's version: supersedes_expected_version / expected_version from the read result.\n"
 )
 
 

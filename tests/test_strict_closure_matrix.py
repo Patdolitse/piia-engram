@@ -626,9 +626,9 @@ def test_unset_archive_knowledge_over_mcp_and_core_never_tombstones(mcp):
     via_mcp = m._engram.add_lesson("archived over mcp", domain="t")
     via_core = m._engram.add_lesson("archived over core", domain="t")
     params = set(inspect.signature(m.archive_knowledge).parameters)
-    assert params == {"item_id"}, "the MCP tool must not accept a reason or internal flag"
+    assert params == {"item_id", "expected_version"}, "the MCP tool must not accept a reason or internal flag"
 
-    _run(m.archive_knowledge(item_id=via_mcp["id"]))
+    _run(m.archive_knowledge(item_id=via_mcp["id"], expected_version=1))
     m._engram.archive_knowledge(via_core["id"])
 
     statuses = {r["id"]: r["status"] for r in _rows(root)}

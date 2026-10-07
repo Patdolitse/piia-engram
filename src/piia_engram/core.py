@@ -2605,6 +2605,7 @@ class Engram(
                         "item_id": lesson_id,
                         "expected_version": expected_version,
                         "actual_version": current_version,
+                        "current_version": current_version,
                     }
                     return lessons
                 before = dict(lesson)
@@ -2700,10 +2701,13 @@ class Engram(
             )
         return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
-    def archive_lesson(self, lesson_id: str, *, _owner_reject: str = "") -> dict:
+    def archive_lesson(
+        self, lesson_id: str, *, _owner_reject: str = "", expected_version: int | None = None
+    ) -> dict:
         """Mark a lesson as outdated without deleting it."""
-        return self._archive_with_reject("lesson", lesson_id, _owner_reject,
-                                         lambda: self.update_lesson(lesson_id, {"status": "outdated"}))
+        return self._archive_with_reject(
+            "lesson", lesson_id, _owner_reject,
+            lambda: self.update_lesson(lesson_id, {"status": "outdated"}, expected_version=expected_version))
 
     def add_decision(
         self,
@@ -3069,6 +3073,7 @@ class Engram(
                         "item_id": decision_id,
                         "expected_version": expected_version,
                         "actual_version": current_version,
+                        "current_version": current_version,
                     }
                     return decisions
                 before = dict(decision)
@@ -3164,10 +3169,13 @@ class Engram(
             )
         return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
-    def archive_decision(self, decision_id: str, *, _owner_reject: str = "") -> dict:
+    def archive_decision(
+        self, decision_id: str, *, _owner_reject: str = "", expected_version: int | None = None
+    ) -> dict:
         """Mark a decision as outdated without deleting it."""
-        return self._archive_with_reject("decision", decision_id, _owner_reject,
-                                         lambda: self.update_decision(decision_id, {"status": "outdated"}))
+        return self._archive_with_reject(
+            "decision", decision_id, _owner_reject,
+            lambda: self.update_decision(decision_id, {"status": "outdated"}, expected_version=expected_version))
 
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""
@@ -3394,6 +3402,7 @@ READ_ONLY_SAFE_METHODS = frozenset({
     "get_staging_summary", "get_stale_knowledge", "get_stats", "get_trust_boundaries",
     "get_unclean_exit_marker", "get_work_style", "is_pending_playbook", "list_agent_sessions",
     "list_playbooks_for_management", "list_projects", "list_tools", "list_user_portraits",
+    "mcp_entry_version", "mcp_existing_write_guard", "mcp_supersede_guard",
     "pending_playbook_count", "preview_session_digest_backfill", "render_portrait_growth",
     "render_user_portrait", "render_user_portrait_html", "review_knowledge", "search_knowledge",
     "suggest_merges", "tombstoned_but_pending",

@@ -142,13 +142,16 @@ async def update_knowledge(
     用途：需要修改已有知识条目的内容、状态或元数据时调用。内容变更会自动保留旧版本为不可变快照并递增版本号（用 get_knowledge_history 查看）。
     Purpose: Call when an existing knowledge item's content, status, or metadata needs to be changed. Content changes automatically retain the prior body as an immutable snapshot and bump the version (see get_knowledge_history).
 
+    必填 expected_version：先读取条目（get_lessons / get_decisions / search_knowledge / get_playbooks 的结果都带 version），再把该值传入。缺失返回 version_required（附当前版本与示例），过期返回 version_conflict，两者都零写入。
+    Required expected_version: read the entry first (results of get_lessons / get_decisions / search_knowledge / get_playbooks carry version) and pass that value. Missing -> version_required (with the current version and an example); stale -> version_conflict; both write nothing.
+
     注意：如果只是确认某条知识仍有效，用 review_staging(action="review_item")；如果要归档，用 archive_knowledge。
     Note: If you only need to confirm an item is still valid, use review_staging(action="review_item"); to archive, use archive_knowledge.
 
     Args:
         item_id: lesson、decision 或 playbook 的 ID。 / ID of the lesson, decision, or playbook.
         updates_json: 要更新字段的 JSON 字符串。 / JSON string containing fields to update.
-        expected_version: 乐观并发保护（可选）：传入当前版本号，不匹配则拒绝写入且零改动（version_conflict）。修订指引的 guidance.revision.expected_version 会给出当前值。 / Optimistic-concurrency guard (optional): the current version; a mismatch refuses the write with zero changes (version_conflict). The dedup guidance's revision.expected_version carries the current value.
+        expected_version: 必填：读取结果中的当前版本号（从未修订的条目为 1；修订指引的 guidance.revision.expected_version 也会给出）。缺失 → version_required，不匹配 → version_conflict，均零改动。 / Required: the current version from a read result (1 for an entry never revised; the dedup guidance's revision.expected_version carries it too). Missing -> version_required; mismatch -> version_conflict; both change nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="update_knowledge")
@@ -162,10 +165,19 @@ async def update_knowledge(
     # Returns the FULL stored item; an attacker who guesses an id can no-op
     # update and read a secret item back through this "write" tool (Codex
     # round-16 P1-3). Gate the returned item — over-ceiling → withheld stub.
-    result = S._locked_engram_call(
-        S._get_engram().update_knowledge, item_id, updates, expected_version=expected_version
-    )
-    result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="update_knowledge")
+    eng = S._get_engram()
+
+    def _guarded() -> dict:
+        refusal = eng.mcp_existing_write_guard(
+            item_id, expected_version,
+            example={"item_id": item_id, "updates_json": updates_json, "expected_version": None},
+        )
+        if refusal is not None:
+            return refusal
+        return eng.update_knowledge(item_id, updates, expected_version=expected_version)
+
+    result = S._locked_engram_call(_guarded)
+    result = S._gov_rt.maybe_govern_one(eng.root, result, tool="update_knowledge")
     return S._json(result)
 
 
@@ -202,8 +214,8 @@ async def get_knowledge_history(
 
 
 @S.mcp.tool()
-async def archive_knowledge(item_id: str) -> str:
-    """按 ID 归档 lesson 或 decision（自动识别类型）。 / Archive a lesson or decision by ID, automatically detecting the item type.
+async def archive_knowledge(item_id: str, expected_version: int | None = None) -> str:
+    """按 ID 归档 lesson、decision 或 playbook（自动识别类型）。 / Archive a lesson, decision, or playbook by ID, automatically detecting the item type.
 
     用途：某条知识已经过时但不应删除时调用。
     Purpose: Call when a knowledge item is outdated but should be preserved rather than deleted.
@@ -212,14 +224,27 @@ async def archive_knowledge(item_id: str) -> str:
     Note: If the item is a duplicate that should be merged, use merge_knowledge.
 
     Args:
-        item_id: 要归档的 lesson 或 decision ID。 / ID of the lesson or decision to archive.
+        item_id: 要归档的条目 ID。 / ID of the item to archive.
+        expected_version: 必填：读取结果中的当前版本号。缺失 → version_required，不匹配 → version_conflict，均零改动。 / Required: the current version from a read result. Missing -> version_required; mismatch -> version_conflict; both change nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="archive_knowledge")
     if refusal is not None:
         return refusal
 
-    result = S._locked_engram_call(S._get_engram().archive_knowledge, item_id)
+    eng = S._get_engram()
+
+    def _guarded() -> dict:
+        refusal = eng.mcp_existing_write_guard(
+            item_id, expected_version, example={"item_id": item_id, "expected_version": None},
+        )
+        if refusal is not None:
+            return refusal
+        return eng.archive_knowledge(item_id, expected_version=expected_version)
+
+    result = S._locked_engram_call(_guarded)
+    if isinstance(result, dict) and result.get("error") in ("version_required", "version_conflict"):
+        return S._json(result)
     S._beta("knowledge_rejected", action="archive")
     # Returns the full stored item (delegates to update_*) — same read-back
     # bypass as update_knowledge; gate the returned item (Codex round-16 P1-3).
@@ -557,18 +582,25 @@ async def request_outline_review(lang: str = "zh") -> str:
 
 
 @S.mcp.tool()
-async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
+async def merge_knowledge(
+    primary_id: str,
+    secondary_id: str,
+    primary_expected_version: int | None = None,
+    secondary_expected_version: int | None = None,
+) -> str:
     """将次要知识条目合并进主知识条目。 / Merge a secondary knowledge item into a primary knowledge item.
 
     用途：find_similar_knowledge 发现重复或高度相似条目后，用来保留主条目并归档次要条目。
     Purpose: Call after find_similar_knowledge identifies duplicate or highly similar items, keeping the primary item and archiving the secondary one.
 
-    注意：主条目的内容会保留，次要条目的关联关系会转移后归档。
-    Note: The primary item's content is preserved; related links from the secondary item are transferred before it is archived.
+    注意：主条目的内容会保留，次要条目的关联关系会转移后归档。两个条目都会被改动，因此两个版本号都必填。
+    Note: The primary item's content is preserved; related links from the secondary item are transferred before it is archived. Both entries change, so both versions are required.
 
     Args:
         primary_id: 要保留的主条目 ID。 / ID of the primary item to keep.
         secondary_id: 要合并并归档的次要条目 ID。 / ID of the secondary item to merge and archive.
+        primary_expected_version: 必填：主条目的当前版本号。 / Required: the primary item's current version.
+        secondary_expected_version: 必填：次要条目的当前版本号。缺失 → version_required，不匹配 → version_conflict，均零改动。 / Required: the secondary item's current version. Missing -> version_required; mismatch -> version_conflict; both change nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="merge_knowledge")
@@ -578,8 +610,27 @@ async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
     # Returns {primary_title, secondary_title} — stored titles the caller only
     # referenced by id. Gate the ack so lower tiers don't read titles back
     # (Codex round-16 write-echo class).
-    result = S._locked_engram_call(S._get_engram().merge_knowledge, primary_id, secondary_id)
-    result = S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="merge_knowledge")
+    eng = S._get_engram()
+
+    def _guarded() -> dict:
+        example = {"primary_id": primary_id, "secondary_id": secondary_id,
+                   "primary_expected_version": eng.mcp_entry_version(primary_id),
+                   "secondary_expected_version": eng.mcp_entry_version(secondary_id)}
+        for item_id, expected, param in ((primary_id, primary_expected_version, "primary_expected_version"),
+                                         (secondary_id, secondary_expected_version, "secondary_expected_version")):
+            refusal = eng.mcp_existing_write_guard(item_id, expected, example=example, param=param)
+            if refusal is not None:
+                return refusal
+        return eng.merge_knowledge(
+            primary_id, secondary_id,
+            primary_expected_version=primary_expected_version,
+            secondary_expected_version=secondary_expected_version,
+        )
+
+    result = S._locked_engram_call(_guarded)
+    if isinstance(result, dict) and result.get("error") in ("version_required", "version_conflict"):
+        return S._json(result)
+    result = S._gov_rt.maybe_govern_write_ack(eng.root, result, tool="merge_knowledge")
     return S._json(result)
 
 

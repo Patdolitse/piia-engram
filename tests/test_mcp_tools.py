@@ -656,6 +656,7 @@ class TestSearchTools:
             pb["id"],
             required_tools_json='[{"name": "mcp-publisher"}]',
             tool_refs="gh",
+            expected_version=1,
         ))
 
         assert "Playbook 已更新" in result

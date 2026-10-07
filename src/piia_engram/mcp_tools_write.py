@@ -49,6 +49,43 @@ def _is_user_confirmed(value) -> bool:
     return False
 
 
+def _pop_supersede_version(content) -> object:
+    """Remove ``supersedes_expected_version`` from a payload (never stored); returns it."""
+    if isinstance(content, dict):
+        return content.pop("supersedes_expected_version", None)
+    return None
+
+
+def _supersede_refusal(kind: str, content, expected) -> dict | None:
+    """A proposal that supersedes an existing entry must name that entry's version.
+
+    Returns ``version_required`` / ``version_conflict`` /
+    ``supersedes_target_not_found`` (nothing written), or None.
+    """
+    if not isinstance(content, dict):
+        return None
+    target = content.get("supersedes")
+    if target in (None, ""):
+        return None
+    if not isinstance(target, str):
+        return {"error": "supersedes must be an entry id (string)", "changed": False}
+    return S._get_engram().mcp_supersede_guard(
+        target, expected, kind=kind,
+        example={"supersedes": target, "supersedes_expected_version": None},
+    )
+
+
+def _guarded_add(kind: str, content: dict, expected, add, *args, **kwargs):
+    """Run ``add`` under the MCP write lock after the supersede version check."""
+    def _call():
+        refusal = _supersede_refusal(kind, content, expected)
+        if refusal is not None:
+            return refusal
+        return add(*args, **kwargs)
+
+    return S._locked_engram_call(_call)
+
+
 def _lesson_confirmation_title(lesson: dict) -> str:
     return f"Lesson: {str(lesson.get('summary', '')).strip()}"
 
@@ -126,6 +163,9 @@ async def memory_store(
         source_tool: 调用来源工具（可选），如 'claude_code', 'cursor'。 / Source tool (optional).
         items_json: 条目 JSON 数组；给了就走批量写入（一次导入多条 lesson/decision）。 / JSON array of items; when provided, batch-writes multiple lessons/decisions in one call.
         allow_similar_new: 单条 lesson/playbook：内容相似但不相同、确属新条目时设为 true（可选，默认 false）；不能绕过完全相同内容的拒绝。 / Single lesson/playbook: set true when similar but not identical content is genuinely new (optional, default false); it cannot bypass the refusal of identical content.
+
+    取代提案：内容（或批量中的某一条）带 supersedes=<已有条目 ID> 时，必须同时带 supersedes_expected_version=<该条目当前版本>；缺失 → version_required，不匹配 → version_conflict，整次调用零写入。
+    Supersede proposals: content (or a batch item) carrying supersedes=<existing id> must also carry supersedes_expected_version=<that entry's current version>; missing -> version_required, mismatch -> version_conflict, and the whole call writes nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="memory_store")
@@ -156,18 +196,38 @@ async def memory_store(
             S.strip_untrusted_trust_fields(_item)
             if effective_project and isinstance(_item, dict):
                 _item.setdefault("project_folder", effective_project)
+        expected_versions = [_pop_supersede_version(_item) for _item in items]
+
+        def _batch_refusal():
+            for index, (_item, expected) in enumerate(zip(items, expected_versions)):
+                refusal = _supersede_refusal(kind or "lesson", _item, expected)
+                if refusal is not None:
+                    return {**refusal, "item_index": index}
+            return None
+
+        early = _batch_refusal()
+        if early is not None:
+            return S._json(early)
         if not _is_user_confirmed(user_confirmed):
             return _confirmation_required(
                 kind or "lesson",
                 f"Batch {kind or 'lesson'} memory write: {len(items)} items",
                 items,
             )
-        result = S._locked_engram_call(
-            S._get_engram().bulk_add_knowledge,
-            items,
-            item_type=kind or "lesson",
-            source_tool=source_tool,
-        )
+
+        def _batch_write():
+            refusal = _batch_refusal()
+            if refusal is not None:
+                return refusal
+            return S._get_engram().bulk_add_knowledge(
+                items, item_type=kind or "lesson", source_tool=source_tool,
+            )
+
+        result = S._locked_engram_call(_batch_write)
+        if isinstance(result, dict) and result.get("error") in (
+            "version_required", "version_conflict", "supersedes_target_not_found",
+        ):
+            return S._json(result)
         S._track("memory_store", success=True)
         return S._json(S._gov_rt.maybe_govern_write_ack(
             S._get_engram().root, result, tool="memory_store",
@@ -185,6 +245,7 @@ async def memory_store(
     # smuggled through content_json so the risk-based write gate is the sole
     # authority over tier (high-risk content -> staging, not verified).
     S.strip_untrusted_trust_fields(content)
+    supersede_version = _pop_supersede_version(content)
 
     if source_tool:
         content["source_tool"] = source_tool
@@ -228,6 +289,9 @@ async def memory_store(
         S._track("memory_store", success=False)
         return "kind 不能为空。可用: lesson, decision, playbook"
 
+    early = _supersede_refusal(kind, content, supersede_version)
+    if early is not None:
+        return S._json(early)
     if not _is_user_confirmed(user_confirmed):
         if kind == "lesson":
             title = _lesson_confirmation_title(content)
@@ -239,8 +303,9 @@ async def memory_store(
 
     try:
         if kind == "lesson":
-            result = S._locked_engram_call(
-                S._get_engram().add_lesson, content, allow_similar_new=allow_similar_new
+            result = _guarded_add(
+                kind, content, supersede_version,
+                S._get_engram().add_lesson, content, allow_similar_new=allow_similar_new,
             )
             label = content.get("summary", "")[:60]
             S._track("memory_store", success=True)
@@ -252,7 +317,7 @@ async def memory_store(
             tier = result.get("tier", "staging")
             return f"[Engram] 教训已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}{_candidate_note(result)}"
         elif kind == "decision":
-            result = S._locked_engram_call(S._get_engram().add_decision, content)
+            result = _guarded_add(kind, content, supersede_version, S._get_engram().add_decision, content)
             label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
             S._track("memory_store", success=True)
             if _insert_refused(result):
@@ -263,8 +328,9 @@ async def memory_store(
             tier = result.get("tier", "staging")
             return f"[Engram] 决策已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}{_candidate_note(result)}"
         else:  # playbook
-            result = S._locked_engram_call(
-                S._get_engram().add_playbook, content, allow_similar_new=allow_similar_new
+            result = _guarded_add(
+                kind, content, supersede_version,
+                S._get_engram().add_playbook, content, allow_similar_new=allow_similar_new,
             )
             label = content.get("title", "")[:60]
             S._track("memory_store", success=True)
@@ -381,6 +447,7 @@ async def add_decision(
     run_id: str = "",
     last_validated_at: str = "",
     user_confirmed: bool = False,
+    supersedes_expected_version: int | None = None,
 ) -> str:
     """记录单条关键决策（用户明确选了某个方案）。 / Record one key decision when the user explicitly chose an option.
 
@@ -406,6 +473,7 @@ async def add_decision(
         project: 关联项目（可选）。 / Related project (optional).
         domain: 技术领域（可选），可填多个，逗号分隔，如 'architecture,database'。 / Technical domain (optional); may contain multiple comma-separated labels such as 'architecture,database'.
         supersedes: 被本决策取代的旧决策 ID（可选）。填写后自动在决策链中建立 supersedes 关系。 / ID of the old decision this one replaces (optional). Creates a supersedes edge in the decision thread.
+        supersedes_expected_version: 填写 supersedes 时必填：旧决策的当前版本号（读取结果中的 version）。缺失 → version_required，不匹配 → version_conflict，均零写入。 / Required with supersedes: the old decision's current version (version in a read result). Missing -> version_required; mismatch -> version_conflict; both write nothing.
         source_agent: 产生/校验此决策的 agent 身份（可选）。 / Agent identity that produced or validated this decision (optional).
         run_id: 产生此决策的工作流/会话运行 ID（可选）。 / Workflow/session run id that produced this decision (optional).
         last_validated_at: 最近确认此决策仍然成立的 ISO-8601 时间（可选）。 / ISO-8601 time this decision was last confirmed to still hold (optional).
@@ -435,10 +503,15 @@ async def add_decision(
         decision, source_agent=source_agent, run_id=run_id,
         last_validated_at=last_validated_at,
     )
+    early = _supersede_refusal("decision", decision, supersedes_expected_version)
+    if early is not None:
+        S._track("add_decision", success=False)
+        return S._json(early)
     if not _is_user_confirmed(user_confirmed):
         return _confirmation_required("decision", _decision_confirmation_title(decision), decision)
     try:
-        result = S._locked_engram_call(S._get_engram().add_decision, decision)
+        result = _guarded_add("decision", decision, supersedes_expected_version,
+                              S._get_engram().add_decision, decision)
         S._track("add_decision", success=True)
         S._beta("knowledge_created", kind="decision",
               domain=domain[:80] if domain else "",
@@ -637,7 +710,7 @@ def _playbook_update_proposal(playbook_id: str, updates: dict) -> str:
         eng.add_playbook, merged, allow_similar_new=True, _update_proposal_of=playbook_id,
     )
     S._track("manage_playbook", success=not result.get("error"))
-    if result.get("error") or result.get("status"):
+    if _insert_refused(result) or result.get("status") == "duplicate":
         return S._json(result)
     return S._json({
         "status": "pending", "id": result.get("id"), "pending_supersedes": playbook_id,
@@ -791,6 +864,7 @@ async def manage_playbook(
     reason: str = "",
     dry_run: bool = True,
     confirm: bool = False,
+    expected_version: int | None = None,
 ) -> str:
     """Playbook 统一管理入口：更新 / 归档 / 删除 / 恢复。 / Unified Playbook management: update, archive, delete, restore.
 
@@ -821,6 +895,7 @@ async def manage_playbook(
         reason: 删除原因（delete，可选）。 / Deletion reason (delete, optional).
         dry_run: 预览不落盘（delete/restore，默认 True）。 / Preview without writing (delete/restore, default True).
         confirm: 确认执行（delete/restore，必须显式 True）。 / Explicit confirmation (delete/restore).
+        expected_version: update / archive 以及真正执行的 delete / restore 必填：读取结果中的当前版本号。缺失 → version_required，不匹配 → version_conflict，均零改动；预览不需要。 / Required for update, archive and an executing delete / restore: the current version from a read result. Missing -> version_required; mismatch -> version_conflict; both change nothing. Previews need none.
     """
     # a4: write-path governance gate — must run unconditionally BEFORE action
     # validation so a low-trust caller gets a governance refusal, never an
@@ -837,6 +912,26 @@ async def manage_playbook(
             return _strict.refuse(S._get_engram().root, tool="manage_playbook", detail=f"action={action}")
         if action == "update" and status:
             return _strict.refuse(S._get_engram().root, tool="manage_playbook", detail="field: status")
+
+    def _version_refusal() -> dict | None:
+        writes = action in ("update", "archive") or (
+            action in ("delete", "restore") and not dry_run and confirm
+        )
+        if not writes:
+            return None
+        example = {"action": action, "playbook_id": playbook_id, "expected_version": None}
+        if action in ("delete", "restore"):
+            example.update(dry_run=False, confirm=True)
+        return S._get_engram().mcp_existing_write_guard(playbook_id, expected_version, example=example)
+
+    def _guarded(call, *args, **kwargs):
+        def _run():
+            refusal = _version_refusal()
+            if refusal is not None:
+                return refusal
+            return call(*args, **kwargs)
+
+        return S._locked_engram_call(_run)
     if action == "update":
         updates: dict = {}
         if title:
@@ -875,9 +970,13 @@ async def manage_playbook(
         if not updates:
             return "未提供任何更新字段。 / No update fields provided."
         if _strict.approval_strict(S._get_engram().root):
+            refusal = S._locked_engram_call(_version_refusal)
+            if refusal is not None:
+                return S._json(refusal)
             return _playbook_update_proposal(playbook_id, updates)
         try:
-            result = S._locked_engram_call(S._get_engram().update_playbook, playbook_id, updates)
+            result = _guarded(S._get_engram().update_playbook, playbook_id, updates,
+                              expected_version=expected_version)
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
@@ -890,7 +989,7 @@ async def manage_playbook(
         return S._gov_rt.maybe_govern_write_ack(S._get_engram().root, ack, tool="manage_playbook")
     if action == "archive":
         try:
-            result = S._locked_engram_call(S._get_engram().archive_playbook, playbook_id)
+            result = _guarded(S._get_engram().archive_playbook, playbook_id, expected_version=expected_version)
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
@@ -901,12 +1000,13 @@ async def manage_playbook(
         return S._gov_rt.maybe_govern_write_ack(S._get_engram().root, ack, tool="manage_playbook")
     if action == "delete":
         try:
-            result = S._locked_engram_call(
+            result = _guarded(
                 S._get_engram().delete_playbook,
                 playbook_id=playbook_id,
                 reason=reason,
                 dry_run=dry_run,
                 confirm=confirm,
+                expected_version=expected_version if (not dry_run and confirm) else None,
             )
             S._track("manage_playbook", success=True)
         except Exception as exc:
@@ -920,11 +1020,12 @@ async def manage_playbook(
         return S._json(result)
     if action == "restore":
         try:
-            result = S._locked_engram_call(
+            result = _guarded(
                 S._get_engram().restore_playbook,
                 playbook_id=playbook_id,
                 dry_run=dry_run,
                 confirm=confirm,
+                expected_version=expected_version if (not dry_run and confirm) else None,
             )
             S._track("manage_playbook", success=True)
         except Exception as exc:

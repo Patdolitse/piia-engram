@@ -1679,6 +1679,7 @@ class PlaybookMixin:
                 "item_id": playbook_id,
                 "expected_version": expected_version,
                 "actual_version": current_version,
+                "current_version": current_version,
             }
 
         allowed_updates = {
@@ -1719,6 +1720,7 @@ class PlaybookMixin:
                     "item_id": playbook_id,
                     "expected_version": expected_version,
                     "actual_version": live_version,
+                    "current_version": live_version,
                 }
                 return pb
             live_changed = False
@@ -1769,9 +1771,9 @@ class PlaybookMixin:
         self._audit.log("write", "playbooks", detail=f"updated {playbook_id}")
         return result
 
-    def archive_playbook(self, playbook_id: str) -> dict:
+    def archive_playbook(self, playbook_id: str, expected_version: int | None = None) -> dict:
         """Mark a playbook as outdated without deleting it."""
-        return self.update_playbook(playbook_id, {"status": "outdated"})
+        return self.update_playbook(playbook_id, {"status": "outdated"}, expected_version=expected_version)
 
     @staticmethod
     def _normalize_playbook_status_filter(status: str | None) -> str:
@@ -1879,11 +1881,15 @@ class PlaybookMixin:
         reason: str = "",
         dry_run: bool = True,
         confirm: bool = False,
+        expected_version: int | None = None,
     ) -> dict:
         """Soft-delete a Playbook so it is hidden but recoverable."""
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        stale = self._playbook_version_conflict(playbook_id, pb, expected_version)
+        if stale is not None:
+            return stale
 
         current_status = self._normalize_playbook_status_filter(pb.get("status", "active"))
         if current_status == "deleted":
@@ -1930,11 +1936,15 @@ class PlaybookMixin:
         playbook_id: str,
         dry_run: bool = True,
         confirm: bool = False,
+        expected_version: int | None = None,
     ) -> dict:
         """Restore a deleted/outdated Playbook to active status."""
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        stale = self._playbook_version_conflict(playbook_id, pb, expected_version)
+        if stale is not None:
+            return stale
 
         current_status = self._normalize_playbook_status_filter(pb.get("status", "active"))
         if current_status == "active":
@@ -1971,6 +1981,21 @@ class PlaybookMixin:
             "dry_run": False,
             "requires_confirmation": False,
             "restored": change,
+        }
+
+    @staticmethod
+    def _playbook_version_conflict(playbook_id: str, pb: dict, expected_version: int | None) -> dict | None:
+        if expected_version is None:
+            return None
+        current = int(pb.get("version") or 1)
+        if int(expected_version) == current:
+            return None
+        return {
+            "error": "version_conflict",
+            "item_id": playbook_id,
+            "expected_version": expected_version,
+            "actual_version": current,
+            "current_version": current,
         }
 
     def merge_playbooks(self, target_id: str, source: dict) -> dict:

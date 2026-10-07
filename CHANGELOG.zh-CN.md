@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### 破坏性变更
+- **经 MCP 修改已有条目必须带版本号。** `update_knowledge`、`archive_knowledge`、`merge_knowledge`（`primary_expected_version` 与 `secondary_expected_version` 都要）、`manage_playbook`（`update`、`archive`，以及确认执行的 `delete` / `restore`；严格模式下的更新提案也一样），以及取代已有条目的写入（带 `supersedes` 的 `add_decision` 或 `memory_store`，现在要同时带 `supersedes_expected_version`），不带该条目的当前版本就不再写入：返回 `{"error": "version_required", "current_version": N, "example": {...}}`；版本已不是当前版本时返回 `{"error": "version_conflict", "current_version": N}`。两种情况都不写入任何内容。`supersedes` 指向不存在的条目时返回 `supersedes_target_not_found`。新建条目、其它纯新增写入、读取和本地 `engram` 命令不受影响。读取结果（`get_lessons`、`get_decisions`、`search_knowledge`、`get_relevant_knowledge`、`get_playbooks`）始终带 `version`（从未修订的条目为 1），`get_knowledge_history` 返回 `current_version`。
+  - **迁移：** 先读取条目，把它的 `version` 作为 `expected_version`（或 `supersedes_expected_version`）传入。收到 `version_required` 时先核对条目，再用回复里的 `current_version` 重试（`example` 给出调用示例）；收到 `version_conflict` 时重新读取条目后再重试。
+
 ### 变更
 - **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动（`get_user_context`、`get_resume_brief`、会话开始钩子）和 `wrap_up_session` 都不再读取或导入其它 AI 工具的记忆和规则文件。`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
 - `engram setup` 改为询问是否现在导入一次（默认否），不再开启自动导入；规则文件步骤不再直接写入已验证记忆或 profile 语言，导入的规则进入待审区并生成回执。
@@ -30,6 +34,7 @@
 
 ### 修复
 - **项目作用域的提案会出现在审核里。** `engram review`、`engram review export`、`engram management` 和交互审核会列出所有项目的待审提案，并显示 `project:<名称>` 作用域（`engram management --scope` 也按它筛选）；此前只列出全局提案。
+- 严格模式下 `manage_playbook(action="update")` 的回复是待审提案（`status: pending`、提案 id 与它要取代的条目），不再回显整份提议的手册。
 
 ## [4.21.2] - 2026-09-26
 

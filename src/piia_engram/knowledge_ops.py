@@ -11,6 +11,7 @@ from . import capacity as _capacity
 from . import freshness_anchors as _freshness_anchors
 from . import provenance as _provenance
 from . import recall_policy as _recall_policy
+from . import version_guard as _version_guard
 from . import write_provenance as _write_provenance
 from .storage import _now_iso, overflow_batch
 
@@ -270,6 +271,8 @@ class KnowledgeOpsMixin:
             "pending_commits": len(pending),
             "pending_commit_ids": pending,
             "eligibility": verdict.state,
+            # the version an MCP write to this entry must name (expected_version)
+            "current_version": head_version,
         }
         if verdict.superseded_by:
             result["superseded_by"] = verdict.superseded_by
@@ -1022,16 +1025,97 @@ class KnowledgeOpsMixin:
         self._audit.log("write", "knowledge/validate", detail=item_id)
         return updated
 
-    def archive_knowledge(self, item_id: str, *, _owner_reject: str = "") -> dict:
-        """Archive a lesson, decision, or playbook by ID (auto-detects type)."""
+    def archive_knowledge(
+        self, item_id: str, *, _owner_reject: str = "", expected_version: int | None = None
+    ) -> dict:
+        """Archive a lesson, decision, or playbook by ID (auto-detects type).
+
+        ``expected_version`` (optional here, required over MCP) is checked under
+        the write lock: a stale value writes nothing (``version_conflict``).
+        """
         item_type, _ = self._find_item_by_id(item_id)
         if item_type is None:
             return {"error": f"Item not found: {item_id}"}
         if item_type == "lesson":
-            return self.archive_lesson(item_id, _owner_reject=_owner_reject)
+            return self.archive_lesson(item_id, _owner_reject=_owner_reject, expected_version=expected_version)
         if item_type == "playbook":
-            return self.archive_playbook(item_id)
-        return self.archive_decision(item_id, _owner_reject=_owner_reject)
+            return self.archive_playbook(item_id, expected_version=expected_version)
+        return self.archive_decision(item_id, _owner_reject=_owner_reject, expected_version=expected_version)
+
+    # -- MCP write contract: an existing entry is changed only at a named version --
+
+    def mcp_existing_write_guard(
+        self,
+        item_id: str,
+        expected_version: Any,
+        *,
+        example: dict,
+        param: str = "expected_version",
+    ) -> dict | None:
+        """The refusal for an MCP write to an existing entry, or None to go ahead.
+
+        ``version_required`` (no version given) or ``version_conflict`` (another
+        version is current). An id that is not a live lesson, decision or
+        playbook (unknown, a history snapshot, in the overflow archive) passes
+        through so the write itself reports it. Reads only.
+        """
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return None
+        if self._is_snapshot_record(item):
+            return None
+        return _version_guard.check(item_id, item, expected_version, example, param=param)
+
+    def mcp_entry_version(self, item_id: str) -> int | None:
+        """The current version of a live lesson, decision or playbook (None when there is none)."""
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return None
+        return _version_guard.current_version(item)
+
+    def mcp_supersede_guard(
+        self,
+        target_id: str,
+        expected_version: Any,
+        *,
+        kind: str,
+        example: dict,
+    ) -> dict | None:
+        """The refusal for a proposal that supersedes ``target_id``, or None.
+
+        The target must be a ``kind`` entry (active, or for lessons and
+        decisions in the overflow archive) and the proposal must name its
+        current version (``supersedes_expected_version``). Reads only.
+        """
+        target_id = str(target_id or "").strip()
+        row = self._supersede_lookup(kind, target_id)
+        if row is None:
+            return {
+                "error": "supersedes_target_not_found",
+                "supersedes": target_id,
+                "kind": kind,
+                "changed": False,
+                "message": f"No {kind} with this id to supersede. Nothing was written.",
+            }
+        return _version_guard.check(target_id, row, expected_version, example,
+                                    param="supersedes_expected_version")
+
+    def _supersede_lookup(self, kind: str, target_id: str) -> dict | None:
+        if not target_id:
+            return None
+        if kind == "playbook":
+            row = self._read_playbook_by_id(target_id)
+            return row if isinstance(row, dict) and not self._is_snapshot_record(row) else None
+        if kind not in {"lesson", "decision"}:
+            return None
+        filename = "lessons.json" if kind == "lesson" else "decisions.json"
+        for row in self._read_entries(self._knowledge_dir / filename, kind, migrate=False):
+            if str(row.get("id") or "") == target_id and not self._is_snapshot_record(row):
+                return row
+        row = self._archive_current_rows(kind).get(target_id)
+        if isinstance(row, dict) and not self._is_snapshot_record(row):
+            return row
+        return None
 
     def soft_archive_knowledge_tier(
         self,
@@ -1258,8 +1342,19 @@ class KnowledgeOpsMixin:
         self._audit.log("write", "knowledge/review", detail=knowledge_id)
         return item
 
-    def merge_knowledge(self, primary_id: str, secondary_id: str) -> dict:
-        """Merge secondary into primary, then archive the secondary item."""
+    def merge_knowledge(
+        self,
+        primary_id: str,
+        secondary_id: str,
+        *,
+        primary_expected_version: int | None = None,
+        secondary_expected_version: int | None = None,
+    ) -> dict:
+        """Merge secondary into primary, then archive the secondary item.
+
+        The expected versions (optional here, required over MCP) are checked
+        before anything is written; a stale one returns ``version_conflict``.
+        """
         if primary_id == secondary_id:
             return {"error": "Cannot merge an item with itself"}
 
@@ -1275,6 +1370,17 @@ class KnowledgeOpsMixin:
             return {"error": f"Primary item is not active (status={primary.get('status')})"}
         if secondary.get("status") != "active":
             return {"error": f"Secondary item is not active (status={secondary.get('status')})"}
+        for item_id, row, expected, param in (
+            (primary_id, primary, primary_expected_version, "primary_expected_version"),
+            (secondary_id, secondary, secondary_expected_version, "secondary_expected_version"),
+        ):
+            if expected is None:
+                continue
+            current = _version_guard.current_version(row)
+            wanted = _version_guard.parse(expected)
+            if wanted != current:
+                return _version_guard.conflict(item_id, wanted if wanted is not None else -1, current,
+                                               param=param)
 
         primary_related = set(primary.get("related_ids", []))
         transferred = []

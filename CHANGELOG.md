@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Breaking changes
+- **MCP writes that change an existing entry need its version.** `update_knowledge`, `archive_knowledge`, `merge_knowledge` (both `primary_expected_version` and `secondary_expected_version`), `manage_playbook` (`update`, `archive`, and a confirmed `delete` / `restore`; also a strict-mode update proposal) and a write that supersedes an entry (`add_decision` or `memory_store` with `supersedes`, now together with `supersedes_expected_version`) no longer write without the entry's current version. They answer `{"error": "version_required", "current_version": N, "example": {...}}`; a version that is no longer current answers `{"error": "version_conflict", "current_version": N}`. Neither writes anything. A `supersedes` id that does not exist answers `supersedes_target_not_found`. New entries, other additive writes, reads and the local `engram` commands are unchanged. Read results (`get_lessons`, `get_decisions`, `search_knowledge`, `get_relevant_knowledge`, `get_playbooks`) always carry `version` (1 for an entry never revised), and `get_knowledge_history` returns `current_version`.
+  - **Migration:** read the entry first and pass its `version` as `expected_version` (or `supersedes_expected_version`). After `version_required`, check the entry and retry with the `current_version` from the reply (`example` shows the call); after `version_conflict`, read the entry again before retrying.
+
 ### Changed
 - **Nothing is imported from other AI tools unless you ask.** Starting the MCP server, cold start (`get_user_context`, `get_resume_brief`, the session-start hook) and `wrap_up_session` no longer read or import other AI tools' memory and rule files. `ENGRAM_MCP_STARTUP_SYNC` and `wrap_up_session(run_reconcile=True)` are still accepted and import nothing.
 - `engram setup` asks whether to import once now (default no) instead of turning on automatic import, and its rule-file step no longer writes trusted memory or the profile language directly: imported rules go to the review queue with a receipt.
@@ -30,6 +34,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 - **Project proposals show up in review.** `engram review`, `engram review export`, `engram management` and the interactive review list pending proposals of every project, with their `project:<name>` scope (`engram management --scope` filters them too); before, only global ones were listed.
+- In strict mode `manage_playbook(action="update")` replies with the pending proposal (`status: pending`, its id and the entry it would replace) instead of echoing the whole proposed playbook.
 
 ## [4.21.2] - 2026-09-26
 

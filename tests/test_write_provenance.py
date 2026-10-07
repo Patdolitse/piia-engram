@@ -240,7 +240,7 @@ def test_strict_playbook_update_proposal_names_the_proposer(mcp_env, monkeypatch
     client.update(name="claude-code", version="2")
 
     out = json.loads(_run(mcp_server.manage_playbook(
-        action="update", playbook_id=original["id"], outcome="a better outcome",
+        action="update", playbook_id=original["id"], outcome="a better outcome", expected_version=1,
     )))
 
     proposal = eng._read_playbook_by_id(out["id"])
@@ -371,7 +371,8 @@ def test_mcp_update_knowledge_refuses_source_tool(mcp_env):
     _run(mcp_server.add_lesson(summary="mcp update target", domain="t", user_confirmed=True))
     row = _lesson(eng, "mcp update target")
 
-    out = json.loads(_run(mcp_server.update_knowledge(row["id"], json.dumps({"source_tool": "owner"}))))
+    out = json.loads(_run(mcp_server.update_knowledge(row["id"], json.dumps({"source_tool": "owner"}),
+                                                      expected_version=1)))
 
     assert out["error"] == "provenance_immutable"
     assert _lesson(eng, "mcp update target")["source_tool"] == "claude_code"
@@ -457,7 +458,7 @@ def test_strict_playbook_proposal_takes_the_proposers_source_tool(mcp_env, monke
     client.update(name="claude-code", version="2")
 
     out = json.loads(_run(mcp_server.manage_playbook(
-        action="update", playbook_id=original["id"], outcome="better",
+        action="update", playbook_id=original["id"], outcome="better", expected_version=1,
     )))
 
     assert eng._read_playbook_by_id(out["id"])["source_tool"] == "claude_code"
