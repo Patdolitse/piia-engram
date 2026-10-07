@@ -8,6 +8,7 @@ Run:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -15,8 +16,6 @@ from typing import Any, Callable
 
 
 ENGRAM_DIRS = ("identity", "knowledge", "projects", "exports", "compat")
-DEFAULT_PYTHON = "python"
-MCP_RELATIVE_PATH = "src/piia_engram/mcp_server.py"
 
 
 def configure_output() -> None:
@@ -147,35 +146,43 @@ def check_knowledge_assets(engram_root: Path) -> tuple[int, int]:
     return len(lessons), len(decisions)
 
 
-def mcp_snippet(project_root: Path) -> dict[str, Any]:
-    python_path = Path(sys.executable) if sys.executable else Path(DEFAULT_PYTHON)
-    mcp_script = project_root / MCP_RELATIVE_PATH
-    return {
-        "mcpServers": {
-            "engram": {
-                "command": str(python_path),
-                "args": [str(mcp_script)],
-            }
-        }
-    }
+CLAUDE_ADD_COMMAND = "claude mcp add --scope user engram -- piia-engram-mcp"
+ENGRAM_NAMES = ("engram", "piia-engram")
 
 
-def check_mcp_config(claude_home: Path, project_root: Path) -> bool:
-    mcp_path = claude_home / ".mcp.json"
-    data = read_json(mcp_path, {})
+def claude_user_config() -> Path:
+    """Claude Code's user config: ~/.claude.json, or $CLAUDE_CONFIG_DIR/.claude.json."""
+    override = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    return (Path(override).expanduser() if override else Path.home()) / ".claude.json"
+
+
+def _has_engram(servers: Any) -> bool:
+    return isinstance(servers, dict) and any(name in servers for name in ENGRAM_NAMES)
+
+
+def check_mcp_config(user_config: Path, project_root: Path) -> bool:
+    """Is Engram registered in Claude Code's user config (top level or a project)?
+
+    Claude Code does not read ~/.claude/.mcp.json; register with the claude
+    command instead of editing the file.
+    """
+    data = read_json(user_config, {})
     configured = False
-
     if isinstance(data, dict):
-        servers = data.get("mcpServers")
-        configured = isinstance(servers, dict) and "engram" in servers
+        configured = _has_engram(data.get("mcpServers"))
+        projects = data.get("projects")
+        if not configured and isinstance(projects, dict):
+            configured = any(
+                isinstance(p, dict) and _has_engram(p.get("mcpServers")) for p in projects.values()
+            )
 
     if configured:
         print("[OK] Claude Code MCP 已配置")
         return True
 
     print("[!] Claude Code MCP 未配置")
-    print("请将下面的 JSON 片段合并到 ~/.claude/.mcp.json：")
-    print(json.dumps(mcp_snippet(project_root), ensure_ascii=False, indent=2))
+    print("请在终端运行（或运行 engram setup，它会替你执行）：")
+    print(f"  {CLAUDE_ADD_COMMAND}")
     return False
 
 
@@ -200,7 +207,7 @@ def print_summary(
     if schema_status != "v2.0":
         print("1. 启动 Engram MCP server，让它自动迁移到 Schema v2.0。")
     if not mcp_configured:
-        print("2. 将上面的 engram 配置片段加入 ~/.claude/.mcp.json。")
+        print(f"2. 运行 {CLAUDE_ADD_COMMAND}（或 engram setup）。")
     if schema_status == "v2.0" and mcp_configured:
         print("全部核心配置已就绪，可以开始跨工具共享 Engram。")
     print("=" * 60)
@@ -208,12 +215,12 @@ def print_summary(
 
 def run_setup(
     engram_root: Path | None = None,
-    claude_home: Path | None = None,
+    claude_user_config_path: Path | None = None,
     project_root: Path | None = None,
     input_func: Callable[[str], str] = input,
 ) -> dict[str, Any]:
     engram_root = engram_root or (Path.home() / ".engram")
-    claude_home = claude_home or (Path.home() / ".claude")
+    claude_user_config_path = claude_user_config_path or claude_user_config()
     project_root = project_root or Path(__file__).resolve().parent.parent
 
     print("=" * 60)
@@ -224,7 +231,7 @@ def run_setup(
     schema_status = check_schema(engram_root)
     profile_status = ensure_profile(engram_root, input_func=input_func)
     lesson_count, decision_count = check_knowledge_assets(engram_root)
-    mcp_configured = check_mcp_config(claude_home, project_root)
+    mcp_configured = check_mcp_config(claude_user_config_path, project_root)
     print_summary(
         engram_root=engram_root,
         schema_status=schema_status,

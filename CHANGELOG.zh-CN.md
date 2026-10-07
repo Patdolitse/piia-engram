@@ -45,7 +45,10 @@
 - 移除未使用的内部函数 `ingest_extraction`（它会把抽取出的文本直接写进身份资料），没有任何调用方。
 
 ### 修复
-- **Claude Code：setup 现在把 Engram 注册到 Claude Code 实际读取的位置。** 此前 `engram setup` 把 Claude Code 的条目写到 `~/.claude/.mcp.json`，而 Claude Code 不读取这个文件，所以 Engram 并没有被加载。现在 setup 通过 `claude mcp add --scope user engram ...` 注册到用户级配置（`~/.claude.json`，或 `$CLAUDE_CONFIG_DIR/.claude.json`），自己从不改写该文件；已有相同条目时不动，已有不同条目时需你确认才替换；找不到 `claude` 命令时打印该命令，并把 Claude Code 标为“需手动完成”。`engram doctor` 只认用户级配置：只在 `~/.claude/.mcp.json` 里的条目报告为旧位置，`engram doctor --fix` 会通过 `claude` 注册（不改动旧文件）。用旧版本配置过 Claude Code 的用户重新运行 `engram setup` 即可；它会询问是否移除旧条目，该文件中的其它服务器保留。
+- **Claude Code：setup 现在把 Engram 注册到 Claude Code 实际读取的位置。** 此前 `engram setup` 把 Claude Code 的条目写到 `~/.claude/.mcp.json`，而 Claude Code 不读取这个文件，所以 Engram 并没有被加载。现在 setup 通过 `claude mcp add --scope user engram ...` 注册到用户级配置（`~/.claude.json`，或 `$CLAUDE_CONFIG_DIR/.claude.json`），自己从不改写该文件；已有相同条目时不动，已有不同条目时需你确认才替换；找不到 `claude` 命令时打印该命令，并把 Claude Code 标为“需手动完成”。`engram doctor` 只认用户级配置：只在 `~/.claude/.mcp.json` 里的条目报告为旧位置，`engram doctor --fix` 会通过 `claude` 注册（不改动旧文件）。用旧版本配置过 Claude Code 的用户重新运行 `engram setup` 即可；它会询问是否移除旧条目（只移除名称和命令都属于 Engram 的条目；原子写入，保留 BOM 与缩进），该文件中的其它服务器保留。`claude` 命令通过遍历 `PATH` 查找（不会用当前目录或相对路径项）；`claude` 是 `.cmd` / `.bat` 启动脚本且参数含 `cmd.exe` 会改写的字符时不自动运行；名为 `engram` 但不是 Engram 的条目不会被替换；打印的命令在 Windows 上按 PowerShell 的引号写法。用 `-e` 传入的值在 `claude` 运行期间会出现在其进程命令行里。`CLAUDE.md` 里的 Engram 段和 `settings.json` 里的钩子也跟随 `CLAUDE_CONFIG_DIR`；doctor 的 MCP Client Env 一节按条目的键名检查 Claude Code。
+- **其它名称下的 Engram 条目各处都能识别。** `engram doctor`、`engram status`、`engram dock-governance` 和完整性报告都按 `engram` / `piia-engram` 键名或启动 Engram 的命令识别客户端里的 Engram 条目。客户端配置里有指向 Engram 的 `piia-engram` 条目时，setup 先备份文件，再把它迁移为 `engram`（保留你的环境变量），不再另加一个服务器。README 片段统一用 `engram`；Codex 片段改为 setup 实际写入的 `~/.codex/config.toml`。
+- `python -m piia_engram.setup_wizard` 不再因循环导入而失败。
+- JSON 导出（`export_engram`、`engram dock-export`）会报告因格式不对而跳过的拒绝记录数（`skipped`），不显示其内容。
 - MCP server 记录连接客户端的日志行会先去掉客户端自报名称和版本里的控制字符（换行、终端转义）并限制长度。
 - setup 中关于预置最佳实践的中文提示不再说“使用 3 次后自动晋升为 verified”：与英文一致，审核确认后才会变为 verified。
 - **项目作用域的提案会出现在审核里。** `engram review`、`engram review export`、`engram management` 和交互审核会列出所有项目的待审提案，并显示 `project:<名称>` 作用域（`engram management --scope` 也按它筛选）；此前只列出全局提案。

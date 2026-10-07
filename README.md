@@ -332,8 +332,9 @@ claude mcp add --scope user engram -- piia-engram-mcp
 Setup registers Engram through the `claude` command into Claude Code's user
 config (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`); it never edits
 that file itself. If `claude` is not on your `PATH`, setup prints the exact
-command to run. Engram also recognises an entry named `piia-engram` from
-earlier instructions. Setup versions before this fix wrote to
+command to run. The values passed with `-e` appear on the `claude` process
+command line while it runs. Engram also recognises an entry named `piia-engram`
+from earlier instructions. Setup versions before this fix wrote to
 `~/.claude/.mcp.json`, which Claude Code does not read: run `engram setup`
 again to register in the right place (it offers to remove the old entry).
 

@@ -29,7 +29,13 @@ claude mcp add --scope user engram -- piia-engram-mcp
 Claude Code stores this in its user config, `~/.claude.json` (or
 `$CLAUDE_CONFIG_DIR/.claude.json` when `CLAUDE_CONFIG_DIR` is set). Engram
 never edits that file itself; if `claude` is not on your `PATH`, setup prints
-the command for you to run. If the console script is not on `PATH`, launch the
+the command for you to run (quoted for PowerShell on Windows, for a POSIX
+shell elsewhere). setup also prints it instead of running it when `claude` is a
+`.cmd` / `.bat` shim and an argument holds a character `cmd.exe` would rewrite
+(`& | < > ^ % ! " ( )`), and when an entry named `engram` exists that does not
+start Engram. The settings setup passes with `-e KEY=VALUE` (such as
+`ENGRAM_DIR`) appear on the `claude` process command line while it runs, where
+other local programs can see them; keep secrets out of the Engram entry's env. If the console script is not on `PATH`, launch the
 module instead:
 
 ```bash

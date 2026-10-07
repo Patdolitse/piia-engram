@@ -342,6 +342,7 @@ claude mcp add --scope user engram -- piia-engram-mcp
 setup 通过 `claude` 命令把 Engram 注册到 Claude Code 的用户级配置
 （`~/.claude.json`，设置了 `CLAUDE_CONFIG_DIR` 时为 `$CLAUDE_CONFIG_DIR/.claude.json`），
 自己从不改写这个文件。`claude` 不在 `PATH` 上时，setup 会打印要运行的完整命令。
+用 `-e` 传入的环境变量值在 `claude` 运行期间会出现在其进程命令行里。
 Engram 也识别早先说明里使用的 `piia-engram` 名称。修复前的 setup 写的是
 `~/.claude/.mcp.json`，Claude Code 并不读取它：重新运行 `engram setup` 即可注册到
 正确位置（它会询问是否移除旧条目）。
