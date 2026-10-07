@@ -134,7 +134,7 @@ def test_merge_dedupes_by_id_and_by_hash(tmp_path):
     _write_stone(dst.root, "playbook", CLAIMS["playbook"], version=2, item_id="pb-local")
     preview = dst.import_all(out, merge=True, dry_run=True)
     assert preview["summary"]["tombstones"] == {
-        "incoming": 3, "would_add": 1, "would_skip": 2, "conflicts": 0}
+        "incoming": 3, "would_add": 1, "would_skip": 2, "conflicts": 0, "kept": 2}
 
     first = dst.import_all(out, merge=True)
     assert "tombstones(+1)" in first["imported"]
@@ -143,20 +143,28 @@ def test_merge_dedupes_by_id_and_by_hash(tmp_path):
     assert sorted(r["id"] for r in tombstones.load(dst.root)) == ["dec-src", "pb-local", "same-id"]
 
 
-def test_replace_mode_replaces_the_tombstone_set(tmp_path):
+def test_replace_mode_keeps_local_tombstones_and_adds_the_backups(tmp_path):
     src = _store(tmp_path, "src")
     _write_stone(src.root, "decision", CLAIMS["decision"], version=2, item_id="from-backup")
+    _write_stone(src.root, "playbook", CLAIMS["playbook"], version=3, item_id="pb-backup")
     out = src.export_all(str(tmp_path / "backup.json"))
 
     dst = _store(tmp_path, "dst")
     _write_stone(dst.root, "lesson", CLAIMS["lesson"], version=3, item_id="local-only")
+    _write_stone(dst.root, "playbook", CLAIMS["playbook"], version=3, item_id="pb-local")  # same hash
     preview = dst.import_all(out, merge=False, dry_run=True)
-    assert preview["summary"]["tombstones"]["would_add"] == 1
+    assert preview["summary"]["tombstones"] == {
+        "incoming": 2, "would_add": 1, "would_skip": 1, "conflicts": 0, "kept": 2}
+    assert "tombstones: incoming=2 add=1 skip=1 conflicts=0 kept=2" in _render_import_result_text(preview)
     result = dst.import_all(out, merge=False)
 
-    assert "tombstones(1)" in result["imported"]
-    assert [r["id"] for r in tombstones.load(dst.root)] == ["from-backup"]
+    # A rejection is the Owner's decision: a replace import keeps the local ones.
+    assert "tombstones(+1, kept 2)" in result["imported"]
+    assert sorted(r["id"] for r in tombstones.load(dst.root)) == ["from-backup", "local-only", "pb-local"]
     assert _propose(dst, "decision")["status"] == "rejected_before"
+    assert _propose(dst, "lesson")["status"] == "rejected_before"
+    again = dst.import_all(out, merge=False)
+    assert "tombstones(+0, kept 3)" in again["imported"]
 
 
 @pytest.mark.parametrize("merge", [True, False], ids=["merge", "replace"])
@@ -188,7 +196,7 @@ def test_dry_run_shows_the_tombstone_count_and_writes_nothing(tmp_path):
     dst = _store(tmp_path, "dst")
     preview = dst.import_all(out, merge=True, dry_run=True)
     assert preview["summary"]["tombstones"] == {
-        "incoming": 3, "would_add": 3, "would_skip": 0, "conflicts": 0}
+        "incoming": 3, "would_add": 3, "would_skip": 0, "conflicts": 0, "kept": 0}
     assert tombstones.load(dst.root) == []
     rendered = _render_import_result_text(preview)
     assert "tombstones: incoming=3 add=3 skip=0" in rendered

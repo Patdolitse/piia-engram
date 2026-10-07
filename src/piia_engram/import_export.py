@@ -17,7 +17,6 @@ from . import capacity as _capacity
 from . import pinning as _pinning
 from . import tombstones as _tombstones
 from . import write_provenance as _write_provenance
-from .atomic_replace import replace_with_retry
 from .decision_thread import validate_edges
 from .governance_store import RelationStore, ResolutionStore
 from .storage import (
@@ -424,14 +423,16 @@ class ImportExportMixin:
                 "conflicts": 0,
             }
         if isinstance(knowledge.get("tombstones"), list):
+            # Rejections are the Owner's decisions: both modes keep the local ones.
             incoming_stones = _clean_tombstones(knowledge["tombstones"])
-            existing_stones = _tombstones.load(self.root) if merge else []
+            existing_stones = _tombstones.load(self.root)
             new_count = len(_new_tombstones(existing_stones, incoming_stones))
             summary["tombstones"] = {
                 "incoming": len(incoming_stones),
                 "would_add": new_count,
                 "would_skip": len(incoming_stones) - new_count,
                 "conflicts": 0,
+                "kept": len(existing_stones),
             }
 
         environment = data.get("environment", {}) if isinstance(data, dict) else {}
@@ -1148,18 +1149,19 @@ class ImportExportMixin:
         return report
 
     def _import_tombstones(self, records: list, *, merge: bool) -> str:
-        """Restore rejection tombstones: merge appends unseen ones, replace swaps the set."""
+        """Restore rejection tombstones: append the unseen ones, in merge and replace mode alike.
+
+        A rejection is the Owner's decision, so a replace import keeps the local
+        records (as it keeps pinned rows) and only adds the backup's new ones.
+        """
         path = self._knowledge_dir / _tombstones.FILENAME
         with hold_directory_lock(self._knowledge_dir, timeout=30):
+            existing = _tombstones.load(self.root)
+            new = _new_tombstones(existing, _clean_tombstones(records))
+            _append_jsonl_lines(path, [json.dumps(r, ensure_ascii=True) for r in new])
             if merge:
-                new = _new_tombstones(_tombstones.load(self.root), _clean_tombstones(records))
-                _append_jsonl_lines(path, [json.dumps(r, ensure_ascii=True) for r in new])
                 return f"tombstones(+{len(new)})"
-            incoming = _new_tombstones([], _clean_tombstones(records))
-            tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text("".join(json.dumps(r, ensure_ascii=True) + "\n" for r in incoming), encoding="utf-8")
-            replace_with_retry(tmp, path)
-            return f"tombstones({len(incoming)})"
+            return f"tombstones(+{len(new)}, kept {len(existing)})"
 
     def export_all(self, output_path: str | None = None, *, exclude_pending: bool = False) -> str:
         """导出整个 Engram 为单一 JSON 文件。
