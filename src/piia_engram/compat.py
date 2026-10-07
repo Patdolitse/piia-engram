@@ -349,6 +349,51 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     }
 
 
+def openclaw_command(soul_path: str = "", memory_path: str = "", user_path: str = "", *, apply: bool = True) -> str:
+    """The local ``engram import --format openclaw`` command line for these files."""
+    parts = ["engram import --format openclaw"]
+    for flag, value in (("--soul", soul_path), ("--memory", memory_path), ("--user", user_path)):
+        if value:
+            parts.append(f"{flag} {value}")
+    if apply:
+        parts.append("--apply --yes")
+    return " ".join(parts)
+
+
+def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "", user_path: str = "") -> dict:
+    """Metadata-only look at OpenClaw files: which exist and how many bullet lines each holds.
+
+    Reads nothing when the import switch is off (ENGRAM_RECONCILE=0). Writes nothing.
+    """
+    from .memory_import import refusal
+
+    refused = refusal(engram.root)
+    if refused is not None:
+        return {**refused, "bridge_level": OPENCLAW_BRIDGE_LEVEL}
+    files: dict = {}
+    for name, raw in (("soul", soul_path), ("memory", memory_path), ("user", user_path)):
+        if not raw:
+            continue
+        if "\x00" in str(raw):
+            files[name] = {"error": "path contains a NUL byte"}
+            continue
+        path = Path(raw).expanduser()
+        if not path.is_file():
+            files[name] = {"exists": False}
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        files[name] = {"exists": True,
+                       "bullets": sum(1 for line in text.splitlines() if line.strip().startswith("- "))}
+    return {
+        "status": "preview",
+        "format": "openclaw",
+        "dry_run": True,
+        "files": files,
+        "note": "metadata only; MEMORY.md lessons go to the review queue, USER.md / SOUL.md merge "
+                "into the profile, preferences and quality standards",
+    }
+
+
 @overflow_batch
 def import_from_openclaw(
     engram: "Engram",
@@ -477,7 +522,7 @@ def import_from_openclaw(
                         existing_summaries.add(text)
             if lesson_lines:
                 with recording(
-                    engram, sources=["openclaw"], command='import_engram(format="openclaw")',
+                    engram, sources=["openclaw"], command="engram import --format openclaw",
                     resource="knowledge/import_openclaw", source_tool="openclaw_import",
                 ) as record:
                     for text, domain in lesson_lines:

@@ -500,7 +500,7 @@ def test_every_recording_path_writes_a_receipt_when_interrupted(store, tmp_path,
     receipts = _receipts(store)
     commands = [r["command"] for r in receipts]
     for command in ("reconcile_apply.apply_reconcile", "bootstrap.run_bootstrap",
-                    'import_engram(format="openclaw")', "legacy_memory_migration"):
+                    "engram import --format openclaw", "legacy_memory_migration"):
         receipt = receipts[commands.index(command)]
         assert receipt["status"] == "partial", command
         assert receipt["error"] == "KeyboardInterrupt", command
@@ -632,7 +632,7 @@ def test_openclaw_and_bootstrap_refuse_when_reading_is_off(store, tmp_path, monk
 
     _run_privacy_report()
     out = capsys.readouterr().out
-    assert 'import_engram(format="openclaw")' in out and "refuse" in out
+    assert "engram import --format openclaw" in out and "refuse" in out
 
 
 # -- engine results carry no item text --------------------------------------------------------

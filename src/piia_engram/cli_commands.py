@@ -1423,7 +1423,7 @@ def _run_privacy_report() -> None:
         print(f"        Importable now: {memory_import.importable_text(summary)}")
         print("        Hard off switch: ENGRAM_RECONCILE=0 (or reconcile_authorized=false) - nothing is read;")
         print("          engram import-memories, setup's import, engram reconcile apply and")
-        print("          import_engram(format=\"openclaw\") all refuse")
+        print("          engram import --format openclaw all refuse")
     except Exception as exc:
         print(f"        (status not available: {type(exc).__name__})")
     print()
@@ -2094,6 +2094,65 @@ def _run_retention(args: list[str]) -> int:
     return 2
 
 
+def _run_import_openclaw(args: list[str]) -> int:
+    """``engram import --format openclaw``: preview by default, --apply --yes writes."""
+    import os as _os
+    from piia_engram.compat import import_from_openclaw, openclaw_command, preview_openclaw
+    from piia_engram.core import Engram
+
+    json_output = "--json" in args
+    values = {"--format": "", "--soul": "", "--memory": "", "--user": ""}
+    flags = {"--json", "--apply", "--yes"}
+    error = ""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in values:
+            if i + 1 >= len(args):
+                error = f"{arg} needs a value"
+                break
+            values[arg] = args[i + 1]
+            i += 2
+            continue
+        if arg not in flags:
+            error = f"Unknown import option: {arg}"
+            break
+        i += 1
+    if not error and values["--format"].strip().lower() != "openclaw":
+        error = "--format must be openclaw (a JSON backup needs no --format)"
+    if not error and not (values["--soul"] or values["--memory"] or values["--user"]):
+        error = "give at least one of --soul, --memory, --user"
+
+    def _emit(payload: dict) -> None:
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif payload.get("error"):
+            print(f"ERROR: {payload['error']}")
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    if error:
+        _emit({"error": error})
+        return 2
+    soul, memory, user = values["--soul"], values["--memory"], values["--user"]
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    apply = "--apply" in args
+    confirm = "--yes" in args
+    if not apply or not confirm:
+        payload = preview_openclaw(eng, soul, memory, user)
+        if apply and not confirm:
+            payload["requires_confirmation"] = True
+            payload["confirmation_hint"] = f"re-run as `{openclaw_command(soul, memory, user)}` to write"
+            _emit(payload)
+            return 1
+        _emit(payload)
+        return 0
+    payload = import_from_openclaw(eng, soul, memory, user)
+    _emit(payload)
+    return 1 if payload.get("error") else 0
+
+
 def _run_import_backup(args: list[str]) -> int:
     """Preview/apply a full Engram JSON backup import.
 
@@ -2110,11 +2169,17 @@ def _run_import_backup(args: list[str]) -> int:
             "  engram import <backup.json> --apply --yes [--json]\n"
             "  engram import <backup.json> --apply --yes --materialize-version-chain [--json]\n"
             "  engram import <backup.json> --overwrite --apply --yes [--json]\n"
-            "  engram import <backup.json> --apply --yes --allow-over-cap [--json]\n\n"
+            "  engram import <backup.json> --apply --yes --allow-over-cap [--json]\n"
+            "  engram import --format openclaw [--soul SOUL.md] [--memory MEMORY.md] [--user USER.md]\n"
+            "                [--apply --yes] [--json]\n\n"
             "Default is metadata-only preview. --overwrite maps to merge=False.\n"
-            "--allow-over-cap imports even when reviewed memories would exceed the hard cap."
+            "--allow-over-cap imports even when reviewed memories would exceed the hard cap.\n"
+            "OpenClaw: MEMORY.md lessons go to the review queue (receipt + audit line);\n"
+            "USER.md / SOUL.md merge into the profile, preferences and quality standards."
         )
         return 0 if args and args[0] in {"-h", "--help"} else 2
+    if "--format" in args:
+        return _run_import_openclaw(args)
 
     json_output = "--json" in args
     apply = "--apply" in args

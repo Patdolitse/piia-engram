@@ -596,7 +596,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `onboard_repo` | owner-only 仓库扫描：从 anchor 生成 staging repo-fact 候选 |
 | `onboard_accept` | owner-only 接受：校验 anchor 并升级为 verified |
 | `export_engram` | owner-gated 导出：写出完整备份（`format="openclaw"` 可导出 OpenClaw 格式文件） |
-| `import_engram` | owner/admin 导入预览（只能 `dry_run=True`）：元数据级合并/冲突计划（支持 `format="openclaw"`）；真正导入只能在本地运行 `engram import <backup.json> --apply --yes`，CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
+| `import_engram` | owner/admin 导入预览（只能 `dry_run=True`）：元数据级合并/冲突计划（支持 `format="openclaw"`）；真正导入只能在本地运行 `engram import <backup.json> --apply --yes`（OpenClaw 用 `engram import --format openclaw ... --apply --yes`），CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
 | `read_web_content` | 读取用户提供的 URL：本地边车运行时优先用边车，否则用包内自足的内置 reader（`pip install "piia-engram[reader]"`） |
 | `get_audit_log` | 查询审计日志 |
 | `start_project` | 新项目启动（继承知识 + 建档） |

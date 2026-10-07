@@ -196,8 +196,10 @@ You stay in control of staged items at any time:
 - A playbook an AI writes over MCP (`add_playbook`, `memory_store` with
   `kind="playbook"`, a playbook drafted from a session) is a proposal in every
   approval mode: it waits in the review queue until you approve it with
-  `engram review`, and automatic recall leaves it out until then. Playbooks
-  you add locally (for example `engram playbook install`) are unchanged.
+  `engram review`, and automatic recall leaves it out until then. It does not
+  run before that either: `playbook_execution` answers `not_approved`, and
+  `get_playbooks` lists it marked `pending_untrusted`. Playbooks you add locally
+  (for example `engram playbook install`) are unchanged.
 - Playbooks always require explicit review before trusted use; Engram never
   silently executes a workflow — it hands the steps to your AI tool as a passive
   reference and tracks the reported outcome.
@@ -312,7 +314,11 @@ your whole memory — there is no cloud copy to reconcile. A JSON backup
 (`export_engram`) goes back in with the local `engram import <backup.json>`
 (a preview by default; `--apply --yes` writes, `--overwrite` replaces). Over MCP,
 `import_engram` only previews an import (`dry_run=true`); a request to apply one
-answers `local_only` and writes nothing.
+answers `local_only` and writes nothing. OpenClaw files come in with
+`engram import --format openclaw --memory MEMORY.md [--soul SOUL.md] [--user USER.md]`
+(a preview by default; `--apply --yes` writes): lessons go to the review queue
+with a receipt, while USER.md / SOUL.md merge into your profile, preferences and
+quality standards.
 
 **What not to store.** Engram is for personal AI context, not secret management.
 Do **not** store passwords, API keys, OAuth tokens, private keys, customer PII,

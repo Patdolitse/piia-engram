@@ -755,6 +755,15 @@ def _playbook_update_proposal(playbook_id: str, updates: dict) -> str:
     })
 
 
+def _mark_pending_playbook(item):
+    """A pending (staging) playbook in a listing carries the same marks as search's pending group."""
+    if isinstance(item, dict) and not item.get("governance_withheld") and item.get("tier") == "staging":
+        item["pending_untrusted"] = True
+        item["eligibility"] = "pending"
+        item["note"] = "pending review: not executable until the Owner approves it (engram review)"
+    return item
+
+
 def _inject_usage_policy(item, policy=_PLAYBOOK_USAGE_POLICY):
     """Add ``usage_policy`` to a playbook / execution-plan dict.
 
@@ -826,6 +835,7 @@ async def get_playbooks(
         if result.get("error"):
             return S._json(result)
         _inject_usage_policy(result)
+        _mark_pending_playbook(result)
         return S._json(result)
     if mode == "recent":
         try:
@@ -861,6 +871,9 @@ async def get_playbooks(
         result = S._gov_rt.maybe_govern_owner_only(
             S._get_engram().root, result, tool="get_playbooks"
         )
+        if isinstance(result, dict) and isinstance(result.get("items"), list):
+            for item in result["items"]:
+                _mark_pending_playbook(item)
         return S._json(result)
     try:
         if project_folder:
@@ -880,6 +893,7 @@ async def get_playbooks(
         return "尚无已保存的 Playbook。"
     for item in result:
         _inject_usage_policy(item)
+        _mark_pending_playbook(item)
     return S._json(result)
 
 

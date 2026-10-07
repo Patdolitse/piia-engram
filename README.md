@@ -630,7 +630,7 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `export_knowledge_report` | Owner-gated export: write a readable Markdown knowledge report |
 | `request_outline_review` | Owner-gated export: generate an interactive local HTML review page |
 | `export_engram` | Owner-gated export: write a full backup (`format="openclaw"` for OpenClaw-compatible files) |
-| `import_engram` | Owner/admin import preview only (`dry_run=True`): a metadata-only merge/conflict plan (`format="openclaw"` supported). Applying an import is local: `engram import <backup.json> --apply --yes` |
+| `import_engram` | Owner/admin import preview only (`dry_run=True`): a metadata-only merge/conflict plan (`format="openclaw"` supported). Applying an import is local: `engram import <backup.json> --apply --yes` (OpenClaw: `engram import --format openclaw ... --apply --yes`) |
 | `read_web_content` | Fetch a user-provided URL: prefers a local sidecar if running, otherwise uses the self-contained built-in reader (`pip install "piia-engram[reader]"`) |
 | `get_audit_log` | Get recent audit log entries |
 | `start_project` | Start a project with inherited knowledge |

@@ -547,6 +547,17 @@ class PlaybookMixin:
         """Pending playbooks are hidden from use only under strict (unset = 4.21.0)."""
         return _strict_mode.approval_strict(self.root)
 
+    def _not_approved(self, playbook_id: str) -> dict | None:
+        """A pending playbook never runs, in any approval mode (None when it may run)."""
+        if not self.is_pending_playbook(self._read_playbook_by_id(playbook_id)):
+            return None
+        if self._hide_pending_playbooks():  # strict: the 4.21.1 refusal, unchanged
+            return {"status": "pending_not_executable", "id": playbook_id,
+                    "message": "This playbook is a pending proposal; it runs only after Owner approval."}
+        return {"status": "not_approved", "id": playbook_id, "changed": False,
+                "message": "This playbook waits for review and does not run until the Owner approves it "
+                           "with engram review."}
+
     def pending_playbook_count(self) -> int:
         count = 0
         for entry in self._read_playbook_index():
@@ -1840,6 +1851,7 @@ class PlaybookMixin:
         return {
             "id": pb.get("id", ""),
             "status": pb.get("status", "active"),
+            "tier": pb.get("tier", "verified"),
             "scope": public_scope,
             "scope_type": scope_type,
             "project_count": project_count,
@@ -2248,9 +2260,9 @@ class PlaybookMixin:
         Returns:
             ``{playbook_id, title, execution_plan: [{order, action, status}], parameters_used}``
         """
-        if self._hide_pending_playbooks() and self.is_pending_playbook(self._read_playbook_by_id(playbook_id)):
-            return {"status": "pending_not_executable", "id": playbook_id,
-                    "message": "This playbook is a pending proposal; it runs only after Owner approval."}
+        refusal = self._not_approved(playbook_id)
+        if refusal is not None:
+            return refusal
         pb = self.get_playbook(
             playbook_id,
             _update_access=True,
@@ -2464,6 +2476,9 @@ class PlaybookMixin:
         valid = {"completed", "skipped", "failed"}
         if status not in valid:
             return {"error": f"status must be one of {valid}"}
+        refusal = self._not_approved(playbook_id)
+        if refusal is not None:
+            return refusal
 
         result_box: dict = {}
 

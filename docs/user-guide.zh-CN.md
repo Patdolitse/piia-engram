@@ -161,7 +161,8 @@ staged 条目始终在你掌控之中：
   `engram review apply` 以非零码退出。
 - AI 经 MCP 写入的 playbook（`add_playbook`、`kind="playbook"` 的 `memory_store`、从会话
   起草的手册）在任何审批模式下都是提案：进入待审区，等你用 `engram review` 批准，批准前
-  不进入自动召回。你在本地添加的手册（例如 `engram playbook install`）不受影响。
+  不进入自动召回，也不能被执行：`playbook_execution` 返回 `not_approved`，`get_playbooks`
+  列出时标上 `pending_untrusted`。你在本地添加的手册（例如 `engram playbook install`）不受影响。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。
 
@@ -244,7 +245,10 @@ AI 拿到什么，各个入口规则一致：
 **迁移或备份数据：** 复制整个 `~/.engram/` 文件夹即可。那就是你全部的记忆——
 没有云端副本需要对账。JSON 备份（`export_engram`）用本地命令 `engram import <backup.json>`
 导回（默认只预览；`--apply --yes` 才写入，`--overwrite` 为替换）。经 MCP，`import_engram`
-只能预览导入（`dry_run=true`）；要求真正导入时返回 `local_only`，不写入任何内容。
+只能预览导入（`dry_run=true`）；要求真正导入时返回 `local_only`，不写入任何内容。OpenClaw
+文件用 `engram import --format openclaw --memory MEMORY.md [--soul SOUL.md] [--user USER.md]`
+导入（默认只预览；`--apply --yes` 才写入）：经验进入待审区并留下回执，USER.md / SOUL.md
+合并进身份资料、偏好和质量标准。
 
 **什么不该存。** Engram 是个人 AI 上下文，不是密钥管理器。**不要**存密码、
 API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经验需要敏感上下文，

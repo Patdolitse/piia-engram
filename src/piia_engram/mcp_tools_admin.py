@@ -508,12 +508,14 @@ async def import_engram(
     format = format.strip().lower()
     if format == "openclaw":
         if not dry_run:
+            from piia_engram.compat import openclaw_command
+
             return S._json({
                 "error": "local_only",
                 "format": "openclaw",
                 "changed": False,
-                "hint": "OpenClaw files are imported by the Owner on the local machine, not over MCP; "
-                        "call import_engram(format=\"openclaw\", dry_run=true) to see what the files hold.",
+                "hint": f"run `{openclaw_command(soul_path, memory_path, user_path)}` locally; "
+                        "over MCP, dry_run=true previews what the files hold",
             })
         try:
             return S._json(_openclaw_preview(soul_path, memory_path, user_path))
@@ -545,36 +547,13 @@ async def import_engram(
 
 
 def _openclaw_preview(soul_path: str, memory_path: str, user_path: str) -> dict:
-    """Metadata-only look at OpenClaw files: which exist and how many bullet lines each holds."""
-    from pathlib import Path
+    """Metadata-only look at OpenClaw files (shared with ``engram import --format openclaw``)."""
+    from piia_engram.compat import openclaw_command, preview_openclaw
 
-    from piia_engram.memory_import import refusal as _import_refusal
-
-    refused = _import_refusal(S._get_engram().root)  # ENGRAM_RECONCILE=0: nothing is read
-    if refused is not None:
-        return refused
-    files: dict = {}
-    for name, raw in (("soul", soul_path), ("memory", memory_path), ("user", user_path)):
-        if not raw:
-            continue
-        err = S._validate_path(raw)
-        if err:
-            files[name] = {"error": err}
-            continue
-        path = Path(raw).expanduser()
-        if not path.is_file():
-            files[name] = {"exists": False}
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        bullets = sum(1 for line in text.splitlines() if line.strip().startswith("- "))
-        files[name] = {"exists": True, "bullets": bullets}
-    return {
-        "status": "preview",
-        "format": "openclaw",
-        "dry_run": True,
-        "files": files,
-        "note": "metadata only; applying an OpenClaw import is a local Owner action, not an MCP one",
-    }
+    preview = preview_openclaw(S._get_engram(), soul_path, memory_path, user_path)
+    if preview.get("status") == "preview":
+        preview["note"] = (preview["note"] + f"; apply locally: {openclaw_command(soul_path, memory_path, user_path)}")
+    return preview
 
 
 @S.mcp.tool()
