@@ -9,55 +9,67 @@
 ## [4.22.0] - 2026-10-07
 
 ### 破坏性变更
-- **经 MCP 修改已有条目必须带当前版本号。** `update_knowledge`、`archive_knowledge`、`merge_knowledge`、`manage_playbook`（`update`、`archive`、确认执行的 `delete` / `restore`）以及带 `supersedes` 的写入，不带版本号（`version_required`）或版本号已过期（`version_conflict`）时不写入任何内容；`supersedes` 指向不存在、已归档、其它项目或另一种作用域的条目时被拒绝（`supersedes_target_not_found` / `supersedes_target_not_applicable`）。读取结果始终带 `version`，`get_knowledge_history` 返回 `current_version`。
-  - **迁移：** 先读取条目，把它的 `version` 作为 `expected_version` 传入（合并用 `primary_expected_version` / `secondary_expected_version`，带 `supersedes` 时用 `supersedes_expected_version`）。`version_required` 回复带 `current_version` 和调用示例；收到 `version_conflict` 时重新读取条目后再重试。
-- **MCP `import_engram` 只能预览。** 写入请求返回 `{"error": "local_only", "hint": ...}` 且不写入；`dry_run=true` 仍返回导入计划，该工具标为只读。
+
+- 经 MCP 修改已有条目必须带当前版本号（`version_required` / `version_conflict`），读取结果带 `version`，`supersedes` 的目标必须有效且属于相同作用域和项目。
+  - **迁移：** 先读取，再传入 `expected_version`（合并用 `primary_expected_version` / `secondary_expected_version`，替换用 `supersedes_expected_version`），参考 `version_required` 中的示例，遇到冲突后重新读取。
+- MCP `import_engram` 只能预览（`dry_run=true`）；写入请求返回 `local_only` 且不导入任何内容，该工具标为只读。
   - **迁移：** 在存放数据的机器上用 `engram import <backup.json> --apply --yes`（或 `engram import --format openclaw ... --apply --yes`）执行导入；`local_only` 回复会给出这条命令。
-- **AI 写入或改写的 playbook 在任何模式下都等你审核，待审 playbook 永远不会执行。** `add_playbook`、`memory_store(kind="playbook")`、从会话起草的手册，以及经 `manage_playbook` 或 `update_knowledge` 修改内容，都存为提案，已批准的版本照常使用；对待审手册调用 `playbook_execution` 返回 `not_approved`；`add_playbook` 的回复改为 JSON（`{"status": "pending", "id": ..., "message": ...}`）。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的被拒绝（`queue_full`），不会被丢弃。
+- AI 经 MCP 写入或改写的 playbook 在任何模式下都等你审核，已批准版本照常使用，待审手册不能执行（`not_approved`），`add_playbook` 回复 JSON，队列满时拒收新提案（`queue_full`，`ENGRAM_PLAYBOOK_QUEUE_MAX` 默认 10）。
   - **迁移：** 用 `engram review` 或 `engram review interactive` 批准还要使用的草稿；按 JSON 读取 `add_playbook` 的回复。
-- **决定待审提案只能在本地进行，任何模式都一样。** 经 MCP 批准、提升、拒绝或归档待审条目，在默认模式和严格模式下都返回 `local_review_only`（并提示在本地运行 `engram review`）且不写入：`review_staging` 的 `action="batch"` 且 `dry_run=false`、`review_staging(action="apply_text")`、改待审条目 tier 或 status（或把任何条目提升为 `verified`）的 `update_knowledge`、对待审条目的 `archive_knowledge` 和 `confirm_knowledge`、对待审 playbook 的 `manage_playbook` archive / delete / restore，以及 `onboard_accept`（接受 onboard 候选改用本地 `engram onboard-accept`，该工具现标为只读）。列出、批量预览（`dry_run=true`）和 `review_item` 仍可用，`review_staging` 不再标为破坏性。风险分级直接判为 verified 的写入不受影响。
+- 任何模式下决定待审提案都只能在本地进行：MCP 批准、提升、拒绝、归档、合并和 onboard 接受返回 `local_review_only`，列出、批量预览和 `review_item` 仍可用，风险分级直接判为 verified 的写入不变。
   - **迁移：** 用 `engram review` 或 `engram review interactive` 决定待审条目，用 `engram onboard-accept <id>`（或 `--all`）接受 onboard 候选；原先经 MCP 落盘批量审核的 AI 仍可用 `dry_run=true` 预览。
-- **AI 新增的决策若会取代已审核决策，等你审核。** 经 MCP 新增的决策如果与已审核决策问题相同、选择不同，在任何模式下都是带 `pending_supersedes` 的待审提案；已审核的决策照常使用，你批准后才写入取代关系。你在本地添加的决策不受影响。
+- AI 经 MCP 新增的决策若与已审核决策问题相同、选择不同，在任何模式下都是带 `pending_supersedes` 的待审提案；本地新增不变，已审核决策在你批准替换前照常使用。
   - **迁移：** 用 `engram review` 批准你要的替换。
-- **Playbook id 由 Engram 生成。** AI 随新 playbook 发来的 `id` 会被忽略，改用新的 id；本地新增时 id 已被占用则拒绝（`id_exists`）。
+- Engram 为经 MCP 新增的 playbook 生成新 id，忽略调用方传入的 `id`，本地新增时拒绝已占用的 id（`id_exists`）。
   - **迁移：** 从回复里读取 id，不要自行指定。
-- **AI 只拿到已审核、当前有效的记忆。** 冷启动、接续简报、会话开始钩子、`get_recall` 和 `get_relevant_knowledge` 不再返回待审、被取代、已归档以及无法确认已审核的条目。`search_knowledge` 把待审条目放在单独的 `pending` 分组（每条标 `pending_untrusted`），被取代的条目只在 `include_superseded=true` 时以单独的 `superseded` 分组返回。详见[用户指南](docs/user-guide.zh-CN.md#4-治理与审批ai-提议重要的由你审)。
+- 冷启动、接续简报、钩子和召回只提供已审核、当前有效的记忆；`search_knowledge` 把未审核提案放在 `pending`，仅在 `include_superseded=true` 时返回 `superseded`，详见[用户指南](docs/user-guide.zh-CN.md#4-治理与审批ai-提议重要的由你审)。
   - **迁移：** 读取 `search_knowledge` 的客户端应单独读取 `pending` 分组，不要把它当作已审核内容；`{"tier": "staging"}` 过滤的结果现在在 `pending` 分组里。
-- **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动和 `wrap_up_session` 不再读取或导入其它 AI 工具的记忆和规则文件；`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
+- 启动 MCP server、冷启动和 `wrap_up_session` 不自动导入其它 AI 工具的记忆或规则文件，即使设置 `ENGRAM_MCP_STARTUP_SYNC` 或 `run_reconcile=True`。
   - **迁移：** 需要时运行 `engram import-memories`；导入内容进入待审区并生成回执。
+- `manage_relation` 不能手工建立或移除内部 `supersedes` 版本关系（`supersedes_is_internal`）。
+  - **迁移：** 使用带版本号的更新或替换提案，不要编辑版本关系。
 
 ### 新增
-- **每天一次匿名使用信号，默认开启。** 每天发送一次，包含随机安装 ID、版本、系统、Python 版本、AI 客户端名称和日期；不含任何记忆内容、路径、账号或命令参数。可用 `engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭（CI 和容器中自动不发）；详见 [PRIVACY.md](PRIVACY.md)。
-- `engram doctor` 新增“Client Connections”一节：逐个 AI 客户端显示是否配置了 Engram、最近 14 天是否调用过（`--days N`、`--json`）。只读。
+
+- 默认每天发送一次匿名使用信号，包含随机安装 ID、版本、系统、Python 版本、客户端名称和日期，不含记忆、路径、账号或参数；可用 `engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭（CI 和容器自动关闭），详见 [PRIVACY.md](PRIVACY.md)。
+- `engram doctor` 新增只读的“Client Connections”一节，显示各客户端的配置和最近 14 天调用情况（`--days N`、`--json`）。
 - `engram import-memories` 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区并生成回执；`engram setup` 会询问是否现在导入一次（默认否）。
 - `engram import --format openclaw` 在本地导入 OpenClaw 的 `SOUL.md` / `MEMORY.md` / `USER.md`；默认只预览，MEMORY.md 的经验进入待审区。
-- `engram pin <id>` / `engram unpin <id>` / `engram pin --list`：钉住的已审核条目不受归档和容量规则影响，不会被导入或经 MCP 修改，并在召回上下文中排在最前；对钉住条目的修订等你在本地审核。详见[钉住必须保留的条目](docs/user-guide.zh-CN.md#钉住必须保留的条目)。
+- `engram pin <id>` / `engram unpin <id>` / `engram pin --list` 保护已审核条目免于归档、导入或 MCP 修改，在召回中优先展示且修订须经本地审核，详见[钉住必须保留的条目](docs/user-guide.zh-CN.md#钉住必须保留的条目)。
 - `engram review interactive`（`engram review -i`）在终端里逐条审核待审提案；确认汇总之前不写入任何内容。
 - `engram review apply` 的 marks 支持 `supersede:<id>`、`skip`、拒绝时可选的 `reason` 和 `expected_version`，按固定顺序执行（同一次运行里可同时批准条目和取代它的提案），edit-type 也能修改决策的类型标签；`engram review export` 会生成 `marks-template.json`。
 - 新条目记录自己从哪里来（`provenance.origin`；经 MCP 写入的还记录客户端自报的名称和版本），审核时显示；`provenance` 与 `source_tool` 写入后不能再通过更新修改（`provenance_immutable`）。
-- MCP 工具声明标准的只读、破坏性、幂等、开放世界标注。标注只是给客户端的提示，不是权限控制。
+- MCP 工具声明标准的只读、破坏性、幂等和开放世界标注，作为客户端提示而非权限控制。
 
 ### 变更
+
 - 近重复条目（相似度不低于 95% 但文字不同）进入待审区并带 `duplicate_candidate`，不再被拒绝；只有规范化后文字完全相同的才按重复拒绝。
 - 审核卡和 `engram preview` 显示重复候选对应的旧条目、相似度和逐句差异。
 - token 预算裁掉内容时，`get_resume_brief`、`get_recall` 和 `engram preview` 返回 `omitted`（条数、id、段名），文本形态的上下文末尾加一行说明。
 - 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明 `superseded_by`。
-- MCP server 下发的说明和 `engram setup` 写入的 Engram 段落写明：AI 只记长期有用的内容（不记当天进度）、相对日期怎么写、修订时用 `supersedes`。`engram setup` 和 `engram doctor --fix` 会刷新内容为旧版默认文案的段落，你改过的段落保持不变。
+- MCP 说明和 setup 段落写明长期事实、明确日期和 `supersedes` 修订；setup 与 `doctor --fix` 刷新旧版默认段落并保留你的修改。
 - `extract_session_insights` 和 `wrap_up_session` 在保存计数旁列出被跳过的候选及原因（`skipped_by_reason`）。
 - `engram reconcile apply --commit --yes` 和 OpenClaw `MEMORY.md` 的经验都经过待审区并生成回执；旧版记忆迁移也受“读取其它 AI 工具文件”的关闭开关约束。
 
 ### 移除
+
 - 移除未使用的内部函数 `ingest_extraction`。
 - MCP `review_staging` 不再批准、拒绝或应用审查结果（见破坏性变更）。
 
 ### 修复
-- **Claude Code：Engram 现在注册到 Claude Code 实际读取的位置。** 此前版本把 Claude Code 的条目写到 `~/.claude/.mcp.json`，而 Claude Code 不读取这个文件；现在 setup 通过 `claude mcp add --scope user` 注册到用户级配置（`~/.claude.json`，或 `$CLAUDE_CONFIG_DIR/.claude.json`），`engram doctor` 会报告仍留在旧文件里的条目。**用旧版本配置过 Claude Code 的用户请重新运行 `engram setup`**，它会询问是否移除旧条目。详见 [Claude Code 配置](docs/integrations/claude-code.md)。
+
+- **Claude Code 用户请重新运行 `engram setup`**，通过 `claude mcp add --scope user` 注册 Engram，不再使用未被读取的 `~/.claude/.mcp.json`，并可选择移除旧条目，详见 [Claude Code 配置](docs/integrations/claude-code.md)。
 - 其它名称下的 Engram 条目（`piia-engram`，或任何启动 Engram 的命令）能被 doctor、status 和 dock 识别；setup 会把 `piia-engram` 条目迁移为 `engram`，不再另加一个服务器。
 - setup 改写的客户端配置文件以原子方式写入；符号链接形式的配置保持为符号链接，在 macOS 和 Linux 上保留文件原有权限。
 - Windows：其它进程短暂占用同一文件时写入不再失败，Engram 会在最多一秒内重试。
 - JSON 备份（`export_engram`、`engram dock-export`）包含你的拒绝记录（只有哈希和元数据），`engram import` 会恢复它们；格式不对的记录会被跳过并计数。
 - 字段类型不对（例如是列表）的拒绝记录会被跳过并计数，不再中断导出、导入或写入；本地文件里的这类记录也一样。
-- Playbook id 始终指向 playbooks 目录内的文件：带路径的 id 会被所有 playbook 操作、执行计划和导入拒绝，新增也不会覆盖已有 playbook。`get_daily_log` 只接受 `YYYY-MM-DD` 格式的日期（`invalid_date`）。
+- Playbook 操作、执行计划和导入只接受普通文件 id，新增不覆盖已有手册，`get_daily_log` 只接受 `YYYY-MM-DD` 日期（`invalid_date`）。
+- 会话、每日日志和执行计划的路径保持在各自目录内，嵌套目录为链接时也一样。
+- 原生导入在预览或执行任何变更前拒绝无效项目 id（`invalid_project_id`）。
+- 涉及待审提案的 MCP 合并返回 `local_review_only`，不改动提案或已审核条目。
+- 合并、删除手册和恢复手册在提交锁内比对预期版本。
+- 操作手册索引更新失败时恢复已有正文，不再移除它。
 - `engram review` 在写入决定的同一把锁内比对你审核时的版本（`expected_version`），期间被改动的条目返回 `version_conflict`，不会被批准、拒绝或写入拒绝记录。
 - 批准 playbook 修订时先停用旧 playbook；运行中断后再次应用同一份 marks 即可完成，两个版本都已被批准的库也能这样补完。
 - 读取信任边界不再写 `identity/trust_boundaries.json`；缺少的默认值只在内存中补齐。
