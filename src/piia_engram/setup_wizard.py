@@ -3277,6 +3277,31 @@ def _in_cli_origin(func):
     return wrapper
 
 
+def _run_doctor_cli(args: list[str]) -> int:
+    """engram doctor [--fix] [--days N] [--json]; 2 on a usage error."""
+    fix = "--fix" in args
+    as_json = "--json" in args
+    days = None
+    if "--days" in args:
+        index = args.index("--days")
+        raw = args[index + 1] if index + 1 < len(args) else ""
+        try:
+            days = int(raw)
+        except ValueError:
+            days = 0
+        if days < 1:
+            print("engram doctor: --days needs a whole number of days (1 or more)", file=sys.stderr)
+            return 2
+    if as_json and fix:
+        print("engram doctor: --json only reports; run --fix separately", file=sys.stderr)
+        return 2
+    if as_json:
+        from piia_engram.doctor import run_doctor_json
+
+        return run_doctor_json(days=days)
+    return run_doctor(fix=fix, days=days)
+
+
 @_in_cli_origin
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
@@ -3305,8 +3330,7 @@ def main() -> None:
         _show_usage_notice(sys.stdout)
         _start_usage_ping_cli()
     elif args[0] == "doctor":
-        fix = "--fix" in args
-        sys.exit(run_doctor(fix=fix))
+        sys.exit(_run_doctor_cli(args[1:]))
     elif args[0] == "capabilities":
         sys.exit(_run_capabilities_cli(args[1:]))
     elif args[0] == "sessions":
@@ -3457,6 +3481,8 @@ def main() -> None:
             "  engram doctor           Check config health (all AI tools; no writes to the memory\n"
             "                          store; the version check may go online and write its cache)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
+            "  engram doctor --days N  Look back N days (default 14) for client calls\n"
+            "  engram doctor --json    Client connections only, as JSON (read-only)\n"
             "  engram capabilities     Content-free runtime capability fingerprint (--json/--require)\n"
             "  engram status           Show a redacted install + memory health summary\n"
             "  engram status --html    Write a local redacted status page\n"

@@ -252,6 +252,7 @@ engram continuity    # metadata-only proof that cross-tool handoff is ready
 engram management    # metadata-only review/playbook management view
 engram doctor        # diagnose all tools
 engram doctor --fix  # auto-repair issues + inject missing instructions
+engram doctor --days 7 --json  # which AI clients are configured and called Engram lately (read-only)
 engram repair-encoding        # dry-run scan for garbled / mojibake text
 engram repair-encoding --apply  # repair reversible cases with a backup
 ```

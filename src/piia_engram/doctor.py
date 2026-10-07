@@ -575,7 +575,7 @@ def _validate_engram_entry(servers: dict, config_path: Path) -> list[str]:
     return issues
 
 
-def run_doctor(fix: bool = False) -> int:
+def run_doctor(fix: bool = False, days: int | None = None) -> int:
     """扫描系统中所有已安装的 AI 工具，检查 Engram MCP 配置健康状况。
 
     流程：
@@ -586,6 +586,7 @@ def run_doctor(fix: bool = False) -> int:
 
     Args:
         fix: True 时自动修复发现的问题。
+        days: 连接一节统计最近多少天的调用（默认 14）。
 
     Returns:
         发现的问题数量（0 = 健康）。
@@ -662,7 +663,7 @@ def run_doctor(fix: bool = False) -> int:
     if not issues:
         if configured_count > 0:
             print("  [ok] All configured tools look healthy.\n")
-        func_issues = _run_functional_checks(fix=fix)
+        func_issues = _run_functional_checks(fix=fix, days=days)
         return func_issues
 
     print(f"  [!] Found {len(issues)} issue(s):\n")
@@ -709,8 +710,39 @@ def run_doctor(fix: bool = False) -> int:
     print(_t("  重启以下工具生效：", "  Restart the following tools to apply:"))
     W._print_restart_hints()
     print()
-    func_issues = _run_functional_checks(fix=fix)
+    func_issues = _run_functional_checks(fix=fix, days=days)
     return remaining + func_issues
+
+
+def _print_connection_report(root, days: int | None = None) -> None:
+    """Which clients are configured and which called Engram lately (read-only)."""
+    from piia_engram import connection_report as _connections
+
+    days = _connections.DEFAULT_DAYS if days is None else days
+    print()
+    W._safe_print(f"  -- Client Connections (last {days} days) --\n")
+    try:
+        report = _connections.build_report(Path(root), days=days)
+    except Exception as exc:
+        W._safe_print(f"    [--] Client connection check skipped: {exc}")
+        return
+    for line in _connections.render_text(report):
+        W._safe_print(f"    {line}")
+
+
+def run_doctor_json(days: int | None = None) -> int:
+    """``engram doctor --json``: the client connection report as JSON (read-only).
+
+    Only this section: it reads the store directory and the client config files
+    directly and opens nothing for writing (no Engram instance, no version check).
+    """
+    from piia_engram import connection_report as _connections
+    from piia_engram.storage import _engram_root
+
+    days = _connections.DEFAULT_DAYS if days is None else days
+    report = _connections.build_report(Path(_engram_root()), days=days)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
 
 
 def _run_governance_visibility_check(eng) -> int:
@@ -749,7 +781,7 @@ def _run_governance_visibility_check(eng) -> int:
     return 0
 
 
-def _run_functional_checks(*, fix: bool = False) -> int:
+def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int:
     """运行功能性验证：MCP server 能否启动、知识库能否读写、quick_context 是否可用。
 
     Args:
@@ -1099,6 +1131,9 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         )
     except Exception as exc:
         W._safe_print(f"    [--] Client env check skipped: {exc}")
+
+    # 6.6 Client connections: configured? called lately? (read-only, informational)
+    _print_connection_report(eng.root, days)
 
     # ── Claude Code Hooks (Stop / PreCompact / SessionStart) ──
     # v3.30 M7: doctor must check all three events the setup wizard

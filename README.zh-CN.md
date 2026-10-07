@@ -231,6 +231,7 @@ engram continuity    # 仅用元数据证明跨工具接续已就绪
 engram management    # 脱敏的审查 / Playbook 管理视图
 engram doctor        # 诊断所有工具
 engram doctor --fix  # 自动修复 + 注入缺失的 AI 指令
+engram doctor --days 7 --json  # 哪些 AI 客户端已配置、最近是否调用过 Engram（只读）
 engram repair-encoding        # dry-run 扫描乱码 / mojibake
 engram repair-encoding --apply  # 备份后修复可逆乱码
 ```
