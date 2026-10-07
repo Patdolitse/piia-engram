@@ -114,6 +114,10 @@ def batch_review_staging(
             items.append(_item(idx, item_id, action, "not_found"))
             counts["failed"] += 1
             continue
+        if expected_version is not None and _row_version(item) != expected_version:
+            items.append(_item(idx, item_id, action, "version_conflict", item_type=item_type))
+            counts["failed"] += 1
+            continue
         unfinished = (
             action == "approve" and item_type == "playbook"
             and bool(eng.unfinished_playbook_replacement(item))
@@ -121,10 +125,7 @@ def batch_review_staging(
         if item.get("tier") != "staging" and not unfinished:
             items.append(_item(idx, item_id, action, "not_staging", item_type=item_type))
             counts["noop"] += 1
-            continue
-        if expected_version is not None and _row_version(item) != expected_version:
-            items.append(_item(idx, item_id, action, "version_conflict", item_type=item_type))
-            counts["failed"] += 1
+            guards[idx] = expected_version
             continue
         if action == "approve":
             from . import tombstones as _tombstones
@@ -190,6 +191,27 @@ def batch_review_staging(
         )
 
     changed = False
+    if confirm:
+        # An approved playbook retry can repair derived index state even when
+        # no approval remains planned. Preview, MCP and unconfirmed calls never
+        # reach this write; the reviewed version is rechecked inside the locks.
+        for it in items:
+            if it["status"] != "not_staging" or it["action"] != "approve" or it.get("type") != "playbook":
+                continue
+            with eng._review_locks():
+                current = eng._read_playbook_by_id(it["id"])
+                expected = guards.get(it["candidate_ref"])
+                stale = eng._review_version_conflict(it["id"], current, expected) if current else None
+                problem = eng._playbook_replacement_problem(current) if current else "not_found"
+                if stale or problem:
+                    it["status"] = stale["status"] if stale else problem
+                    counts["noop"] -= 1
+                    counts["failed"] += 1
+                    continue
+                changed |= eng._reconcile_playbook_index(it["id"])["changed"]
+                target = str(current.get("pending_supersedes") or "")
+                if target:
+                    changed |= eng._reconcile_playbook_index(target)["changed"]
     for it in planned:
         owner_reject = via or "core:batch_review_staging"
         expected_version = guards.get(it["candidate_ref"])

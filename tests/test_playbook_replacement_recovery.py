@@ -328,3 +328,81 @@ def test_retirement_index_interruption_is_repaired_before_approval(eng, tmp_path
     assert _apply(tmp_path, new["id"], mark, expected_version=1) == 0
     assert [fresh._playbook_path(i).read_bytes() for i in (old["id"], new["id"])] == before
     assert (fresh._playbooks_dir / "_index.json").read_bytes() == before_index
+
+
+@pytest.mark.parametrize("mark_kind", ["approve", "supersede"])
+@pytest.mark.parametrize("failures", [1, 2])
+def test_legacy_replacement_records_handoff_and_recovers_index(eng, tmp_path, monkeypatch, mark_kind, failures):
+    from piia_engram.storage import _read_json
+
+    old, new = _revision(eng, "Recover a legacy approved replacement")
+    pinning.pin(eng, old["id"])
+    eng._update_playbook_file_by_id(new["id"], lambda r: {
+        **r, "tier": "verified", "approval_status": "approved", "promotion_reason": "owner_review"})
+    mark = "supersede:" + old["id"] if mark_kind == "supersede" else "approve"
+    real_index = Engram._update_playbook_index
+    interruptions = []
+
+    def fail_index(self, mutator):
+        if self._read_playbook_by_id(old["id"])["status"] == "outdated" and len(interruptions) < failures:
+            interruptions.append(True)
+            raise OSError("legacy retirement index interrupted")
+        return real_index(self, mutator)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(Engram, "_update_playbook_index", fail_index)
+        for _attempt in range(failures):
+            with pytest.raises(OSError, match="legacy retirement"):
+                _apply(tmp_path, new["id"], mark, expected_version=1)
+            assert eng._read_playbook_by_id(new["id"])["_replacement_in_progress"] == {
+                "target": old["id"], "proposal_version": 1, "target_version": 1}
+    assert _apply(tmp_path, new["id"], mark, expected_version=1) == 0
+    fresh = Engram(root=eng.root)
+    bodies = {i: _read_json(fresh._playbook_path(i)) for i in (old["id"], new["id"])}
+    indexes = {r["id"]: r for r in _read_json(fresh._playbooks_dir / "_index.json")}
+    for item_id in bodies:
+        assert indexes[item_id]["status"] == bodies[item_id]["status"]
+        assert indexes[item_id]["tier"] == bodies[item_id]["tier"]
+    assert not pinning.has_pin(bodies[old["id"]])
+    assert "_replacement_in_progress" not in bodies[new["id"]]
+    assert {r["id"] for r in fresh.get_playbooks()} == {new["id"]}
+
+
+def test_explicit_already_applied_reconciles_an_old_index_without_handoff(eng):
+    old, new = _revision(eng, "Reconcile an already applied legacy mark")
+    eng._update_playbook_file_by_id(new["id"], lambda r: {**r, "tier": "verified", "approval_status": "approved"})
+    eng._update_playbook_file_by_id(old["id"], lambda r: {**r, "status": "outdated"})
+    result = review_cli._review_one(eng, {"id": new["id"], "mark": "supersede", "target": old["id"],
+                                        "expected_version": 1}, review_cli._new_counts(), dry_run=False, via="test")
+    assert result["status"] == "already_applied"
+    index = {r["id"]: r for r in eng._read_playbook_index()}
+    assert index[old["id"]]["status"] == "outdated"
+    assert index[new["id"]]["tier"] == "verified"
+    assert {r["id"] for r in eng.get_playbooks()} == {new["id"]}
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_retry_reconciles_index_after_new_approval_body_committed(eng, tmp_path, monkeypatch, explicit):
+    old, new = _revision(eng, "Recover the final approval index")
+    mark = "supersede:" + old["id"] if explicit else "approve"
+    real = Engram._update_playbook_index
+
+    def _interrupt(self, mutator):
+        if self._read_playbook_by_id(new["id"]).get("approval_status") == "approved":
+            raise OSError("approval index interrupted")
+        return real(self, mutator)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(Engram, "_update_playbook_index", _interrupt)
+        with pytest.raises(OSError):
+            _apply(tmp_path, new["id"], mark, expected_version=1)
+    assert eng._read_playbook_by_id(new["id"])["approval_status"] == "approved"
+    assert next(r for r in eng._read_playbook_index() if r["id"] == new["id"])["tier"] == "staging"
+    assert _apply(tmp_path, new["id"], mark, expected_version=1) == 0
+    fresh = Engram(root=eng.root, read_only=True)
+    index = {r["id"]: r for r in fresh._read_playbook_index()}
+    for item_id in (old["id"], new["id"]):
+        body = fresh._read_playbook_by_id(item_id)
+        assert index[item_id]["status"] == body["status"]
+        assert index[item_id]["tier"] == body["tier"]
+    assert {r["id"] for r in fresh.get_playbooks()} == {new["id"]}

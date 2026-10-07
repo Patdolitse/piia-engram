@@ -771,7 +771,31 @@ def _claude_code_section(tools: list[dict], *, fix: bool) -> int:
     return 0 if reg.registered else 1
 
 
+def _run_playbook_index_check(*, fix: bool = False) -> int:
+    """Check derived playbook state independently of client configuration."""
+    from piia_engram.core import Engram
+
+    try:
+        report = Engram(read_only=not fix)._reconcile_playbook_index(dry_run=not fix)
+        pending = report["mismatches"] + report["unpinned"]
+        label = "repaired" if fix and pending else "mismatched" if pending else "consistent"
+        print(f"    Playbook index: {label} ({report['mismatches']} status/tier, {report['unpinned']} retired pins)")
+        if pending and not fix:
+            print("         Run 'engram doctor --fix' to reconcile from bodies; no body is deleted.")
+        if report["skipped"]:
+            print(f"    [!!] Playbook index: {report['skipped']} missing or unreadable bodies left unchanged")
+        return int(bool((pending and not fix) or report["skipped"]))
+    except Exception as exc:
+        print(f"    [!!] Playbook index check failed: {type(exc).__name__}")
+        return 1
+
+
 def run_doctor(fix: bool = False, days: int | None = None) -> int:
+    """Report playbook index drift; --fix reconciles it before client checks."""
+    return _run_playbook_index_check(fix=fix) + _run_doctor_config_checks(fix=fix, days=days)
+
+
+def _run_doctor_config_checks(fix: bool = False, days: int | None = None) -> int:
     """扫描系统中所有已安装的 AI 工具，检查 Engram MCP 配置健康状况。
 
     流程：

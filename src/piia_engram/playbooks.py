@@ -592,6 +592,7 @@ class PlaybookMixin:
             "triggers": pb.get("triggers", []),
             "domain": pb.get("domain", ""),
             "status": pb.get("status", "active"),
+            "tier": pb.get("tier", "verified"),
             "updated_at": pb.get("last_updated") or pb.get("created_at") or _now_iso(),
         }
         if pb.get("builtin_name"):
@@ -724,14 +725,109 @@ class PlaybookMixin:
             return ""
         return target
 
+    def _reconcile_playbook_index(self, playbook_id: str | None = None, *, dry_run: bool = False) -> dict:
+        """Derive index status/tier from bodies, never delete a body.
+
+        Repairs hold both review locks; a report-only snapshot creates no locks
+        or files. Missing/unreadable bodies are reported, not removed.
+        """
+        from contextlib import nullcontext
+        from .storage import SkipWrite
+
+        if not dry_run:
+            if getattr(self, "_read_only", False):
+                raise ReadOnlyStoreError("read-only handle: refused playbook index reconciliation")
+            if _review_boundary.mcp_origin():
+                return _review_boundary.refusal(playbook_id or "", action="reconcile")
+        with nullcontext() if dry_run else self._review_locks():
+            # Ordinary JSON reads quarantine corrupt files. A diagnostic must
+            # not create those copies; inspect safely contained files directly.
+            index_path = confined_path(self._playbooks_dir, "_index.json")
+            index = json.loads(index_path.read_text(encoding="utf-8-sig")) if index_path.is_file() else []
+            if not isinstance(index, list) or any(not isinstance(e, dict) for e in index):
+                raise ValueError("invalid playbook index")
+            ids = {playbook_id} if playbook_id is not None else {
+                p.stem for p in self._playbooks_dir.glob("*.json") if valid_playbook_id(p.stem)}
+            if playbook_id is None:
+                ids.update(str(e.get("id") or "") for e in index)
+            bodies: dict[str, dict] = {}
+            mismatches: set[str] = set()
+            unpinned: set[str] = set()
+            skipped = 0
+            for item_id in sorted(ids):
+                if not valid_playbook_id(item_id):
+                    skipped += 1
+                    continue
+                try:
+                    path = self._playbook_path(item_id)
+                    row = json.loads(path.read_text(encoding="utf-8-sig"))
+                    if not isinstance(row, dict):
+                        row = None
+                    elif self._corpus_key:
+                        row = self._crypto.decrypt_entry(row, self._corpus_key, "playbook")
+                    if row is not None:
+                        row = self._ensure_playbook_fields(row)
+                except (OSError, ValueError, TypeError):
+                    row = None
+                if row is None or playbook_id_key(row.get("id")) != playbook_id_key(item_id):
+                    skipped += 1
+                    continue
+                key = playbook_id_key(item_id)
+                bodies[key] = row
+                matches = [e for e in index if playbook_id_key(e.get("id")) == key]
+                if not matches or any(e.get("status") != row.get("status", "active")
+                                      or e.get("tier") != row.get("tier", "verified") for e in matches):
+                    mismatches.add(item_id)
+                if (row.get("status", "active") != "active" or row.get("tier") == "retired") and _pinning.has_pin(row):
+                    unpinned.add(item_id)
+                    if not dry_run:
+                        self._update_playbook_file_by_id(item_id, _pinning.strip)
+                        _pinning.audit_auto_unpin(self, "playbook", [item_id], reason="no_longer_trusted")
+
+            def _sync(current: list[dict]) -> list[dict]:
+                changed = False
+                seen: set[str] = set()
+                for entry in current:
+                    key = playbook_id_key(entry.get("id"))
+                    row = bodies.get(key)
+                    if row is None:
+                        continue
+                    seen.add(key)
+                    for field, default in (("status", "active"), ("tier", "verified")):
+                        value = row.get(field, default)
+                        if entry.get(field) != value:
+                            entry[field] = value
+                            changed = True
+                for key, row in bodies.items():
+                    if key not in seen:
+                        current.append(self._playbook_index_entry(row))
+                        changed = True
+                if not changed:
+                    raise SkipWrite
+                return current
+
+            if not dry_run and mismatches:
+                self._update_playbook_index(_sync)
+            return {"checked": len(bodies), "mismatches": len(mismatches), "unpinned": len(unpinned),
+                    "skipped": skipped, "changed": not dry_run and bool(mismatches or unpinned), "dry_run": dry_run}
+
+    def _record_playbook_replacement(self, row: dict, target: str) -> None:
+        """Persist the retirement handoff under the caller's review locks."""
+        if "_replacement_in_progress" in row:
+            return
+        old = self._read_playbook_by_id(target)
+        if old is None:
+            raise ValueError("replacement target not found")
+        state = {"target": target, "proposal_version": int(row.get("version") or 1),
+                 "target_version": int(old.get("version") or 1)}
+        self._update_playbook_file_by_id(row["id"], lambda r: {**r, "_replacement_in_progress": state})
+
     def _retire_replaced_playbook(self, old_id: str, new_id: str) -> None:
         """Finish retirement of both body and index under the caller's review locks.
 
         The replacement handoff remains durable until this operation succeeds,
         so a retry repairs an index commit interrupted after the body retired.
         """
-        from .storage import SkipWrite
-
         if getattr(self, "_read_only", False):
             raise ReadOnlyStoreError("read-only handle: refused replacement retirement")
         _pinning.auto_unpin(self, old_id, reason="superseded", by=new_id)
@@ -741,19 +837,7 @@ class PlaybookMixin:
             old = self._read_playbook_by_id(old_id)
         if old is None or old.get("status") != "outdated":
             raise ValueError("replacement target is not retired")
-        idx_entry = self._playbook_index_entry(old)
-
-        def _reconcile(index: list[dict]) -> list[dict]:
-            for i, entry in enumerate(index):
-                if playbook_id_key(entry.get("id")) == playbook_id_key(old_id):
-                    if entry == idx_entry:
-                        raise SkipWrite
-                    index[i] = idx_entry
-                    return index
-            index.append(idx_entry)
-            return index
-
-        self._update_playbook_index(_reconcile)
+        self._reconcile_playbook_index(old_id)
 
     def approve_playbook(self, playbook_id: str, expected_version: int | None = None) -> dict:
         """Owner approval: a pending playbook becomes verified; an approved update
@@ -780,9 +864,17 @@ class PlaybookMixin:
         if problem:
             return {"status": problem, "error": problem, "id": playbook_id, "changed": False}
         if not self.is_pending_playbook(pb):
+            self._reconcile_playbook_index(playbook_id)
+            target = str(pb.get("pending_supersedes") or "")
+            if target:
+                self._reconcile_playbook_index(target)
             unfinished = self.unfinished_playbook_replacement(pb)
             if unfinished:
+                self._record_playbook_replacement(pb, unfinished)
                 self._retire_replaced_playbook(unfinished, playbook_id)
+                self._reconcile_playbook_index(playbook_id)
+                self._update_playbook_file_by_id(playbook_id, lambda r: {
+                    k: v for k, v in r.items() if k != "_replacement_in_progress"})
                 self._audit.log("write", "playbooks", detail=f"approved {playbook_id} (replacement completed)")
                 return {"status": "promoted", "id": playbook_id, "retired": unfinished, "completed": True}
             return {"status": "not_staging", "id": playbook_id}
@@ -797,6 +889,9 @@ class PlaybookMixin:
         if target and _pinning.blocked_targets([(playbook_id, target)],
                                                [self._read_playbook_by_id(target) or {}]):
             return {"status": _pinning.ERROR_PINNED_TARGET, "id": playbook_id, "targets": [target]}
+        self._reconcile_playbook_index(playbook_id)
+        if target:
+            self._reconcile_playbook_index(target)
         now = _now_iso()
 
         def _approve(row):
@@ -810,16 +905,12 @@ class PlaybookMixin:
 
         old_id = target
         if old is not None:
-            if "_replacement_in_progress" not in pb:
-                state = {"target": old_id, "proposal_version": int(pb.get("version") or 1),
-                         "target_version": int(old.get("version") or 1)}
-                # Persist BEFORE retirement, under the same review locks. Failure
-                # after retirement must not erase the chosen target or versions.
-                self._update_playbook_file_by_id(playbook_id, lambda r: {**r, "_replacement_in_progress": state})
+            self._record_playbook_replacement(pb, old_id)
             # Even an already-retired body can have an unfinished index commit.
             # Complete both records before approval clears the durable handoff.
             self._retire_replaced_playbook(old_id, playbook_id)
         self._update_playbook_file_by_id(playbook_id, _approve)
+        self._reconcile_playbook_index(playbook_id)
         self._audit.log("write", "playbooks", detail=f"approved {playbook_id}")
         return {"status": "promoted", "id": playbook_id, "retired": old_id or None}
 

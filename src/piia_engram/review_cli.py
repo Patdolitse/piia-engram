@@ -681,6 +681,22 @@ def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str, sim: 
             _add_counts(counts, {"requested": 1, "approve": 1, "failed": 1,
                                  "supersede_failed": int(mark["mark"] == "supersede")})
             return _item_view({"id": mark["id"], "status": problem}, mark)
+        # An already-decided row can bypass batch approval. Reconcile its
+        # derived index before those retry/no-op exits, never during preview.
+        if not dry_run and current.get("tier") != "staging" and (
+                mark["mark"] == "approve" or current.get("pending_supersedes") == mark.get("target")):
+            with eng._review_locks():
+                current = eng._read_playbook_by_id(mark["id"])
+                stale = eng._review_version_conflict(mark["id"], current, mark.get("expected_version")) if current else None
+                problem = eng._playbook_replacement_problem(current, mark.get("target", "")) if current else "not_found"
+                if stale or problem:
+                    _add_counts(counts, {"requested": 1, "approve": 1, "failed": 1})
+                    return _item_view(stale or {"id": mark["id"], "status": problem}, mark)
+                if mark["mark"] == "approve" or current.get("pending_supersedes") == mark.get("target"):
+                    eng._reconcile_playbook_index(mark["id"])
+                    target_id = str(current.get("pending_supersedes") or "")
+                    if target_id:
+                        eng._reconcile_playbook_index(target_id)
     if sim is not None:
         sim_args.update(assume_trusted=sim["trusted"], assume_untrusted=sim["untrusted"], extra_edges=sim["edges"])
     if mark["mark"] == "supersede":
