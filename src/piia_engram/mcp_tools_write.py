@@ -360,6 +360,8 @@ async def add_lesson(
     last_validated_at: str = "",
     allow_similar_new: bool = False,
     user_confirmed: bool = False,
+    supersedes: str = "",
+    supersedes_expected_version: int | None = None,
 ) -> str:
     """记录单条经验教训（你已经知道要记什么）。 / Record one lesson learned when you already know what to save.
 
@@ -382,6 +384,8 @@ async def add_lesson(
         run_id: 产生此条目的工作流/会话运行 ID（可选）。 / Workflow/session id that produced this entry (optional).
         last_validated_at: 人/agent 最近确认此条目仍然成立的 ISO-8601 时间（可选）。 / ISO-8601 time this entry was last confirmed to still hold (optional).
         allow_similar_new: 摘要相似但不相同、确属新条目时设为 true：按相关条目写入并互链，而不是作为重复候选进入待审（可选，默认 false）。不能绕过完全相同（规范化后）内容的拒绝；该拒绝会指向已有条目并给出修订方式。 / Set true when a similar but not identical summary is genuinely a NEW fact: it is stored linked as related instead of queued for review as a duplicate candidate (optional, default false). It cannot bypass the refusal of identical content (after normalization); that refusal names the existing entry and how to revise it.
+        supersedes: 本条修订的已有 lesson ID（可选）。修订提案总是进入待审，主人批准后旧条目才被取代；被主人钉住的条目只能这样修订。 / ID of the existing lesson this one revises (optional). A revision is always a proposal that waits for the Owner; the old lesson is superseded only on approval. An Owner-pinned lesson can only be revised this way.
+        supersedes_expected_version: 填写 supersedes 时必填：旧条目的当前版本号。缺失 → version_required，不匹配 → version_conflict，均零写入。 / Required with supersedes: the old lesson's current version. Missing -> version_required; mismatch -> version_conflict; both write nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_lesson")
@@ -402,15 +406,22 @@ async def add_lesson(
     if effective_project:
         S._session.detect_project(effective_project)
         lesson["project_folder"] = effective_project
+    if supersedes:
+        lesson["supersedes"] = supersedes
     S._attach_provenance(
         lesson, source_agent=source_agent, run_id=run_id,
         last_validated_at=last_validated_at,
     )
+    early = _supersede_refusal("lesson", lesson, supersedes_expected_version)
+    if early is not None:
+        S._track("add_lesson", success=False)
+        return S._json(early)
     if not _is_user_confirmed(user_confirmed):
         return _confirmation_required("lesson", _lesson_confirmation_title(lesson), lesson)
     try:
-        result = S._locked_engram_call(
-            S._get_engram().add_lesson, lesson, allow_similar_new=allow_similar_new
+        result = _guarded_add(
+            "lesson", lesson, supersedes_expected_version,
+            S._get_engram().add_lesson, lesson, allow_similar_new=allow_similar_new,
         )
         S._track("add_lesson", success=True)
         S._beta("knowledge_created", kind="lesson",
@@ -550,6 +561,8 @@ async def add_playbook(
     last_validated_at: str = "",
     allow_similar_new: bool = False,
     user_confirmed: bool = False,
+    supersedes: str = "",
+    supersedes_expected_version: int | None = None,
 ) -> str:
     """记录操作手册（Playbook）— 结构化的多步骤流程。 / Record an operational playbook — a structured multi-step procedure.
 
@@ -574,6 +587,8 @@ async def add_playbook(
         outcome: 预期结果（可选）。 / Expected outcome (optional).
         source_tool: 来源工具（可选）。 / Source tool (optional).
         allow_similar_new: 标题相似但不相同、确属另一份手册时设为 true，写入新条目（可选，默认 false）。不能绕过标题完全相同的拒绝；该拒绝会指向已有手册并给出修订方式。 / Set true when a similar but not identical title is genuinely a DIFFERENT playbook, to store it as a new entry (optional, default false). It cannot bypass the refusal of an identical title; that refusal names the existing playbook and how to revise it.
+        supersedes: 本手册修订的已有 playbook ID（可选）。修订提案总是进入待审，主人批准后旧手册才归档；被主人钉住的手册只能这样修订。 / ID of the existing playbook this one revises (optional). A revision is always a proposal that waits for the Owner; the old playbook is retired only on approval. An Owner-pinned playbook can only be revised this way.
+        supersedes_expected_version: 填写 supersedes 时必填：旧手册的当前版本号。缺失 → version_required，不匹配 → version_conflict，均零写入。 / Required with supersedes: the old playbook's current version. Missing -> version_required; mismatch -> version_conflict; both write nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="add_playbook")
@@ -622,15 +637,22 @@ async def add_playbook(
         playbook["project_folder"] = effective_project
     else:
         playbook["scope_type"] = "global"
+    if supersedes:
+        playbook["supersedes"] = supersedes
     S._attach_provenance(
         playbook, source_agent=source_agent, run_id=run_id,
         last_validated_at=last_validated_at,
     )
+    early = _supersede_refusal("playbook", playbook, supersedes_expected_version)
+    if early is not None:
+        S._track("add_playbook", success=False)
+        return S._json(early)
     if not _is_user_confirmed(user_confirmed):
         return _confirmation_required("playbook", _playbook_confirmation_title(playbook), playbook)
     try:
-        result = S._locked_engram_call(
-            S._get_engram().add_playbook, playbook, allow_similar_new=allow_similar_new
+        result = _guarded_add(
+            "playbook", playbook, supersedes_expected_version,
+            S._get_engram().add_playbook, playbook, allow_similar_new=allow_similar_new,
         )
         S._track("add_playbook", success=True)
     except Exception as exc:
@@ -644,11 +666,14 @@ async def add_playbook(
         return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_playbook"))
     if result.get("error") or result.get("status") in ("rejected_before", "duplicate_retired", "queue_full"):
         return S._json(result)
-    if S._gov_rt._strict_mode.approval_strict(S._get_engram().root):
-        return S._json({
+    if S._gov_rt._strict_mode.approval_strict(S._get_engram().root) or result.get("pending_supersedes"):
+        payload = {
             "status": "pending", "id": result.get("id"), "tier": result.get("tier", "staging"),
             "message": "Playbook proposal saved; it is used only after the Owner approves it.",
-        })
+        }
+        if result.get("pending_supersedes"):
+            payload["pending_supersedes"] = result.get("pending_supersedes")
+        return S._json(payload)
     tier = result.get("tier", "staging")
     return f"[Engram] Playbook 已记录 · tier={tier} · 可召回: {title} (triggers: {triggers})"
 
@@ -878,6 +903,9 @@ async def manage_playbook(
     For update, pass only the fields to change; version auto-increments.
     delete/restore default to dry_run=True preview and require confirm=True.
 
+    被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
+    An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
+
     Args:
         action: update | archive | delete | restore。
         playbook_id: 目标 Playbook ID。 / Target Playbook ID.
@@ -913,7 +941,7 @@ async def manage_playbook(
         if action == "update" and status:
             return _strict.refuse(S._get_engram().root, tool="manage_playbook", detail="field: status")
 
-    def _version_refusal() -> dict | None:
+    def _version_refusal(*, proposal: bool = False) -> dict | None:
         writes = action in ("update", "archive") or (
             action in ("delete", "restore") and not dry_run and confirm
         )
@@ -922,7 +950,11 @@ async def manage_playbook(
         example = {"action": action, "playbook_id": playbook_id, "expected_version": None}
         if action in ("delete", "restore"):
             example.update(dry_run=False, confirm=True)
-        return S._get_engram().mcp_existing_write_guard(playbook_id, expected_version, example=example)
+        # A strict update is a proposal (a new pending row): allowed for a
+        # pinned playbook too. Every direct change of a pinned one is refused.
+        return S._get_engram().mcp_existing_write_guard(
+            playbook_id, expected_version, example=example, allow_pinned=proposal,
+        )
 
     def _guarded(call, *args, **kwargs):
         def _run():
@@ -970,7 +1002,7 @@ async def manage_playbook(
         if not updates:
             return "未提供任何更新字段。 / No update fields provided."
         if _strict.approval_strict(S._get_engram().root):
-            refusal = S._locked_engram_call(_version_refusal)
+            refusal = S._locked_engram_call(lambda: _version_refusal(proposal=True))
             if refusal is not None:
                 return S._json(refusal)
             return _playbook_update_proposal(playbook_id, updates)

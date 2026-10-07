@@ -409,6 +409,8 @@ def _print_review_item(item_type: str, item: dict) -> None:
     print(f"id: {item.get('id', '')}")
     print(f"tier: {item.get('tier', '')}")
     print(f"status: {item.get('status', '')}")
+    if item.get("pinned") is True:
+        print(f"pinned: yes (since {item.get('pinned_at') or '?'})")
     if item.get("domain"):
         print(f"domain: {item.get('domain')}")
     if item_type == "decision":
@@ -958,6 +960,119 @@ def run_anchors(argv: list[str] | None = None) -> int:
             f"skipped_legacy={result.get('skipped_legacy', 0)}"
         )
     return 1 if missing_project else 0
+
+
+def _print_pin_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram pin <id> [--kind lesson|decision|playbook] [--json]\n"
+        "  engram pin --list [--json]\n"
+        "  engram unpin <id> [--kind lesson|decision|playbook] [--json]\n\n"
+        "A pinned entry is kept out of automatic archiving, capacity moves and import\n"
+        "overwrites and is shown first in recall. Only trusted entries can be pinned;\n"
+        "agents cannot change a pinned entry over MCP, they can only propose a revision.\n"
+    )
+
+
+_PIN_KINDS = ("lesson", "decision", "playbook")
+
+
+def _parse_pin_args(args: list[str]) -> tuple[str, str, bool, str]:
+    """(item id, kind, --json, usage error)."""
+    item_id = ""
+    kind = ""
+    json_output = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--json":
+            json_output = True
+        elif arg == "--kind":
+            if i + 1 >= len(args):
+                return "", "", json_output, "--kind requires lesson|decision|playbook"
+            kind = args[i + 1].strip().lower()
+            if kind not in _PIN_KINDS:
+                return "", "", json_output, "--kind must be lesson, decision or playbook"
+            i += 1
+        elif arg.startswith("--"):
+            return "", "", json_output, f"Unknown option: {arg}"
+        elif not item_id:
+            item_id = arg.strip()
+        else:
+            return "", "", json_output, f"Unexpected argument: {arg}"
+        i += 1
+    return item_id, kind, json_output, ""
+
+
+def _print_pin_result(result: dict, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif result.get("error"):
+        print(f"ERROR: {result.get('message') or result['error']}")
+    else:
+        status = result.get("status", "")
+        label = {
+            "pinned": "Pinned",
+            "already_pinned": "Already pinned",
+            "unpinned": "Unpinned",
+            "not_pinned": "Not pinned",
+        }.get(status, status)
+        print(f"{label}: {result.get('kind', '')} {result.get('id', '')}")
+    return 1 if result.get("error") else 0
+
+
+def run_pin(argv: list[str] | None = None) -> int:
+    """Owner-only: pin a trusted entry, or list pinned entries (``--list``)."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_pin_usage()
+        return 0
+    from piia_engram import pinning
+    from piia_engram.core import Engram
+
+    if "--list" in args:
+        json_output = "--json" in args
+        rest = [a for a in args if a not in ("--list", "--json")]
+        if rest:
+            _print_pin_usage()
+            return 2
+        items = pinning.list_pinned(Engram(read_only=True))
+        if json_output:
+            print(json.dumps({"pinned": items, "count": len(items)}, ensure_ascii=False, indent=2))
+        elif not items:
+            print("No pinned entries.")
+        else:
+            for item in items:
+                note = "" if item["state"] == "trusted" else f"  ({item['state']})"
+                print(f"{item['kind']:<9} {item['id']}  v{item['version']}  pinned {item['pinned_at']}{note}")
+        return 0
+    item_id, kind, json_output, error = _parse_pin_args(args)
+    if error or not item_id:
+        if error:
+            print(error)
+        _print_pin_usage()
+        return 2
+    return _print_pin_result(pinning.pin(Engram(), item_id, kind or None), json_output)
+
+
+def run_unpin(argv: list[str] | None = None) -> int:
+    """Owner-only: remove the pin from an entry."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_pin_usage()
+        return 0
+    item_id, kind, json_output, error = _parse_pin_args(args)
+    if error or not item_id:
+        if error:
+            print(error)
+        _print_pin_usage()
+        return 2
+    from piia_engram import pinning
+    from piia_engram.core import Engram
+
+    return _print_pin_result(pinning.unpin(Engram(), item_id, kind or None), json_output)
 
 
 def _render_first_value_funnel(events: list) -> str:

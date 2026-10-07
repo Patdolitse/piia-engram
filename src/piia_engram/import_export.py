@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from . import capacity as _capacity
+from . import pinning as _pinning
 from . import write_provenance as _write_provenance
 from .decision_thread import validate_edges
 from .governance_store import RelationStore, ResolutionStore
@@ -426,13 +427,61 @@ class ImportExportMixin:
                 "conflicts": conflict_count,
             }
 
-        return {
+        plan = {
             "status": "preview",
             "mode": "merge" if merge else "overwrite",
             "dry_run": True,
             "summary": summary,
             "conflicts": conflicts,
             "source": _metadata_source(input_path),
+        }
+        pinned = self._pinned_import_report(knowledge if isinstance(knowledge, dict) else {}, merge=merge)
+        if pinned is not None:
+            plan["pinned"] = pinned
+        return plan
+
+    def _pinned_import_report(self, knowledge: dict, *, merge: bool) -> dict | None:
+        """Owner-pinned local entries this import leaves as they are (ids only), or None.
+
+        Merge: pinned entries that an incoming entry matches (same id or same
+        identity text / title); they are skipped. Replace: every pinned lesson
+        and decision (a replace keeps them), plus matched pinned playbooks
+        (playbooks are only ever added).
+        """
+        protected: dict[str, list[str]] = {}
+        for section, kind, key_field in (("lessons", "lesson", "summary"), ("decisions", "decision", "question")):
+            incoming = knowledge.get(section)
+            if not isinstance(incoming, list) or not incoming:
+                continue  # the import does not touch this section
+            filename = "lessons.json" if kind == "lesson" else "decisions.json"
+            local = [r for r in self._read_entries(self._knowledge_dir / filename, kind, migrate=False)
+                     if _pinning.is_pinned(r)]
+            if merge:
+                ids = {str(r.get("id") or "") for r in incoming if isinstance(r, dict)}
+                keys = {str(r.get(key_field) or "") for r in incoming if isinstance(r, dict)}
+                local = [r for r in local
+                         if str(r.get("id") or "") in ids or str(r.get(key_field) or "") in keys]
+            if local:
+                protected[section] = sorted(str(r.get("id") or "") for r in local)
+        incoming_pbs = knowledge.get("playbooks")
+        if isinstance(incoming_pbs, list) and incoming_pbs:
+            ids = {str(p.get("id") or "") for p in incoming_pbs if isinstance(p, dict)}
+            titles = {str(p.get("title") or "") for p in incoming_pbs if isinstance(p, dict)}
+            local_pbs = [p for p in self._export_playbooks() if _pinning.is_pinned(p)
+                         and (str(p.get("id") or "") in ids or str(p.get("title") or "") in titles)]
+            if local_pbs:
+                protected["playbooks"] = sorted(str(p.get("id") or "") for p in local_pbs)
+        if not protected:
+            return None
+        count = sum(len(v) for v in protected.values())
+        return {
+            "protected": protected,
+            "count": count,
+            "warning": (
+                f"{count} pinned entr{'y' if count == 1 else 'ies'} kept as they are: an import never "
+                "overwrites, replaces or archives a pinned entry. Unpin first (engram unpin <id>) to let "
+                "the backup's version in."
+            ),
         }
 
     @staticmethod
@@ -493,6 +542,8 @@ class ImportExportMixin:
             if not isinstance(row, dict):
                 continue
             item = deepcopy(row)
+            # A pin is the Owner's local decision: an import never brings one in.
+            _pinning.strip(item)
             if not item.get("id"):
                 extra = item.get("choice") if kind == "decision" else item.get("domain")
                 seed = f"import:{kind}:{self._entry_identity_text(item, kind)}\n{extra or ''}"
@@ -568,6 +619,10 @@ class ImportExportMixin:
         existing = next((r for r in rows if str(r.get("id") or "") == existing_id), None)
         if existing is None:
             item.update(outcome="skipped", reason="existing_not_found")
+            return
+        if _pinning.is_pinned(existing):
+            # An import never replaces an Owner-pinned entry.
+            item.update(outcome="skipped", reason="pinned")
             return
         if existing.get("status") != "active":
             src = next(
@@ -660,19 +715,25 @@ class ImportExportMixin:
 
         def _mutate(current: list[dict]) -> list[dict]:
             stats["added"] = 0
+            # Owner-pinned local rows are kept as they are in both modes.
+            pinned_local = [row for row in current if _pinning.is_pinned(row)]
+            pinned_ids = {str(row.get("id") or "") for row in pinned_local}
             if not merge:
-                wanted = {self._import_digest(row, kind) for row in incoming}
+                kept_in = [row for row in incoming if str(row.get("id") or "") not in pinned_ids]
+                wanted = {self._import_digest(row, kind) for row in kept_in + pinned_local}
                 wanted_ids = {key[0] for key in wanted}
                 for local in current:
+                    if str(local.get("id") or "") in pinned_ids:
+                        continue
                     key = self._import_digest(local, kind)
                     if key not in wanted and key[0] in wanted_ids:
                         ctx.extra_archive.append((local, _capacity.REASON_IMPORT_REPLACE))
-                stats["added"] = len(incoming)
-                return [deepcopy(row) for row in incoming]
+                stats["added"] = len(kept_in)
+                return [deepcopy(row) for row in pinned_local] + [deepcopy(row) for row in kept_in]
             seen = {self._import_identity_key(row, kind) for row in current} | archive_keys
             for row in incoming:
                 key = self._import_identity_key(row, kind)
-                if key in seen:
+                if key in seen or str(row.get("id") or "") in pinned_ids:
                     continue
                 current.append(deepcopy(row))
                 seen.add(key)
@@ -1212,13 +1273,18 @@ class ImportExportMixin:
                 _write_json(self._knowledge_dir / "domains.json", knowledge["domains"])
             imported.append("domains")
 
+        pinned_report = self._pinned_import_report(knowledge if isinstance(knowledge, dict) else {}, merge=merge)
         if knowledge.get("playbooks"):
             new_count = 0
             new_body_paths: list[Path] = []
             existing_index = self._read_playbook_index()
             existing_titles = {e.get("title", "") for e in existing_index}
+            pinned_pb_ids = {str(p.get("id") or "") for p in self._export_playbooks() if _pinning.is_pinned(p)}
             for pb in knowledge["playbooks"]:
+                if not isinstance(pb, dict) or str(pb.get("id") or "") in pinned_pb_ids:
+                    continue  # never written over an Owner-pinned playbook
                 if pb.get("title") not in existing_titles:
+                    pb = _pinning.strip(dict(pb))
                     pb = self._ensure_playbook_fields(pb)
                     body_path = self._playbooks_dir / f"{pb['id']}.json"
                     self._write_playbook_file(body_path, pb)
@@ -1306,4 +1372,6 @@ class ImportExportMixin:
         }
         if version_chain_materialization is not None:
             result["version_chain_materialization"] = version_chain_materialization
+        if pinned_report is not None:
+            result["pinned"] = pinned_report
         return result

@@ -130,6 +130,11 @@ def batch_review_staging(
                 items.append(_item(idx, item_id, action, "rejected_before", item_type=item_type))
                 counts["failed"] += 1
                 continue
+            if not owner_cli and _replaces_pinned(eng, item):
+                # Replacing an Owner-pinned entry is decided by the Owner's local review only.
+                items.append(_item(idx, item_id, action, "pinned_target", item_type=item_type))
+                counts["failed"] += 1
+                continue
 
         items.append(_item(idx, item_id, action, "planned", item_type=item_type))
         counts["planned"] += 1
@@ -201,6 +206,17 @@ def batch_review_staging(
         counts=counts,
         items=items,
     )
+
+
+def _replaces_pinned(eng, item: dict[str, Any]) -> bool:
+    """Whether approving ``item`` would supersede an entry the Owner pinned."""
+    from . import pinning as _pinning
+
+    target = str(item.get("pending_supersedes") or "")
+    if not target:
+        return False
+    _kind, row = _pinning.find(eng, target)
+    return _pinning.is_pinned(row)
 
 
 def _expected_version(row: dict[str, Any]) -> int | None:

@@ -177,6 +177,20 @@
           "required": false,
           "default": false,
           "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes_expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
+          "kind": "positional_or_keyword"
         }
       ],
       "returns": "str"
@@ -307,6 +321,20 @@
           "annotation": "bool",
           "required": false,
           "default": false,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes_expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
           "kind": "positional_or_keyword"
         }
       ],

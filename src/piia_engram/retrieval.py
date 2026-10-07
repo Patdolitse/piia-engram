@@ -1006,14 +1006,16 @@ class RetrievalMixin:
                     view = dict(item)
                     view["_score"] = round(score, 3)
                     out.append(view)
-            out.sort(key=lambda v: v["_score"], reverse=True)
+            # A pin decides only between equally relevant results.
+            out.sort(key=lambda v: (v["_score"], _recall_policy.is_pinned(v)), reverse=True)
             return out[:limit]
 
         by_id = {str(item["id"]): item for item, _ in scored if item.get("id")}
         kw_score = {str(item["id"]): s for item, s in scored if item.get("id")}
         cand_ids = set(by_id)
+        pinned_ids = {eid for eid, item in by_id.items() if _recall_policy.is_pinned(item)}
         kw_rank = [
-            eid for eid, _ in sorted(kw_score.items(), key=lambda kv: kv[1], reverse=True)
+            eid for eid, _ in sorted(kw_score.items(), key=lambda kv: (kv[1], kv[0] in pinned_ids), reverse=True)
             if kw_score[eid] > 0
         ]
         fts_rank = [i for i in hybrid_idx.fts_search(query, limit=max(limit, 50)) if i in cand_ids]
@@ -1034,7 +1036,7 @@ class RetrievalMixin:
         # pin the keyword keepers first, then fill remaining slots by RRF.
         kw_keep = [eid for eid in kw_rank if kw_score[eid] >= SEARCH_RELEVANCE_THRESHOLD][:limit]
         selected = list(dict.fromkeys(kw_keep + fused_order))[:limit]
-        selected.sort(key=lambda eid: rrf_by_id.get(eid, 0.0), reverse=True)
+        selected.sort(key=lambda eid: (rrf_by_id.get(eid, 0.0), eid in pinned_ids), reverse=True)
 
         out = []
         for eid in selected:
@@ -1108,11 +1110,19 @@ class RetrievalMixin:
         # 通用领域（总是相关）
         universal_domains = {"产品策略", "架构"}
 
+        # Owner-pinned lessons take the first slots (newest first); the
+        # remaining slots follow the bucket split below.
+        pinned = [lesson for lesson in reversed(all_lessons) if _recall_policy.is_pinned(lesson)][:limit]
+        pinned_ids = {id(lesson) for lesson in pinned}
+        slots = limit - len(pinned)
+
         # 分桶：相关领域 / 通用 / 其他（支持多标签 domain）
         relevant = []
         universal = []
         other = []
         for lesson in reversed(all_lessons):  # 最新的在前
+            if id(lesson) in pinned_ids:
+                continue
             lesson_domains = {d.strip() for d in (lesson.get("domain") or "").split(",") if d.strip()}
             if lesson_domains & relevant_domains:
                 relevant.append(lesson)
@@ -1123,11 +1133,12 @@ class RetrievalMixin:
 
         # 按比例分配: 相关领域占 60%, 通用 30%, 其他 10%
         # 空桶的 slots 回收给非空桶，避免大量浪费
-        n_relevant = min(len(relevant), max(1, int(limit * 0.6)))
-        n_universal = min(len(universal), max(1, int(limit * 0.3)))
-        n_other = limit - n_relevant - n_universal
-
-        result = (relevant[:n_relevant] + universal[:n_universal] + other[:n_other])[:limit]
+        result = list(pinned)
+        if slots > 0:
+            n_relevant = min(len(relevant), max(1, int(slots * 0.6)))
+            n_universal = min(len(universal), max(1, int(slots * 0.3)))
+            n_other = slots - n_relevant - n_universal
+            result += (relevant[:n_relevant] + universal[:n_universal] + other[:n_other])[:slots]
         if _update_access and result:
             self._record_lesson_reads(result)
         # Display-only result (never written back); ensure no leaked ciphertext

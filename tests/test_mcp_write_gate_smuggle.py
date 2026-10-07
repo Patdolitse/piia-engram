@@ -472,6 +472,8 @@ def test_untrusted_trust_fields_contract() -> None:
         "rejected_at",
         "approval_reason",
         "pending_supersedes",
+        "pinned",
+        "pinned_at",
         "snapshot_of",
         "overflow_archived_at",
         "overflow_archive_reason",

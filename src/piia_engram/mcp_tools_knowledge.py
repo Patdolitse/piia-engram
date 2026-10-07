@@ -145,6 +145,9 @@ async def update_knowledge(
     必填 expected_version：先读取条目（get_lessons / get_decisions / search_knowledge / get_playbooks 的结果都带 version），再把该值传入。缺失返回 version_required（附当前版本与示例），过期返回 version_conflict，两者都零写入。
     Required expected_version: read the entry first (results of get_lessons / get_decisions / search_knowledge / get_playbooks carry version) and pass that value. Missing -> version_required (with the current version and an example); stale -> version_conflict; both write nothing.
 
+    被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
+    An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
+
     注意：如果只是确认某条知识仍有效，用 review_staging(action="review_item")；如果要归档，用 archive_knowledge。
     Note: If you only need to confirm an item is still valid, use review_staging(action="review_item"); to archive, use archive_knowledge.
 
@@ -220,8 +223,8 @@ async def archive_knowledge(item_id: str, expected_version: int | None = None) -
     用途：某条知识已经过时但不应删除时调用。
     Purpose: Call when a knowledge item is outdated but should be preserved rather than deleted.
 
-    注意：如果只是内容重复需要合并，用 merge_knowledge。
-    Note: If the item is a duplicate that should be merged, use merge_knowledge.
+    注意：如果只是内容重复需要合并，用 merge_knowledge。被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
+    Note: If the item is a duplicate that should be merged, use merge_knowledge. An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
 
     Args:
         item_id: 要归档的条目 ID。 / ID of the item to archive.
@@ -243,7 +246,7 @@ async def archive_knowledge(item_id: str, expected_version: int | None = None) -
         return eng.archive_knowledge(item_id, expected_version=expected_version)
 
     result = S._locked_engram_call(_guarded)
-    if isinstance(result, dict) and result.get("error") in ("version_required", "version_conflict"):
+    if isinstance(result, dict) and result.get("error") in ("version_required", "version_conflict", "pinned_entry"):
         return S._json(result)
     S._beta("knowledge_rejected", action="archive")
     # Returns the full stored item (delegates to update_*) — same read-back
@@ -596,6 +599,9 @@ async def merge_knowledge(
     注意：主条目的内容会保留，次要条目的关联关系会转移后归档。两个条目都会被改动，因此两个版本号都必填。
     Note: The primary item's content is preserved; related links from the secondary item are transferred before it is archived. Both entries change, so both versions are required.
 
+    被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
+    An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
+
     Args:
         primary_id: 要保留的主条目 ID。 / ID of the primary item to keep.
         secondary_id: 要合并并归档的次要条目 ID。 / ID of the secondary item to merge and archive.
@@ -628,7 +634,7 @@ async def merge_knowledge(
         )
 
     result = S._locked_engram_call(_guarded)
-    if isinstance(result, dict) and result.get("error") in ("version_required", "version_conflict"):
+    if isinstance(result, dict) and result.get("error") in ("version_required", "version_conflict", "pinned_entry"):
         return S._json(result)
     result = S._gov_rt.maybe_govern_write_ack(eng.root, result, tool="merge_knowledge")
     return S._json(result)

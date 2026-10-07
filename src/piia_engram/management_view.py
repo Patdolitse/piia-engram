@@ -35,6 +35,7 @@ PLAYBOOK_ITEM_KEYS = frozenset(
         "project_count",
         "needs_scope_review",
         "version",
+        "pinned",
         "created_at",
         "last_updated",
     }
@@ -165,6 +166,7 @@ def _playbook_entry(item: dict[str, Any]) -> dict[str, Any]:
         "project_count": project_count,
         "needs_scope_review": str(item.get("scope_review_status") or "") == "unresolved",
         "version": int(item.get("version") or 1),
+        "pinned": item.get("pinned") is True,
         "created_at": str(item.get("created_at") or ""),
         "last_updated": str(item.get("last_updated") or item.get("last_reviewed") or ""),
     }, PLAYBOOK_ITEM_KEYS)
@@ -434,13 +436,15 @@ def render_management_text(view: dict[str, Any]) -> str:
     review = view.get("review_queue") or {}
     playbooks = view.get("playbooks") or {}
     continuity = view.get("continuity") or {}
+    pinned = sum(1 for item in playbooks.get("items") or [] if isinstance(item, dict) and item.get("pinned"))
     lines = [
         "Engram management view",
         f"  Review queue: {review.get('pending_count', 0)} pending "
         f"({review.get('low_quality_count', 0)} low/missing quality)",
         f"  Playbooks: {playbooks.get('active_count', 0)} active, "
         f"{playbooks.get('archived_count', 0)} archived, "
-        f"{playbooks.get('deleted_count', 0)} deleted",
+        f"{playbooks.get('deleted_count', 0)} deleted"
+        + (f", {pinned} pinned" if pinned else ""),
         f"  Scope review: {playbooks.get('scope_review_pending_count', 0)} pending",
         f"  Continuity readiness: {continuity.get('readiness_level', 'not_ready')}",
     ]

@@ -739,3 +739,95 @@ def test_superseded_playbooks_do_not_crowd_trusted_ones_out_of_get_recall(tmp_pa
     sources = recall_service.gather_recall_sources(eng, include_playbooks=True)
     assert [pb["id"] for pb in sources["playbooks"]] == ["pb-keeper"]
     assert sources["collapsed_count"] == 5  # the five superseded ones are still counted
+
+
+
+# ---------------------------------------------------------------------------
+# pinned dimension: a pin orders trusted rows first and never makes a row eligible
+# ---------------------------------------------------------------------------
+
+PINNED_TRUSTED = {"l-guarded": L_GUARDED, "d-new": D_NEW, "pb-approved": P_APPROVED}
+PINNED_INELIGIBLE = {"l-pending": L_PENDING, "d-old": D_OLD, "l-archived": L_ARCHIVED}
+
+
+def _pin_rows(root: Path) -> None:
+    """Pin a trusted row of each kind that is NOT first without the pin, plus rows that are not trusted."""
+    wanted = set(PINNED_TRUSTED) | set(PINNED_INELIGIBLE)
+    for name in ("lessons.json", "decisions.json"):
+        path = root / "knowledge" / name
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        for row in rows:
+            if row["id"] in wanted:
+                row["pinned"] = True
+                row["pinned_at"] = "2026-10-01T00:00:00Z"
+        raw_write_json(path, rows)
+    path = root / "playbooks" / "pb-approved.json"
+    pb = json.loads(path.read_text(encoding="utf-8"))
+    pb["pinned"] = True
+    pb["pinned_at"] = "2026-10-01T00:00:00Z"
+    _write_json(path, pb)
+
+
+@pytest.fixture(params=MODES)
+def pinned_env(request, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "engram"
+    project = tmp_path / PROJECT_DIR
+    project.mkdir()
+    _seed(root, project)
+    _pin_rows(root)
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    monkeypatch.setenv("ENGRAM_RECONCILE", "0")
+    monkeypatch.delenv("ENGRAM_GOVERNANCE", raising=False)
+    monkeypatch.delenv("CURSOR_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "claude_code")
+    if request.param == "strict":
+        monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    else:
+        monkeypatch.delenv("ENGRAM_APPROVAL", raising=False)
+    import piia_engram.mcp_server as m
+
+    eng = Engram(root)
+    monkeypatch.setattr(m, "_engram", eng)
+    monkeypatch.setattr(m, "_session", m._SessionTracker())
+    return m, eng, root, tmp_path
+
+
+@pytest.mark.parametrize("entry", sorted(AUTO_ENTRIES))
+def test_pinned_rows_keep_their_eligibility_in_every_entry(pinned_env, entry):
+    m, eng, root, tmp_path = pinned_env
+    text = AUTO_ENTRIES[entry](m, eng, tmp_path)
+    assert tokens(text) == EXPECTED[entry], entry
+
+
+@pytest.mark.parametrize("entry", sorted(HOOKS))
+def test_pinned_rows_keep_their_eligibility_in_hooks(pinned_env, entry, monkeypatch, capsys):
+    m, eng, root, tmp_path = pinned_env
+    text = HOOKS[entry](m, eng, tmp_path, monkeypatch=monkeypatch, capsys=capsys)
+    assert tokens(text) == EXPECTED[entry], entry
+    lessons = _section_items(text, "Recent verified lessons")
+    assert L_GUARDED in lessons[0]  # the oldest trusted lesson is pinned: listed first
+
+
+def test_pinned_rows_come_first_in_the_brief_and_cold_start(pinned_env):
+    m, eng, root, tmp_path = pinned_env
+    brief = json.loads(_resume_brief(m, eng, tmp_path))["markdown"]
+    assert L_GUARDED in _section_items(brief, "Recent verified lessons")[0]
+    assert D_NEW in _section_items(brief, "Recent verified decisions")[0]
+    context = _user_context(m, eng, tmp_path)
+    assert context.index(D_NEW) < context.index(D_APPROVED)  # cold start lists the oldest first otherwise
+    assert context.index(P_APPROVED) < context.index(P_NEW)
+
+
+def test_pinned_relevant_lessons_come_first(pinned_env):
+    m, eng, root, tmp_path = pinned_env
+    data = json.loads(_relevant(m, eng, tmp_path))
+    assert data["items"][0]["id"] == "l-guarded"
+
+
+def test_search_with_pins_keeps_the_groups(pinned_env):
+    m, eng, root, tmp_path = pinned_env
+    data = json.loads(_run(m.search_knowledge(query=TOPIC)))
+    assert _toks(data["lessons"]) == TRUSTED_LESSONS
+    assert _toks(data["decisions"]) == TRUSTED_DECISIONS
+    assert _toks(data["pending"]["lessons"]) == PENDING_LESSONS
+    assert not tokens(json.dumps(data, ensure_ascii=False)) & (ARCHIVED_ALL | SUPERSEDED_ALL)

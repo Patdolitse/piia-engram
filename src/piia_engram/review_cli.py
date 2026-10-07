@@ -202,11 +202,15 @@ def _card(n: int, kind: str, row: dict, eng, lookup: dict[str, dict] | None = No
         f"- version: {_row_version(row)}",
         f"- claim: {claim}",
     ]
+    if row.get("pinned") is True:
+        lines.append(f"- pinned: yes (since {row.get('pinned_at') or '?'})")
     if detail:
         lines.append(f"- why / detail: {detail[:_DETAIL_CAP]}")
     if row.get("pending_supersedes"):
         target = _dedup_review.safe_id(row.get("pending_supersedes")) or "(malformed id)"
         lines.append(f"- relation: SUPERSEDES {target} (proposed; checked again on approval)")
+        if _target_is_pinned(eng, row.get("pending_supersedes")):
+            lines.append("- note: the target is a PINNED entry; approving this replaces it and removes the pin")
     if kind == "playbook":
         triggers = row.get("triggers") or []
         lines.append(f"- triggers: {', '.join(str(t) for t in triggers[:3])}")
@@ -219,6 +223,15 @@ def _card(n: int, kind: str, row: dict, eng, lookup: dict[str, dict] | None = No
     lines.append(_write_provenance.client_card_line(row))
     lines.append("")
     return lines
+
+
+def _target_is_pinned(eng, target_id: Any) -> bool:
+    if not isinstance(target_id, str) or not target_id:
+        return False
+    from . import pinning as _pinning
+
+    _kind, row = _pinning.find(eng, target_id)
+    return _pinning.is_pinned(row)
 
 
 def _sort_key(item: tuple[str, dict]) -> tuple:

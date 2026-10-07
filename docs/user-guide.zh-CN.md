@@ -179,6 +179,25 @@ AI 拿到什么，各个入口规则一致：
   `Omitted 3 items (budget): lessons, decisions`（接续简报与钩子）。
   `engram preview` 会显示被裁掉条目的摘要。
 
+### 钉住必须保留的条目
+
+`engram pin <id>` 钉住一条已审核的 lesson、decision 或 playbook（id 有歧义时用
+`--kind` 指定类型；`engram pin --list` 列出已钉住的条目；`engram unpin <id>` 解钉）。
+钉住的意思是"保留并优先展示"，不是"永远正确"：
+
+- 只有本地命令能钉住或解钉，且只能钉住已审核、当前有效的条目（待审、已归档、
+  已被取代的会被拒绝并说明原因）。钉住会记入审计日志，条目版本号不变。
+- 钉住的条目不受生命周期归档、容量规则和导入影响：合并导入跳过它，替换导入保留它，
+  两者都在预览和结果里列出。备份导入永远不会带入钉住状态。
+- 经 MCP 不能修改、归档、合并或删除钉住的条目：工具返回 `pinned_entry`，不写入任何内容。
+  AI 仍可用 `add_lesson` / `add_decision` / `add_playbook` 加 `supersedes=<id>`
+  （以及 `supersedes_expected_version`）提交修订提案；无论哪种审批模式，这类提案都
+  进入待审，审核卡会提示目标是钉住条目。你批准后旧条目被取代并自动解钉（记入审计）。
+  你自己归档它也会解钉。
+- AI 拿到的上下文里，钉住的条目在各自分组（lessons、decisions、playbooks）内排在最前，
+  条数上限或预算裁剪时先舍弃未钉住的条目。`search_knowledge` 里钉住只在相关度相同时
+  决定先后，不会出现在无关的搜索结果里。`engram preview` 会标出钉住的条目。
+
 每条记录都带生命周期元数据（`memory_state`、`approval_status`、
 `risk_level`/`risk_flags`、`provenance`、`approval_required`），状态始终可见。
 完整细节以及可选的按调用方治理层（`ENGRAM_GOVERNANCE=1`，默认关）见

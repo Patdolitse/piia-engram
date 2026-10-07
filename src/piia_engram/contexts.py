@@ -1193,7 +1193,7 @@ class ContextStoreMixin:
                 )
         except Exception:
             lessons = []
-        for lesson in reversed(lessons):
+        for lesson in _recall_policy.pinned_first(reversed(lessons)):
             if not isinstance(lesson, dict) or lesson.get("status") != "active":
                 continue
             if _context_entry_is_soft_archived(lesson):
@@ -1265,7 +1265,7 @@ class ContextStoreMixin:
                 )
         except Exception:
             decisions = []
-        for decision in reversed(decisions):
+        for decision in _recall_policy.pinned_first(reversed(decisions)):
             if not isinstance(decision, dict) or decision.get("status") != "active":
                 continue
             if _context_entry_is_soft_archived(decision):
@@ -2085,7 +2085,8 @@ class ContextStoreMixin:
                 )
                 if lessons:
                     parts = ["## Recent verified lessons"]
-                    for L in reversed(lessons):
+                    # Owner-pinned lessons first (stable), then the newest.
+                    for L in _recall_policy.pinned_first(reversed(lessons)):
                         if L.get("status") != "active":
                             continue
                         if project_folder and not _context_entry_visible_for_project(
@@ -2133,7 +2134,7 @@ class ContextStoreMixin:
                 )
                 if decs:
                     parts = ["## Recent verified decisions"]
-                    for D in reversed(decs):
+                    for D in _recall_policy.pinned_first(reversed(decs)):
                         if D.get("status") != "active":
                             continue
                         if project_folder and not _context_entry_visible_for_project(

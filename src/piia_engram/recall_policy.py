@@ -31,6 +31,10 @@ A cycle of ``supersedes`` edges is not a version order. Edges inside a cycle
 are ignored, so its members keep their own state; the caller logs one audit
 warning (see ``Engram._recall_supersede_index``).
 
+Pins: inside one group a trusted row the Owner pinned comes first (input order
+kept within the pinned and unpinned parts; :func:`pinned_first`), so a fixed cap
+or a budget cut drops unpinned rows first. A pin never makes a row eligible.
+
 Budget omissions are reported as ``{omitted_count, ids, sections, reason}``
 with no content of the dropped rows. Pure module: stdlib only, no store access.
 """
@@ -243,6 +247,34 @@ def is_trusted(row: Mapping[str, Any]) -> bool:
     if not isinstance(row, Mapping) or _is_version_snapshot(row):
         return False
     return _review_state(row).state == TRUSTED
+
+
+def is_pinned(row: Mapping[str, Any]) -> bool:
+    """An Owner pin that counts: ``pinned is True`` on a row whose own labels are trusted."""
+    return isinstance(row, Mapping) and row.get("pinned") is True and is_trusted(row)
+
+
+def pinned_first(rows: Iterable[Any]) -> list:
+    """Pinned trusted rows first, then the rest; each part keeps its input order.
+
+    The ordering rule every recall surface applies inside one group (lessons,
+    decisions, playbooks) before a fixed cap or a budget cut, so a cut drops
+    unpinned rows first. It never adds a row and never changes eligibility.
+    """
+    items = list(rows or ())
+    pinned = [row for row in items if is_pinned(row)]
+    if not pinned:
+        return items
+    return pinned + [row for row in items if not is_pinned(row)]
+
+
+def pinned_last(rows: Iterable[Any]) -> list:
+    """Like :func:`pinned_first` for lists read from the end (the newest rows last)."""
+    items = list(rows or ())
+    pinned = [row for row in items if is_pinned(row)]
+    if not pinned:
+        return items
+    return [row for row in items if not is_pinned(row)] + pinned
 
 
 @dataclass

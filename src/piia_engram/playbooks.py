@@ -9,6 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from . import pinning as _pinning
+from . import recall_policy as _recall_policy
 from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
 from .storage import ReadOnlyStoreError
@@ -134,6 +136,7 @@ class PlaybookMixin:
             return None
 
         result_box: dict[str, dict | None] = {}
+        unpinned: list[str] = []
 
         def _locked(current: Any) -> dict:
             if not isinstance(current, dict):
@@ -146,10 +149,14 @@ class PlaybookMixin:
             updated = mutator(playbook)
             if updated is None:
                 updated = playbook
+            # A pin counts only on a trusted playbook (see pinning.py).
+            unpinned[:] = _pinning.clear_stale([updated])
             result_box["result"] = updated
             return self._playbook_for_storage(updated)
 
         _update_json(path, _locked, default={})
+        if unpinned:
+            _pinning.audit_auto_unpin(self, "playbook", unpinned, reason="no_longer_trusted")
         return result_box.get("result")
 
     @staticmethod
@@ -598,6 +605,7 @@ class PlaybookMixin:
         self._update_playbook_file_by_id(playbook_id, _approve)
         old_id = str(pb.get("pending_supersedes") or "")
         if old_id and self._read_playbook_by_id(old_id) is not None:
+            _pinning.auto_unpin(self, old_id, reason="superseded", by=playbook_id)
             self.archive_playbook(old_id)
         self._audit.log("write", "playbooks", detail=f"approved {playbook_id}")
         return {"status": "promoted", "id": playbook_id, "retired": old_id or None}
@@ -631,6 +639,13 @@ class PlaybookMixin:
         allow_internal_provenance = extra.pop("_allow_internal_provenance", False) is True
         update_of = str(extra.pop("_update_proposal_of", "") or "")
         new_pb = dict(playbook)
+        _pinning.strip(new_pb)
+        new_pb.pop("pending_supersedes", None)
+        # ``supersedes`` names the playbook this one revises: an update
+        # proposal that always waits for the Owner (approval retires the old one).
+        cited = str(new_pb.pop("supersedes", "") or "")
+        if cited and not update_of and self._read_playbook_by_id(cited) is not None:
+            update_of = cited
         if source_tool:
             new_pb["source_tool"] = source_tool
         for key, value in extra.items():
@@ -663,6 +678,13 @@ class PlaybookMixin:
             new_pb["approval_status"] = "pending"
         if update_of:
             new_pb["pending_supersedes"] = update_of
+            if new_pb.get("tier") != "staging":
+                # An update proposal is the Owner's decision in every approval mode.
+                for key in [k for k in new_pb if k.startswith(("promotion_", "promoted_"))]:
+                    new_pb.pop(key, None)
+                new_pb["status"] = "active"
+                new_pb["tier"] = "staging"
+                new_pb["approval_status"] = "pending"
 
         refusal = self._playbook_insert_guard(new_pb)
         if refusal is not None:
@@ -953,6 +975,8 @@ class PlaybookMixin:
             and self._playbook_visible_for_project(pb, project_folder)
         ]
         active.sort(key=lambda pb: pb.get("last_reviewed", ""), reverse=True)
+        # Owner-pinned playbooks first (stable), so a cap keeps them.
+        active = _recall_policy.pinned_first(active)
         result = active[:limit]
         for pb in result:
             pb["parameters"] = self._extract_parameters(pb)
@@ -1672,6 +1696,8 @@ class PlaybookMixin:
         refusal = self._reject_update_payload(current, updates)
         if refusal is not None:
             return refusal
+        if _pinning.mcp_refuses(current):
+            return _pinning.refusal(playbook_id, "playbook", current)
         current_version = int(current.get("version") or 1)
         if expected_version is not None and expected_version != current_version:
             return {
@@ -1712,6 +1738,9 @@ class PlaybookMixin:
                     "error": "snapshot_immutable",
                     "item_id": playbook_id,
                 }
+                return pb
+            if _pinning.mcp_refuses(pb):
+                outcome["error"] = _pinning.refusal(playbook_id, "playbook", pb)
                 return pb
             live_version = int(pb.get("version") or 1)
             if expected_version is not None and expected_version != live_version:
@@ -1814,6 +1843,7 @@ class PlaybookMixin:
             "last_reviewed": pb.get("last_reviewed", ""),
             "version": pb.get("version", 1),
             "deleted_at": pb.get("deleted_at", ""),
+            "pinned": _recall_policy.is_pinned(pb),
         }
 
     def list_playbooks_for_management(
@@ -1887,6 +1917,8 @@ class PlaybookMixin:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        if _pinning.mcp_refuses(pb):
+            return _pinning.refusal(playbook_id, "playbook", pb)
         stale = self._playbook_version_conflict(playbook_id, pb, expected_version)
         if stale is not None:
             return stale
@@ -1923,7 +1955,11 @@ class PlaybookMixin:
         pb["deletion_history"] = history
         pb["last_updated"] = now
         pb["version"] = pb.get("version", 1) + 1
+        was_pinned = _pinning.has_pin(pb)
+        _pinning.strip(pb)  # a deleted playbook keeps no pin, so a restore never brings one back
         self._write_playbook_and_index(pb)
+        if was_pinned:
+            _pinning.audit_auto_unpin(self, "playbook", [playbook_id], reason="no_longer_trusted")
         self._audit.log("write", "playbooks", detail=f"soft-deleted {playbook_id}")
         return {
             "dry_run": False,
@@ -1975,6 +2011,7 @@ class PlaybookMixin:
         pb["deletion_history"] = history
         pb["last_updated"] = now
         pb["version"] = pb.get("version", 1) + 1
+        _pinning.strip(pb)  # a restore never brings a pin back; the Owner pins again
         self._write_playbook_and_index(pb)
         self._audit.log("write", "playbooks", detail=f"restored {playbook_id}")
         return {

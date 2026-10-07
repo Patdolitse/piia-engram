@@ -233,6 +233,9 @@ def card(n: int, total: int, kind: str, row: dict, *, eng, lookup: dict[str, dic
         lines.append(t("提示：", "flags: ") + "; ".join(notes))
     lines.extend(_dedup_review.card_lines(kind, row, lookup.get(kind) or {}))
     lines.extend(_chain_lines(row, edges))
+    if _review_cli._target_is_pinned(eng, row.get("pending_supersedes")):
+        lines.append(t("  注意：取代目标是已钉住条目；批准后它被取代并自动解钉",
+                       "  note: the target is a pinned entry; approving replaces it and removes the pin"))
     if folded:
         lines.append(t("（长内容已折叠，输入 v 查看全文）", "(long text folded; v shows the full text)"))
     return lines, folded

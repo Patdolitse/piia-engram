@@ -3035,6 +3035,8 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     run_review,
     run_confirm,
     run_anchors,
+    run_pin,
+    run_unpin,
     run_onboard,
     run_onboard_accept,
     _run_telemetry_cli,
@@ -3273,6 +3275,10 @@ def main() -> None:
         sys.exit(run_confirm(args[1:]))
     elif args[0] == "anchors":
         sys.exit(run_anchors(args[1:]))
+    elif args[0] == "pin":
+        sys.exit(run_pin(args[1:]))
+    elif args[0] == "unpin":
+        sys.exit(run_unpin(args[1:]))
     elif args[0] == "onboard":
         sys.exit(run_onboard(args[1:]))
     elif args[0] == "onboard-accept":
@@ -3424,6 +3430,8 @@ def main() -> None:
             "  engram review archive <id> --yes  Archive review item\n"
             "  engram confirm <id> --by human|test|anchor  Owner-confirm freshness provenance\n"
             "  engram anchors check   Owner-run anchor revalidation for the current repo\n"
+            "  engram pin <id>         Pin a trusted entry: kept and shown first (--list, --kind)\n"
+            "  engram unpin <id>       Remove a pin\n"
             "  engram onboard [--root PATH]  Scan repo anchors -> staging candidate repo-facts\n"
             "  engram onboard-accept --all [--yes]  Verify & accept repo-fact candidate(s) (single: <id>)\n"
             "  engram playbook install <builtin-name> [--yes]\n"

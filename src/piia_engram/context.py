@@ -1605,7 +1605,12 @@ class ContextMixin:
         if _wants("decisions"):
             # trusted-only; superseded decisions (e.g. an older choice for the
             # same question) never take one of the six slots
-            decisions = _trusted(self.get_decisions(limit=None, _update_access=False))[-6:]
+            # Owner-pinned decisions first, then the newest; six in all.
+            trusted_decisions = _trusted(self.get_decisions(limit=None, _update_access=False))
+            pinned_decisions = [d for d in trusted_decisions if _recall_policy.is_pinned(d)][-6:]
+            other_decisions = [d for d in trusted_decisions if not _recall_policy.is_pinned(d)]
+            room = 6 - len(pinned_decisions)
+            decisions = pinned_decisions + (other_decisions[-room:] if room > 0 else [])
             if decisions:
                 dc: list[str] = ["\n## 已做的关键决策（请遵循）"]
                 for d in decisions:
@@ -1625,9 +1630,9 @@ class ContextMixin:
         # Recent playbooks
         if _wants("playbooks"):
             # fetch a wider window, filter, then keep the five most recent
-            recent_pbs = _trusted(
+            recent_pbs = _recall_policy.pinned_first(_trusted(
                 self.get_recent_playbooks(limit=50, project_folder=project_folder)
-            )[:5]
+            ))[:5]
             if recent_pbs:
                 pb_lines: list[str] = ["\n## 近期操作手册"]
                 for pb in recent_pbs:

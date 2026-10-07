@@ -80,12 +80,15 @@ def _knowledge_digest(item: dict[str, Any]) -> dict[str, Any]:
         or item.get("question")
         or "(no summary)"
     )
-    return {
+    digest = {
         "type": str(item.get("type") or item.get("_type") or _entry_type(item)),
         "tier": str(item.get("tier") or ""),
         "sensitivity": str(item.get("sensitivity") or DEFAULT_SENSITIVITY),
         "summary": str(label),
     }
+    if _recall_policy.is_pinned(item):
+        digest["pinned"] = True
+    return digest
 
 
 def _review_annotations(digest: dict[str, Any], item: dict[str, Any]) -> None:
@@ -189,6 +192,9 @@ def build_context_preview(
         for pb in (sources.get("playbooks") or [])
         if isinstance(pb, dict)
     ][:2]
+    for pointer, pb in zip(playbook_pointers, sources.get("playbooks") or []):
+        if isinstance(pb, dict) and _recall_policy.is_pinned(pb):
+            pointer["pinned"] = True
 
     # --- panel ②: split raw knowledge into exposed vs withheld -----------
     exposed_pre: list[dict[str, Any]] = []
@@ -367,6 +373,7 @@ _TIER_LABELS: dict[str, tuple[str, str]] = {
     "verified": ("已验证", "verified"),
     "staging": ("暂存", "staging"),
 }
+_PIN_LABEL: tuple[str, str] = ("已钉住", "pinned")
 # Identity field names: zh UI shows a human label, en keeps the raw key.
 # Unknown keys fall back to the raw name (never hidden, never invented).
 _FIELD_LABELS: dict[str, tuple[str, str]] = {
@@ -459,8 +466,9 @@ def render_context_preview_text(preview: dict[str, Any]) -> str:
     ))
     for item in knowledge.get("exposed", []):
         tier = f"/{_label(_TIER_LABELS, item['tier'])}" if item.get("tier") else ""
+        pin = f"/{t(*_PIN_LABEL)}" if item.get("pinned") else ""
         lines.append(
-            f"  - ({_label(_TYPE_LABELS, item.get('type'))}{tier}, "
+            f"  - ({_label(_TYPE_LABELS, item.get('type'))}{tier}{pin}, "
             f"{_label(_SENS_LABELS, item.get('sensitivity'))}) {item.get('summary')}"
         )
     withheld = knowledge.get("withheld", [])
@@ -745,7 +753,8 @@ def render_context_preview_html(preview: dict[str, Any]) -> str:
             rows.append(
                 "<tr>"
                 f"<td>{esc(_label(_TYPE_LABELS, item.get('type')))}</td>"
-                f"<td>{esc(_label(_TIER_LABELS, item.get('tier')) or '—')}</td>"
+                f"<td>{esc(_label(_TIER_LABELS, item.get('tier')) or '—')}"
+                f"{esc(' · ' + t(*_PIN_LABEL)) if item.get('pinned') else ''}</td>"
                 f"<td>{_sens_tag(item.get('sensitivity'))}</td>"
                 f"<td>{_summary_html(item.get('summary', ''))}</td>"
                 "</tr>"

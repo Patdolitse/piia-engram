@@ -9,6 +9,7 @@ from typing import Any
 
 from . import capacity as _capacity
 from . import freshness_anchors as _freshness_anchors
+from . import pinning as _pinning
 from . import provenance as _provenance
 from . import recall_policy as _recall_policy
 from . import version_guard as _version_guard
@@ -898,6 +899,11 @@ class KnowledgeOpsMixin:
             item_id = item.get("id")
             if not isinstance(item_id, str) or not item_id:
                 continue
+            if _pinning.mcp_refuses(item):
+                # An MCP caller never changes an Owner-pinned entry; the Owner's
+                # own `engram anchors check` still checks it.
+                report["pinned_skipped"] = report.get("pinned_skipped", 0) + 1
+                continue
 
             item_project_id = provenance.get("anchor_project_id")
             if not isinstance(item_project_id, str) or not item_project_id.strip():
@@ -1051,19 +1057,23 @@ class KnowledgeOpsMixin:
         *,
         example: dict,
         param: str = "expected_version",
+        allow_pinned: bool = False,
     ) -> dict | None:
         """The refusal for an MCP write to an existing entry, or None to go ahead.
 
-        ``version_required`` (no version given) or ``version_conflict`` (another
-        version is current). An id that is not a live lesson, decision or
-        playbook (unknown, a history snapshot, in the overflow archive) passes
-        through so the write itself reports it. Reads only.
+        ``pinned_entry`` (the Owner pinned it: only a revision proposal is
+        possible), else ``version_required`` (no version given) or
+        ``version_conflict`` (another version is current). An id that is not a
+        live lesson, decision or playbook (unknown, a history snapshot, in the
+        overflow archive) passes through so the write itself reports it. Reads only.
         """
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return None
         if self._is_snapshot_record(item):
             return None
+        if _pinning.is_pinned(item) and not allow_pinned:
+            return _pinning.refusal(item_id, item_type, item)
         return _version_guard.check(item_id, item, expected_version, example, param=param)
 
     def mcp_entry_version(self, item_id: str) -> int | None:
@@ -1370,6 +1380,9 @@ class KnowledgeOpsMixin:
             return {"error": f"Primary item is not active (status={primary.get('status')})"}
         if secondary.get("status") != "active":
             return {"error": f"Secondary item is not active (status={secondary.get('status')})"}
+        for item_id, item_type, row in ((primary_id, primary_type, primary), (secondary_id, secondary_type, secondary)):
+            if _pinning.mcp_refuses(row):
+                return _pinning.refusal(item_id, str(item_type), row)
         for item_id, row, expected, param in (
             (primary_id, primary, primary_expected_version, "primary_expected_version"),
             (secondary_id, secondary, secondary_expected_version, "secondary_expected_version"),

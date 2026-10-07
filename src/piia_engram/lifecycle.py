@@ -130,7 +130,7 @@ def score_entry(
         pass
 
     score = round(min(1.0, max(0.0, score)), 4)
-    return {
+    scored = {
         "id": entry.get("id", "") if isinstance(entry.get("id"), str) else "",
         "entry_type": _entry_type(entry),
         "decay_score": score,
@@ -140,6 +140,9 @@ def score_entry(
         "tier": tier,
         "reasons": reasons,
     }
+    if entry.get("pinned") is True:
+        scored["pinned"] = True  # an Owner pin: never an archive candidate
+    return scored
 
 
 def _proposal_for(scored: dict[str, Any]) -> str:
@@ -230,6 +233,8 @@ def select_archive_candidate_ids(
             continue
         if proposal.get("tier") in {"verified", "archived"}:
             continue
+        if proposal.get("pinned"):
+            continue  # an Owner-pinned entry is never archived by this path
         item_id = proposal.get("id")
         if not item_id:
             continue

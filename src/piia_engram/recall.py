@@ -96,6 +96,8 @@ def _project_playbook_item(
         trust = _project_trust(entry, freshness=view.get("freshness"), now=now)
         if trust:
             view["trust"] = trust
+    if _recall_policy.is_pinned(entry):
+        view["pinned"] = True
     return view
 
 
@@ -150,6 +152,8 @@ def _project_item(
         trust = _project_trust(entry, freshness=view.get("freshness"), now=now)
         if trust:
             view["trust"] = trust
+    if _recall_policy.is_pinned(entry):
+        view["pinned"] = True
     return view
 
 

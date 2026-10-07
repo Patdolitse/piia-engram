@@ -218,6 +218,32 @@ What your AI receives follows the same rule everywhere:
   `Omitted 3 items (budget): lessons, decisions` (resume brief and hooks). `engram preview` shows
   the trimmed items' summaries.
 
+### Pinning what must stay
+
+`engram pin <id>` pins a reviewed lesson, decision or playbook (`--kind` picks
+the type when an id is ambiguous; `engram pin --list` lists pins;
+`engram unpin <id>` removes one). A pin means "keep this and show it first", not
+"this is always right":
+
+- Only the local command sets or clears a pin, and only a reviewed, current
+  entry can be pinned (a pending, archived or replaced one is refused with the
+  reason). The pin is recorded in the audit log; the entry's version does not change.
+- A pinned entry is left alone by the lifecycle archive, the capacity rules and
+  imports: a merge import skips it, a replace import keeps it, and both list it
+  in the preview and the result. A backup never brings a pin in.
+- Over MCP a pinned entry cannot be edited, archived, merged or deleted: the
+  tool answers `pinned_entry` and writes nothing. An AI can still propose a
+  revision with `add_lesson` / `add_decision` / `add_playbook` and
+  `supersedes=<id>` (plus `supersedes_expected_version`); that proposal always
+  waits for your review, in every approval mode, and the review card says the
+  target is pinned. When you approve it, the old entry is replaced and its pin
+  is removed (audited). Archiving it yourself also removes the pin.
+- In what your AI receives, pinned entries come first within their section
+  (lessons, decisions, playbooks), so a cap or a budget cut drops unpinned
+  entries first. In `search_knowledge` a pin only decides between equally
+  relevant results, so it never shows up for an unrelated query. `engram preview`
+  marks pinned entries.
+
 Each entry carries lifecycle metadata (`memory_state`, `approval_status`,
 `risk_level`/`risk_flags`, `provenance`, `approval_required`) so the state is
 always visible. Full detail and the optional per-caller governance layer

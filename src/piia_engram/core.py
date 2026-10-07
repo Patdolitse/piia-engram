@@ -23,6 +23,7 @@ from . import provenance as _provenance
 from . import recall_policy as _recall_policy
 from . import write_provenance as _write_provenance
 from . import dedup_review as _dedup_review
+from . import pinning as _pinning
 
 # (store root, cycle ids) pairs already reported, so a cycle warns once per process.
 _SUPERSEDE_CYCLES_WARNED: set[tuple[str, frozenset]] = set()
@@ -1538,6 +1539,7 @@ class Engram(
             raise ReadOnlyStoreError(f"read-only handle: refused write to {path.name}")
         outcome = CapacityOutcome()
         ctx = capacity_ctx or _capacity.CapacityContext()
+        unpinned: list[str] = []
 
         def _locked(current: Any) -> list[dict]:
             entries = self._entries_for_locked_mutation(current, entry_type)
@@ -1548,6 +1550,9 @@ class Engram(
             updated = mutator(entries)
             if updated is None:
                 updated = entries
+            # A pin counts only on a trusted row: a row this write took out of
+            # the trusted state (archived, demoted, rejected) loses its pin.
+            unpinned[:] = _pinning.clear_stale(updated)
             if entry_type in self._OVERFLOW_ARCHIVE_FILES:
                 plan = _capacity.plan_capacity(
                     deepcopy(before),
@@ -1580,6 +1585,8 @@ class Engram(
 
         with knowledge_write_allowed():
             _update_json(path, _locked, default=[], blocking=blocking)
+        if unpinned:
+            _pinning.audit_auto_unpin(self, entry_type, unpinned, reason="no_longer_trusted")
         self._audit_capacity_moves(entry_type, outcome, ctx.source_tool)
         self._commit_promoted_supersedes(outcome)
         return outcome
@@ -1596,6 +1603,25 @@ class Engram(
                     "write", "knowledge/relations",
                     detail=f"{src} supersedes {dst} (pending edge written on promotion)",
                 )
+                self._unpin_superseded(dst, src)
+
+    def _unpin_superseded(self, old_id: str, new_id: str) -> None:
+        """A superseded entry keeps no pin (best-effort; audited)."""
+        try:
+            _pinning.auto_unpin(self, old_id, reason="superseded", by=new_id)
+        except Exception:
+            pass
+
+    def _hold_for_owner(self, new_row: dict, reason: str) -> None:
+        """Send a new row to the review queue: the Owner decides it, in every approval mode."""
+        new_row["tier"] = "staging"
+        new_row["memory_state"] = "staging"
+        new_row["approval_status"] = "pending"
+        new_row["approval_required"] = True
+        new_row["approval_reason"] = reason
+        for key in [k for k in new_row if k.startswith(("promotion_", "promoted_"))]:
+            new_row.pop(key, None)
+        self._refresh_labeling(new_row)
 
     def _supersede_target_row(
         self, new_row: dict, target_id: str, active: list[dict] | None = None
@@ -2251,6 +2277,7 @@ class Engram(
         )
 
         result_box: dict[str, dict] = {}
+        lesson_ctx = _capacity.CapacityContext(source_tool=new_lesson.get("source_tool", ""))
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
             guard = self._insert_guard("lesson", new_lesson, lessons)
@@ -2365,6 +2392,23 @@ class Engram(
                 new_lesson, same_scope_lessons, semantic_neighbors, best_sim
             )
 
+            # A lesson that names another lesson in ``supersedes`` is a revision
+            # proposal: it always waits for the Owner, and the supersedes edge
+            # is written when it is approved (as for decisions).
+            supersede_target = str(new_lesson.get("supersedes") or "")
+            if supersede_target:
+                target_row = next(
+                    (
+                        row for row in lessons
+                        if str(row.get("id") or "") == supersede_target
+                        and not self._is_snapshot_record(row)
+                    ),
+                    None,
+                )
+                if target_row is not None and self._entries_share_project_scope(new_lesson, target_row):
+                    self._hold_for_owner(new_lesson, "supersede_proposal")
+                    new_lesson["pending_supersedes"] = supersede_target
+                    lesson_ctx.supersede_target = supersede_target
             self._redirect_when_verified_full(new_lesson, lessons)
             # A queued capture already in the archive is not placed there again.
             if _capacity.pool_of(new_lesson) != _capacity.POOL_V:
@@ -2376,10 +2420,7 @@ class Engram(
             result_box["result"] = new_lesson
             return lessons
 
-        outcome = self._update_entries(
-            path, "lesson", _mutate_lessons,
-            capacity_ctx=_capacity.CapacityContext(source_tool=new_lesson.get("source_tool", "")),
-        )
+        outcome = self._update_entries(path, "lesson", _mutate_lessons, capacity_ctx=lesson_ctx)
         result = result_box["result"]
         if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
             return result
@@ -2597,6 +2638,9 @@ class Engram(
                         "error": "snapshot_immutable",
                         "item_id": lesson_id,
                     }
+                    return lessons
+                if _pinning.mcp_refuses(lesson):
+                    result_box["result"] = _pinning.refusal(lesson_id, "lesson", lesson)
                     return lessons
                 current_version = int(lesson.get("version") or 1)
                 if expected_version is not None and expected_version != current_version:
@@ -2897,6 +2941,11 @@ class Engram(
             # by the same write (explicit ``supersedes`` or auto-detected).
             target = str(new_decision.get("supersedes") or auto_supersedes_target or "")
             decision_ctx.supersede_target = target
+            # Replacing an Owner-pinned decision is always the Owner's call.
+            if target and _capacity.pool_of(new_decision) == _capacity.POOL_V:
+                pinned_target = self._supersede_target_row(new_decision, target, decisions)
+                if pinned_target is not None and _pinning.is_pinned(pinned_target):
+                    self._hold_for_owner(new_decision, "pinned_target")
             # An unreviewed decision must not hide a reviewed one: it records
             # the supersede, and the edge is written when it is promoted.
             if target and _capacity.pool_of(new_decision) != _capacity.POOL_V:
@@ -2950,6 +2999,7 @@ class Engram(
                         "knowledge/relations",
                         detail=f"{new_decision['id']} supersedes {supersedes_id} (decision thread)",
                     )
+                    self._unpin_superseded(str(supersedes_id), str(new_decision["id"]))
             except Exception:
                 pass  # edge is advisory; the decision itself is the hard write
 
@@ -3065,6 +3115,9 @@ class Engram(
                         "error": "snapshot_immutable",
                         "item_id": decision_id,
                     }
+                    return decisions
+                if _pinning.mcp_refuses(decision):
+                    result_box["result"] = _pinning.refusal(decision_id, "decision", decision)
                     return decisions
                 current_version = int(decision.get("version") or 1)
                 if expected_version is not None and expected_version != current_version:
