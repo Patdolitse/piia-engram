@@ -267,3 +267,32 @@ def test_backup_retention_is_per_source_file(tmp_path: Path, monkeypatch):
     names = [p.name for p in backup_dir.iterdir() if p.is_file()]
     assert sum(n.startswith("lessons.json.") for n in names) == 3
     assert sum(n.startswith("domains.json.") for n in names) == 3
+
+
+def test_external_write_is_atomic_when_the_replace_fails(tmp_path: Path, monkeypatch):
+    root = tmp_path / "root"
+    external = tmp_path / "home" / "client.json"
+    external.parent.mkdir(parents=True)
+    original = '{"mcpServers": {"keep": {"command": "x"}}}\n'
+    external.write_text(original, encoding="utf-8")
+
+    from piia_engram import atomic_replace
+
+    def boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(atomic_replace, "replace_with_retry", boom)
+    with pytest.raises(OSError):
+        write_external_config_text(root, external, "{}\n", tool="setup", authorized=True)
+
+    assert external.read_text(encoding="utf-8") == original  # not truncated
+    assert sorted(p.name for p in external.parent.iterdir()) == ["client.json"]  # no temp file left
+
+
+def test_external_write_replaces_the_content(tmp_path: Path):
+    root = tmp_path / "root"
+    external = tmp_path / "home" / "client.json"
+    external.parent.mkdir(parents=True)
+    external.write_text("{}\n", encoding="utf-8")
+    write_external_config_text(root, external, '{"a": 1}\n', tool="setup", authorized=True)
+    assert json.loads(external.read_text(encoding="utf-8")) == {"a": 1}

@@ -833,3 +833,69 @@ def test_manual_command_for_posix_shells():
     assert "'/opt/my py/python3'" in text
     assert "'ENGRAM_DIR=/data/$HOME'" in text
     assert " -- " in text
+
+
+# ---------------------------------------------------------------------------
+# the old file: what may be removed, and how it is read
+# ---------------------------------------------------------------------------
+
+
+def test_only_entries_matching_name_and_command_are_removed(home, tmp_path, cli, monkeypatch):
+    legacy = _write(home / ".claude" / ".mcp.json", {"mcpServers": {
+        "engram": _entry(),
+        "piia-engram": {"command": "npx", "args": ["something-else"]},
+        "memory": {"command": "piia-engram-mcp"},
+        "keep-me": {"command": "y"}}})
+    _answers(monkeypatch, "1")
+    _, out = _apply(tmp_path, interactive=True)
+    data = json.loads(legacy.read_text(encoding="utf-8"))
+    assert sorted(data["mcpServers"]) == ["keep-me", "memory", "piia-engram"]
+    assert "memory" in out and "piia-engram" in out  # named, left for the user
+
+
+def test_nothing_removable_means_no_question(home, tmp_path, cli, monkeypatch):
+    legacy = _write(home / ".claude" / ".mcp.json", {"mcpServers": {"memory": {"command": "piia-engram-mcp"}}})
+    before = legacy.read_bytes()
+    asked = _answers(monkeypatch, "1")
+    _apply(tmp_path, interactive=True)
+    assert legacy.read_bytes() == before
+    assert not any(".mcp.json" in q for q in asked)
+
+
+def test_removal_keeps_bom_and_indent(home, tmp_path, cli, monkeypatch):
+    legacy = home / ".claude" / ".mcp.json"
+    legacy.parent.mkdir(parents=True)
+    payload = {"mcpServers": {"engram": _entry(), "keep-me": {"command": "y"}}}
+    legacy.write_bytes(b"\xef\xbb\xbf" + json.dumps(payload, indent=4).encode("utf-8"))
+    _answers(monkeypatch, "1")
+    _apply(tmp_path, interactive=True)
+    raw = legacy.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    text = raw[3:].decode("utf-8")
+    assert '\n    "mcpServers"' in text.replace("\r\n", "\n")
+    assert json.loads(text) == {"mcpServers": {"keep-me": {"command": "y"}}}
+
+
+def test_old_file_is_read_with_a_size_limit(home, monkeypatch):
+    _write(home / ".claude" / ".mcp.json", {"mcpServers": {"engram": _entry()}})
+    assert M.read_legacy().has_engram
+    monkeypatch.setattr(M, "MAX_USER_CONFIG_BYTES", 10)
+    state = M.read_legacy()
+    assert state.too_large and not state.has_engram
+
+
+def test_user_config_is_checked_by_bytes_read_not_only_stat(home, monkeypatch):
+    path = _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "x"}}})
+    monkeypatch.setattr(M, "MAX_USER_CONFIG_BYTES", 10)
+
+    real_stat = Path.stat
+
+    def small_stat(self, *a, **k):  # stat says small; the read must still catch it
+        st = real_stat(self, *a, **k)
+        if self == path:
+            return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, st.st_uid,
+                                   st.st_gid, 1, st.st_atime, st.st_mtime, st.st_ctime))
+        return st
+
+    monkeypatch.setattr(Path, "stat", small_stat)
+    assert M.read_user_config().status == "undetermined"

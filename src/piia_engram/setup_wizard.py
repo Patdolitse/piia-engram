@@ -1502,7 +1502,9 @@ def _write_config_text_with_backup(
         if existing == text:
             return
         _backup_existing_config(config_path)
-    config_path.write_text(text, encoding="utf-8")
+    from piia_engram.file_safety import atomic_write_text
+
+    atomic_write_text(config_path, text)
 
 
 def _parse_toml(text: str) -> dict:
@@ -2821,6 +2823,14 @@ def _offer_claude_legacy_cleanup(data_dir: str | None, *, registered: bool, inte
     if not legacy.has_engram:
         return
     _claude_legacy_notice()
+    unmatched = [n for n in legacy.names if n not in legacy.removable]
+    if unmatched:
+        listed = ", ".join(unmatched)
+        print(_t(f"      其中 {listed} 只有名称或只有命令像 Engram，setup 不会移除，请自行检查。",
+                 f"      {listed}: only the name or only the command looks like Engram; setup does not "
+                 "remove it, check it yourself."))
+    if not legacy.removable:
+        return
     if not registered:
         print(_t("      完成上面的注册后，可重新运行 engram setup 清理旧条目。",
                  "      After finishing the registration above, re-run engram setup to remove it."))
@@ -2830,7 +2840,7 @@ def _offer_claude_legacy_cleanup(data_dir: str | None, *, registered: bool, inte
                  "      The old entry was left in place; run engram setup interactively to remove it "
                  "(other servers in that file are kept)."))
         return
-    names = ", ".join(legacy.names)
+    names = ", ".join(legacy.removable)
     answer = _prompt(_t(
         f"  从 {_claude_code_mcp.LEGACY_LABEL} 移除旧的 Engram 条目（{names}）？其它条目保留。 "
         "1=移除（推荐）  2=保留",

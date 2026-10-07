@@ -136,9 +136,25 @@ def engram_names(servers: object) -> list[str]:
     return [str(name) for name, entry in servers.items() if is_engram_entry(str(name), entry)]
 
 
-def _read_json(path: Path) -> object:
+_TOO_LARGE = object()
+
+
+def _read_capped(path: Path) -> object:
+    """Parsed JSON, ``None`` when unreadable, or ``_TOO_LARGE``.
+
+    The size is judged by the bytes actually read (at most one byte past the
+    limit), not by an earlier ``stat``, so a file that grows in between is
+    still caught.
+    """
     try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
+        with open(path, "rb") as handle:
+            raw = handle.read(MAX_USER_CONFIG_BYTES + 1)
+    except OSError:
+        return None
+    if len(raw) > MAX_USER_CONFIG_BYTES:
+        return _TOO_LARGE
+    try:
+        return json.loads(raw.decode("utf-8-sig"))
     except Exception:
         return None
 
@@ -169,7 +185,7 @@ def read_user_config(path: Path | None = None) -> UserConfigState:
             return UserConfigState("undetermined")
     except OSError:
         return UserConfigState("undetermined")
-    data = _read_json(path)
+    data = _read_capped(path)
     if not isinstance(data, dict):
         return UserConfigState("undetermined")
     top = data.get("mcpServers")
@@ -196,26 +212,36 @@ class LegacyState:
 
     names: list[str] = field(default_factory=list)
     env: dict = field(default_factory=dict)
+    # Entries setup may remove: an Engram name AND a command that launches Engram.
+    removable: list[str] = field(default_factory=list)
+    too_large: bool = False
 
     @property
     def has_engram(self) -> bool:
         return bool(self.names)
 
 
+def _removable(name: str, entry: object) -> bool:
+    return name in KNOWN_NAMES and launches_engram(entry)
+
+
 def read_legacy(path: Path | None = None) -> LegacyState:
     path = legacy_path() if path is None else Path(path)
     if not _is_file(path):
         return LegacyState()
-    data = _read_json(path)
+    data = _read_capped(path)
+    if data is _TOO_LARGE:
+        return LegacyState(too_large=True)
     servers = data.get("mcpServers") if isinstance(data, dict) else None
     names = engram_names(servers)
+    removable = [n for n in names if _removable(n, servers.get(n))]
     env: dict = {}
     for name in [SERVER_NAME, *names]:
         entry = servers.get(name) if isinstance(servers, dict) else None
         if isinstance(entry, dict) and isinstance(entry.get("env"), dict):
             env = dict(entry["env"])
             break
-    return LegacyState(names=names, env=env)
+    return LegacyState(names=names, env=env, removable=removable)
 
 
 def detection_status() -> str:
@@ -503,6 +529,16 @@ def register(
 # the old location
 # ---------------------------------------------------------------------------
 
+def _indent_of(text: str) -> str | int:
+    """The indent of the first indented line (a tab or a number of spaces), default 2."""
+    for line in text.splitlines()[1:]:
+        stripped = line.lstrip(" \t")
+        if stripped and len(stripped) < len(line):
+            lead = line[: len(line) - len(stripped)]
+            return "\t" if lead.startswith("\t") else len(lead)
+    return 2
+
+
 def remove_legacy_entries(
     *,
     write_text: Callable[[Path, str], None],
@@ -510,20 +546,36 @@ def remove_legacy_entries(
 ) -> list[str]:
     """Drop Engram entries from ``~/.claude/.mcp.json``; every other key stays.
 
-    ``write_text(path, text)`` does the (backed-up) write. Returns the removed
-    names; an unreadable file is left untouched.
+    Only an entry with an Engram name (``engram`` / ``piia-engram``) that also
+    launches Engram is removed; an entry matching only one of them is left
+    for the user. A leading BOM and the file's indent are kept.
+    ``write_text(path, text)`` does the (backed-up, atomic) write. Returns
+    the removed names; an unreadable or oversized file is left untouched.
     """
     path = legacy_path() if path is None else Path(path)
     if not _is_file(path):
         return []
-    data = _read_json(path)
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(MAX_USER_CONFIG_BYTES + 1)
+    except OSError:
+        return []
+    if len(raw) > MAX_USER_CONFIG_BYTES:
+        return []
+    bom = raw.startswith(b"\xef\xbb\xbf")
+    try:
+        text = raw.decode("utf-8-sig")
+        data = json.loads(text)
+    except Exception:
+        return []
     if not isinstance(data, dict) or not isinstance(data.get("mcpServers"), dict):
         return []
     servers = data["mcpServers"]
-    names = engram_names(servers)
+    names = [n for n in engram_names(servers) if _removable(n, servers.get(n))]
     if not names:
         return []
     for name in names:
         del servers[name]
-    write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    out = json.dumps(data, ensure_ascii=False, indent=_indent_of(text)) + "\n"
+    write_text(path, ("\ufeff" if bom else "") + out)
     return names
