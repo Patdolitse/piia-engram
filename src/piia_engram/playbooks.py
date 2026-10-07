@@ -42,6 +42,33 @@ def _stable_json(value: Any) -> str:
 
 
 
+# A playbook id names a file in playbooks/: a plain token, never a path.
+# Generated ids are 12 hex digits; snapshots add "-prev-<stamp>[-n[-xxxx]]".
+_PLAYBOOK_ID_RE = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,158}[A-Za-z0-9_-])?$")
+_WINDOWS_DEVICE_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(10)} | {f"LPT{i}" for i in range(10)}
+)
+
+
+class PlaybookIdExists(Exception):
+    """An insert named a playbook id that is already taken."""
+
+
+def valid_playbook_id(value: Any) -> bool:
+    """True when ``value`` can safely name a file directly inside playbooks/."""
+    if not isinstance(value, str) or not _PLAYBOOK_ID_RE.match(value) or ".." in value:
+        return False
+    return value.split(".")[0].upper() not in _WINDOWS_DEVICE_NAMES
+
+
+def new_playbook_id(title: str) -> str:
+    """A fresh server-side id (12 hex digits, like every generated id)."""
+    import os
+
+    seed = f"{title}{_now_iso()}{os.urandom(8).hex()}"
+    return hashlib.sha256(seed.encode()).hexdigest()[:12]
+
+
 def _playbook_queue_max() -> int:
     import os
 
@@ -112,9 +139,25 @@ class PlaybookMixin:
 
         _update_json(self._playbooks_dir / "_index.json", _locked, default=[])
 
+    def _playbook_path(self, playbook_id: Any) -> Path:
+        """The file of one playbook; ValueError for an id that is not a plain token
+        or that would land outside playbooks/."""
+        import os
+
+        if not valid_playbook_id(playbook_id):
+            raise ValueError("invalid playbook id")
+        base = os.path.normcase(os.path.abspath(self._playbooks_dir))
+        path = self._playbooks_dir / f"{playbook_id}.json"
+        if os.path.dirname(os.path.normcase(os.path.abspath(path))) != base:
+            raise ValueError("invalid playbook id")
+        return path
+
     def _read_playbook_by_id(self, playbook_id: str) -> dict | None:
         """Read a single playbook file by ID (with corpus decryption)."""
-        path = self._playbooks_dir / f"{playbook_id}.json"
+        try:
+            path = self._playbook_path(playbook_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         pb = self._read_playbook_file(path) or None
@@ -131,7 +174,10 @@ class PlaybookMixin:
         """Apply ``mutator`` to one playbook file under that file's write lock."""
         if getattr(self, "_read_only", False):
             raise ReadOnlyStoreError(f"read-only handle: refused write to playbook {playbook_id}")
-        path = self._playbooks_dir / f"{playbook_id}.json"
+        try:
+            path = self._playbook_path(playbook_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
 
@@ -681,6 +727,10 @@ class PlaybookMixin:
         if not new_pb.get("title"):
             return {"error": "Playbook must have a title"}
 
+        # The id names the playbook's file: an MCP caller never chooses it, and
+        # a local caller's id must be a plain token (else a fresh one is made).
+        if _pinning.mcp_origin() or not valid_playbook_id(new_pb.get("id")):
+            new_pb["id"] = new_playbook_id(str(new_pb.get("title") or ""))
         new_pb["timestamp"] = new_pb.get("timestamp") or _now_iso()
         new_pb = self._ensure_playbook_fields(new_pb)
         strict = _strict_mode.approval_strict(self.root)
@@ -774,7 +824,11 @@ class PlaybookMixin:
                 return {"status": "queue_full", "kind": "playbook", "cap": cap,
                         "message": "The pending playbook queue is full; nothing was dropped."}
 
-        self._write_playbook_and_index(new_pb)
+        try:
+            self._write_playbook_and_index(new_pb, create=True)
+        except PlaybookIdExists:
+            return {"status": "id_exists", "error": "id_exists", "existing_id": new_pb.get("id"),
+                    "message": "A playbook with this id already exists; nothing was written."}
 
         if self.is_pending_playbook(new_pb) and proposal:
             # A pending proposal's text stays out of agent-readable surfaces,
@@ -1129,22 +1183,42 @@ class PlaybookMixin:
             "suggestions": suggestions,
         }
 
-    def _write_playbook_and_index(self, pb: dict) -> None:
+    def _write_playbook_and_index(self, pb: dict, *, create: bool = False) -> None:
         """Persist a playbook and keep the lightweight index in sync.
 
-        Refused on a read-only handle (a backstop behind the verb guard).
+        Refused on a read-only handle (a backstop behind the verb guard), and
+        for an id that is not a plain token inside playbooks/ (ValueError).
+        ``create=True`` (a new row) reserves the file with an exclusive create
+        and raises PlaybookIdExists when the id is already taken, so an insert
+        never overwrites an existing playbook.
 
         Body is written first; if the index update fails the body file is
         removed so no orphaned body can accumulate without an index entry.
         """
+        import os as _os
+
         if getattr(self, "_read_only", False):
             raise ReadOnlyStoreError("read-only handle: refused playbook write")
         playbook_id = str(pb.get("id") or "")
         if not playbook_id:
             raise ValueError("missing playbook id")
 
-        body_path = self._playbooks_dir / f"{playbook_id}.json"
-        self._write_playbook_file(body_path, pb)
+        body_path = self._playbook_path(playbook_id)
+        if create:
+            if any(e.get("id") == playbook_id for e in self._read_playbook_index()):
+                raise PlaybookIdExists(playbook_id)
+            self._playbooks_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                fd = _os.open(str(body_path), _os.O_CREAT | _os.O_EXCL | _os.O_WRONLY)
+            except FileExistsError:
+                raise PlaybookIdExists(playbook_id) from None
+            _os.close(fd)
+        try:
+            self._write_playbook_file(body_path, pb)
+        except Exception:
+            if create:
+                body_path.unlink(missing_ok=True)
+            raise
 
         idx_entry = self._playbook_index_entry(pb)
 
@@ -1622,15 +1696,17 @@ class PlaybookMixin:
         now = _now_iso()
         suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
         base_id = f"{head_id}-prev-{suffix}"
+        if not valid_playbook_id(base_id):
+            return None
         existing_index_ids = {e.get("id") for e in self._read_playbook_index()}
         snapshot_id = base_id
         counter = 2
-        body_path = self._playbooks_dir / f"{snapshot_id}.json"
+        body_path = self._playbook_path(snapshot_id)
         while True:
             if snapshot_id in existing_index_ids:
                 snapshot_id = f"{base_id}-{counter}"
                 counter += 1
-                body_path = self._playbooks_dir / f"{snapshot_id}.json"
+                body_path = self._playbook_path(snapshot_id)
                 continue
             try:
                 self._playbooks_dir.mkdir(parents=True, exist_ok=True)
@@ -1640,7 +1716,7 @@ class PlaybookMixin:
             except FileExistsError:
                 snapshot_id = f"{base_id}-{counter}-{_os.urandom(2).hex()}"
                 counter += 1
-                body_path = self._playbooks_dir / f"{snapshot_id}.json"
+                body_path = self._playbook_path(snapshot_id)
                 continue
             except OSError:
                 # fall back to non-exclusive write (exotic filesystems)
@@ -1662,8 +1738,10 @@ class PlaybookMixin:
 
     def _delete_playbook_snapshot(self, snapshot_id: str) -> None:
         """Best-effort removal of an orphaned snapshot (body file + index row)."""
+        if not valid_playbook_id(snapshot_id):
+            return
         try:
-            body_path = self._playbooks_dir / f"{snapshot_id}.json"
+            body_path = self._playbook_path(snapshot_id)
             if body_path.exists():
                 body_path.unlink()
 
@@ -2318,6 +2396,8 @@ class PlaybookMixin:
         return d
 
     def _execution_path(self, playbook_id: str) -> Path:
+        if not valid_playbook_id(playbook_id):
+            raise ValueError("invalid playbook id")
         return self._executions_dir() / f"{playbook_id}.json"
 
     def _update_execution_plan_file(self, playbook_id: str, mutator, *, allow_create: bool = False):
@@ -2430,6 +2510,8 @@ class PlaybookMixin:
         pid = plan.get("playbook_id", "")
         if not pid:
             return {"error": "missing playbook_id"}
+        if not valid_playbook_id(pid):
+            return {"error": "invalid playbook_id"}
         plan["started_at"] = _now_iso()
         plan["updated_at"] = _now_iso()
 
@@ -2476,6 +2558,8 @@ class PlaybookMixin:
         valid = {"completed", "skipped", "failed"}
         if status not in valid:
             return {"error": f"status must be one of {valid}"}
+        if not valid_playbook_id(playbook_id):
+            return {"error": "invalid playbook_id"}
         refusal = self._not_approved(playbook_id)
         if refusal is not None:
             return refusal
@@ -2526,6 +2610,8 @@ class PlaybookMixin:
 
     def get_execution_status(self, playbook_id: str) -> dict:
         """Return the current execution state for a playbook."""
+        if not valid_playbook_id(playbook_id):
+            return {"error": "invalid playbook_id"}
         plan = _read_json(self._execution_path(playbook_id))
         if not plan:
             return {"error": f"no execution plan found for {playbook_id}"}

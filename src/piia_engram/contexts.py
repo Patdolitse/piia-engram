@@ -705,8 +705,8 @@ class ContextStoreMixin:
         This read path is intentionally zero-write and never backfills old files.
         """
         session_ref = str(session_id or "").strip()
-        if not session_ref:
-            return None
+        if not session_ref or not _SESSION_ID_PATH_RE.fullmatch(session_ref) or ".." in session_ref:
+            return None  # the id names a file under contexts/<tool>/, never a path
         path = self._session_digest_path(tool, session_ref)
         if not path.is_file():
             return None
@@ -1786,6 +1786,10 @@ class ContextStoreMixin:
         """
         if date is None:
             date = datetime.now().strftime("%Y-%m-%d")
+        if not isinstance(date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            # the date names a file: a plain YYYY-MM-DD, never a path
+            return {"error": "invalid_date", "date": str(date)[:40], "exists": False, "content": "",
+                    "message": "date must be YYYY-MM-DD"}
         path = self._daily_log_path(project_folder, date=date)
         exists = path.is_file()
         return {

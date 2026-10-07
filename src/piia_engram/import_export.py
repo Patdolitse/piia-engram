@@ -19,6 +19,7 @@ from . import pinning as _pinning
 from . import tombstones as _tombstones
 from . import write_provenance as _write_provenance
 from .decision_thread import validate_edges
+from .playbooks import new_playbook_id, valid_playbook_id
 from .governance_store import RelationStore, ResolutionStore
 from .storage import (
     DEFAULT_TRUST_BOUNDARIES,
@@ -1515,8 +1516,12 @@ class ImportExportMixin:
                     continue  # never written over an Owner-pinned playbook
                 if pb.get("title") not in existing_titles:
                     pb = _pinning.strip(dict(pb))
+                    # the id names the body file: never a path, never an existing row
+                    taken = {str(e.get("id") or "") for e in existing_index}
+                    if not valid_playbook_id(pb.get("id")) or str(pb.get("id")) in taken:
+                        pb["id"] = new_playbook_id(str(pb.get("title") or ""))
                     pb = self._ensure_playbook_fields(pb)
-                    body_path = self._playbooks_dir / f"{pb['id']}.json"
+                    body_path = self._playbook_path(pb["id"])
                     self._write_playbook_file(body_path, pb)
                     new_body_paths.append(body_path)
                     existing_index.append(self._playbook_index_entry(pb))
