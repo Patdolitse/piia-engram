@@ -490,3 +490,144 @@ def test_cli_rejects_non_ascii_digits(world, monkeypatch, capsys, argv):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "Traceback" not in err and "--days needs a whole number" in err
+
+
+# ---------------------------------------------------------------------------
+# Claude Code in ~/.claude.json: doctor's tool list agrees with the report
+# ---------------------------------------------------------------------------
+
+
+def _doctor_text(fix: bool = False) -> str:
+    buf = io.StringIO()
+
+    def run():
+        with redirect_stdout(buf):
+            doctor.run_doctor(fix=fix)
+
+    _without_mcp_server_module(run)
+    return buf.getvalue()
+
+
+def _claude_tool() -> dict | None:
+    return next((t for t in doctor._detect_installed_tools() if t["tool_id"] == "claude_code"), None)
+
+
+def _claude_layout(home: Path, store: Path, *, user_config: str | None, dot_mcp: bool) -> None:
+    """user_config: None (no ~/.claude.json), "top", "project" or "other"."""
+    Engram(root=store)
+    if dot_mcp:
+        _write(home / ".claude" / ".mcp.json", json.dumps({"mcpServers": {"engram": _entry(store)}}))
+    if user_config == "top":
+        _claude_json(home, {"mcpServers": {"engram": _entry(store)}, "userID": _SECRET})
+    elif user_config == "project":
+        _claude_json(home, {"projects": {str(home / "proj"): {
+            "mcpServers": {"engram": _entry(store)}, "history": [_SECRET]}}})
+    elif user_config == "other":
+        _claude_json(home, {"mcpServers": {"other": {"command": _SECRET}}})
+
+
+@pytest.mark.parametrize("where", ["top", "project"])
+def test_doctor_counts_claude_user_config_as_configured(home, tmp_path, where):
+    store = tmp_path / "store"
+    _claude_layout(home, store, user_config=where, dot_mcp=False)
+
+    tool = _claude_tool()
+    assert tool is not None and tool["status"] == "configured"
+    assert tool["detect_only"] is True
+    # The write target stays where setup writes; nothing from the file is kept.
+    assert tool["config_path"] == home / ".claude" / ".mcp.json"
+    assert tool["servers"] == {} and tool["config"] == {}
+    assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "configured"
+
+    out = _doctor_text()
+    assert "[ok] Claude Code" in out and "~/.claude.json" in out
+    assert "Claude Code — Engram NOT configured" not in out
+    assert "- Claude Code (" not in out  # not listed under "Run 'engram setup'"
+    assert "Claude Code (claude_code): configured" in out
+    assert _SECRET not in out and str(home / "proj") not in out
+
+
+def test_doctor_with_only_dot_mcp_json_is_unchanged(home, tmp_path):
+    store = tmp_path / "store"
+    _claude_layout(home, store, user_config=None, dot_mcp=True)
+
+    tool = _claude_tool()
+    assert tool["status"] == "configured" and not tool.get("detect_only")
+    assert "engram" in tool["servers"]
+    assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "configured"
+    out = _doctor_text()
+    assert "[ok] Claude Code — Engram configured" in out
+    assert "Claude Code — Engram NOT configured" not in out
+
+
+@pytest.mark.parametrize("user_config", [None, "other"])
+def test_doctor_without_any_engram_entry_says_not_configured(home, tmp_path, user_config):
+    store = tmp_path / "store"
+    (home / ".claude").mkdir()
+    _claude_layout(home, store, user_config=user_config, dot_mcp=False)
+
+    tool = _claude_tool()
+    assert tool["status"] == "installed"
+    assert tool["config_path"] == home / ".claude" / ".mcp.json"
+    assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "not_configured"
+    out = _doctor_text()
+    assert "Claude Code — Engram NOT configured" in out
+    assert "Run 'engram setup' to configure them." in out
+    assert _SECRET not in out
+
+
+def test_doctor_user_config_alone_without_claude_dir_is_detected(home, tmp_path):
+    store = tmp_path / "store"
+    _claude_layout(home, store, user_config="other", dot_mcp=False)
+    tool = _claude_tool()
+    assert tool is not None and tool["status"] == "installed"
+    assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "not_configured"
+
+
+def test_doctor_with_both_configs_validates_the_dot_mcp_json_entry(home, tmp_path):
+    store = tmp_path / "store"
+    _claude_layout(home, store, user_config="top", dot_mcp=True)
+
+    tool = _claude_tool()
+    assert tool["status"] == "configured" and not tool.get("detect_only")
+    assert tool["config_path"] == home / ".claude" / ".mcp.json"
+    assert "engram" in tool["servers"]
+    row = _by_tool(C.build_report(store, days=14))["claude_code"]
+    assert row["config_status"] == "configured" and row["config_path"] == "~/.claude/.mcp.json"
+    out = _doctor_text()
+    assert "[ok] Claude Code — Engram configured" in out
+    assert "NOT configured" not in out.split("Claude Code", 1)[1].splitlines()[0]
+
+
+def test_doctor_too_large_user_config_is_undetermined_not_unconfigured(home, tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    (home / ".claude").mkdir()
+    _claude_layout(home, store, user_config="top", dot_mcp=False)
+    monkeypatch.setattr(C, "MAX_CLAUDE_JSON_BYTES", 8)
+
+    tool = _claude_tool()
+    assert tool["status"] == "undetermined" and tool["detect_only"] is True
+    assert _by_tool(C.build_report(store, days=14))["claude_code"]["config_status"] == "undetermined"
+    out = _doctor_text()
+    assert "Claude Code — Engram NOT configured" not in out
+    assert "- Claude Code (" not in out
+
+
+def test_doctor_env_check_skips_a_user_config_entry_it_does_not_read(home, tmp_path):
+    store = tmp_path / "store"
+    _claude_layout(home, store, user_config="top", dot_mcp=False)
+    assert doctor._client_env_findings([_claude_tool()], strict=True, user_env={}) == []
+
+
+def test_doctor_fix_never_writes_claude_user_config(home, tmp_path):
+    store = tmp_path / "store"
+    _claude_layout(home, store, user_config="top", dot_mcp=False)
+    claude_json = home / ".claude.json"
+    before = claude_json.read_bytes()
+
+    out = _doctor_text(fix=True)
+
+    assert claude_json.read_bytes() == before
+    assert not (home / ".claude" / ".mcp.json").exists()
+    assert _SECRET not in out
+

@@ -22,42 +22,89 @@ def _detect_installed_tools() -> list[dict]:
 
     不仅检查配置文件是否存在，还检查工具本身是否安装（配置目录存在）。
     返回 [{tool_id, name, config_path, format, verified, status, config, servers}]。
-    - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram)
+    - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram),
+      "undetermined" (detect-only config too large to check)
     - verified: True = evidence-tracked setup path, False = expected/community setup path
+
+    Claude Code may also hold its engram server in its user config
+    (``~/.claude.json``). That file is only checked for an ``engram`` key, the
+    same way the connection report checks it: such a tool is reported with
+    ``detect_only=True``, empty ``config``/``servers`` and ``config_path`` left
+    at the setup target, so nothing validates, prints or rewrites that file.
     """
     results = []
     for tool_id, cfg in W._tool_configs().items():
-        fmt = cfg.get("format", "json")
-        server_key = cfg.get("server_key", "mcpServers")
-        verified = cfg.get("verified", False)
-        for config_path in cfg["config_paths"]:
-            # 检查工具是否安装（配置目录存在 = 工具装了）
-            tool_dir = config_path.parent
-            if not tool_dir.exists():
-                continue
-
-            config = W._read_mcp_config(config_path, fmt=fmt)
-
-            # 按工具的 server_key 取 MCP servers 段
-            servers = config.get(server_key, {})
-            # TOML 回退：也检查下划线变体
-            if not servers and server_key == "mcpServers":
-                servers = config.get("mcp_servers", {})
-            has_engram = "engram" in servers
-
-            results.append({
-                "tool_id": tool_id,
-                "name": cfg["name"],
-                "config_path": config_path,
-                "format": fmt,
-                "server_key": server_key,
-                "verified": verified,
-                "status": "configured" if has_engram else "installed",
-                "config": config,
-                "servers": servers,
-            })
-            break  # 每个工具只取第一个匹配的路径
+        found = _detect_tool_config(tool_id, cfg)
+        if found is None or found["status"] != "configured":
+            found = _with_detect_only_config(tool_id, cfg, found)
+        if found is not None:
+            results.append(found)
     return results
+
+
+def _with_detect_only_config(tool_id: str, cfg: dict, found: dict | None) -> dict | None:
+    """Fold in config files doctor only checks for an engram key (never writes)."""
+    from . import connection_report as _conn
+
+    state = None  # None: no such file; else "configured" | "undetermined" | "installed"
+    detected_in = ""
+    for path in _conn._detect_only_paths(tool_id, Path.home()):
+        if not _conn._is_file(path):
+            continue
+        has = _conn._claude_user_config_has_engram(path)
+        if has:
+            state, detected_in = "configured", "~/" + path.name
+            break
+        if has is None:
+            state, detected_in = "undetermined", "~/" + path.name
+        elif state is None:
+            state = "installed"
+    if state is None or (state == "installed" and found is not None):
+        return found
+    tool = dict(found) if found is not None else {
+        "tool_id": tool_id,
+        "name": cfg["name"],
+        "config_path": Path(cfg["config_paths"][0]),
+        "format": cfg.get("format", "json"),
+        "server_key": cfg.get("server_key", "mcpServers"),
+        "verified": cfg.get("verified", False),
+    }
+    tool.update(status=state, config={}, servers={})
+    if state != "installed":
+        tool.update(detect_only=True, detected_in=detected_in)
+    return tool
+
+
+def _detect_tool_config(tool_id: str, cfg: dict) -> dict | None:
+    """The first installed setup path of one tool, or None when none is installed."""
+    fmt = cfg.get("format", "json")
+    server_key = cfg.get("server_key", "mcpServers")
+    for config_path in cfg["config_paths"]:
+        # 检查工具是否安装（配置目录存在 = 工具装了）
+        if not config_path.parent.exists():
+            continue
+
+        config = W._read_mcp_config(config_path, fmt=fmt)
+
+        # 按工具的 server_key 取 MCP servers 段
+        servers = config.get(server_key, {})
+        # TOML 回退：也检查下划线变体
+        if not servers and server_key == "mcpServers":
+            servers = config.get("mcp_servers", {})
+
+        # 每个工具只取第一个匹配的路径
+        return {
+            "tool_id": tool_id,
+            "name": cfg["name"],
+            "config_path": config_path,
+            "format": fmt,
+            "server_key": server_key,
+            "verified": cfg.get("verified", False),
+            "status": "configured" if "engram" in servers else "installed",
+            "config": config,
+            "servers": servers,
+        }
+    return None
 
 
 # Settings an MCP server reads from its environment. Claude Desktop and Codex pass
@@ -81,8 +128,8 @@ def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> l
     user_env = os.environ if user_env is None else user_env
     findings = []
     for tool in tools:
-        if tool.get("status") != "configured":
-            continue
+        if tool.get("status") != "configured" or tool.get("detect_only"):
+            continue  # a detect-only config (~/.claude.json) is not read for its env
         entry = (tool.get("servers") or {}).get("engram")
         env = entry.get("env") if isinstance(entry, dict) else None
         env = env if isinstance(env, dict) else {}
@@ -575,6 +622,16 @@ def _validate_engram_entry(servers: dict, config_path: Path) -> list[str]:
     return issues
 
 
+def _found_in(tool: dict) -> str:
+    """`` (in ~/.claude.json)`` for an entry found only in a detect-only config."""
+    return f" (in {tool['detected_in']})" if tool.get("detect_only") else ""
+
+
+def _undetermined_line(tool: dict) -> str:
+    return (f"    [??] {tool['name']} — {tool.get('detected_in') or 'config'} too large "
+            "to check for an Engram entry")
+
+
 def run_doctor(fix: bool = False, days: int | None = None) -> int:
     """扫描系统中所有已安装的 AI 工具，检查 Engram MCP 配置健康状况。
 
@@ -616,8 +673,10 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
         print("  Evidence-tracked setup paths:")
         for t in verified_tools:
             if t["status"] == "configured":
-                W._safe_print(f"    [ok] {t['name']} — Engram configured")
+                W._safe_print(f"    [ok] {t['name']} — Engram configured{_found_in(t)}")
                 configured_count += 1
+            elif t["status"] == "undetermined":
+                W._safe_print(_undetermined_line(t))
             else:
                 W._safe_print(f"    [--] {t['name']} — Engram NOT configured")
                 unconfigured.append(t)
@@ -628,8 +687,10 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
         print("  Expected/community setup paths:")
         for t in community_tools:
             if t["status"] == "configured":
-                W._safe_print(f"    [ok] {t['name']} — Engram configured")
+                W._safe_print(f"    [ok] {t['name']} — Engram configured{_found_in(t)}")
                 configured_count += 1
+            elif t["status"] == "undetermined":
+                W._safe_print(_undetermined_line(t))
             else:
                 W._safe_print(f"    [--] {t['name']} — installed, Engram not configured")
                 unconfigured.append(t)
@@ -639,8 +700,8 @@ def run_doctor(fix: bool = False, days: int | None = None) -> int:
     issues: list[tuple[dict, str]] = []  # (tool_info, 描述)
 
     for t in tools:
-        if t["status"] != "configured":
-            continue
+        if t["status"] != "configured" or t.get("detect_only"):
+            continue  # a detect-only config is never validated or rewritten
         servers = t["servers"]
 
         # 旧版 server 名称

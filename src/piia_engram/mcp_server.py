@@ -448,7 +448,13 @@ class _SessionTracker:
         if self.client_info:
             return  # already detected
         self.client_info = {"name": name, "version": version}
-        logger.info("MCP client: %s %s", name, version)
+        # clientInfo is whatever the client sent: strip control characters
+        # (newlines, terminal escapes) and cap it before it reaches the log.
+        logger.info(
+            "MCP client: %s %s",
+            _write_provenance.clean_client_text(name),
+            _write_provenance.clean_client_text(version),
+        )
         # Auto-map well-known MCP client names to our tool_name taxonomy
         # so session tracking works even if the AI never calls
         # save_agent_context(tool=...).

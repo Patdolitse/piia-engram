@@ -464,6 +464,20 @@ def test_strict_playbook_proposal_takes_the_proposers_source_tool(mcp_env, monke
     assert eng._read_playbook_by_id(out["id"])["source_tool"] == "claude_code"
 
 
+def test_client_info_log_line_is_cleaned_and_capped(caplog):
+    tracker = mcp_server._SessionTracker()
+    name = "evil\r\n2026-10-07 INFO forged line\x1b]0;title\x07" + "n" * 500
+    version = "1.0\n\x1b[2J" + "v" * 500
+    with caplog.at_level("INFO", logger=mcp_server.logger.name):
+        tracker.detect_client_info(name, version)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("MCP client:")]
+    assert len(lines) == 1
+    line = lines[0]
+    assert not any(ch in line for ch in "\r\n\x1b\x07")
+    assert len(line) <= len("MCP client: ") + 2 * wp.MAX_CLIENT_TEXT + 1
+    assert line.startswith("MCP client: evil 2026-10-07 INFO forged line")
+
+
 def test_client_info_outside_a_request_is_unknown(monkeypatch):
     monkeypatch.setattr(mcp_server._session, "client_info", {"name": "first-client", "version": "1"})
     assert mcp_server._current_client_info() == ("", "")
