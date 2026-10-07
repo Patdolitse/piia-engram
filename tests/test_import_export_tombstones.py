@@ -192,3 +192,121 @@ def test_dry_run_shows_the_tombstone_count_and_writes_nothing(tmp_path):
     assert tombstones.load(dst.root) == []
     rendered = _render_import_result_text(preview)
     assert "tombstones: incoming=3 add=3 skip=0" in rendered
+
+
+# -- with the import's pin protection and the MCP preview-only rule -------------
+
+
+@pytest.fixture()
+def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engram:
+    """A store the MCP server and the pin CLI both act on."""
+    from piia_engram import mcp_server
+
+    root = tmp_path / "live"
+    root.mkdir()
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    monkeypatch.setenv("ENGRAM_HEARTBEAT_INTERVAL", "0")
+    monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+    monkeypatch.setattr(mcp_server, "_session", mcp_server._SessionTracker())
+    engram = Engram(root=root)
+    monkeypatch.setattr(mcp_server, "_engram", engram)
+    return engram
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    return {
+        str(p.relative_to(root)): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and p.suffix != ".log" and "sessions" not in p.parts
+    }
+
+
+def _stones_backup(tmp_path: Path, lessons: list[dict], name: str = "pinned.json") -> str:
+    src = _store(tmp_path, "stones-src")
+    _write_stone(src.root, "decision", CLAIMS["decision"], version=3, item_id="rej-backup")
+    stones = json.loads(Path(src.export_all(str(tmp_path / "stones.json"))).read_text(
+        encoding="utf-8"))["knowledge"]["tombstones"]
+    return _backup(tmp_path, {"schema_version": "2.0", "identity": {}, "knowledge": {
+        "lessons": lessons, "decisions": [], "playbooks": [], "tombstones": stones}}, name)
+
+
+def test_mcp_preview_counts_tombstones_and_writes_nothing(live, tmp_path):
+    import asyncio
+
+    from piia_engram import mcp_server
+
+    path = _stones_backup(tmp_path, [])
+    before = _snapshot(live.root)
+    for merge in (True, False):
+        plan = json.loads(asyncio.run(mcp_server.import_engram(input_path=path, merge=merge, dry_run=True)))
+        assert plan["dry_run"] is True
+        assert plan["summary"]["tombstones"]["incoming"] == 1
+        applied = json.loads(asyncio.run(mcp_server.import_engram(input_path=path, merge=merge)))
+        assert applied["error"] == "local_only"
+    assert _snapshot(live.root) == before
+    assert tombstones.load(live.root) == []
+
+
+@pytest.mark.parametrize("merge", [True, False], ids=["merge", "replace"])
+def test_tombstones_restore_next_to_a_pinned_entry(live, tmp_path, merge):
+    from piia_engram.cli_commands import run_pin
+
+    pinned = live.add_lesson({"summary": "Pinned lesson next to restored rejections", "domain": "t",
+                              "tier": "verified"})
+    assert run_pin([pinned["id"]]) == 0
+    path = _stones_backup(tmp_path, [{"id": pinned["id"], "summary": "Backup copy, other text",
+                                      "tier": "verified", "status": "active"}])
+
+    result = live.import_all(path, merge=merge)
+
+    assert result["status"] == "success"
+    assert any(str(item).startswith("tombstones(") for item in result["imported"])
+    assert [r["id"] for r in tombstones.load(live.root)] == ["rej-backup"]
+    row = live._find_item_by_id(pinned["id"])[1]
+    assert row["pinned"] is True and row["summary"] == "Pinned lesson next to restored rejections"
+
+
+def test_a_refused_pinned_import_restores_no_tombstones(live, tmp_path):
+    from piia_engram.cli_commands import run_pin
+
+    pinned = live.add_lesson({"summary": "Pinned lesson an import would supersede", "domain": "t",
+                              "tier": "verified"})
+    assert run_pin([pinned["id"]]) == 0
+    proposal = live.add_lesson({"summary": "Pending revision of the pinned lesson", "domain": "t",
+                                "supersedes": pinned["id"]})
+    promoted = {**live._find_item_by_id(proposal["id"])[1], "tier": "verified",
+                "memory_state": "verified", "approval_status": "approved"}
+    path = _stones_backup(tmp_path, [live._find_item_by_id(pinned["id"])[1], promoted])
+    before = _snapshot(live.root)
+
+    result = live.import_all(path, merge=False)
+
+    assert result["error"] == "pinned_target"
+    assert _snapshot(live.root) == before
+    assert tombstones.load(live.root) == []
+
+
+def test_an_interrupted_import_restores_tombstones_on_resume(live, tmp_path, monkeypatch):
+    from piia_engram import pinning
+
+    path = _stones_backup(tmp_path, [{"id": "imp-1", "summary": "A lesson only in the backup",
+                                      "tier": "verified", "status": "active"}])
+    real = live._update_entries
+
+    def _race(*args, **kwargs):
+        raise pinning.PinnedTargetRefused("lesson", ["pinned-x"])
+
+    monkeypatch.setattr(live, "_update_entries", _race)
+    refused = live.import_all(path, merge=True)
+    assert refused["error"] == "pinned_target"
+    assert tombstones.load(live.root) == []
+    assert (live.root / "knowledge" / live._IMPORT_PENDING_MARKER).is_file()
+
+    monkeypatch.setattr(live, "_update_entries", real)
+    resumed = live.import_all(path, merge=True)
+    assert resumed["status"] == "success"
+    assert "tombstones(+1)" in resumed["imported"]
+    assert not (live.root / "knowledge" / live._IMPORT_PENDING_MARKER).exists()
+    again = live.import_all(path, merge=True)
+    assert "tombstones(+0)" in again["imported"]
+    assert [r["id"] for r in tombstones.load(live.root)] == ["rej-backup"]
