@@ -17,6 +17,7 @@ from . import tombstones as _tombstones
 from .storage import ReadOnlyStoreError
 from .storage import (
     SIMILARITY_THRESHOLD,
+    hold_directory_lock,
     _ALLOWED_PLAYBOOK_UPDATE_FIELDS,
     _now_iso,
     _project_id,
@@ -650,15 +651,76 @@ class PlaybookMixin:
                         "message": "The same procedure is retired; the Owner can restore it."}
         return None
 
-    def approve_playbook(self, playbook_id: str) -> dict:
+    def _review_locks(self):
+        """Hold the knowledge and playbooks write locks across one review decision,
+        so its version check, tombstone and status writes commit together."""
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        stack.enter_context(hold_directory_lock(self._knowledge_dir, timeout=30))
+        stack.enter_context(hold_directory_lock(self._playbooks_dir, timeout=30))
+        return stack
+
+    @staticmethod
+    def _review_version_conflict(playbook_id: str, row: dict, expected_version: int | None) -> dict | None:
+        if expected_version is None:
+            return None
+        current = int(row.get("version") or 1)
+        if current == expected_version:
+            return None
+        return {"status": "version_conflict", "error": "version_conflict", "id": playbook_id,
+                "item_id": playbook_id, "expected_version": expected_version,
+                "current_version": current, "changed": False}
+
+    def unfinished_playbook_replacement(self, row: dict | None) -> str:
+        """The playbook an approved revision still has to retire (empty when none).
+
+        Left behind when an approval was interrupted between approving the new
+        row and retiring the old one; approving the same row again finishes it.
+        """
+        if not isinstance(row, dict) or self.is_pending_playbook(row):
+            return ""
+        if row.get("approval_status") != "approved" or row.get("status", "active") != "active":
+            return ""
+        target = str(row.get("pending_supersedes") or "")
+        if not target or target == str(row.get("id") or ""):
+            return ""
+        old = self._read_playbook_by_id(target)
+        if old is None or old.get("status", "active") != "active":
+            return ""
+        return target
+
+    def _retire_replaced_playbook(self, old_id: str, new_id: str) -> None:
+        _pinning.auto_unpin(self, old_id, reason="superseded", by=new_id)
+        self.archive_playbook(old_id)
+
+    def approve_playbook(self, playbook_id: str, expected_version: int | None = None) -> dict:
         """Owner approval: a pending playbook becomes verified; an approved update
-        proposal retires the row it replaces. Never over MCP (local review only)."""
+        proposal retires the row it replaces. Never over MCP (local review only).
+
+        ``expected_version`` (the version the Owner reviewed) is compared under
+        the same write locks that commit the approval. The row being replaced is
+        retired first, so an interrupted approval leaves at most one usable
+        version, and approving again completes it.
+        """
         if _review_boundary.mcp_origin():
             return _review_boundary.refusal(playbook_id, action="approve")
+        with self._review_locks():
+            return self._approve_playbook_locked(playbook_id, expected_version)
+
+    def _approve_playbook_locked(self, playbook_id: str, expected_version: int | None) -> dict:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"status": "not_found", "id": playbook_id}
+        stale = self._review_version_conflict(playbook_id, pb, expected_version)
+        if stale is not None:
+            return stale
         if not self.is_pending_playbook(pb):
+            unfinished = self.unfinished_playbook_replacement(pb)
+            if unfinished:
+                self._retire_replaced_playbook(unfinished, playbook_id)
+                self._audit.log("write", "playbooks", detail=f"approved {playbook_id} (replacement completed)")
+                return {"status": "promoted", "id": playbook_id, "retired": unfinished, "completed": True}
             return {"status": "not_staging", "id": playbook_id}
         if _tombstones.by_id(self.root, playbook_id) or _tombstones.lookup(self.root, "playbook", pb):
             return {"status": "rejected_before", "id": playbook_id}
@@ -676,24 +738,32 @@ class PlaybookMixin:
             row["promotion_reason"] = "owner_review"
             return row
 
-        self._update_playbook_file_by_id(playbook_id, _approve)
-        old_id = str(pb.get("pending_supersedes") or "")
+        old_id = target
         if old_id and self._read_playbook_by_id(old_id) is not None:
-            _pinning.auto_unpin(self, old_id, reason="superseded", by=playbook_id)
-            self.archive_playbook(old_id)
+            self._retire_replaced_playbook(old_id, playbook_id)
+        self._update_playbook_file_by_id(playbook_id, _approve)
         self._audit.log("write", "playbooks", detail=f"approved {playbook_id}")
         return {"status": "promoted", "id": playbook_id, "retired": old_id or None}
 
-    def reject_playbook(self, playbook_id: str, *, _owner_reject: str) -> dict:
-        """Owner reject mark: tombstone first, then archive the pending row."""
+    def reject_playbook(self, playbook_id: str, *, _owner_reject: str,
+                        expected_version: int | None = None) -> dict:
+        """Owner reject mark: tombstone first, then archive the pending row.
+
+        ``expected_version`` is compared under the write locks that hold both
+        the tombstone and the archive write: a changed row gets neither.
+        """
         if _review_boundary.mcp_origin():
             return _review_boundary.refusal(playbook_id, action="reject")
-        pb = self._read_playbook_by_id(playbook_id)
-        if pb is None:
-            return {"error": f"Playbook not found: {playbook_id}"}
-        if self.is_pending_playbook(pb):
-            _tombstones.append(self.root, "playbook", pb, via=_owner_reject)
-        return self.archive_playbook(playbook_id)
+        with self._review_locks():
+            pb = self._read_playbook_by_id(playbook_id)
+            if pb is None:
+                return {"error": f"Playbook not found: {playbook_id}"}
+            stale = self._review_version_conflict(playbook_id, pb, expected_version)
+            if stale is not None:
+                return stale
+            if self.is_pending_playbook(pb):
+                _tombstones.append(self.root, "playbook", pb, via=_owner_reject)
+            return self.archive_playbook(playbook_id, expected_version=expected_version)
 
     def add_playbook(
         self,

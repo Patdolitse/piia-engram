@@ -114,7 +114,11 @@ def batch_review_staging(
             items.append(_item(idx, item_id, action, "not_found"))
             counts["failed"] += 1
             continue
-        if item.get("tier") != "staging":
+        unfinished = (
+            action == "approve" and item_type == "playbook"
+            and bool(eng.unfinished_playbook_replacement(item))
+        )
+        if item.get("tier") != "staging" and not unfinished:
             items.append(_item(idx, item_id, action, "not_staging", item_type=item_type))
             counts["noop"] += 1
             continue
@@ -195,20 +199,28 @@ def batch_review_staging(
                 it["status"] = "version_conflict"
                 counts["failed"] += 1
                 continue
+        # The reviewed version travels into the operation and is compared again
+        # inside the lock that commits it (another process may write meanwhile).
         if it["action"] == "approve":
             if it.get("type") == "playbook":
-                result = eng.approve_playbook(it["id"])
+                result = eng.approve_playbook(it["id"], expected_version=expected_version)
             else:
-                result = eng.promote_knowledge(it["id"])
+                result = eng.promote_knowledge(it["id"], expected_version=expected_version)
             ok = result.get("status") == "promoted"
         else:
             # An explicit reject mark: the only core path (with the CLI apply and
             # the backfill) that writes a permanent tombstone.
             if it.get("type") == "playbook":
-                result = eng.reject_playbook(it["id"], _owner_reject=owner_reject)
+                result = eng.reject_playbook(it["id"], _owner_reject=owner_reject,
+                                             expected_version=expected_version)
             else:
-                result = eng.archive_knowledge(it["id"], _owner_reject=owner_reject)
+                result = eng.archive_knowledge(it["id"], _owner_reject=owner_reject,
+                                               expected_version=expected_version)
             ok = not result.get("error")
+        if "version_conflict" in (result.get("status"), result.get("error")):
+            it["status"] = "version_conflict"
+            counts["failed"] += 1
+            continue
         if ok:
             it["status"] = "applied"
             counts["applied"] += 1

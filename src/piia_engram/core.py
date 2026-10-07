@@ -2156,24 +2156,39 @@ class Engram(
                 entry["reproposal_of_rejected"] = cited
         return None
 
-    def _archive_with_reject(self, kind: str, item_id: str, owner_reject: str, archive) -> dict:
+    def _archive_with_reject(self, kind: str, item_id: str, owner_reject: str, archive,
+                             expected_version: int | None = None) -> dict:
         """Archive a row; tombstone it only for an explicit Owner reject mark.
 
         The tombstone is written FIRST, so the Owner's rejection holds even if the
         status write that follows never lands. That window is visible, not silent:
         doctor lists a tombstoned row that is still pending, and re-applying the
         same reject mark finishes it (the tombstone append is idempotent).
+
+        A reject mark holds the knowledge write lock across the version check,
+        the tombstone and the status write: a row changed since the Owner
+        reviewed it (``expected_version``) gets neither.
         """
         if owner_reject and _review_boundary.mcp_origin():
             return _review_boundary.refusal(item_id, action="reject")
-        if owner_reject:
+        if not owner_reject:
+            return archive()
+        from .storage import hold_directory_lock
+
+        with hold_directory_lock(self._knowledge_dir, timeout=30):
             _t, before = self._find_item_by_id(item_id)
+            if isinstance(before, dict) and expected_version is not None:
+                current = int(before.get("version") or 1)
+                if current != expected_version:
+                    return {"error": "version_conflict", "item_id": item_id,
+                            "expected_version": expected_version, "actual_version": current,
+                            "current_version": current, "changed": False}
             if isinstance(before, dict) and before.get("tier") == "staging":
                 _tombstones.append(
                     self.root, kind, before, via=owner_reject,
                     prior_rejection_id=str(before.get("reproposal_of_rejected") or ""),
                 )
-        return archive()
+            return archive()
 
     def tombstoned_but_pending(self) -> list[dict]:
         """Rows an Owner reject mark tombstoned whose status write did not land."""
@@ -2769,7 +2784,8 @@ class Engram(
         """Mark a lesson as outdated without deleting it."""
         return self._archive_with_reject(
             "lesson", lesson_id, _owner_reject,
-            lambda: self.update_lesson(lesson_id, {"status": "outdated"}, expected_version=expected_version))
+            lambda: self.update_lesson(lesson_id, {"status": "outdated"}, expected_version=expected_version),
+            expected_version=expected_version)
 
     def add_decision(
         self,
@@ -3262,7 +3278,8 @@ class Engram(
         """Mark a decision as outdated without deleting it."""
         return self._archive_with_reject(
             "decision", decision_id, _owner_reject,
-            lambda: self.update_decision(decision_id, {"status": "outdated"}, expected_version=expected_version))
+            lambda: self.update_decision(decision_id, {"status": "outdated"}, expected_version=expected_version),
+            expected_version=expected_version)
 
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""
