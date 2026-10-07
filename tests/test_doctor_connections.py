@@ -82,6 +82,8 @@ def world(home: Path, tmp_path: Path) -> dict:
     _write(home / ".claude" / ".mcp.json", json.dumps({"mcpServers": {"engram": _entry(store)}}))
     _write(home / ".cursor" / "mcp.json", json.dumps({"mcpServers": {"engram": _entry(store)}}))
     _write(home / ".codex" / "config.toml", '[mcp_servers.other]\ncommand = "other"\n')
+    _write(home / ".claude.json", json.dumps({"userID": _SECRET, "projects": {
+        str(tmp_path / "proj"): {"mcpServers": {"engram": _entry(store)}, "history": [_SECRET]}}}))
     _checkpoint(store, "claude_code", "auto-2026-10-05T10-00-00-cp1.md", 20)
     _checkpoint(store, "claude_code", "auto-2026-10-05T10-00-00.md", 27)
     _checkpoint(store, "claude_code", "auto-2026-10-06T09-00-00.md", 4)
@@ -95,11 +97,16 @@ def _by_tool(report: dict) -> dict[str, dict]:
     return {row["tool_id"]: row for row in report["clients"]}
 
 
-def _snapshot(*roots: Path) -> dict[str, str]:
-    return {
-        str(p): hashlib.sha256(p.read_bytes()).hexdigest()
-        for root in roots for p in sorted(root.rglob("*")) if p.is_file()
-    }
+def _snapshot(*roots: Path) -> dict[str, tuple]:
+    """Every file (bytes + mtime_ns) and every directory (mtime_ns) under ``roots``."""
+    shot: dict[str, tuple] = {}
+    for root in roots:
+        for p in sorted(root.rglob("*")):
+            if p.is_file():
+                shot[str(p)] = ("file", hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
+            elif p.is_dir():
+                shot[str(p)] = ("dir", p.stat().st_mtime_ns)
+    return shot
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +285,18 @@ def test_cli_refuses_bad_arguments(world, monkeypatch, capsys, argv):
     assert exc.value.code == 2
 
 
-def test_mcp_doctor_tool_does_not_carry_the_connection_report(world):
-    import inspect
+def test_mcp_doctor_tool_does_not_carry_the_connection_report(world, monkeypatch):
+    import asyncio
 
-    from piia_engram import mcp_tools_admin
+    from piia_engram import mcp_server
 
-    assert "connection_report" not in inspect.getsource(mcp_tools_admin.doctor)
+    monkeypatch.setenv("ENGRAM_HEARTBEAT_INTERVAL", "0")
+    monkeypatch.setattr(mcp_server, "_engram", Engram(root=world["store"]))
+    for fmt in ("markdown", "json"):
+        out = asyncio.run(mcp_server.doctor(output_format=fmt))
+        for marker in ("Client Connections", "configured_no_calls", "connected", "claude.json",
+                       "mcp.json", "verdict", _SECRET):
+            assert marker not in out, (fmt, marker)
 
 
 # ---------------------------------------------------------------------------
@@ -341,3 +354,128 @@ def test_user_config_detection_does_not_change_where_setup_writes(home, tmp_path
 
     assert (home / ".claude" / ".mcp.json").is_file()
     assert claude_json.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# review follow-ups: labels, unreadable dirs, limits, shared labels
+# ---------------------------------------------------------------------------
+
+
+def _rewrite_lessons(store: Path, mutate) -> None:
+    path = store / "knowledge" / "lessons.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    mutate(rows)
+    path.write_text(json.dumps(rows), encoding="utf-8")
+
+
+def test_a_stored_client_name_is_relabeled_never_echoed(world):
+    def poison(rows):
+        rows[0]["provenance"]["client"] = "evil\x1b[2J\nINJECTED line"
+
+    _rewrite_lessons(world["store"], poison)
+    report = C.build_report(world["store"], days=14)
+    dumped = json.dumps(report, ensure_ascii=False) + "\n".join(C.render_text(report))
+    assert "\x1b" not in dumped and "INJECTED" not in dumped and "evil" not in dumped
+    assert report["other_activity"]["other"]["writes"] == 1
+
+
+def test_an_unreadable_directory_is_skipped(world, monkeypatch):
+    real_iterdir = Path.iterdir
+    blocked = {world["store"] / "contexts" / "claude_code", world["store"] / "playbooks"}
+
+    def iterdir(self):
+        if self in blocked:
+            raise PermissionError(13, "denied", str(self))
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    rows = _by_tool(C.build_report(world["store"], days=14))
+    assert rows["claude_code"]["verdict"] == "connected"  # the MCP write still counts
+    assert rows["claude_code"]["sessions"] == 0
+
+
+def test_json_reports_an_error_type_only(world, monkeypatch, capsys):
+    secret_path = str(world["home"] / "private-dir-name")
+
+    def boom(*args, **kwargs):
+        raise PermissionError(13, "denied", secret_path)
+
+    monkeypatch.setattr(C, "build_report", boom)
+    code = doctor.run_doctor_json(days=14)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert json.loads(out) == {"error": "PermissionError", "read_only": True}
+    assert "private-dir-name" not in out
+
+
+def test_full_doctor_prints_only_the_error_type(world, monkeypatch):
+    secret_path = str(world["home"] / "private-dir-name")
+
+    def boom(*args, **kwargs):
+        raise PermissionError(13, "denied", secret_path)
+
+    monkeypatch.setattr(C, "build_report", boom)
+    buf = io.StringIO()
+
+    def run():
+        with redirect_stdout(buf):
+            doctor.run_doctor(fix=False)
+
+    _without_mcp_server_module(run)
+    out = buf.getvalue()
+    assert "Client connection check skipped (PermissionError)" in out
+    assert "private-dir-name" not in out
+
+
+def test_shared_label_client_without_activity_is_configured_no_calls(home, tmp_path):
+    store = tmp_path / "store"
+    Engram(root=store)
+    _write(home / ".trae" / "mcp.json", json.dumps({"mcpServers": {"engram": _entry(store)}}))
+    report = C.build_report(store, days=14)
+    assert _by_tool(report)["trae"]["verdict"] == "configured_no_calls"
+    assert "Trae (other): configured, no Engram calls" in "\n".join(C.render_text(report))
+
+    _checkpoint(store, "trae", "auto-2026-10-06T08-00-00.md", 2)
+    assert _by_tool(C.build_report(store, days=14))["trae"]["verdict"] == "configured_unattributed"
+
+
+def test_session_counts_are_capped(world):
+    _checkpoint(world["store"], "claude_code", "auto-2026-10-06T10-00-00.md", 10**12)
+    row = _by_tool(C.build_report(world["store"], days=14))["claude_code"]
+    assert row["calls"] == 27 + 4 + C.MAX_SESSION_CALLS
+    assert "save_agent_context" in C.SELF_REPORTED_NOTE
+
+
+def test_huge_days_do_not_overflow(world):
+    report = C.build_report(world["store"], days=10**9)
+    assert report["days"] == C.MAX_DAYS
+
+
+def test_an_oversized_claude_user_config_is_undetermined(home, tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    Engram(root=store)
+    _claude_json(home, {"mcpServers": {"engram": _entry(store)}})
+    monkeypatch.setattr(C, "MAX_CLAUDE_JSON_BYTES", 10)
+    report = C.build_report(store, days=14)
+    row = _by_tool(report)["claude_code"]
+    assert row["config_status"] == "undetermined"
+    assert "could not be checked" in "\n".join(C.render_text(report))
+
+
+@pytest.mark.parametrize("argv,days", [(["doctor", "--json", "--days=30"], 30),
+                                       (["doctor", "--json", "--days", "3650"], 3650)])
+def test_cli_days_forms(world, monkeypatch, capsys, argv, days):
+    monkeypatch.setattr(sys, "argv", ["engram", *argv])
+    with pytest.raises(SystemExit) as exc:
+        W.main()
+    assert exc.value.code == 0
+    assert json.loads(capsys.readouterr().out)["days"] == days
+
+
+@pytest.mark.parametrize("argv", [["doctor", "--days", "3651"], ["doctor", "--days=99999999999999999999"],
+                                  ["doctor", "--days="], ["doctor", "--days"]])
+def test_cli_days_out_of_range(world, monkeypatch, argv):
+    monkeypatch.setattr(sys, "argv", ["engram", *argv])
+    with pytest.raises(SystemExit) as exc:
+        W.main()
+    assert exc.value.code == 2

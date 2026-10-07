@@ -35,6 +35,12 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_DAYS = 14
+MAX_DAYS = 3650
+# One session's counter is taken at most at this value: a checkpoint file can
+# also be written through save_agent_context, so its number is only a hint.
+MAX_SESSION_CALLS = 100_000
+# ~/.claude.json grows with Claude Code's history; past this size it is not parsed.
+MAX_CLAUDE_JSON_BYTES = 32 * 1024 * 1024
 
 _AUTO_SESSION = re.compile(r"^(auto-.+?)(?:-cp\d+)?\.md$")
 _CALL_COUNTER = re.compile(r"^工具调用次数:\s*(\d+)\s*$")
@@ -44,8 +50,40 @@ _HEADER_READ_LIMIT = 64 * 1024
 SELF_REPORTED_NOTE = (
     "Client names are self-reported by each client (MCP clientInfo), not verified. "
     "Counts are a lower bound: a short session that never reached a checkpoint and "
-    "wrote nothing leaves no trace."
+    "wrote nothing leaves no trace. Session counts come from checkpoint files, which a "
+    "client can also write through save_agent_context; treat them as hints "
+    f"(at most {MAX_SESSION_CALLS} calls per session are counted)."
 )
+
+
+def _listdir(path: Path) -> list[Path]:
+    """Directory entries, or none when the directory cannot be read."""
+    try:
+        return sorted(path.iterdir())
+    except OSError:
+        return []
+
+
+def _is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def _clamp_days(days: int) -> int:
+    try:
+        value = int(days)
+    except (TypeError, ValueError, OverflowError):
+        value = DEFAULT_DAYS
+    return min(max(value, 0), MAX_DAYS)
 
 
 def client_label(name: str) -> str:
@@ -83,13 +121,19 @@ def _servers(config: dict, server_key: str) -> dict:
     return fallback if isinstance(fallback, dict) else {}
 
 
-def _claude_user_config_has_engram(path: Path) -> bool:
+def _claude_user_config_has_engram(path: Path) -> bool | None:
     """Does Claude Code's user config (``~/.claude.json``) register an engram server?
 
     Detection only: looks at the top-level ``mcpServers`` and each
     ``projects.<dir>.mcpServers`` for an ``engram`` key; nothing else is read
-    out of the file and nothing from it is returned or printed.
+    out of the file and nothing from it is returned or printed. None when the
+    file is too large to check (``MAX_CLAUDE_JSON_BYTES``).
     """
+    try:
+        if path.stat().st_size > MAX_CLAUDE_JSON_BYTES:
+            return None
+    except OSError:
+        return False
     data = _read_json_quietly(path)
     if not isinstance(data, dict):
         return False
@@ -122,26 +166,36 @@ def client_configs(home: Path | None = None) -> list[dict[str, Any]]:
         fmt = cfg.get("format", "json")
         server_key = cfg.get("server_key", "mcpServers")
         installed = False
+        undetermined = False
         configured_path: Path | None = None
         first_path: Path | None = None
         for raw_path in cfg.get("config_paths", []):
             path = Path(raw_path)
-            if not path.parent.exists():
+            if not _is_dir(path.parent):
                 continue
             installed = True
             first_path = first_path or path
-            if path.is_file() and "engram" in _servers(W._read_mcp_config(path, fmt=fmt), server_key):
+            if _is_file(path) and "engram" in _servers(W._read_mcp_config(path, fmt=fmt), server_key):
                 configured_path = path
                 break
         if configured_path is None:
             for path in _detect_only_paths(tool_id, home):
-                if not path.is_file():
+                if not _is_file(path):
                     continue
                 installed = True
-                if _claude_user_config_has_engram(path):
+                found = _claude_user_config_has_engram(path)
+                if found is None:
+                    undetermined = True
+                    first_path = path
+                elif found:
                     configured_path = path
                     break
-        status = "configured" if configured_path else ("not_configured" if installed else "not_installed")
+        if configured_path:
+            status = "configured"
+        elif undetermined:
+            status = "undetermined"
+        else:
+            status = "not_configured" if installed else "not_installed"
         shown = configured_path or first_path
         rows.append({
             "tool_id": tool_id,
@@ -196,7 +250,7 @@ def _session_calls(path: Path) -> int:
     for line in text.splitlines():
         match = _CALL_COUNTER.match(line.strip())
         if match:
-            best = max(best, int(match.group(1)))
+            best = max(best, min(int(match.group(1)), MAX_SESSION_CALLS))
     return best
 
 
@@ -204,7 +258,7 @@ def call_activity(root: Path, *, days: int = DEFAULT_DAYS, now: float | None = N
     """Per client label: sessions, calls (lower bound), writes and the last time seen."""
     root = Path(root)
     now = datetime.now(timezone.utc).timestamp() if now is None else now
-    since = now - timedelta(days=max(int(days), 0)).total_seconds()
+    since = now - timedelta(days=_clamp_days(days)).total_seconds()
     activity: dict[str, dict] = {}
 
     def bucket(label: str) -> dict:
@@ -215,14 +269,14 @@ def call_activity(root: Path, *, days: int = DEFAULT_DAYS, now: float | None = N
             entry["last_seen"] = moment
 
     contexts = root / "contexts"
-    if contexts.is_dir():
-        for tool_dir in sorted(contexts.iterdir()):
-            if not tool_dir.is_dir():
+    if _is_dir(contexts):
+        for tool_dir in _listdir(contexts):
+            if not _is_dir(tool_dir):
                 continue
             sessions: dict[str, tuple[int, float]] = {}
-            for path in tool_dir.iterdir():
+            for path in _listdir(tool_dir):
                 match = _AUTO_SESSION.match(path.name)
-                if not match or not path.is_file():
+                if not match or not _is_file(path):
                     continue
                 try:
                     mtime = path.stat().st_mtime
@@ -242,10 +296,12 @@ def call_activity(root: Path, *, days: int = DEFAULT_DAYS, now: float | None = N
 
     knowledge_files = [root / "knowledge" / "lessons.json", root / "knowledge" / "decisions.json"]
     playbook_dir = root / "playbooks"
-    if playbook_dir.is_dir():
-        knowledge_files += [p for p in sorted(playbook_dir.glob("*.json")) if not p.name.startswith("_")]
+    if _is_dir(playbook_dir):
+        knowledge_files += [
+            p for p in _listdir(playbook_dir) if p.suffix == ".json" and not p.name.startswith("_")
+        ]
     for path in knowledge_files:
-        if not path.is_file():
+        if not _is_file(path):
             continue
         data = _read_json_quietly(path)
         rows = [data] if isinstance(data, dict) and "provenance" in data else _rows_of(data)
@@ -256,7 +312,7 @@ def call_activity(root: Path, *, days: int = DEFAULT_DAYS, now: float | None = N
             moment = _parse_time(prov.get("created_at")) or _parse_time(row.get("created_at"))
             if moment is None or moment < since:
                 continue
-            entry = bucket(str(prov.get("client") or "unknown"))
+            entry = bucket(client_label(str(prov.get("client") or "")))
             entry["writes"] += 1
             seen(entry, moment)
     return activity
@@ -281,8 +337,10 @@ def strict_line(root: Path) -> dict[str, str]:
 def startup_line(root: Path) -> dict[str, Any]:
     from .reconcile import _reconcile_config_value
 
+    from .write_provenance import clean_client_text
+
     def env(name: str) -> str:
-        return str(os.environ.get(name, "") or "").strip()
+        return clean_client_text(os.environ.get(name, ""), limit=32)
 
     configured = _reconcile_config_value(root)
     reconcile = env("ENGRAM_RECONCILE")
@@ -318,9 +376,11 @@ def startup_line(root: Path) -> dict[str, Any]:
 def _verdict(config_status: str, active: dict | None, shared_label: bool) -> str:
     has_calls = bool(active) and not shared_label
     if config_status == "configured":
-        if shared_label:
+        if shared_label and active:
             return "configured_unattributed"
         return "connected" if has_calls else "configured_no_calls"
+    if config_status == "undetermined":
+        return "config_undetermined"
     if has_calls:
         return "calls_without_config"
     return config_status  # not_configured | not_installed
@@ -330,6 +390,7 @@ def build_report(root: Path, *, days: int = DEFAULT_DAYS, home: Path | None = No
                  now: float | None = None) -> dict[str, Any]:
     """The whole connection report (JSON-ready)."""
     root = Path(root)
+    days = _clamp_days(days)
     configs = client_configs(home)
     activity = call_activity(root, days=days, now=now)
     label_counts: dict[str, int] = {}
@@ -355,7 +416,7 @@ def build_report(root: Path, *, days: int = DEFAULT_DAYS, home: Path | None = No
     }
     return {
         "schema_version": 1,
-        "days": int(days),
+        "days": days,
         "strict_approval": strict_line(root),
         "startup_writes": startup_line(root),
         "clients": clients,
@@ -404,6 +465,13 @@ def render_text(report: dict[str, Any]) -> list[str]:
             lines.append(
                 f"[ok] {label}: configured; its calls cannot be told apart from other clients "
                 "(no label of its own)")
+        elif verdict == "config_undetermined":
+            calls = ""
+            if row.get("last_seen"):
+                calls = f"; called in the last {days} days (last {_when(row['last_seen'])})"
+            lines.append(
+                f"[--] {label}: config could not be checked ({row['config_path']} is larger than "
+                f"{MAX_CLAUDE_JSON_BYTES // (1024 * 1024)} MB){calls}")
         elif verdict == "calls_without_config":
             lines.append(
                 f"[ok] {label}: called in the last {days} days (last {_when(row['last_seen'])}), but "

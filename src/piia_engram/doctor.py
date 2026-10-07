@@ -723,8 +723,8 @@ def _print_connection_report(root, days: int | None = None) -> None:
     W._safe_print(f"  -- Client Connections (last {days} days) --\n")
     try:
         report = _connections.build_report(Path(root), days=days)
-    except Exception as exc:
-        W._safe_print(f"    [--] Client connection check skipped: {exc}")
+    except Exception as exc:  # the message may hold a private path: name the type only
+        W._safe_print(f"    [--] Client connection check skipped ({type(exc).__name__})")
         return
     for line in _connections.render_text(report):
         W._safe_print(f"    {line}")
@@ -740,7 +740,11 @@ def run_doctor_json(days: int | None = None) -> int:
     from piia_engram.storage import _engram_root
 
     days = _connections.DEFAULT_DAYS if days is None else days
-    report = _connections.build_report(Path(_engram_root()), days=days)
+    try:
+        report = _connections.build_report(Path(_engram_root()), days=days)
+    except Exception as exc:  # the message may hold a private path: name the type only
+        print(json.dumps({"error": type(exc).__name__, "read_only": True}))
+        return 1
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -1054,7 +1058,9 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
             W._safe_print(f"    [--] {tool_id}: file exists but no Engram snippet")
             missing_snippets.append(tool_id)
         elif state == "stale_default":
-            if strict:
+            if strict and W._instruction_snippet_is_strict_default(tool_id, content):
+                why = "an older default snippet"
+            elif strict:
                 why = "default text that auto-saves; strict approval wants read + propose"
                 if W._SNIPPET_FRESHNESS_TOKEN not in content:
                     why = f"missing '{W._SNIPPET_FRESHNESS_TOKEN}' directive (pre-v3.31)"
@@ -1067,8 +1073,8 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
         elif state == "custom":
             W._safe_print(f"    [ok] {tool_id}: your own Engram block in {target_path} (left as is)")
             W._safe_print(
-                "         If you want Engram's newer default text (for example the rules on what "
-                "to keep), merge it by hand; your block is never overwritten."
+                "         Engram's default text may be newer than your block (for example the rules "
+                "on what to keep); merge it by hand if you want it. Your block is never overwritten."
             )
             if W._SNIPPET_FRESHNESS_TOKEN not in content:
                 W._safe_print(

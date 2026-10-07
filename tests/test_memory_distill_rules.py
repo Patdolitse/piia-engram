@@ -123,12 +123,14 @@ def _has_rules_en(text: str) -> None:
     assert "to-dos" in text and "temporary state" in text
     assert "(date unknown)" in text
     assert "supersedes=<old id>" in text
+    assert "If something contradicts an existing entry" in text
 
 
 def _has_rules_zh(text: str) -> None:
     assert "待办" in text and "临时状态" in text
     assert "日期未定" in text
     assert "supersedes=<旧 id>" in text
+    assert "如果与已有条目矛盾" in text
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +170,31 @@ def test_every_snippet_shipped_in_4212_is_a_known_default():
     assert _STRICT_4212_FINGERPRINTS <= _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS
     assert _snippet_fingerprint(_snippet_inner("codex", _CODEX_EN_4212)) in _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS
     assert _snippet_fingerprint(_STRICT_EN_4212) in _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS
+
+
+# Defaults this branch wrote before the wording fix ("If something contradicts ...").
+_BRANCH_DEFAULTS_BEFORE_WORDING_FIX = {
+    "92c68841751dbffada5cd6473b4ce9575098f9c14636326afdc7fa9c613c5b45",
+    "f15e2f9086e2bb887766f7e5b41cf3889272fcdbb6ee54c841dd8c89e3523cf0",
+    "06d50df7db4796e0c5f5dd46e11ac264a5b0d93b407ec3bc15537ea86079ff88",
+    "05bca085559c10863ea71442d56757eec69311852f3f2de016c6cd7b910694cd",
+    "b4dd70e8ba9655c0bef95f4e5ea5150ef5a220fbff2f99edbd45c82cab00a9e5",
+    "0d918e90b65df60c334b0c9441713e8b4fad58f976e8a7ea52896d53d6061307",
+    "960d123f47cc63907bfe305ce1104a5aae1f30416d80b57388aff8771b39f292",
+    "132b555c208a0c930135c481215c47ccf2923afd3969a9942ca2b4ea8f7353a5",
+}
+_BRANCH_STRICT_BEFORE_WORDING_FIX = {
+    "51f38a59c9ea288eda82b5c8a5acd1c7290fd45d2e9b53ad774fed44d959e635",
+    "2fbcf7073e6504731c1b9b507d9e8dcfe6d1e23abf978c31f254c0ac3168052b",
+    "0d2d5bc68d407b10a8037f67bf4bc29e280f9cbfa24c0ca32997d6021e1da4b7",
+    "c2e4d289195e4bf32ed1a26ad21922777c408d35b148a7f1d250c4d65a6cac04",
+}
+
+
+def test_branch_defaults_before_the_wording_fix_are_known():
+    assert _BRANCH_DEFAULTS_BEFORE_WORDING_FIX <= _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS
+    assert _BRANCH_STRICT_BEFORE_WORDING_FIX <= _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS
+    assert _BRANCH_STRICT_BEFORE_WORDING_FIX | _STRICT_4212_FINGERPRINTS <= W._KNOWN_STRICT_SNIPPET_FINGERPRINTS
 
 
 def test_new_defaults_are_new_text():
@@ -273,7 +300,7 @@ def test_doctor_names_a_newer_default_for_an_owner_block(home, tmp_path):
 
     assert claude.read_bytes() == before
     assert "your own Engram block" in out
-    assert "newer default" in out and "merge" in out
+    assert "may be newer" in out and "merge" in out
 
 
 # ---------------------------------------------------------------------------
@@ -352,3 +379,48 @@ def test_a_revision_of_an_unknown_id_is_refused_everywhere(eng, kind, version):
         assert result["error"] == "supersedes_target_not_found", (name, result)
         assert result["changed"] is False
         assert _store(eng.root) == before, name
+
+
+# ---------------------------------------------------------------------------
+# 4. doctor: wording for older strict text, and what --fix refreshes
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_calls_an_older_strict_block_an_older_default(home, tmp_path):
+    store = tmp_path / "store"
+    Engram(root=store)
+    _latch_strict(store)
+    codex = home / ".codex" / "AGENTS.md"
+    codex.parent.mkdir(parents=True)
+    codex.write_text(f"{_INSTRUCTION_MARKER}\n{_STRICT_EN_4212}{_INSTRUCTION_MARKER_END}\n", encoding="utf-8")
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        doctor._run_functional_checks(fix=False)
+    out = buf.getvalue()
+
+    assert "[stale] codex: an older default snippet" in out
+    assert "auto-saves" not in out.split("[stale] codex", 1)[1].splitlines()[0]
+
+
+def test_doctor_fix_never_hands_a_custom_block_to_the_injector(home, tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    Engram(root=store)
+    claude = home / ".claude" / "CLAUDE.md"
+    claude.parent.mkdir(parents=True)
+    claude.write_text("# rules\n\n" + _OWNER_BLOCK, encoding="utf-8")
+    codex = home / ".codex" / "AGENTS.md"
+    codex.parent.mkdir(parents=True)
+    codex.write_text("# codex\n" + _CODEX_EN_4212, encoding="utf-8")
+    asked: list[str] = []
+
+    def spy(tool_id, *args, **kwargs):
+        asked.append(tool_id)
+        return None
+
+    monkeypatch.setattr(W, "_inject_instruction_snippet", spy)
+    with redirect_stdout(io.StringIO()):
+        doctor._run_functional_checks(fix=True)
+
+    assert "codex" in asked
+    assert "claude_code" not in asked

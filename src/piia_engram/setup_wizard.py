@@ -396,15 +396,15 @@ _SNIPPET_FRESHNESS_TOKEN = "get_resume_brief"
 _DISTILL_RULES_ZH = (
     "- 只记长期有用的内容；当天进度、待办和临时状态不记\n"
     "- “昨天”“下周”这类相对日期：能确定当时日期就写成具体日期，否则保留原文并注明“日期未定”\n"
-    "- 与已有条目矛盾：先用 `search_knowledge` 找到旧条目，再提交带 `supersedes=<旧 id>` 的修订，"
+    "- 如果与已有条目矛盾：先用 `search_knowledge` 找到旧条目，再提交带 `supersedes=<旧 id>` 的修订，"
     "不要另起一条无关联的新条目\n"
 )
 _DISTILL_RULES_EN = (
     "- Keep only what stays useful later; skip today's progress, to-dos and temporary state\n"
     "- Relative dates (\"yesterday\", \"next week\"): write the actual date when you can tell when "
     "it was said; otherwise keep the words and add \"(date unknown)\"\n"
-    "- Contradicts an existing entry: find the old one with `search_knowledge`, then submit a "
-    "revision with `supersedes=<old id>` instead of an unrelated new entry\n"
+    "- If something contradicts an existing entry: find the old one with `search_knowledge`, "
+    "then submit a revision with `supersedes=<old id>` instead of an unrelated new entry\n"
 )
 
 # Map: tool_id → (instruction_file_path_fn, snippet)
@@ -561,7 +561,7 @@ _STRICT_SNIPPET_BODY = {
         "- 只提案长期有用的：会话日志、当天进度、待办、临时状态、检查点，以及文件或 git 里已有的内容，"
         "不要提案；写进项目自己的笔记。\n"
         "- “昨天”“下周”这类相对日期：能确定当时日期就写成具体日期，否则保留原文并注明“日期未定”。\n"
-        "- 与已有条目矛盾：先用 `search_knowledge` 找到旧条目，再提交带 `supersedes=<旧 id>` 的修订提案"
+        "- 如果与已有条目矛盾：先用 `search_knowledge` 找到旧条目，再提交带 `supersedes=<旧 id>` 的修订提案"
         "（同样进入待审），不要另起一条无关联的新条目。\n"
         "- 不要用 `wrap_up_session`、`extract_session_insights`、`save_agent_context` 做自动保存。\n"
         "- 批准、驳回、编辑、合并、导入和身份修改由 Owner 在本地完成，MCP 会拒绝这些操作。\n"
@@ -582,9 +582,9 @@ _STRICT_SNIPPET_BODY = {
         "project's own notes.\n"
         "- Relative dates (\"yesterday\", \"next week\"): write the actual date when you can tell "
         "when it was said; otherwise keep the words and add \"(date unknown)\".\n"
-        "- Contradicts an existing entry: find the old one with `search_knowledge`, then submit a "
-        "revision with `supersedes=<old id>` (it waits for review too) instead of an unrelated "
-        "new entry.\n"
+        "- If something contradicts an existing entry: find the old one with `search_knowledge`, "
+        "then submit a revision with `supersedes=<old id>` (it waits for review too) instead of "
+        "an unrelated new entry.\n"
         "- Do not use `wrap_up_session`, `extract_session_insights` or `save_agent_context` as an "
         "auto-save.\n"
         "- Approving, rejecting, editing, merging, importing and identity changes are the Owner's, "
@@ -640,6 +640,31 @@ _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS = frozenset({
     "8661550f037b83c20ec053954ecec6c05676a9583ea381bfa93888070234078d",  # strict en (marked block)
     "a92d0ad53a563a6ba04d7d51c773005eed8d1a3416327d209c80dd1038a25717",  # cursor strict zh
     "477fd57e28d527a896652d2c63e73edf42a8385ef410b829b32c59d96678ae59",  # cursor strict en
+    # Unreleased first wording of the distill rules ("Contradicts an existing entry").
+    "92c68841751dbffada5cd6473b4ce9575098f9c14636326afdc7fa9c613c5b45",  # claude_code zh
+    "f15e2f9086e2bb887766f7e5b41cf3889272fcdbb6ee54c841dd8c89e3523cf0",  # claude_code en
+    "06d50df7db4796e0c5f5dd46e11ac264a5b0d93b407ec3bc15537ea86079ff88",  # cursor zh
+    "05bca085559c10863ea71442d56757eec69311852f3f2de016c6cd7b910694cd",  # cursor en
+    "b4dd70e8ba9655c0bef95f4e5ea5150ef5a220fbff2f99edbd45c82cab00a9e5",  # codex zh
+    "0d918e90b65df60c334b0c9441713e8b4fad58f976e8a7ea52896d53d6061307",  # codex en
+    "960d123f47cc63907bfe305ce1104a5aae1f30416d80b57388aff8771b39f292",  # windsurf zh
+    "132b555c208a0c930135c481215c47ccf2923afd3969a9942ca2b4ea8f7353a5",  # windsurf en
+    "51f38a59c9ea288eda82b5c8a5acd1c7290fd45d2e9b53ad774fed44d959e635",  # strict zh (marked block)
+    "2fbcf7073e6504731c1b9b507d9e8dcfe6d1e23abf978c31f254c0ac3168052b",  # strict en (marked block)
+    "0d2d5bc68d407b10a8037f67bf4bc29e280f9cbfa24c0ca32997d6021e1da4b7",  # cursor strict zh
+    "c2e4d289195e4bf32ed1a26ad21922777c408d35b148a7f1d250c4d65a6cac04",  # cursor strict en
+})
+# The strict (read + propose) texts among them: an older one of these is just an
+# older default to doctor, not "text that auto-saves".
+_KNOWN_STRICT_SNIPPET_FINGERPRINTS = frozenset({
+    "d185faf1cc61b62230caaf247d0bba4403dd4f813a5d91a57dc4bdba8d7db005",
+    "8661550f037b83c20ec053954ecec6c05676a9583ea381bfa93888070234078d",
+    "a92d0ad53a563a6ba04d7d51c773005eed8d1a3416327d209c80dd1038a25717",
+    "477fd57e28d527a896652d2c63e73edf42a8385ef410b829b32c59d96678ae59",
+    "51f38a59c9ea288eda82b5c8a5acd1c7290fd45d2e9b53ad774fed44d959e635",
+    "2fbcf7073e6504731c1b9b507d9e8dcfe6d1e23abf978c31f254c0ac3168052b",
+    "0d2d5bc68d407b10a8037f67bf4bc29e280f9cbfa24c0ca32997d6021e1da4b7",
+    "c2e4d289195e4bf32ed1a26ad21922777c408d35b148a7f1d250c4d65a6cac04",
 })
 
 
@@ -708,6 +733,20 @@ def _marked_block(content: str, marker: str) -> tuple[int, int, str] | None:
 def _is_default_snippet(tool_id: str, text: str) -> bool:
     fp = _snippet_fingerprint(text)
     return fp in _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS or fp in _default_fingerprints(tool_id)
+
+
+def _instruction_snippet_is_strict_default(tool_id: str, content: str) -> bool:
+    """Is the Engram block (or Cursor .mdc) a strict default text Engram shipped?"""
+    content = content or ""
+    if tool_id == "cursor":
+        inner = content
+    else:
+        block = _marked_block(content, _INSTRUCTION_MARKER) or _marked_block(content, _INSTRUCTION_MARKER_V1)
+        if block is None:
+            return False
+        inner = block[2]
+    fp = _snippet_fingerprint(inner)
+    return fp in _KNOWN_STRICT_SNIPPET_FINGERPRINTS or fp in _default_fingerprints(tool_id, strict=True)
 
 
 def _instruction_snippet_state(tool_id: str, content: str, *, strict: bool = False) -> str:
@@ -3282,15 +3321,19 @@ def _run_doctor_cli(args: list[str]) -> int:
     fix = "--fix" in args
     as_json = "--json" in args
     days = None
-    if "--days" in args:
-        index = args.index("--days")
-        raw = args[index + 1] if index + 1 < len(args) else ""
-        try:
-            days = int(raw)
-        except ValueError:
-            days = 0
-        if days < 1:
-            print("engram doctor: --days needs a whole number of days (1 or more)", file=sys.stderr)
+    raw = None
+    for index, arg in enumerate(args):
+        if arg == "--days":
+            raw = args[index + 1] if index + 1 < len(args) else ""
+        elif arg.startswith("--days="):
+            raw = arg[len("--days="):]
+    if raw is not None:
+        from piia_engram.connection_report import MAX_DAYS
+
+        raw = raw.strip()
+        days = int(raw) if raw.isdigit() and len(raw) <= 6 else 0
+        if not 1 <= days <= MAX_DAYS:
+            print(f"engram doctor: --days needs a whole number from 1 to {MAX_DAYS}", file=sys.stderr)
             return 2
     if as_json and fix:
         print("engram doctor: --json only reports; run --fix separately", file=sys.stderr)
@@ -3481,7 +3524,7 @@ def main() -> None:
             "  engram doctor           Check config health (all AI tools; no writes to the memory\n"
             "                          store; the version check may go online and write its cache)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
-            "  engram doctor --days N  Look back N days (default 14) for client calls\n"
+            "  engram doctor --days N  Look back N days (1-3650, default 14) for client calls\n"
             "  engram doctor --json    Client connections only, as JSON (read-only)\n"
             "  engram capabilities     Content-free runtime capability fingerprint (--json/--require)\n"
             "  engram status           Show a redacted install + memory health summary\n"
