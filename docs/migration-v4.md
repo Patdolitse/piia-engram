@@ -133,8 +133,8 @@ parameters are given, `thread_seed_id` wins.
 |---|---|
 | `export_engram(...)` | unchanged (default `format="native"`) |
 | `export_engram_to_openclaw(output_dir)` | `export_engram(format="openclaw", output_dir=...)` |
-| `import_engram(input_path, merge, dry_run)` | unchanged (default `format="native"`) |
-| `import_engram_from_openclaw(soul_path, memory_path, user_path)` | `import_engram(format="openclaw", soul_path=..., memory_path=..., user_path=...)` |
+| `import_engram(input_path, merge, dry_run)` | same parameters (default `format="native"`); over MCP it only previews now (`dry_run=true`): apply with the local `engram import` |
+| `import_engram_from_openclaw(soul_path, memory_path, user_path)` | `import_engram(format="openclaw", soul_path=..., memory_path=..., user_path=...)`; over MCP it only previews now (`dry_run=true`): import with the local `engram import --format openclaw` |
 
 ### Caller trust (2 → 1)
 

@@ -1333,6 +1333,8 @@ def _validate_path(value: str, *, allow_empty: bool = False) -> str | None:
         return f"路径参数必须是字符串（收到 {type(value).__name__}）"
     if "\x00" in value:
         return "路径包含 NUL 字节（不允许）"
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        return "路径包含控制字符（不允许） / path contains a control character"
     if not allow_empty and not value.strip():
         return "路径不能为空"
     return None

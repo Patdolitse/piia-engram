@@ -350,14 +350,57 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
 
 
 def openclaw_command(soul_path: str = "", memory_path: str = "", user_path: str = "", *, apply: bool = True) -> str:
-    """The local ``engram import --format openclaw`` command line for these files."""
+    """The local ``engram import --format openclaw`` command line, with placeholders.
+
+    The caller's paths are never echoed (they could carry shell syntax); each
+    file that was given appears as ``<SOUL.md>`` / ``<MEMORY.md>`` / ``<USER.md>``.
+    """
     parts = ["engram import --format openclaw"]
-    for flag, value in (("--soul", soul_path), ("--memory", memory_path), ("--user", user_path)):
+    for flag, value, holder in (("--soul", soul_path, "<SOUL.md>"), ("--memory", memory_path, "<MEMORY.md>"),
+                                ("--user", user_path, "<USER.md>")):
         if value:
-            parts.append(f"{flag} {value}")
+            parts.append(f"{flag} {holder}")
     if apply:
         parts.append("--apply --yes")
     return " ".join(parts)
+
+
+def _read_openclaw_file(raw: str) -> tuple[dict, str | None]:
+    """(metadata, text) for one OpenClaw file: ``~`` expanded, strict UTF-8."""
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in str(raw)):
+        return {"error": "path contains a control character"}, None
+    path = Path(raw).expanduser()
+    if not path.exists():
+        return {"exists": False}, None
+    if not path.is_file():
+        return {"exists": True, "error": "not a file"}, None
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return {"exists": True, "error": "not UTF-8 text"}, None
+    except OSError as exc:
+        return {"exists": True, "error": f"cannot read the file ({type(exc).__name__})"}, None
+    bullets = sum(1 for line in text.splitlines() if line.strip().startswith("- "))
+    return {"exists": True, "bullets": bullets}, text
+
+
+def read_openclaw_files(soul_path: str = "", memory_path: str = "", user_path: str = "") -> tuple[dict, dict]:
+    """Read every given OpenClaw file up front: ({name: text}, {name: metadata}).
+
+    The preview and the import use this one reader. A missing file is
+    reported as ``{"exists": False}`` and skipped; any other problem carries
+    ``error``, and the import then writes nothing.
+    """
+    texts: dict[str, str] = {}
+    files: dict[str, dict] = {}
+    for name, raw in (("soul", soul_path), ("memory", memory_path), ("user", user_path)):
+        if not raw:
+            continue
+        info, text = _read_openclaw_file(raw)
+        files[name] = info
+        if text is not None:
+            texts[name] = text
+    return texts, files
 
 
 def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "", user_path: str = "") -> dict:
@@ -370,20 +413,10 @@ def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "
     refused = refusal(engram.root)
     if refused is not None:
         return {**refused, "bridge_level": OPENCLAW_BRIDGE_LEVEL}
-    files: dict = {}
-    for name, raw in (("soul", soul_path), ("memory", memory_path), ("user", user_path)):
-        if not raw:
-            continue
-        if "\x00" in str(raw):
-            files[name] = {"error": "path contains a NUL byte"}
-            continue
-        path = Path(raw).expanduser()
-        if not path.is_file():
-            files[name] = {"exists": False}
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        files[name] = {"exists": True,
-                       "bullets": sum(1 for line in text.splitlines() if line.strip().startswith("- "))}
+    if not (soul_path or memory_path or user_path):
+        return {"error": "give at least one OpenClaw file (soul, memory or user)",
+                "bridge_level": OPENCLAW_BRIDGE_LEVEL}
+    _texts, files = read_openclaw_files(soul_path, memory_path, user_path)
     return {
         "status": "preview",
         "format": "openclaw",
@@ -426,6 +459,14 @@ def import_from_openclaw(
     if refused is not None:
         return {**refused, "bridge_level": OPENCLAW_BRIDGE_LEVEL, "receipt": ""}
 
+    # Everything is read and checked before anything is written.
+    texts, files = read_openclaw_files(soul_path, memory_path, user_path)
+    unreadable = {name: info for name, info in files.items() if info.get("error")}
+    if unreadable:
+        return {"error": "unreadable_file", "files": files, "imported": [],
+                "bridge_level": OPENCLAW_BRIDGE_LEVEL, "receipt": "",
+                "message": "An OpenClaw file could not be read; nothing was imported."}
+
     imported = []
     receipt = ""
 
@@ -439,10 +480,9 @@ def import_from_openclaw(
         return lines
 
     # --- Import USER.md → profile ---
-    if user_path:
-        p = Path(user_path)
-        if p.is_file():
-            content = p.read_text(encoding="utf-8")
+    if "user" in texts:
+        if True:
+            content = texts["user"]
             bullets = _parse_md_bullets(content)
             updates = {}
             for b in bullets:
@@ -457,10 +497,9 @@ def import_from_openclaw(
                 imported.append(f"USER.md → profile ({', '.join(updates.keys())})")
 
     # --- Import SOUL.md → preferences + quality_standards ---
-    if soul_path:
-        p = Path(soul_path)
-        if p.is_file():
-            content = p.read_text(encoding="utf-8")
+    if "soul" in texts:
+        if True:
+            content = texts["soul"]
             # Simple section-based parsing
             current_section = ""
             prefs = {}
@@ -490,10 +529,10 @@ def import_from_openclaw(
                     imported.append(f"SOUL.md → quality_standards (+{len(new_rules)} rules)")
 
     # --- Import MEMORY.md → lessons ---
-    if memory_path:
-        p = Path(memory_path)
-        if p.is_file():
-            content = p.read_text(encoding="utf-8")
+    if "memory" in texts:
+        p = Path(memory_path).expanduser()
+        if True:
+            content = texts["memory"]
             existing_summaries = {
                 l.get("summary", "") for l in engram.get_lessons(limit=None, _update_access=False)
             }

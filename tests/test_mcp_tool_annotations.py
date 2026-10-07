@@ -59,7 +59,7 @@ def test_read_web_content_is_the_only_open_world_tool():
 
 
 # Owner-gated tools that only read over MCP: import_engram previews; applying an
-# import is the local `engram import` (Owner decision 2026-10-07).
+# import is the local `engram import`.
 OWNER_GATED_READS = frozenset({"import_engram"})
 
 

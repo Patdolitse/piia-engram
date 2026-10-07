@@ -128,8 +128,8 @@ merge_candidates：10）。
 |---|---|
 | `export_engram(...)` | 不变（默认 `format="native"`） |
 | `export_engram_to_openclaw(output_dir)` | `export_engram(format="openclaw", output_dir=...)` |
-| `import_engram(input_path, merge, dry_run)` | 不变（默认 `format="native"`） |
-| `import_engram_from_openclaw(soul_path, memory_path, user_path)` | `import_engram(format="openclaw", soul_path=..., memory_path=..., user_path=...)` |
+| `import_engram(input_path, merge, dry_run)` | 参数不变（默认 `format="native"`）；现在经 MCP 只能预览（`dry_run=true`），导入请用本地 `engram import` |
+| `import_engram_from_openclaw(soul_path, memory_path, user_path)` | `import_engram(format="openclaw", soul_path=..., memory_path=..., user_path=...)`；现在经 MCP 只能预览（`dry_run=true`），导入请用本地 `engram import --format openclaw` |
 
 ### 调用方信任（2 → 1）
 

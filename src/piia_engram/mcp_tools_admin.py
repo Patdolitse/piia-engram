@@ -488,13 +488,13 @@ async def import_engram(
     export_engram backup; format="openclaw" imports SOUL.md / MEMORY.md /
     USER.md files (provide only the paths that exist).
 
-    注意：dry_run=True 只返回元数据预览，不写入数据；merge=False 会覆盖现有数据，使用前要确认风险。
-    Note: dry_run=True returns a metadata-only preview without writing; merge=False overwrites existing data, so confirm the risk first.
+    注意：只有 dry_run=True 会执行（元数据预览，不写入）；merge=False 预览的是覆盖模式下的计划。
+    Note: only dry_run=True runs (a metadata-only preview, nothing written); merge=False previews the replace plan.
 
     Args:
         input_path: 备份文件路径（format=native 必填）。 / Backup file path (required for format=native).
-        merge: True 合并模式（保留已有数据并追加），False 覆盖模式（native）。 / Merge vs overwrite mode (native).
-        dry_run: True 仅预览导入计划，不修改本地数据（native）。 / Preview the import plan without mutating (native).
+        merge: 预览合并模式（True）或覆盖模式（False）的计划（native）。 / Preview the merge (True) or replace (False) plan (native).
+        dry_run: 必须为 True：经 MCP 只能预览；否则返回 local_only 并给出本地命令。 / Must be true: MCP only previews; otherwise the reply is local_only with the local command.
         format: native（默认）| openclaw。
         soul_path: SOUL.md 文件路径（format=openclaw，可选）。 / Path to SOUL.md (openclaw, optional).
         memory_path: MEMORY.md 文件路径（format=openclaw，可选）。 / Path to MEMORY.md (openclaw, optional).
@@ -507,6 +507,10 @@ async def import_engram(
         return refusal
     format = format.strip().lower()
     if format == "openclaw":
+        for raw in (soul_path, memory_path, user_path):
+            err = S._validate_path(raw, allow_empty=True)
+            if err:
+                return S._json({"error": err})
         if not dry_run:
             from piia_engram.compat import openclaw_command
 
@@ -534,8 +538,8 @@ async def import_engram(
     if err:
         return S._json({"error": err})
     if not dry_run:
-        # Owner decision 2026-10-07: applying an import is a local command only.
-        command = f"engram import {input_path} --apply --yes" + ("" if merge else " --overwrite")
+        # Applying an import is a local command only; MCP previews.
+        command = "engram import <path> --apply --yes" + ("" if merge else " --overwrite")
         return S._json({
             "error": "local_only",
             "format": "native",
@@ -846,7 +850,16 @@ async def wrap_up_session(
                 source_tool=source_tool,
                 project_folder=project_folder,
             )
-        if playbook:
+        if playbook and playbook.get("status") == "queue_full":
+            results["playbook_draft"] = {
+                "status": "queue_full",
+                "message": "The pending playbook queue is full; no draft was saved. "
+                           "The Owner reviews the queue with engram review.",
+            }
+            maintenance["extract_playbook_from_session"] = {
+                "status": "ok", "draft": False, "reason": "queue_full",
+            }
+        elif playbook:
             pb_confidence = playbook.get("confidence", "medium")
             _zh = S._user_lang() == "zh"
             if pb_confidence == "high":

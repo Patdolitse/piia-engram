@@ -154,3 +154,10 @@ def test_import_text_counts_skipped_and_link_protected_entries_apart(eng, tmp_pa
     assert "pinned: 1 entry skipped" in text
     assert "1 entry protected from a supersedes link" in text
     assert "imp-2 -> " + linked["id"] in text
+
+
+def test_native_hint_does_not_echo_the_path(eng, tmp_path):
+    odd = str(tmp_path / "my backup; $(id).json")
+    result = json.loads(_run(mcp_server.import_engram(input_path=odd, merge=False)))
+    assert result["error"] == "local_only" and odd not in result["hint"]
+    assert "engram import <path> --apply --yes --overwrite" in result["hint"]

@@ -2148,7 +2148,10 @@ def _run_import_openclaw(args: list[str]) -> int:
             return 1
         _emit(payload)
         return 0
-    payload = import_from_openclaw(eng, soul, memory, user)
+    try:
+        payload = import_from_openclaw(eng, soul, memory, user)
+    except Exception as exc:  # never a traceback: report and exit non-zero
+        payload = {"error": f"OpenClaw import failed: {type(exc).__name__}"}
     _emit(payload)
     return 1 if payload.get("error") else 0
 
