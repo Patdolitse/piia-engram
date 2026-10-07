@@ -2708,9 +2708,17 @@ def _print_claude_code_manual(reg) -> None:
                  "  ⚠️  Claude Code needs a manual step: a different engram entry exists and was "
                  "left as is. To replace it, run:"))
         print("      claude mcp remove --scope user engram")
+    elif reg.detail == "cmd_unsafe":
+        print(_t("  ⚠️  Claude Code 需手动完成：claude 是经 cmd.exe 运行的 .cmd/.bat 启动脚本，而参数里有 "
+                 "cmd.exe 会改写的字符（如 & % ^ ! \" ( ) |），setup 不自动运行它。请在终端运行：",
+                 "  ⚠️  Claude Code needs a manual step: claude is a .cmd/.bat shim run through cmd.exe "
+                 "and an argument holds characters cmd.exe would rewrite (such as & % ^ ! \" ( ) |), "
+                 "so setup does not run it. Run:"))
     else:
         print(_t("  ⚠️  Claude Code 需手动完成，请在终端运行：",
                  "  ⚠️  Claude Code needs a manual step. Run:"))
+    print(_t(f"      （以下命令按 {_claude_code_mcp.manual_shell()} 的引号写法）",
+             f"      (quoted for {_claude_code_mcp.manual_shell()})"))
     print(f"      {reg.command}")
     if reg.hidden_env:
         keys = ", ".join(reg.hidden_env)
@@ -2735,6 +2743,12 @@ def _report_claude_code_registration(reg) -> None:
     elif status == "kept":
         print(_t("  ℹ️  Claude Code：保留了你现有的 engram 条目（与本次配置不同）",
                  "  ℹ️  Claude Code: kept your existing engram entry (it differs from this setup)"))
+    elif status == "conflict":
+        print(_t("  ⚠️  Claude Code 需手动完成：已有名为 engram 的条目，但它不是 Engram（启动的是别的服务器），"
+                 "保留未动，也没有另加条目。请先给它改名或删除，再重新运行 engram setup。",
+                 "  ⚠️  Claude Code needs a manual step: an entry named engram exists but it is not Engram "
+                 "(it starts another server); it was left alone and nothing was added. Rename or remove "
+                 "it, then run engram setup again."))
     elif status == "failed":
         detail = f": {reg.detail}" if reg.detail else ""
         print(_t(f"  ❌ Claude Code：claude mcp add 失败{detail}",
@@ -2913,7 +2927,7 @@ def _apply_external_configs(
             continue
         if claude_reg.registered:
             success.append(tool["name"])
-        elif claude_reg.status == "manual":
+        elif claude_reg.status in ("manual", "conflict"):
             manual.append(tool["name"])
         else:
             failed.append(f"{tool['name']} (claude mcp add: {claude_reg.detail or 'error'})")

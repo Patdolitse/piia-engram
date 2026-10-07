@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
@@ -113,8 +112,11 @@ def _stem(value: object) -> str:
 
 def is_engram_entry(name: str, entry: object) -> bool:
     """An ``engram`` / ``piia-engram`` key, or a server that launches Engram's MCP server."""
-    if name in KNOWN_NAMES:
-        return True
+    return name in KNOWN_NAMES or launches_engram(entry)
+
+
+def launches_engram(entry: object) -> bool:
+    """Does this server entry start Engram's MCP server (whatever its name)?"""
     if not isinstance(entry, dict):
         return False
     if _stem(entry.get("command")) == _MCP_SCRIPT:
@@ -254,7 +256,43 @@ def summary_status(status: str | None = None) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def _find_cli() -> str | None:
-    return shutil.which("claude")
+    """The ``claude`` command from PATH, as an absolute path.
+
+    Walks PATH itself instead of ``shutil.which``: empty entries, ``.`` and
+    relative directories are skipped, so a ``claude`` file in the current
+    directory is never picked. On Windows the names follow PATHEXT.
+    """
+    if os.name == "nt":
+        exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
+        names = ["claude" + ext.lower() for ext in exts]
+    else:
+        names = ["claude"]
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if not entry or entry == "." or not os.path.isabs(entry):
+            continue
+        for name in names:
+            candidate = os.path.join(entry, name)
+            if not os.path.isfile(candidate):
+                continue
+            if os.name != "nt" and not os.access(candidate, os.X_OK):
+                continue
+            return os.path.abspath(candidate)
+    return None
+
+
+# A .cmd / .bat shim runs through cmd.exe, which re-parses its arguments: any
+# of these in an argument could change the command or split it.
+_CMD_UNSAFE = frozenset('&|<>^%!"()\n\r')
+
+
+def _runs_through_cmd(exe: str) -> bool:
+    return PurePath(str(exe)).suffix.lower() in (".cmd", ".bat")
+
+
+def cmd_unsafe(exe: str, args: list[str]) -> bool:
+    """True when ``exe`` is a batch shim and an argument holds a character cmd.exe interprets."""
+    return _runs_through_cmd(exe) and any(ch in _CMD_UNSAFE for arg in args for ch in str(arg))
 
 
 def _run(argv: list[str], timeout: float = CLI_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
@@ -291,23 +329,44 @@ def get_args() -> list[str]:
     return ["mcp", "get", SERVER_NAME]
 
 
-def _quote(value: str) -> str:
-    if value and not any(c in value for c in ' \t"&|<>()^!%\'$`;*?'):
+_ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+_PLAIN_POSIX = frozenset(_ALNUM + "-_./:=+,@")
+_PLAIN_POWERSHELL = frozenset(_ALNUM + "-_./:=+\\")
+
+
+def _quote_powershell(value: str) -> str:
+    """PowerShell: single quotes (a quote inside is doubled). ``--`` is quoted too:
+    unquoted, PowerShell may take it as its own end-of-parameters marker."""
+    if value and value != "--" and all(c in _PLAIN_POWERSHELL for c in value):
         return value
-    return '"' + value.replace('"', '\\"') + '"'
+    return "'" + value.replace("'", "''") + "'"
 
 
-def manual_command(entry: dict) -> tuple[str, list[str]]:
+def _quote_posix(value: str) -> str:
+    if value and all(c in _PLAIN_POSIX for c in value):
+        return value
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def manual_command(entry: dict, *, windows: bool | None = None) -> tuple[str, list[str]]:
     """The add command to print, and the owner env keys left out of it.
 
-    Only the env keys setup manages are written out; any other key of the
-    old entry (it may hold a secret) is named, not shown.
+    Quoted for PowerShell on Windows and for a POSIX shell elsewhere. Only
+    the env keys setup manages are written out; any other key of the old
+    entry (it may hold a secret) is named, not shown.
     """
+    windows = (os.name == "nt") if windows is None else windows
+    quote = _quote_powershell if windows else _quote_posix
     env = entry.get("env") or {}
     shown = {k: v for k, v in env.items() if k in _SHOWN_ENV_KEYS}
     hidden = sorted(k for k in env if k not in _SHOWN_ENV_KEYS)
     args = add_args({**entry, "env": shown})
-    return "claude " + " ".join(_quote(a) for a in args), hidden
+    return "claude " + " ".join(quote(a) for a in args), hidden
+
+
+def manual_shell() -> str:
+    """The shell the printed commands are quoted for."""
+    return "PowerShell" if os.name == "nt" else "sh"
 
 
 def _comparable(entry: dict | None) -> tuple | None:
@@ -343,8 +402,11 @@ class Registration:
       ``present`` -- Engram is already registered (other name, or the file
       could not be checked and ``claude mcp get engram`` found it);
       ``kept`` -- a different ``engram`` entry exists and was left alone;
-      ``manual`` -- the user has to run ``command`` (no claude command, or
-      a different entry the caller would not replace);
+      ``conflict`` -- an ``engram`` entry exists that does not launch Engram;
+      it is left alone and nothing is added;
+      ``manual`` -- the user has to run ``command`` (no claude command, a
+      different entry the caller would not replace, or ``cmd_unsafe``: a
+      .cmd/.bat shim with arguments cmd.exe would re-interpret);
       ``failed`` -- the claude command returned an error (``detail``).
     """
 
@@ -396,6 +458,8 @@ def register(
     if state.user_entry is not None:
         if same_entry(state.user_entry, wanted):
             return Registration("unchanged")
+        if not launches_engram(state.user_entry):
+            return Registration("conflict", command=command, hidden_env=hidden, detail="not_engram")
         if on_differ == "ask" and confirm_replace is not None and confirm_replace():
             replacing = True
         else:
@@ -406,6 +470,10 @@ def register(
     exe = cli_path()
     if not exe:
         return manual("no_cli")
+
+    planned = [add_args(wanted)] + ([remove_args()] if replacing else [])
+    if cmd_unsafe(exe, [a for argv in planned for a in argv]):
+        return manual("cmd_unsafe")
 
     if state.status == "undetermined" and not replacing:
         try:

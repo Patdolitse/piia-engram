@@ -179,7 +179,7 @@ def test_no_cli_writes_nothing_and_returns_the_manual_command(home, tmp_path):
     result = M.register(_build)
     assert result.status == "manual" and result.detail == "no_cli"
     assert result.command.startswith("claude mcp add --scope user engram -e PYTHONIOENCODING=utf-8")
-    assert result.command.endswith(f"-- {PY} -m piia_engram.mcp_server")
+    assert result.command.endswith(f" {PY} -m piia_engram.mcp_server")
     assert _snapshot(home) == before
 
 
@@ -198,21 +198,21 @@ def test_owner_env_from_the_old_entry_is_passed_to_add(home, cli):
 
 
 def test_different_entry_is_kept_without_asking(home, cli):
-    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old", "args": []}}})
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old-python", "args": ["-m", "piia_engram.mcp_server"]}}})
     result = M.register(_build, on_differ="keep")
     assert result.status == "manual" and result.detail == "differs"
     assert cli.calls == []
 
 
 def test_different_entry_replaced_after_confirm(home, cli):
-    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old", "args": []}}})
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old-python", "args": ["-m", "piia_engram.mcp_server"]}}})
     result = M.register(_build, on_differ="ask", confirm_replace=lambda: True)
     assert result.status == "replaced"
     assert cli.calls == [["/fake/bin/claude", "mcp", "remove", "--scope", "user", "engram"], EXPECTED_ADD]
 
 
 def test_different_entry_declined_is_kept(home, cli):
-    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old", "args": []}}})
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old-python", "args": ["-m", "piia_engram.mcp_server"]}}})
     result = M.register(_build, on_differ="ask", confirm_replace=lambda: False)
     assert result.status == "kept"
     assert cli.calls == []
@@ -553,7 +553,7 @@ def test_setup_does_not_offer_cleanup_when_registration_is_manual(home, tmp_path
 
 
 def test_setup_asks_before_replacing_a_different_entry(home, tmp_path, cli, monkeypatch):
-    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old", "args": []}}})
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old-python", "args": ["-m", "piia_engram.mcp_server"]}}})
     asked = _answers(monkeypatch, "2")
     (success, _, manual), _ = _apply(tmp_path, interactive=True)
     assert cli.calls == [] and success == ["Claude Code"] and manual == []
@@ -564,7 +564,7 @@ def test_setup_asks_before_replacing_a_different_entry(home, tmp_path, cli, monk
 
 
 def test_setup_non_interactive_does_not_replace_a_different_entry(home, tmp_path, cli, monkeypatch):
-    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old", "args": []}}})
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "old-python", "args": ["-m", "piia_engram.mcp_server"]}}})
     _answers(monkeypatch)
     (success, _, manual), out = _apply(tmp_path, interactive=False)
     assert cli.calls == [] and manual == ["Claude Code"]
@@ -699,3 +699,137 @@ def test_mcp_startup_check_uses_the_shared_detection(home, tmp_path, monkeypatch
         assert "~/.claude/.mcp.json" in log and "does not read" in log
     else:
         assert ".claude" not in log
+
+
+# ---------------------------------------------------------------------------
+# finding and running the claude command safely
+# ---------------------------------------------------------------------------
+
+
+def _fake_cli_file(directory: Path) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        script = directory / "claude.cmd"
+        script.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    else:
+        script = directory / "claude"
+        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
+    return script
+
+
+def test_find_cli_ignores_the_current_directory_and_relative_path_entries(tmp_path, monkeypatch):
+    cwd = tmp_path / "cwd"
+    _fake_cli_file(cwd)
+    _fake_cli_file(cwd / "rel")
+    empty_abs = tmp_path / "empty-bin"
+    empty_abs.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("PATH", os.pathsep.join(["", ".", "rel", str(empty_abs)]))
+    assert M._find_cli() is None
+
+    good = _fake_cli_file(tmp_path / "abs-bin")
+    monkeypatch.setenv("PATH", os.pathsep.join([".", "rel", str(tmp_path / "abs-bin")]))
+    found = M._find_cli()
+    assert found is not None and Path(found).is_absolute()
+    assert Path(found).resolve() == good.resolve()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="PATHEXT is a Windows lookup rule")
+def test_find_cli_follows_pathext(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "claude.bat").write_text("@echo off\r\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("PATHEXT", ".EXE;.BAT")
+    assert Path(M._find_cli()).name.lower() == "claude.bat"
+    monkeypatch.setenv("PATHEXT", ".EXE")
+    assert M._find_cli() is None
+
+
+@pytest.mark.parametrize("bad", ["R&D", "100%", "a^b", 'q"uote', "x(86)", "a|b", "line\nbreak", "bang!"])
+def test_a_batch_shim_with_unsafe_arguments_is_not_run(home, monkeypatch, bad):
+    rec = Recorder()
+    monkeypatch.setattr(M, "cli_path", lambda: "C:/tools/claude.cmd")
+    monkeypatch.setattr(M, "run_cli", rec)
+    result = M.register(lambda env: _entry({"ENGRAM_DIR": f"/data/{bad}"}))
+    assert result.status == "manual" and result.detail == "cmd_unsafe"
+    assert rec.calls == []
+    assert result.command.startswith("claude mcp add")
+
+
+def test_a_batch_shim_with_safe_arguments_runs(home, monkeypatch):
+    rec = Recorder()
+    monkeypatch.setattr(M, "cli_path", lambda: "C:/tools/claude.CMD")
+    monkeypatch.setattr(M, "run_cli", rec)
+    assert M.register(lambda env: _entry({"ENGRAM_DIR": "/data/with space"})).status == "added"
+    assert len(rec.calls) == 1
+
+
+def test_an_exe_is_run_with_any_argument(home, monkeypatch):
+    rec = Recorder()
+    monkeypatch.setattr(M, "cli_path", lambda: "C:/tools/claude.exe")
+    monkeypatch.setattr(M, "run_cli", rec)
+    assert M.register(lambda env: _entry({"ENGRAM_DIR": "/data/R&D 100%"})).status == "added"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="claude.cmd runs through cmd.exe on Windows only")
+@pytest.mark.parametrize("data_dir,runs", [
+    ("C:/Engram Data/store", True),
+    ("C:/R&D/store", False),
+    ("C:/100%/store", False),
+    ("C:/a^b/store", False),
+])
+def test_fake_claude_cmd_regression(home, tmp_path, monkeypatch, data_dir, runs):
+    bin_dir = tmp_path / "fake bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls.log"
+    (bin_dir / "claude.cmd").write_text(f'@echo off\r\necho %*>>"{log}"\r\nexit /b 0\r\n', encoding="utf-8")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr(M, "cli_path", M._find_cli)
+    monkeypatch.setattr(M, "run_cli", M._run)
+
+    result = M.register(lambda env: _entry({"ENGRAM_DIR": data_dir}))
+
+    if runs:
+        assert result.status == "added"
+        assert f'"ENGRAM_DIR={data_dir}"' in log.read_text(encoding="utf-8", errors="replace")
+    else:
+        assert result.status == "manual" and result.detail == "cmd_unsafe"
+        assert not log.exists()
+
+
+def test_a_same_named_entry_that_is_not_engram_is_never_replaced(home, cli):
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "npx", "args": ["other-server"]}}})
+    asked = []
+    result = M.register(_build, on_differ="ask", confirm_replace=lambda: asked.append(1) or True)
+    assert result.status == "conflict" and not result.registered
+    assert cli.calls == [] and asked == []
+
+
+def test_setup_says_a_foreign_engram_entry_is_not_engram(home, tmp_path, cli, monkeypatch):
+    _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "npx", "args": ["other-server"]}}})
+    asked = _answers(monkeypatch, "1")
+    (success, failed, manual), out = _apply(tmp_path, interactive=True)
+    assert cli.calls == [] and asked == []
+    assert manual == ["Claude Code"] and success == []
+    assert "is not Engram" in out or "不是 Engram" in out
+
+
+def test_manual_command_for_powershell_quotes_and_keeps_the_separator():
+    entry = {"command": "C:/Program Files/Python/python.exe", "args": ["-m", "piia_engram.mcp_server"],
+             "env": {"ENGRAM_DIR": "C:/it's here"}}
+    text, _ = M.manual_command(entry, windows=True)
+    assert text.startswith("claude mcp add --scope user engram")
+    assert "'C:/Program Files/Python/python.exe'" in text
+    assert "'ENGRAM_DIR=C:/it''s here'" in text
+    assert " '--' " in text
+
+
+def test_manual_command_for_posix_shells():
+    entry = {"command": "/opt/my py/python3", "args": ["-m", "piia_engram.mcp_server"],
+             "env": {"ENGRAM_DIR": "/data/$HOME"}}
+    text, _ = M.manual_command(entry, windows=False)
+    assert "'/opt/my py/python3'" in text
+    assert "'ENGRAM_DIR=/data/$HOME'" in text
+    assert " -- " in text
