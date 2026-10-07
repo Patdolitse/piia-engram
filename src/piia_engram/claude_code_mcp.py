@@ -233,6 +233,22 @@ def detection_status() -> str:
     return "not_configured" if is_installed() else "not_installed"
 
 
+# detection_status -> (status, style) in the pathless client summaries
+# (`engram status`, `engram dock-governance`).
+_SUMMARY_ROWS = {
+    "configured": ("configured", "claude_cli"),
+    "undetermined": ("needs attention", "unknown"),
+    "legacy_only": ("needs attention", "legacy_location"),
+    "not_configured": ("missing entry", "missing"),
+    "not_installed": ("not configured", "missing"),
+}
+
+
+def summary_status(status: str | None = None) -> tuple[str, str]:
+    """``(status, style)`` for a client summary row; no path, no config value."""
+    return _SUMMARY_ROWS[detection_status() if status is None else status]
+
+
 # ---------------------------------------------------------------------------
 # the claude command
 # ---------------------------------------------------------------------------

@@ -266,6 +266,35 @@ def _claude_hook_rows(home: Path) -> list[dict]:
     return rows
 
 
+def _claude_code_integrity_row(tool_id: str, cfg: dict) -> dict:
+    """Claude Code's integrity row from the shared detection.
+
+    Its user config holds Claude Code's history and changes all the time, so
+    it is neither hashed nor read for content here; ``detection`` is the
+    shared status and ``legacy_location`` flags an Engram entry left in
+    ``~/.claude/.mcp.json`` (a file Claude Code does not read).
+    """
+    from . import claude_code_mcp as _claude
+
+    path = _claude.user_config_path()
+    status = _claude.detection_status()
+    return {
+        "tool_id": tool_id,
+        "name": cfg.get("name", tool_id),
+        "path": str(path),
+        "format": "json",
+        "server_key": "mcpServers",
+        "verified": bool(cfg.get("verified", False)),
+        "parent_exists": path.parent.exists(),
+        "exists": path.is_file(),
+        "configured": status == "configured",
+        "detection": status,
+        "legacy_location": _claude.read_legacy().has_engram,
+        "legacy_servers": [],
+        "sha256_12": "",
+    }
+
+
 def _build_config_integrity_report(cwd: Path | None = None) -> dict:
     """Build a metadata-only portability/integrity report for local AI config.
 
@@ -276,6 +305,9 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
     for tool_id, cfg in W._tool_configs().items():
         fmt = cfg.get("format", "json")
         server_key = cfg.get("server_key", "mcpServers")
+        if cfg.get("register_via") == "claude_cli":
+            mcp_configs.append(_claude_code_integrity_row(tool_id, cfg))
+            continue
         for raw_path in cfg.get("config_paths", []):
             path = Path(raw_path)
             exists = path.is_file()

@@ -245,6 +245,14 @@ def _client_summary() -> dict[str, Any]:
             "style": "missing",
             "verified": bool(cfg.get("verified")),
         }
+        if cfg.get("register_via") == "claude_cli":
+            # Claude Code: the shared detection (user config, projects, old
+            # location); the entry itself is not read or classified.
+            from . import claude_code_mcp
+
+            row["status"], row["style"] = claude_code_mcp.summary_status()
+            tools.append(row)
+            continue
         for raw_path in cfg.get("config_paths", []):
             path = Path(raw_path)
             if not path.is_file():

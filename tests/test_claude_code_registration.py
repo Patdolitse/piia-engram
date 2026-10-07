@@ -577,3 +577,125 @@ def test_write_tool_mcp_config_refuses_claude_code(home, tmp_path):
         W._write_tool_mcp_config(_claude_setup_tool(), PY, "piia_engram.mcp_server",
                                  str(tmp_path / "store"))
     assert not (home / ".claude.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# other readers: status, dock governance, integrity report, MCP start-up check
+# ---------------------------------------------------------------------------
+
+READER_LAYOUTS = {
+    # name: (user config, old file, detection status)
+    "engram_key": ({"mcpServers": {"engram": {"command": "x", "env": {"T": _SECRET}}}}, None, "configured"),
+    "piia_engram_key": ({"mcpServers": {"piia-engram": {"command": "x"}}}, None, "configured"),
+    "command_in_project": ({"projects": {"/p": {"mcpServers": {"mem": {"command": "piia-engram-mcp"}}}}},
+                           None, "configured"),
+    "legacy_only": ({"mcpServers": {}}, {"mcpServers": {"engram": _entry({"T": _SECRET})}}, "legacy_only"),
+    "nothing": ({"mcpServers": {"other": {"command": _SECRET}}}, None, "not_configured"),
+    "too_large": ({"mcpServers": {"engram": {"command": "x"}}}, None, "undetermined"),
+}
+STATUS_ROWS = {
+    "configured": ("configured", "claude_cli"),
+    "undetermined": ("needs attention", "unknown"),
+    "legacy_only": ("needs attention", "legacy_location"),
+    "not_configured": ("missing entry", "missing"),
+}
+
+
+def _reader_layout(home: Path, monkeypatch, layout: str, use_config_dir: bool, tmp_path: Path) -> str:
+    user_config, legacy, expected = READER_LAYOUTS[layout]
+    if use_config_dir:
+        cdir = tmp_path / "claude-config"
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cdir))
+        _write(cdir / ".claude.json", user_config)
+        _write(home / ".claude.json", {"mcpServers": {"engram": {"command": "x"}}})  # ignored
+    else:
+        _write(home / ".claude.json", user_config)
+    if legacy:
+        _write(home / ".claude" / ".mcp.json", legacy)
+    if layout == "too_large":
+        monkeypatch.setattr(M, "MAX_USER_CONFIG_BYTES", 2)
+    return expected
+
+
+@pytest.mark.parametrize("layout", sorted(READER_LAYOUTS))
+@pytest.mark.parametrize("use_config_dir", [False, True])
+def test_status_summary_uses_the_shared_detection(home, tmp_path, monkeypatch, layout, use_config_dir):
+    from piia_engram.status_report import _client_summary
+
+    expected = _reader_layout(home, monkeypatch, layout, use_config_dir, tmp_path)
+    summary = _client_summary()
+    row = next(r for r in summary["tools"] if r["name"] == "Claude Code")
+    assert (row["status"], row["style"]) == STATUS_ROWS[expected]
+    dumped = json.dumps(summary)
+    assert _SECRET not in dumped and str(home) not in dumped and str(tmp_path) not in dumped
+
+
+def test_status_summary_claude_code_not_installed(home):
+    from piia_engram.status_report import _client_summary
+
+    row = next(r for r in _client_summary()["tools"] if r["name"] == "Claude Code")
+    assert row["status"] == "not configured"
+
+
+@pytest.mark.parametrize("layout", sorted(READER_LAYOUTS))
+def test_dock_governance_uses_the_shared_detection(home, tmp_path, monkeypatch, layout):
+    from piia_engram import cli_commands
+
+    expected = _reader_layout(home, monkeypatch, layout, False, tmp_path)
+    summary = cli_commands._dock_config_governance_summary()
+    row = next(r for r in summary["clients"] if r["name"] == "Claude Code")
+    assert row["status"] == STATUS_ROWS[expected][0]
+    # The entry is not read for its env, so governance coverage is not known.
+    assert row["governance_env"] == ("unknown" if expected in ("configured", "undetermined") else "missing")
+    assert "legacy_location" not in row or row["legacy_location"] is True
+    dumped = json.dumps(summary)
+    assert _SECRET not in dumped and str(home) not in dumped
+
+
+@pytest.mark.parametrize("layout", sorted(READER_LAYOUTS))
+def test_integrity_report_uses_the_shared_detection(home, tmp_path, monkeypatch, layout):
+    expected = _reader_layout(home, monkeypatch, layout, False, tmp_path)
+    report = doctor._build_config_integrity_report(cwd=tmp_path)
+    rows = [r for r in report["mcp_configs"] if r["tool_id"] == "claude_code"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["path"] == str(home / ".claude.json")
+    assert row["configured"] is (expected == "configured")
+    assert row["detection"] == expected
+    assert row["legacy_location"] is (layout == "legacy_only")
+    assert row["sha256_12"] == ""  # the user config is not hashed or read for content
+    assert row["legacy_servers"] == []
+    assert _SECRET not in json.dumps(report)
+
+
+def test_integrity_report_follows_claude_config_dir(home, config_dir, tmp_path):
+    _write(config_dir / ".claude.json", {"mcpServers": {"engram": {"command": "x"}}})
+    report = doctor._build_config_integrity_report(cwd=tmp_path)
+    row = next(r for r in report["mcp_configs"] if r["tool_id"] == "claude_code")
+    assert row["path"] == str(config_dir / ".claude.json") and row["configured"] is True
+
+
+def _fresh_auto_migrate(tmp_path: Path) -> str:
+    store = tmp_path / "store"
+    W.auto_migrate()
+    log = store / "migration.log"
+    return log.read_text(encoding="utf-8") if log.is_file() else ""
+
+
+@pytest.mark.parametrize("layout", sorted(READER_LAYOUTS))
+def test_mcp_startup_check_uses_the_shared_detection(home, tmp_path, monkeypatch, layout):
+    _reader_layout(home, monkeypatch, layout, False, tmp_path)
+    user_config = home / ".claude.json"
+    before = user_config.read_bytes()
+    legacy = home / ".claude" / ".mcp.json"
+    legacy_before = legacy.read_bytes() if legacy.is_file() else None
+
+    log = _fresh_auto_migrate(tmp_path)
+
+    assert user_config.read_bytes() == before
+    assert (legacy.read_bytes() if legacy.is_file() else None) == legacy_before
+    assert _SECRET not in log
+    if layout == "legacy_only":
+        assert "~/.claude/.mcp.json" in log and "does not read" in log
+    else:
+        assert ".claude" not in log

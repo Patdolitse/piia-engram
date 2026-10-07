@@ -3281,6 +3281,15 @@ def auto_migrate() -> None:
         # config writes are explicit setup/doctor actions.
         log_lines: list[str] = []
         for _tool_id, cfg in _tool_configs().items():
+            if cfg.get("register_via") == "claude_cli":
+                # Claude Code: the shared detection; its user config is not
+                # read for content here.
+                if _claude_code_mcp.detection_status() == "legacy_only":
+                    log_lines.append(
+                        f"  {_claude_code_mcp.LEGACY_LABEL}: holds an Engram entry, but "
+                        f"{cfg['name']} does not read that file; external config left unchanged"
+                    )
+                continue
             fmt = cfg.get("format", "json")
             server_key = cfg.get("server_key", "mcpServers")
             for config_path in cfg["config_paths"]:
