@@ -83,6 +83,35 @@ def _servers(config: dict, server_key: str) -> dict:
     return fallback if isinstance(fallback, dict) else {}
 
 
+def _claude_user_config_has_engram(path: Path) -> bool:
+    """Does Claude Code's user config (``~/.claude.json``) register an engram server?
+
+    Detection only: looks at the top-level ``mcpServers`` and each
+    ``projects.<dir>.mcpServers`` for an ``engram`` key; nothing else is read
+    out of the file and nothing from it is returned or printed.
+    """
+    data = _read_json_quietly(path)
+    if not isinstance(data, dict):
+        return False
+    servers = data.get("mcpServers")
+    if isinstance(servers, dict) and "engram" in servers:
+        return True
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        for project in projects.values():
+            servers = project.get("mcpServers") if isinstance(project, dict) else None
+            if isinstance(servers, dict) and "engram" in servers:
+                return True
+    return False
+
+
+def _detect_only_paths(tool_id: str, home: Path) -> list[Path]:
+    """Extra config files checked for the report only; setup never writes them."""
+    if tool_id == "claude_code":
+        return [home / ".claude.json"]
+    return []
+
+
 def client_configs(home: Path | None = None) -> list[dict[str, Any]]:
     """Every client ``engram setup`` knows: not_installed | not_configured | configured."""
     from . import setup_wizard as W
@@ -104,6 +133,14 @@ def client_configs(home: Path | None = None) -> list[dict[str, Any]]:
             if path.is_file() and "engram" in _servers(W._read_mcp_config(path, fmt=fmt), server_key):
                 configured_path = path
                 break
+        if configured_path is None:
+            for path in _detect_only_paths(tool_id, home):
+                if not path.is_file():
+                    continue
+                installed = True
+                if _claude_user_config_has_engram(path):
+                    configured_path = path
+                    break
         status = "configured" if configured_path else ("not_configured" if installed else "not_installed")
         shown = configured_path or first_path
         rows.append({

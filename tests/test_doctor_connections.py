@@ -284,3 +284,60 @@ def test_mcp_doctor_tool_does_not_carry_the_connection_report(world):
     from piia_engram import mcp_tools_admin
 
     assert "connection_report" not in inspect.getsource(mcp_tools_admin.doctor)
+
+
+# ---------------------------------------------------------------------------
+# Claude Code's user config (~/.claude.json): detected for the report only
+# ---------------------------------------------------------------------------
+
+
+def _claude_json(home: Path, payload: dict) -> Path:
+    return _write(home / ".claude.json", json.dumps(payload))
+
+
+def test_claude_user_config_top_level_entry_counts_as_configured(home, tmp_path):
+    _claude_json(home, {"mcpServers": {"engram": _entry(tmp_path / "store")}, "userID": _SECRET})
+    rows = _by_tool(C.build_report(tmp_path / "store", days=14))
+    assert rows["claude_code"]["config_status"] == "configured"
+    assert rows["claude_code"]["config_path"] == "~/.claude.json"
+
+
+def test_claude_user_config_project_entry_counts_as_configured(home, tmp_path):
+    _claude_json(home, {"projects": {str(tmp_path / "proj"): {
+        "mcpServers": {"engram": _entry(tmp_path / "store")}, "history": [_SECRET]}}})
+    report = C.build_report(tmp_path / "store", days=14)
+    assert _by_tool(report)["claude_code"]["config_status"] == "configured"
+    dumped = json.dumps(report) + "\n".join(C.render_text(report))
+    assert _SECRET not in dumped and "proj" not in dumped
+
+
+def test_claude_user_config_without_engram_is_not_configured(home, tmp_path):
+    _claude_json(home, {"mcpServers": {"other": {"command": _SECRET}}, "projects": {"x": {}}})
+    report = C.build_report(tmp_path / "store", days=14)
+    assert _by_tool(report)["claude_code"]["config_status"] == "not_configured"
+    assert _SECRET not in json.dumps(report)
+
+
+def test_claude_dot_mcp_json_is_still_detected(home, tmp_path):
+    _write(home / ".claude" / ".mcp.json", json.dumps({"mcpServers": {"engram": _entry(tmp_path / "store")}}))
+    _claude_json(home, {"mcpServers": {}})
+    row = _by_tool(C.build_report(tmp_path / "store", days=14))["claude_code"]
+    assert row["config_status"] == "configured"
+    assert row["config_path"] == "~/.claude/.mcp.json"
+
+
+def test_user_config_detection_does_not_change_where_setup_writes(home, tmp_path):
+    claude_json = _claude_json(home, {"mcpServers": {"engram": _entry(tmp_path / "store")}})
+    (home / ".claude").mkdir()
+    before = claude_json.read_bytes()
+
+    assert W._tool_configs()["claude_code"]["config_paths"] == [home / ".claude" / ".mcp.json"]
+    assert all(Path(t["config_path"]).name != ".claude.json" for t in doctor._detect_installed_tools())
+    tool = next(t for t in W._detect_tools() if t["id"] == "claude_code")
+    assert tool["config_path"] == home / ".claude" / ".mcp.json"
+    W._write_tool_mcp_config(tool, sys.executable, "piia_engram.mcp_server",
+                             str(tmp_path / "store"), file_safety_root=tmp_path / "store",
+                             authorized_external_write=True)
+
+    assert (home / ".claude" / ".mcp.json").is_file()
+    assert claude_json.read_bytes() == before
