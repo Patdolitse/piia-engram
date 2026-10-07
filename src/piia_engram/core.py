@@ -3431,7 +3431,7 @@ STORE_WRITE_METHODS = frozenset({
     "archive_knowledge", "archive_lesson", "archive_playbook", "bulk_add_decisions",
     "bulk_add_knowledge", "bulk_add_lessons", "commit_candidates", "confirm_knowledge",
     "create_onboard_candidate", "create_onboard_candidates", "delete_playbook", "evaluate_tiers",
-    "export_all",
+    "export_all", "export_all_with_summary",
     "export_identity_card", "export_knowledge_report", "export_review_page",
     "extract_playbook_from_session", "extract_session_insights", "import_all",
     "increment_domain_usage", "ingest_notes", "install_builtin_playbook", "link_knowledge",
