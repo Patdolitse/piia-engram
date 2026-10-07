@@ -246,7 +246,6 @@ def test_mcp_cannot_edit_archive_merge_or_delete_a_pinned_entry(eng, capsys):
                                    secondary_expected_version=1),
         mcp_server.merge_knowledge(other["id"], lesson["id"], primary_expected_version=1,
                                    secondary_expected_version=1),
-        mcp_server.manage_playbook("update", playbook["id"], title="edited", expected_version=1),
         mcp_server.manage_playbook("archive", playbook["id"], expected_version=1),
         mcp_server.manage_playbook("delete", playbook["id"], dry_run=False, confirm=True, expected_version=1),
     ]
@@ -258,6 +257,11 @@ def test_mcp_cannot_edit_archive_merge_or_delete_a_pinned_entry(eng, capsys):
     # the version is not even needed to learn that the entry is pinned
     assert _json(_run(mcp_server.update_knowledge(lesson["id"], json.dumps({"summary": "x"}))))["error"] == "pinned_entry"
     assert _store(eng.root) == before
+    # a playbook content update is a proposal: the pinned playbook itself stays as it is
+    pb_before = eng._read_playbook_by_id(playbook["id"])
+    proposal = _json(_run(mcp_server.manage_playbook("update", playbook["id"], title="edited", expected_version=1)))
+    assert proposal["status"] == "pending" and proposal["pending_supersedes"] == playbook["id"]
+    assert eng._read_playbook_by_id(playbook["id"]) == pb_before
 
 
 def test_mcp_review_apply_text_cannot_archive_a_pinned_entry(eng):

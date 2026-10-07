@@ -185,11 +185,12 @@ def test_manage_playbook_update_archive_delete_restore_require_the_version(eng):
     preview = _json(_run(mcp_server.manage_playbook("delete", pb["id"])))
     assert preview["dry_run"] is True
 
-    ack = _run(mcp_server.manage_playbook("update", pb["id"], title="Publish the docs", expected_version=1))
-    assert "error" not in ack
-    assert eng._read_playbook_by_id(pb["id"])["version"] == 2
+    # an AI's content update of an approved playbook is a proposal: the playbook stays at v1
+    ack = _json(_run(mcp_server.manage_playbook("update", pb["id"], title="Publish the docs", expected_version=1)))
+    assert ack["status"] == "pending"
+    assert eng._read_playbook_by_id(pb["id"])["version"] == 1
     deleted = _json(_run(mcp_server.manage_playbook("delete", pb["id"], dry_run=False, confirm=True,
-                                                    expected_version=2)))
+                                                    expected_version=1)))
     assert deleted["dry_run"] is False
     version = eng._read_playbook_by_id(pb["id"])["version"]
     _assert_required(_json(_run(mcp_server.manage_playbook("restore", pb["id"], dry_run=False, confirm=True))),
@@ -372,10 +373,11 @@ def test_a_version_given_as_a_digit_string_is_not_a_conflict(eng):
     merge = _json(_run(mcp_server.merge_knowledge(lesson["id"], merged["id"], primary_expected_version="2",
                                                   secondary_expected_version="1")))
     assert merge.get("success") is True, merge
-    assert "error" not in _run(mcp_server.manage_playbook("update", pb["id"], title="z", expected_version="1"))
+    assert _json(_run(mcp_server.manage_playbook("update", pb["id"], title="z", expected_version="1")))[
+        "status"] == "pending"
     deleted = _json(_run(mcp_server.manage_playbook("delete", pb["id"], dry_run=False, confirm=True,
-                                                    expected_version="2")))
+                                                    expected_version="1")))
     assert deleted["dry_run"] is False, deleted
     restored = _json(_run(mcp_server.manage_playbook("restore", pb["id"], dry_run=False, confirm=True,
-                                                     expected_version="3")))
+                                                     expected_version="2")))
     assert restored["dry_run"] is False, restored

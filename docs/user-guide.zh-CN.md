@@ -161,7 +161,8 @@ staged 条目始终在你掌控之中：
   `engram review apply` 以非零码退出。
 - AI 经 MCP 写入的 playbook（`add_playbook`、`kind="playbook"` 的 `memory_store`、从会话
   起草的手册）在任何审批模式下都是提案：进入待审区，等你用 `engram review` 批准，批准前
-  不进入自动召回，也不能被执行：`playbook_execution` 返回 `not_approved`，`get_playbooks`
+  不进入自动召回。AI 对已批准手册的改写（用 `manage_playbook` update 改步骤、标题、触发词等）
+  也是提案：在你批准新版本之前，已批准的版本照常可用、不被改动。待审手册也不能被执行：`playbook_execution` 返回 `not_approved`，`get_playbooks`
   列出时标上 `pending_untrusted`。你在本地添加的手册（例如 `engram playbook install`）不受影响。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。

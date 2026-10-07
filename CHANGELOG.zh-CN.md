@@ -13,10 +13,10 @@
   - **迁移：** 先读取条目，把它的 `version` 作为 `expected_version`（或 `supersedes_expected_version`）传入。收到 `version_required` 时先核对条目，再用回复里的 `current_version` 重试（`example` 给出调用示例）；收到 `version_conflict` 时重新读取条目后再重试。
 - **MCP `import_engram` 只能预览。** 两种格式（`native` 与 `openclaw`）收到写入请求时都返回 `{"error": "local_only", "hint": ...}` 且不写入；`dry_run=true` 仍返回元数据级计划（OpenClaw 文件给出哪些文件存在、各有多少条要点）。该工具现在标为只读。本地 `engram import` 不变。
   - **迁移：** 继续用 `import_engram(..., dry_run=true)` 预览，然后在存放数据的机器上运行 `engram import <backup.json> --apply --yes`（替换模式加 `--overwrite`），OpenClaw 文件用 `engram import --format openclaw --memory MEMORY.md ... --apply --yes`。`local_only` 回复会给出这条命令。
+- **AI 写入或改写的 playbook 在任何模式下都等你审核。** 经 MCP 的 `add_playbook`、`memory_store(kind="playbook")`、从会话起草的手册，以及对已批准手册内容的 `manage_playbook(action="update")`，在非严格模式下也存为待审提案；已批准的手册在你批准替代版本之前照常可用、不被改动（只改状态的更新仍是直接修改；两者混在一次调用里返回 `mixed_update`）。`add_playbook` 的回复改为 JSON（`{"status": "pending", "id": ..., "message": ...}`），不再是文本确认。待审手册永远不会被执行：`playbook_execution`（`prepare`、`update_step`）在任何模式下返回 `not_approved`（严格模式仍为 `pending_not_executable`）且不写入；`get_playbooks` 列出时标上 `pending_untrusted` 和 `eligibility: "pending"`；自动召回不包含它。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的会被拒绝（`queue_full`）、不会被丢弃。已批准的手册不受影响；默认模式下已有的待审草稿从此批准后才能执行。
+  - **迁移：** 用 `engram review`（或 `engram review interactive`）批准你还要使用的草稿；按 JSON 读取 `add_playbook` 的回复。
 
 ### 变更
-- **待审 playbook 永远不会被执行。** `playbook_execution`（`prepare`、`update_step`）在任何模式下都拒绝执行等待审核的手册，返回 `not_approved`（严格模式仍为 `pending_not_executable`），不写入任何内容；批准后即可执行。`get_playbooks` 仍会列出待审手册，并像搜索的 pending 分组一样标上 `pending_untrusted` 和 `eligibility: "pending"`。
-- **AI 写入的 playbook 在任何模式下都等你审核。** 经 MCP 的 `add_playbook`、`memory_store(kind="playbook")` 和从会话起草的手册，在非严格模式下也存为待审提案；回复会说明由主人用 `engram review` 批准，批准前不进入自动召回。同时最多 `ENGRAM_PLAYBOOK_QUEUE_MAX`（10）条待审，超出的会被拒绝、不会被丢弃。本地添加的手册（`engram playbook install`、setup）和已有手册不受影响。
 - **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动（`get_user_context`、`get_resume_brief`、会话开始钩子）和 `wrap_up_session` 都不再读取或导入其它 AI 工具的记忆和规则文件。`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。
 - `engram setup` 改为询问是否现在导入一次（默认否），不再开启自动导入；规则文件步骤不再直接写入已验证记忆或 profile 语言，导入的规则进入待审区并生成回执。
 - `engram reconcile apply --commit --yes` 改为与 `engram import-memories --source memories` 相同的导入（待审区、回执、审计）。从 OpenClaw `MEMORY.md` 导入的经验也进入待审区并生成回执。

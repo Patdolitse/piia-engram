@@ -1374,8 +1374,10 @@ class ContextMixin:
         # Save via add_playbook (inherits duplicate detection)
         result = self.add_playbook(playbook, source_tool=source_tool)
 
+        if result.get("status") == "queue_full":
+            return result  # reported by the caller; nothing was written
         if result.get("status") in _NOT_ADDED and result.get("status") != "duplicate":
-            return None  # rejected, retired or queue full: never merged into anything
+            return None  # rejected or retired: never merged into anything
         if result.get("status") == "duplicate":
             # Cross-session merge: if the existing playbook is staging, merge instead
             existing_id = result.get("existing_id")

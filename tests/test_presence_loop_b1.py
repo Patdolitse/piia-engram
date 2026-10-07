@@ -65,8 +65,8 @@ class TestBrandedSaveAck:
         assert "brand q" in result and "brand c" in result
 
     def test_add_playbook_ack_branded(self, eng: Engram):
-        # An AI-written playbook is a pending proposal in every mode (Owner decision
-        # 2026-10-07): the reply is the pending payload, as under strict.
+        # An AI-written playbook is a pending proposal in every approval mode: the
+        # reply is the pending payload, as under strict.
         result = json.loads(_run(mcp_server.add_playbook(title="brand pb", triggers="t1,t2", user_confirmed=True)))
         assert result["status"] == "pending" and result["tier"] == "staging"
         assert "engram review" in result["message"]

@@ -196,7 +196,10 @@ You stay in control of staged items at any time:
 - A playbook an AI writes over MCP (`add_playbook`, `memory_store` with
   `kind="playbook"`, a playbook drafted from a session) is a proposal in every
   approval mode: it waits in the review queue until you approve it with
-  `engram review`, and automatic recall leaves it out until then. It does not
+  `engram review`, and automatic recall leaves it out until then. An AI's
+  rewrite of an approved playbook (`manage_playbook` update of its steps,
+  title, triggers and so on) is a proposal too: the approved version stays in
+  use, unchanged, until you approve the new one. A pending playbook does not
   run before that either: `playbook_execution` answers `not_approved`, and
   `get_playbooks` lists it marked `pending_untrusted`. Playbooks you add locally
   (for example `engram playbook install`) are unchanged.

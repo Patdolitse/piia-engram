@@ -333,4 +333,5 @@ def test_ingest_extraction_is_removed():
 
     assert not hasattr(context, "ingest_extraction")
     assert not hasattr(core, "ingest_extraction")
-    assert "ingest_extraction" not in getattr(piia_engram, "__all__", [])
+    assert "ingest_extraction" not in piia_engram.__all__
+    assert not hasattr(piia_engram, "ingest_extraction")

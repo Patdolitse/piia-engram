@@ -540,7 +540,7 @@ def test_cli_playbook_list_staging_is_read_only(env, monkeypatch, capsys):
 
 
 def test_unset_add_playbook_over_mcp_is_a_pending_proposal(env):
-    """Owner decision 2026-10-07: an AI-written playbook waits for review in every mode."""
+    """An AI-written playbook waits for review in every approval mode."""
     m, root = env
 
     result = _add_mcp(m)
@@ -549,13 +549,13 @@ def test_unset_add_playbook_over_mcp_is_a_pending_proposal(env):
     assert row["tier"] == "staging" and row["approval_status"] == "pending"
 
 
-def test_unset_staging_draft_stays_visible_and_executable(env):
+def test_unset_staging_draft_stays_visible_but_does_not_run(env):
     m, root = env
     draft = m._engram.add_playbook({"title": "Draft procedure", "steps": ["a", "b", "c"], "tier": "staging"})
 
     assert draft["id"] in {p["id"] for p in m._engram.get_playbooks(limit=None)}
     result = json.loads(_run(m.playbook_execution(action="prepare", playbook_id=draft["id"])))
-    assert result.get("status") != "pending_not_executable"
+    assert result.get("status") == "not_approved"
 
 
 @pytest.mark.parametrize("mode", ["strict", None])

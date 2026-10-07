@@ -659,12 +659,16 @@ class TestSearchTools:
             expected_version=1,
         ))
 
-        assert "Playbook 已更新" in result
-        stored = isolated_engram.get_playbook(pb["id"], _update_access=False)
-        assert [tool["name"] for tool in stored["required_tools"]] == [
+        # an AI's content update of an approved playbook is a pending proposal
+        # that carries the new tools; the approved playbook is unchanged
+        reply = json.loads(result)
+        assert reply["status"] == "pending"
+        proposal = isolated_engram.get_playbook(reply["id"], _update_access=False)
+        assert [tool["name"] for tool in proposal["required_tools"]] == [
             "mcp-publisher",
             "gh",
         ]
+        assert "required_tools" not in isolated_engram.get_playbook(pb["id"], _update_access=False)
 
 
 class TestSearchKnowledgeResultSize:

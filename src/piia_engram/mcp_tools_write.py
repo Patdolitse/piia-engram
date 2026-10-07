@@ -756,10 +756,15 @@ def _playbook_update_proposal(playbook_id: str, updates: dict) -> str:
 
 
 def _mark_pending_playbook(item):
-    """A pending (staging) playbook in a listing carries the same marks as search's pending group."""
-    if isinstance(item, dict) and not item.get("governance_withheld") and item.get("tier") == "staging":
-        item["pending_untrusted"] = True
-        item["eligibility"] = "pending"
+    """A pending playbook in a listing carries the same marks as search's pending group."""
+    from piia_engram import recall_policy as _recall_policy
+
+    if (
+        isinstance(item, dict)
+        and not item.get("governance_withheld")
+        and _recall_policy.classify(item).state == _recall_policy.PENDING
+    ):
+        item.update(_recall_policy.mark_pending(item))
         item["note"] = "pending review: not executable until the Owner approves it (engram review)"
     return item
 
@@ -1030,6 +1035,25 @@ async def manage_playbook(
         if not updates:
             return "未提供任何更新字段。 / No update fields provided."
         if _strict.approval_strict(S._get_engram().root):
+            refusal = S._locked_engram_call(lambda: _version_refusal(proposal=True))
+            if refusal is not None:
+                return S._json(refusal)
+            return _playbook_update_proposal(playbook_id, updates)
+        # Outside strict too, an AI's rewrite of an approved playbook's content
+        # is a pending proposal; the approved version stays in use until the
+        # Owner approves the new one. A status change stays a direct edit.
+        from piia_engram.playbooks import _PLAYBOOK_CONTENT_FIELDS
+
+        content_keys = set(updates) & _PLAYBOOK_CONTENT_FIELDS
+        current = S._get_engram()._read_playbook_by_id(playbook_id)
+        if content_keys and current is not None and not S._get_engram().is_pending_playbook(current):
+            if "status" in updates:
+                return S._json({
+                    "error": "mixed_update",
+                    "changed": False,
+                    "message": "A content change of an approved playbook is a proposal and a status change "
+                               "is a direct edit; send them as two calls.",
+                })
             refusal = S._locked_engram_call(lambda: _version_refusal(proposal=True))
             if refusal is not None:
                 return S._json(refusal)

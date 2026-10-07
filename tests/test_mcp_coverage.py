@@ -537,7 +537,7 @@ class TestMemoryStore:
             }),
             user_confirmed=True,
         ))
-        # an AI-written playbook is a proposal in every mode (Owner decision 2026-10-07)
+        # an AI-written playbook is a proposal in every approval mode
         assert "engram review" in result
 
     def test_memory_store_invalid_json(self, eng: Engram):

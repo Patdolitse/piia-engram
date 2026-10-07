@@ -684,8 +684,8 @@ class PlaybookMixin:
         new_pb["timestamp"] = new_pb.get("timestamp") or _now_iso()
         new_pb = self._ensure_playbook_fields(new_pb)
         strict = _strict_mode.approval_strict(self.root)
-        # A playbook an AI writes over MCP is a proposal in every approval mode
-        # (Owner decision 2026-10-07); local Owner actions are unchanged.
+        # A playbook an AI writes over MCP is a proposal in every approval mode;
+        # local Owner actions are unchanged.
         proposal = strict or _pinning.mcp_origin()
         if proposal:
             for key in [k for k in new_pb if k.startswith(("promotion_", "promoted_", "approval_"))]:
