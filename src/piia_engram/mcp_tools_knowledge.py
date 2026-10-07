@@ -246,7 +246,9 @@ async def archive_knowledge(item_id: str, expected_version: int | None = None) -
         return eng.archive_knowledge(item_id, expected_version=expected_version)
 
     result = S._locked_engram_call(_guarded)
-    if isinstance(result, dict) and result.get("error") in ("version_required", "version_conflict", "pinned_entry"):
+    if isinstance(result, dict) and result.get("error") in (
+        "version_required", "version_conflict", "version_invalid", "pinned_entry",
+    ):
         return S._json(result)
     S._beta("knowledge_rejected", action="archive")
     # Returns the full stored item (delegates to update_*) — same read-back
@@ -634,7 +636,9 @@ async def merge_knowledge(
         )
 
     result = S._locked_engram_call(_guarded)
-    if isinstance(result, dict) and result.get("error") in ("version_required", "version_conflict", "pinned_entry"):
+    if isinstance(result, dict) and result.get("error") in (
+        "version_required", "version_conflict", "version_invalid", "pinned_entry",
+    ):
         return S._json(result)
     result = S._gov_rt.maybe_govern_write_ack(eng.root, result, tool="merge_knowledge")
     return S._json(result)

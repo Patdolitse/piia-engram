@@ -721,3 +721,39 @@ def test_owner_interactive_review_approves_a_revision_of_a_pinned_entry(eng, mon
     index = eng._recall_supersede_index()
     assert index.successor(decision["id"]) == proposal["id"]
     assert "pinned" not in _row(eng, decision["id"])
+
+
+# ---------------------------------------------------------------------------
+# a supersedes target must be applicable: same project, not archived
+# ---------------------------------------------------------------------------
+
+
+def test_supersedes_targets_in_another_project_or_archived_are_refused(eng, tmp_path):
+    other_project = str(tmp_path / "other-project")
+    lesson_far = eng.add_lesson({"summary": "A lesson that belongs to another project", "domain": "workflow",
+                                 "tier": "verified", "project_folder": other_project})
+    lesson_old = _lesson(eng, "A lesson the Owner archived some time ago")
+    eng.archive_knowledge(lesson_old["id"])
+    decision_old = _decision(eng, "Which mirror do we use?", "the old mirror")
+    eng.archive_knowledge(decision_old["id"])
+    pb_far = eng.add_playbook({"title": "Project-only release steps", "steps": [{"action": "x"}],
+                               "scope_type": "project", "project_folder": other_project})
+    before = _store(eng.root)
+
+    cases = [
+        (mcp_server.add_lesson(summary="Revise the far lesson", supersedes=lesson_far["id"],
+                               supersedes_expected_version=1, user_confirmed=True), "different_project"),
+        (mcp_server.add_lesson(summary="Revise the archived lesson", supersedes=lesson_old["id"],
+                               supersedes_expected_version=1, user_confirmed=True), "archived"),
+        (mcp_server.add_decision(question="Which mirror do we use now?", choice="the new mirror",
+                                 supersedes=decision_old["id"], supersedes_expected_version=1,
+                                 user_confirmed=True), "archived"),
+        (mcp_server.add_playbook(title="Global release steps", triggers="release",
+                                 steps_json=json.dumps([{"action": "y"}]), supersedes=pb_far["id"],
+                                 supersedes_expected_version=1, user_confirmed=True), "different_project"),
+    ]
+    for call, reason in cases:
+        result = _json(_run(call))
+        assert result["error"] == "supersedes_target_not_applicable", result
+        assert result["reason"] == reason
+    assert _store(eng.root) == before

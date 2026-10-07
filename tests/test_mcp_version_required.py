@@ -315,3 +315,47 @@ def test_read_tools_return_the_version(eng):
     assert history["current_version"] == 2
     history = _json(_run(mcp_server.get_knowledge_history(decision["id"])))
     assert history["current_version"] == 1
+
+
+# ---------------------------------------------------------------------------
+# only whole numbers count as a version
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [True, False, 1.9, 2.0, "abc", "1.9", "-1", -1, " ", "１"])
+def test_version_guard_rejects_values_that_are_not_whole_numbers(value):
+    from piia_engram import version_guard
+
+    row = {"id": "x", "version": 1}
+    result = version_guard.check("x", row, value, {"item_id": "x", "expected_version": None})
+    assert result is not None
+    assert result["error"] == ("version_required" if value == " " else "version_invalid"), (value, result)
+    assert result["current_version"] == 1
+
+
+@pytest.mark.parametrize("value", [1, "1", " 1 "])
+def test_version_guard_accepts_whole_numbers(value):
+    from piia_engram import version_guard
+
+    assert version_guard.check("x", {"id": "x", "version": 1}, value, {"expected_version": None}) is None
+
+
+@pytest.mark.parametrize("value", [True, -1, "abc", 1.0])
+def test_mcp_tools_refuse_an_invalid_version_without_writing(eng, value):
+    lesson = _lesson(eng, "A lesson guarded against odd version values")
+    decision = _decision(eng, "Which value types are versions?", "whole numbers")
+    pb = _playbook(eng, "Check the version value")
+    before = _store(eng.root)
+    results = [
+        _run(mcp_server.update_knowledge(lesson["id"], json.dumps({"detail": "x"}), expected_version=value)),
+        _run(mcp_server.archive_knowledge(lesson["id"], expected_version=value)),
+        _run(mcp_server.merge_knowledge(lesson["id"], decision["id"], primary_expected_version=1,
+                                        secondary_expected_version=value)),
+        _run(mcp_server.manage_playbook("update", pb["id"], title="y", expected_version=value)),
+        _run(mcp_server.add_decision(question="Which value types are versions now?", choice="ints",
+                                     supersedes=decision["id"], supersedes_expected_version=value,
+                                     user_confirmed=True)),
+    ]
+    for text in results:
+        assert _json(text)["error"] == "version_invalid", text
+    assert _store(eng.root) == before

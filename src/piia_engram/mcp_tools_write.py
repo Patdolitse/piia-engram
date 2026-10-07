@@ -72,6 +72,7 @@ def _supersede_refusal(kind: str, content, expected) -> dict | None:
     return S._get_engram().mcp_supersede_guard(
         target, expected, kind=kind,
         example={"supersedes": target, "supersedes_expected_version": None},
+        content=content,
     )
 
 
@@ -225,7 +226,8 @@ async def memory_store(
 
         result = S._locked_engram_call(_batch_write)
         if isinstance(result, dict) and result.get("error") in (
-            "version_required", "version_conflict", "supersedes_target_not_found",
+            "version_required", "version_conflict", "version_invalid",
+            "supersedes_target_not_found", "supersedes_target_not_applicable",
         ):
             return S._json(result)
         S._track("memory_store", success=True)

@@ -1090,15 +1090,20 @@ class KnowledgeOpsMixin:
         *,
         kind: str,
         example: dict,
+        content: dict | None = None,
     ) -> dict | None:
         """The refusal for a proposal that supersedes ``target_id``, or None.
 
-        The target must be a ``kind`` entry (active, or for lessons and
-        decisions in the overflow archive) and the proposal must name its
-        current version (``supersedes_expected_version``). Reads only.
+        The target must be an active ``kind`` entry in the same project scope
+        as the proposal (``content``): one that does not exist is
+        ``supersedes_target_not_found``; one in another project, or archived
+        (retired, or moved to the overflow archive), is
+        ``supersedes_target_not_applicable`` with the reason. The proposal must
+        name the target's current version (``supersedes_expected_version``).
+        Reads only.
         """
         target_id = str(target_id or "").strip()
-        row = self._supersede_lookup(kind, target_id)
+        row, where = self._supersede_lookup(kind, target_id)
         if row is None:
             return {
                 "error": "supersedes_target_not_found",
@@ -1107,25 +1112,54 @@ class KnowledgeOpsMixin:
                 "changed": False,
                 "message": f"No {kind} with this id to supersede. Nothing was written.",
             }
+        reason = ""
+        if where == "archive" or str(row.get("status") or "active") != "active":
+            reason = "archived"
+        elif isinstance(content, dict) and not self._supersede_same_scope(kind, content, row):
+            reason = "different_project"
+        if reason:
+            return {
+                "error": "supersedes_target_not_applicable",
+                "supersedes": target_id,
+                "kind": kind,
+                "reason": reason,
+                "changed": False,
+                "message": (
+                    f"This {kind} cannot be superseded by this proposal: "
+                    + ("it is archived (restore it first, or write a new entry)."
+                       if reason == "archived" else
+                       "it belongs to a different project than the proposal.")
+                    + " Nothing was written."
+                ),
+            }
         return _version_guard.check(target_id, row, expected_version, example,
                                     param="supersedes_expected_version")
 
-    def _supersede_lookup(self, kind: str, target_id: str) -> dict | None:
+    def _supersede_same_scope(self, kind: str, content: dict, target: dict) -> bool:
+        if kind == "playbook":
+            return self._same_playbook_scope(dict(content), target)
+        new_row = self._normalize_project_scope_for_entry(dict(content))
+        return self._entries_share_project_scope(new_row, target)
+
+    def _supersede_lookup(self, kind: str, target_id: str) -> tuple[dict | None, str]:
+        """(row, "active" | "archive") of a supersede target, or (None, "")."""
         if not target_id:
-            return None
+            return None, ""
         if kind == "playbook":
             row = self._read_playbook_by_id(target_id)
-            return row if isinstance(row, dict) and not self._is_snapshot_record(row) else None
+            if isinstance(row, dict) and not self._is_snapshot_record(row):
+                return row, "active"
+            return None, ""
         if kind not in {"lesson", "decision"}:
-            return None
+            return None, ""
         filename = "lessons.json" if kind == "lesson" else "decisions.json"
         for row in self._read_entries(self._knowledge_dir / filename, kind, migrate=False):
             if str(row.get("id") or "") == target_id and not self._is_snapshot_record(row):
-                return row
+                return row, "active"
         row = self._archive_current_rows(kind).get(target_id)
         if isinstance(row, dict) and not self._is_snapshot_record(row):
-            return row
-        return None
+            return row, "archive"
+        return None, ""
 
     def soft_archive_knowledge_tier(
         self,
@@ -1391,6 +1425,8 @@ class KnowledgeOpsMixin:
                 continue
             current = _version_guard.current_version(row)
             wanted = _version_guard.parse(expected)
+            if wanted is _version_guard.INVALID:
+                return _version_guard.invalid(item_id, expected, current, param=param)
             if wanted != current:
                 return _version_guard.conflict(item_id, wanted if wanted is not None else -1, current,
                                                param=param)
