@@ -184,8 +184,12 @@ You stay in control of staged items at any time:
   this). The "same type" check of a supersede uses the `type:` labels both
   entries have after the run's edit-type marks, so relabeling a proposal to its
   target's type in the same file works and relabeling it to another type is
-  refused. edit-type on an archived playbook (or one its replacement archives in
-  the same run) is skipped, not failed. The dry run follows the same order and
+  refused. A playbook that is archived, or that a replacement in the same run
+  archives, is judged by the label it has now, because its edit-type is skipped
+  (skipped, not failed). The check goes by the planned types: if the edit-type of
+  a decision or a lesson then fails, a replacement of the same run that already
+  went through is not rolled back. Each edit-type item names the label it came
+  from (`from`, null if it had none) and the one it sets (`to`). The dry run follows the same order and
   shows what the applying run will do; each receipt item names its phase and the receipt lists the ids in
   the order they were applied. `engram review apply` exits non-zero when every
   mark in the file failed.

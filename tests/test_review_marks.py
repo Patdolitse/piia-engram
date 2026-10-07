@@ -202,7 +202,8 @@ def test_old_format_marks_apply_exactly_as_before(eng, tmp_path, capsys):
     assert applied["status"] == "applied"
     assert applied["items"] == [{"id": keep["id"], "action": "approve", "status": "applied", "phase": 1},
                                 {"id": drop["id"], "action": "reject", "status": "applied", "phase": 1},
-                                {"id": relabel["id"], "action": "edit-type", "status": "applied", "phase": "edit"}]
+                                {"id": relabel["id"], "action": "edit-type", "from": None, "to": "rule",
+                                 "status": "applied", "phase": "edit"}]
     assert applied["order"] == [keep["id"], drop["id"], relabel["id"]]
     assert applied["edit_type_failed"] == []
     counts = applied["counts"]
@@ -870,3 +871,123 @@ def test_a_supersede_loop_keeps_file_order_and_writes_no_loop(eng, tmp_path, cap
 
     assert applied["order"] == rows
     assert _supersede_edges(eng) == []
+
+
+# ---------------------------------------------------------------------------
+# type checks skip playbooks that are retired; relabels leave a trail
+# ---------------------------------------------------------------------------
+
+
+def _typed_playbook(eng, title: str, mem_type: str, *, approve: bool = False) -> dict:
+    row = eng.add_playbook({"title": title, "domain": f"type:{mem_type}",
+                            "steps": [{"action": "Run the first step"}, {"action": "Run the second step"}]})
+    if approve:
+        _approve(eng, row["id"])
+    return row
+
+
+def test_a_playbook_its_replacement_archives_keeps_its_label_in_the_type_check(eng, tmp_path, capsys):
+    old = _typed_playbook(eng, "Rotate the signing key by hand", "rule", approve=True)
+    new = _typed_playbook(eng, "Key rollover through the release tool", "lesson")
+    replace = {"id": new["id"], "mark": f"supersede:{old['id']}"}
+
+    alone = _apply(tmp_path, capsys, [replace], yes=False)
+    assert alone["items"][0]["status"] == "type_mismatch"
+
+    dry, applied = _dry_then_apply(eng, tmp_path, capsys,
+                                   [{"id": old["id"], "mark": "edit-type:lesson"}, replace])
+
+    for payload in (dry, applied):
+        assert [i["status"] for i in payload["items"] if i["action"] == "supersede"] == ["type_mismatch"]
+    assert (new["id"], old["id"]) not in _supersede_edges(eng)
+    assert eng._read_playbook_by_id(old["id"])["status"] == "active"
+
+
+def test_final_types_leave_out_playbooks_that_keep_their_label(eng):
+    old = _typed_playbook(eng, "Rotate the signing key by hand", "rule", approve=True)
+    new = _typed_playbook(eng, "Key rollover through the release tool", "lesson")
+    gone = _typed_playbook(eng, "Mail keys on paper", "rule", approve=True)
+    eng.archive_playbook(gone["id"])
+    lesson = eng.add_lesson({"summary": "Tag releases by hand", "domain": "type:lesson"})
+    _approve(eng, lesson["id"])
+    newer = eng.add_lesson({"summary": "Tag releases from the release workflow", "domain": "type:lesson"})
+    marks, error = review_cli.validate_marks([
+        {"id": old["id"], "mark": "edit-type:lesson"},
+        {"id": gone["id"], "mark": "edit-type:lesson"},
+        {"id": lesson["id"], "mark": "edit-type:rule"},
+        {"id": new["id"], "mark": f"supersede:{old['id']}"},
+        {"id": newer["id"], "mark": f"supersede:{lesson['id']}"},
+    ])
+    assert not error
+
+    assert review_cli._final_types(eng, marks) == {lesson["id"]: "rule"}
+    assert review_cli._final_types(eng, [m for m in marks if m["id"] != new["id"]]) == {
+        old["id"]: "lesson", lesson["id"]: "rule"}
+
+
+def test_edit_type_items_say_which_label_they_change_from_and_to(eng, tmp_path, capsys):
+    decision = eng.add_decision({"question": "Which CI cache backend?", "choice": "local disk",
+                                 "domain": "infra,type:lesson"})
+    _approve(eng, decision["id"])
+    bare = eng.add_lesson({"summary": "Pin the runner image", "domain": "ci"})
+    _approve(eng, bare["id"])
+    playbook = _typed_playbook(eng, "Rotate the signing key by hand", "rule", approve=True)
+    marks = [{"id": decision["id"], "mark": "edit-type:rule"},
+             {"id": bare["id"], "mark": "edit-type:lesson"},
+             {"id": playbook["id"], "mark": "edit-type:lesson"}]
+
+    dry, applied = _dry_then_apply(eng, tmp_path, capsys, marks)
+
+    expected = [("lesson", "rule"), (None, "lesson"), ("rule", "lesson")]
+    for payload in (dry, applied):
+        assert [(i["from"], i["to"]) for i in payload["items"]] == expected
+    assert [i["status"] for i in applied["items"]] == ["applied"] * 3
+
+    _dry, again = _dry_then_apply(eng, tmp_path, capsys, marks)
+    assert [i["status"] for i in again["items"]] == ["already_applied"] * 3
+    assert [(i["from"], i["to"]) for i in again["items"]] == [("rule", "rule"), ("lesson", "lesson"),
+                                                              ("lesson", "lesson")]
+
+
+@pytest.mark.parametrize("kind", ["lesson", "decision", "playbook"])
+@pytest.mark.parametrize("bad", ["", "bogus", "rule,project_fact", "rule\nlesson", "type:rule", "Rule"])
+def test_relabel_type_refuses_a_type_that_is_not_one_of_the_five(eng, kind, bad):
+    if kind == "lesson":
+        row = eng.add_lesson({"summary": "Pin the runner image", "domain": "ci"})
+    elif kind == "decision":
+        row = eng.add_decision({"question": "Which CI cache backend?", "choice": "local disk", "domain": "ci"})
+    else:
+        row = _typed_playbook(eng, "Rotate the signing key by hand", "rule")
+    _approve(eng, row["id"])
+    before = _knowledge(eng.root)
+
+    assert review_cli.relabel_type(eng, kind, row["id"], bad) == {"error": "invalid_type"}
+
+    assert _knowledge(eng.root) == before
+
+
+def test_independent_replacements_keep_file_order_and_a_chain_goes_oldest_first(eng, tmp_path, capsys):
+    def _lesson(summary: str, *, approved: bool = False) -> str:
+        row = eng.add_lesson({"summary": summary, "domain": "type:lesson"})
+        if approved:
+            _approve(eng, row["id"])
+        return row["id"]
+
+    old1, old2, old3 = (_lesson(f"Older practice {i}", approved=True) for i in (1, 2, 3))
+    c0 = _lesson("Chain root", approved=True)
+    new1, new2, new3 = (_lesson(f"Newer practice {i}") for i in (1, 2, 3))
+    c1, c2 = _lesson("Chain middle"), _lesson("Chain newest")
+
+    _dry, applied = _dry_then_apply(eng, tmp_path, capsys, [
+        {"id": new1, "mark": f"supersede:{old1}"},
+        {"id": c2, "mark": f"supersede:{c1}"},
+        {"id": new2, "mark": f"supersede:{old2}"},
+        {"id": c1, "mark": f"supersede:{c0}"},
+        {"id": new3, "mark": f"supersede:{old3}"},
+    ])
+
+    assert [i["status"] for i in applied["items"]] == ["applied"] * 5
+    order = applied["order"]
+    assert [i for i in order if i in (new1, new2, new3)] == [new1, new2, new3]
+    assert order.index(c1) < order.index(c2)
+    assert order == [new1, new2, c1, c2, new3]

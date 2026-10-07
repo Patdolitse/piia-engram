@@ -741,9 +741,35 @@ def _plan(eng, marks: list[dict]) -> list[tuple[int, dict, Any]]:
             + [(n, m, "lifecycle") for n, m in enumerate(marks) if m["mark"] in ("retire", "restore")])
 
 
-def _final_types(marks: list[dict]) -> dict[str, str]:
-    """The ``type:`` label each id has after the run's edit-type marks."""
-    return {m["id"]: m["type"] for m in marks if m["mark"] == "edit-type"}
+def _keeps_label(row: Any, kind: str | None, replaced: Any = ()) -> bool:
+    """An edit-type skips a playbook that is archived or that a replacement of
+    this run archives; such an entry keeps the label it has now."""
+    return kind == "playbook" and isinstance(row, dict) and (
+        str(row.get("status") or "active") != "active" or str(row.get("id") or "") in replaced)
+
+
+def _final_types(eng, marks: list[dict]) -> dict[str, str]:
+    """The ``type:`` label each id has after the run's edit-type marks, for the
+    same-type check of a supersede.
+
+    Left out: an archived playbook and a playbook another mark of this run
+    replaces. Its edit-type is skipped (the replacement archives it), so the
+    check judges it by the label it carries now.
+
+    The check goes by the planned types. If an edit-type of a decision or a
+    lesson then fails, a replacement of the same run that already went through
+    is not rolled back.
+    """
+    edits = [m for m in marks if m["mark"] == "edit-type"]
+    if not edits:
+        return {}
+    replaced = {t for t in (_replaces(eng, m) for m in marks if m["mark"] in REVIEW_MARKS) if t}
+    final: dict[str, str] = {}
+    for m in edits:
+        kind, row = eng._find_item_by_id(m["id"])
+        if not _keeps_label(row, kind, replaced):
+            final[m["id"]] = m["type"]
+    return final
 
 
 def _simulate(eng, sim: dict, mark: dict, item: dict) -> None:
@@ -768,8 +794,14 @@ def relabel_type(eng, kind: str, item_id: str, mem_type: str) -> Any:
     Lessons and playbooks go through their update path. A decision's ``domain``
     is not a field an update may change (the MCP whitelist stays as it is), so
     the Owner's path writes the label directly under the file lock and touches
-    nothing else.
+    only ``domain`` and ``last_updated``: unlike a lesson or a playbook, a
+    decision's version is not incremented and no snapshot is left.
+
+    ``mem_type`` must be one of ``MEM_TYPES``; anything else returns
+    ``{"error": "invalid_type"}`` and writes nothing.
     """
+    if mem_type not in MEM_TYPES:
+        return {"error": "invalid_type"}
     if kind == "decision":
         from .storage import SkipWrite, _now_iso
 
@@ -789,10 +821,11 @@ def relabel_type(eng, kind: str, item_id: str, mem_type: str) -> Any:
 
 def _edit_one(eng, mark: dict, counts: dict, edit_failed: list[str], *, dry_run: bool,
               sim: dict | None = None) -> dict:
-    view = {"id": mark["id"], "action": "edit-type"}
     kind, row = eng._find_item_by_id(mark["id"])
-    if kind == "playbook" and isinstance(row, dict) and (
-            str(row.get("status") or "active") != "active" or (sim is not None and mark["id"] in sim["retired"])):
+    # the trail of a relabel: the label the entry had (None when it had none) and the one asked for
+    view = {"id": mark["id"], "action": "edit-type",
+            "from": (_type_label(row) or None) if isinstance(row, dict) else None, "to": mark["type"]}
+    if _keeps_label(row, kind, sim["retired"] if sim is not None else ()):
         # An archived playbook (or one its replacement archives in this run) keeps its label.
         counts["edit_type_skipped"] = counts.get("edit_type_skipped", 0) + 1
         return {**view, "status": "skipped", "reason": "archived"}
@@ -846,7 +879,7 @@ def preview_marks(eng, marks: list[dict]) -> dict:
     """
     counts = _new_counts()
     sim: dict = {"trusted": set(), "untrusted": set(), "edges": [], "retired": set()}
-    final_types = _final_types(marks)
+    final_types = _final_types(eng, marks)
     by_index: dict[int, dict] = {}
     order: list[str] = []
     for n, m, phase in _plan(eng, marks):
@@ -912,7 +945,7 @@ def apply_marks(eng, marks: list[dict], attribution: dict, *, progress: dict | N
     via = f"cli:{attribution['operator']}"
     reviews = [m for m in marks if m["mark"] in REVIEW_MARKS]
     plan = _plan(eng, marks)
-    final_types = _final_types(marks)
+    final_types = _final_types(eng, marks)
     counts: dict[str, Any] = {**_new_counts(), "edit_type": 0, "edit_type_failed": 0, "edit_type_skipped": 0,
                               "lifecycle": 0, "lifecycle_failed": 0, "already_applied": 0}
     handled: list[dict] = progress.setdefault("items", []) if progress is not None else []
