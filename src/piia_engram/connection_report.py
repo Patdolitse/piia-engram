@@ -346,8 +346,12 @@ def startup_line(root: Path) -> dict[str, Any]:
         authorized_meaning = "unset"
     sync = env("ENGRAM_MCP_STARTUP_SYNC")
     return {
-        "state": "zero_write",
-        "detail": "the MCP server imports nothing from other AI tools at start",
+        # Not "zero write": a start and reads keep session and access
+        # bookkeeping (session state, audit, read counts). What holds is that
+        # nothing is imported and no knowledge or identity content changes.
+        "state": "no_import",
+        "detail": "the MCP server imports nothing from other AI tools at start and changes no "
+                  "knowledge or identity content",
         "variables": {
             "ENGRAM_MCP_STARTUP_SYNC": {"value": sync, "meaning": "no effect" if sync else "unset"},
             "ENGRAM_RECONCILE": {"value": reconcile, "meaning": reconcile_meaning},
@@ -439,7 +443,7 @@ def render_text(report: dict[str, Any]) -> list[str]:
     for name, info in start["variables"].items():
         shown = f"{name}={info['value']}" if info["value"] else f"{name} unset"
         parts.append(shown if info["meaning"] == "unset" else f"{shown} ({info['meaning']})")
-    lines.append(f"Startup writes: none -- {start['detail']}; " + "; ".join(parts))
+    lines.append(f"Startup: {start['detail']}; " + "; ".join(parts))
     not_installed = []
     for row in report["clients"]:
         verdict = row["verdict"]

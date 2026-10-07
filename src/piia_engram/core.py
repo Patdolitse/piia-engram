@@ -960,7 +960,17 @@ class Engram(
     # -- Trust Boundaries (v2.0, new) --
 
     def get_trust_boundaries(self) -> dict:
-        return self._ensure_trust_boundaries()
+        """The trust boundaries with any missing default filled in memory.
+
+        A read never writes identity/trust_boundaries.json: the store's own
+        initialisation backfills the file, update_trust_boundaries changes it.
+        """
+        existing = _read_json(self._identity_dir / "trust_boundaries.json")
+        view = dict(existing) if isinstance(existing, dict) else {}
+        for key, value in DEFAULT_TRUST_BOUNDARIES.items():
+            if key not in view:
+                view[key] = deepcopy(value)
+        return view
 
     def update_trust_boundaries(self, updates: dict) -> None:
         updates, rejected = self._filter_allowed(updates, _ALLOWED_TRUST_FIELDS)
