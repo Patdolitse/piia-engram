@@ -471,9 +471,15 @@ async def import_engram(
     memory_path: str = "",
     user_path: str = "",
 ) -> str:
-    """导入 Engram 数据：从备份文件或 OpenClaw 兼容文件。 / Import Engram data: from a backup file, or from OpenClaw-compatible files.
+    """预览 Engram 数据导入：备份文件或 OpenClaw 兼容文件（经 MCP 只能预览）。 / Preview an Engram data import: a backup file or OpenClaw-compatible files (preview only over MCP).
 
-    Owner/admin surface: imports or overwrites local store data and is refused for non-owner callers when governance is enabled.
+    经 MCP 只返回预览（dry_run=true）；真正写入只能由主人在本地执行 `engram import <backup.json> --apply --yes`
+    （覆盖模式加 --overwrite）。不带 dry_run=true 的请求返回 local_only，零写入。
+    Over MCP this only previews (dry_run=true). Applying an import is a local Owner command:
+    `engram import <backup.json> --apply --yes` (add --overwrite for replace). A request without
+    dry_run=true answers local_only and writes nothing.
+
+    Owner/admin surface: refused for non-owner callers when governance is enabled.
 
     用途：format="native"（默认）从 export_engram 生成的备份恢复或跨机迁移；
     format="openclaw" 从 SOUL.md / MEMORY.md / USER.md 迁移进 Engram（只提供
@@ -501,11 +507,16 @@ async def import_engram(
         return refusal
     format = format.strip().lower()
     if format == "openclaw":
+        if not dry_run:
+            return S._json({
+                "error": "local_only",
+                "format": "openclaw",
+                "changed": False,
+                "hint": "OpenClaw files are imported by the Owner on the local machine, not over MCP; "
+                        "call import_engram(format=\"openclaw\", dry_run=true) to see what the files hold.",
+            })
         try:
-            result = S._locked_engram_call(
-                S.import_from_openclaw, S._get_engram(), soul_path, memory_path, user_path,
-            )
-            return S._json(result)
+            return S._json(_openclaw_preview(soul_path, memory_path, user_path))
         except Exception as e:
             return f"从 OpenClaw 兼容格式导入失败: {S._safe_err(e)}"
     if format != "native":
@@ -520,10 +531,50 @@ async def import_engram(
     err = S._validate_path(input_path)
     if err:
         return S._json({"error": err})
-    # Under the MCP write lock and the MCP origin, like every other MCP write:
-    # an import never supersedes or replaces an Owner-pinned entry.
-    result = S._locked_engram_call(S._get_engram().import_all, input_path, merge=merge, dry_run=dry_run)
+    if not dry_run:
+        # Owner decision 2026-10-07: applying an import is a local command only.
+        command = f"engram import {input_path} --apply --yes" + ("" if merge else " --overwrite")
+        return S._json({
+            "error": "local_only",
+            "format": "native",
+            "changed": False,
+            "hint": f"run `{command}` locally; over MCP, dry_run=true previews the import",
+        })
+    result = S._locked_engram_call(S._get_engram().import_all, input_path, merge=merge, dry_run=True)
     return S._json(result)
+
+
+def _openclaw_preview(soul_path: str, memory_path: str, user_path: str) -> dict:
+    """Metadata-only look at OpenClaw files: which exist and how many bullet lines each holds."""
+    from pathlib import Path
+
+    from piia_engram.memory_import import refusal as _import_refusal
+
+    refused = _import_refusal(S._get_engram().root)  # ENGRAM_RECONCILE=0: nothing is read
+    if refused is not None:
+        return refused
+    files: dict = {}
+    for name, raw in (("soul", soul_path), ("memory", memory_path), ("user", user_path)):
+        if not raw:
+            continue
+        err = S._validate_path(raw)
+        if err:
+            files[name] = {"error": err}
+            continue
+        path = Path(raw).expanduser()
+        if not path.is_file():
+            files[name] = {"exists": False}
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        bullets = sum(1 for line in text.splitlines() if line.strip().startswith("- "))
+        files[name] = {"exists": True, "bullets": bullets}
+    return {
+        "status": "preview",
+        "format": "openclaw",
+        "dry_run": True,
+        "files": files,
+        "note": "metadata only; applying an OpenClaw import is a local Owner action, not an MCP one",
+    }
 
 
 @S.mcp.tool()

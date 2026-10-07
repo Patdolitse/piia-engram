@@ -2006,20 +2006,24 @@ def _render_import_result_text(payload: dict) -> str:
                     f"place_in_archive={counts.get('placed_in_archive', 0)}"
                 )
     pinned = payload.get("pinned") if isinstance(payload.get("pinned"), dict) else {}
-    protected = pinned.get("protected") if isinstance(pinned.get("protected"), dict) else {}
-    if protected:
+    matched = pinned.get("matched") if isinstance(pinned.get("matched"), dict) else {}
+    dropped = [e for e in pinned.get("dropped_edges") or [] if isinstance(e, dict)]
+    if matched:
         verb = "kept in place" if mode == "overwrite" else "skipped (not overwritten)"
-        count = sum(len(ids) for ids in protected.values() if isinstance(ids, list))
+        count = sum(len(ids) for ids in matched.values() if isinstance(ids, list))
         lines.append(f"  pinned: {count} {'entry' if count == 1 else 'entries'} {verb}")
-        for section, ids in sorted(protected.items()):
+        for section, ids in sorted(matched.items()):
             if isinstance(ids, list):
                 lines.append(f"    - {section}: {', '.join(str(i) for i in ids)}")
-        dropped = pinned.get("dropped_edges") if isinstance(pinned.get("dropped_edges"), list) else []
-        if dropped:
-            pairs = ", ".join(f"{e.get('src')} -> {e.get('dst')}" for e in dropped if isinstance(e, dict))
-            lines.append(f"    - supersedes links to pinned entries dropped: {pairs}")
-        if pinned.get("warning"):
-            lines.append(f"  {pinned['warning']}")
+    if dropped:
+        targets = sorted({str(e.get("dst")) for e in dropped})
+        pairs = ", ".join(f"{e.get('src')} -> {e.get('dst')}" for e in dropped)
+        lines.append(
+            f"  pinned: {len(targets)} {'entry' if len(targets) == 1 else 'entries'} protected from a "
+            f"supersedes link (link dropped): {pairs}"
+        )
+    if (matched or dropped) and pinned.get("warning"):
+        lines.append(f"  {pinned['warning']}")
     imported = payload.get("imported") if isinstance(payload.get("imported"), list) else []
     if imported:
         lines.append(f"  imported: {', '.join(str(item) for item in imported)}")

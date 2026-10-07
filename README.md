@@ -630,7 +630,7 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `export_knowledge_report` | Owner-gated export: write a readable Markdown knowledge report |
 | `request_outline_review` | Owner-gated export: generate an interactive local HTML review page |
 | `export_engram` | Owner-gated export: write a full backup (`format="openclaw"` for OpenClaw-compatible files) |
-| `import_engram` | Owner/admin import: use `dry_run=True` first for a metadata-only merge/conflict preview (`format="openclaw"` supported) |
+| `import_engram` | Owner/admin import preview only (`dry_run=True`): a metadata-only merge/conflict plan (`format="openclaw"` supported). Applying an import is local: `engram import <backup.json> --apply --yes` |
 | `read_web_content` | Fetch a user-provided URL: prefers a local sidecar if running, otherwise uses the self-contained built-in reader (`pip install "piia-engram[reader]"`) |
 | `get_audit_log` | Get recent audit log entries |
 | `start_project` | Start a project with inherited knowledge |
@@ -744,8 +744,8 @@ brings an entry back).
 upgrade (it reads no stored knowledge bodies and never reaches outside the
 Engram root). For JSON backups, `import_engram(..., dry_run=True)` or
 `engram import <backup.json>` returns a metadata-only merge plan with
-add/skip/conflict counts before any write; `--apply --yes` is required to mutate
-the local store. Same-summary lessons and same-question decisions with divergent
+add/skip/conflict counts before any write; applying it is local only:
+`engram import <backup.json> --apply --yes` (over MCP, `import_engram` only previews). Same-summary lessons and same-question decisions with divergent
 semantic fields are previewed as version-chain candidates; they are materialized
 only when the owner explicitly runs
 `engram import <backup.json> --apply --yes --materialize-version-chain`. Engram

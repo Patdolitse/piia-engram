@@ -11,6 +11,8 @@
 ### 破坏性变更
 - **经 MCP 修改已有条目必须带版本号。** `update_knowledge`、`archive_knowledge`、`merge_knowledge`（`primary_expected_version` 与 `secondary_expected_version` 都要）、`manage_playbook`（`update`、`archive`，以及确认执行的 `delete` / `restore`；严格模式下的更新提案也一样），以及取代已有条目的写入（带 `supersedes` 的 `add_decision` 或 `memory_store`，现在要同时带 `supersedes_expected_version`），不带该条目的当前版本就不再写入：返回 `{"error": "version_required", "current_version": N, "example": {...}}`；版本已不是当前版本时返回 `{"error": "version_conflict", "current_version": N}`。两种情况都不写入任何内容。`supersedes` 指向不存在的条目时返回 `supersedes_target_not_found`；指向已归档、其它项目或另一种作用域（项目提案取代全局条目，或反过来）的条目时返回 `supersedes_target_not_applicable` 并说明 `reason`（`archived`、`different_project`、`scope_mismatch`）。版本号不是整数时返回 `version_invalid`。新建条目、其它纯新增写入、读取和本地 `engram` 命令不受影响。读取结果（`get_lessons`、`get_decisions`、`search_knowledge`、`get_relevant_knowledge`、`get_playbooks`）始终带 `version`（从未修订的条目为 1），`get_knowledge_history` 返回 `current_version`。
   - **迁移：** 先读取条目，把它的 `version` 作为 `expected_version`（或 `supersedes_expected_version`）传入。收到 `version_required` 时先核对条目，再用回复里的 `current_version` 重试（`example` 给出调用示例）；收到 `version_conflict` 时重新读取条目后再重试。
+- **MCP `import_engram` 只能预览。** 两种格式（`native` 与 `openclaw`）收到写入请求时都返回 `{"error": "local_only", "hint": ...}` 且不写入；`dry_run=true` 仍返回元数据级计划（OpenClaw 文件给出哪些文件存在、各有多少条要点）。该工具现在标为只读。本地 `engram import` 不变。
+  - **迁移：** 继续用 `import_engram(..., dry_run=true)` 预览，然后在存放数据的机器上运行 `engram import <backup.json> --apply --yes`（替换模式加 `--overwrite`）。
 
 ### 变更
 - **不再自动从其它 AI 工具导入。** 启动 MCP server、冷启动（`get_user_context`、`get_resume_brief`、会话开始钩子）和 `wrap_up_session` 都不再读取或导入其它 AI 工具的记忆和规则文件。`ENGRAM_MCP_STARTUP_SYNC` 与 `wrap_up_session(run_reconcile=True)` 仍被接受，但不导入任何内容。

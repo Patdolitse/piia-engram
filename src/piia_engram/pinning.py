@@ -110,10 +110,16 @@ def pinned_target_refusal(item_id: str, targets: Iterable[str]) -> dict:
     }
 
 
-def blocked_targets(promoted: Iterable[tuple[str, str]], rows: Iterable[Any]) -> list[str]:
-    """The pinned targets among ``(new id, superseded id)`` promotions, when an MCP caller writes."""
+def blocked_targets(
+    promoted: Iterable[tuple[str, str]], rows: Iterable[Any], *, any_origin: bool = False
+) -> list[str]:
+    """The pinned targets among ``(new id, superseded id)`` promotions.
+
+    Checked when an MCP caller writes; ``any_origin`` checks every caller (an
+    import never supersedes a pinned entry, also when the Owner runs it).
+    """
     pairs = list(promoted or ())
-    if not pairs or not mcp_origin():
+    if not pairs or not (any_origin or mcp_origin()):
         return []
     pinned = {str(r.get("id") or "") for r in rows or () if is_pinned(r)}
     return [dst for _src, dst in pairs if dst in pinned]

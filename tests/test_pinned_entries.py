@@ -938,12 +938,17 @@ def test_mcp_import_cannot_supersede_a_pinned_entry(eng, tmp_path):
     assert pinned["id"] in preview["pinned"]["protected"]["lessons"]
     assert {"src": "imp-x", "dst": pinned["id"]} in preview["pinned"]["dropped_edges"]
 
+    # applying an import over MCP is refused outright (local only); nothing changes
+    before = _store(eng.root)
     result = _json(_run(mcp_server.import_engram(input_path=str(path), merge=True)))
-    assert result["status"] == "success"
-    assert pinned["id"] in result["pinned"]["protected"]["lessons"]
-    assert {"src": "imp-x", "dst": pinned["id"]} in result["pinned"]["dropped_edges"]
+    assert result["error"] == "local_only"
+    assert _store(eng.root) == before
     _assert_pin_survived(eng, pinned["id"])
-    assert _row(eng, "imp-x") is not None  # the rest of the backup still came in
+    # the local import brings the rest in and drops the link
+    local = eng.import_all(str(path), merge=True)
+    assert {"src": "imp-x", "dst": pinned["id"]} in local["pinned"]["dropped_edges"]
+    _assert_pin_survived(eng, pinned["id"])
+    assert _row(eng, "imp-x") is not None
 
 
 def test_local_import_cannot_supersede_a_pinned_entry(eng, tmp_path, capsys):
@@ -960,7 +965,7 @@ def test_local_import_cannot_supersede_a_pinned_entry(eng, tmp_path, capsys):
         _assert_pin_survived(eng, pinned["id"])
 
 
-def test_import_that_would_promote_a_revision_of_a_pinned_entry_is_refused_over_mcp(eng, tmp_path):
+def test_import_that_would_promote_a_revision_of_a_pinned_entry_is_refused(eng, tmp_path):
     pinned = _lesson(eng, "Pinned lesson a replace import would supersede by promotion")
     assert run_pin([pinned["id"]]) == 0
     proposal = eng.add_lesson({"summary": "Pending revision of the pinned lesson", "domain": "workflow",
@@ -972,7 +977,8 @@ def test_import_that_would_promote_a_revision_of_a_pinned_entry_is_refused_over_
     path.write_text(json.dumps({"schema_version": "1.0", "identity": {}, "knowledge": {
         "lessons": [_row(eng, pinned["id"]), promoted], "decisions": [], "playbooks": []}}), encoding="utf-8")
     before = _store(eng.root)
-    result = _json(_run(mcp_server.import_engram(input_path=str(path), merge=False)))
+    assert _json(_run(mcp_server.import_engram(input_path=str(path), merge=False)))["error"] == "local_only"
+    result = eng.import_all(str(path), merge=False)  # the Owner's local import refuses it too
     assert result["error"] == "pinned_target", result
     assert _store(eng.root) == before
     _assert_pin_survived(eng, pinned["id"])

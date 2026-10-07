@@ -303,7 +303,11 @@ playbooks, project snapshots, recent contexts, and daily logs.
   `pip install "piia-engram[secure]"` and `ENGRAM_SECRET`.
 
 **Moving or backing up your data:** copy the entire `~/.engram/` folder. That is
-your whole memory — there is no cloud copy to reconcile.
+your whole memory — there is no cloud copy to reconcile. A JSON backup
+(`export_engram`) goes back in with the local `engram import <backup.json>`
+(a preview by default; `--apply --yes` writes, `--overwrite` replaces). Over MCP,
+`import_engram` only previews an import (`dry_run=true`); a request to apply one
+answers `local_only` and writes nothing.
 
 **What not to store.** Engram is for personal AI context, not secret management.
 Do **not** store passwords, API keys, OAuth tokens, private keys, customer PII,

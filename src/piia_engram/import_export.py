@@ -441,16 +441,26 @@ class ImportExportMixin:
         return plan
 
     @staticmethod
-    def _pinned_import_refusal(kind: str, targets) -> dict:
+    def _pinned_import_refusal(kind: str, targets, *, part_way: bool = False) -> dict:
+        if part_way:
+            message = (
+                f"the import stopped part-way: importing the {kind}s would approve a proposal that "
+                "supersedes a pinned entry, so nothing in that section was written. Sections imported "
+                "before it stay, and the unfinished run is recorded by the import marker: run the same "
+                "import again to resume it once the entry is unpinned (engram unpin <id>)."
+            )
+        else:
+            message = (
+                "importing would approve a proposal that supersedes a pinned entry; an import never "
+                "does that (unpin it first, or approve the proposal with engram review). Nothing was imported."
+            )
         return {
             "status": "refused",
             "error": _pinning.ERROR_PINNED_TARGET,
             "kind": kind,
             "targets": sorted({str(t) for t in targets}),
-            "message": (
-                "importing would approve a proposal that supersedes a pinned entry; only the Owner's "
-                "local review can do that. Nothing was imported."
-            ),
+            "part_way": part_way,
+            "message": message,
         }
 
     def _pinned_import_report(self, knowledge: dict, *, merge: bool) -> dict | None:
@@ -476,6 +486,7 @@ class ImportExportMixin:
                          if str(r.get("id") or "") in ids or str(r.get(key_field) or "") in keys]
             if local:
                 protected[section] = sorted(str(r.get("id") or "") for r in local)
+        matched = {section: list(ids) for section, ids in protected.items()}
         dropped = self._pinned_edge_drops(knowledge.get("relations"))
         for edge in dropped:
             section = edge.pop("_section")
@@ -490,7 +501,8 @@ class ImportExportMixin:
             local_pbs = [p for p in self._export_playbooks() if _pinning.is_pinned(p)
                          and (str(p.get("id") or "") in ids or str(p.get("title") or "") in titles)]
             if local_pbs:
-                protected["playbooks"] = sorted(str(p.get("id") or "") for p in local_pbs)
+                matched["playbooks"] = sorted(str(p.get("id") or "") for p in local_pbs)
+                protected["playbooks"] = sorted(set(protected.get("playbooks", [])) | set(matched["playbooks"]))
         if not protected:
             return None
         count = sum(len(v) for v in protected.values())
@@ -503,6 +515,8 @@ class ImportExportMixin:
                 "(engram unpin <id>) to let the backup's version in."
             ),
         }
+        if matched:
+            report["matched"] = matched
         if dropped:
             report["dropped_edges"] = dropped
         return report
@@ -852,7 +866,7 @@ class ImportExportMixin:
             return {"refused": True, "hard_cap": exc.hard_cap, "verified_active": exc.verified_active}
         placed = len(plan.placed_ids)
         preview = {"refused": False, "moved_to_archive": len(plan.archive) - placed, "placed_in_archive": placed}
-        blocked = _pinning.blocked_targets(plan.promoted_supersedes, after)
+        blocked = _pinning.blocked_targets(plan.promoted_supersedes, after, any_origin=True)
         if blocked:
             preview["pinned_targets"] = sorted(set(blocked))
         return preview
@@ -1050,9 +1064,10 @@ class ImportExportMixin:
                     )
                 except _pinning.PinnedTargetRefused as exc:
                     # The preview above refuses this first; a race lands here.
-                    # This section wrote nothing; the pending marker stays, so
-                    # running the import again resumes it.
-                    return self._pinned_import_refusal(kind, exc.targets)
+                    # This section wrote nothing; sections before it stay
+                    # written and the pending marker stays, so running the
+                    # import again resumes it.
+                    return self._pinned_import_refusal(kind, exc.targets, part_way=True)
                 note = f", archived {len(outcome.archived_ids)}" if outcome.archived_ids else ""
                 sign = "+" if merge else ""
                 report[section] = f"{section}({sign}{stats['added']}{note})"

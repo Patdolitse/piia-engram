@@ -1319,13 +1319,14 @@ class TestExportImportExceptions:
     def test_import_openclaw_exception(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
     ):
-        """Lines 1093-1094: import_from_openclaw raises -> error message."""
+        """An error while previewing OpenClaw files -> error message (MCP only previews them)."""
+        from piia_engram import mcp_tools_admin
 
         def explode(*a, **kw):
             raise RuntimeError("import boom")
 
-        monkeypatch.setattr(mcp_server, "import_from_openclaw", explode)
-        result = _run(mcp_server.import_engram(format="openclaw"))
+        monkeypatch.setattr(mcp_tools_admin, "_openclaw_preview", explode)
+        result = _run(mcp_server.import_engram(format="openclaw", dry_run=True))
         assert "OpenClaw 兼容格式导入失败" in result
 
     def test_export_openclaw_non_success_status(

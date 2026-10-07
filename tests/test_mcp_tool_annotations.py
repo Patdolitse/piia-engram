@@ -58,6 +58,11 @@ def test_read_web_content_is_the_only_open_world_tool():
     assert {n for n, h in TOOL_ANNOTATIONS.items() if h.open_world} == {"read_web_content"}
 
 
+# Owner-gated tools that only read over MCP: import_engram previews; applying an
+# import is the local `engram import` (Owner decision 2026-10-07).
+OWNER_GATED_READS = frozenset({"import_engram"})
+
+
 def test_classes_and_hints_agree():
     classes = _governance_class()
     assert set(classes) == set(TOOL_ANNOTATIONS)
@@ -65,6 +70,9 @@ def test_classes_and_hints_agree():
         cls = classes[name]
         if cls == "read":
             # access counters and usage logs are bookkeeping, not writes
+            assert hints.read_only and hints.idempotent and not hints.destructive, name
+        elif name in OWNER_GATED_READS:
+            # owner-gated (and refused under strict) but writes nothing over MCP
             assert hints.read_only and hints.idempotent and not hints.destructive, name
         else:
             assert not hints.read_only, f"{name} ({cls}) writes, so it is not read-only"
@@ -74,7 +82,7 @@ def test_classes_and_hints_agree():
 
 def test_destructive_tools_are_exactly_the_ones_that_overwrite_downgrade_or_retire():
     assert {n for n, h in TOOL_ANNOTATIONS.items() if h.destructive} == {
-        "manage_caller_trust", "import_engram", "archive_knowledge", "review_staging",
+        "manage_caller_trust", "archive_knowledge", "review_staging",
         "merge_knowledge", "manage_relation", "update_identity", "user_portrait",
         "manage_playbook", "update_knowledge", "export_engram",
         "register_tool", "save_project_snapshot", "start_project", "wrap_up_session",

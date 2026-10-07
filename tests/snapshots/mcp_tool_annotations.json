@@ -192,9 +192,9 @@
     "openWorldHint": false
   },
   "import_engram": {
-    "readOnlyHint": false,
-    "destructiveHint": true,
-    "idempotentHint": false,
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
     "openWorldHint": false
   },
   "ingest_notes": {

@@ -239,7 +239,9 @@ AI 拿到什么，各个入口规则一致：
   开启可选的字段级加密。
 
 **迁移或备份数据：** 复制整个 `~/.engram/` 文件夹即可。那就是你全部的记忆——
-没有云端副本需要对账。
+没有云端副本需要对账。JSON 备份（`export_engram`）用本地命令 `engram import <backup.json>`
+导回（默认只预览；`--apply --yes` 才写入，`--overwrite` 为替换）。经 MCP，`import_engram`
+只能预览导入（`dry_run=true`）；要求真正导入时返回 `local_only`，不写入任何内容。
 
 **什么不该存。** Engram 是个人 AI 上下文，不是密钥管理器。**不要**存密码、
 API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经验需要敏感上下文，
