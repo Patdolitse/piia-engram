@@ -435,7 +435,10 @@ def test_capacity_full_of_pinned_rows_is_safe(eng, monkeypatch):
     assert not {r.get("id") for r in archived} & {p["id"] for p in pinned}
 
 
-def test_capacity_plan_never_moves_a_pinned_row():
+def test_capacity_plan_result_never_touches_a_pinned_row():
+    """Reviewed (pool V) rows are never moved by the capacity rules anyway; this
+    guards the plan's result: a pinned row stays in ``rows`` and never shows up
+    in ``archive``, even when every limit is exceeded around it."""
     from datetime import datetime, timezone
 
     now = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -757,3 +760,104 @@ def test_supersedes_targets_in_another_project_or_archived_are_refused(eng, tmp_
         assert result["error"] == "supersedes_target_not_applicable", result
         assert result["reason"] == reason
     assert _store(eng.root) == before
+
+
+# ---------------------------------------------------------------------------
+# import CLI text names the pinned entries it kept
+# ---------------------------------------------------------------------------
+
+
+def test_import_cli_text_lists_pinned_entries(eng, tmp_path):
+    from piia_engram.cli_commands import _render_import_result_text
+
+    lesson = _lesson(eng, "Pinned lesson the import CLI reports")
+    assert run_pin([lesson["id"]]) == 0
+    path = _backup(tmp_path, "cli.json", [{"id": "fresh-2", "summary": "Backup lesson", "tier": "verified",
+                                            "status": "active"}])
+    for merge in (True, False):
+        for dry_run in (True, False):
+            payload = eng.import_all(str(path), merge=merge, dry_run=dry_run)
+            text = _render_import_result_text(payload)
+            if merge:  # nothing in the backup matches the pinned lesson
+                assert "pinned" not in text.lower()
+            else:
+                assert "pinned" in text.lower() and lesson["id"] in text
+                assert "kept" in text.lower()
+    path = _backup(tmp_path, "cli2.json", [{"id": lesson["id"], "summary": "Other text", "tier": "verified",
+                                             "status": "active"}])
+    text = _render_import_result_text(eng.import_all(str(path), merge=True, dry_run=True))
+    assert lesson["id"] in text and "skipped" in text.lower()
+
+
+def test_replace_import_keeps_pinned_rows_in_place(eng, tmp_path):
+    first = _lesson(eng, "First local lesson before the pin")
+    pinned = _lesson(eng, "Pinned lesson in the middle of the file")
+    _lesson(eng, "Third local lesson after the pin")
+    assert run_pin([pinned["id"]]) == 0
+    incoming = [{"id": f"in-{n}", "summary": f"Backup lesson number {n}", "tier": "verified",
+                 "status": "active"} for n in range(3)]
+    eng.import_all(str(_backup(tmp_path, "order.json", incoming)), merge=False)
+    ids = [r["id"] for r in json.loads((eng.root / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
+           if not r.get("snapshot_of")]
+    assert ids == ["in-0", pinned["id"], "in-1", "in-2"]
+    assert first["id"] not in ids
+
+
+# ---------------------------------------------------------------------------
+# a pin never beats relevance
+# ---------------------------------------------------------------------------
+
+
+def _search_rows():
+    strong = {"id": "strong", "summary": "kubernetes ingress annotations guide", "detail": "",
+              "status": "active", "tier": "verified"}
+    weak = {"id": "weak", "summary": "kubernetes notes", "detail": "", "status": "active",
+            "tier": "verified", "pinned": True}
+    return strong, weak
+
+
+def test_keyword_search_ranks_a_strong_match_above_a_weak_pinned_one(eng):
+    strong, weak = _search_rows()
+    query = "kubernetes ingress annotations"
+    ranked = eng._rank_scope([weak, strong], query.split(), query, 10, None)
+    assert [v["id"] for v in ranked] == ["strong", "weak"]
+    assert ranked[0]["_score"] > ranked[1]["_score"]
+
+
+def test_hybrid_search_ranks_a_strong_match_above_a_weak_pinned_one(eng):
+    strong, weak = _search_rows()
+
+    class _Index:
+        def fts_search(self, query, limit=50):
+            return ["strong", "weak"]
+
+        def vector_search(self, query, limit=50):
+            return ["strong", "weak"]
+
+    query = "kubernetes ingress annotations"
+    ranked = eng._rank_scope([weak, strong], query.split(), query, 10, _Index())
+    assert [v["id"] for v in ranked] == ["strong", "weak"]
+
+
+# ---------------------------------------------------------------------------
+# conflicts resolve --action supersede audits the unpin as superseded
+# ---------------------------------------------------------------------------
+
+
+def test_conflict_supersede_unpins_with_reason_superseded(eng, capsys):
+    from piia_engram.setup_wizard import run_conflicts
+
+    rows = [
+        {"id": "conflict-a", "question": "which release gate should Engram use", "choice": "manual owner approval",
+         "domain": "release", "status": "active", "tier": "verified", "timestamp": "2026-10-01T00:00:00Z"},
+        {"id": "conflict-b", "question": "which release gate should Engram use", "choice": "automated pipeline gate",
+         "domain": "release", "status": "active", "tier": "verified", "timestamp": "2026-10-01T00:00:00Z"},
+    ]
+    eng._write_entries(eng._knowledge_dir / "decisions.json", rows, "decision")
+    assert run_pin(["conflict-a"]) == 0
+    capsys.readouterr()
+    assert run_conflicts(["resolve", "conflict-a", "conflict-b", "--action", "supersede", "--keep", "conflict-b",
+                          "--commit", "--yes", "--json"]) == 0
+    events = [e for e in _audit(eng.root) if e.get("resource") == "pin/auto_unpin" and e["id"] == "conflict-a"]
+    assert [e["reason"] for e in events] == ["superseded"]
+    assert "pinned" not in _row(eng, "conflict-a")

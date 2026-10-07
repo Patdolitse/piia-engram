@@ -729,7 +729,13 @@ class ImportExportMixin:
                     if key not in wanted and key[0] in wanted_ids:
                         ctx.extra_archive.append((local, _capacity.REASON_IMPORT_REPLACE))
                 stats["added"] = len(kept_in)
-                return [deepcopy(row) for row in pinned_local] + [deepcopy(row) for row in kept_in]
+                # Each pinned row keeps its place: it goes back at its old
+                # index (or at the end when the new list is shorter).
+                out = [deepcopy(row) for row in kept_in]
+                for index, row in enumerate(current):
+                    if str(row.get("id") or "") in pinned_ids:
+                        out.insert(min(index, len(out)), deepcopy(row))
+                return out
             seen = {self._import_identity_key(row, kind) for row in current} | archive_keys
             for row in incoming:
                 key = self._import_identity_key(row, kind)

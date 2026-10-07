@@ -2005,6 +2005,17 @@ def _render_import_result_text(payload: dict) -> str:
                     f"    - {kind}: move_to_archive={counts.get('moved_to_archive', 0)} "
                     f"place_in_archive={counts.get('placed_in_archive', 0)}"
                 )
+    pinned = payload.get("pinned") if isinstance(payload.get("pinned"), dict) else {}
+    protected = pinned.get("protected") if isinstance(pinned.get("protected"), dict) else {}
+    if protected:
+        verb = "kept in place" if mode == "overwrite" else "skipped (not overwritten)"
+        count = sum(len(ids) for ids in protected.values() if isinstance(ids, list))
+        lines.append(f"  pinned: {count} {'entry' if count == 1 else 'entries'} {verb}")
+        for section, ids in sorted(protected.items()):
+            if isinstance(ids, list):
+                lines.append(f"    - {section}: {', '.join(str(i) for i in ids)}")
+        if pinned.get("warning"):
+            lines.append(f"  {pinned['warning']}")
     imported = payload.get("imported") if isinstance(payload.get("imported"), list) else []
     if imported:
         lines.append(f"  imported: {', '.join(str(item) for item in imported)}")
@@ -5056,6 +5067,10 @@ def _run_conflicts_resolve(eng, args: list[str]) -> tuple[int, dict]:
         from piia_engram.governance_store import RelationStore as _RS
 
         relation_added = _RS(eng.root).add_relation(keep, "supersedes", other)
+        # The superseded decision loses its pin first, audited as superseded.
+        from piia_engram import pinning as _pinning
+
+        _pinning.auto_unpin(eng, other, reason="superseded", by=keep)
         archive = eng.update_decision(other, {"status": "outdated"})
         store.record(first, second, action=action, keep=keep, note=str(opts["note"] or ""))
         payload["changed"] = bool(relation_added or archive.get("status") == "outdated")
