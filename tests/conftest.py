@@ -1,6 +1,8 @@
 """Shared pytest fixtures for the Engram test suite."""
 
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -18,9 +20,12 @@ _SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
 # conftest code runs early enough, because pytest imports conftest.py before
 # collecting any test module.
 os.environ["ENGRAM_TEST"] = "1"
-os.environ["ENGRAM_DIR"] = str(
-    Path(tempfile.mkdtemp(prefix="engram-collect-")) / "engram-home"
-)
+# Removed again when the session ends (pytest_sessionfinish, atexit as a
+# fallback), so runs do not pile up engram-collect-* directories in the
+# temp dir. It has to exist before any fixture, so it cannot come from
+# tmp_path_factory.
+_COLLECT_DIR = Path(tempfile.mkdtemp(prefix="engram-collect-"))
+os.environ["ENGRAM_DIR"] = str(_COLLECT_DIR / "engram-home")
 # The update-check cache lives outside the store (4.21.2), in the user's cache
 # directory by default; the suite must never write there either.
 os.environ["ENGRAM_CACHE_DIR"] = str(Path(os.environ["ENGRAM_DIR"]).parent / "engram-cache")
@@ -61,6 +66,18 @@ try:
     REAL_PING_STATE_DIR = _usage_ping.state_dir()
 except Exception:  # no resolvable home: nothing real to protect
     REAL_PING_STATE_DIR = None
+
+
+def _remove_collect_dir(path: Path = _COLLECT_DIR) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+
+
+atexit.register(_remove_collect_dir)
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """Drop the collection-time store made above (see _COLLECT_DIR)."""
+    _remove_collect_dir()
 
 
 @pytest.fixture(scope="session", autouse=True)
