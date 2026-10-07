@@ -346,6 +346,9 @@ async def onboard_repo(project_root: str = "") -> str:
 async def onboard_accept(item_id: str, project_root: str = "") -> str:
     """Owner-only, local only: accepting an onboard candidate is the local `engram onboard-accept`.
 
+    Owner/admin surface: compatibility endpoint that directs the Owner to the
+    local command; no candidate is accepted over MCP.
+
     接受 onboard 候选（校验锚点并提升为 verified）是主人的本地命令
     `engram onboard-accept <id>`；经 MCP 在任何模式下都返回 local_review_only，零写入。
     Accepting an onboard candidate (check its anchor, promote it to verified) is
