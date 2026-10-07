@@ -12,6 +12,14 @@ bounded time. Any other error, any other platform, or a conflict that outlasts
 the budget re-raises the original exception, so a real permission problem is
 still reported (after at most ``_RETRY_TIMEOUT`` seconds).
 
+The retry sleeps in the calling thread: a blocked write holds that thread for
+up to about one second before it succeeds or raises. A write made from an
+async MCP tool handler therefore stalls the event loop for that long; it only
+happens while another handle holds the target file.
+
+A blocked-write warning names the file (base name only) and the Windows error
+code, never the exception message, which carries the full path.
+
 Standard library only: imported by modules that must stay light at startup.
 """
 
@@ -41,7 +49,10 @@ def _is_transient(exc: OSError) -> bool:
 
 
 def replace_with_retry(src: str | os.PathLike, dst: str | os.PathLike) -> None:
-    """``os.replace(src, dst)``, retrying a transient Windows sharing conflict."""
+    """``os.replace(src, dst)``, retrying a transient Windows sharing conflict.
+
+    Blocks the calling thread for up to about one second while the conflict lasts.
+    """
     deadline: float | None = None
     delay = _RETRY_FIRST_DELAY
     attempts = 0
@@ -58,8 +69,8 @@ def replace_with_retry(src: str | os.PathLike, dst: str | os.PathLike) -> None:
             remaining = deadline - now
             if remaining <= 0:
                 logger.warning(
-                    "replace of %s still blocked after %d attempts: %s",
-                    os.path.basename(os.fspath(dst)), attempts, exc,
+                    "replace of %s still blocked after %d attempts (winerror %s)",
+                    os.path.basename(os.fspath(dst)), attempts, exc.winerror,
                 )
                 raise
             time.sleep(min(delay, remaining))

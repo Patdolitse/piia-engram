@@ -11,8 +11,8 @@ permission error is not hidden.
 
 from __future__ import annotations
 
+import ast
 import os
-import re
 import threading
 import time
 from pathlib import Path
@@ -247,25 +247,144 @@ def test_usage_ping_setting_retries(monkeypatch, on_windows):
     assert '"enabled": false' in target.read_text(encoding="utf-8")
 
 
-_REPLACE_CALL = re.compile(r"\b_?os\.replace\(|\bPath\([^()]*\)\.replace\(")
+# -- no rename bypasses it (checked on the syntax tree) -------------------------
+
+_RENAME_ATTRS = frozenset({"replace", "rename", "renames", "move"})
+_RENAME_MODULES = frozenset({"os", "shutil", "pathlib"})
 # Renames that are not an atomic overwrite of a file other processes read.
-_ALLOWED_REPLACES = {
+_ALLOWED_RENAMES = {
     ("core.py", "os.replace(staging, final)"),  # backup directory moved to a fresh name
-    ("file_safety.py", "os.replace(path, path.with_name("),  # best-effort log rotation
+    ("file_safety.py", 'os.replace(path, path.with_name(path.name + ".1"))'),  # best-effort log rotation
 }
 
 
-def test_no_bare_os_replace_in_atomic_writers():
-    """Atomic writes go through replace_with_retry, not a bare os.replace."""
+def _rename_calls(source: str) -> list[tuple[int, str]]:
+    """(line, call source) of every call that renames or moves a file.
+
+    Flags os/shutil rename functions however they are imported (``os.replace``,
+    ``import os as _os``, ``from os import replace``, ``shutil.move``) and a
+    one-argument ``.replace(x)`` / ``.rename(x)`` on any object (``Path.replace``).
+    ``str.replace`` takes two arguments and ``datetime.replace`` keywords, so
+    neither is flagged; nor is any method called on a string literal.
+    """
+    tree = ast.parse(source)
+    modules: set[str] = set()
+    functions: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in _RENAME_MODULES:
+                    modules.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] in _RENAME_MODULES:
+            for alias in node.names:
+                if alias.name in _RENAME_ATTRS:
+                    functions.add(alias.asname or alias.name)
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name):
+            flagged = func.id in functions
+        elif isinstance(func, ast.Attribute) and func.attr in _RENAME_ATTRS:
+            owner = func.value
+            if isinstance(owner, ast.Constant):
+                flagged = False
+            elif isinstance(owner, ast.Name) and owner.id in modules:
+                flagged = True
+            else:
+                flagged = (func.attr in {"replace", "rename"} and len(node.args) == 1
+                           and not node.keywords)
+        else:
+            flagged = False
+        if flagged:
+            found.append((node.lineno, ast.get_source_segment(source, node) or ""))
+    return found
+
+
+@pytest.mark.parametrize("code", [
+    "import os\nos.replace(a, b)",
+    "import os as _os\n_os.replace(a, b)",
+    "import os\nos.rename(a, b)",
+    "import os\nos.renames(a, b)",
+    "from os import replace\nreplace(a, b)",
+    "from os import rename as mv\nmv(a, b)",
+    "import shutil\nshutil.move(a, b)",
+    "from shutil import move\nmove(a, b)",
+    "from pathlib import Path\nPath(a).replace(b)",
+    "tmp.replace(target)",
+    "tmp.rename(target)",
+    "self.path.with_suffix('.tmp').replace(self.path)",
+])
+def test_rename_guard_flags(code):
+    assert len(_rename_calls(code)) == 1
+
+
+@pytest.mark.parametrize("code", [
+    "'a-b'.replace('-', '_')",
+    "name.replace('-', '_')",
+    "text.replace(old, new)",
+    "text.replace(old, new, 1)",
+    "dt.replace(tzinfo=None)",
+    "dataclasses.replace(obj, field=1)",
+    "'x'.replace(y)",
+    "from os import path\npath.join(a, b)",
+])
+def test_rename_guard_ignores(code):
+    assert _rename_calls(code) == []
+
+
+def test_no_bare_rename_in_atomic_writers():
+    """Atomic writes go through replace_with_retry, never a bare rename or move."""
     offenders = []
     for path in sorted(SRC.rglob("*.py")):
         if path.name == "atomic_replace.py":
-            continue
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            code = line.split("#", 1)[0]
-            if not _REPLACE_CALL.search(code):
+            continue  # the implementation itself
+        for lineno, call in _rename_calls(path.read_text(encoding="utf-8")):
+            if (path.name, call) in _ALLOWED_RENAMES:
                 continue
-            if any(path.name == name and snippet in code for name, snippet in _ALLOWED_REPLACES):
-                continue
-            offenders.append(f"{path.relative_to(SRC).as_posix()}:{lineno}: {line.strip()}")
+            offenders.append(f"{path.relative_to(SRC).as_posix()}:{lineno}: {call}")
     assert offenders == []
+
+
+# -- a failed write leaves no temp file and logs no message text ----------------
+
+
+def test_blocked_replace_logs_the_file_name_and_winerror_only(tmp_path, monkeypatch, on_windows, caplog):
+    monkeypatch.setattr(atomic_replace, "_RETRY_TIMEOUT", 0.05)
+    src, dst = tmp_path / "new.tmp", tmp_path / "secret-dir" / "target.json"
+    dst.parent.mkdir()
+    src.write_text("new", encoding="utf-8")
+    dst.write_text("old", encoding="utf-8")
+
+    def _blocked(*_args, **_kwargs):
+        exc = PermissionError(13, "Access is denied: private detail", str(dst))
+        exc.winerror = 32
+        raise exc
+
+    monkeypatch.setattr(os, "replace", _blocked)
+    with caplog.at_level("WARNING", logger="piia_engram.atomic_replace"):
+        with pytest.raises(PermissionError):
+            atomic_replace.replace_with_retry(src, dst)
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "piia_engram.atomic_replace"]
+    assert len(messages) == 1
+    assert "target.json" in messages[0] and "32" in messages[0]
+    assert "private detail" not in messages[0] and "secret-dir" not in messages[0]
+    assert "Access is denied" not in messages[0]
+
+
+def test_tombstone_remove_cleans_up_when_the_replace_fails(tmp_path, monkeypatch, on_windows):
+    from piia_engram import tombstones
+
+    monkeypatch.setattr(atomic_replace, "_RETRY_TIMEOUT", 0.05)
+    path = tombstones._path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text('{"id": "les_1"}\n{"id": "les_2"}\n', encoding="utf-8")
+    monkeypatch.setattr(os, "replace", _FlakyReplace(path, failures=-1))
+
+    with pytest.raises(PermissionError):
+        tombstones.remove(tmp_path, "les_1")
+
+    assert path.read_text(encoding="utf-8") == '{"id": "les_1"}\n{"id": "les_2"}\n'
+    assert _no_temp_files(path.parent)

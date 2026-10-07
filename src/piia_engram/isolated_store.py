@@ -692,8 +692,12 @@ class IsolatedStore:
             marker.update(_identity(self.root))
             marker["rebound_at"] = utc_now_z()
             tmp = marker_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
-            replace_with_retry(tmp, marker_path)
+            try:
+                tmp.write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
+                replace_with_retry(tmp, marker_path)
+            except BaseException:
+                tmp.unlink(missing_ok=True)  # leave no half-done marker behind
+                raise
             return self._append({"op": "rebind", "result": "rebound", "operator": operator})
 
     # -- recall (design s8) ---------------------------------------------------------

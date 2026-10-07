@@ -960,6 +960,34 @@ def test_rebind_refuses_a_torn_receipt_before_rebinding(world, monkeypatch):
     assert marker_path.read_bytes() != moved
 
 
+def test_a_rebind_whose_replace_fails_leaves_no_temp_file(world, monkeypatch):
+    from piia_engram import atomic_replace
+
+    marker_path = Path(world.data["root"]) / "isolated_store_root.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["file_id"] = marker["file_id"] + 1
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    moved = marker_path.read_bytes()
+    store = IsolatedStore.open(world.cfg, allow_rebind=True)
+    real_replace = os.replace
+
+    def _blocked(src, dst, *args, **kwargs):
+        if Path(dst) == marker_path:
+            exc = PermissionError(13, "Access is denied")
+            exc.winerror = 32
+            raise exc
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(atomic_replace, "_IS_WINDOWS", True)
+    monkeypatch.setattr(atomic_replace, "_RETRY_TIMEOUT", 0.05)
+    monkeypatch.setattr(os, "replace", _blocked)
+    with pytest.raises(PermissionError):
+        store.owner_rebind("Owner")
+
+    assert marker_path.read_bytes() == moved
+    assert not marker_path.with_suffix(".tmp").exists()
+
+
 @pytest.mark.parametrize("spelling", ["Q2-IRV", "q2_irv", "Q2.IRV"])
 def test_family_spellings_fold_into_one_canonical_code(world, monkeypatch, spelling):
     """R2 change 3: upper case, "-" and "." as "_", before every family comparison."""
