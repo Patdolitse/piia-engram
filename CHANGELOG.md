@@ -40,6 +40,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - The unused internal function `ingest_extraction` (it wrote extracted text straight into the profile); nothing called it.
 
 ### Fixed
+- The setup message about seeded best practices no longer says they become verified after three uses: review decides, as the English text already said.
 - **Project proposals show up in review.** `engram review`, `engram review export`, `engram management` and the interactive review list pending proposals of every project, with their `project:<name>` scope (`engram management --scope` filters them too); before, only global ones were listed.
 - In strict mode `manage_playbook(action="update")` replies with the pending proposal (`status: pending`, its id and the entry it would replace) instead of echoing the whole proposed playbook.
 

@@ -40,6 +40,7 @@
 - 移除未使用的内部函数 `ingest_extraction`（它会把抽取出的文本直接写进身份资料），没有任何调用方。
 
 ### 修复
+- setup 中关于预置最佳实践的中文提示不再说“使用 3 次后自动晋升为 verified”：与英文一致，审核确认后才会变为 verified。
 - **项目作用域的提案会出现在审核里。** `engram review`、`engram review export`、`engram management` 和交互审核会列出所有项目的待审提案，并显示 `project:<名称>` 作用域（`engram management --scope` 也按它筛选）；此前只列出全局提案。
 - 严格模式下 `manage_playbook(action="update")` 的回复是待审提案（`status: pending`、提案 id 与它要取代的条目），不再回显整份提议的手册。
 

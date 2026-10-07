@@ -2126,7 +2126,7 @@ def _run_seed_knowledge_onboarding(
         if seed_count:
             print(_t(f"\n  🌱 已注入 {seed_count} 条通用最佳实践（基于 {effective_tech}）",
                      f"\n  🌱 Injected {seed_count} starter best practices (based on {effective_tech})"))
-            print(_t("     这些标记为 staging——使用 3 次后自动晋升为 verified。",
+            print(_t("     这些标记为 staging——审核确认后才会变为 verified。",
                      "     These are marked staging — review confirms what becomes verified."))
 
     # Step 4.5 — rule files and memories from other AI tools: the same flow as
