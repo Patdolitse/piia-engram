@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,19 +41,75 @@ from .storage import (
 _TOMBSTONE_FIELDS = ("id", "kind", "scope", "h1", "h2", "hv", "rejected_at", "via", "prior_rejection_id")
 
 
-def _clean_tombstones(records: Any) -> list[dict]:
-    """Backup-safe tombstone records (known scalar fields only); drops malformed ones."""
+_TOMBSTONE_KINDS = frozenset({"lesson", "decision", "playbook"})
+_TOMBSTONE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_TOMBSTONE_HASH_RE = re.compile(r"[0-9a-f]{64}")
+_TOMBSTONE_SCOPE_MAX = 128
+_TOMBSTONE_TEXT_MAX = 64  # rejected_at, via
+# A backup keeps only the route a rejection came through, never who made it or
+# which client was connected ("owner-veto:<name>" -> "owner-veto").
+_TOMBSTONE_VIA_ROUTES = frozenset({"owner-veto", "cli", "backfill", "mcp", "core", "import"})
+
+
+def _tombstone_via(value: str) -> str:
+    route = value.split(":", 1)[0].strip()
+    return route if route in _TOMBSTONE_VIA_ROUTES else "other"
+
+
+def _short_text(value: Any, limit: int) -> bool:
+    return isinstance(value, str) and len(value) <= limit and value.isprintable()
+
+
+def _clean_tombstone(record: Any) -> dict | None:
+    """One backup-safe tombstone record, or None when any field is malformed."""
+    if not isinstance(record, dict):
+        return None
+    item_id, hv = record.get("id"), record.get("hv")
+    if not (isinstance(item_id, str) and _TOMBSTONE_ID_RE.fullmatch(item_id)):
+        return None
+    if record.get("kind") not in _TOMBSTONE_KINDS:
+        return None
+    if isinstance(hv, bool) or not isinstance(hv, int) or hv not in _tombstones.MATCHED_HASH_VERSIONS:
+        return None
+    for key in ("h1", "h2"):
+        value = record.get(key)
+        if not (isinstance(value, str) and _TOMBSTONE_HASH_RE.fullmatch(value)):
+            return None
+    clean: dict[str, Any] = {key: record[key] for key in ("id", "kind", "h1", "h2", "hv")}
+    if "scope" in record:
+        scope = record["scope"]
+        if not (_short_text(scope, _TOMBSTONE_SCOPE_MAX) and scope.strip()):
+            return None
+        clean["scope"] = scope
+    for key in ("rejected_at", "via"):
+        if key in record:
+            if not _short_text(record[key], _TOMBSTONE_TEXT_MAX):
+                return None
+            clean[key] = _tombstone_via(record[key]) if key == "via" else record[key]
+    prior = record.get("prior_rejection_id")
+    if prior not in (None, ""):
+        if not (isinstance(prior, str) and _TOMBSTONE_ID_RE.fullmatch(prior)):
+            return None
+        clean["prior_rejection_id"] = prior
+    return {key: clean[key] for key in _TOMBSTONE_FIELDS if key in clean}
+
+
+def _check_tombstones(records: Any) -> tuple[list[dict], int]:
+    """(backup-safe records, number of malformed records skipped)."""
     out: list[dict] = []
+    invalid = 0
     for record in records if isinstance(records, list) else []:
-        if not isinstance(record, dict):
-            continue
-        if not all(isinstance(record.get(key), str) and record.get(key) for key in ("id", "h1")):
-            continue
-        out.append({
-            key: record[key] for key in _TOMBSTONE_FIELDS
-            if key in record and isinstance(record[key], (str, int)) and not isinstance(record[key], bool)
-        })
-    return out
+        clean = _clean_tombstone(record)
+        if clean is None:
+            invalid += 1
+        else:
+            out.append(clean)
+    return out, invalid
+
+
+def _clean_tombstones(records: Any) -> list[dict]:
+    """Backup-safe tombstone records (known, well-formed fields only); drops malformed ones."""
+    return _check_tombstones(records)[0]
 
 
 def _new_tombstones(existing: list[dict], incoming: list[dict]) -> list[dict]:
@@ -424,7 +481,7 @@ class ImportExportMixin:
             }
         if isinstance(knowledge.get("tombstones"), list):
             # Rejections are the Owner's decisions: both modes keep the local ones.
-            incoming_stones = _clean_tombstones(knowledge["tombstones"])
+            incoming_stones, invalid_stones = _check_tombstones(knowledge["tombstones"])
             existing_stones = _tombstones.load(self.root)
             new_count = len(_new_tombstones(existing_stones, incoming_stones))
             summary["tombstones"] = {
@@ -433,6 +490,7 @@ class ImportExportMixin:
                 "would_skip": len(incoming_stones) - new_count,
                 "conflicts": 0,
                 "kept": len(existing_stones),
+                "invalid": invalid_stones,
             }
 
         environment = data.get("environment", {}) if isinstance(data, dict) else {}
@@ -1157,11 +1215,15 @@ class ImportExportMixin:
         path = self._knowledge_dir / _tombstones.FILENAME
         with hold_directory_lock(self._knowledge_dir, timeout=30):
             existing = _tombstones.load(self.root)
-            new = _new_tombstones(existing, _clean_tombstones(records))
+            incoming, invalid = _check_tombstones(records)
+            new = _new_tombstones(existing, incoming)
             _append_jsonl_lines(path, [json.dumps(r, ensure_ascii=True) for r in new])
-            if merge:
-                return f"tombstones(+{len(new)})"
-            return f"tombstones(+{len(new)}, kept {len(existing)})"
+        notes = [f"+{len(new)}"]
+        if not merge:
+            notes.append(f"kept {len(existing)}")
+        if invalid:
+            notes.append(f"invalid {invalid}")
+        return f"tombstones({', '.join(notes)})"
 
     def export_all(self, output_path: str | None = None, *, exclude_pending: bool = False) -> str:
         """导出整个 Engram 为单一 JSON 文件。

@@ -134,7 +134,7 @@ def test_merge_dedupes_by_id_and_by_hash(tmp_path):
     _write_stone(dst.root, "playbook", CLAIMS["playbook"], version=2, item_id="pb-local")
     preview = dst.import_all(out, merge=True, dry_run=True)
     assert preview["summary"]["tombstones"] == {
-        "incoming": 3, "would_add": 1, "would_skip": 2, "conflicts": 0, "kept": 2}
+        "incoming": 3, "would_add": 1, "would_skip": 2, "conflicts": 0, "kept": 2, "invalid": 0}
 
     first = dst.import_all(out, merge=True)
     assert "tombstones(+1)" in first["imported"]
@@ -154,7 +154,7 @@ def test_replace_mode_keeps_local_tombstones_and_adds_the_backups(tmp_path):
     _write_stone(dst.root, "playbook", CLAIMS["playbook"], version=3, item_id="pb-local")  # same hash
     preview = dst.import_all(out, merge=False, dry_run=True)
     assert preview["summary"]["tombstones"] == {
-        "incoming": 2, "would_add": 1, "would_skip": 1, "conflicts": 0, "kept": 2}
+        "incoming": 2, "would_add": 1, "would_skip": 1, "conflicts": 0, "kept": 2, "invalid": 0}
     assert "tombstones: incoming=2 add=1 skip=1 conflicts=0 kept=2" in _render_import_result_text(preview)
     result = dst.import_all(out, merge=False)
 
@@ -196,7 +196,7 @@ def test_dry_run_shows_the_tombstone_count_and_writes_nothing(tmp_path):
     dst = _store(tmp_path, "dst")
     preview = dst.import_all(out, merge=True, dry_run=True)
     assert preview["summary"]["tombstones"] == {
-        "incoming": 3, "would_add": 3, "would_skip": 0, "conflicts": 0, "kept": 0}
+        "incoming": 3, "would_add": 3, "would_skip": 0, "conflicts": 0, "kept": 0, "invalid": 0}
     assert tombstones.load(dst.root) == []
     rendered = _render_import_result_text(preview)
     assert "tombstones: incoming=3 add=3 skip=0" in rendered
@@ -318,3 +318,138 @@ def test_an_interrupted_import_restores_tombstones_on_resume(live, tmp_path, mon
     again = live.import_all(path, merge=True)
     assert "tombstones(+0)" in again["imported"]
     assert [r["id"] for r in tombstones.load(live.root)] == ["rej-backup"]
+
+
+# -- forged backups: only well-formed records are restored ----------------------
+
+
+def _good_stone(**over) -> dict:
+    record = {"id": "rej-good", "kind": "lesson", "scope": "global", "h1": "a" * 64, "h2": "b" * 64,
+              "hv": 3, "rejected_at": "2026-01-01T00:00:00Z", "via": "cli"}
+    record.update(over)
+    return {k: v for k, v in record.items() if v is not _DROP}
+
+
+_DROP = object()
+
+FORGED = {
+    "hv_string": _good_stone(id="f1", hv="3"),
+    "hv_missing": _good_stone(id="f2", hv=_DROP),
+    "hv_unknown": _good_stone(id="f3", hv=999),
+    "hv_bool": _good_stone(id="f4", hv=True),
+    "h1_too_long": _good_stone(id="f5", h1="a" * 65),
+    "h1_not_hex": _good_stone(id="f6", h1="g" * 64),
+    "h1_upper": _good_stone(id="f7", h1="A" * 64),
+    "h2_bad": _good_stone(id="f8", h2="b" * 10),
+    "scope_int": _good_stone(id="f9", scope=7),
+    "scope_too_long": _good_stone(id="f10", scope="p" * 200),
+    "id_path": _good_stone(id="../../outside/escape"),
+    "id_backslash": _good_stone(id=r"..\outside"),
+    "id_int": _good_stone(id=12345),
+    "id_too_long": _good_stone(id="x" * 129),
+    "kind_unknown": _good_stone(id="f11", kind="tool"),
+    "via_too_long": _good_stone(id="f12", via="v" * 65),
+}
+
+
+@pytest.mark.parametrize("name", sorted(FORGED))
+def test_a_forged_tombstone_is_skipped_and_counted_invalid(tmp_path, name):
+    payload = {"schema_version": "2.0", "knowledge": {"tombstones": [_good_stone(), FORGED[name]]}}
+    path = _backup(tmp_path, payload)
+    dst = _store(tmp_path, "dst")
+
+    for merge in (True, False):
+        preview = dst.import_all(path, merge=merge, dry_run=True)
+        stones = preview["summary"]["tombstones"]
+        assert stones["incoming"] == 1 and stones["invalid"] == 1 and stones["would_add"] == 1
+        assert "invalid=1" in _render_import_result_text(preview)
+    result = dst.import_all(path, merge=True)
+
+    assert "tombstones(+1, invalid 1)" in result["imported"]
+    assert [r["id"] for r in tombstones.load(dst.root)] == ["rej-good"]
+
+
+def test_a_valid_backup_reports_zero_invalid(tmp_path):
+    path = _backup(tmp_path, {"schema_version": "2.0", "knowledge": {"tombstones": [_good_stone()]}})
+    dst = _store(tmp_path, "dst")
+    preview = dst.import_all(path, merge=True, dry_run=True)
+    assert preview["summary"]["tombstones"]["invalid"] == 0
+    assert "tombstones(+1)" in dst.import_all(path, merge=True)["imported"]
+
+
+# -- dedupe keys: scope and hash version count ----------------------------------
+
+
+def test_a_project_tombstone_with_the_same_hash_as_a_global_one_is_added(tmp_path):
+    h1, h2 = tombstones.claim_hashes("lesson", CLAIMS["lesson"])
+    dst = _store(tmp_path, "dst")
+    _write_stone(dst.root, "lesson", CLAIMS["lesson"], version=3, item_id="local-global")
+    path = _backup(tmp_path, {"schema_version": "2.0", "knowledge": {"tombstones": [
+        _good_stone(id="rej-proj-a", scope="projA", h1=h1, h2=h2)]}})
+
+    preview = dst.import_all(path, merge=True, dry_run=True)
+    assert preview["summary"]["tombstones"]["would_add"] == 1
+    assert "tombstones(+1)" in dst.import_all(path, merge=True)["imported"]
+
+    claim = CLAIMS["lesson"]["summary"]
+    in_a = dst.add_lesson({"summary": claim, "domain": "t", "project_id": "projA"})
+    assert in_a["status"] == "rejected_before" and in_a["rejection_id"] == "rej-proj-a"
+    in_b = dst.add_lesson({"summary": claim, "domain": "t", "project_id": "projB"})
+    assert in_b.get("status") != "rejected_before" and in_b.get("project_id") == "projB"
+
+
+def test_dedupe_compares_hashes_within_one_hash_version(tmp_path):
+    # A lesson's v2 and v3 h1 are the same string; records of different
+    # versions are still distinct (each version is compared on its own).
+    v2 = tombstones._hashes_v2(tombstones.claim_text("lesson", CLAIMS["lesson"]))
+    v3 = tombstones.claim_hashes("lesson", CLAIMS["lesson"])
+    assert v2[0] == v3[0]
+    dst = _store(tmp_path, "dst")
+    _write_stone(dst.root, "lesson", CLAIMS["lesson"], version=3, item_id="local-v3")
+    path = _backup(tmp_path, {"schema_version": "2.0", "knowledge": {"tombstones": [
+        _good_stone(id="backup-v2", hv=2, h1=v2[0], h2=v2[1]),
+        _good_stone(id="backup-v3", hv=3, h1=v3[0], h2=v3[1]),
+    ]}})
+
+    preview = dst.import_all(path, merge=True, dry_run=True)
+    assert preview["summary"]["tombstones"]["would_add"] == 1
+    assert preview["summary"]["tombstones"]["would_skip"] == 1
+    dst.import_all(path, merge=True)
+    assert sorted(r["id"] for r in tombstones.load(dst.root)) == ["backup-v2", "local-v3"]
+
+
+# -- via: only the route travels, never who or which client ---------------------
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("owner-veto:Alice Example", "owner-veto"),
+    ("cli:Alice Example", "cli"),
+    ("backfill:abc123:none:op=Alice Example", "backfill"),
+    ("mcp:SecretClient", "mcp"),
+    ("core:batch_review_staging", "core"),
+    ("import", "import"),
+    ("somewhere-else:Alice Example", "other"),
+    ("", "other"),
+])
+def test_via_is_reduced_to_its_route(tmp_path, raw, expected):
+    src = _store(tmp_path, "src")
+    _write_stone(src.root, "lesson", CLAIMS["lesson"], version=3, item_id="r1")
+    path = Path(src.root) / "knowledge" / tombstones.FILENAME
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["via"] = raw
+    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    out = src.export_all(str(tmp_path / "backup.json"))
+    text = Path(out).read_text(encoding="utf-8")
+    assert "Alice" not in text and "SecretClient" not in text
+    assert json.loads(text)["knowledge"]["tombstones"][0]["via"] == expected
+
+
+def test_import_reduces_via_too(tmp_path):
+    path = _backup(tmp_path, {"schema_version": "2.0", "knowledge": {"tombstones": [
+        _good_stone(via="mcp:SecretClient")]}})
+    dst = _store(tmp_path, "dst")
+    dst.import_all(path, merge=True)
+    raw = (dst.root / "knowledge" / tombstones.FILENAME).read_text(encoding="utf-8")
+    assert "SecretClient" not in raw
+    assert tombstones.load(dst.root)[0]["via"] == "mcp"

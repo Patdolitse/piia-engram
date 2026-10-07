@@ -1989,6 +1989,7 @@ def _render_import_result_text(payload: dict) -> str:
                 f"skip={counts.get('would_skip', 0)} "
                 f"conflicts={counts.get('conflicts', 0)}"
                 + (f" kept={counts['kept']}" if "kept" in counts else "")
+                + (f" invalid={counts['invalid']}" if counts.get("invalid") else "")
             )
     if conflicts:
         lines.append(f"  conflicts: {len(conflicts)} (metadata only; values withheld)")
