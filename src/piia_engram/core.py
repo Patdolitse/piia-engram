@@ -2959,6 +2959,18 @@ class Engram(
             # by the same write (explicit ``supersedes`` or auto-detected).
             target = str(new_decision.get("supersedes") or auto_supersedes_target or "")
             decision_ctx.supersede_target = target
+            # An AI's decision that would replace a reviewed one by inference
+            # (same question, other choice) is a proposal in every approval
+            # mode: no edge without the Owner, and no version guard is skipped.
+            if (
+                auto_supersedes_target
+                and not new_decision.get("supersedes")
+                and _pinning.mcp_origin()
+                and _capacity.pool_of(new_decision) == _capacity.POOL_V
+            ):
+                inferred = self._supersede_target_row(new_decision, target, decisions)
+                if inferred is not None and _capacity.pool_of(inferred) == _capacity.POOL_V:
+                    self._hold_for_owner(new_decision, "inferred_supersede")
             # Replacing an Owner-pinned decision is always the Owner's call.
             if target and _capacity.pool_of(new_decision) == _capacity.POOL_V:
                 pinned_target = self._supersede_target_row(new_decision, target, decisions)
