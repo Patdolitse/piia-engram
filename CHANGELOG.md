@@ -48,6 +48,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - The setup message about seeded best practices no longer says they become verified after three uses: review decides, as the English text already said.
 - **Project proposals show up in review.** `engram review`, `engram review export`, `engram management` and the interactive review list pending proposals of every project, with their `project:<name>` scope (`engram management --scope` filters them too); before, only global ones were listed.
 - In strict mode `manage_playbook(action="update")` replies with the pending proposal (`status: pending`, its id and the entry it would replace) instead of echoing the whole proposed playbook.
+- **Windows: writes no longer fail while another process reads the same file.** When several AI clients share one store, a write could fail with `PermissionError [WinError 5]` if another process, an antivirus or a search indexer had the file open at that moment. Engram now retries such a write for up to one second; a permission problem that lasts longer is still reported.
 
 ## [4.21.2] - 2026-09-26
 

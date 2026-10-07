@@ -48,6 +48,7 @@
 - setup 中关于预置最佳实践的中文提示不再说“使用 3 次后自动晋升为 verified”：与英文一致，审核确认后才会变为 verified。
 - **项目作用域的提案会出现在审核里。** `engram review`、`engram review export`、`engram management` 和交互审核会列出所有项目的待审提案，并显示 `project:<名称>` 作用域（`engram management --scope` 也按它筛选）；此前只列出全局提案。
 - 严格模式下 `manage_playbook(action="update")` 的回复是待审提案（`status: pending`、提案 id 与它要取代的条目），不再回显整份提议的手册。
+- **Windows：其它进程正在读取同一文件时，写入不再失败。** 多个 AI 客户端共用一个存储时，如果另一个进程、杀毒软件或搜索索引恰好打开着该文件，写入可能报 `PermissionError [WinError 5]`。现在 Engram 会在最多一秒内重试这次写入；持续更久的权限问题仍会照常报错。
 
 ## [4.21.2] - 2026-09-26
 
