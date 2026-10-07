@@ -26,6 +26,7 @@ from . import recall_policy as _recall_policy
 from .continuity_digest import build_session_digest, sanitize_digest_value
 from .encoding_repair import repair_text
 from .storage import _atomic_write_json, _project_id, _project_id_aliases
+from .store_paths import confined_path, valid_file_id
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,14 @@ def _utc_now_iso_seconds() -> str:
 
 
 def _sanitize_tool_name(name: str) -> str:
-    """Normalize tool name for filesystem use."""
-    return name.strip().lower().replace(" ", "_").replace("/", "_")
+    """Normalize a caller's label to one portable directory name."""
+    cleaned = re.sub(r"[^a-z0-9_.-]", "_", str(name).strip().lower()).strip(".")
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        f"{prefix}{i}" for prefix in ("COM", "LPT") for i in range(10)
+    }
+    if not cleaned or ".." in cleaned or cleaned.split(".")[0].upper() in reserved:
+        return "unknown"
+    return cleaned[:128]
 
 
 _SESSION_ID_PATH_RE = __import__("re").compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -401,8 +408,17 @@ class ContextStoreMixin:
         return self.root / "contexts"
 
     def _session_digest_path(self, tool: str, session_id: str) -> Path:
-        tool_safe = _sanitize_tool_name(tool)
-        return self._contexts_dir / tool_safe / f"{session_id}.digest.json"
+        if not valid_file_id(session_id) or len(session_id) > 128:
+            raise ValueError("invalid session id")
+        return confined_path(self._context_tool_dir(tool), f"{session_id}.digest.json")
+
+    def _context_tool_dir(self, tool: str) -> Path:
+        return confined_path(self._contexts_dir, _sanitize_tool_name(tool))
+
+    def _context_session_path(self, tool: str, session_id: str) -> Path:
+        if not valid_file_id(session_id) or len(session_id) > 128:
+            raise ValueError("invalid session id")
+        return confined_path(self._context_tool_dir(tool), f"{session_id}.md")
 
     @staticmethod
     def _digest_has_session_signal(digest: dict[str, Any]) -> bool:
@@ -435,7 +451,10 @@ class ContextStoreMixin:
             ]
 
         for tool_name in tool_names:
-            tool_dir = self._contexts_dir / tool_name
+            try:
+                tool_dir = self._context_tool_dir(tool_name)
+            except ValueError:
+                continue
             if not tool_dir.exists():
                 continue
             files = sorted(
@@ -444,6 +463,10 @@ class ContextStoreMixin:
                 reverse=True,
             )
             for path in files:
+                try:
+                    self._context_session_path(tool_name, path.stem)
+                except ValueError:
+                    continue
                 yield tool_name, path
 
     @staticmethod
@@ -610,7 +633,7 @@ class ContextStoreMixin:
             ``{session_id, file, tool, appended}``
         """
         tool_safe = _sanitize_tool_name(tool)
-        tool_dir = self._contexts_dir / tool_safe
+        tool_dir = self._context_tool_dir(tool_safe)
         tool_dir.mkdir(parents=True, exist_ok=True)
 
         now = datetime.now()
@@ -622,7 +645,7 @@ class ContextStoreMixin:
         # same strict charset rule applies here as at every extraction site —
         # a crafted id (../, \\, NUL) can never escape contexts/<tool>/.
         session_id = _sanitize_session_id_for_path(session_id, fallback=now)
-        file_path = tool_dir / f"{session_id}.md"
+        file_path = self._context_session_path(tool_safe, session_id)
         timestamp = now.strftime("%H:%M")
 
         # Build checkpoint body
@@ -707,7 +730,10 @@ class ContextStoreMixin:
         session_ref = str(session_id or "").strip()
         if not session_ref or not _SESSION_ID_PATH_RE.fullmatch(session_ref) or ".." in session_ref:
             return None  # the id names a file under contexts/<tool>/, never a path
-        path = self._session_digest_path(tool, session_ref)
+        try:
+            path = self._session_digest_path(tool, session_ref)
+        except ValueError:
+            return None
         if not path.is_file():
             return None
         try:
@@ -1595,7 +1621,10 @@ class ContextStoreMixin:
             ]
 
         for t in tool_names:
-            tool_dir = self._contexts_dir / t
+            try:
+                tool_dir = self._context_tool_dir(t)
+            except ValueError:
+                continue
             if not tool_dir.exists():
                 continue
             files = sorted(
@@ -1604,6 +1633,10 @@ class ContextStoreMixin:
                 reverse=True,
             )
             for f in files:
+                try:
+                    self._context_session_path(t, f.stem)
+                except ValueError:
+                    continue
                 content = ""
                 digest = self.get_session_digest(t, f.stem)
                 if not digest:
@@ -1668,7 +1701,10 @@ class ContextStoreMixin:
             ]
 
         for t in tool_names:
-            tool_dir = self._contexts_dir / t
+            try:
+                tool_dir = self._context_tool_dir(t)
+            except ValueError:
+                continue
             if not tool_dir.exists():
                 continue
             files = sorted(
@@ -1677,6 +1713,10 @@ class ContextStoreMixin:
                 reverse=True,
             )
             for f in files:
+                try:
+                    self._context_session_path(t, f.stem)
+                except ValueError:
+                    continue
                 results.append({
                     "tool": t,
                     "session_id": f.stem,
@@ -1708,7 +1748,9 @@ class ContextStoreMixin:
         pid = _project_id(project_folder)
         if date is None:
             date = datetime.now().strftime("%Y-%m-%d")
-        return self._daily_dir / pid / f"{date}.md"
+        if not isinstance(date, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", date):
+            raise ValueError("invalid date")
+        return confined_path(self._daily_dir, pid, f"{date}.md")
 
     def append_daily_log(
         self,
@@ -1790,7 +1832,10 @@ class ContextStoreMixin:
             # the date names a file: a plain YYYY-MM-DD, never a path
             return {"error": "invalid_date", "date": str(date)[:40], "exists": False, "content": "",
                     "message": "date must be YYYY-MM-DD"}
-        path = self._daily_log_path(project_folder, date=date)
+        try:
+            path = self._daily_log_path(project_folder, date=date)
+        except ValueError:
+            return {"error": "invalid_path", "date": date, "exists": False, "content": ""}
         exists = path.is_file()
         return {
             "file": str(path),

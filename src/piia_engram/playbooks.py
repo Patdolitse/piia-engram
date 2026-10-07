@@ -15,6 +15,7 @@ from . import review_boundary as _review_boundary
 from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
 from .storage import ReadOnlyStoreError
+from .store_paths import confined_path, valid_file_id
 from .storage import (
     SIMILARITY_THRESHOLD,
     hold_directory_lock,
@@ -56,21 +57,13 @@ def _stable_json(value: Any) -> str:
 
 # A playbook id names a file in playbooks/: a plain token, never a path.
 # Generated ids are 12 hex digits; snapshots add "-prev-<stamp>[-n[-xxxx]]".
-_PLAYBOOK_ID_RE = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,158}[A-Za-z0-9_-])?$")
-_WINDOWS_DEVICE_NAMES = frozenset(
-    {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(10)} | {f"LPT{i}" for i in range(10)}
-)
-
-
 class PlaybookIdExists(Exception):
     """An insert named a playbook id that is already taken."""
 
 
 def valid_playbook_id(value: Any) -> bool:
     """True when ``value`` can safely name a file directly inside playbooks/."""
-    if not isinstance(value, str) or not _PLAYBOOK_ID_RE.match(value) or ".." in value:
-        return False
-    return value.split(".")[0].upper() not in _WINDOWS_DEVICE_NAMES
+    return valid_file_id(value)
 
 
 def new_playbook_id(title: str) -> str:
@@ -162,7 +155,7 @@ class PlaybookMixin:
         path = self._playbooks_dir / f"{playbook_id}.json"
         if os.path.dirname(os.path.normcase(os.path.abspath(path))) != base:
             raise ValueError("invalid playbook id")
-        return path
+        return confined_path(self._playbooks_dir, f"{playbook_id}.json")
 
     def _read_playbook_by_id(self, playbook_id: str) -> dict | None:
         """Read a single playbook file by ID (with corpus decryption)."""
@@ -1275,11 +1268,9 @@ class PlaybookMixin:
         and raises PlaybookIdExists when the id is already taken, so an insert
         never overwrites an existing playbook.
 
-        Body is written first; if the index update fails the body file is
-        removed so no orphaned body can accumulate without an index entry.
+        Body and index writes share the directory lock; on index failure a
+        new body is removed and an existing body is restored byte-for-byte.
         """
-        import os as _os
-
         if getattr(self, "_read_only", False):
             raise ReadOnlyStoreError("read-only handle: refused playbook write")
         playbook_id = str(pb.get("id") or "")
@@ -1287,6 +1278,14 @@ class PlaybookMixin:
             raise ValueError("missing playbook id")
 
         body_path = self._playbook_path(playbook_id)
+        with hold_directory_lock(self._playbooks_dir, timeout=30):
+            self._write_playbook_and_index_locked(pb, body_path, create=create)
+
+    def _write_playbook_and_index_locked(self, pb: dict, body_path: Path, *, create: bool) -> None:
+        import os as _os
+
+        playbook_id = pb["id"]
+        previous_body = body_path.read_bytes() if not create and body_path.exists() else None
         if create:
             if any(e.get("id") == playbook_id for e in self._read_playbook_index()):
                 raise PlaybookIdExists(playbook_id)
@@ -1317,11 +1316,10 @@ class PlaybookMixin:
         try:
             self._update_playbook_index(_upsert)
         except Exception:
-            # Roll back body file to prevent orphaned body without index entry
-            try:
+            if previous_body is not None:
+                self._atomic_write_bytes(body_path, previous_body)
+            else:
                 body_path.unlink(missing_ok=True)
-            except OSError:
-                pass
             raise
 
     @staticmethod
@@ -2141,6 +2139,13 @@ class PlaybookMixin:
         expected_version: int | None = None,
     ) -> dict:
         """Soft-delete a Playbook so it is hidden but recoverable."""
+        if dry_run or not confirm:
+            return self._delete_playbook_locked(playbook_id, reason, dry_run, confirm, expected_version)
+        with hold_directory_lock(self._playbooks_dir, timeout=30):
+            return self._delete_playbook_locked(playbook_id, reason, dry_run, confirm, expected_version)
+
+    def _delete_playbook_locked(self, playbook_id: str, reason: str, dry_run: bool,
+                                confirm: bool, expected_version: int | None) -> dict:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
@@ -2204,6 +2209,13 @@ class PlaybookMixin:
         expected_version: int | None = None,
     ) -> dict:
         """Restore a deleted/outdated Playbook to active status."""
+        if dry_run or not confirm:
+            return self._restore_playbook_locked(playbook_id, dry_run, confirm, expected_version)
+        with hold_directory_lock(self._playbooks_dir, timeout=30):
+            return self._restore_playbook_locked(playbook_id, dry_run, confirm, expected_version)
+
+    def _restore_playbook_locked(self, playbook_id: str, dry_run: bool, confirm: bool,
+                                 expected_version: int | None) -> dict:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
@@ -2526,14 +2538,14 @@ class PlaybookMixin:
     # ------------------------------------------------------------------
 
     def _executions_dir(self) -> Path:
-        d = self.root / "playbooks" / "executions"
+        d = confined_path(self._playbooks_dir, "executions")
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def _execution_path(self, playbook_id: str) -> Path:
         if not valid_playbook_id(playbook_id):
             raise ValueError("invalid playbook id")
-        return self._executions_dir() / f"{playbook_id}.json"
+        return confined_path(self._executions_dir(), f"{playbook_id}.json")
 
     def _update_execution_plan_file(self, playbook_id: str, mutator, *, allow_create: bool = False):
         """Apply ``mutator`` to execution plan under file lock."""

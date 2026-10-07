@@ -653,12 +653,13 @@ async def manage_relation(
 
     用途：rel 留空时管理无类型、双向的"see also"关联；rel 取 led_to / supersedes /
     implemented_by 时管理有类型、有方向的演进边，用于重建"想法 → 决策 → 实现"
-    决策链（喂给 get_decisions 的 thread_seed_id 分支）。unlink 幂等——关系不存在
-    也不报错。
+    决策链（喂给 get_decisions 的 thread_seed_id 分支）；内部 supersedes 链仅由版本
+    更新维护，不能手工建立或移除，其他关系的 unlink 幂等。
     Purpose: with rel empty this manages the untyped bidirectional "see also"
     link; with rel set (led_to / supersedes / implemented_by) it manages the
     typed, directed evolution edge consumed by decision threads
-    (get_decisions thread_seed_id). unlink is idempotent.
+    (get_decisions thread_seed_id); internal supersedes lineage cannot be
+    manually added or removed, and unlink is idempotent for other relations.
 
     rel 取值 / values:
       - led_to：src 引出 / 导致 dst（src led to dst）

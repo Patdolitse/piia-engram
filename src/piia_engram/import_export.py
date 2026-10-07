@@ -20,6 +20,7 @@ from . import tombstones as _tombstones
 from . import write_provenance as _write_provenance
 from .decision_thread import validate_edges
 from .playbooks import new_playbook_id, valid_playbook_id
+from .store_paths import confined_path, valid_file_id
 from .governance_store import RelationStore, ResolutionStore
 from .storage import (
     DEFAULT_TRUST_BOUNDARIES,
@@ -528,7 +529,7 @@ class ImportExportMixin:
         if isinstance(projects, dict) and projects:
             new_count = 0
             for pid, project_data in projects.items():
-                existing = _read_json(self._projects_dir / f"{pid}.json") or {}
+                existing = _read_json(confined_path(self._projects_dir, f"{pid}.json")) or {}
                 if merge and existing and isinstance(project_data, dict):
                     _, project_summary, project_conflicts = self._merge_dict_preserving_existing(
                         existing,
@@ -1375,6 +1376,17 @@ class ImportExportMixin:
         if not data or "schema_version" not in data:
             return {"error": "不是有效的 Engram 备份文件"}
 
+        projects = data.get("projects", {})
+        if not isinstance(projects, dict):
+            return {"error": "invalid_projects", "changed": False}
+        for pid in projects:
+            if not valid_file_id(pid):
+                return {"error": "invalid_project_id", "changed": False}
+            try:
+                confined_path(self._projects_dir, f"{pid}.json")
+            except ValueError:
+                return {"error": "invalid_project_id", "changed": False}
+
         plan = self._build_import_plan(data, merge=merge, input_path=input_path)
         if dry_run:
             plan["capacity"] = self._import_capacity_summary(
@@ -1594,7 +1606,7 @@ class ImportExportMixin:
         projects = data.get("projects", {})
         if projects:
             for pid, proj_data in projects.items():
-                proj_path = self._projects_dir / f"{pid}.json"
+                proj_path = confined_path(self._projects_dir, f"{pid}.json")
                 if merge and proj_path.exists():
                     existing = _read_json(proj_path)
                     merged, _, _ = self._merge_dict_preserving_existing(

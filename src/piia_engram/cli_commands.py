@@ -133,10 +133,10 @@ def run_sessions(argv: list[str] | None = None) -> int:
             print(f"Session not found: {session_id}")
             return 1
 
-        session_path = eng.root / "contexts" / str(match.get("tool", "")) / f"{session_id}.md"
         try:
+            session_path = eng._context_session_path(str(match.get("tool", "")), session_id)
             content = session_path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             print(f"Session not readable: {session_id} ({exc})")
             return 1
 

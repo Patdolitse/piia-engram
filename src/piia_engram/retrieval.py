@@ -576,9 +576,13 @@ class RetrievalMixin:
 
     def remove_relation(self, src_id: str, rel: str, dst_id: str) -> dict:
         """Remove a typed, directed relation. Idempotent (returns removed=False
-        if the edge did not exist). This is the undo for ``add_relation``."""
+        if the edge did not exist). Internal version lineage is not removable."""
         from .governance_store import RelationStore
 
+        if rel == "supersedes":
+            return {"removed": False, "reason": "supersedes_is_internal",
+                    "src": str(src_id), "rel": rel, "dst": str(dst_id),
+                    "message": "version lineage is generated internally and cannot be removed"}
         removed = RelationStore(self.root).remove_relation(src_id, rel, dst_id)
         self._audit.log("write", "knowledge/relations",
                         detail=f"{src_id} {rel} {dst_id} removed={removed}")

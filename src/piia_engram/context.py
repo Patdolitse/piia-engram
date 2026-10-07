@@ -1285,13 +1285,7 @@ class ContextMixin:
             try:
                 session_content = ""
                 try:
-                    from .contexts import _sanitize_tool_name
-
-                    session_path = (
-                        self._contexts_dir
-                        / _sanitize_tool_name(source_tool)
-                        / f"{session_id}.md"
-                    )
+                    session_path = self._context_session_path(source_tool, session_id)
                     if session_path.exists():
                         session_content = session_path.read_text(encoding="utf-8")
                 except Exception:

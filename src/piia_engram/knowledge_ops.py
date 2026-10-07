@@ -1445,8 +1445,28 @@ class KnowledgeOpsMixin:
         """Merge secondary into primary, then archive the secondary item.
 
         The expected versions (optional here, required over MCP) are checked
-        before anything is written; a stale one returns ``version_conflict``.
+        inside the commit locks before any write; a stale one returns
+        ``version_conflict``.
         """
+        refusal = self._merge_knowledge_locked(
+            primary_id, secondary_id,
+            primary_expected_version=primary_expected_version,
+            secondary_expected_version=secondary_expected_version,
+            _validate_only=True,
+        )
+        if refusal is not None:
+            return refusal
+        with self._review_locks():
+            return self._merge_knowledge_locked(
+                primary_id, secondary_id,
+                primary_expected_version=primary_expected_version,
+                secondary_expected_version=secondary_expected_version,
+            )
+
+    def _merge_knowledge_locked(self, primary_id: str, secondary_id: str, *,
+                                primary_expected_version: int | None,
+                                secondary_expected_version: int | None,
+                                _validate_only: bool = False) -> dict | None:
         if primary_id == secondary_id:
             return {"error": "Cannot merge an item with itself"}
 
@@ -1458,6 +1478,9 @@ class KnowledgeOpsMixin:
             return {"error": f"Primary item not found: {primary_id}"}
         if secondary is None:
             return {"error": f"Secondary item not found: {secondary_id}"}
+        for item_id, row in ((primary_id, primary), (secondary_id, secondary)):
+            if _review_boundary.refuses_decision(row):
+                return _review_boundary.refusal(item_id, action="merge")
         if primary.get("status") != "active":
             return {"error": f"Primary item is not active (status={primary.get('status')})"}
         if secondary.get("status") != "active":
@@ -1479,6 +1502,10 @@ class KnowledgeOpsMixin:
                 return _version_guard.conflict(item_id, wanted if wanted is not None else -1, current,
                                                param=param)
 
+        if _validate_only:
+            # Refusals need not create lock files; repeat every check inside
+            # the commit locks so the preflight is never the authority.
+            return None
         primary_related = set(primary.get("related_ids", []))
         transferred = []
         secondary_related = list(secondary.get("related_ids", []))
