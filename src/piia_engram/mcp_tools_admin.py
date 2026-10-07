@@ -452,11 +452,17 @@ async def export_engram(
     try:
         # Strict: an agent-triggered export never carries pending proposals;
         # the Owner's full backup is a local export (plan V4 amendment A5).
-        path = S._get_engram().export_all(
+        eng = S._get_engram()
+        eng.last_export_summary = None
+        path = eng.export_all(
             output_path,
-            exclude_pending=S._gov_rt._strict_mode.approval_strict(S._get_engram().root),
+            exclude_pending=S._gov_rt._strict_mode.approval_strict(eng.root),
         )
-        return f"导出成功: {path}"
+        summary = getattr(eng, "last_export_summary", None) or {}
+        skipped = (summary.get("skipped") or {}).get("tombstones", 0)
+        note = (f"（跳过格式不对的拒绝记录 {skipped} 条 / skipped {skipped} malformed rejection record(s)）"
+                if skipped else "")
+        return f"导出成功: {path}{note}"
     except Exception as e:
         return f"导出失败: {S._safe_err(e)}"
 

@@ -3460,7 +3460,8 @@ def _run_dock_export(args: list[str]) -> int:
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
     try:
         eng = Engram(root=root)
-        path = eng.export_all(output or None)
+        summary = eng.export_all_with_summary(output or None)
+        path = summary["path"]
     except Exception as exc:  # never crash the Dock spawn — emit a usable error
         if want_json:
             print(json.dumps(
@@ -3473,11 +3474,14 @@ def _run_dock_export(args: list[str]) -> int:
 
     if want_json:
         print(json.dumps(
-            {"ok": True, "engram_dir": str(root), "path": str(path)},
+            {"ok": True, "engram_dir": str(root), "path": str(path), "skipped": summary["skipped"]},
             ensure_ascii=False,
         ))
         return 0
     print(f"导出成功: {path}")
+    skipped = summary["skipped"].get("tombstones", 0)
+    if skipped:
+        print(f"跳过格式不对的拒绝记录: {skipped} / Skipped malformed rejection records: {skipped}")
     return 0
 
 

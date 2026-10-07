@@ -1226,7 +1226,23 @@ class ImportExportMixin:
         return f"tombstones({', '.join(notes)})"
 
     def export_all(self, output_path: str | None = None, *, exclude_pending: bool = False) -> str:
+        """导出整个 Engram 为单一 JSON 文件；返回文件路径。
+
+        The counts of export_all_with_summary are kept on
+        ``self.last_export_summary`` for callers that only take the path.
+        """
+        summary = self.export_all_with_summary(output_path, exclude_pending=exclude_pending)
+        self.last_export_summary = summary
+        return summary["path"]
+
+    def export_all_with_summary(
+        self, output_path: str | None = None, *, exclude_pending: bool = False,
+    ) -> dict:
         """导出整个 Engram 为单一 JSON 文件。
+
+        Returns ``{"path": ..., "skipped": {"tombstones": N}}``: N rejection
+        records failed validation and were left out of the backup (counted
+        only; nothing of them is shown).
 
         包含：identity、knowledge、projects 所有数据。
         用于备份或迁移到另一台机器。
@@ -1237,8 +1253,9 @@ class ImportExportMixin:
                 （lesson / decision / playbook 的 tier=staging 行）。本地完整备份不受影响。
 
         Returns:
-            导出文件的完整路径。
+            ``{"path": 导出文件的完整路径, "skipped": {"tombstones": N}}``。
         """
+        export_stones, skipped_stones = _check_tombstones(_tombstones.load(self.root))
         export_data = {
             "schema_version": SCHEMA_VERSION,
             "exported_at": _now_iso(),
@@ -1276,7 +1293,7 @@ class ImportExportMixin:
                 "relations": RelationStore(self.root).all_edges(),
                 "conflict_resolutions": ResolutionStore(self.root).all_records(),
                 # Owner reject marks (hashes only), so a restored store still refuses them.
-                "tombstones": _clean_tombstones(_tombstones.load(self.root)),
+                "tombstones": export_stones,
             },
             "environment": {
                 "tools": self._export_tools(),
@@ -1310,7 +1327,7 @@ class ImportExportMixin:
         out.parent.mkdir(parents=True, exist_ok=True)
         _write_json(out, export_data)
         self._audit.log("export", "all", detail=f"exported to {out}")
-        return str(out)
+        return {"path": str(out), "skipped": {"tombstones": skipped_stones}}
 
     def import_all(
         self,
