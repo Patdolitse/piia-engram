@@ -6,8 +6,10 @@ import re
 
 try:
     from . import mcp_server as S
+    from . import version_guard as _version_guard
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
+    import version_guard as _version_guard  # type: ignore[no-redef]
 
 
 def _confirmation_detail(content) -> str:
@@ -958,6 +960,8 @@ async def manage_playbook(
             playbook_id, expected_version, example=example, allow_pinned=proposal,
         )
 
+    version_value = _version_guard.normalized(expected_version)
+
     def _guarded(call, *args, **kwargs):
         def _run():
             refusal = _version_refusal()
@@ -1010,7 +1014,7 @@ async def manage_playbook(
             return _playbook_update_proposal(playbook_id, updates)
         try:
             result = _guarded(S._get_engram().update_playbook, playbook_id, updates,
-                              expected_version=expected_version)
+                              expected_version=version_value)
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
@@ -1023,7 +1027,7 @@ async def manage_playbook(
         return S._gov_rt.maybe_govern_write_ack(S._get_engram().root, ack, tool="manage_playbook")
     if action == "archive":
         try:
-            result = _guarded(S._get_engram().archive_playbook, playbook_id, expected_version=expected_version)
+            result = _guarded(S._get_engram().archive_playbook, playbook_id, expected_version=version_value)
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
@@ -1040,7 +1044,7 @@ async def manage_playbook(
                 reason=reason,
                 dry_run=dry_run,
                 confirm=confirm,
-                expected_version=expected_version if (not dry_run and confirm) else None,
+                expected_version=version_value if (not dry_run and confirm) else None,
             )
             S._track("manage_playbook", success=True)
         except Exception as exc:
@@ -1059,7 +1063,7 @@ async def manage_playbook(
                 playbook_id=playbook_id,
                 dry_run=dry_run,
                 confirm=confirm,
-                expected_version=expected_version if (not dry_run and confirm) else None,
+                expected_version=version_value if (not dry_run and confirm) else None,
             )
             S._track("manage_playbook", success=True)
         except Exception as exc:

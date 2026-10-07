@@ -502,7 +502,9 @@ async def import_engram(
     format = format.strip().lower()
     if format == "openclaw":
         try:
-            result = S.import_from_openclaw(S._get_engram(), soul_path, memory_path, user_path)
+            result = S._locked_engram_call(
+                S.import_from_openclaw, S._get_engram(), soul_path, memory_path, user_path,
+            )
             return S._json(result)
         except Exception as e:
             return f"从 OpenClaw 兼容格式导入失败: {S._safe_err(e)}"
@@ -518,7 +520,9 @@ async def import_engram(
     err = S._validate_path(input_path)
     if err:
         return S._json({"error": err})
-    result = S._get_engram().import_all(input_path, merge=merge, dry_run=dry_run)
+    # Under the MCP write lock and the MCP origin, like every other MCP write:
+    # an import never supersedes or replaces an Owner-pinned entry.
+    result = S._locked_engram_call(S._get_engram().import_all, input_path, merge=merge, dry_run=dry_run)
     return S._json(result)
 
 

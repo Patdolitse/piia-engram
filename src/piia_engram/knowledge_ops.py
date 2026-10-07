@@ -547,6 +547,18 @@ class KnowledgeOpsMixin:
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
+        if item_type == "playbook" and item.get("pending_supersedes"):
+            # A playbook update proposal replaces another playbook when it is
+            # approved; that is a review decision (engram review), never an
+            # onboard accept, which would mark it verified without retiring
+            # the old one or honoring its pin.
+            return {
+                "error": "revision_proposal",
+                "item_id": item_id,
+                "changed": False,
+                "message": "This playbook is a revision proposal, not an onboard candidate; "
+                           "decide it with engram review. Nothing was written.",
+            }
         provenance = item.get("provenance")
         anchor_ref = provenance.get("anchor_ref") if isinstance(provenance, dict) else None
         if not isinstance(anchor_ref, str) or not anchor_ref.strip():
@@ -1113,10 +1125,28 @@ class KnowledgeOpsMixin:
                 "message": f"No {kind} with this id to supersede. Nothing was written.",
             }
         reason = ""
-        if where == "archive" or str(row.get("status") or "active") != "active":
+        why = ""
+        if (
+            where == "archive"
+            or str(row.get("status") or "active") != "active"
+            or str(row.get("tier") or "") == "archived"
+        ):
             reason = "archived"
+            why = "it is archived (restore it first, or write a new entry)."
         elif isinstance(content, dict) and not self._supersede_same_scope(kind, content, row):
-            reason = "different_project"
+            new_scope = self._supersede_scope_kind(kind, content)
+            old_scope = self._supersede_scope_kind(kind, row)
+            if new_scope == old_scope:
+                reason = "different_project"
+                why = "it belongs to a different project than the proposal."
+            elif old_scope == "global":
+                reason = "scope_mismatch"
+                why = ("it is a global entry; a revision of a global entry must be global too "
+                       "(leave project_folder empty / use scope_type global).")
+            else:
+                reason = "scope_mismatch"
+                why = ("it belongs to a project; a revision of a project entry must be in the "
+                       "same project (pass that project_folder).")
         if reason:
             return {
                 "error": "supersedes_target_not_applicable",
@@ -1124,16 +1154,19 @@ class KnowledgeOpsMixin:
                 "kind": kind,
                 "reason": reason,
                 "changed": False,
-                "message": (
-                    f"This {kind} cannot be superseded by this proposal: "
-                    + ("it is archived (restore it first, or write a new entry)."
-                       if reason == "archived" else
-                       "it belongs to a different project than the proposal.")
-                    + " Nothing was written."
-                ),
+                "message": f"This {kind} cannot be superseded by this proposal: {why} Nothing was written.",
             }
         return _version_guard.check(target_id, row, expected_version, example,
                                     param="supersedes_expected_version")
+
+    def _supersede_scope_kind(self, kind: str, row: dict) -> str:
+        """"global" or "project" (a project or shared scope)."""
+        if kind == "playbook":
+            scope_type = str(self._normalize_playbook_scope(dict(row)).get("type") or "global")
+            return "global" if scope_type == "global" else "project"
+        normalized = self._normalize_project_scope_for_entry(dict(row))
+        has_project = self._entry_project_id(normalized) or self._entry_project_label(normalized)
+        return "project" if has_project else "global"
 
     def _supersede_same_scope(self, kind: str, content: dict, target: dict) -> bool:
         if kind == "playbook":

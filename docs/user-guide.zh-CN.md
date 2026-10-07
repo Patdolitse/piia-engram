@@ -187,14 +187,18 @@ AI 拿到什么，各个入口规则一致：
 
 - 只有本地命令能钉住或解钉，且只能钉住已审核、当前有效的条目（待审、已归档、
   已被取代的会被拒绝并说明原因）。钉住会记入审计日志，条目版本号不变。
-- 钉住的条目不受生命周期归档、容量规则和导入影响：合并导入跳过它，替换导入保留它，
-  两者都在预览和结果里列出。备份导入永远不会带入钉住状态。
+- 钉住的条目不受生命周期归档、容量规则和导入影响（本地导入与经 MCP 导入都一样）：合并
+  导入跳过它，替换导入把它留在原位，备份里指向它的 supersedes 关系会被丢弃，这些都在预览和
+  结果里列出；会批准取代它的提案的导入被拒绝（`pinned_target`）。备份导入永远不会带入钉住状态。
 - 经 MCP 不能修改、归档、合并或删除钉住的条目：工具返回 `pinned_entry`，不写入任何内容。
   AI 仍可用 `add_lesson` / `add_decision` / `add_playbook` 加 `supersedes=<id>`
   （以及 `supersedes_expected_version`）提交修订提案；无论哪种审批模式，这类提案都
   等待你的本地审核（`engram review apply` / `engram review interactive`）。AI 经 MCP
-  无论走哪条路径都不能批准它：批量批准、审查页的 promote 列表、改 tier 都返回
-  `pinned_target` 且不写入。审核卡会提示目标是钉住条目。你批准后旧条目被取代并自动解钉（记入审计）。
+  无论走哪条路径都不能批准它：批量批准、审查页的 promote 列表、改 tier、导入都返回
+  `pinned_target` 且不写入，`onboard_accept` 拒绝 playbook 修订提案（`revision_proposal`）。
+  审核卡会提示目标是钉住条目。提案只能取代同一作用域内的有效条目：其它项目的条目、项目提案
+  取代全局条目（或反过来）、已归档的条目都会被拒绝，返回 `supersedes_target_not_applicable`
+  与 `reason`（`different_project`、`scope_mismatch`、`archived`）。你批准后旧条目被取代并自动解钉（记入审计）。
   你自己归档它也会解钉。
 - AI 拿到的上下文里，钉住的条目在各自分组（lessons、decisions、playbooks）内排在最前，
   条数上限或预算裁剪时先舍弃未钉住的条目。`search_knowledge` 里钉住只在相关度相同时

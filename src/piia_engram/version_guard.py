@@ -16,7 +16,11 @@ revised is version 1) is in the results of ``get_lessons``, ``get_decisions``,
 None of them writes anything. Limit: over the MCP transport the tool's
 ``int | None`` parameter is validated before the tool runs, so ``true`` arrives
 as 1, ``2.0`` as 2 and ``"3"`` as 3, while ``1.9`` and ``"abc"`` are refused by
-that validation; the checks here see the original value only on a direct call. New entries, purely additive writes and reads need no
+that validation; the checks here see the original value on a direct call and
+for values inside a JSON payload (``content_json`` / ``items_json`` of
+``memory_store``, e.g. ``supersedes_expected_version``), which arrive as sent.
+Once a value passed the check, callers hand :func:`normalized` (the int) to the
+store, so ``"1"`` compares equal to version 1. New entries, purely additive writes and reads need no
 version. The Owner's local commands keep their own version checks and are not
 affected.
 """
@@ -66,6 +70,12 @@ def parse(value: Any) -> Any:
             return int(text)
         return INVALID
     return INVALID
+
+
+def normalized(value: Any) -> Any:
+    """The int a valid version stands for (``"2"`` -> 2); other values unchanged."""
+    parsed = parse(value)
+    return parsed if isinstance(parsed, int) else value
 
 
 def invalid(item_id: str, value: Any, version: int, *, param: str = "expected_version") -> dict:

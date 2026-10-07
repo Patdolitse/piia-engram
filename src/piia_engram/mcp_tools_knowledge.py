@@ -5,8 +5,10 @@ import json
 
 try:
     from . import mcp_server as S
+    from . import version_guard as _version_guard
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
+    import version_guard as _version_guard  # type: ignore[no-redef]
 
 
 def _confirmation_detail(content) -> str:
@@ -177,7 +179,7 @@ async def update_knowledge(
         )
         if refusal is not None:
             return refusal
-        return eng.update_knowledge(item_id, updates, expected_version=expected_version)
+        return eng.update_knowledge(item_id, updates, expected_version=_version_guard.normalized(expected_version))
 
     result = S._locked_engram_call(_guarded)
     result = S._gov_rt.maybe_govern_one(eng.root, result, tool="update_knowledge")
@@ -243,7 +245,7 @@ async def archive_knowledge(item_id: str, expected_version: int | None = None) -
         )
         if refusal is not None:
             return refusal
-        return eng.archive_knowledge(item_id, expected_version=expected_version)
+        return eng.archive_knowledge(item_id, expected_version=_version_guard.normalized(expected_version))
 
     result = S._locked_engram_call(_guarded)
     if isinstance(result, dict) and result.get("error") in (
@@ -631,8 +633,8 @@ async def merge_knowledge(
                 return refusal
         return eng.merge_knowledge(
             primary_id, secondary_id,
-            primary_expected_version=primary_expected_version,
-            secondary_expected_version=secondary_expected_version,
+            primary_expected_version=_version_guard.normalized(primary_expected_version),
+            secondary_expected_version=_version_guard.normalized(secondary_expected_version),
         )
 
     result = S._locked_engram_call(_guarded)

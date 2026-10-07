@@ -359,3 +359,23 @@ def test_mcp_tools_refuse_an_invalid_version_without_writing(eng, value):
     for text in results:
         assert _json(text)["error"] == "version_invalid", text
     assert _store(eng.root) == before
+
+
+def test_a_version_given_as_a_digit_string_is_not_a_conflict(eng):
+    lesson = _lesson(eng, "A lesson updated with a string version")
+    other = _lesson(eng, "A lesson archived with a string version")
+    merged = _lesson(eng, "A lesson merged away with a string version")
+    pb = _playbook(eng, "A playbook updated with a string version")
+    assert "error" not in _json(_run(mcp_server.update_knowledge(lesson["id"], json.dumps({"detail": "x"}),
+                                                                 expected_version="1")))
+    assert "error" not in _json(_run(mcp_server.archive_knowledge(other["id"], expected_version="1")))
+    merge = _json(_run(mcp_server.merge_knowledge(lesson["id"], merged["id"], primary_expected_version="2",
+                                                  secondary_expected_version="1")))
+    assert merge.get("success") is True, merge
+    assert "error" not in _run(mcp_server.manage_playbook("update", pb["id"], title="z", expected_version="1"))
+    deleted = _json(_run(mcp_server.manage_playbook("delete", pb["id"], dry_run=False, confirm=True,
+                                                    expected_version="2")))
+    assert deleted["dry_run"] is False, deleted
+    restored = _json(_run(mcp_server.manage_playbook("restore", pb["id"], dry_run=False, confirm=True,
+                                                     expected_version="3")))
+    assert restored["dry_run"] is False, restored

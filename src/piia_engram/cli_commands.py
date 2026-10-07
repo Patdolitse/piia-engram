@@ -2014,6 +2014,10 @@ def _render_import_result_text(payload: dict) -> str:
         for section, ids in sorted(protected.items()):
             if isinstance(ids, list):
                 lines.append(f"    - {section}: {', '.join(str(i) for i in ids)}")
+        dropped = pinned.get("dropped_edges") if isinstance(pinned.get("dropped_edges"), list) else []
+        if dropped:
+            pairs = ", ".join(f"{e.get('src')} -> {e.get('dst')}" for e in dropped if isinstance(e, dict))
+            lines.append(f"    - supersedes links to pinned entries dropped: {pairs}")
         if pinned.get("warning"):
             lines.append(f"  {pinned['warning']}")
     imported = payload.get("imported") if isinstance(payload.get("imported"), list) else []

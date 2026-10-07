@@ -440,6 +440,19 @@ class ImportExportMixin:
             plan["pinned"] = pinned
         return plan
 
+    @staticmethod
+    def _pinned_import_refusal(kind: str, targets) -> dict:
+        return {
+            "status": "refused",
+            "error": _pinning.ERROR_PINNED_TARGET,
+            "kind": kind,
+            "targets": sorted({str(t) for t in targets}),
+            "message": (
+                "importing would approve a proposal that supersedes a pinned entry; only the Owner's "
+                "local review can do that. Nothing was imported."
+            ),
+        }
+
     def _pinned_import_report(self, knowledge: dict, *, merge: bool) -> dict | None:
         """Owner-pinned local entries this import leaves as they are (ids only), or None.
 
@@ -463,6 +476,13 @@ class ImportExportMixin:
                          if str(r.get("id") or "") in ids or str(r.get(key_field) or "") in keys]
             if local:
                 protected[section] = sorted(str(r.get("id") or "") for r in local)
+        dropped = self._pinned_edge_drops(knowledge.get("relations"))
+        for edge in dropped:
+            section = edge.pop("_section")
+            ids = protected.setdefault(section, [])
+            if edge["dst"] not in ids:
+                ids.append(edge["dst"])
+                ids.sort()
         incoming_pbs = knowledge.get("playbooks")
         if isinstance(incoming_pbs, list) and incoming_pbs:
             ids = {str(p.get("id") or "") for p in incoming_pbs if isinstance(p, dict)}
@@ -474,15 +494,32 @@ class ImportExportMixin:
         if not protected:
             return None
         count = sum(len(v) for v in protected.values())
-        return {
+        report = {
             "protected": protected,
             "count": count,
             "warning": (
                 f"{count} pinned entr{'y' if count == 1 else 'ies'} kept as they are: an import never "
-                "overwrites, replaces or archives a pinned entry. Unpin first (engram unpin <id>) to let "
-                "the backup's version in."
+                "overwrites, replaces, supersedes or archives a pinned entry. Unpin first "
+                "(engram unpin <id>) to let the backup's version in."
             ),
         }
+        if dropped:
+            report["dropped_edges"] = dropped
+        return report
+
+    def _pinned_edge_drops(self, relations: Any) -> list[dict]:
+        """Backup ``supersedes`` edges whose target is a local pinned entry (never imported)."""
+        if not isinstance(relations, list) or not relations:
+            return []
+        by_kind = _pinning.pinned_ids(self)
+        section_of = {item_id: f"{kind}s" for kind, ids in by_kind.items() for item_id in ids}
+        out: list[dict] = []
+        for edge in validate_edges(relations):
+            if edge["rel"] == "supersedes" and edge["dst"] in section_of:
+                item = {"src": edge["src"], "dst": edge["dst"], "_section": section_of[edge["dst"]]}
+                if item not in out:
+                    out.append(item)
+        return out
 
     @staticmethod
     def _import_version_hash(entry: dict, entry_type: str) -> str:
@@ -814,7 +851,11 @@ class ImportExportMixin:
         except _capacity.CapacityRefused as exc:
             return {"refused": True, "hard_cap": exc.hard_cap, "verified_active": exc.verified_active}
         placed = len(plan.placed_ids)
-        return {"refused": False, "moved_to_archive": len(plan.archive) - placed, "placed_in_archive": placed}
+        preview = {"refused": False, "moved_to_archive": len(plan.archive) - placed, "placed_in_archive": placed}
+        blocked = _pinning.blocked_targets(plan.promoted_supersedes, after)
+        if blocked:
+            preview["pinned_targets"] = sorted(set(blocked))
+        return preview
 
     def _import_capacity_summary(
         self,
@@ -876,9 +917,22 @@ class ImportExportMixin:
         new_edges: list[tuple[str, str]],
         *,
         merge: bool,
+        pinned_ids: set[str] | frozenset = frozenset(),
     ) -> str | None:
-        """Merge: local edges plus new file edges. Replace: file edges plus every local edge."""
+        """Merge: local edges plus new file edges. Replace: file edges plus every local edge.
+
+        An incoming ``supersedes`` edge (from the file or materialization) whose
+        target is an Owner-pinned entry is dropped: an import never supersedes
+        a pinned entry. Local edges are kept as they are.
+        """
         counts = {"added": 0}
+        if pinned_ids:
+            if relations_in is not None:
+                relations_in = [
+                    edge for edge in relations_in
+                    if not (edge.get("rel") == "supersedes" and edge.get("dst") in pinned_ids)
+                ]
+            new_edges = [(src, dst) for src, dst in new_edges if dst not in pinned_ids]
 
         def _key(edge: dict) -> tuple:
             return edge.get("src"), edge.get("rel"), edge.get("dst")
@@ -954,6 +1008,8 @@ class ImportExportMixin:
                     items=[i for i in items if i["_kind"] == kind], edges=edges,
                     input_path=input_path, allow_over_cap=allow_over_cap,
                 )
+                if preview.get("pinned_targets"):
+                    return self._pinned_import_refusal(kind, preview["pinned_targets"])
                 if preview["refused"]:
                     return {
                         "status": "refused",
@@ -980,17 +1036,23 @@ class ImportExportMixin:
                 ctx = self._import_context(merge=merge, allow_over_cap=allow_over_cap)
                 stats = {"added": 0}
                 filename = "lessons.json" if kind == "lesson" else "decisions.json"
-                outcome = self._update_entries(
-                    self._knowledge_dir / filename,
-                    kind,
-                    self._import_row_mutator(
-                        kind, rows, merge=merge, ctx=ctx, stats=stats,
-                        archive_keys=archive_keys[kind],
-                        items=[i for i in items if i["_kind"] == kind], edges=edges,
-                        new_edges=new_edges, input_path=input_path,
-                    ),
-                    capacity_ctx=ctx,
-                )
+                try:
+                    outcome = self._update_entries(
+                        self._knowledge_dir / filename,
+                        kind,
+                        self._import_row_mutator(
+                            kind, rows, merge=merge, ctx=ctx, stats=stats,
+                            archive_keys=archive_keys[kind],
+                            items=[i for i in items if i["_kind"] == kind], edges=edges,
+                            new_edges=new_edges, input_path=input_path,
+                        ),
+                        capacity_ctx=ctx,
+                    )
+                except _pinning.PinnedTargetRefused as exc:
+                    # The preview above refuses this first; a race lands here.
+                    # This section wrote nothing; the pending marker stays, so
+                    # running the import again resumes it.
+                    return self._pinned_import_refusal(kind, exc.targets)
                 note = f", archived {len(outcome.archived_ids)}" if outcome.archived_ids else ""
                 sign = "+" if merge else ""
                 report[section] = f"{section}({sign}{stats['added']}{note})"
@@ -999,7 +1061,10 @@ class ImportExportMixin:
             if merge and resuming:
                 new_edges.extend(self._missing_import_version_edges(edges))
             if relations_in is not None or new_edges:
-                relations_text = self._import_relations_locked(relations_in, new_edges, merge=merge)
+                pinned_all = set().union(*_pinning.pinned_ids(self).values())
+                relations_text = self._import_relations_locked(
+                    relations_in, new_edges, merge=merge, pinned_ids=pinned_all,
+                )
                 if relations_text is not None:
                     report["relations"] = relations_text
             marker.unlink(missing_ok=True)

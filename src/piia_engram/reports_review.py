@@ -620,6 +620,9 @@ function copyResult() {{
                 result = self.promote_knowledge(item_id)
                 if result.get("status") == "promoted":
                     promoted += 1
+                else:
+                    # e.g. pinned_target, rejected_before, not_found: say why
+                    errors.append(f"promote {item_id}: {result.get('status') or 'not_promoted'}")
             except Exception as exc:
                 errors.append(f"promote {item_id}: {exc}")
 

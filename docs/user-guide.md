@@ -229,17 +229,25 @@ the type when an id is ambiguous; `engram pin --list` lists pins;
   entry can be pinned (a pending, archived or replaced one is refused with the
   reason). The pin is recorded in the audit log; the entry's version does not change.
 - A pinned entry is left alone by the lifecycle archive, the capacity rules and
-  imports: a merge import skips it, a replace import keeps it, and both list it
-  in the preview and the result. A backup never brings a pin in.
+  imports, local or over MCP: a merge import skips it, a replace import keeps it
+  in its place, a backup's "supersedes" link that points at it is dropped, and
+  the preview and the result list all of these. An import that would approve a
+  proposal replacing it is refused (`pinned_target`). A backup never brings a
+  pin in.
 - Over MCP a pinned entry cannot be edited, archived, merged or deleted: the
   tool answers `pinned_entry` and writes nothing. An AI can still propose a
   revision with `add_lesson` / `add_decision` / `add_playbook` and
   `supersedes=<id>` (plus `supersedes_expected_version`); in every approval
   mode that proposal waits for your local review (`engram review apply` /
   `engram review interactive`). An AI cannot approve it over MCP by any route:
-  batch approval, the outline review's promote list and changing its tier all
-  answer `pinned_target` and write nothing. The review card says the target is
-  pinned. When you approve it, the old entry is replaced and its pin
+  batch approval, the outline review's promote list, changing its tier and an
+  import all answer `pinned_target` and write nothing, and `onboard_accept`
+  refuses a playbook revision proposal (`revision_proposal`). The review card
+  says the target is pinned. A proposal may only supersede an active entry of
+  the same scope: one in another project, a global entry from a project
+  proposal (or the other way round) and an archived entry are refused with
+  `supersedes_target_not_applicable` and a `reason` (`different_project`,
+  `scope_mismatch`, `archived`). When you approve it, the old entry is replaced and its pin
   is removed (audited). Archiving it yourself also removes the pin.
 - In what your AI receives, pinned entries come first within their section
   (lessons, decisions, playbooks), so a cap or a budget cut drops unpinned

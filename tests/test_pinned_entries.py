@@ -745,7 +745,7 @@ def test_supersedes_targets_in_another_project_or_archived_are_refused(eng, tmp_
 
     cases = [
         (mcp_server.add_lesson(summary="Revise the far lesson", supersedes=lesson_far["id"],
-                               supersedes_expected_version=1, user_confirmed=True), "different_project"),
+                               supersedes_expected_version=1, user_confirmed=True), "scope_mismatch"),
         (mcp_server.add_lesson(summary="Revise the archived lesson", supersedes=lesson_old["id"],
                                supersedes_expected_version=1, user_confirmed=True), "archived"),
         (mcp_server.add_decision(question="Which mirror do we use now?", choice="the new mirror",
@@ -753,7 +753,7 @@ def test_supersedes_targets_in_another_project_or_archived_are_refused(eng, tmp_
                                  user_confirmed=True), "archived"),
         (mcp_server.add_playbook(title="Global release steps", triggers="release",
                                  steps_json=json.dumps([{"action": "y"}]), supersedes=pb_far["id"],
-                                 supersedes_expected_version=1, user_confirmed=True), "different_project"),
+                                 supersedes_expected_version=1, user_confirmed=True), "scope_mismatch"),
     ]
     for call, reason in cases:
         result = _json(_run(call))
@@ -861,3 +861,157 @@ def test_conflict_supersede_unpins_with_reason_superseded(eng, capsys):
     events = [e for e in _audit(eng.root) if e.get("resource") == "pin/auto_unpin" and e["id"] == "conflict-a"]
     assert [e["reason"] for e in events] == ["superseded"]
     assert "pinned" not in _row(eng, "conflict-a")
+
+
+def test_supersede_scope_reasons_name_the_fix(eng, tmp_path):
+    proj_a, proj_b = str(tmp_path / "proj-a"), str(tmp_path / "proj-b")
+    global_lesson = _lesson(eng, "A global lesson about commit messages")
+    lesson_a = eng.add_lesson({"summary": "A project lesson about the build in project A", "domain": "workflow",
+                               "tier": "verified", "project_folder": proj_a})
+    before = _store(eng.root)
+
+    # a project proposal may not supersede a global entry
+    result = _json(_run(mcp_server.add_lesson(summary="Project revision of the global lesson",
+                                              project_folder=proj_a, supersedes=global_lesson["id"],
+                                              supersedes_expected_version=1, user_confirmed=True)))
+    assert result["error"] == "supersedes_target_not_applicable" and result["reason"] == "scope_mismatch"
+    assert "global" in result["message"].lower()
+    # a global proposal may not supersede a project entry
+    result = _json(_run(mcp_server.add_lesson(summary="Global revision of the project lesson",
+                                              supersedes=lesson_a["id"], supersedes_expected_version=1,
+                                              user_confirmed=True)))
+    assert result["error"] == "supersedes_target_not_applicable" and result["reason"] == "scope_mismatch"
+    assert "same project" in result["message"].lower()
+    # two different projects
+    result = _json(_run(mcp_server.add_lesson(summary="Project B revision of the project A lesson",
+                                              project_folder=proj_b, supersedes=lesson_a["id"],
+                                              supersedes_expected_version=1, user_confirmed=True)))
+    assert result["error"] == "supersedes_target_not_applicable" and result["reason"] == "different_project"
+    assert _store(eng.root) == before
+
+
+def test_a_lifecycle_archived_target_counts_as_archived(eng):
+    lesson = _lesson(eng, "A lesson the lifecycle archive moved to the archived tier")
+    eng.soft_archive_knowledge_tier(lesson["id"], allow_verified=True)
+    row = _row(eng, lesson["id"])
+    assert row["status"] == "active" and row["tier"] == "archived"
+    before = _store(eng.root)
+    result = _json(_run(mcp_server.add_lesson(summary="Revision of the lifecycle-archived lesson",
+                                              supersedes=lesson["id"], supersedes_expected_version=1,
+                                              user_confirmed=True)))
+    assert result["error"] == "supersedes_target_not_applicable" and result["reason"] == "archived"
+    assert _store(eng.root) == before
+
+
+# ---------------------------------------------------------------------------
+# imports never supersede a pinned entry (MCP and local)
+# ---------------------------------------------------------------------------
+
+
+def _edge_backup(tmp_path: Path, pinned_id: str) -> Path:
+    path = tmp_path / "edges.json"
+    data = {"schema_version": "1.0", "exported_at": "2026-10-01T00:00:00Z", "identity": {},
+            "knowledge": {"lessons": [{"id": "imp-x", "summary": "Imported lesson that claims to replace a pin",
+                                       "tier": "verified", "status": "active"}],
+                          "decisions": [], "playbooks": [],
+                          "relations": [{"src": "imp-x", "rel": "supersedes", "dst": pinned_id},
+                                        {"src": "imp-x", "rel": "led_to", "dst": pinned_id}]}}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _assert_pin_survived(eng, pinned_id: str) -> None:
+    row = _row(eng, pinned_id)
+    assert row["pinned"] is True
+    assert eng._recall_supersede_index().successor(pinned_id) == ""
+    assert recall_policy.classify(row, eng._recall_supersede_index()).state == recall_policy.TRUSTED
+    edges = RelationStore(eng.root).all_edges()
+    assert not [e for e in edges if e["rel"] == "supersedes" and e["dst"] == pinned_id]
+
+
+def test_mcp_import_cannot_supersede_a_pinned_entry(eng, tmp_path):
+    pinned = _lesson(eng, "Pinned lesson an imported edge targets")
+    assert run_pin([pinned["id"]]) == 0
+    path = _edge_backup(tmp_path, pinned["id"])
+
+    preview = _json(_run(mcp_server.import_engram(input_path=str(path), merge=True, dry_run=True)))
+    assert pinned["id"] in preview["pinned"]["protected"]["lessons"]
+    assert {"src": "imp-x", "dst": pinned["id"]} in preview["pinned"]["dropped_edges"]
+
+    result = _json(_run(mcp_server.import_engram(input_path=str(path), merge=True)))
+    assert result["status"] == "success"
+    assert pinned["id"] in result["pinned"]["protected"]["lessons"]
+    assert {"src": "imp-x", "dst": pinned["id"]} in result["pinned"]["dropped_edges"]
+    _assert_pin_survived(eng, pinned["id"])
+    assert _row(eng, "imp-x") is not None  # the rest of the backup still came in
+
+
+def test_local_import_cannot_supersede_a_pinned_entry(eng, tmp_path, capsys):
+    from piia_engram.cli_commands import _render_import_result_text
+
+    pinned = _decision(eng, "Which formatter is used?", "the project formatter")
+    assert run_pin([pinned["id"]]) == 0
+    path = _edge_backup(tmp_path, pinned["id"])
+    for merge in (True, False):
+        result = eng.import_all(str(path), merge=merge)
+        assert {"src": "imp-x", "dst": pinned["id"]} in result["pinned"]["dropped_edges"]
+        text = _render_import_result_text(result)
+        assert "imp-x" in text and pinned["id"] in text and "dropped" in text.lower()
+        _assert_pin_survived(eng, pinned["id"])
+
+
+def test_import_that_would_promote_a_revision_of_a_pinned_entry_is_refused_over_mcp(eng, tmp_path):
+    pinned = _lesson(eng, "Pinned lesson a replace import would supersede by promotion")
+    assert run_pin([pinned["id"]]) == 0
+    proposal = eng.add_lesson({"summary": "Pending revision of the pinned lesson", "domain": "workflow",
+                               "supersedes": pinned["id"]})
+    stored = _row(eng, proposal["id"])
+    assert stored["tier"] == "staging" and stored["pending_supersedes"] == pinned["id"]
+    promoted = {**stored, "tier": "verified", "memory_state": "verified", "approval_status": "approved"}
+    path = tmp_path / "promote.json"
+    path.write_text(json.dumps({"schema_version": "1.0", "identity": {}, "knowledge": {
+        "lessons": [_row(eng, pinned["id"]), promoted], "decisions": [], "playbooks": []}}), encoding="utf-8")
+    before = _store(eng.root)
+    result = _json(_run(mcp_server.import_engram(input_path=str(path), merge=False)))
+    assert result["error"] == "pinned_target", result
+    assert _store(eng.root) == before
+    _assert_pin_survived(eng, pinned["id"])
+
+
+# ---------------------------------------------------------------------------
+# onboard accept never approves a revision proposal
+# ---------------------------------------------------------------------------
+
+
+def test_onboard_accept_refuses_a_playbook_revision_proposal(eng):
+    playbook = _playbook(eng, "Pinned playbook an onboard accept tries to replace")
+    assert run_pin([playbook["id"]]) == 0
+    proposal = eng.add_playbook({"title": "Replacement playbook with an anchor", "steps": [{"action": "x"}],
+                                 "provenance": {"anchor_ref": "file:README.md", "confirmation_source": "anchor"}},
+                                _update_proposal_of=playbook["id"], _allow_internal_provenance=True)
+    assert eng._read_playbook_by_id(proposal["id"])["tier"] == "staging"
+    before = _store(eng.root)
+    result = _json(_run(mcp_server.onboard_accept(proposal["id"])))
+    assert result["error"] == "revision_proposal", result
+    assert _store(eng.root) == before
+
+    plain = eng.add_playbook({"title": "Plain onboard candidate playbook", "steps": [{"action": "y"}],
+                              "tier": "staging",
+                              "provenance": {"anchor_ref": "file:README.md", "confirmation_source": "anchor"}},
+                             _allow_internal_provenance=True)
+    accepted = _json(_run(mcp_server.onboard_accept(plain["id"])))
+    assert "error" not in accepted, accepted
+    assert eng._read_playbook_by_id(plain["id"])["tier"] == "verified"
+
+
+def test_apply_review_reports_why_a_promotion_did_not_happen(eng):
+    decision = _decision(eng, "Which CI image is used?", "the stock image")
+    assert run_pin([decision["id"]]) == 0
+    proposal = eng.add_decision({"question": "Which CI image is used now?", "choice": "a slim image",
+                                 "supersedes": decision["id"]})
+    from piia_engram import write_provenance
+
+    with write_provenance.origin_scope(write_provenance.ORIGIN_MCP):
+        result = eng.apply_review({"promote": [{"id": proposal["id"]}], "archive": []})
+    assert result["promoted"] == 0
+    assert f"promote {proposal['id']}: pinned_target" in result["errors"]
