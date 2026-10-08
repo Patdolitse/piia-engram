@@ -14,6 +14,15 @@
 - OpenClaw `USER.md` 和 `SOUL.md` 导入生成身份待审提案，即使用了 `--apply --yes` 也如此；迁移时先用 `engram review` 审核并批准导入提案，身份修改才会生效。
 - 原生备份导出拒绝写入存储目录内或覆盖受管理文件，链接别名也受到同样限制；迁移时选择存储目录外的目标，或使用默认的同级 `<store-name>_exports` 目录。
 
+### 新增
+
+- 身份提案进入本地审核、交互审核及导出的标记文件，可通过 `engram review show <id>` 查看当前值和提议值。
+
+### 变更
+
+- `DO_NOT_TRACK=1` 或 `ENGRAM_TELEMETRY=0` 时，`engram stats` 不发出增长指标请求；`--online` 只允许本次请求，不开启遥测。
+- Claude Code 握手、写入来源和 doctor 活动检测使用一致的客户端自报标签，并兼容旧 `claude-cli` 和 `claude_cli` 检查点目录，但不会把标签当作身份或授权证明。
+
 ### 修复
 
 - 身份批准中断后可通过重试批准或运行 `engram doctor --fix` 恢复，拒绝操作不能覆盖已开始的批准。
@@ -21,8 +30,10 @@
 - 原生备份保留只有哈希的身份拒绝记录，拒绝指纹允许原值改变后重新提案，同时继续否决相同原值上的相同修改。
 - Codex setup 合并裸键或引号键的表及内联表 Engram 配置，保留已有环境值和旧条目独有的键，并在写入前备份和验证 TOML；缺少完整解析器或无关值将改变时，保持配置不变并提供手动步骤。
 - Setup 的 Claude Code 终端重启提示只显示一次。
-- `DO_NOT_TRACK=1` 或 `ENGRAM_TELEMETRY=0` 时，`engram stats` 不发出增长指标请求；`--online` 只允许本次请求，不开启遥测。
-- Claude Code 握手、写入来源和 doctor 活动检测使用一致的客户端自报标签，并兼容旧 `claude-cli` 和 `claude_cli` 检查点目录，但不会把标签当作身份或授权证明。
+
+### 发布证据
+
+发布前所需检查见[发布证据声明](release-evidence/README.md)。
 
 ## [4.22.0] - 2026-10-07
 
@@ -50,6 +61,7 @@
 ### 新增
 
 - 默认每天发送一次匿名使用信号，包含随机安装 ID、版本、系统、Python 版本、客户端名称和日期，不含记忆、路径、账号或参数；可用 `engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭（CI 和容器自动关闭），详见 [PRIVACY.md](PRIVACY.md)。
+- 自动化调用方可使用独立的准入式存储，配有清理后的启动环境、固定容量、按时间检索、哈希链回执及本地 Owner 否决；其准入合同与个人存储分离。
 - `engram doctor` 新增只读的“Client Connections”一节，显示各客户端的配置和最近 14 天调用情况（`--days N`、`--json`）。
 - `engram import-memories` 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区并生成回执；`engram setup` 会询问是否现在导入一次（默认否）。
 - `engram import --format openclaw` 在本地导入 OpenClaw 的 `SOUL.md` / `MEMORY.md` / `USER.md`；默认只预览，MEMORY.md 的经验进入待审区。
