@@ -174,7 +174,7 @@ def test_get_playbook_by_id_refuses_snapshot(tmp_path: Path):
 
 # ---------------------------------------------------------------- 6
 def test_export_contains_no_snapshots(tmp_path: Path):
-    eng = Engram(tmp_path)
+    eng = Engram(tmp_path / 'store')
     lesson = eng.add_lesson({"summary": "s", "detail": "d1", "domain": "release"})
     eng.update_lesson(lesson["id"], {"detail": "d2"}, expected_version=1)
     created = eng.add_playbook(_pb("Handbook five", STEPS_A))

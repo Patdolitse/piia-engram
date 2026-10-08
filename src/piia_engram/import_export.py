@@ -20,7 +20,7 @@ from . import tombstones as _tombstones
 from . import write_provenance as _write_provenance
 from .decision_thread import validate_edges
 from .playbooks import PlaybookIdExists, new_playbook_id, playbook_id_key, valid_playbook_id
-from .store_paths import confined_path, valid_file_id
+from .store_paths import confined_path, export_destination, valid_file_id
 from .governance_store import RelationStore, ResolutionStore
 from .storage import (
     DEFAULT_TRUST_BOUNDARIES,
@@ -1265,13 +1265,18 @@ class ImportExportMixin:
         用于备份或迁移到另一台机器。
 
         Args:
-            output_path: 导出文件路径。默认存到 ~/.engram/exports/engram_backup_<date>.json
+            output_path: 导出文件路径。默认存到数据目录旁的 <store-name>_exports 目录。
             exclude_pending: 严格模式下经 MCP 导出时为 True：不导出待审提案
                 （lesson / decision / playbook 的 tier=staging 行）。本地完整备份不受影响。
 
         Returns:
             ``{"path": 导出文件的完整路径, "skipped": {"tombstones": N}}``。
         """
+        # Validate before reads that append audit records, mkdir or any writer.
+        default_dir = self.root.resolve().with_name(self.root.resolve().name + '_exports')
+        out = Path(output_path) if output_path else default_dir / (
+            f'engram_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
+        export_destination(self.root, out)
         export_stones, skipped_stones = _check_tombstones(_tombstones.load(self.root))
         export_data = {
             "schema_version": SCHEMA_VERSION,
@@ -1334,13 +1339,7 @@ class ImportExportMixin:
             if data:
                 export_data["projects"][f.stem] = data
 
-        # 确定输出路径
-        if output_path:
-            out = Path(output_path)
-        else:
-            date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out = self._exports_dir / f"engram_backup_{date_str}.json"
-
+        export_destination(self.root, out)
         out.parent.mkdir(parents=True, exist_ok=True)
         _write_json(out, export_data)
         self._audit.log("export", "all", detail=f"exported to {out}")

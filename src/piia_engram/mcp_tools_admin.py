@@ -414,9 +414,9 @@ async def export_engram(
     Note: Exports contain all identity, knowledge, and project data, so handle the files according to their privacy level.
 
     Args:
-        output_path: 导出路径（format=native，可选，默认 ~/.engram/exports/engram_backup_<日期>.json）。 / Export path (native; optional).
+        output_path: 导出路径（format=native，可选，默认数据目录旁的 <store-name>_exports/engram_backup_<日期>.json）。 / Export path (native; optional; defaults to the sibling <store-name>_exports directory).
         format: native（默认）| openclaw。
-        output_dir: 输出目录（format=openclaw，可选，默认 Engram 的 compat/openclaw 目录）。 / Output directory (openclaw; optional).
+        output_dir: 输出目录（format=openclaw，可选，默认数据目录旁的 <store-name>_exports/openclaw）。 / Output directory (openclaw; optional; defaults to <store-name>_exports/openclaw beside the store).
     """
     # The export writes the ENTIRE store (identity + all knowledge) to files.
     # path-only ≠ no-disclosure: an agent with filesystem read then opens it
@@ -430,7 +430,8 @@ async def export_engram(
     format = format.strip().lower()
     if format == "openclaw":
         try:
-            target_dir = output_dir or str(S._get_engram().root / "compat" / "openclaw")
+            root = S._get_engram().root.resolve()
+            target_dir = output_dir or str(root.with_name(root.name + '_exports') / 'openclaw')
             result = S.export_to_openclaw(S._get_engram(), target_dir)
             files = result.get("files", [])
             if result.get("status") == "success":

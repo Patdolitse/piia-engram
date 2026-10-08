@@ -402,7 +402,7 @@ def test_identity_card(tmp_path: Path):
 
 def test_export_import_round_trip(tmp_path: Path):
     """导出再导入应保留数据。"""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.update_profile({"role": "RT测试"})
     engram.add_lesson({"summary": "RT教训", "domain": "rt"})
     engram.add_decision({"question": "RT问题", "choice": "RT选择"})
@@ -424,7 +424,7 @@ def test_export_import_round_trip(tmp_path: Path):
 
 def test_import_all_restores_preferences_and_trust_boundaries(tmp_path: Path):
     """Whole-store import must restore the v2 identity sections exported by export_all."""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.update_preferences({
         "communication": "简洁",
         "tool_preferences": {"coding": "Codex"},
@@ -748,7 +748,7 @@ def test_import_all_invalid_backup(tmp_path: Path):
 
 def test_export_all_custom_path(tmp_path: Path):
     """自定义导出路径应正确创建文件。"""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.add_lesson("导出路径测试")
     custom_path = tmp_path / "custom" / "backup.json"
     result_path = engram.export_all(str(custom_path))
@@ -2746,7 +2746,7 @@ def test_migrate_from_oca_memory_near_misses(tmp_path: Path):
 
 def test_export_to_openclaw_creates_three_files(tmp_path: Path):
     """应在输出目录创建 SOUL.md、USER.md、MEMORY.md。"""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.update_profile({"role": "developer", "language": "中文"})
     out_dir = tmp_path / "openclaw_export"
     result = export_to_openclaw(engram, str(out_dir))
@@ -2759,7 +2759,7 @@ def test_export_to_openclaw_creates_three_files(tmp_path: Path):
 
 def test_export_to_openclaw_soul_contains_profile(tmp_path: Path):
     """SOUL.md 应包含 profile 信息。"""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.update_profile({
         "role": "senior_engineer",
         "language": "中文",
@@ -2775,7 +2775,7 @@ def test_export_to_openclaw_soul_contains_profile(tmp_path: Path):
 
 def test_export_to_openclaw_memory_contains_lessons(tmp_path: Path):
     """MEMORY.md 应包含 lessons 和 decisions。"""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.add_lesson({"summary": "永远先写测试", "domain": "testing"})
     engram.add_decision({
         "question": "数据库选型",
@@ -2793,7 +2793,7 @@ def test_export_to_openclaw_memory_contains_lessons(tmp_path: Path):
 
 def test_export_to_openclaw_empty_data(tmp_path: Path):
     """空数据导出不应崩溃。"""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     out_dir = tmp_path / "export_empty"
     result = export_to_openclaw(engram, str(out_dir))
     assert result["status"] == "success"
@@ -2802,7 +2802,7 @@ def test_export_to_openclaw_empty_data(tmp_path: Path):
 
 def test_export_to_openclaw_excludes_staging_knowledge(tmp_path: Path):
     """OpenClaw static snapshots must not include unapproved staging items."""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.add_lesson({"summary": "verified lesson may export", "domain": "safe"})
     engram.add_lesson({
         "summary": "staging lesson must stay private",
@@ -2831,7 +2831,7 @@ def test_export_to_openclaw_excludes_staging_knowledge(tmp_path: Path):
 
 def test_export_to_openclaw_excludes_verified_non_active_knowledge(tmp_path: Path):
     """Verified entries still need active status before entering MEMORY.md."""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.add_lesson({"summary": "active verified lesson may export"})
     rejected = engram.add_lesson({"summary": "rejected verified lesson stays out"})
     outdated = engram.add_decision({
@@ -2852,7 +2852,7 @@ def test_export_to_openclaw_excludes_verified_non_active_knowledge(tmp_path: Pat
 
 def test_export_to_openclaw_memory_has_size_budget(tmp_path: Path):
     """MEMORY.md should stay below the documented OpenClaw snapshot budget."""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     for idx in range(90):
         engram.add_lesson({
             "summary": f"verified long lesson {idx} " + ("x" * 700),
@@ -3148,7 +3148,7 @@ def test_apply_review_nonexistent_item(tmp_path: Path):
 
 def test_export_import_roundtrip(tmp_path: Path):
     """导出后再导入应保持 profile 数据一致。"""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
     engram.update_profile({
         "role": "data_engineer",
         "language": "中文",
@@ -4271,7 +4271,7 @@ def test_merge_knowledge_transfers_related(tmp_path: Path):
 
 def test_import_all_overwrite_mode(tmp_path: Path):
     """import_all(merge=False) 应覆盖而不是合并。"""
-    engram = make_engram(tmp_path)
+    engram = make_engram(tmp_path / 'store')
 
     # Set up initial data
     engram.update_profile({"role": "原始角色"})
