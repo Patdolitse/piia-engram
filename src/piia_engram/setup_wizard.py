@@ -1447,7 +1447,9 @@ def _read_mcp_config_for_write(config_path: Path, fmt: str = "json") -> dict:
         return {}
     raw = config_path.read_text(encoding="utf-8")
     try:
-        config = _parse_toml(raw) if fmt == "toml" else json.loads(raw)
+        config = _parse_toml(raw, require_complete=True) if fmt == "toml" else json.loads(raw)
+    except _ManualTomlStep:
+        raise
     except Exception as exc:
         raise ValueError(
             f"Cannot parse existing {fmt.upper()} config at {config_path}; "
@@ -1520,7 +1522,11 @@ def _write_config_text_with_backup(
     atomic_write_text(config_path, text)
 
 
-def _parse_toml(text: str) -> dict:
+class _ManualTomlStep(RuntimeError):
+    """A complete parser is unavailable, so setup must not mutate TOML."""
+
+
+def _parse_toml(text: str, *, require_complete: bool = False) -> dict:
     """解析 TOML 文本，兼容 Python 3.10（无 tomllib）。"""
     try:
         import tomllib  # Python 3.11+
@@ -1532,6 +1538,8 @@ def _parse_toml(text: str) -> dict:
         return tomli.loads(text)
     except ImportError:
         pass
+    if require_complete:
+        raise _ManualTomlStep('A complete TOML parser is unavailable; manual configuration is required')
     # 最后手段：只提取 [mcp_servers.*] 段（覆盖 doctor 的核心需求）
     return _parse_toml_mcp_minimal(text)
 
@@ -1773,28 +1781,40 @@ def _write_mcp_config_toml(
     策略：原地替换 [mcp_servers.engram] 段，保留文件其余内容不动。
     """
     existing_env: dict = {}
-    migrate_from: str | None = None
+    try:
+        # This check also covers creating a new config on Python 3.10.
+        _parse_toml('', require_complete=True)
+    except _ManualTomlStep:
+        print(_t('  ⚠️  Codex 需手动配置：缺少完整 TOML 解析器，配置文件未修改。',
+                 '  ⚠️  Codex needs a manual step: no complete TOML parser; config was left unchanged.'))
+        print(_t('  请将 Engram 条目合并为 engram，保留所有现有环境变量（包括 ENGRAM_APPROVAL）。参考：',
+                 '  Merge Engram entries into engram and keep existing env, including ENGRAM_APPROVAL. Example:'))
+        entry = _engram_server_entry(python_path, mcp_server_path, data_dir,
+                                    extra_env=extra_env, engram_tools=engram_tools)
+        print('[mcp_servers.engram]')
+        print('command = ' + json.dumps(entry['command'], ensure_ascii=False))
+        print('args = ' + json.dumps(entry['args']))
+        print('[mcp_servers.engram.env]')
+        for key, value in entry['env'].items():
+            print(json.dumps(key) + ' = ' + json.dumps(value, ensure_ascii=False))
+        raise
+    replaced_names = {'engram'}
     if config_path.is_file():
         existing_config = _read_mcp_config_for_write(config_path, fmt="toml")
         existing_servers = existing_config.get("mcp_servers", {})
         existing_servers = existing_servers if isinstance(existing_servers, dict) else {}
-        existing_engram = existing_servers.get("engram")
-        if existing_engram is None and _claude_code_mcp.launches_engram(existing_servers.get("piia-engram")):
-            # Move an Engram entry under the old name to the engram table.
-            migrate_from = "piia-engram"
-            existing_engram = existing_servers.get("piia-engram")
-        if isinstance(existing_engram, dict) and isinstance(existing_engram.get("env"), dict):
-            existing_env = existing_engram["env"]
-    replaced_headers = {"[mcp_servers.engram]", "[mcp_servers.engram.env]",
-                        '[mcp_servers."engram"]', '[mcp_servers."engram".env]'}
-    if migrate_from:
-        for form in (migrate_from, f'"{migrate_from}"'):
-            replaced_headers |= {f"[mcp_servers.{form}]", f"[mcp_servers.{form}.env]"}
-        print(f"  [migrated] {migrate_from} -> engram")
+        # Legacy-only env keys survive; the explicit canonical env wins ties.
+        for name in ['piia-engram', *LEGACY_SERVER_NAMES, 'engram']:
+            server = existing_servers.get(name)
+            if name != 'engram' and not _claude_code_mcp.launches_engram(server):
+                continue
+            if isinstance(server, dict):
+                replaced_names.add(name)
+                if isinstance(server.get('env'), dict):
+                    existing_env.update(server['env'])
 
     lines = config_path.read_text(encoding="utf-8").splitlines() if config_path.is_file() else []
     new_lines: list[str] = []
-    skip_until_next_section = False
 
     def toml_string(value: str) -> str:
         return json.dumps(str(value), ensure_ascii=False)
@@ -1832,59 +1852,69 @@ def _write_mcp_config_toml(
         toml_key = key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else toml_string(key)
         engram_block.append(f'{toml_key} = {toml_string(value)}')
 
-    inserted = False
     in_server_table = False
-    replaced_names = {"engram", migrate_from} - {None}
-    i = 0
-    while i < len(lines):
-        line = lines[i]
+    skip_section = False
+    for line in lines:
         stripped = line.strip()
+        if stripped.startswith('['):
+            # Parse a header rather than comparing its spelling: whitespace,
+            # quoted keys, literal keys and comments all have TOML semantics.
+            header = _parse_toml(line + '\n__engram_setup_marker__ = true\n', require_complete=True)
+
+            def marker_path(node, path=()):
+                if isinstance(node, dict):
+                    if '__engram_setup_marker__' in node:
+                        return path
+                    for key, value in node.items():
+                        found = marker_path(value, (*path, key))
+                        if found is not None:
+                            return found
+                elif isinstance(node, list):
+                    for value in node:
+                        found = marker_path(value, path)
+                        if found is not None:
+                            return found
+                return None
+
+            section = marker_path(header)
+            in_server_table = section == ('mcp_servers',)
+            target_section = bool(section and len(section) >= 2 and section[0] == 'mcp_servers'
+                                  and section[1] in replaced_names)
+            skip_section = target_section and (len(section) == 2 or section[2] == 'env')
+            if target_section and not skip_section and section[1] != 'engram':
+                # Preserve client-specific tool settings under the canonical
+                # server. Conflicting subtables fail final validation safely.
+                tail = re.search(r'\]\s*(#.*)?$', line)
+                comment = (' ' + tail.group(1)) if tail and tail.group(1) else ''
+                keys = ('mcp_servers', 'engram', *section[2:])
+                line = '[' + '.'.join(k if re.fullmatch(r'[A-Za-z0-9_-]+', k)
+                                      else toml_string(k) for k in keys) + ']' + comment
+        if skip_section:
+            continue
         # Inline tables in [mcp_servers] are complete single-line values. Remove
         # just the target assignment, leaving peer servers and comments intact;
         # the replacement is emitted as a standalone table outside this section.
-        if stripped.startswith("["):
-            in_server_table = bool(re.fullmatch(r'\[\s*mcp_servers\s*\]\s*(?:#.*)?', stripped))
         if in_server_table:
             inline = re.match(r'''^(?:([A-Za-z0-9_-]+)|"([^"]+)"|'([^']+)')\s*=\s*\{''', stripped)
-            if inline and next(g for g in inline.groups() if g is not None) in replaced_names:
-                i += 1
+            if inline and next(iter(_parse_toml(line, require_complete=True))) in replaced_names:
                 continue
+        new_lines.append(line)
 
-        # 检测 [mcp_servers.engram] 段（以及要迁移的旧名称段）
-        if stripped in replaced_headers and not stripped.endswith(".env]"):
-            skip_until_next_section = True
-            if not inserted:
-                new_lines.extend(engram_block)
-                inserted = True
-            i += 1
-            continue
-
-        # 检测 .env 子段（也要跳过）
-        if stripped in replaced_headers:
-            skip_until_next_section = True
-            i += 1
-            continue
-
-        # 遇到其他段头，结束跳过
-        if stripped.startswith('[') and skip_until_next_section:
-            skip_until_next_section = False
-
-        if not skip_until_next_section:
-            new_lines.append(line)
-
-        i += 1
-
-    # 如果原文件没有 engram 段，追加到末尾
-    if not inserted:
-        new_lines.append('')
-        new_lines.extend(engram_block)
+    while new_lines and not new_lines[-1].strip():
+        new_lines.pop()
+    new_lines.append('')
+    new_lines.extend(engram_block)
+    candidate = '\n'.join(new_lines) + '\n'
+    _parse_toml(candidate, require_complete=True)
 
     _write_config_text_with_backup(
         config_path,
-        '\n'.join(new_lines) + '\n',
+        candidate,
         backup_root=file_safety_root,
         authorized_external_write=authorized_external_write,
     )
+    for name in sorted(replaced_names - {'engram'}):
+        print(f'  [migrated] {name} -> engram')
 
 
 def _write_tool_mcp_config(
@@ -2958,6 +2988,8 @@ def _apply_external_configs(
             )
             success.append(tool["name"])
             configured_tool_ids.append(tool["id"])
+        except _ManualTomlStep:
+            manual.append(tool['name'])
         except Exception as exc:
             failed.append(f"{tool['name']} ({exc})")
     for name in success:

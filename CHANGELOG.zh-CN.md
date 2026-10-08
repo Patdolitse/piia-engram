@@ -22,7 +22,7 @@
 - 批量身份审核预览按实际应用顺序模拟修改，并与应用一致地拒绝不支持的标记。
 - 原生备份保留只有哈希的身份拒绝记录；新指纹包含原值，允许原值改变后的冲突恢复，同时继续拒绝相同原值上的相同修改。
 - 原生备份拒绝写入数据目录内或覆盖受管理文件，包含链接别名；默认备份存到数据目录旁的 `<store-name>_exports` 目录。
-- Codex setup 支持迁移旧名称的 inline-table MCP 配置，写前备份，保留用户环境变量和其它服务器。
+- Codex setup 合并裸键及引号键的独立表或 inline-table Engram 配置，写前备份并验证 TOML。现有 `engram` 环境值优先，保留旧条目独有的键（包括 `ENGRAM_APPROVAL`）；缺少完整 TOML 解析器时不修改配置，给出手动步骤。
 - setup 的 Claude Code 终端重启提示只显示一次。
 - `DO_NOT_TRACK=1` 或 `ENGRAM_TELEMETRY=0` 时，`engram stats` 不发出任何增长指标请求；显式 `--online` 只允许本次联网查询，不开启遥测。
 - Claude Code 握手、写入来源和 doctor 活动检测使用一致客户端标签，并兼容旧 `claude-cli` / `claude_cli` 检查点目录。标签仍由客户端自报，不证明身份或授权。

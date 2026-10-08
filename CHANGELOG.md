@@ -22,7 +22,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - Batch identity previews simulate changes in application order and refuse unsupported marks consistently with application.
 - Native backups preserve hash-only identity rejection records. New fingerprints include the original value, allowing conflict recovery against a changed value while retaining vetoes against identical changes.
 - Native backup exports refuse destinations inside the store or over managed files, including link aliases. Default backups go to a sibling `<store-name>_exports` directory.
-- Codex setup migrates legacy inline-table MCP entries with a pre-write backup, preserving user environment settings and other servers.
+- Codex setup reconciles bare and quoted table or inline-table Engram entries with a pre-write backup and TOML validation. Existing `engram` environment values win conflicts; legacy-only keys, including `ENGRAM_APPROVAL`, are preserved. Without a complete TOML parser, setup leaves the config unchanged and prints a manual step.
 - Setup prints the Claude Code terminal restart hint once.
 - `engram stats` skips all growth-metric requests when `DO_NOT_TRACK=1` or `ENGRAM_TELEMETRY=0`; `--online` explicitly allows requests for that invocation without enabling telemetry.
 - Claude Code handshake, write provenance and doctor activity use consistent client labels, including older `claude-cli` / `claude_cli` checkpoint directories. Client labels remain self-reported, not proof of identity or authorization.
