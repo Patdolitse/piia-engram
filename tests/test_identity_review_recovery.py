@@ -1,5 +1,6 @@
 """Identity decisions retain a recoverable approval intent and portable vetoes."""
 import json
+import random
 from pathlib import Path
 
 import pytest
@@ -251,3 +252,76 @@ def test_recovery_never_writes_from_mcp_or_read_only_handle(eng, monkeypatch):
     readonly = Engram(root=eng.root, read_only=True)
     assert readonly.recover_identity_proposals()['error'] == 'read_only'
     assert (eng.root / 'identity' / 'proposals.json').read_bytes() == before
+
+
+def preview_statuses(eng, marks):
+    # A planned decision is reported as applied after its queue status is saved.
+    return ['applied' if item['status'] == 'planned' else item['status']
+            for item in R.preview_marks(eng, marks)['items']]
+
+
+@pytest.mark.parametrize('surface', ['marks', 'batch'])
+def test_noop_approval_does_not_materialize_legacy_preferences(eng, surface):
+    eng.update_work_style({'communication': 'old'})
+    preferences = eng._identity_dir / 'preferences.json'
+    assert not preferences.exists()
+    rows = [eng.propose_identity(field, {'communication': value}) for field, value in [
+        ('preferences', 'old'), ('work_style', 'new'), ('preferences', 'other')]]
+    if surface == 'marks':
+        marks = [mark(row) for row in rows]
+        predicted = preview_statuses(eng, marks)
+        actual = apply(eng, marks)
+    else:
+        actions = [{'id': row['id'], 'action': 'approve'} for row in rows]
+        predicted = ['applied' if item['status'] == 'planned' else item['status']
+                     for item in batch_review_staging(eng, actions)['items']]
+        actual = batch_review_staging(eng, actions, dry_run=False, confirm=True, owner_cli=True)
+    assert predicted == [item['status'] for item in actual['items']]
+    assert predicted == ['applied', 'applied', 'identity_conflict']
+    assert not preferences.exists()
+    assert eng.get_preferences()['communication'] == 'new'
+
+
+@pytest.mark.parametrize('seed', range(24))
+def test_random_identity_sequences_preview_matches_apply(tmp_path, seed):
+    rng = random.Random(seed)
+    eng = Engram(root=tmp_path / 'store')
+    eng.update_work_style({'communication': 'old', 'preferences': {'pace': 'steady'}})
+    eng.update_profile({'role': 'old'})
+    if rng.choice([False, True]):
+        eng.update_preferences({'communication': 'old'})
+    fields = [('work_style', 'communication'), ('preferences', 'communication'),
+              ('profile', 'role'), ('quality_standards', 'rules'),
+              ('trust_boundaries', 'restricted_fields')]
+    for _ in range(3):
+        # Include a no-op in each random batch, with both legacy and stored
+        # preferences exercised by different seeds.
+        rows = [eng.propose_identity('preferences', {
+            'communication': eng.get_preferences()['communication']})]
+        for _ in range(rng.randint(3, 8)):
+            field, key = rng.choice(fields)
+            value = rng.choice(['old', 'new', 'other'])
+            rows.append(eng.propose_identity(field, {key: [value] if key in {
+                'rules', 'restricted_fields'} else value}))
+        marks = [mark(row, rng.choice(['approve', 'approve', 'reject', 'skip']))
+                 for row in rows if row.get('status') == 'pending']
+        before = {p.name: p.read_bytes() for p in eng._identity_dir.iterdir() if p.is_file()}
+        predicted = preview_statuses(eng, marks)
+        assert before == {p.name: p.read_bytes() for p in eng._identity_dir.iterdir() if p.is_file()}
+        actual = apply(eng, marks)
+        assert predicted == [item['status'] for item in actual['items']], (seed, marks)
+
+
+@pytest.mark.parametrize('field,updates', [
+    ('profile', {'role': 'old'}), ('work_style', {'communication': 'old'}),
+    ('preferences', {'communication': 'old'}), ('quality_standards', {'rules': ['old']}),
+    ('trust_boundaries', {'restricted_fields': ['role']}),
+])
+def test_noop_preview_does_not_mark_any_identity_field_written(eng, field, updates):
+    getattr(eng, 'update_' + field)(updates)
+    row = eng.propose_identity(field, updates)
+    preview = IR.IdentityPreview(eng)
+    assert eng._review_identity_proposal(row['id'], 'approve', dry_run=True,
+                                         preview=preview)['status'] == 'planned'
+    assert preview.written == set()
+    assert apply(eng, [mark(row)])['items'][0]['status'] == 'applied'

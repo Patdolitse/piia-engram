@@ -132,7 +132,8 @@ class IdentityReviewMixin:
                     return result("identity_conflict")
             if dry_run:
                 if preview is not None:
-                    preview.decide(row, action, current if action == 'approve' else None)
+                    preview.decide(row, action, current if action == 'approve' else None,
+                                   write_identity=action == 'approve' and not after)
                 return result("planned")
             if action == "approve":
                 if row['status'] == 'pending':
@@ -185,8 +186,8 @@ class IdentityPreview:
                     'communication': old.get('communication', ''), 'tool_preferences': {}} if old else {}
         return self.values[field]
 
-    def decide(self, row, action, current):
-        if action == 'approve':
+    def decide(self, row, action, current, *, write_identity):
+        if write_identity:
             self.values[row['field']] = {**current, **deepcopy(row['after'])}
             self.written.add(row['field'])
         row['status'] = 'approved' if action == 'approve' else 'rejected'
