@@ -9,6 +9,7 @@ import hashlib
 import json
 import locale
 import logging
+import math
 import os
 import platform
 import re
@@ -1523,7 +1524,7 @@ def _write_config_text_with_backup(
 
 
 class _ManualTomlStep(RuntimeError):
-    """A complete parser is unavailable, so setup must not mutate TOML."""
+    """Setup cannot safely mutate TOML and requires a manual change."""
 
 
 def _parse_toml(text: str, *, require_complete: bool = False) -> dict:
@@ -1766,6 +1767,86 @@ def _engram_server_entry(
     }
 
 
+def _toml_statement_lines(lines):
+    """Yield lines with whether they start outside strings and containers.
+
+    The complete parser validates syntax; this lexer only finds statement
+    boundaries without interpreting examples inside multiline TOML values.
+    Scan skipped sections too, so their values cannot expose false headers.
+    """
+    quote = None
+    depth = 0
+    for line in lines:
+        statement = quote is None and depth == 0
+        i = 0
+        while i < len(line):
+            char = line[i]
+            if quote is not None:
+                if quote[0] == '"' and char == '\\':
+                    i += 2
+                    continue
+                if len(quote) == 3 and line.startswith(quote, i):
+                    # Four/five closing quotes include one/two literal quotes.
+                    while i < len(line) and line[i] == quote[0]:
+                        i += 1
+                    quote = None
+                    continue
+                if len(quote) == 1 and char == quote:
+                    quote = None
+            elif char == '#':
+                break
+            elif char in {'"', "'"}:
+                quote = char * 3 if line.startswith(char * 3, i) else char
+                i += len(quote)
+                continue
+            elif char in '[{':
+                depth += 1
+            elif char in ']}':
+                depth -= 1
+            i += 1
+        yield line, statement
+
+
+def _toml_unrelated_values(config, replaced_names):
+    """Exclude only the server entries setup is allowed to replace."""
+    remaining = dict(config)
+    servers = remaining.get('mcp_servers')
+    if isinstance(servers, dict):
+        peers = {key: value for key, value in servers.items() if key not in replaced_names}
+        if peers:
+            remaining['mcp_servers'] = peers
+        else:
+            remaining.pop('mcp_servers')
+    return remaining
+
+
+def _toml_values_identical(before, after):
+    """Compare parsed values, preserving TOML types and unchanged NaNs."""
+    if type(before) is not type(after):
+        return False
+    if isinstance(before, dict):
+        return before.keys() == after.keys() and all(
+            _toml_values_identical(value, after[key]) for key, value in before.items())
+    if isinstance(before, list):
+        return len(before) == len(after) and all(
+            _toml_values_identical(a, b) for a, b in zip(before, after))
+    if isinstance(before, float) and math.isnan(before):
+        return math.isnan(after)
+    return before == after
+
+
+def _print_codex_manual_change(entry, reason):
+    print(reason)
+    print(_t('  请将 Engram 条目合并为 engram，保留所有现有环境变量（包括 ENGRAM_APPROVAL）。参考：',
+             '  Merge Engram entries into engram and keep existing env, including ENGRAM_APPROVAL. Example:'))
+    print('[mcp_servers.engram]')
+    print('command = ' + json.dumps(entry['command'], ensure_ascii=False))
+    print('args = ' + json.dumps(entry['args']))
+    print('[mcp_servers.engram.env]')
+    for key, value in entry['env'].items():
+        print(json.dumps(key) + ' = ' + json.dumps(value, ensure_ascii=False))
+
+
 def _write_mcp_config_toml(
     config_path: Path,
     python_path: str,
@@ -1785,20 +1866,14 @@ def _write_mcp_config_toml(
         # This check also covers creating a new config on Python 3.10.
         _parse_toml('', require_complete=True)
     except _ManualTomlStep:
-        print(_t('  ⚠️  Codex 需手动配置：缺少完整 TOML 解析器，配置文件未修改。',
-                 '  ⚠️  Codex needs a manual step: no complete TOML parser; config was left unchanged.'))
-        print(_t('  请将 Engram 条目合并为 engram，保留所有现有环境变量（包括 ENGRAM_APPROVAL）。参考：',
-                 '  Merge Engram entries into engram and keep existing env, including ENGRAM_APPROVAL. Example:'))
         entry = _engram_server_entry(python_path, mcp_server_path, data_dir,
                                     extra_env=extra_env, engram_tools=engram_tools)
-        print('[mcp_servers.engram]')
-        print('command = ' + json.dumps(entry['command'], ensure_ascii=False))
-        print('args = ' + json.dumps(entry['args']))
-        print('[mcp_servers.engram.env]')
-        for key, value in entry['env'].items():
-            print(json.dumps(key) + ' = ' + json.dumps(value, ensure_ascii=False))
+        _print_codex_manual_change(entry, _t(
+            '  ⚠️  Codex 需手动配置：缺少完整 TOML 解析器，配置文件未修改。',
+            '  ⚠️  Codex needs a manual step: no complete TOML parser; config was left unchanged.'))
         raise
     replaced_names = {'engram'}
+    existing_config = {}
     if config_path.is_file():
         existing_config = _read_mcp_config_for_write(config_path, fmt="toml")
         existing_servers = existing_config.get("mcp_servers", {})
@@ -1813,7 +1888,9 @@ def _write_mcp_config_toml(
                 if isinstance(server.get('env'), dict):
                     existing_env.update(server['env'])
 
-    lines = config_path.read_text(encoding="utf-8").splitlines() if config_path.is_file() else []
+    # Split physical newlines only: Unicode line separators are literal TOML
+    # string content and must not be normalized into newlines.
+    lines = config_path.read_text(encoding="utf-8").split('\n') if config_path.is_file() else []
     new_lines: list[str] = []
 
     def toml_string(value: str) -> str:
@@ -1854,9 +1931,9 @@ def _write_mcp_config_toml(
 
     in_server_table = False
     skip_section = False
-    for line in lines:
+    for line, statement in _toml_statement_lines(lines):
         stripped = line.strip()
-        if stripped.startswith('['):
+        if statement and stripped.startswith('['):
             # Parse a header rather than comparing its spelling: whitespace,
             # quoted keys, literal keys and comments all have TOML semantics.
             header = _parse_toml(line + '\n__engram_setup_marker__ = true\n', require_complete=True)
@@ -1894,7 +1971,7 @@ def _write_mcp_config_toml(
         # Inline tables in [mcp_servers] are complete single-line values. Remove
         # just the target assignment, leaving peer servers and comments intact;
         # the replacement is emitted as a standalone table outside this section.
-        if in_server_table:
+        if statement and in_server_table:
             inline = re.match(r'''^(?:([A-Za-z0-9_-]+)|"([^"]+)"|'([^']+)')\s*=\s*\{''', stripped)
             if inline and next(iter(_parse_toml(line, require_complete=True))) in replaced_names:
                 continue
@@ -1905,7 +1982,19 @@ def _write_mcp_config_toml(
     new_lines.append('')
     new_lines.extend(engram_block)
     candidate = '\n'.join(new_lines) + '\n'
-    _parse_toml(candidate, require_complete=True)
+    parsed_candidate = _parse_toml(candidate, require_complete=True)
+    # Validate the exact input used for rewriting, as well as the candidate.
+    parsed_input = _parse_toml('\n'.join(lines), require_complete=True)
+    if not _toml_values_identical(
+            _toml_unrelated_values(parsed_input, replaced_names),
+            _toml_unrelated_values(parsed_candidate, replaced_names)):
+        entry = _engram_server_entry(python_path, mcp_server_path, data_dir,
+                                    existing_env=existing_env, extra_env=extra_env,
+                                    engram_tools=engram_tools)
+        _print_codex_manual_change(entry, _t(
+            '  ⚠️  Codex 需手动配置：重写会改变其它配置值，配置文件未修改。',
+            '  ⚠️  Codex needs a manual step: rewriting would change unrelated values; config was left unchanged.'))
+        raise _ManualTomlStep('Unrelated TOML values changed; manual configuration is required')
 
     _write_config_text_with_backup(
         config_path,

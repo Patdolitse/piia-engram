@@ -136,3 +136,79 @@ def test_tool_specific_subtables_survive_migration(tmp_path, name):
     servers = W._parse_toml(config.read_text(encoding='utf-8'))['mcp_servers']
     assert set(servers) == {'engram'}
     assert servers['engram']['tools']['search_knowledge']['approval_mode'] == 'approve'
+
+
+@pytest.mark.parametrize('value', [
+    '\"\"\"\n[ mcp_servers . \'piia-engram\' ] # example\nPreserve this instruction\n[other]\nKeep this part\n\"\"\"',
+    "'''\n[ mcp_servers . 'piia-engram' ] # example\nPreserve this instruction\n[other]\nKeep this part\n'''",
+    '\"\"\"\n[example] is literal text\n\"\"\"',
+    "'''\n[example] is literal text\n'''",
+    '[\n  [\n    [1, 2], # [other]\n    [3, 4],\n  ],\n  [[5, 6]],\n]',
+    '[\n  [\"\"\"\n[mcp_servers.engram]\n\"\"\", \'[other]\'],\n]',
+    '\"\"\"escaped quote: \\\" and escaped delimiter: \\\"\"\"\n[other]\n\"\"\"',
+    '\"\"\"literal separator:\u2028[other]\u2029still literal\"\"\"',
+])
+@pytest.mark.parametrize('location', ['root', 'peer', 'removed'])
+def test_multiline_values_are_not_table_boundaries(tmp_path, value, location):
+    config = tmp_path / 'config.toml'
+    legacy = entry('piia-engram', 'single', {'ENGRAM_APPROVAL': 'strict'})
+    peer = '[mcp_servers.peer]\ncommand = "peer"\n'
+    assignment = 'example = ' + value + '\n'
+    original = ((assignment if location == 'root' else '') + legacy +
+                (assignment if location == 'removed' else '') + peer +
+                (assignment if location == 'peer' else '') +
+                '[features]\npreview = true\n')
+    config.write_text(original, encoding='utf-8')
+    before = W._parse_toml(original, require_complete=True)
+    W._write_mcp_config_toml(config, sys.executable, 'server.py')
+    after = W._parse_toml(config.read_text(encoding='utf-8'), require_complete=True)
+    before['mcp_servers'].pop('piia-engram')
+    after['mcp_servers'].pop('engram')
+    assert after == before
+    first = config.read_bytes()
+    W._write_mcp_config_toml(config, sys.executable, 'server.py')
+    assert config.read_bytes() == first
+
+
+@pytest.mark.parametrize('literal,replacement', [
+    ('"example"', 'changed'), ('"example"', None), ('1', True), ('true', 1),
+])
+def test_unrelated_value_changes_require_manual_step(tmp_path, monkeypatch, capsys, literal, replacement):
+    config = tmp_path / 'config.toml'
+    original = 'model = ' + literal + '\n' + entry('piia-engram', 'bare', {'ENGRAM_APPROVAL': 'strict'})
+    config.write_text(original, encoding='utf-8')
+    parse = W._parse_toml
+
+    def changed_candidate(text, **kwargs):
+        parsed = parse(text, **kwargs)
+        if 'model = ' in text and '[mcp_servers.engram]' in text:
+            if replacement is None:
+                parsed.pop('model')
+            else:
+                parsed['model'] = replacement
+        return parsed
+
+    monkeypatch.setattr(W, '_parse_toml', changed_candidate)
+    tool = {'id': 'codex', 'name': 'Codex', 'format': 'toml', 'config_path': config}
+    assert W._apply_external_configs([tool], sys.executable, 'server.py',
+                                     str(tmp_path / 'store'), interactive=False) == ([], [], ['Codex'])
+    assert config.read_text(encoding='utf-8') == original
+    assert not list(tmp_path.glob('config.toml.engram-backup.*'))
+    output = capsys.readouterr().out
+    assert '[mcp_servers.engram]' in output and 'ENGRAM_APPROVAL' in output
+
+
+def test_unrelated_toml_types_and_array_tables_survive(tmp_path):
+    config = tmp_path / 'config.toml'
+    original = ('number = nan\nwhen = 2026-01-01T12:00:00Z\n'
+                'day = 2026-01-01\nclock = 12:00:00\nflag = true\ninteger = 1\n'
+                '[mcp_servers.peer]\ncommand = "peer"\n'
+                'example = """quote at the end: """"\n'
+                "literal = '''quotes at the end: '''''\n"
+                '[[examples]]\nname = "first"\n[[examples]]\nname = "second"\n')
+    config.write_text(original, encoding='utf-8')
+    W._write_mcp_config_toml(config, sys.executable, 'server.py')
+    first = config.read_bytes()
+    assert original.rstrip() in config.read_text(encoding='utf-8')
+    W._write_mcp_config_toml(config, sys.executable, 'server.py')
+    assert config.read_bytes() == first
