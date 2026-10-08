@@ -432,6 +432,8 @@ def _mark_state(eng, mark: dict) -> str:
     kind, row = eng._find_item_by_id(mark["id"])
     if row is None:
         return "not_found"
+    if kind == 'identity':
+        return 'invalid_action'
     if mark["mark"] == "edit-type":
         labels = [p.strip() for p in str(row.get("domain", "") or "").split(",") if p.strip().startswith("type:")]
         return "already_applied" if labels == [f"type:{mark['type']}"] else "planned"
@@ -731,7 +733,8 @@ def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str, sim: 
     else:
         target = _proposed_target(eng._find_item_by_id(mark["id"])[1]) if mark["mark"] == "approve" else ""
         problem = supersede_problem(eng, mark["id"], target, **sim_args) if target else ""
-    preview = batch_review_staging(eng, [row], dry_run=True, limit=1, owner_cli=True)
+    preview = batch_review_staging(eng, [row], dry_run=True, limit=1, owner_cli=True,
+                                  identity_preview=sim['identity'] if sim is not None else None)
     planned = preview["items"][0].get("status") == "planned"
     if dry_run or not planned:
         _add_counts(counts, preview["counts"])
@@ -904,6 +907,9 @@ def _edit_one(eng, mark: dict, counts: dict, edit_failed: list[str], *, dry_run:
         counts["edit_type_skipped"] = counts.get("edit_type_skipped", 0) + 1
         return {**view, "status": "skipped", "reason": "archived"}
     state = _mark_state(eng, mark)
+    if state == 'invalid_action':
+        edit_failed.append(mark['id'])
+        return {**view, 'status': state}
     if dry_run:
         return {**view, "status": state}
     if row is None or kind not in ("lesson", "decision", "playbook"):
@@ -923,6 +929,9 @@ def _edit_one(eng, mark: dict, counts: dict, edit_failed: list[str], *, dry_run:
 def _lifecycle_one(eng, mark: dict, counts: dict, *, dry_run: bool, sim: dict | None = None) -> dict:
     view = {"id": mark["id"], "action": mark["mark"]}
     state = _mark_state(eng, mark)
+    if state == 'invalid_action':
+        counts['lifecycle_failed'] = counts.get('lifecycle_failed', 0) + 1
+        return {**view, 'status': state}
     if dry_run:
         if sim is not None and mark["id"] in sim["retired"] and state != "not_found":
             # archived by an approved replacement earlier in the run
@@ -952,7 +961,9 @@ def preview_marks(eng, marks: list[dict]) -> dict:
     decision, so every item reads as the applying run will report it.
     """
     counts = _new_counts()
-    sim: dict = {"trusted": set(), "untrusted": set(), "edges": [], "retired": set()}
+    from .identity_review import IdentityPreview
+    sim: dict = {"trusted": set(), "untrusted": set(), "edges": [], "retired": set(),
+                 'identity': IdentityPreview(eng)}
     final_types = _final_types(eng, marks)
     by_index: dict[int, dict] = {}
     order: list[str] = []

@@ -3513,7 +3513,7 @@ STORE_WRITE_METHODS = frozenset({
     "soft_archive_knowledge_tier", "unlink_knowledge", "update_decision", "update_domain",
     "update_execution_step", "update_knowledge", "update_lesson", "update_playbook",
     "update_preferences", "update_profile", "update_quality_standards", "update_tool",
-    "update_trust_boundaries", "update_work_style",
+    "update_trust_boundaries", "update_work_style", "recover_identity_proposals",
 })
 
 READ_ONLY_SAFE_METHODS = frozenset({

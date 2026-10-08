@@ -163,7 +163,15 @@ You stay in control of staged items at any time:
   Rejection leaves approved identity unchanged and stores a text-free rejection
   record. If a relevant approved value changed after the proposal was made,
   approval returns `identity_conflict`; reject the old proposal and request a new
-  one against current values. Local setup and `engram dock-set-lang` still apply
+  one against current values. Rejection fingerprints include the original value:
+  the same requested value is allowed against a different original value, while
+  an identical change against the same original value remains refused, including
+  after backup/restore. Older rejection records without an original-value
+  fingerprint still require `engram review untombstone <id>` to withdraw the veto.
+  An interrupted approval remains `applying`; retry approval or run
+  `engram doctor --fix` to finish it. Rejection is refused until that approval is
+  resolved; a later local edit is preserved and reported as `identity_conflict`.
+  Local setup and `engram dock-set-lang` still apply
   Owner-entered values directly.
 
 - `review_staging(action="list")` — see what is waiting for review (cold-start

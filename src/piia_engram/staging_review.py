@@ -57,6 +57,7 @@ def batch_review_staging(
     offset: int = 0,
     via: str = "core:batch_review_staging",
     owner_cli: bool = False,
+    identity_preview=None,
 ) -> dict[str, Any]:
     """Preview or apply staging approve/reject actions.
 
@@ -86,6 +87,9 @@ def batch_review_staging(
     }
     items: list[dict[str, Any]] = []
     guards: dict[int, int | None] = {}
+    if identity_preview is None:
+        from .identity_review import IdentityPreview
+        identity_preview = IdentityPreview(eng)
 
     for idx, row in enumerate(rows):
         item_id = str(row.get("id") or row.get("item_id") or "").strip()
@@ -120,7 +124,7 @@ def batch_review_staging(
             continue
         if item_type == "identity":
             result = eng._review_identity_proposal(item_id, action, expected_version=expected_version,
-                                                 dry_run=True)
+                                                 dry_run=True, preview=identity_preview)
             state = result["status"]
             items.append(_item(idx, item_id, action, state, item_type=item_type))
             counts["planned" if state == "planned" else "noop" if state == "already_applied" else "failed"] += 1
