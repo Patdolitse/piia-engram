@@ -1,4 +1,4 @@
-"""Tests for telemetry endpoint decoupling from any personal handle (M0 G4 / #80).
+"""Tests for telemetry endpoints supplied only through explicit configuration.
 
 The open-source core must ship with NO built-in telemetry destination and no
 personal domain/handle baked into source. Remote send is enabled only when an
@@ -11,6 +11,7 @@ nothing touches a real store or the network.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -31,14 +32,16 @@ def test_default_endpoints_are_empty_and_carry_no_personal_handle():
     """No hardcoded default destination; no personal handle in the constants."""
     assert telemetry._DEFAULT_ENDPOINT == ""
     assert telemetry._DEFAULT_FEEDBACK_ENDPOINT == ""
-    assert "pp3x325" not in telemetry._DEFAULT_ENDPOINT
-    assert "pp3x325" not in telemetry._DEFAULT_FEEDBACK_ENDPOINT
 
 
-def test_telemetry_source_has_no_personal_handle():
-    """The shipped telemetry module source must not embed a personal handle."""
+def test_telemetry_source_has_no_builtin_destination():
+    """The shipped telemetry module must not embed a destination URL."""
     src = Path(telemetry.__file__).read_text(encoding="utf-8")
-    assert "pp3x325" not in src
+    literals = (
+        node.value for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    )
+    assert not any(value.startswith(("https://", "http://")) for value in literals)
 
 
 def test_get_endpoint_empty_when_env_unset():
