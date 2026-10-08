@@ -568,11 +568,13 @@ def test_an_upgrade_with_a_changed_card_is_blocked(world, monkeypatch):
 _PROBE = r'''
 import json, os, sys, ntpath
 seen = []
+io_seen = []
 def _hook(event, args):
     if event in ("open", "os.listdir", "os.scandir", "os.mkdir", "os.rename", "os.replace", "os.remove",
                  "shutil.copyfile", "os.chmod"):
         if args:
             seen.append(str(args[0]))
+            io_seen.append(str(args[0]))
 sys.addaudithook(_hook)
 # CPython raises no audit event for stat / lstat / realpath, so they are wrapped.
 # The reverse test drops nowraps.flag next to this script to prove the wraps matter.
@@ -609,7 +611,8 @@ if _canary_file.is_file():
     _c = json.loads(_canary_file.read_text(encoding="utf-8"))
     from piia_engram.isolated_store_launch import pin_deny_list
     pin_deny_list(Path(_c["out"]), owner_home=_c["owner_home"], owner_engram_dir=_c["owner_store"])
-print(json.dumps({"home": str(Path.home()), "seen": seen, "problems": pr.reconcile()["problems"],
+print(json.dumps({"home": str(Path.home()), "seen": seen, "io_seen": io_seen,
+                  "problems": pr.reconcile()["problems"],
                   "rows": len(pr._rows(pr._engram(read_only=True)))}))
 '''
 
@@ -652,9 +655,15 @@ def _probe(world, *, canary: bool, wraps: bool = True) -> tuple[dict, list[str],
     report = json.loads(out.stdout.strip().splitlines()[-1])
     owner = os.path.normcase(str(world.owner_home))
     paths = [os.path.normcase(os.path.abspath(p)) for p in report["seen"] if p and not p.isdigit()]
+    io_paths = {os.path.normcase(os.path.abspath(p)) for p in report["io_seen"] if p and not p.isdigit()}
     allowed = tuple(os.path.normcase(os.path.abspath(a)) for a in (
         world.area, sys.prefix, sys.base_prefix, sys.exec_prefix, SRC, os.path.dirname(os.__file__)))
-    return report, [p for p in paths if p.startswith(owner)], sorted({p for p in paths if not p.startswith(allowed)})
+    # POSIX realpath stats structural ancestors. Exempt only those exact metadata
+    # paths, never file I/O, directory listing, or mutation at an ancestor.
+    metadata_ancestors = {os.path.normcase(str(p)) for p in world.area.resolve().parents}
+    outside = {p for p in paths if not p.startswith(allowed)
+               and (p not in metadata_ancestors or p in io_paths)}
+    return report, [p for p in paths if p.startswith(owner)], sorted(outside)
 
 
 def test_isolation_probe_through_the_launcher_touches_nothing_of_the_owner(world):
@@ -662,8 +671,8 @@ def test_isolation_probe_through_the_launcher_touches_nothing_of_the_owner(world
     report, owner_touched, outside = _probe(world, canary=False)
     assert Path(report["home"]) == Path(world.data["fake_home"])
     assert owner_touched == []
-    # Allow-list: every file the child touched is in the caller's own area, the Python
-    # installation or this source tree -- never anywhere else on the machine.
+    # All file I/O stays in the caller area, Python installation, or source tree;
+    # path resolution may inspect metadata of the caller area's exact ancestors.
     assert outside == [], outside[:10]
     assert report["seen"], "the probe must have recorded file activity"
     assert report["problems"] == [] and report["rows"] == 1
@@ -1005,7 +1014,7 @@ def test_family_spellings_fold_into_one_canonical_code(world, monkeypatch, spell
 def test_the_guard_refuses_homedrive_homepath_outside_the_fake_home(world, monkeypatch):
     """R2 S2: the guard side of HOMEDRIVE + HOMEPATH."""
     fake = Path(world.data["fake_home"])
-    monkeypatch.setenv("HOMEDRIVE", fake.drive or "C:")
+    monkeypatch.setenv("HOMEDRIVE", fake.drive)
     monkeypatch.setenv("HOMEPATH", str(fake)[len(fake.drive):])
     assert IsolatedStore.open(world.cfg)  # reverse: inside the fake home it opens
     monkeypatch.setenv("HOMEPATH", "\\Users\\owner")

@@ -5,9 +5,9 @@
   "local_dev_version": "4.22.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 5677,
-    "test_skipped": 16,
-    "test_collected": 5693,
+    "test_passed": 6973,
+    "test_skipped": 27,
+    "test_collected": 7000,
     "mcp_tools_total": 59,
     "mcp_tools_core": 19,
     "mcp_tools_advanced": 40,
@@ -82,7 +82,7 @@
       "Owner-gated export/admin surfaces are public capabilities with governance, not private internals."
     ]
   },
-  "last_verified_date": "2026-10-07",
+  "last_verified_date": "2026-10-08",
   "sources": {
     "package_name": "pyproject.toml [project].name",
     "local_dev_version": "pyproject.toml [project].version  (cross-check: git tag --sort=-creatordate | head -1)",

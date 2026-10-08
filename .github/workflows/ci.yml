@@ -236,10 +236,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build==1.5.0
+        run: pip install build==1.5.0 twine==6.2.0
 
       - name: Build package
         run: python -m build
+
+      - name: Check distribution metadata
+        run: python -m twine check --strict dist/*.whl dist/*.tar.gz
 
       - name: Generate CycloneDX SBOM
         run: |
