@@ -593,6 +593,10 @@ if _WRAPS and sys.platform == "win32":
     nt._getfinalpathname = _final
     ntpath._getfinalpathname = _final
 from pathlib import Path
+if _WRAPS and hasattr(Path, "_accessor"):
+    # Python 3.10's accessor must not bind a Python spy as an instance method.
+    for name in ("stat", "lstat"):
+        setattr(type(Path._accessor), name, staticmethod(getattr(os, name)))
 from piia_engram.isolated_store import IsolatedStore
 pr = IsolatedStore.open()
 adm = {"verdict": "admit", "judge_version": "j", "decision_record_id": "r"}
