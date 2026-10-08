@@ -6,28 +6,23 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
-## [Unreleased]
+## [4.23.0] - 2026-10-09
 
 ### 不兼容变更
 
-- MCP `update_identity` 在所有模式下只创建身份待审提案，信任边界修改也需要审核。OpenClaw USER.md / SOUL.md 导入同样等待本地批准；`--apply --yes` 只导入提案，不批准身份。自动上下文继续只使用已批准值。
-
-### 迁移说明
-
-- 用 `engram review show <id>` 或 `engram review interactive` 比较旧值/新值。文件审核用 `engram review export --out <dir>`，再运行 `engram review apply <marks.json> --operator <name> --yes`；身份提案支持 approve/reject/skip。相关原值被本地修改时返回 `identity_conflict`，请重新提案。Owner 本地 setup 和语言命令仍直接生效；不会迁移或重置既有已批准身份。
+- AI 工具通过 MCP `update_identity` 提议的身份修改在所有模式下都等待本地审核，信任边界修改也如此，已批准值继续使用；迁移时用 `engram review show <id>` 比较旧值和新值，再用 `engram review interactive` 作出决定。
+- OpenClaw `USER.md` 和 `SOUL.md` 导入生成身份待审提案，即使用了 `--apply --yes` 也如此；迁移时先用 `engram review` 审核并批准导入提案，身份修改才会生效。
+- 原生备份导出拒绝写入存储目录内或覆盖受管理文件，链接别名也受到同样限制；迁移时选择存储目录外的目标，或使用默认的同级 `<store-name>_exports` 目录。
 
 ### 修复
 
-- 无需写入的身份批准不会在预览中物化字段，旧偏好回退和后续冲突与实际应用保持一致。
-- Codex setup 只在多行字符串和嵌套数组之外识别表边界；任何无关配置解析值改变时拒绝重写，并给出手动步骤。
-- 身份批准先保存可恢复的批准意图，再修改身份值；重试批准或 `engram doctor --fix` 可完成中断的批准，拒绝不能与已开始的批准矛盾。
-- 批量身份审核预览按实际应用顺序模拟修改，并与应用一致地拒绝不支持的标记。
-- 原生备份保留只有哈希的身份拒绝记录；新指纹包含原值，允许原值改变后的冲突恢复，同时继续拒绝相同原值上的相同修改。
-- 原生备份拒绝写入数据目录内或覆盖受管理文件，包含链接别名；默认备份存到数据目录旁的 `<store-name>_exports` 目录。
-- Codex setup 合并裸键及引号键的独立表或 inline-table Engram 配置，写前备份并验证 TOML。现有 `engram` 环境值优先，保留旧条目独有的键（包括 `ENGRAM_APPROVAL`）；缺少完整 TOML 解析器时不修改配置，给出手动步骤。
-- setup 的 Claude Code 终端重启提示只显示一次。
-- `DO_NOT_TRACK=1` 或 `ENGRAM_TELEMETRY=0` 时，`engram stats` 不发出任何增长指标请求；显式 `--online` 只允许本次联网查询，不开启遥测。
-- Claude Code 握手、写入来源和 doctor 活动检测使用一致客户端标签，并兼容旧 `claude-cli` / `claude_cli` 检查点目录。标签仍由客户端自报，不证明身份或授权。
+- 身份批准中断后可通过重试批准或运行 `engram doctor --fix` 恢复，拒绝操作不能覆盖已开始的批准。
+- 批量身份预览按实际应用顺序处理修改，无需写入的批准保留旧偏好回退行为，并与应用一致地拒绝不支持的标记；相关本地值改变而返回 `identity_conflict` 时，请重新提案。
+- 原生备份保留只有哈希的身份拒绝记录，拒绝指纹允许原值改变后重新提案，同时继续否决相同原值上的相同修改。
+- Codex setup 合并裸键或引号键的表及内联表 Engram 配置，保留已有环境值和旧条目独有的键，并在写入前备份和验证 TOML；缺少完整解析器或无关值将改变时，保持配置不变并提供手动步骤。
+- Setup 的 Claude Code 终端重启提示只显示一次。
+- `DO_NOT_TRACK=1` 或 `ENGRAM_TELEMETRY=0` 时，`engram stats` 不发出增长指标请求；`--online` 只允许本次请求，不开启遥测。
+- Claude Code 握手、写入来源和 doctor 活动检测使用一致的客户端自报标签，并兼容旧 `claude-cli` 和 `claude_cli` 检查点目录，但不会把标签当作身份或授权证明。
 
 ## [4.22.0] - 2026-10-07
 

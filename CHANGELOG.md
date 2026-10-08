@@ -6,28 +6,23 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.23.0] - 2026-10-09
 
 ### Breaking changes
 
-- MCP `update_identity` creates pending identity proposals in every mode, including trust-boundary changes. OpenClaw USER.md / SOUL.md imports also wait for local approval; `--apply --yes` imports proposals, not approved identity. Automatic context continues using approved values only.
-
-### Migration
-
-- Review old/new values with `engram review show <id>` or `engram review interactive`. File-based review uses `engram review export --out <dir>` followed by `engram review apply <marks.json> --operator <name> --yes`; identity proposals accept approve/reject/skip. Relevant local edits cause `identity_conflict`, so request a fresh proposal. Owner-local setup and language commands remain direct; no existing approved identity is migrated or reset.
+- Identity changes proposed by AI tools through MCP `update_identity`, including trust-boundary changes, wait for local review in every mode while approved values stay in use; migrate by comparing values with `engram review show <id>` and deciding with `engram review interactive`.
+- OpenClaw `USER.md` and `SOUL.md` imports create pending identity proposals, including with `--apply --yes`; migrate by reviewing and approving the imported proposals with `engram review` before expecting identity changes to take effect.
+- Native backup exports refuse destinations inside the store or over managed files, including link aliases; migrate by choosing a destination outside the store or using the default sibling `<store-name>_exports` directory.
 
 ### Fixed
 
-- No-op identity approvals leave preview fields unmaterialized, preserving the same legacy preference fallback and subsequent conflicts as application.
-- Codex setup recognizes table boundaries outside multiline strings and nested arrays, and refuses a rewrite with a manual step if any unrelated parsed value changes.
-- Identity approval saves a recoverable intent before changing values; retrying approval or `engram doctor --fix` finishes interrupted approvals, and rejection cannot contradict an approval already in progress.
-- Batch identity previews simulate changes in application order and refuse unsupported marks consistently with application.
-- Native backups preserve hash-only identity rejection records. New fingerprints include the original value, allowing conflict recovery against a changed value while retaining vetoes against identical changes.
-- Native backup exports refuse destinations inside the store or over managed files, including link aliases. Default backups go to a sibling `<store-name>_exports` directory.
-- Codex setup reconciles bare and quoted table or inline-table Engram entries with a pre-write backup and TOML validation. Existing `engram` environment values win conflicts; legacy-only keys, including `ENGRAM_APPROVAL`, are preserved. Without a complete TOML parser, setup leaves the config unchanged and prints a manual step.
+- Identity approval can recover after interruption by retrying approval or running `engram doctor --fix`, and a rejection cannot override an approval already in progress.
+- Batch identity previews follow application order, preserve legacy preference fallbacks for no-op approvals and reject unsupported marks consistently with application; if a relevant local value changes, request a fresh proposal after `identity_conflict`.
+- Native backups preserve hash-only identity rejection records, and rejection fingerprints allow a fresh proposal after the original value changes while retaining vetoes against identical changes.
+- Codex setup combines bare and quoted Engram entries in table or inline-table form, preserves existing environment values and legacy-only keys, and backs up and validates TOML before writing; without a complete parser or when an unrelated value would change, it leaves the configuration unchanged and provides a manual step.
 - Setup prints the Claude Code terminal restart hint once.
-- `engram stats` skips all growth-metric requests when `DO_NOT_TRACK=1` or `ENGRAM_TELEMETRY=0`; `--online` explicitly allows requests for that invocation without enabling telemetry.
-- Claude Code handshake, write provenance and doctor activity use consistent client labels, including older `claude-cli` / `claude_cli` checkpoint directories. Client labels remain self-reported, not proof of identity or authorization.
+- `engram stats` makes no growth-metric requests with `DO_NOT_TRACK=1` or `ENGRAM_TELEMETRY=0`; `--online` permits requests for that invocation without enabling telemetry.
+- Claude Code handshake, write provenance and doctor activity use consistent self-reported client labels, including older `claude-cli` and `claude_cli` checkpoint directories, without treating the labels as proof of identity or authorization.
 
 ## [4.22.0] - 2026-10-07
 
