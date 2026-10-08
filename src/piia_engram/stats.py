@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from datetime import datetime, timezone
 
@@ -43,10 +44,23 @@ def _pypi_recent() -> dict | None:
         return None
 
 
-def run_stats() -> None:
+def _network_allowed(online: bool = False) -> bool:
+    return online or not (os.environ.get("DO_NOT_TRACK", "").strip().lower() not in ("", "0", "false")
+                         or os.environ.get("ENGRAM_TELEMETRY", "").strip().lower() in ("0", "false", "off", "no"))
+
+
+def _offline_notice() -> None:
+    print(t("  已跳过在线增长指标（隐私设置）。本次要联网请显式加 --online。",
+            "  Online growth metrics skipped by privacy settings. Use --online to fetch for this invocation."))
+
+
+def run_stats(*, online: bool = False) -> None:
     """打印项目增长数据。"""
     print(f"\n  {t('Engram 数据概览', 'Engram Stats')} — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("  " + "=" * 44)
+    if not _network_allowed(online):
+        _offline_notice()
+        return
 
     # --- GitHub 基础 ---
     repo = _gh("")
@@ -104,10 +118,13 @@ def run_stats() -> None:
     print("\n  " + "=" * 44 + "\n")
 
 
-def log_stats() -> None:
+def log_stats(*, online: bool = False) -> None:
     """Append a JSON snapshot of current stats to ~/.engram/stats.log."""
-    import os
     from pathlib import Path
+
+    if not _network_allowed(online):
+        _offline_notice()
+        return
 
     data_dir = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -149,12 +166,18 @@ def log_stats() -> None:
            f"  Stats snapshot saved to {log_path}"))
 
 
-def main() -> None:
+def main(args: list[str] | None = None) -> None:
     import sys
-    if "--log" in sys.argv:
-        log_stats()
+    args = list(sys.argv[1:] if args is None else args)
+    if "--help" in args or "-h" in args:
+        print("Usage: engram stats [--log] [--online]\n"
+              "DO_NOT_TRACK=1 / ENGRAM_TELEMETRY=0 skips GitHub and PyPI requests.\n"
+              "--online explicitly fetches growth metrics for this invocation; it does not enable telemetry.")
+        return
+    if "--log" in args:
+        log_stats(online="--online" in args)
     else:
-        run_stats()
+        run_stats(online="--online" in args)
 
 
 if __name__ == "__main__":

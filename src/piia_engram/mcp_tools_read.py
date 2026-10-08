@@ -140,8 +140,9 @@ async def get_user_context(
             "2. 问偏好的沟通语言 → update_identity(field='profile', updates_json='{\"language\":\"...\"}')\n"
             "3. 问技术栈 → update_identity(field='profile', updates_json='{\"tech_stack\":\"...\"}')\n"
             "4. 问有没有 AI 总是忘记的规则 → 调用 add_lesson(...)\n"
-            "5. 完成后调用 refresh_quick_context() 持久化\n\n"
-            "这只需要 30 秒，之后所有 AI 工具都能从第一条消息开始了解这位用户。\n"
+            "5. 身份修改都是待审提案：请用户在本地运行 `engram review interactive` 比较旧值/新值并批准。\n"
+            "   Identity changes are pending proposals: ask the Owner to compare old/new values and approve locally.\n\n"
+            "批准后，所有 AI 工具才能使用新身份；待审身份不进入自动上下文。\n"
             "或者建议用户在终端运行 `piia-engram` 完成引导式设置。\n"
             + IMPORT_HINT
         )

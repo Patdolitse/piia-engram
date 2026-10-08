@@ -1616,6 +1616,10 @@ class KnowledgeOpsMixin:
 
     def _find_item_by_id(self, item_id: str) -> tuple[str | None, dict | None]:
         """Find a lesson, decision, playbook, or tool by id without updating access metadata."""
+        if item_id.startswith("identity-"):
+            for row in self.get_identity_proposals(include_decided=True):
+                if row.get("id") == item_id:
+                    return "identity", row
         lessons, decisions, playbooks = self._read_link_collections()
         item_type, item = self._find_item_in_collections(item_id, lessons, decisions, playbooks)
         if item_type is not None:

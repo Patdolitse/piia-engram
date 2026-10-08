@@ -7,6 +7,7 @@ from pathlib import Path
 
 from piia_engram import Engram, hermes_handoff_payload
 from piia_engram.compat import export_to_openclaw, import_from_openclaw
+from piia_engram.review_cli import apply_marks
 
 
 def test_hermes_handoff_payload_schema_and_counts(tmp_path: Path) -> None:
@@ -104,7 +105,16 @@ def test_hermes_handoff_payload_after_openclaw_roundtrip(tmp_path: Path) -> None
 
     assert result["status"] == "success"
     assert payload["schema"] == "hermes_handoff_v1"
-    assert payload["identity_summary"]["role"] == "local identity owner"
+    # Imported identity is excluded from handoffs until local approval too.
+    assert payload["identity_summary"].get("role") != "local identity owner"
+    proposals = target.get_identity_proposals()
+    assert any(row["field"] == "profile" for row in proposals)
+    reviewed = apply_marks(target, [
+        {"id": row["id"], "mark": "approve", "expected_version": row["version"]}
+        for row in proposals
+    ], {"operator": "owner", "isatty": True})
+    assert all(row["status"] == "applied" for row in reviewed["items"])
+    assert hermes_handoff_payload(target)["identity_summary"]["role"] == "local identity owner"
     # Imported lessons wait in the review queue; the handoff carries only
     # approved (verified) knowledge, so it counts the lesson after approval.
     assert payload["lessons_count"] == 0

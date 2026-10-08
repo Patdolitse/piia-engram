@@ -182,6 +182,7 @@ CLIENTS = frozenset({"claude_code", "claude_desktop", "codex", "cursor", "windsu
 # Order matters: "cursor-vscode" must map to cursor before the vscode rule.
 _CLIENT_RULES = (
     ("claude-code", "claude_code"), ("claude code", "claude_code"),
+    ("claude-cli", "claude_code"),
     ("claude-ai", "claude_desktop"), ("claude-desktop", "claude_desktop"),
     ("claude desktop", "claude_desktop"), ("codex", "codex"), ("cursor", "cursor"),
     ("windsurf", "windsurf"), ("visual studio code", "vscode"), ("vscode", "vscode"),
@@ -253,7 +254,7 @@ def _has_needle(raw: str, needle: str) -> bool:
 
 def normalize_client(name: Any) -> str:
     """Map an MCP clientInfo.name to a closed label; the raw string is never sent."""
-    raw = str(name or "").strip().lower()
+    raw = str(name or "").strip().lower().replace("_", "-")
     if not raw or raw == "unknown":
         return "unknown"
     if raw == "cli":

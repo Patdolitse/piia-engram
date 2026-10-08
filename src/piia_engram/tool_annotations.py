@@ -31,7 +31,7 @@ store's files.
 * ``destructiveHint`` errs towards warning once too often rather than missing a
   case. It is True where the tool's normal function overwrites, downgrades or
   retires records the caller names, or edits one in place:
-  ``update_knowledge`` and ``update_identity`` change fields where they stand
+  ``update_knowledge`` changes fields where they stand
   (``update_knowledge`` can also set a status that retires the item);
   ``register_tool`` replaces the fields of a same-named entry and keeps no
   history; ``save_project_snapshot``, ``start_project`` and ``wrap_up_session``
@@ -143,7 +143,7 @@ TOOL_ANNOTATIONS: dict[str, ToolHints] = {
     "review_staging": _STAMP,  # list / dry-run preview; review_item refreshes last_reviewed; deciding is local only
     "merge_knowledge": _REMOVES,  # archives the secondary item
     "manage_relation": _REMOVES_IDEMPOTENT,  # unlink removes an edge
-    "update_identity": _REMOVES_IDEMPOTENT,  # replaces field values in place
+    "update_identity": _ADD,  # pending identity proposals, never replaces approved fields
     "save_project_snapshot": _REMOVES,  # overwrites title, tech stack, known issues, notes; only current_state keeps up to 5 earlier versions
     "start_project": _REMOVES_IDEMPOTENT,  # may overwrite an existing title with the description
     "user_portrait": _REMOVES,  # save prunes older portrait snapshots

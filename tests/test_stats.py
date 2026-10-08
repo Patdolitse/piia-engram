@@ -2,9 +2,17 @@
 
 import json
 import subprocess
+import pytest
 from unittest.mock import MagicMock, patch
 
 from piia_engram.stats import _gh, _pypi_recent, log_stats, main, run_stats
+
+
+@pytest.fixture(autouse=True)
+def mocked_online_environment(monkeypatch):
+    """These legacy API tests mock every transport and test the online path."""
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
 
 
 # ── _gh tests ────────────────────────────────────────────────────────

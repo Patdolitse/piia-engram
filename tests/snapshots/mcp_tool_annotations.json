@@ -331,8 +331,8 @@
   },
   "update_identity": {
     "readOnlyHint": false,
-    "destructiveHint": true,
-    "idempotentHint": true,
+    "destructiveHint": false,
+    "idempotentHint": false,
     "openWorldHint": false
   },
   "update_knowledge": {

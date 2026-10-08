@@ -83,7 +83,7 @@ def test_classes_and_hints_agree():
 def test_destructive_tools_are_exactly_the_ones_that_overwrite_downgrade_or_retire():
     assert {n for n, h in TOOL_ANNOTATIONS.items() if h.destructive} == {
         "manage_caller_trust", "archive_knowledge",
-        "merge_knowledge", "manage_relation", "update_identity", "user_portrait",
+        "merge_knowledge", "manage_relation", "user_portrait",
         "manage_playbook", "update_knowledge", "export_engram",
         "register_tool", "save_project_snapshot", "start_project", "wrap_up_session",
         "check_anchors",

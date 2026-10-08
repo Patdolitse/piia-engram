@@ -4356,7 +4356,7 @@ class TestMainCLIRouting:
     def test_main_stats_log(self, tmp_path, monkeypatch, capsys):
         """main() 处理 'stats --log' 子命令。"""
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-        monkeypatch.setattr("sys.argv", ["engram", "stats", "--log"])
+        monkeypatch.setattr("sys.argv", ["engram", "stats", "--log", "--online"])
         from unittest.mock import patch
         with (
             patch("piia_engram.stats._gh", return_value=None),

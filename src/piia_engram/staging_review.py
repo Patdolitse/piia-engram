@@ -104,19 +104,27 @@ def batch_review_staging(
 
         item_type, item = eng._find_item_by_id(item_id)
         expected_version = _expected_version(row) if owner_cli else None
-        if action == "reject" and _already_rejected(eng, item_id, item):
+        if action == "reject" and item_type != "identity" and _already_rejected(eng, item_id, item):
             # A reject that already landed (tombstone written, row gone or not
             # active): nothing left to do, so a re-run reports it as such.
             items.append(_item(idx, item_id, action, "already_applied", item_type=item_type))
             counts["noop"] += 1
             continue
-        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+        if item is None or item_type not in {"lesson", "decision", "playbook", "identity"}:
             items.append(_item(idx, item_id, action, "not_found"))
             counts["failed"] += 1
             continue
         if expected_version is not None and _row_version(item) != expected_version:
             items.append(_item(idx, item_id, action, "version_conflict", item_type=item_type))
             counts["failed"] += 1
+            continue
+        if item_type == "identity":
+            result = eng._review_identity_proposal(item_id, action, expected_version=expected_version,
+                                                 dry_run=True)
+            state = result["status"]
+            items.append(_item(idx, item_id, action, state, item_type=item_type))
+            counts["planned" if state == "planned" else "noop" if state == "already_applied" else "failed"] += 1
+            guards[idx] = expected_version
             continue
         unfinished = (
             action == "approve" and item_type == "playbook"
@@ -223,7 +231,15 @@ def batch_review_staging(
                 continue
         # The reviewed version travels into the operation and is compared again
         # inside the lock that commits it (another process may write meanwhile).
-        if it["action"] == "approve":
+        if it.get("type") == "identity":
+            result = eng.review_identity_proposal(it["id"], it["action"], expected_version=expected_version,
+                                                 via=owner_reject)
+            ok = result.get("status") in {"applied", "already_applied"}
+            if not ok:
+                it["status"] = result.get("status", "failed")
+                counts["failed"] += 1
+                continue
+        elif it["action"] == "approve":
             if it.get("type") == "playbook":
                 result = eng.approve_playbook(it["id"], expected_version=expected_version)
             else:
@@ -350,6 +366,7 @@ def _list_pending(
         safe_offset = 0
 
     candidates: list[dict[str, Any]] = []
+    candidates.extend(_pending_item("identity", row) for row in eng.get_identity_proposals())
     for item_type, rows in (
         ("lesson", eng.get_lessons(limit=None, _update_access=False)),
         ("decision", eng.get_decisions(limit=None, _update_access=False)),

@@ -6,6 +6,23 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 不兼容变更
+
+- MCP `update_identity` 在所有模式下只创建身份待审提案，信任边界修改也需要审核。OpenClaw USER.md / SOUL.md 导入同样等待本地批准；`--apply --yes` 只导入提案，不批准身份。自动上下文继续只使用已批准值。
+
+### 迁移说明
+
+- 用 `engram review show <id>` 或 `engram review interactive` 比较旧值/新值。文件审核用 `engram review export --out <dir>`，再运行 `engram review apply <marks.json> --operator <name> --yes`；身份提案支持 approve/reject/skip。相关原值被本地修改时返回 `identity_conflict`，请重新提案。Owner 本地 setup 和语言命令仍直接生效；不会迁移或重置既有已批准身份。
+
+### 修复
+
+- Codex setup 支持迁移旧名称的 inline-table MCP 配置，写前备份，保留用户环境变量和其它服务器。
+- setup 的 Claude Code 终端重启提示只显示一次。
+- `DO_NOT_TRACK=1` 或 `ENGRAM_TELEMETRY=0` 时，`engram stats` 不发出任何增长指标请求；显式 `--online` 只允许本次联网查询，不开启遥测。
+- Claude Code 握手、写入来源和 doctor 活动检测使用一致客户端标签，并兼容旧 `claude-cli` / `claude_cli` 检查点目录。标签仍由客户端自报，不证明身份或授权。
+
 ## [4.22.0] - 2026-10-07
 
 ### 破坏性变更

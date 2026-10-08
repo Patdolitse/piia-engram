@@ -1,8 +1,8 @@
 """engram import --format openclaw: the local way to import OpenClaw files.
 
 Preview by default (metadata only); --apply --yes writes: MEMORY.md lessons go
-to the review queue with a receipt and an audit line, USER.md / SOUL.md merge
-into the profile, preferences and quality standards as before. The
+to the review queue with a receipt and an audit line, USER.md / SOUL.md create
+pending profile, preference and quality-standard proposals. The
 ENGRAM_RECONCILE=0 switch stops it before any file is read. The MCP refusal
 names this command.
 """
@@ -63,7 +63,8 @@ def test_openclaw_apply_queues_lessons_with_a_receipt(eng, tmp_path, capsys):
     assert code == 0 and out["status"] == "success" and out["receipt"]
     lessons = eng.get_lessons(limit=None, _update_access=False)
     assert [(l["summary"], l["tier"]) for l in lessons] == [("pin the lockfile before a release build", "staging")]
-    assert eng.get_profile().get("role") == "release engineer"  # identity: merged as before
+    assert eng.get_profile().get("role") != "release engineer"
+    assert eng.get_identity_proposals()[0]["updates"]["role"] == "release engineer"
     audit = [json.loads(line) for line in (eng.root / "audit.log").read_text(encoding="utf-8").splitlines()]
     assert any(e.get("resource") == "knowledge/import_openclaw" for e in audit)
 

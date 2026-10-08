@@ -75,6 +75,8 @@ Engram 的价值出现在你*第二次*跟 AI 说话时——它已经知道你�
    *"记住我喜欢简洁的回答，并附上明确的验证命令。"*
    AI 会调一个写入工具（`memory_store`、`add_lesson`、`add_decision`、
    `add_playbook` 或 `update_identity`）。
+   `update_identity` 的身份修改在所有模式下均等待本地批准：运行
+   `engram review interactive`，比较旧值/新值后批准。自动上下文不包含待审提案。
 2. 开一个**全新**对话——同一个工具，或同一台机器上另一个已连接的工具。
 3. 问一个会用到那条偏好的问题。新对话会直接从你说过的内容起步，而不是让你
    重新解释。
@@ -131,6 +133,15 @@ Engram 把长期记忆当作**归你所有的资产**，而不是某个 agent �
 内容里自己钉死 `tier` 的调用方）都会先送 staging 等你批准。
 
 staged 条目始终在你掌控之中：
+
+- **身份提案在所有模式下都需审核。** MCP `update_identity` 不直接修改身份资料、偏好、
+  工作风格、质量标准或信任边界。用 `engram review` 列出，`engram review show <id>`
+  查看旧值/新值，或 `engram review interactive` 批准/拒绝。文件审核用
+  `engram review export --out <dir>`，再运行
+  `engram review apply <marks.json> --operator <name> --yes`；身份只支持 approve/reject/skip。
+  拒绝不改已批准身份，拒绝记录不保存正文。相关原值被本地修改后，批准会返回
+  `identity_conflict`；请拒绝旧提案，再基于当前值重新提案。本地 setup 和
+  `engram dock-set-lang` 等 Owner 命令仍直接生效。
 
 - `review_staging(action="list")`——查看待审内容（冷启动 `get_resume_brief` 也会带出
   待审数量，含高风险项）。
@@ -263,7 +274,8 @@ AI 拿到什么，各个入口规则一致：
 只能预览导入（`dry_run=true`）；要求真正导入时返回 `local_only`，不写入任何内容。OpenClaw
 文件用 `engram import --format openclaw --memory MEMORY.md [--soul SOUL.md] [--user USER.md]`
 导入（默认只预览；`--apply --yes` 才写入）：经验进入待审区并留下回执，USER.md / SOUL.md
-合并进身份资料、偏好和质量标准。
+生成身份资料、偏好和质量标准的待审提案。先在本地比较旧值/新值，再批准；
+`--apply --yes` 只导入提案，不代表批准身份修改。
 
 **什么不该存。** Engram 是个人 AI 上下文，不是密钥管理器。**不要**存密码、
 API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经验需要敏感上下文，
