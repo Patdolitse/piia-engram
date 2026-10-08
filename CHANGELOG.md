@@ -18,6 +18,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
+- No-op identity approvals leave preview fields unmaterialized, preserving the same legacy preference fallback and subsequent conflicts as application.
 - Codex setup recognizes table boundaries outside multiline strings and nested arrays, and refuses a rewrite with a manual step if any unrelated parsed value changes.
 - Identity approval saves a recoverable intent before changing values; retrying approval or `engram doctor --fix` finishes interrupted approvals, and rejection cannot contradict an approval already in progress.
 - Batch identity previews simulate changes in application order and refuse unsupported marks consistently with application.
