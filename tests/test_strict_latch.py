@@ -75,7 +75,8 @@ def test_latched_store_stays_strict_with_the_variable_unset(root, monkeypatch):
     m._engram = Engram(root)
 
     assert strict_mode.approval_strict(root) is True
-    assert "ENGRAM_APPROVAL=strict" in _run(m.update_identity(field="profile", updates_json='{"role": "x"}'))
+    assert '"status": "pending"' in _run(m.update_identity(field="profile", updates_json='{"role": "x"}'))
+    assert m._engram.get_profile().get("role") != "x"
     assert "wrap_up_session" not in m.server_instructions()
     lesson = m._engram.add_lesson("latched proposal", domain="t")
     assert lesson["tier"] == "staging"

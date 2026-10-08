@@ -161,6 +161,10 @@ def scope_label(eng, kind: str, row: dict) -> str:
 
 def _pending(eng, lookup: dict[str, dict[str, dict]] | None = None) -> list[tuple[str, dict]]:
     rows: list[tuple[str, dict]] = []
+    identities = eng.get_identity_proposals()
+    rows.extend(("identity", row) for row in identities)
+    if lookup is not None:
+        lookup["identity"] = {str(row["id"]): row for row in identities}
     for kind, items in (
         ("lesson", active_rows(eng, "lesson")),
         ("decision", active_rows(eng, "decision")),
@@ -175,6 +179,13 @@ def _pending(eng, lookup: dict[str, dict[str, dict]] | None = None) -> list[tupl
 
 def _card(n: int, kind: str, row: dict, eng, lookup: dict[str, dict] | None = None) -> list[str]:
     root = eng.root
+    if kind == "identity":
+        return [f"### {n}. identity `{row['id']}`", "", f"- field: {row['field']}",
+                f"- version: {_row_version(row)}", "- scope: global", "- mark: approve | reject | skip",
+                "- old: " + json.dumps(row.get("before", {}), ensure_ascii=False, sort_keys=True),
+                "- new: " + json.dumps(row.get("after", {}), ensure_ascii=False, sort_keys=True),
+                "- previously absent: " + ", ".join(row.get("missing_before", [])),
+                _write_provenance.client_card_line(row), ""]
     flags = []
     if row.get("reproposal_of_rejected"):
         flags.append(f"re-proposal of rejected {row['reproposal_of_rejected']}")
@@ -675,6 +686,9 @@ def _review_one(eng, mark: dict, counts: dict, *, dry_run: bool, via: str, sim: 
     sim_args: dict[str, Any] = {"final_types": final_types or {}}
     recovering = False
     kind, current = eng._find_item_by_id(mark["id"])
+    if kind == "identity" and mark["mark"] == "supersede":
+        _add_counts(counts, {"requested": 1, "approve": 1, "failed": 1, "supersede_failed": 1})
+        return _item_view({"id": mark["id"], "status": "invalid_action"}, mark)
     if kind == "playbook" and isinstance(current, dict) and mark["mark"] in ("approve", "supersede"):
         problem = eng._playbook_replacement_problem(current, mark.get("target", ""))
         if problem:

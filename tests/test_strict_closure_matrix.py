@@ -31,6 +31,7 @@ from piia_engram.staging_review import batch_review_staging
 # Mutating MCP tools an agent may still call under strict. Every other tool in a
 # mutating governance class is refused (default-refuse).
 STRICT_ALLOWLIST: dict[str, str] = {
+    "update_identity": "pending identity proposal",
     # proposals: knowledge rows they create land in staging
     "add_lesson": "proposal",
     "add_decision": "proposal",
@@ -221,7 +222,7 @@ def test_strict_allowlist_names_only_real_mutating_tools():
 def test_default_refuse_covers_the_owner_verbs():
     refused = set(_refused_tools())
     owner_verbs = {
-        "update_identity", "update_knowledge",
+        "update_knowledge",
         "confirm_knowledge", "merge_knowledge", "archive_knowledge", "manage_relation",
         "import_engram", "onboard_accept", "manage_caller_trust", "save_project_snapshot",
     }

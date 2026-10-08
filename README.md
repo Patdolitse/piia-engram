@@ -590,7 +590,7 @@ You can also expose composable capability modes such as knowledge management, go
 | `get_recall` | Return one structured identity + recent activity + relevant knowledge recall payload |
 | `get_knowledge_history` | Read one item's revision history (superseded snapshots; exact by-version lookup) |
 | `get_identity_card` | Owner-gated export: write and return a Markdown identity card for non-MCP tools |
-| `update_identity` | Update profile, preferences, or quality standards |
+| `update_identity` | Propose identity, preference, or quality-standard changes for local review (all modes) |
 | `get_project_context` | Read a saved project snapshot |
 | `save_project_snapshot` | Persist project state for future sessions |
 | `get_recent_context` | Recover lost session context after restart |
@@ -691,7 +691,7 @@ Users can disable or re-enable playbook auto-extraction at any time:
 - **Disable:** Tell your AI "关闭 playbook" / "stop playbook" / "disable playbook auto-extraction"
 - **Enable:** Tell your AI "开启 playbook" / "start playbook" / "enable playbook auto-extraction"
 
-The AI calls `update_identity(field="preferences", ...)` to toggle `playbook_auto_extract`. Default is **enabled**.
+The AI can propose a `playbook_auto_extract` change with `update_identity(field="preferences", ...)`; it takes effect only after you approve it locally with `engram review`. Default is **enabled**.
 
 ### Manual Playbook Creation
 

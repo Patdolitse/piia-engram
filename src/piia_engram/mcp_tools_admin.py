@@ -171,13 +171,15 @@ async def manage_caller_trust(
 
 @S.mcp.tool()
 async def update_identity(field: str, updates_json: str, source_tool: str = "") -> str:
-    """更新一个身份字段。 / Update one identity field.
+    """提议修改一个身份字段，等待本地审核。 / Propose an identity change for local review.
 
     用途：需要修改 profile、preferences、trust_boundaries、work_style 或 quality_standards 时调用。
     Purpose: Call when changing profile, preferences, trust_boundaries, work_style, or quality_standards.
 
-    注意：updates_json 必须只包含该字段允许的键；敏感字段边界应通过 trust_boundaries 管理。
-    Note: updates_json should contain only keys valid for that field; manage sensitive-field boundaries through trust_boundaries.
+    所有模式只创建 pending 身份提案；Owner 用 engram review 查看旧值/新值并批准或拒绝。
+    All modes create pending identity proposals only; the Owner compares old/new values in engram review.
+    批准前自动上下文继续使用已批准身份。trust_boundaries 的变更也需要审核。
+    Automatic context uses approved identity until approval, including trust_boundaries changes.
 
     Args:
         field: 字段名：profile、preferences、trust_boundaries、work_style 或 quality_standards。 / Field name: profile, preferences, trust_boundaries, work_style, or quality_standards.
@@ -202,21 +204,12 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
         updates = json.loads(updates_json)
     except json.JSONDecodeError:
         return S._json({"error": "updates_json must be valid JSON"})
-    dispatch = {
-        "profile": S._get_engram().update_profile,
-        "preferences": S._get_engram().update_preferences,
-        "trust_boundaries": S._get_engram().update_trust_boundaries,
-        "work_style": S._get_engram().update_work_style,
-        "quality_standards": S._get_engram().update_quality_standards,
-    }
+    if not isinstance(updates, dict):
+        return S._json({"error": "updates_json must be a JSON object"})
     try:
-        fn = dispatch[field]
-        # Pass source_tool for provenance tracking (profile supports it)
-        if field == "profile" and source_tool:
-            S._locked_engram_call(fn, updates, source_tool=source_tool)
-        else:
-            S._locked_engram_call(fn, updates)
-        S._track("update_identity", success=True)
+        result = S._locked_engram_call(S._get_engram().propose_identity, field, updates,
+                                      source_tool=source_tool)
+        S._track("update_identity", success=result.get("status") == "pending")
     except Exception as exc:
         S._track("update_identity", success=False)
         return S._json({
@@ -224,7 +217,11 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
             "field": field,
             "error": f"update_identity failed: {S._safe_err(exc)}",
         })
-    return S._json({"success": True, "field": field, "updated_keys": list(updates.keys())})
+    return S._json({"success": result.get("status") == "pending", "field": field,
+                    "status": result.get("status", "error"), "id": result.get("id", ""),
+                    "updated_keys": list(updates) if not result.get("error") else [],
+                    "changed": False, "hint": "run `engram review` locally",
+                    **({"error": result["error"]} if result.get("error") else {})})
 
 
 @S.mcp.tool()

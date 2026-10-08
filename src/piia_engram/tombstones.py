@@ -86,6 +86,9 @@ def _step_actions(row: dict) -> list[str]:
 def claim_fields(kind: str, row: dict) -> tuple[str, ...]:
     """The fields a claim is made of: a lesson summary; a decision's question (else
     its title) and choice; a playbook's title and step actions."""
+    if kind == "identity":
+        return (str(row.get("field") or ""), json.dumps(row.get("updates", {}), sort_keys=True,
+                                                       ensure_ascii=False, separators=(",", ":")))
     if kind == "decision":
         return (str(row.get("question") or row.get("title") or ""), str(row.get("choice") or ""))
     if kind == "playbook":
@@ -132,6 +135,8 @@ def _hashes_v2(text: str) -> tuple[str, str]:
 
 def claim_hashes(kind: str, row: dict) -> tuple[str, str]:
     """(h1, h2) of the claim under the current HASH_VERSION (cached by content)."""
+    if kind == "identity":
+        return _hash_pair(_FIELD_SEP.join(claim_fields(kind, row)))
     return _hashes_v3(claim_fields(kind, row))
 
 
@@ -146,6 +151,8 @@ def claim_hashes_for_version(kind: str, row: dict, version: Any) -> tuple[str, s
     if version == HASH_VERSION:
         return claim_hashes(kind, row)
     if version == 2:
+        if kind == "identity":
+            return None
         if kind == "decision" and not str(row.get("question") or "").strip():
             return None
         return _hashes_v2(claim_text(kind, row))

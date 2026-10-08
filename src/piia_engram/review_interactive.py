@@ -157,6 +157,11 @@ def _is_terminal(stream: Any) -> bool:
 
 
 def _claim_fields(kind: str, row: dict) -> list[tuple[str, Any]]:
+    if kind == "identity":
+        return [("field", row.get("field")),
+                ("old", json.dumps(row.get("before", {}), ensure_ascii=False, sort_keys=True)),
+                ("new", json.dumps(row.get("after", {}), ensure_ascii=False, sort_keys=True)),
+                ("previously absent", ", ".join(row.get("missing_before", [])))]
     if kind == "decision":
         return [("question", row.get("question") or row.get("title")), ("choice", row.get("choice")),
                 ("reasoning", row.get("reasoning"))]
@@ -379,6 +384,9 @@ def _decide(term: _Terminal, eng, n: int, total: int, kind: str, row: dict, *, l
             _record(session, decision)
             return decision
         if key == "s":
+            if kind == "identity":
+                term.say(t("身份提案只能批准、拒绝或跳过。", "Identity proposals allow approve, reject or skip only."))
+                continue
             target = _ask_target(term, eng, item_id, taken, session)
             if target:
                 taken.add(target)

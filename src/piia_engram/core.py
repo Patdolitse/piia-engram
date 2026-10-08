@@ -94,6 +94,7 @@ from .knowledge_ops import KnowledgeOpsMixin
 from .playbooks import PlaybookMixin
 from .tools_registry import ToolRegistryMixin
 from .encoding_repair import normalize_entry_text
+from .identity_review import IdentityReviewMixin
 # Compat helpers re-exported for backward compatibility (tests import these
 # from piia_engram.core directly).
 from .compat import (  # noqa: F401
@@ -153,6 +154,7 @@ class BackupFailedError(RuntimeError):
 
 
 class Engram(
+    IdentityReviewMixin,
     ImportExportMixin,
     RetrievalMixin,
     ContextMixin,
@@ -872,6 +874,8 @@ class Engram(
         Field-level provenance is tracked in ``_provenance`` so callers
         can determine which tool last touched each field.
         """
+        if _review_boundary.mcp_origin():
+            return self.propose_identity("profile", updates, source_tool=source_tool)
         updates, rejected = self._filter_allowed(updates, _ALLOWED_PROFILE_FIELDS)
         if rejected:
             self._audit.log("warn", "identity/profile",
@@ -920,6 +924,8 @@ class Engram(
         return _read_json(self._identity_dir / "work_style.json")
 
     def update_work_style(self, updates: dict) -> None:
+        if _review_boundary.mcp_origin():
+            return self.propose_identity("work_style", updates)
         updates = self._repair_incoming_text(dict(updates))
         style = self.get_work_style()
         style.update(updates)
@@ -944,6 +950,8 @@ class Engram(
         return {}
 
     def update_preferences(self, updates: dict) -> None:
+        if _review_boundary.mcp_origin():
+            return self.propose_identity("preferences", updates)
         updates, rejected = self._filter_allowed(updates, _ALLOWED_PREFERENCES_FIELDS)
         if rejected:
             self._audit.log("warn", "identity/preferences",
@@ -978,6 +986,8 @@ class Engram(
         return view
 
     def update_trust_boundaries(self, updates: dict) -> None:
+        if _review_boundary.mcp_origin():
+            return self.propose_identity("trust_boundaries", updates)
         updates, rejected = self._filter_allowed(updates, _ALLOWED_TRUST_FIELDS)
         if rejected:
             self._audit.log("warn", "identity/trust_boundaries",
@@ -999,6 +1009,8 @@ class Engram(
         return _read_json(self._identity_dir / "quality_standards.json")
 
     def update_quality_standards(self, updates: dict) -> None:
+        if _review_boundary.mcp_origin():
+            return self.propose_identity("quality_standards", updates)
         updates, rejected = self._filter_allowed(updates, _ALLOWED_QUALITY_FIELDS)
         if rejected:
             self._audit.log("warn", "identity/quality_standards",
@@ -3479,6 +3491,7 @@ class Engram(
 # ---------------------------------------------------------------------------
 
 STORE_WRITE_METHODS = frozenset({
+    "propose_identity", "review_identity_proposal",
     "accept_onboard_candidate", "accept_onboard_candidates", "add_decision", "add_lesson",
     "add_playbook", "add_relation", "append_daily_log", "apply_legacy_playbook_scope_suggestions",
     "apply_review", "apply_session_digest_backfill", "approve_playbook", "archive_decision",
@@ -3504,6 +3517,7 @@ STORE_WRITE_METHODS = frozenset({
 })
 
 READ_ONLY_SAFE_METHODS = frozenset({
+    "get_identity_proposals",
     "available_builtin_playbooks", "build_agent_context_pack", "build_project_resume_pack",
     "build_user_portrait", "build_user_portrait_rich", "builtin_playbook_template",
     "capacity_status", "classify_legacy_playbooks", "classify_rarity", "collect_memory_candidates",

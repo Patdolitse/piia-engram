@@ -158,7 +158,8 @@ def test_latched_store_is_strict_even_when_engram_dir_points_elsewhere(env, monk
 
     out = _run(m.update_identity(field="profile", updates_json='{"role": "x"}'))
 
-    assert "ENGRAM_APPROVAL=strict" in out
+    assert '"status": "pending"' in out
+    assert m._engram.get_profile().get("role") != "x"
     assert "wrap_up_session" not in m.server_instructions()
     actions = json.dumps([{"id": "x", "action": "approve"}])
     assert "ENGRAM_APPROVAL=strict" in _run(

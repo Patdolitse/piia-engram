@@ -549,7 +549,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_recall` | 一次返回结构化身份 + 最近活动 + 相关知识的 Recall 载荷 |
 | `get_knowledge_history` | 查看单个条目的修订历史（被取代的快照；支持按精确版本号取） |
 | `get_identity_card` | owner-gated 导出：写出并返回 Markdown 身份卡（给无 MCP 工具用） |
-| `update_identity` | 更新身份画像、偏好或质量标准 |
+| `update_identity` | 提议修改身份、偏好或质量标准，所有模式均等待本地审核 |
 | `get_project_context` | 读取项目快照 |
 | `save_project_snapshot` | 保存项目状态 |
 | `get_recent_context` | 重启后找回丢失的会话上下文 |
@@ -654,7 +654,7 @@ Playbook 自动提取不是全自动的。piia-engram 检测流程并生成粗�
 - **关闭：** 对 AI 说"关闭 playbook"/"不要自动记录流程"/"停止 playbook"
 - **开启：** 对 AI 说"开启 playbook"/"恢复自动记录"/"启动 playbook"
 
-AI 会调用 `update_identity(field="preferences", ...)` 切换 `playbook_auto_extract` 开关。默认**开启**。
+AI 可用 `update_identity(field="preferences", ...)` 提议切换 `playbook_auto_extract`；只有你在本地 `engram review` 批准后才生效。默认**开启**。
 
 ### 手动创建 Playbook
 

@@ -6,6 +6,23 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Breaking changes
+
+- MCP `update_identity` creates pending identity proposals in every mode, including trust-boundary changes. OpenClaw USER.md / SOUL.md imports also wait for local approval; `--apply --yes` imports proposals, not approved identity. Automatic context continues using approved values only.
+
+### Migration
+
+- Review old/new values with `engram review show <id>` or `engram review interactive`. File-based review uses `engram review export --out <dir>` followed by `engram review apply <marks.json> --operator <name> --yes`; identity proposals accept approve/reject/skip. Relevant local edits cause `identity_conflict`, so request a fresh proposal. Owner-local setup and language commands remain direct; no existing approved identity is migrated or reset.
+
+### Fixed
+
+- Codex setup migrates legacy inline-table MCP entries with a pre-write backup, preserving user environment settings and other servers.
+- Setup prints the Claude Code terminal restart hint once.
+- `engram stats` skips all growth-metric requests when `DO_NOT_TRACK=1` or `ENGRAM_TELEMETRY=0`; `--online` explicitly allows requests for that invocation without enabling telemetry.
+- Claude Code handshake, write provenance and doctor activity use consistent client labels, including older `claude-cli` / `claude_cli` checkpoint directories. Client labels remain self-reported, not proof of identity or authorization.
+
 ## [4.22.0] - 2026-10-07
 
 ### Breaking changes

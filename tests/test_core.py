@@ -2887,6 +2887,9 @@ def test_import_from_openclaw_user_md(tmp_path: Path):
     )
     result = import_from_openclaw(engram, user_path=str(user_file))
     assert result["status"] == "success"
+    assert engram.get_profile().get("role") != "architect"
+    row = engram.get_identity_proposals()[0]
+    assert engram.review_identity_proposal(row["id"], "approve")["status"] == "applied"
     p = engram.get_profile()
     assert p["role"] == "architect"
     assert p["language"] == "English"
@@ -3165,6 +3168,9 @@ def test_export_import_roundtrip(tmp_path: Path):
         memory_path=str(out_dir / "MEMORY.md"),
         user_path=str(out_dir / "USER.md"),
     )
+    assert engram2.get_profile().get("role") != "data_engineer"
+    for row in engram2.get_identity_proposals():
+        assert engram2.review_identity_proposal(row["id"], "approve")["status"] == "applied"
     p2 = engram2.get_profile()
     assert p2["role"] == "data_engineer"
     assert p2["language"] == "中文"

@@ -2,12 +2,13 @@
 
 Under strict, an agent may only *propose* over MCP: lesson/decision rows land in
 staging and wait for the Owner. Every other mutating MCP tool is refused by
-default -- identity edits, content/tier edits, approvals, merges, imports,
+default -- direct content/tier edits, approvals, merges, imports,
 relation edits -- and the Owner applies decisions with the local
 ``engram review`` CLI instead. The refusal is independent of the caller's
 self-reported trust, because an agent can claim any client type.
 
-With the variable unset, nothing here changes behaviour.
+Identity changes are pending proposals in every mode. With the variable unset,
+the other tools retain their default risk-based behaviour.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from pathlib import Path
 # Mutating MCP tools that stay callable under strict. Anything else in a mutating
 # governance class is refused (default-refuse).
 STRICT_MCP_ALLOWLIST = frozenset({
+    "update_identity",  # pending identity proposal in every mode, never a direct edit
     # proposals: the knowledge rows they create are forced into staging
     "add_lesson",
     "add_decision",

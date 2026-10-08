@@ -196,6 +196,7 @@ def _print_review_usage() -> None:
         "  engram review show <id>\n"
         "  engram review approve <id> --yes\n"
         "  engram review archive <id> --yes\n"
+        "  engram review reject <identity-id> --yes\n"
         "  engram review export --out <dir>\n"
         "  engram review apply <marks.json> [--operator <name> --yes]\n"
         "      marks: approve | reject | edit-type:<type> | supersede:<old id> | retire | restore\n"
@@ -218,6 +219,8 @@ def _print_anchors_usage() -> None:
 
 
 def _review_title(item_type: str, item: dict) -> str:
+    if item_type == "identity":
+        return str(item.get("field") or "identity") + " (old vs new: review show <id>)"
     if item_type == "decision":
         title = item.get("question") or item.get("title") or ""
         choice = item.get("choice") or ""
@@ -350,6 +353,8 @@ def _review_items(
         for item in active_rows(eng, kind):
             if item.get("tier") == "staging":
                 rows.append({"type": kind, "item": item, "scope": scope_label(eng, kind, item)})
+    rows.extend({"type": "identity", "item": item, "scope": "global"}
+                for item in eng.get_identity_proposals())
 
     if low_quality_only:
         rows = [
@@ -405,6 +410,11 @@ def _print_review_list(rows: list[dict]) -> None:
 
 
 def _print_review_item(item_type: str, item: dict) -> None:
+    if item_type == "identity":
+        W._safe_print(f"identity: {item.get('id')} field: {item.get('field')}")
+        W._safe_print("old: " + json.dumps(item.get("before", {}), ensure_ascii=False, sort_keys=True))
+        W._safe_print("new: " + json.dumps(item.get("after", {}), ensure_ascii=False, sort_keys=True))
+        return
     print(f"type: {item_type}")
     print(f"id: {item.get('id', '')}")
     print(f"tier: {item.get('tier', '')}")
@@ -613,12 +623,24 @@ def run_review(argv: list[str] | None = None) -> int:
             _print_review_usage()
             return 2
         item_type, item = eng._find_item_by_id(args[1])
-        if item is None or item_type not in {"lesson", "decision"}:
+        if item is None or item_type not in {"lesson", "decision", "identity"}:
             print(f"Review item not found: {args[1]}")
             return 1
         _print_review_item(item_type, item)
         return 0
 
+    if args and args[0] in ("approve", "reject", "archive") and len(args) >= 2:
+        kind, item = eng._find_item_by_id(args[1])
+        if kind == "identity":
+            if not _require_yes(args[2:], "review identity proposal"):
+                return 2
+            _print_review_item(kind, item)
+            action = "approve" if args[0] == "approve" else "reject"
+            result = review_cli.apply_marks(eng, [{"id": args[1], "mark": action,
+                                                   "expected_version": item.get("version", 1)}],
+                                            review_cli.attribution_record("owner", mode="single"))
+            print(json.dumps(result, ensure_ascii=False))
+            return 1 if review_cli.all_failed(result) else 0
     if args and args[0] == "approve":
         if len(args) < 2:
             _print_review_usage()
@@ -2180,7 +2202,7 @@ def _run_import_backup(args: list[str]) -> int:
             "Default is metadata-only preview. --overwrite maps to merge=False.\n"
             "--allow-over-cap imports even when reviewed memories would exceed the hard cap.\n"
             "OpenClaw: MEMORY.md lessons go to the review queue (receipt + audit line);\n"
-            "USER.md / SOUL.md merge into the profile, preferences and quality standards."
+            "USER.md / SOUL.md create pending identity proposals; approve them with engram review."
         )
         return 0 if args and args[0] in {"-h", "--help"} else 2
     if "--format" in args:

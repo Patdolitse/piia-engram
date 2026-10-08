@@ -762,7 +762,6 @@ _TRUSTED_LOCAL_OWNER_REVIEW_REFUSAL = _refusal(
 )
 
 _TRUSTED_LOCAL_OWNER_REVIEW_TOOLS = frozenset({
-    "update_identity",
     "update_knowledge",
     "archive_knowledge",
     "merge_knowledge",

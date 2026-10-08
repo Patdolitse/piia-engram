@@ -1264,7 +1264,7 @@ class TestUpdateIdentityException:
         def explode(*args, **kwargs):
             raise RuntimeError(r"update boom at C:\Users\someone\secret.json")
 
-        monkeypatch.setattr(isolated_engram, "update_profile", explode)
+        monkeypatch.setattr(isolated_engram, "propose_identity", explode)
         result = _run(
             mcp_server.update_identity(
                 field="profile", updates_json='{"role": "test"}'

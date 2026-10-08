@@ -83,6 +83,9 @@ already knows something you told it before. To feel it once:
    *"Remember that I prefer concise answers with explicit verification commands."*
    The AI calls a write tool (`memory_store`, `add_lesson`, `add_decision`,
    `add_playbook`, or `update_identity`).
+   Identity changes made with `update_identity` always wait for your local
+   approval: run `engram review interactive`, compare old/new values and approve.
+   Pending proposals are not included in automatic context.
 2. Start a **fresh** chat — in the same tool, or a different connected tool on
    the same machine.
 3. Ask something where that preference applies. The new session starts from what
@@ -150,6 +153,18 @@ If you want a stricter posture, set `ENGRAM_APPROVAL=strict` and **every** write
 your approval first.
 
 You stay in control of staged items at any time:
+
+- **Identity proposals, in every mode.** MCP `update_identity` never changes
+  profile, preferences, work style, quality standards or trust boundaries directly.
+  Use `engram review` to list them, `engram review show <id>` for old/new values,
+  or `engram review interactive` to approve/reject. File-based review uses
+  `engram review export --out <dir>` and `engram review apply <marks.json>
+  --operator <name> --yes`; identity marks allow approve, reject or skip only.
+  Rejection leaves approved identity unchanged and stores a text-free rejection
+  record. If a relevant approved value changed after the proposal was made,
+  approval returns `identity_conflict`; reject the old proposal and request a new
+  one against current values. Local setup and `engram dock-set-lang` still apply
+  Owner-entered values directly.
 
 - `review_staging(action="list")` — see what is waiting for review (cold-start
   `get_resume_brief` also surfaces the pending count, including high-risk items).
@@ -341,8 +356,9 @@ your whole memory — there is no cloud copy to reconcile. A JSON backup
 answers `local_only` and writes nothing. OpenClaw files come in with
 `engram import --format openclaw --memory MEMORY.md [--soul SOUL.md] [--user USER.md]`
 (a preview by default; `--apply --yes` writes): lessons go to the review queue
-with a receipt, while USER.md / SOUL.md merge into your profile, preferences and
-quality standards.
+with a receipt, while USER.md / SOUL.md create pending profile, preference and
+quality-standard proposals. Review old/new values locally before approving them;
+`--apply --yes` imports the proposals, not their approval.
 
 **What not to store.** Engram is for personal AI context, not secret management.
 Do **not** store passwords, API keys, OAuth tokens, private keys, customer PII,

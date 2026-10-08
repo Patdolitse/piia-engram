@@ -470,7 +470,9 @@ class _SessionTracker:
             "copilot": "copilot_vscode",
             "amazon-q": "amazon_q",
         }
-        mapped = _CLIENT_NAME_MAP.get(name.lower(), name.lower().replace("-", "_"))
+        normalized = _write_provenance.client_label(name)
+        mapped = normalized if normalized not in {"other", "unknown"} else _CLIENT_NAME_MAP.get(
+            name.lower(), name.lower().replace("-", "_"))
         self.detect_tool(mapped)
 
     def detect_project(self, folder: str) -> None:
@@ -1210,6 +1212,9 @@ TOOL_GOVERNANCE_CLASS: dict[str, str] = {
 
 _DEFAULT_SERVER_INSTRUCTIONS = (
     "Engram — the user's personal memory layer across all AI tools.\n\n"
+    "Identity changes: update_identity only creates pending proposals in every mode. "
+    "The Owner compares old/new values and approves or rejects in the local engram review CLI; "
+    "automatic context includes approved identity only.\n\n"
     "Memory lifecycle (act on each phase without waiting for the user to ask):\n\n"
     "1. STARTUP  — get_user_context: inject user identity & context at conversation start.\n"
     "2. RETRIEVAL — search_knowledge / get_relevant_knowledge: look up past knowledge mid-conversation.\n"
@@ -1256,7 +1261,9 @@ _STRICT_SERVER_INSTRUCTIONS = (
     "- If something contradicts an existing entry: search_knowledge for the old one, then\n"
     "  propose a revision with supersedes=<old id> (it waits for review like any proposal)\n"
     "  instead of an unrelated new entry.\n"
-    "- Editing, approving, archiving, merging and identity changes are refused over MCP.\n"
+    "- Editing, approving, archiving and merging are refused over MCP.\n"
+    "- update_identity proposes identity changes only; the Owner compares old/new values and "
+    "decides in the local engram review CLI. Automatic context uses approved identity only.\n"
     "- A proposal that replaces an existing entry (supersedes, or a playbook update) needs that\n"
     "  entry's version: supersedes_expected_version / expected_version from the read result.\n"
 )

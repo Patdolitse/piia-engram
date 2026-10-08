@@ -1785,7 +1785,8 @@ def _write_mcp_config_toml(
             existing_engram = existing_servers.get("piia-engram")
         if isinstance(existing_engram, dict) and isinstance(existing_engram.get("env"), dict):
             existing_env = existing_engram["env"]
-    replaced_headers = {"[mcp_servers.engram]", "[mcp_servers.engram.env]"}
+    replaced_headers = {"[mcp_servers.engram]", "[mcp_servers.engram.env]",
+                        '[mcp_servers."engram"]', '[mcp_servers."engram".env]'}
     if migrate_from:
         for form in (migrate_from, f'"{migrate_from}"'):
             replaced_headers |= {f"[mcp_servers.{form}]", f"[mcp_servers.{form}.env]"}
@@ -1832,10 +1833,22 @@ def _write_mcp_config_toml(
         engram_block.append(f'{toml_key} = {toml_string(value)}')
 
     inserted = False
+    in_server_table = False
+    replaced_names = {"engram", migrate_from} - {None}
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
+        # Inline tables in [mcp_servers] are complete single-line values. Remove
+        # just the target assignment, leaving peer servers and comments intact;
+        # the replacement is emitted as a standalone table outside this section.
+        if stripped.startswith("["):
+            in_server_table = bool(re.fullmatch(r'\[\s*mcp_servers\s*\]\s*(?:#.*)?', stripped))
+        if in_server_table:
+            inline = re.match(r'''^(?:([A-Za-z0-9_-]+)|"([^"]+)"|'([^']+)')\s*=\s*\{''', stripped)
+            if inline and next(g for g in inline.groups() if g is not None) in replaced_names:
+                i += 1
+                continue
 
         # 检测 [mcp_servers.engram] 段（以及要迁移的旧名称段）
         if stripped in replaced_headers and not stripped.endswith(".env]"):
@@ -2374,7 +2387,6 @@ def _run_seed_knowledge_onboarding(
     print("========================================\n")
     if external_config_applied:
         print("  1. Restart your AI tool:")
-        _print_restart_hints()
         print('  2. Say to AI: "Sync Engram context"')
         print("  3. Confirm AI knows your role and preferences")
         print("  4. Run 'engram doctor' anytime to check health\n")
@@ -3732,11 +3744,8 @@ def main() -> None:
     elif args[0] == "management":
         sys.exit(run_management(args[1:]))
     elif args[0] == "stats":
-        from piia_engram.stats import run_stats, log_stats
-        if "--log" in args:
-            log_stats()
-        else:
-            run_stats()
+        from piia_engram.stats import main as stats_main
+        stats_main(args[1:])
     elif args[0] == "telemetry":
         _run_telemetry_cli(args[1:])
     elif args[0] == "privacy":
@@ -3918,6 +3927,7 @@ def main() -> None:
             "  engram watcher status   Show watcher install + last-scan status\n"
             "  engram stats            Show project growth metrics\n"
             "  engram stats --log      Append stats snapshot to local log\n"
+            "  engram stats --online   Fetch growth metrics even when DO_NOT_TRACK=1 / ENGRAM_TELEMETRY=0\n"
             "  engram telemetry        Manage anonymous usage statistics\n"
             "  engram privacy          Show what data Engram stores\n\n"
             "Export & identity (run these as MCP tools in your AI client):\n"

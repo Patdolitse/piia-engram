@@ -422,8 +422,8 @@ def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "
         "format": "openclaw",
         "dry_run": True,
         "files": files,
-        "note": "metadata only; MEMORY.md lessons go to the review queue, USER.md / SOUL.md merge "
-                "into the profile, preferences and quality standards",
+        "note": "metadata only; MEMORY.md lessons and USER.md / SOUL.md identity changes "
+                "go to the local review queue",
     }
 
 
@@ -446,8 +446,8 @@ def import_from_openclaw(
         user_path: Path to USER.md (optional).
 
     Lessons from MEMORY.md wait in the review queue (staging) and a confirmed
-    batch leaves an import receipt plus an audit line. USER.md / SOUL.md still
-    merge into identity directly (there is no identity review queue).
+    batch leaves an import receipt plus an audit line. USER.md / SOUL.md create
+    pending identity proposals; only the Owner's local review applies them.
 
     Returns:
         Dict with import summary.
@@ -492,8 +492,8 @@ def import_from_openclaw(
             elif b.lower().startswith("technical level:"):
                 updates["technical_level"] = b.split(":", 1)[1].strip()
         if updates:
-            engram.update_profile(updates)
-            imported.append(f"USER.md → profile ({', '.join(updates.keys())})")
+            proposal = engram.propose_identity("profile", updates, source_tool="openclaw")
+            imported.append(f"USER.md → profile proposal ({proposal.get('status', 'error')})")
 
     # --- Import SOUL.md → preferences + quality_standards ---
     if "soul" in texts:
@@ -515,16 +515,16 @@ def import_from_openclaw(
                 elif current_section in ("quality standards", "质量标准"):
                     rules.append(value)
         if prefs:
-            engram.update_preferences({"work_patterns": prefs})
-            imported.append(f"SOUL.md → preferences ({len(prefs)} items)")
+            proposal = engram.propose_identity("preferences", {"work_patterns": prefs}, source_tool="openclaw")
+            imported.append(f"SOUL.md → preferences proposal ({proposal.get('status', 'error')})")
         if rules:
             existing = engram.get_quality_standards()
             existing_rules = set(existing.get("rules", []))
             new_rules = [r for r in rules if r not in existing_rules]
             if new_rules:
                 all_rules = list(existing_rules) + new_rules
-                engram.update_quality_standards({"rules": all_rules[-15:]})
-                imported.append(f"SOUL.md → quality_standards (+{len(new_rules)} rules)")
+                proposal = engram.propose_identity("quality_standards", {"rules": all_rules[-15:]}, source_tool="openclaw")
+                imported.append(f"SOUL.md → quality_standards proposal ({proposal.get('status', 'error')})")
 
     # --- Import MEMORY.md → lessons ---
     if "memory" in texts:

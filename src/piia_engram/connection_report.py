@@ -298,7 +298,12 @@ def call_activity(root: Path, *, days: int = DEFAULT_DAYS, now: float | None = N
             moment = _parse_time(prov.get("created_at")) or _parse_time(row.get("created_at"))
             if moment is None or moment < since:
                 continue
-            entry = bucket(client_label(str(prov.get("client") or "")))
+            label = client_label(str(prov.get("client") or ""))
+            # Older rows may carry "other" from an unrecognised alias. Re-read
+            # only the self-reported name, not any stored knowledge content.
+            if str(prov.get("client") or "").strip().lower() in {"other", "unknown", ""}:
+                label = client_label(str(prov.get("client_name") or ""))
+            entry = bucket(label)
             entry["writes"] += 1
             seen(entry, moment)
     return activity

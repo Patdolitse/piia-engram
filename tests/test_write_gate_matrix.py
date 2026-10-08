@@ -597,8 +597,8 @@ class TestOwnerStillWorks:
             source_tool="codex",
         ))
 
-        assert _is_refusal(result)
-        assert "owner review" in result
+        assert json.loads(result)["status"] == "pending"
+        assert len(e.get_identity_proposals()) == 1
         assert e.get_profile(safe=False) == before
 
     def test_trusted_local_existing_knowledge_update_needs_owner_review(
