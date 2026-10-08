@@ -14,6 +14,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - OpenClaw `USER.md` and `SOUL.md` imports create pending identity proposals, including with `--apply --yes`; migrate by reviewing and approving the imported proposals with `engram review` before expecting identity changes to take effect.
 - Native backup exports refuse destinations inside the store or over managed files, including link aliases; migrate by choosing a destination outside the store or using the default sibling `<store-name>_exports` directory.
 
+### Added
+
+- Identity proposals appear in local review, interactive review and exported marks, with the current and proposed values available through `engram review show <id>`.
+
+### Changed
+
+- `engram stats` makes no growth-metric requests with `DO_NOT_TRACK=1` or `ENGRAM_TELEMETRY=0`; `--online` permits requests for that invocation without enabling telemetry.
+- Claude Code handshake, write provenance and doctor activity use consistent self-reported client labels, including older `claude-cli` and `claude_cli` checkpoint directories, without treating the labels as proof of identity or authorization.
+
 ### Fixed
 
 - Identity approval can recover after interruption by retrying approval or running `engram doctor --fix`, and a rejection cannot override an approval already in progress.
@@ -21,8 +30,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - Native backups preserve hash-only identity rejection records, and rejection fingerprints allow a fresh proposal after the original value changes while retaining vetoes against identical changes.
 - Codex setup combines bare and quoted Engram entries in table or inline-table form, preserves existing environment values and legacy-only keys, and backs up and validates TOML before writing; without a complete parser or when an unrelated value would change, it leaves the configuration unchanged and provides a manual step.
 - Setup prints the Claude Code terminal restart hint once.
-- `engram stats` makes no growth-metric requests with `DO_NOT_TRACK=1` or `ENGRAM_TELEMETRY=0`; `--online` permits requests for that invocation without enabling telemetry.
-- Claude Code handshake, write provenance and doctor activity use consistent self-reported client labels, including older `claude-cli` and `claude_cli` checkpoint directories, without treating the labels as proof of identity or authorization.
+
+### Release Evidence
+
+See the [release evidence declarations](release-evidence/README.md) for the checks required before publication.
 
 ## [4.22.0] - 2026-10-07
 
@@ -50,6 +61,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 ### Added
 
 - A daily anonymous usage ping is on by default with a random install ID, version, OS, Python version, client name and date but no memories, paths, accounts or arguments; disable it with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (automatically off in CI and containers), as described in [PRIVACY.md](PRIVACY.md).
+- Automated callers can use a separate admission-gated store with a cleaned launch environment, pinned limits, time-aware recall, hash-chained receipts and local owner vetoes; its admission contract is separate from the personal store.
 - `engram doctor` adds a read-only "Client Connections" section showing each client's configuration and calls in the last 14 days (`--days N`, `--json`).
 - `engram import-memories` lists memories and rule-file sections found in other AI tools and adds them to the review queue after you confirm, with a receipt; `engram setup` offers a one-time import (default no).
 - `engram import --format openclaw` imports OpenClaw `SOUL.md` / `MEMORY.md` / `USER.md` locally; it previews by default, and MEMORY.md lessons go to the review queue.
